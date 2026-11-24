@@ -1,7 +1,7 @@
 //! Trace validation for `proofs/tla/P2PDelivery.tla`.
 //!
 //! A defra binary built with `--features model-trace` logs one JSON event per
-//! model action under the `model_trace` log target (`crates/p2p/src/model_trace.rs`).
+//! model action under the `model_trace` log target (`crates/database/p2p/src/model_trace.rs`).
 //! [`read`] collects those events from each node's log and orders them by
 //! time; [`Trace::abstracted`] names the nodes and the heads of one document
 //! and keeps only what the model follows; [`Trace::module`] and
@@ -100,7 +100,7 @@ pub fn read(nodes: &[NodeLog]) -> Result<Vec<Logged>> {
 }
 
 /// The receiver's limits, as the node's defaults set them
-/// (`crates/p2p/src/sync/manager/config.rs`).
+/// (`crates/database/p2p/src/sync/manager/config.rs`).
 #[derive(Debug, Clone, Copy)]
 pub struct Bounds {
     /// `max_concurrent_dag_fetches`: fetch slots and global permits.

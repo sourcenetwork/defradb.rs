@@ -1,0 +1,12 @@
+[package]
+name = "rust-wasm32-copy"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+lens_sdk.workspace = true

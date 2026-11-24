@@ -40,9 +40,9 @@ The order of trainings, retries and writers is the TLA+ model
 `proofs/tla/SharedQuantizer.tla`; this file proves the laws it rests on.
 
 Rust anchors: `Trained`, `encode_trained`, `decode_trained`
-(`crates/db/src/index/vector/engine/diskann/codec.rs`), and
+(`crates/database/db/src/index/vector/engine/diskann/codec.rs`), and
 `CodeCache::quantizer`, `CodeCache::share_quantizer`, `SHARED_TRAININGS`
-(`crates/db/src/index/vector/engine/diskann/cache.rs`).
+(`crates/database/db/src/index/vector/engine/diskann/cache.rs`).
 -/
 
 namespace SharedQuantizer

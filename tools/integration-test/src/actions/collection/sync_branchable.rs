@@ -38,15 +38,7 @@ impl Op for SyncBranchableCollection {
         let identity = self.common.client_identity(Self::name())?;
         let node = state.node_on(self.common.node())?;
         let context = state.context_as(None, identity);
-        // Go's harness knows the collection from the test's own setup, so
-        // finding it checks no permission.
-        let name = self.selector()?.names.unwrap_or_default().concat();
-        let collections: Vec<_> = node
-            .get_collection(&name)
-            .map_err(|e| Failure::operation(e.to_string()))?
-            .into_iter()
-            .collect();
-        let id = Self::collection_id(&collections)?;
+        let id = self.known_id(&node)?;
         state
             .block_on(node.sync_branchable_collection_as(&context, &id))
             .map(|()| json!({}))
@@ -80,6 +72,19 @@ impl SyncBranchableCollection {
         })
     }
 
+    /// The collection's ID as the test sees it on `node`. Go's harness knows
+    /// the collection from the test's own setup, so finding it checks no
+    /// permission, whichever client the test runs through.
+    fn known_id(&self, node: &defra_node::Node) -> Result<String, Failure> {
+        let name = self.selector()?.names.unwrap_or_default().concat();
+        let collections: Vec<_> = node
+            .get_collection(&name)
+            .map_err(|e| Failure::operation(e.to_string()))?
+            .into_iter()
+            .collect();
+        Self::collection_id(&collections)
+    }
+
     fn collection_id(collections: &[schema::CollectionVersion]) -> Result<String, Failure> {
         collections
             .first()
@@ -92,13 +97,18 @@ impl HttpRun for SyncBranchableCollection {
     fn execute_http(&self, state: &mut State) {
         crate::scenario::execute_with(self, state, |action, state| {
             let identity = action.common.client_identity(Self::name())?;
-            let selector = action.selector()?;
-            let collections = state
-                .http_as(action.common.node(), identity, |client| async move {
-                    client.get_collections(None, &selector).await
-                })?
-                .map_err(|e| Failure::operation(e.to_string()))?;
-            let id = Self::collection_id(&collections)?;
+            let id = match state.node(action.common.node())?.embedded() {
+                Some(node) => action.known_id(node)?,
+                None => {
+                    let selector = action.selector()?;
+                    let collections = state
+                        .http_as(action.common.node(), identity, |client| async move {
+                            client.get_collections(None, &selector).await
+                        })?
+                        .map_err(|e| Failure::operation(e.to_string()))?;
+                    Self::collection_id(&collections)?
+                }
+            };
             state
                 .http_as(action.common.node(), identity, |client| async move {
                     client.p2p_collection_sync_branchable(&id).await
@@ -113,19 +123,26 @@ impl CliRun for SyncBranchableCollection {
     fn execute_cli(&self, state: &mut State) {
         crate::scenario::execute_with(self, state, |action, state| {
             let identity = action.common.client_identity(Self::name())?;
-            let names = action.selector()?.names.unwrap_or_default();
-            let name = names.first().map(String::as_str).unwrap_or_default();
-            let described = state
-                .defra_client_as(
-                    action.common.node(),
-                    None,
-                    identity,
-                    &["collection", "describe", "--collection-name", name],
-                )
-                .map_err(Failure::operation)?;
-            let collections: Vec<schema::CollectionVersion> = serde_json::from_value(described)
-                .map_err(|e| Failure::operation(format!("collection describe output: {e}")))?;
-            let id = Self::collection_id(&collections)?;
+            let id = match state.node(action.common.node())?.embedded() {
+                Some(node) => action.known_id(node)?,
+                None => {
+                    let names = action.selector()?.names.unwrap_or_default();
+                    let name = names.first().map(String::as_str).unwrap_or_default();
+                    let described = state
+                        .defra_client_as(
+                            action.common.node(),
+                            None,
+                            identity,
+                            &["collection", "describe", "--collection-name", name],
+                        )
+                        .map_err(Failure::operation)?;
+                    let collections: Vec<schema::CollectionVersion> =
+                        serde_json::from_value(described).map_err(|e| {
+                            Failure::operation(format!("collection describe output: {e}"))
+                        })?;
+                    Self::collection_id(&collections)?
+                }
+            };
             state
                 .defra_client_as(
                     action.common.node(),

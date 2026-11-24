@@ -44,7 +44,7 @@ fn chunk_documents_and_settings_are_read_only() {
         .into(),
         Truncate {
             collection: CHUNKS.into(),
-            expected_error: Some("Article__body_chunk holds generated chunks and is emptied only with its parent".into()),
+            expected_error: Some("Article__body_chunk holds the chunks of Article.body and is changed only through Article".into()),
             ..Default::default()
         }
         .into(),

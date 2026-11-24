@@ -28,8 +28,8 @@ The promises are `prefix_best_exact`, `unread_ranks_no_higher` and
 Scores are natural numbers here: only their order matters, and larger is nearer.
 
 Code it models:
-  crates/query/src/plan/chunk_similarity/best.rs   best_per_parent
-  crates/query/src/plan/chunk_similarity/search.rs ChunkSearch::run (stops at k accepted articles)
+  crates/engine/query/src/plan/chunk_similarity/best.rs   best_per_parent
+  crates/engine/query/src/plan/chunk_similarity/search.rs ChunkSearch::run (stops at k accepted articles)
 -/
 
 namespace ChunkSimilarity

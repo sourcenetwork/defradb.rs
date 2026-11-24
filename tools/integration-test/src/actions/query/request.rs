@@ -56,7 +56,7 @@ impl Op for Request {
     }
 
     fn run(&self, state: &State) -> Result<Value, Failure> {
-        let identity = self.check_arguments()?;
+        let identity = self.check_arguments(state)?;
         state
             .block_on(
                 state.node_on(self.common.node())?.execute_request_as(
@@ -119,8 +119,8 @@ impl Request {
     }
 
     /// Fails on the arguments no client supports yet.
-    fn check_arguments(&self) -> Result<Option<u64>, Failure> {
-        let identity = self.common.client_identity(Self::name())?;
+    fn check_arguments(&self, state: &State) -> Result<Option<u64>, Failure> {
+        let identity = self.common.acting_identity(Self::name(), state)?;
         let unsupported = [
             ("nonFiniteFloats", self.non_finite_floats.is_some()),
             ("operationName", self.operation_name.is_some()),
@@ -178,7 +178,7 @@ impl Action for Request {
 impl HttpRun for Request {
     fn execute_http(&self, state: &mut State) {
         crate::scenario::execute_with(self, state, |action, state| {
-            let identity = action.check_arguments()?;
+            let identity = action.check_arguments(state)?;
             let request = action.request.as_str().to_owned();
             let variables = action.variables.clone();
             let txn = state.txn_id(action.txn);
@@ -202,7 +202,7 @@ impl HttpRun for Request {
 impl CliRun for Request {
     fn execute_cli(&self, state: &mut State) {
         crate::scenario::execute_with(self, state, |action, state| {
-            let identity = action.check_arguments()?;
+            let identity = action.check_arguments(state)?;
             let variables = action.variables.as_ref().map(Value::to_string);
             let mut args = vec!["query", action.request.as_str()];
             if let Some(variables) = &variables {

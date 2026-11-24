@@ -5,7 +5,7 @@
 \* the same peer must be able to take the permit while the first waits. This
 \* model does not claim availability of the separate global permit.
 \*
-\* State correspondence (crates/p2p/src/sync/coordinator/dag_fetcher.rs):
+\* State correspondence (crates/database/p2p/src/sync/coordinator/dag_fetcher.rs):
 \* phase is poll_fetch_dag's program counter; held is the Option in its
 \* DagFetchContext; otherHeld is a second task's semaphore permit; full is
 \* whether event_tx's bounded channel has no room.

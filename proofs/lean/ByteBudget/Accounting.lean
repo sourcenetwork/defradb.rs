@@ -18,7 +18,7 @@ The temporal story (stuck handlers, stalled senders, deadlines) is the TLA+ mode
 takes on trust by giving every body size 1.
 
 Rust anchors: `InboundBudget::admit` and `InboundLease` (its `Drop` gives the
-room back) in `crates/p2p/src/iroh/inbound_budget.rs`. Each pool is a
+room back) in `crates/database/p2p/src/iroh/inbound_budget.rs`. Each pool is a
 `regolith::sync::Semaphore` counted in KiB (`permits_for`), so a 128 MiB budget
 fits a semaphore on 32-bit targets; it is modeled here as its free count, in
 units. The last section shows that rounding each body up to whole KiB never lets

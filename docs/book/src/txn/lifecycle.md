@@ -1,7 +1,7 @@
 # Lifecycle and states
 
 A defradb.rs transaction is an engine transaction (`regolith::Transaction`) wrapped in a
-`DbTxn` ([`crates/db/src/txn/mod.rs`](https://github.com/sourcenetwork/defradb.rs/blob/main/crates/db/src/txn/mod.rs)) that adds the namespaced store views (datastore,
+`DbTxn` ([`crates/database/db/src/txn/mod.rs`](https://github.com/sourcenetwork/defradb.rs/blob/main/crates/database/db/src/txn/mod.rs)) that adds the namespaced store views (datastore,
 blockstore, headstore, systemstore, acpstore, peerstore), a transaction-scoped collection
 catalog, and the statement savepoint machinery. The state machine it moves through:
 
@@ -18,7 +18,7 @@ transaction.
 
 A read-only transaction does not begin an engine transaction at all: it pins a snapshot,
 which is the same view without commit-time validation nothing will ever ask for
-([`crates/storage/src/backends/regolith/transaction.rs`](https://github.com/sourcenetwork/defradb.rs/blob/main/crates/storage/src/backends/regolith/transaction.rs)).
+([`crates/engine/storage/src/backends/regolith/transaction.rs`](https://github.com/sourcenetwork/defradb.rs/blob/main/crates/engine/storage/src/backends/regolith/transaction.rs)).
 
 ## Validating: the write-free fast path
 
@@ -27,7 +27,7 @@ At commit the engine validates the read set against newer commits. A transaction
 section, done. This is not a corner case; it is every status read, every query without a
 mutation, every arrival page. Concretely: a write-free attempt and a concurrent update of
 the very rows it read *both* commit (there is a regression test that asserts exactly
-this, `crates/storage/src/corekv/retry/`).
+this, `crates/engine/storage/src/corekv/retry/`).
 
 ## Decided, written, durable, visible
 

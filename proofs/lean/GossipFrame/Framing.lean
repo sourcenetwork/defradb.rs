@@ -20,8 +20,8 @@ Bytes are modelled as natural numbers below 256. The message inside a frame is
 iroh-gossip's own encoding and is not covered here.
 
 Rust anchors: `write_gossip_frame`, `read_gossip_frame` in
-`crates/p2p/src/iroh/gossip/frame.rs`; `write_stream_tag`, `read_stream_tag`
-in `crates/p2p/src/iroh/protocols.rs`.
+`crates/database/p2p/src/iroh/gossip/frame.rs`; `write_stream_tag`, `read_stream_tag`
+in `crates/database/p2p/src/iroh/protocols.rs`.
 -/
 
 namespace GossipFrame

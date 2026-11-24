@@ -10,15 +10,22 @@ func defraSwiftSmoke(
     publicKeyBytes: UnsafePointer<UInt8>,
     keyType: UnsafePointer<CChar>
 ) {
-    let _ = register_remote_identity(did, publicKeyHex, keyType, 1, defraSwiftSmokeCallback)
-    let _ = register_remote_identity_bytes(
-        did,
-        publicKeyBytes,
-        65,
-        keyType,
-        1,
-        defraSwiftSmokeCallback
-    )
-    let _ = bind_identity_bearer_token(did, publicKeyHex)
-    let _ = node_set_default_identity(0, did)
+    var hex = DefraRemoteIdentityOptions()
+    hex.key_type = keyType
+    hex.public_key_hex = publicKeyHex
+    hex.signer_handle = 1
+    hex.sign = defraSwiftSmokeCallback
+    let _ = defra_identity_new_remote(did, hex)
+
+    var bytes = DefraRemoteIdentityOptions()
+    bytes.key_type = keyType
+    bytes.public_key = publicKeyBytes
+    bytes.public_key_len = 65
+    bytes.signer_handle = 1
+    bytes.sign = defraSwiftSmokeCallback
+    let _ = defra_identity_new_remote(did, bytes)
+
+    let delegated = defra_identity_new_from_bearer_token(
+        did, publicKeyHex, DefraIdentityBearerOptions())
+    let _ = defra_node_set_identity(0, delegated.identity_ptr)
 }

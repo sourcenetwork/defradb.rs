@@ -9,10 +9,10 @@ An owning transaction guard must likewise move to an edge-admitted commit task:
 otherwise cancellation of its caller abandons the transaction under the task.
 
 Rust anchors: `execute_with_signing_context` in
-`crates/defra-node/src/signed_query/mod.rs`; `NodeTransaction::commit` in
-`crates/defra-node/src/transaction.rs`; `run_on` in
-`crates/workers/src/pool/detached.rs`; and `Scope::drain` in
-`crates/edge/src/handle.rs`. Interleavings are checked by
+`crates/entry-points/defra-node/src/signed_query/mod.rs`; `NodeTransaction::commit` in
+`crates/entry-points/defra-node/src/transaction.rs`; `run_on` in
+`crates/foundation/workers/src/pool/detached.rs`; and `Scope::drain` in
+`crates/foundation/edge/src/handle.rs`. Interleavings are checked by
 `SignedRequestDrain.tla` and `GuardedCommit.tla`.
 -/
 

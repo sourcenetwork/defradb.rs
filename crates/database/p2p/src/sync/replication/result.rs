@@ -1,0 +1,61 @@
+//! Result types for the replication loop.
+
+use cid::Cid;
+
+use crate::QueryId;
+
+/// Result of a replication loop iteration.
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub enum ReplicationResult {
+    /// Block was merged successfully
+    Merged {
+        cid: Cid,
+        doc_id: String,
+        collection_id: String,
+    },
+    /// Block was merged but re-broadcast failed (replication to other nodes may be incomplete)
+    MergedButBroadcastFailed {
+        cid: Cid,
+        doc_id: String,
+        collection_id: String,
+        broadcast_error: String,
+    },
+    /// Block was skipped (already applied or rejected)
+    Skipped {
+        cid: Cid,
+        doc_id: String,
+        collection_id: String,
+        reason: String,
+        terminal: bool,
+    },
+    /// Block was deterministically rejected on its content and has been
+    /// quarantined (#1128): durably retained for forensics, counted, and no
+    /// longer re-driven by local retry (a remote re-push may still repeat
+    /// the rejection independently). See `MergeOutcome::Rejected` and
+    /// `SyncManager::quarantine_pending_dag`.
+    Quarantined {
+        cid: Cid,
+        doc_id: String,
+        collection_id: String,
+        reason: String,
+    },
+    /// A gossip head refused at admission was dropped with its deferral
+    /// budget full (#2489).
+    GossipHeadDropped {
+        cid: Cid,
+        doc_id: String,
+        collection_id: String,
+        peer_id: String,
+    },
+    /// Merge failed
+    Failed { cid: Cid, error: String },
+    /// Merge succeeded but failed to mark as merged (will be reprocessed on restart)
+    MergedButNotMarked { cid: Cid, error: String },
+    /// Event channel closed
+    ChannelClosed,
+    /// Poll-based DAG fetch started for a known source peer
+    DagFetchStarted { root_cid: Cid },
+    /// Block-sync fetch started for missing blocks
+    BitswapFetchStarted { root_cid: Cid, query_id: QueryId },
+}

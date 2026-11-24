@@ -3,14 +3,14 @@
 Models the pusher-side admission and dispatch of outbound PushLog work (issue **#1099**,
 audit **F24**):
 
-- `crates/p2p/src/sync/push_backlog.rs`: `BacklogOwner::enqueue` (admission against the
+- `crates/database/p2p/src/sync/push_backlog.rs`: `BacklogOwner::enqueue` (admission against the
   item and byte caps, coalescing, explicit rejection), `BacklogOwner::pop_eligible`
   (which job a free worker takes next: the per-peer cap, the parked peers, the
   unreachable peers' shared cap, and which job is a probe), `BacklogOwner::park_peer`,
   `BacklogOwner::park_peer_unreachable`, `BacklogOwner::peer_answered`,
   `BacklogOwner::retire_idle_cooldowns`, `BacklogOwner::take_queued_for_peer`,
   `BacklogOwner::job_done`.
-- `crates/p2p/src/sync/coordinator/push_worker.rs`: `spawn_push_workers` (the fixed
+- `crates/database/p2p/src/sync/coordinator/push_worker.rs`: `spawn_push_workers` (the fixed
   pool) and `run_push_job` (send with `send_timeout`, park the peer on a capacity nack,
   a `retry_after` or a transport failure, demote its queued jobs to the retry ledger,
   record a reply).
@@ -125,11 +125,11 @@ so the failure is attributable.
 
 ## Conformance fence
 
-The Rust-side fence is the `crates/p2p/src/sync/push_backlog.rs` unit tests (queue
+The Rust-side fence is the `crates/database/p2p/src/sync/push_backlog.rs` unit tests (queue
 caps, coalescing, explicit rejection, parks, `unreachable_peers_share_one_peer_cap`,
 `only_a_failed_probe_demotes_an_unreachable_peer`,
 `idle_parking_state_is_retired_past_the_bound`), the worker tests in
-`crates/p2p/src/sync/coordinator/push_worker_tests.rs`
+`crates/database/p2p/src/sync/coordinator/push_worker_tests.rs`
 (`slow_peer_does_not_starve_healthy_peers`,
 `two_stalled_replicators_do_not_starve_healthy_peer` and
 `transient_transport_failure_keeps_queued_jobs_live` on the default pool and send

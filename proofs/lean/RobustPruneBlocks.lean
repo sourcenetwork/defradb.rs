@@ -26,11 +26,11 @@ What covers what is left abstract (`covers`), so the result holds whatever
 distance and `alpha` decide it.
 
 Rust anchors: `RobustPrune::select`
-(`crates/db/src/index/vector/engine/select/robust_prune.rs`), whose blocks are
+(`crates/database/db/src/index/vector/engine/select/robust_prune.rs`), whose blocks are
 `pool.chunks(BLOCK)`; `squared_euclidean_block`
-(`crates/defra-core/src/vector/kernel/mod.rs`) computes the distances behind
+(`crates/foundation/defra-core/src/vector/kernel/mod.rs`) computes the distances behind
 the before-the-block answers, bit-equal per pair to `squared_euclidean`
-(`crates/defra-core/tests/vector_kernel.rs` `a_block_is_bit_equal_to_each_pair`).
+(`crates/foundation/defra-core/tests/vector_kernel.rs` `a_block_is_bit_equal_to_each_pair`).
 The Rust loop over earlier edges stops once every candidate of the block is
 covered; an answer that is already "covered" stays so, which is why the full
 `any` below is the same answer.

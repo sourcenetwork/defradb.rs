@@ -1,4 +1,4 @@
-# Survey: `crates/datastore/`
+# Survey: `crates/engine/datastore/`
 
 ## Purpose
 Transaction-wrapper / namespace-prefixing shim sitting between the `storage`

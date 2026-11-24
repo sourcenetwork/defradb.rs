@@ -342,6 +342,13 @@ Migrations configured before or after the patch are still applied to queries aft
 
 Truncating an empty collection, or the same collection twice, succeeds; truncating while documents are added in parallel deletes every document that existed before the truncate.
 
+# `defra.collection.truncate_isolation`: Truncating preserves other collections
+
+- **Parents:** ["go.collection.truncate"]
+- **Scenarios:** ["collection.truncate.isolation.truncate_preserves_other_collections"]
+
+Truncating an indexed collection removes its documents and leaves the documents, collection definitions and indexes of every other collection intact, including when legacy index prefixes overlap other datastore key families.
+
 # `go.collection.truncate.re_add`: Re-adding documents after truncate
 
 - **Parents:** ["go.collection.truncate"]
@@ -356,3 +363,10 @@ A document re-added after truncate gets the same docID and the same head CID as 
 - **Scope:** "the large-integer test: Go, HTTP, CLI and C clients with collection save/named mutations only"
 
 A truncate limited to certain documents removes only those (idempotently on retry), matches large integers exactly (2^53 vs 2^53+1), works through plain and unique secondary indexes, and frees a unique value so a document with it can be created again.
+
+# `defra.collection.truncate.other_collections`: Truncate leaves other collections intact
+
+- **Parents:** ["go.collection.truncate"]
+- **Scenarios:** ["collection::truncate::other_collections::truncate_leaves_other_collections_indexes_intact"]
+
+Truncating a collection removes only its own documents and index entries: another collection's documents stay, and a filter on its indexed field still returns them, whatever short IDs the two collections have (with `Kept { name: String @index }` holding `{name: "Kept"}`, truncating each of 125 other indexed collections leaves `Kept(filter: {name: {_eq: "Kept"}})` returning that document, while the truncated collection's own indexed filter returns nothing).

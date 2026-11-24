@@ -6,7 +6,7 @@ use integration_test::scenario::{Common, Text};
 use integration_test::test_case::TestCase;
 use serde_json::{json, Value};
 
-use super::support::{add_article, add_article_collection, body, CHUNKS};
+use super::support::{add_article, add_article_collection, body, texts, CHUNKS};
 
 fn paragraphs(i: usize) -> usize {
     3 + i % 4
@@ -16,13 +16,12 @@ fn candidate_body(i: usize) -> String {
     body(paragraphs(i), &format!("topic {i}"))
 }
 
-/// A chunk keeps the blank line that follows its paragraph.
 fn candidate_chunks(i: usize) -> Value {
-    let texts: Vec<Value> = candidate_body(i)
-        .split_inclusive("\n\n")
+    let rows: Vec<Value> = texts(&candidate_body(i))
+        .into_iter()
         .map(|text| json!({ "text": text }))
         .collect();
-    m::unordered(json!(texts))
+    m::unordered(json!(rows))
 }
 
 /// The state after update `i` won: its text, its chunk list and its chunks, no others.

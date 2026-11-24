@@ -57,12 +57,12 @@ merged value, written only by blind merges, so this model maps to the code
 at what a read returns and nowhere else:
 
 * `derivedHeads` is what `src/block/heads.rs` `live_collection_heads` reads
-  (`crates/db`). `crates/db/tests/block/head_conformance.rs`
+  (`crates/database/db`). `crates/database/db/tests/block/head_conformance.rs`
   `head_queries_match_executable_lean` runs `HeadSet/Conformance.lean` and the
   storage owner on the same transaction actions and compares those reads.
 * `Store.headKeys` and `Store.supersedes` have no code counterpart. A name's
   state in the merged value (live, ahead or absent, folded by
-  `crates/storage/src/backends/regolith/merge/head_set.rs`) is a function of
+  `crates/engine/storage/src/backends/regolith/merge/head_set.rs`) is a function of
   them, and the code keeps only that: which child superseded a parent is not
   stored.
 * `derived_writeSets_disjoint` is about the per-key design's keys. Writers in
@@ -79,7 +79,7 @@ The eager loop the model proves defective is gone from the tree. Its shape is
 preserved in `eagerWriteSet` and in
 `proofs/tla/MC_HeadSet_Red_EagerDelete.cfg`.
 
-Storage (`crates/storage`, this worktree):
+Storage (`crates/engine/storage`, this worktree):
 * `src/corekv/types.rs` no longer carries `IterOptions::commutative_set`. It
   was a flag the removed backends honoured and regolith did not, and once
   nothing set it a flag promising overlap that no backend granted was worse

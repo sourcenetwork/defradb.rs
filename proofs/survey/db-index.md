@@ -1,6 +1,6 @@
-# Survey: `crates/db (index)/`
+# Survey: `crates/database/db (index)/`
 
-> **Now a module, not a crate.** `db-index` was folded into `db` as `crates/db/src/index/`. The slice below is unchanged; only its location moved.
+> **Now a module, not a crate.** `db-index` was folded into `db` as `crates/database/db/src/index/`. The slice below is unchanged; only its location moved.
 
 ## Purpose
 Secondary-index manager for DefraDB collections (extracted from `db` per #669).

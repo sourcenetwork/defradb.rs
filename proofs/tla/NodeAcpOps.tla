@@ -15,9 +15,15 @@
 \*              relationships, since the live check lets everyone through
 \*              while NAC is off), already (NAC is not on yet);
 \*   add        configured, nac, acp (NAC is on), identity (someone acts),
-\*              relation (one the node's policy has), target (a DID or *);
+\*              present (a target is given: Go's "acp relationship target
+\*              actor must not be empty"), relation (one the node's policy
+\*              has), target (a DID or *), authority (the caller is an admin,
+\*              or a delegate the Lean model NodeAcpDelegation admits for
+\*              this relation and target);
 \*   delete     the same but target: a target that is not a DID holds no
-\*              relationship, so Go finds none to take and refuses nothing.
+\*              relationship, so Go finds none to take and refuses nothing,
+\*              and taking nothing needs no authority. An empty target is
+\*              still refused, so it can never reach the wildcard.
 \* A restart, with or without NAC asked for at start, leaves a set-up NAC as
 \* it was: a disabled NAC stays off.
 \*
@@ -39,39 +45,49 @@
 \*
 \* What must never happen: NAC turned off by a caller without the live
 \* permission; NAC turned back on by a caller without the stored permission;
-\* a relation given or taken while NAC is off, without an identity, for a
-\* relation or target the policy does not have, or by a caller without the
-\* permission; a status answered to a caller without the permission; a status
+\* a relation given or taken while NAC is off, without an identity, for an
+\* empty target, for a relation or target the policy does not have, by a
+\* caller without the
+\* permission, or by a caller with no authority over that relation and target;
+\* a status answered to a caller without the permission; a status
 \* change on a node where NAC was never set up; a restart that turns a
 \* disabled NAC back on; a refusal reported with another check's error than
 \* Go's. And when racing: a status change committed by a caller that lost its
 \* permission before the commit; two clients both making the same change; a
 \* client that lost the race told anything but Go's "already"; a relationship
 \* changed after a disable committed, or refused with the store's error
-\* instead of Go's "ACP not available".
+\* instead of Go's "ACP not available"; a request Go refuses let through.
 \*
 \* Code it models:
-\*   crates/db/src/access/nac_ops/mod.rs
+\*   crates/database/db/src/access/nac_ops/mod.rs
 \*     DB::nac_status_as                    the status check
 \*     DB::disable_nac_as                   hands the caller to NacManager::disable_as
 \*     DB::re_enable_nac_as                 hands the caller to NacManager::re_enable_as
 \*     DB::add_nac_actor_relationship_as    parses the request; NacManager::decide_relationship checks it
 \*     DB::delete_nac_actor_relationship_as the same checks but target, then the
 \*                                          revocation, or "not found" for a non-DID
-\*   crates/db/src/nac/toggle.rs
+\*   crates/database/db/src/nac/toggle.rs
 \*     NacManager::toggle_as                the status change, through in_write
 \*     NacManager::decide_toggle            the guard and the check in Go's order,
 \*                                          then the write, all in one try's scope
 \*     NacManager::require                  the live check, or the stored one for re-enable
-\*   crates/db/src/nac/write.rs
+\*   crates/database/db/src/nac/write.rs
 \*     NacManager::in_write                 one write scope per try; a lost
 \*                                          commit runs the decision again
-\*     NacManager::decide_relationship      part three: set up, permission, NAC on,
-\*                                          then the change, all in one try's scope
-\*   crates/acp/src/zanzibar/store/persistent.rs
+\*     NacManager::decide_relationship      parts one and three: set up, permission,
+\*                                          NAC on, identity, a target given, the
+\*                                          relation, the target, then the change,
+\*                                          all in one try's scope
+\*   (not modelled) crates/surfaces/http/src/handlers/nac.rs validate_add_relationship:
+\*     the batch route, which Go does not have, checks each entry's target and
+\*     relation before any write, so ahead of the identity; every
+\*     single-relationship route keeps the order above
+\*   crates/engine/acp/src/zanzibar/store/persistent.rs
 \*     PersistentZanzibarStore::transact    the tries, through datastore::transact
 \*                                          (native only: no wasm client runs NAC)
-\*   crates/db/src/nac/mod.rs
+\*   crates/engine/acp/src/nac/node_acp/operations.rs
+\*     NodeACP::authorize_change            the authority check, inside the change
+\*   crates/database/db/src/nac/mod.rs
 \*     NacManager::initialize               the restart
 EXTENDS Naturals, Sequences, FiniteSets   \* indexing, counting and set sizes
 
@@ -87,7 +103,7 @@ CONSTANTS
 
 \* Only the named checks can be enforced.
 ASSUME Enforced \subseteq {"configured", "already", "nac", "stored", "acp",
-                           "identity", "relation", "target"}
+                           "identity", "present", "relation", "target", "authority"}
 \* The switches of part one are yes or no.
 ASSUME LiveReEnable \in BOOLEAN /\ StartReEnables \in BOOLEAN /\ AlreadyFirst \in BOOLEAN
 \* The switches of part two are yes or no.
@@ -101,8 +117,10 @@ GoOrder(o) ==
   CASE o = "status"   -> <<"nac">>
     [] o = "disable"  -> <<"configured", "already", "nac">>
     [] o = "reenable" -> <<"configured", "stored", "already">>
-    [] o = "add"      -> <<"configured", "nac", "acp", "identity", "relation", "target">>
-    [] o = "delete"   -> <<"configured", "nac", "acp", "identity", "relation">>
+    [] o = "add"      -> <<"configured", "nac", "acp", "identity", "present", "relation",
+                           "target", "authority">>
+    [] o = "delete"   -> <<"configured", "nac", "acp", "identity", "present", "relation",
+                           "authority">>
     [] o = "restart"  -> <<>>
 
 \* The order the database runs a request's checks in: Go's, or for re-enable
@@ -118,16 +136,18 @@ VARIABLES
   permitted,    \* the caller holds the permission the request needs
   stored,       \* the stored relationships give the caller that permission
   hasIdentity,  \* someone acts in the request
+  targetSet,    \* a target is given: it is not the empty string
   relationOk,   \* the relation is one the node's policy has
   targetOk,     \* the target is a DID or *
+  authorityOk,  \* the caller is an admin, or a delegate admitted for this change
   step,         \* "check", then "apply", then "done"
   reason,       \* the check the request was refused at, or "none"
   after,        \* NAC after the request
   granted       \* a relationship was given or taken
 
 \* Part one's variables, for saying a step leaves them all as they are.
-vars == <<op, status, permitted, stored, hasIdentity, relationOk, targetOk,
-          step, reason, after, granted>>
+vars == <<op, status, permitted, stored, hasIdentity, targetSet, relationOk, targetOk,
+          authorityOk, step, reason, after, granted>>
 
 \* The live NAC check: everyone passes while NAC is not on.
 Live == status # "on" \/ permitted
@@ -141,8 +161,11 @@ Passes(c) ==
     [] c = "stored"     -> IF LiveReEnable THEN Live ELSE stored
     [] c = "acp"        -> status = "on"
     [] c = "identity"   -> hasIdentity
+    [] c = "present"    -> targetSet
     [] c = "relation"   -> relationOk
     [] c = "target"     -> targetOk
+    \* a delete whose target is no DID takes nothing, so nothing needs authority
+    [] c = "authority"  -> authorityOk \/ (op = "delete" /\ ~targetOk)
 
 \* The positions in `order` of the checks that are enforced and fail.
 Failing(order) == {i \in 1..Len(order) : order[i] \in Enforced /\ ~Passes(order[i])}
@@ -158,10 +181,11 @@ TypeOK ==
   /\ op \in {"status", "disable", "reenable", "add", "delete", "restart"}
   /\ status \in {"none", "on", "off"}
   /\ permitted \in BOOLEAN /\ stored \in BOOLEAN /\ hasIdentity \in BOOLEAN
-  /\ relationOk \in BOOLEAN /\ targetOk \in BOOLEAN
+  /\ targetSet \in BOOLEAN
+  /\ relationOk \in BOOLEAN /\ targetOk \in BOOLEAN /\ authorityOk \in BOOLEAN
   /\ step \in {"check", "apply", "done"}
   /\ reason \in {"none", "configured", "already", "nac", "stored", "acp",
-                 "identity", "relation", "target"}
+                 "identity", "present", "relation", "target", "authority"}
   /\ after \in {"none", "on", "off"}
   /\ granted \in BOOLEAN
 
@@ -170,7 +194,10 @@ Init ==
   /\ op \in {"status", "disable", "reenable", "add", "delete", "restart"}
   /\ status \in {"none", "on", "off"}
   /\ permitted \in BOOLEAN /\ stored \in BOOLEAN /\ hasIdentity \in BOOLEAN
-  /\ relationOk \in BOOLEAN /\ targetOk \in BOOLEAN
+  /\ targetSet \in BOOLEAN
+  /\ relationOk \in BOOLEAN /\ targetOk \in BOOLEAN /\ authorityOk \in BOOLEAN
+  \* the empty string is no DID and not *: an absent target is never a valid one
+  /\ targetSet \/ ~targetOk
   /\ step = "check"
   /\ reason = "none"
   /\ after = status
@@ -184,8 +211,8 @@ Check ==
   /\ IF First(CheckOrder(op)) # "none"
        THEN /\ reason' = First(CheckOrder(op)) /\ step' = "done"
        ELSE /\ reason' = reason /\ step' = "apply"
-  /\ UNCHANGED <<op, status, permitted, stored, hasIdentity, relationOk,
-                 targetOk, after, granted>>
+  /\ UNCHANGED <<op, status, permitted, stored, hasIdentity, targetSet, relationOk,
+                 targetOk, authorityOk, after, granted>>
 
 \* The change. Disable turns NAC off and re-enable turns it on, even on a
 \* node where NAC was never set up when the check for that is left out. Add
@@ -204,8 +231,8 @@ Apply ==
        [] op = "restart"  -> /\ after' = IF StartReEnables /\ status = "off"
                                             THEN "on" ELSE status
                              /\ UNCHANGED granted
-  /\ UNCHANGED <<op, status, permitted, stored, hasIdentity, relationOk,
-                 targetOk, reason>>
+  /\ UNCHANGED <<op, status, permitted, stored, hasIdentity, targetSet, relationOk,
+                 targetOk, authorityOk, reason>>
 
 \* Each step of a request is one of the two.
 Next == Check \/ Apply
@@ -378,8 +405,8 @@ RaceIdle ==
 \* Part one held still while part two runs: every value fixed.
 RequestIdle ==
   /\ op = "restart" /\ status = "none"
-  /\ permitted = FALSE /\ stored = FALSE /\ hasIdentity = FALSE
-  /\ relationOk = FALSE /\ targetOk = FALSE
+  /\ permitted = FALSE /\ stored = FALSE /\ hasIdentity = FALSE /\ targetSet = FALSE
+  /\ relationOk = FALSE /\ targetOk = FALSE /\ authorityOk = FALSE
   /\ step = "done" /\ reason = "none" /\ after = "none" /\ granted = FALSE
 
 \* ---------------------------------------------------------------------------
@@ -488,9 +515,11 @@ INV_NoReEnableWithoutStoredPermission ==
   (op = "reenable" /\ status = "off" /\ after = "on") => stored
 
 \* A relation is given or taken only while NAC is on, by a permitted caller
-\* with an identity, for a relation and a target the policy has.
+\* with an identity and authority over it, for a relation and a target the
+\* policy has.
 INV_NoGrantUnlessAllChecksPass ==
-  granted => (status = "on" /\ permitted /\ hasIdentity /\ relationOk /\ targetOk)
+  granted => (status = "on" /\ permitted /\ hasIdentity /\ targetSet /\ relationOk
+              /\ targetOk /\ authorityOk)
 
 \* A node where NAC was never set up keeps it so.
 INV_NoChangeUnlessConfigured == status = "none" => after = "none"
@@ -505,6 +534,14 @@ INV_NoSilentNoOp ==
 
 \* A refused request reports the first failing check in Go's order.
 INV_GoOrder == (step = "done" /\ reason # "none") => reason = First(GoOrder(op))
+
+\* A request Go refuses is refused here too: one that finished without an
+\* error passed every one of Go's checks. Without this, a check left out
+\* where its failure changes nothing (a delete with an empty target takes
+\* nothing) would go unnoticed.
+INV_RefusedWhenGoRefuses ==
+  (step = "done" /\ reason = "none")
+    => \A i \in 1..Len(GoOrder(op)) : Passes(GoOrder(op)[i])
 
 \* ---------------------------------------------------------------------------
 \* Part two's promises.

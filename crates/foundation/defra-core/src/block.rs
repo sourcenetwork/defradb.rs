@@ -1,0 +1,434 @@
+//! IPLD Block types and operations for DefraDB
+//!
+//! This module provides Go-compatible Block structures with DAG-CBOR serialization.
+//! All types match the Go implementation in `internal/core/block/` for wire compatibility.
+
+use cid::Cid;
+use multihash::Multihash;
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
+
+use crate::cid_encoding::CidText;
+use crate::{Error, Result};
+
+// Re-export delta payload types
+pub use crate::block_delta::is_default_splitter_version;
+pub use crate::block_delta::{
+    ChunkOfDelta, ChunkedFieldDelta, CollectionDefinitionDeltaPayload, CollectionDeltaPayload,
+    CollectionSetDeltaPayload, CompositeDeltaPayload, CounterDeltaPayload, CustomDeltaPayload,
+    FieldDefinitionDeltaPayload, ImmutableDeltaPayload, JsonDeltaPayload, LwwDeltaPayload,
+    TextDeltaPayload, DEFAULT_SPLITTER_VERSION, IMMUTABLE_LINK_NAME,
+};
+
+// Re-export signature/encryption types
+pub use crate::block_signature::go_verifiable_policy;
+pub use crate::block_signature::{
+    DocumentStatus, Encryption, Signature, SignatureHeader, SignatureType,
+};
+
+// Multicodec table: https://github.com/multiformats/multicodec/blob/master/table.csv
+
+/// DAG-CBOR codec identifier (multicodec 0x71)
+pub const DAG_CBOR_CODEC: u64 = 0x71;
+
+/// SHA2-256 multihash code (multicodec 0x12)
+pub const SHA2_256_CODE: u64 = 0x12;
+
+// ============================================================================
+// Block - The fundamental unit of content-addressed storage
+// ============================================================================
+
+/// IPLD Block for DefraDB - content-addressed data with CRDT deltas
+///
+/// Matches Go's `internal/core/block/block.go:Block` structure exactly for
+/// wire compatibility. Uses DAG-CBOR serialization with deterministic field ordering.
+///
+/// # Serialization
+///
+/// - Empty slices become `None` for space efficiency (omitted in CBOR)
+/// - Heads and links are sorted lexicographically by CID string
+/// - Uses CIDv1 with DAG-CBOR codec (0x71) and SHA2-256 hash
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Block {
+    /// CRDT delta payload
+    pub delta: CrdtDelta,
+
+    /// Previous block CIDs (sorted lexicographically by string)
+    ///
+    /// `None` = nil (omitted in CBOR), `Some(Vec::new())` would be empty array
+    /// but is normalized to `None` in constructor for space efficiency.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub heads: Option<Vec<Cid>>,
+
+    /// Named links to other blocks (sorted lexicographically by CID string)
+    ///
+    /// Used for field-level links in composite blocks. Empty for field-level blocks.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub links: Option<Vec<DAGLink>>,
+
+    /// Optional link to encryption metadata block
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub encryption: Option<Cid>,
+
+    /// Optional link to signature block
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub signature: Option<Cid>,
+}
+
+impl Block {
+    /// Create a new block with sorted heads and links
+    ///
+    /// Matches Go's `New()` behavior:
+    /// - Sorts heads lexicographically by CID string
+    /// - Sorts links lexicographically by CID string
+    /// - Converts empty slices to `None` for space efficiency
+    pub fn new(delta: CrdtDelta, heads: Vec<Cid>, links: Vec<DAGLink>) -> Self {
+        // Sort and normalize heads. Go sorts by CID string, not raw CID bytes.
+        let mut sorted_heads = heads;
+        sorted_heads.sort_by_cached_key(CidText::new);
+        let heads = if sorted_heads.is_empty() {
+            None
+        } else {
+            Some(sorted_heads)
+        };
+
+        // Sort and normalize links. `DAGLink::cmp` formats both CIDs on every
+        // comparison. Stable secondary-then-primary sorts preserve its exact
+        // CID-string then name order while formatting each CID just once.
+        let mut sorted_links = links;
+        sorted_links.sort_by(|left, right| left.name.cmp(&right.name));
+        sorted_links.sort_by_cached_key(|link| CidText::new(&link.link));
+        let links = if sorted_links.is_empty() {
+            None
+        } else {
+            Some(sorted_links)
+        };
+
+        Self {
+            delta,
+            heads,
+            links,
+            encryption: None,
+            signature: None,
+        }
+    }
+
+    /// Create a block with encryption and/or signature
+    pub fn new_with_options(
+        delta: CrdtDelta,
+        heads: Vec<Cid>,
+        links: Vec<DAGLink>,
+        encryption: Option<Cid>,
+        signature: Option<Cid>,
+    ) -> Self {
+        let mut block = Self::new(delta, heads, links);
+        block.encryption = encryption;
+        block.signature = signature;
+        block
+    }
+
+    /// Serialize to DAG-CBOR bytes
+    pub fn to_dag_cbor(&self) -> Result<Vec<u8>> {
+        match crate::block_encode::encode(self) {
+            Some(encoded) => encoded,
+            None => Ok(serde_ipld_dagcbor::to_vec(self)?),
+        }
+    }
+
+    /// Deserialize from DAG-CBOR bytes
+    pub fn from_dag_cbor(bytes: &[u8]) -> Result<Self> {
+        Ok(serde_ipld_dagcbor::from_slice(bytes)?)
+    }
+
+    /// Generate CID from block content
+    ///
+    /// Uses CIDv1 with DAG-CBOR codec (0x71) and SHA2-256 hash.
+    /// Equivalent to Go's `GenerateLink()`.
+    pub fn generate_cid(&self) -> Result<Cid> {
+        let bytes = self.to_dag_cbor()?;
+        generate_cid_from_bytes(&bytes)
+    }
+
+    /// Get all CID links in this block (heads + named links)
+    ///
+    /// Returns heads first, then named links (in order).
+    /// Matches Go's `AllLinks()` method.
+    ///
+    /// For IPLD-based traversal with visitor pattern, use `ipld::collect_block_links()`
+    /// or `ipld::walk_ipld()` with a custom `IpldVisitor`.
+    pub fn all_links(&self) -> Vec<Cid> {
+        let mut links = Vec::new();
+
+        if let Some(ref heads) = self.heads {
+            links.extend(heads.iter().cloned());
+        }
+
+        if let Some(ref dag_links) = self.links {
+            links.extend(dag_links.iter().map(|l| l.link));
+        }
+
+        links
+    }
+
+    /// Get a specific named link by name
+    ///
+    /// Matches Go's `GetLinkByName()` method.
+    pub fn get_link_by_name(&self, name: &str) -> Option<&Cid> {
+        self.links
+            .as_ref()?
+            .iter()
+            .find(|l| l.name == name)
+            .map(|l| &l.link)
+    }
+
+    /// Check if this block has encryption
+    pub fn is_encrypted(&self) -> bool {
+        self.encryption.is_some()
+    }
+
+    /// Check if this block is signed
+    pub fn is_signed(&self) -> bool {
+        self.signature.is_some()
+    }
+}
+
+// ============================================================================
+// DAGLink - Named link to another block
+// ============================================================================
+
+/// Link to another block with a name
+///
+/// Matches Go's `internal/core/block/block.go:DAGLink`.
+/// The name is typically a field name or "_head" for composite head links.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DAGLink {
+    /// Field name or "_head" for composite head
+    pub name: String,
+
+    /// CID of the linked block
+    pub link: Cid,
+}
+
+impl DAGLink {
+    /// Create a new DAGLink
+    pub fn new(name: impl Into<String>, link: Cid) -> Self {
+        Self {
+            name: name.into(),
+            link,
+        }
+    }
+}
+
+impl PartialEq for DAGLink {
+    fn eq(&self, other: &Self) -> bool {
+        self.name == other.name && self.link == other.link
+    }
+}
+
+impl Eq for DAGLink {}
+
+impl PartialOrd for DAGLink {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for DAGLink {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        // Go sorts DAG links by CID string. Raw CID byte ordering is not equivalent
+        // for all CID values and changes block CIDs for those schemas.
+        CidText::new(&self.link)
+            .cmp(&CidText::new(&other.link))
+            .then_with(|| self.name.cmp(&other.name))
+    }
+}
+
+// ============================================================================
+// CrdtDelta - CRDT delta payloads embedded in blocks
+// ============================================================================
+
+/// CRDT delta types that can be embedded in a Block
+///
+/// Matches Go's `crdt.CRDT` IPLD union with "keyed" representation.
+/// Serializes as `{"lww": {...}}` or `{"counter": {...}}` etc.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[non_exhaustive]
+pub enum CrdtDelta {
+    /// LWW Register delta
+    #[serde(rename = "lww")]
+    Lww(LwwDeltaPayload),
+
+    /// Counter delta
+    #[serde(rename = "counter")]
+    Counter(CounterDeltaPayload),
+
+    /// Document composite delta
+    #[serde(rename = "composite")]
+    Composite(CompositeDeltaPayload),
+
+    /// Immutable fields delta (Rust-only)
+    #[serde(rename = "immutable")]
+    Immutable(ImmutableDeltaPayload),
+
+    /// Text delta (Rust-only)
+    #[serde(rename = "text")]
+    Text(TextDeltaPayload),
+
+    /// JSON delta (Rust-only)
+    #[serde(rename = "json")]
+    Json(JsonDeltaPayload),
+
+    /// Custom CRDT delta (Rust-only)
+    #[serde(rename = "custom")]
+    Custom(CustomDeltaPayload),
+
+    /// Collection delta
+    #[serde(rename = "collection")]
+    Collection(CollectionDeltaPayload),
+
+    /// Collection set delta (circular relation groups)
+    #[serde(rename = "collectionSet")]
+    CollectionSet(CollectionSetDeltaPayload),
+
+    /// Field definition delta (schema versioning)
+    #[serde(rename = "fieldDefinition")]
+    FieldDefinition(FieldDefinitionDeltaPayload),
+
+    /// Collection definition delta (schema versioning)
+    #[serde(rename = "collectionDefinition")]
+    CollectionDefinition(CollectionDefinitionDeltaPayload),
+}
+
+/// A field block's delta, read the same whichever field CRDT wrote it.
+#[derive(Debug, Clone, Copy)]
+pub struct FieldDelta<'a> {
+    pub field_name: &'a str,
+    pub priority: u64,
+    pub collection_version_id: &'a str,
+    /// The encoded (and possibly encrypted) value or operation.
+    pub data: &'a [u8],
+}
+
+impl CrdtDelta {
+    /// The field delta this is, when a field CRDT wrote it.
+    pub fn field(&self) -> Option<FieldDelta<'_>> {
+        let (field_name, priority, collection_version_id, data) = match self {
+            CrdtDelta::Lww(d) => (&d.field_name, d.priority, &d.collection_version_id, &d.data),
+            CrdtDelta::Counter(d) => (&d.field_name, d.priority, &d.collection_version_id, &d.data),
+            CrdtDelta::Text(d) => (&d.field_name, d.priority, &d.collection_version_id, &d.data),
+            CrdtDelta::Json(d) => (&d.field_name, d.priority, &d.collection_version_id, &d.data),
+            CrdtDelta::Custom(d) => (&d.field_name, d.priority, &d.collection_version_id, &d.data),
+            _ => return None,
+        };
+        Some(FieldDelta {
+            field_name,
+            priority,
+            collection_version_id,
+            data,
+        })
+    }
+
+    /// The data of a field delta, to replace with its decryption.
+    pub fn field_data_mut(&mut self) -> Option<&mut Vec<u8>> {
+        match self {
+            CrdtDelta::Lww(d) => Some(&mut d.data),
+            CrdtDelta::Counter(d) => Some(&mut d.data),
+            CrdtDelta::Text(d) => Some(&mut d.data),
+            CrdtDelta::Json(d) => Some(&mut d.data),
+            CrdtDelta::Custom(d) => Some(&mut d.data),
+            _ => None,
+        }
+    }
+
+    /// Get the priority of this delta
+    pub fn priority(&self) -> u64 {
+        match self {
+            CrdtDelta::Lww(d) => d.priority,
+            CrdtDelta::Counter(d) => d.priority,
+            CrdtDelta::Composite(d) => d.priority,
+            CrdtDelta::Immutable(d) => d.priority,
+            CrdtDelta::Text(d) => d.priority,
+            CrdtDelta::Json(d) => d.priority,
+            CrdtDelta::Custom(d) => d.priority,
+            CrdtDelta::Collection(d) => d.priority,
+            CrdtDelta::CollectionSet(d) => d.priority,
+            CrdtDelta::FieldDefinition(d) => d.priority,
+            CrdtDelta::CollectionDefinition(d) => d.priority,
+        }
+    }
+
+    /// Set the priority of this delta
+    pub fn set_priority(&mut self, priority: u64) {
+        match self {
+            CrdtDelta::Lww(d) => d.priority = priority,
+            CrdtDelta::Counter(d) => d.priority = priority,
+            CrdtDelta::Composite(d) => d.priority = priority,
+            CrdtDelta::Immutable(d) => d.priority = priority,
+            CrdtDelta::Text(d) => d.priority = priority,
+            CrdtDelta::Json(d) => d.priority = priority,
+            CrdtDelta::Custom(d) => d.priority = priority,
+            CrdtDelta::Collection(d) => d.priority = priority,
+            CrdtDelta::CollectionSet(d) => d.priority = priority,
+            CrdtDelta::FieldDefinition(d) => d.priority = priority,
+            CrdtDelta::CollectionDefinition(d) => d.priority = priority,
+        }
+    }
+
+    /// Get the collection version ID / collection version ID (if present)
+    ///
+    /// Note: FieldDefinition and CollectionDefinition deltas do not have
+    /// a collection_version_id, so return None for those types.
+    pub fn collection_version_id(&self) -> Option<&str> {
+        match self {
+            CrdtDelta::Lww(d) => Some(&d.collection_version_id),
+            CrdtDelta::Counter(d) => Some(&d.collection_version_id),
+            CrdtDelta::Composite(d) => Some(&d.collection_version_id),
+            CrdtDelta::Immutable(d) => Some(&d.collection_version_id),
+            CrdtDelta::Text(d) => Some(&d.collection_version_id),
+            CrdtDelta::Json(d) => Some(&d.collection_version_id),
+            CrdtDelta::Custom(d) => Some(&d.collection_version_id),
+            CrdtDelta::Collection(d) => Some(&d.collection_version_id),
+            CrdtDelta::CollectionSet(_) => None,
+            CrdtDelta::FieldDefinition(_) => None,
+            CrdtDelta::CollectionDefinition(_) => None,
+        }
+    }
+
+    /// Check if this is a schema definition delta.
+    ///
+    /// Mirrors Go's `IsDefinition()` (collection + field definitions only). This
+    /// gates the P2P serve whitelist: definition blocks carry no user data and
+    /// are served to any peer. `CollectionSet` is deliberately excluded — it has
+    /// no collection-version id, cannot be ACP-scoped, and (unlike Go, which
+    /// stores but denies serving it) is never transferred over P2P at all:
+    /// circular-relation groups converge by local deterministic reconstruction
+    /// (`schema/cid.rs`), so it must not be unconditionally served.
+    pub fn is_definition(&self) -> bool {
+        matches!(
+            self,
+            CrdtDelta::FieldDefinition(_) | CrdtDelta::CollectionDefinition(_)
+        )
+    }
+}
+
+// ============================================================================
+// Helper Functions
+// ============================================================================
+
+/// Generate CID from raw DAG-CBOR bytes using SHA2-256.
+///
+/// Use this when you already have the serialized bytes to avoid
+/// double-serializing (e.g., when you called `to_dag_cbor()` separately).
+pub fn generate_cid_from_bytes(bytes: &[u8]) -> Result<Cid> {
+    // Hash with SHA2-256
+    let mut hasher = Sha256::new();
+    hasher.update(bytes);
+    let digest = hasher.finalize();
+
+    // Create multihash
+    let mh = Multihash::<64>::wrap(SHA2_256_CODE, &digest)
+        .map_err(|e| Error::BlockError(format!("Failed to create multihash: {}", e)))?;
+
+    // Create CIDv1 with DAG-CBOR codec
+    Ok(Cid::new_v1(DAG_CBOR_CODEC, mh))
+}

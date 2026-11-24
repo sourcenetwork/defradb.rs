@@ -77,7 +77,7 @@
 \* is loaded with Acquire and published with an AcqRel compare-and-swap
 \* (regolith 0.2.1 src/sync/once_cell.rs:78, 166-171).
 \*
-\* Correspondence with the Rust code (crates/workers/src/pool/ unless named;
+\* Correspondence with the Rust code (crates/foundation/workers/src/pool/ unless named;
 \* once_cell.rs is regolith 0.2.1 src/sync/once_cell.rs):
 \*
 \*   | Model             | Rust                                                        |
@@ -159,7 +159,7 @@
 \*   | StopShutsFirst    | mod.rs:509 before mod.rs:510 (RED: ask, then shut down)     |
 \*   | StartedKept       | default.rs:5-8, 30-31 kept for the life of the process      |
 \*   |                   | (RED: a caller shuts it down)                               |
-\*   | RegisterOwnRunning| crates/storage/src/backends/regolith/worker_io/mod.rs:92-93 |
+\*   | RegisterOwnRunning| crates/engine/storage/src/backends/regolith/worker_io/mod.rs:92-93 |
 \*   |                   | start_pool registers the pool it just started (RED: a       |
 \*   |                   | closing pool registers)                                     |
 \*   | INV_NeverHands-   | default.rs:140 with mod.rs:274 for a registered answer; for |

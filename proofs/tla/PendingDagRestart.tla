@@ -2,7 +2,7 @@
 \* Pending-DAG registration durability across a hub restart (#1099), companion to
 \* PushLogAdmission.tla: that module fixes the hub's REPLY decision at capacity (#1088
 \* W1, kept here as HubOverflowNack); this one asks what survives a hub CRASH after an
-\* honest success reply. Abstracts crates/p2p/src/sync/manager/process/pushlog.rs
+\* honest success reply. Abstracts crates/database/p2p/src/sync/manager/process/pushlog.rs
 \* (process_block_inner: try_insert_pending_dag, then the pending store's register)
 \* plus the pusher's persisted retry ladder.
 \*

@@ -32,7 +32,7 @@ What must never happen:
 How the averages behave over many samples is in `Arbitration.Dynamics`.
 
 Rust anchors: `roll`, `troll` and `record_word` in
-`crates/p2p/src/sync/arbitration/ewma.rs`, which `RootEstimates::observe`
+`crates/database/p2p/src/sync/arbitration/ewma.rs`, which `RootEstimates::observe`
 (`root.rs`), `advance` (`occupancy.rs`) and `ProviderEstimates` (`provider.rs`)
 call.
 Every Rust value is a `u64` (products in `u128`); `Nat` here never wraps, and

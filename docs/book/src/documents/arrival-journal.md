@@ -11,7 +11,7 @@ and "sorted by DocID" is not an arrival order.
 ## The mechanism
 
 Each collection has a journal, stored as a **Log** under `s/arrival/`
-([`crates/db/src/event/arrivals.rs`](https://github.com/sourcenetwork/defradb.rs/blob/main/crates/db/src/event/arrivals.rs)):
+([`crates/database/db/src/event/arrivals.rs`](https://github.com/sourcenetwork/defradb.rs/blob/main/crates/database/db/src/event/arrivals.rs)):
 
 - `/arrival/{collection}/head`: the number of rows,
 - `/arrival/{collection}/row/{cursor:020}`: one row per position, holding a DocID,
@@ -21,7 +21,7 @@ A create (local or replicated) *appends* to the journal inside its own transacti
 the document as the once key. The engine assigns positions in commit order: nothing
 conflicts, and a document appended twice (a local create racing a P2P merge of the same
 document) keeps exactly one row, because the once key is applied exactly once. Position
-keys are zero-padded to a fixed width (`{cursor:020}`, `crates/storage/src/backends/
+keys are zero-padded to a fixed width (`{cursor:020}`, `crates/engine/storage/src/backends/
 [regolith](https://sourcenetwork.github.io/regolith/)/log_layout.rs`) so they sort in position order; the layout is frozen: a store
 keeps reading its journal across releases.
 

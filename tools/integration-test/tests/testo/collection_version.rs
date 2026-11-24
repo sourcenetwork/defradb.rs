@@ -32,6 +32,7 @@ mod migrations {
         mod with_inverse;
         mod with_p2p;
         mod with_p2p_collection_branch;
+        mod with_p2p_no_write_back;
         mod with_restart;
         mod with_set_default;
         mod with_txn;
@@ -100,6 +101,7 @@ mod updates {
             mod with_introspection;
             mod with_relation;
         }
+        mod inactive_version;
         mod simple;
     }
     mod copy {
@@ -142,9 +144,11 @@ mod updates {
         }
         mod fields;
         mod id;
+        mod inactive_version_transform;
         mod indexes;
         mod is_active;
         mod is_active_txn;
+        mod is_active_with_transform;
         mod materialized;
         mod name;
         mod name_one_many;

@@ -1,0 +1,106 @@
+//! Query runner initialization helpers for Node startup.
+
+use std::sync::Arc;
+
+use tracing::info;
+
+use super::node::Node;
+#[cfg(feature = "vera")]
+use crate::config::AcpDocumentType;
+use crate::config::Config;
+use identity::Did;
+
+pub(super) struct QueryRunnerSetup {
+    pub(super) runner: Arc<dyn query::executor::QueryExecutor>,
+    pub(super) rest_ops: Arc<dyn query::rest::RestOperations>,
+    pub(super) registry: Arc<db::DbTransactionRegistry<storage::DynStore>>,
+    #[cfg(feature = "postgres")]
+    pub(super) collection_provider: Arc<dyn query::CollectionProvider>,
+}
+
+impl Node {
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn setup_query_runner(
+        database: Arc<db::DB<storage::DynStore>>,
+        config: &Config,
+        user_did: Option<&Did>,
+        document_acp: Arc<dyn acp::DocumentACP>,
+        nac_adapter: Option<Arc<defra_http::nac_adapter::NacAdapter>>,
+        mutator: Arc<dyn query::mutator::DocMutator>,
+        txn_broadcaster: Option<Arc<dyn db::event::emission::TxnBroadcaster>>,
+        se_transport: Option<Arc<dyn query::SeQueryTransport>>,
+    ) -> QueryRunnerSetup {
+        let fetcher = db::LensedAutoCommitFetcher::new(database.clone());
+        let registry = Arc::new(match txn_broadcaster {
+            Some(b) => db::DbTransactionRegistry::with_broadcaster(database.clone(), b),
+            None => db::DbTransactionRegistry::new(database.clone()),
+        });
+        let collection_provider: Arc<dyn query::CollectionProvider> =
+            db::DbCollectionProvider::new_arc(database.clone());
+        info!(
+            "Collection provider configured ({} collection(s) available)",
+            database.list_collections().map(|c| c.len()).unwrap_or(0)
+        );
+
+        let mut query_runner = query::QueryRunner::with_arc_registry_and_provider(
+            fetcher,
+            collection_provider.clone(),
+            registry.clone(),
+        )
+        .with_mutator(mutator)
+        .with_collection_truncator(db::DbCollectionTruncator::new_arc(database.clone()))
+        .with_acp(document_acp)
+        .with_lens_store(database.lens_store().clone())
+        .with_query_timeout(config.api.query_timeout)
+        .with_query_limits(query::QueryLimits {
+            max_query_depth: config.api.query_max_depth,
+            max_query_width: config.api.query_max_width,
+            max_filter_depth: config.api.query_max_filter_depth,
+            max_fragment_nesting: config.api.query_max_fragment_nesting,
+        })
+        .with_introspection_cache(config.api.introspection_cache);
+
+        if !config.datastore.no_encryption {
+            info!("CRDT delta encryption enabled");
+        }
+
+        if let Some(did) = user_did {
+            #[cfg(feature = "vera")]
+            let remote_acp = config.acp.document_type == AcpDocumentType::Vera
+                || config.acp.document_type.is_vera_rs();
+            #[cfg(not(feature = "vera"))]
+            let remote_acp = false;
+            if !remote_acp {
+                info!("Query runner configured with default identity for ACP");
+                query_runner = query_runner.with_default_identity(did.clone());
+            }
+        }
+
+        // Queries check the node's NAC once it is configured, by the flag or by
+        // a previous run: one a previous run enabled is enforced without the
+        // flag. A node never configured stays so for the run (no NAC routes).
+        if let Some(adapter) = nac_adapter {
+            query_runner = query_runner.with_nac(adapter as Arc<dyn query::NacChecker>);
+        }
+
+        if let Some(transport) = se_transport {
+            info!("Query runner configured with SE remote query transport");
+            query_runner = query_runner.with_se_transport(transport);
+        }
+
+        let runner = Arc::new(query_runner);
+        let rest_ops: Arc<dyn query::rest::RestOperations> =
+            Arc::new(query::rest::RestOperationsImpl::new(runner.clone()));
+        // GraphQL requests run on the database's worker pool, routed there
+        // once at the edge.
+        let runner = query::pooled::PooledExecutor::wrap(runner, database.pool());
+
+        QueryRunnerSetup {
+            runner,
+            rest_ops,
+            registry,
+            #[cfg(feature = "postgres")]
+            collection_provider,
+        }
+    }
+}

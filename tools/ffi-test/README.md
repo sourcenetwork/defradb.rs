@@ -11,34 +11,33 @@ cargo install --path tools/ffi-test
 ## Architecture
 
 ```
-defradb.rs (Rust)                     defradb (Go) @ the client branch
-├── crates/ffi/                       ├── tests/integration/
+defradb.rs (Rust)                     defradb (Go) @ the client commit
+├── crates/entry-points/ffi/                       ├── tests/integration/
 │   └── (FFI library)                 │   └── (Go test packages)
 └── tools/ffi-test/                   └── tests/clients/rustffi/
-    └── (this CLI tool)      ──────▶      ├── (the Go client, on the branch)
+    └── (this CLI tool)      ──────▶      ├── (the Go client, at the pin)
                                           ├── defra.h        (generated)
                                           └── libdefra_ffi.* (generated)
 ```
 
-The Go tree is a checkout of `sourcenetwork/defradb` on the branch that carries
-the rustffi client — `edjroz/ffi-rust-compat`, or a branch based on it. That
-branch is a maintained chore branch, not something upstream intends to merge;
-it holds the client plus the harness seams the client needs.
+The Go tree is a checkout of `sourcenetwork/defradb` at a commit that carries
+the rustffi client: the client plus the harness seams it needs. Upstream does
+not merge it; the commit, not a branch name, identifies it.
 
 The checkout must sit on the pinned client commit, `GO_FFI_CLIENT_COMMIT` in
-`crates/defra-version`, and `ffi-test run` fails fast when it does not. The pin
+`crates/foundation/defra-version`, and `ffi-test run` fails fast when it does not. The pin
 keeps pass rates comparable: an unpinned checkout silently changes what the
 test corpus measures.
 
 `ffi-test` writes exactly two things into that checkout, both regenerated from
-`crates/ffi` on every run and neither ever committed:
+`crates/entry-points/ffi` on every run and neither ever committed:
 
 - **`defra.h`** — cbindgen output.
 - **the shared library** — `cargo build --release -p ffi`, copied in as
   `libdefra_ffi.*`.
 
 Everything else in the Go tree belongs to the Go side. Changes to the client
-itself are commits on that branch, not edits here.
+itself are commits on the Go side, followed by a move of the pin.
 
 ## Resolving the Go checkout
 

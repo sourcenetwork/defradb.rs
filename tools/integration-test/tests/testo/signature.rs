@@ -4,6 +4,7 @@ mod branchable;
 mod commit;
 mod fallback_signer;
 mod peer;
+mod per_op_signing;
 mod query;
 mod txn_acp;
 mod verify;

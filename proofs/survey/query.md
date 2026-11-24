@@ -1,4 +1,4 @@
-# Survey: `crates/query/`
+# Survey: `crates/engine/query/`
 
 ## Purpose
 The GraphQL query engine. Volcano-iterator pipeline:
@@ -32,7 +32,7 @@ logic is plumbing over those layers.
 | Management/query NAC gate | TLA+ | no execution without fresh scope-correct actor permission | yes (Auth slice) | — |
 
 All three are *boundary seams* in this crate; the proofs target their real
-implementations. No novel candidate originates in `crates/query/`.
+implementations. No novel candidate originates in `crates/engine/query/`.
 
 ## Verdict
 **Plumbing.** The query engine is deterministic single-node dataflow

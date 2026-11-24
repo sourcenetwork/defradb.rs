@@ -79,9 +79,9 @@ A malformed CID string (`"fhbnjfahfhfhanfhga"`, `"bafybeidfhbnjfahfhfhanfhga"`) 
 # `go.query.commits.depth`: Depth-limited commit traversal
 
 - **Parents:** ["go.query.commits"]
-- **Scenarios:** ["query.commits.with-depth1", "query.commits.with-depth1-and-multiple-docs", "query.commits.with-depth1-with-update", "query.commits.with-depth2-with-update", "query.commits.with-filter-field-name-and-depth-returns-commits-at-all-heights"]
+- **Scenarios:** ["query.commits.with-depth1", "query.commits.with-depth1-and-multiple-docs", "query.commits.with-depth1-with-update", "query.commits.with-depth2-with-update", "query.commits.with-filter-field-name-and-depth-returns-commits-at-all-heights", "query.commits.with-depth-minus-one-returns-all-commits", "query.commits.with-doc-id-cid-and-depth-minus-one-returns-ancestors", "query.commits.with-depth-minus-two-returns-error", "query.commits.with-cid-and-depth-minus-one-on-merged-history-lists-last-head-first"]
 
-`_commits(depth: N)` returns the current heads of every block plus up to N-1 prior versions: depth 1 after a create returns 3 commits (6 for two docs), after an update the heads only (age at 2, name at 1, composite at 2); depth 2 after two updates adds the head-1 versions. Combined with `filter: {fieldName: {_eq: "age"}}` and depth 2 it returns `age` at heights 3 and 2.
+`_commits(depth: N)` returns the current heads of every block plus up to N-1 prior versions: depth 1 after a create returns 3 commits (6 for two docs), after an update the heads only (age at 2, name at 1, composite at 2); depth 2 after two updates adds the head-1 versions. Combined with `filter: {fieldName: {_eq: "age"}}` and depth 2 it returns `age` at heights 3 and 2. `depth: -1` is unlimited: with `docID` alone it returns the same commits as no `depth`; with `docID` and `cid` it returns that commit and every ancestor, each once, and on a merged history the branches are listed last head first (the commit, then everything reached through its last head, then through each earlier head, skipping commits already listed). Any other negative `depth` (`-2`, `-7`, the least Int) fails with `depth must be non-negative, or -1 for no limit`. This diverges from Go, which casts every negative depth to an unsigned one and so walks with no limit.
 
 # `go.query.commits.filter.compound`: Compound and set operators on fieldName
 
@@ -580,3 +580,10 @@ An SDL with mutually referential named relations (`Player`/`Deck`/`Game` with `d
 - **Scenarios:** ["query.one_to_two_many.with-named-and-unnamed-relationships", "query.one_to_two_many.with-named-and-unnamed-relationships-from-many-side", "query.one_to_two_many.with-nil-unnamed-relationship-from-many-side", "query.one_to_two_many.with-nil-unnamed-relationship-from-one-side", "query.one_to_two_many.with-order"]
 
 With `Book.author` / `Author.written` (`written_books`) and `Book.reviewedBy` / `Author.reviewed` (`reviewed_books`), plus an unnamed `Book.price` / `Price.books`, each relation resolves to its own counterpart from both sides, and `written(order: {rating: ASC})` / `reviewed(order: {rating: DESC})` order each list independently.
+
+# `defra.query.one_to_one.null_relation_id`: Missing relation ID conditions
+
+- **Parents:** ["go.query.one_to_one.filter"]
+- **Scenarios:** ["query::one_to_one::with_filter_secondary_relation_id::missing_relation_checks_all_conditions_against_null"]
+
+A missing relation's ID is null. An explicit ID predicate uses the ordinary null comparison rules, and other conditions on the same missing relation must also match.

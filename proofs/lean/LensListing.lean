@@ -8,9 +8,9 @@ listing kept only each lens's first module, so a lens with two modules came
 back with one. This file proves the listing loses nothing: every stored lens
 comes back once, under its own ID, with all its modules in the same order.
 
-Rust owner: crates/lens/src/wasm.rs `WasmTransformStore::list` and
-crates/lens/src/store.rs `list`, which map each `(id, config)` to
-`(id, config.lenses)`; crates/db/src/txn/registry/lifecycle.rs `list_lenses_as`
+Rust owner: crates/foundation/lens/src/wasm.rs `WasmTransformStore::list` and
+crates/foundation/lens/src/store.rs `list`, which map each `(id, config)` to
+`(id, config.lenses)`; crates/database/db/src/txn/registry/lifecycle.rs `list_lenses_as`
 serializes the result. The Rust check is
 tools/integration-test/tests/testo/collection_version (ListLenses scenarios).
 -/

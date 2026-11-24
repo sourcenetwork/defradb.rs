@@ -1,0 +1,55 @@
+[package]
+name = "orbis"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[package.metadata.cargo-machete]
+ignored = ["prost", "tonic-prost"]
+
+[lib]
+bench = false
+
+[dependencies]
+defra-core = { path = "../../foundation/defra-core" }
+identity = { path = "../../building-blocks/identity" }
+crypto = { path = "../../foundation/crypto" }
+
+# gRPC
+tonic = { workspace = true }
+tonic-prost = { workspace = true }
+prost = { workspace = true }
+
+# Signing runs on the network runtime the client is given.
+edge = { path = "../../foundation/edge" }
+# The gRPC channel, on nuclei sockets.
+net = { path = "../../building-blocks/net" }
+
+# Encoding
+base64.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+uuid.workspace = true
+hex.workspace = true
+
+# Error handling
+thiserror.workspace = true
+
+[target.'cfg(not(target_env = "msvc"))'.dependencies]
+sha2 = { workspace = true, features = ["asm"] }
+
+[dev-dependencies]
+edge = { path = "../../foundation/edge", features = ["testing"] }
+nuclei.workspace = true
+regolith.workspace = true
+rapidhash.workspace = true
+blst = "0.3"
+
+[build-dependencies]
+tonic-prost-build = { workspace = true }
+
+[lints]
+workspace = true

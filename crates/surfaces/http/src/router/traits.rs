@@ -1,0 +1,528 @@
+//! Operation traits and supporting types for the HTTP router.
+
+/// The `bind_request` an operations trait provides: the handle that serves
+/// one request (see `crate::request_scope`).
+macro_rules! bind_request {
+    ($operations:ident) => {
+        /// This handle bound to the request `context` serves, for an
+        /// implementation that reads it (the identity node access control
+        /// checks, the creator of what it writes); `None` serves every request
+        /// as it is.
+        fn bind_request(
+            &self,
+            _context: &defra_core::RequestContext,
+        ) -> Option<std::sync::Arc<dyn $operations>> {
+            None
+        }
+    };
+}
+
+/// Trait for index operations.
+///
+/// Indexes improve query performance for specific fields. Creating unique
+/// indexes also enforces uniqueness constraints on the indexed fields.
+#[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
+pub trait IndexOperations: defra_core::thread_bounds::MaybeSendSync {
+    bind_request!(IndexOperations);
+
+    /// Create an index on a collection. Returns the created index info.
+    ///
+    /// `name` of `None` auto-generates one. `vector` makes this a vector index,
+    /// in which case `unique` does not apply. Both are parameters rather than a
+    /// defaulted second method so an implementor cannot quietly ignore the
+    /// vector config and build an ordinary index over the vector field.
+    async fn create_index(
+        &self,
+        collection: &str,
+        fields: Vec<String>,
+        name: Option<&str>,
+        unique: bool,
+        vector: Option<schema::VectorIndexDescription>,
+    ) -> Result<IndexInfo, String>;
+
+    /// List indexes, optionally filtered by collection.
+    ///
+    /// If `collection` is `None`, returns indexes from all collections.
+    async fn list_indexes(&self, collection: Option<&str>) -> Result<Vec<IndexInfo>, String>;
+
+    /// Delete an index by collection and name.
+    async fn delete_index(&self, collection: &str, name: &str) -> Result<(), String>;
+}
+
+/// Index information for HTTP responses.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct IndexInfo {
+    #[serde(skip)]
+    pub id: u32,
+    pub name: String,
+    pub collection: String,
+    #[serde(skip)]
+    pub collection_id: String,
+    pub fields: Vec<IndexFieldInfo>,
+    #[serde(default)]
+    pub unique: bool,
+    /// Kind-specific config, absent for an ordinary index.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<schema::IndexKind>,
+    /// The state of the action that builds the index; `None` reads as built.
+    #[serde(skip)]
+    pub execution: Option<defra_core::ActionExecution>,
+}
+
+/// Index field information.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct IndexFieldInfo {
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub direction: Option<String>,
+}
+
+/// Trait for encrypted index (searchable encryption) operations.
+#[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
+pub trait EncryptedIndexOperations: defra_core::thread_bounds::MaybeSendSync {
+    bind_request!(EncryptedIndexOperations);
+
+    /// Add an encrypted index on a collection field.
+    async fn add_encrypted_index(
+        &self,
+        collection: &str,
+        field_name: &str,
+    ) -> Result<EncryptedIndexInfo, String>;
+
+    /// List encrypted indexes. If `collection` is `None`, returns indexes from all collections.
+    async fn list_encrypted_indexes(
+        &self,
+        collection: Option<&str>,
+    ) -> Result<Vec<EncryptedIndexInfo>, String>;
+
+    /// Delete an encrypted index from a collection field.
+    async fn delete_encrypted_index(
+        &self,
+        collection: &str,
+        field_name: &str,
+    ) -> Result<(), String>;
+}
+
+/// Encrypted index information for HTTP responses.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct EncryptedIndexInfo {
+    /// Collection name (used for grouping in list-all responses, not serialized in per-collection responses).
+    #[serde(skip)]
+    pub collection: String,
+    #[serde(rename = "FieldName")]
+    pub field_name: String,
+    #[serde(rename = "Type")]
+    pub index_type: String,
+}
+
+/// Trait for block operations.
+///
+/// Block operations provide signature verification capabilities for
+/// DAG-CBOR blocks stored in the blockstore.
+#[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
+pub trait BlockOperations: defra_core::thread_bounds::MaybeSendSync {
+    bind_request!(BlockOperations);
+
+    /// Return canonical bytes for an authorized signed block and its detached
+    /// signature so clients can verify content addressing and authorship
+    /// locally.
+    async fn signed_block_bytes(
+        &self,
+        cid: &str,
+        caller_did: Option<&str>,
+    ) -> Result<(Vec<u8>, Vec<u8>), String>;
+
+    /// Verify the signature of a block.
+    ///
+    /// Loads a block by CID, checks its signature, and verifies using the
+    /// provided public key. `key_type` defaults to "secp256k1" if `None`.
+    /// `caller_did` is the DID string of the caller for document-level ACP checks.
+    async fn verify_signature(
+        &self,
+        cid: &str,
+        public_key: &str,
+        key_type: Option<&str>,
+        caller_did: Option<&str>,
+    ) -> Result<(), String>;
+}
+
+/// Result of a backup import operation.
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+pub struct ImportResult {
+    /// Number of documents successfully imported.
+    pub documents_imported: u64,
+    /// Number of documents skipped (e.g., duplicates).
+    pub documents_skipped: u64,
+    /// Collections that were affected by the import.
+    pub collections_affected: Vec<String>,
+    /// Errors encountered during import (non-fatal).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub errors: Vec<String>,
+}
+
+/// Re-export NAC types from the acp crate for convenience.
+pub use acp::nac::{NacStatus, NodePermission};
+
+/// The outcome of [`NodeAcpOperations::check_permissions`]: every permission
+/// held, or the first one that was not and why.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PermissionCheck {
+    /// The identity holds every permission asked for.
+    Granted,
+    /// The identity does not hold this permission.
+    Denied(NodePermission),
+    /// Checking this permission failed with this error.
+    Failed(NodePermission, String),
+}
+
+/// Trait for Node Access Control (NAC) operations.
+///
+/// NAC provides node-level access control using the Zanzibar permission model.
+/// When enabled, node operations require authentication and authorization.
+#[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
+pub trait NodeAcpOperations: defra_core::thread_bounds::MaybeSendSync {
+    /// Check if an identity has a specific node permission.
+    ///
+    /// Returns `true` if:
+    /// - NAC is not enabled (all operations allowed)
+    /// - The identity has the required permission
+    async fn check_permission(
+        &self,
+        identity: &identity::Did,
+        permission: NodePermission,
+    ) -> Result<bool, String>;
+
+    /// Checks `permissions` in order and stops at the first one `identity`
+    /// does not hold, as [`Self::check_permission`] would one at a time.
+    ///
+    /// The HTTP edge decides all of a route's permissions in this one call,
+    /// so an implementation that reaches its store on a worker pool crosses
+    /// onto it once per request instead of once per permission.
+    async fn check_permissions(
+        &self,
+        identity: &identity::Did,
+        permissions: &[NodePermission],
+    ) -> PermissionCheck {
+        for &permission in permissions {
+            match self.check_permission(identity, permission).await {
+                Ok(true) => {}
+                Ok(false) => return PermissionCheck::Denied(permission),
+                Err(error) => return PermissionCheck::Failed(permission, error),
+            }
+        }
+        PermissionCheck::Granted
+    }
+
+    /// Get the current NAC status.
+    async fn get_status(&self) -> NacStatus;
+
+    /// Enable NAC with the given owner identity.
+    ///
+    /// Initializes NAC and sets the owner. Can only be called when NAC
+    /// is not already configured.
+    async fn enable(&self, owner: &identity::Did) -> Result<(), String>;
+}
+
+/// Trait for schema operations.
+///
+/// Enables adding and managing collection schemas via SDL.
+#[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
+pub trait CollectionOperations: defra_core::thread_bounds::MaybeSendSync {
+    bind_request!(CollectionOperations);
+
+    /// Add a schema from SDL string.
+    ///
+    /// Parses the SDL and creates collections for each type defined.
+    /// Returns the created collection versions.
+    async fn add_collection(&self, sdl: &str) -> Result<Vec<schema::CollectionVersion>, String>;
+}
+
+/// Collection lookups the event stream needs, which a host gives it without the management routes.
+#[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
+pub trait CollectionLookup: defra_core::thread_bounds::MaybeSendSync {
+    /// Find a collection by its collection ID.
+    async fn find_collection_by_id(
+        &self,
+        collection_id: &str,
+    ) -> Result<Option<schema::CollectionVersion>, String>;
+
+    /// Get a collection by version ID, searching both cache and storage.
+    async fn get_collection_by_version_id(
+        &self,
+        version_id: &str,
+    ) -> Result<Option<schema::CollectionVersion>, String>;
+}
+
+/// Trait for collection management operations beyond basic CRUD.
+///
+/// Provides action listing, purge, collection lookups and collection drops,
+/// that operate at the collection level rather than the document level.
+#[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
+pub trait CollectionManagementOperations: CollectionLookup {
+    bind_request!(CollectionManagementOperations);
+
+    /// List actions that have not completed successfully.
+    async fn list_actions(&self) -> Result<Vec<defra_core::ActionExecution>, String>;
+
+    /// Purge all data from all collections.
+    async fn purge(&self) -> Result<(), String>;
+
+    /// Get a collection by name.
+    async fn get_collection_by_name(
+        &self,
+        name: &str,
+    ) -> Result<Option<schema::CollectionVersion>, String>;
+
+    /// Check if a collection exists.
+    async fn has_collection(&self, name: &str) -> Result<bool, String>;
+
+    /// Delete multiple collection versions in a batch.
+    async fn delete_collection_versions(&self, version_ids: Vec<String>) -> Result<(), String>;
+
+    /// Delete a collection by name.
+    async fn delete_collection(&self, name: &str) -> Result<(), String>;
+
+    /// Delete one or more collections by name (Go #4688 parity).
+    ///
+    /// When `active_only` is true, only the active head version of each named
+    /// collection is removed. When false (Go's default), every version of each
+    /// named collection is removed.
+    async fn delete_collections(&self, names: Vec<String>, active_only: bool)
+        -> Result<(), String>;
+}
+
+/// What a relationship change made in a request did.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DocRelationshipChange {
+    /// Document ACP joined the request (or its transaction) and holds the
+    /// change. `existed` says whether the relationship was there before.
+    Applied { existed: bool },
+    /// Document ACP is a remote provider: the change is recorded as owed in
+    /// the request's transaction, at place `seq` of the node's queue, and is
+    /// sent to the provider after the commit. `authority_checked` says
+    /// whether the acting DID's authority was checked before staging.
+    Staged { seq: u64, authority_checked: bool },
+}
+
+impl DocRelationshipChange {
+    /// What an add answers as Go does: whether the relationship existed
+    /// already. A staged add is reported as new.
+    pub fn existed_already(self) -> bool {
+        match self {
+            Self::Applied { existed } => existed,
+            Self::Staged { .. } => false,
+        }
+    }
+
+    /// What a delete answers as Go does: whether a relationship was found.
+    /// A staged delete is reported as found.
+    pub fn record_found(self) -> bool {
+        match self {
+            Self::Applied { existed } => existed,
+            Self::Staged { .. } => true,
+        }
+    }
+}
+
+/// Trait for document-level ACP operations.
+///
+/// Manages per-document access control relationships (e.g., granting a user
+/// read or write access to a specific document).
+#[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
+pub trait DocumentAcpOperations: defra_core::thread_bounds::MaybeSendSync {
+    bind_request!(DocumentAcpOperations);
+
+    /// The DID that signed `token`, when `token` is a delegation the node's
+    /// document ACP may act under now for that DID. `None` when `token` is
+    /// not a delegation or the node's ACP takes none.
+    fn caller_of_delegation(
+        &self,
+        _token: &str,
+    ) -> Option<Result<acp::AuthenticatedCaller, String>> {
+        None
+    }
+
+    /// Whether a bound request changes relationships in its named
+    /// transaction: in it, with document ACP that joins the transaction, or
+    /// staged in it as owed to a remote provider. Backends must refuse the
+    /// request if they cannot bind its authorization provider to that
+    /// transaction.
+    fn supports_transactional_relationships(&self) -> bool {
+        false
+    }
+
+    /// Add (`delete` false) or delete a relationship as the bound request's
+    /// caller, saying whether it was applied or staged. The default applies
+    /// it through [`Self::add_doc_relationship`] or
+    /// [`Self::delete_doc_relationship`].
+    async fn change_doc_relationship(
+        &self,
+        requestor: Option<&identity::Did>,
+        target_actor: &str,
+        collection: &str,
+        doc_id: &str,
+        relation: &str,
+        delete: bool,
+    ) -> Result<DocRelationshipChange, String> {
+        let existed = if delete {
+            self.delete_doc_relationship(requestor, target_actor, collection, doc_id, relation)
+                .await?
+        } else {
+            !self
+                .add_doc_relationship(requestor, target_actor, collection, doc_id, relation)
+                .await?
+        };
+        Ok(DocRelationshipChange::Applied { existed })
+    }
+
+    /// Check whether an actor has a document permission.
+    ///
+    /// This is a read-only preview of the current document ACP decision and
+    /// does not create or remove relationships.
+    async fn check_doc_access(
+        &self,
+        actor: &identity::Did,
+        permission: acp::DocumentPermission,
+        policy_id: &str,
+        resource_name: &str,
+        doc_id: &str,
+    ) -> Result<bool, String>;
+
+    /// Add an actor relationship to a document.
+    ///
+    /// Grants the `target_actor` the specified `relation` on the document
+    /// identified by `collection` and `doc_id`.
+    ///
+    /// Returns `true` if a new relationship was created, `false` if it already existed.
+    async fn add_doc_relationship(
+        &self,
+        requestor: Option<&identity::Did>,
+        target_actor: &str,
+        collection: &str,
+        doc_id: &str,
+        relation: &str,
+    ) -> Result<bool, String>;
+
+    /// Every relationship on a document, for its owner or a requester holding
+    /// a relation that manages one on that resource.
+    async fn list_doc_relationships(
+        &self,
+        requestor: &identity::Did,
+        collection: &str,
+        doc_id: &str,
+    ) -> Result<Vec<acp::DocumentRelationship>, String> {
+        let _ = (requestor, collection, doc_id);
+        Err(acp::Error::UnsupportedRelationshipListing.to_string())
+    }
+
+    async fn observe_doc_actor_relationship(
+        &self,
+        _requestor: &identity::Did,
+        _collection: &str,
+        _doc_id: &str,
+        _relation: &str,
+        _target: &str,
+    ) -> Result<bool, String> {
+        Err(acp::Error::UnsupportedRelationshipListing.to_string())
+    }
+
+    /// Delete an actor relationship from a document.
+    ///
+    /// Revokes the `target_actor`'s `relation` on the document
+    /// identified by `collection` and `doc_id`.
+    ///
+    /// Returns `true` if the relationship was removed, `false` if it didn't exist.
+    async fn delete_doc_relationship(
+        &self,
+        requestor: Option<&identity::Did>,
+        target_actor: &str,
+        collection: &str,
+        doc_id: &str,
+        relation: &str,
+    ) -> Result<bool, String>;
+}
+
+/// Trait for backup operations.
+///
+/// Enables exporting and importing database state as JSON. Export produces
+/// a JSON representation of documents that can be reimported to restore state.
+///
+/// For export, the JSON includes document metadata and relationships.
+/// For import, the JSON must match the expected structure with valid document
+/// IDs and collection references.
+#[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
+pub trait BackupOperations: defra_core::thread_bounds::MaybeSendSync {
+    bind_request!(BackupOperations);
+
+    /// Export database to JSON.
+    ///
+    /// If `collections` is `None`, exports all collections.
+    /// If `pretty` is true, the JSON output is formatted with indentation.
+    async fn export(
+        &self,
+        collections: Option<Vec<String>>,
+        pretty: bool,
+    ) -> Result<String, String>;
+
+    /// Import database from JSON.
+    ///
+    /// The `data` parameter should be valid JSON matching the export format.
+    /// Returns `ImportResult` with details about what was imported, skipped, and any errors.
+    /// A fatal error (e.g., completely malformed data) returns `Err(message)`.
+    /// Every create and relation patch is a request sent through `host`, the
+    /// request path of the edge the import came in by.
+    async fn import(
+        &self,
+        data: &str,
+        host: &dyn db::backup::ImportHost,
+    ) -> Result<ImportResult, String>;
+}
+
+/// Trait for view operations.
+///
+/// Views are virtual collections backed by a GQL query. Materialized views
+/// cache their results and may also expose explicit maintenance operations.
+#[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
+pub trait ViewOperations: defra_core::thread_bounds::MaybeSendSync {
+    bind_request!(ViewOperations);
+
+    /// Add a view from a GQL query and SDL schema.
+    ///
+    /// Returns the created collection versions for the view.
+    async fn add_view(
+        &self,
+        gql_query: &str,
+        sdl: &str,
+        transform: Option<&str>,
+    ) -> Result<Vec<schema::CollectionVersion>, String>;
+
+    /// Refresh materialized view caches.
+    ///
+    /// The options select which views to refresh, mirroring Go's collection
+    /// lookup. Default options refresh every materialized view.
+    async fn refresh_views(&self, options: db::CollectionSelector) -> Result<(), String>;
+
+    /// Run manual downsample history GC.
+    ///
+    /// If `names` is provided, only those downsample targets are processed.
+    /// Otherwise all downsample targets are processed.
+    async fn gc_downsample_histories(&self, names: Option<Vec<String>>) -> Result<(), String>;
+}
+
+/// Trait for debug dump operations.
+#[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
+pub trait DumpOperations: defra_core::thread_bounds::MaybeSendSync {
+    /// Dump all database key/value pairs as a list of human-readable strings.
+    async fn print_dump(&self) -> Result<Vec<String>, String>;
+}

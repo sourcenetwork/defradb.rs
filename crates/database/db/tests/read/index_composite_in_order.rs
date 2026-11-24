@@ -1,0 +1,175 @@
+//! A partial `_in` over a composite index scans a prefix, so one `_in` value
+//! covers several distinct full index keys. Index order across those keys is
+//! the secondary field's order, and within one full key it is the order the
+//! documents were created in (their short IDs), as in Go.
+
+use db::database::DB;
+use db::DbDocFetcher;
+use db::DbDocMutator;
+use document::Document;
+use document::NormalValue;
+use query::mutator::DocMutator;
+use query::planner::index_selection::IndexScanParams;
+use query::planner::index_selection::IndexScanType;
+use query::runner::DocFetcher;
+use schema::CollectionVersion;
+use schema::FieldDescription;
+use schema::FieldKind;
+use schema::IndexDescription;
+use schema::IndexedFieldDescription;
+use std::sync::Arc;
+use storage::RegolithStore;
+
+const COLLECTION: &str = "products";
+const INDEX: &str = "by_category_rank";
+const CATEGORY: &str = "a";
+
+/// Ranks repeat so one scan covers both the across-key order and the
+/// within-key creation order. They are seeded out of rank order, so a scan
+/// that kept plain creation order fails. `p3` is created before `p1` because
+/// p1's DocID sorts below p3's: a DocID tie-break within rank 1 fails too.
+const SEED: [(&str, i64); 5] = [("p0", 2), ("p3", 1), ("p2", 3), ("p1", 1), ("p4", 2)];
+
+fn schema() -> CollectionVersion {
+    let mut version = CollectionVersion::new(
+        COLLECTION,
+        "v1",
+        "col-products",
+        vec![
+            FieldDescription::new(
+                "1",
+                "_docID",
+                FieldKind::doc_id(),
+                schema::CType::LwwRegister,
+            ),
+            FieldDescription::new(
+                "2",
+                "category",
+                FieldKind::string(),
+                schema::CType::LwwRegister,
+            ),
+            FieldDescription::new("3", "rank", FieldKind::int(), schema::CType::LwwRegister),
+            FieldDescription::new("4", "name", FieldKind::string(), schema::CType::LwwRegister),
+        ],
+    );
+    version.indexes = vec![IndexDescription {
+        name: INDEX.to_string(),
+        id: 0,
+        fields: vec![
+            IndexedFieldDescription {
+                name: "category".to_string(),
+                descending: false,
+            },
+            IndexedFieldDescription {
+                name: "rank".to_string(),
+                descending: false,
+            },
+        ],
+        unique: false,
+        kind: None,
+        auto_generated: false,
+    }];
+    version
+}
+
+/// Returns (rank, doc_id) per seeded document, in insertion order.
+async fn populated() -> (Arc<DB<RegolithStore>>, Vec<(i64, String)>) {
+    let db = Arc::new(DB::new(RegolithStore::in_memory().unwrap()).expect("a database"));
+    db.create_collection(schema())
+        .await
+        .expect("the collection must register");
+
+    let txn = db.new_txn(false).await.unwrap();
+    let mutator = DbDocMutator::new(db.clone(), txn);
+    let mut seeded = Vec::new();
+    for (name, rank) in SEED {
+        let mut doc = Document::new(schema());
+        doc.set("category", NormalValue::String(CATEGORY.to_string()))
+            .unwrap();
+        doc.set("rank", NormalValue::Int(rank)).unwrap();
+        doc.set("name", NormalValue::String(name.to_string()))
+            .unwrap();
+        let created = mutator
+            .create(COLLECTION, doc)
+            .await
+            .expect("the document must be created");
+        seeded.push((rank, created.doc_id.to_string()));
+    }
+    mutator
+        .take_txn()
+        .await
+        .expect("the mutator still holds its transaction")
+        .commit()
+        .await
+        .unwrap();
+
+    (db, seeded)
+}
+
+/// Index order: rank ascending, creation order within one rank.
+fn index_order(seeded: &[(i64, String)]) -> Vec<String> {
+    let mut ordered = seeded.to_vec();
+    ordered.sort_by_key(|(rank, _)| *rank);
+    ordered.into_iter().map(|(_, id)| id).collect()
+}
+
+#[test]
+fn partial_in_over_a_composite_index_keeps_secondary_field_order() {
+    workers::block_on(async {
+        let (db, seeded) = populated().await;
+
+        let expected = index_order(&seeded);
+        let creation_only: Vec<String> = seeded.iter().map(|(_, id)| id.clone()).collect();
+        assert_ne!(
+            expected, creation_only,
+            "the seed must distinguish index order from plain creation order, \
+         otherwise this test cannot fail"
+        );
+        let doc_id_only: Vec<String> = {
+            let mut ids: Vec<String> = seeded.iter().map(|(_, id)| id.clone()).collect();
+            ids.sort();
+            ids
+        };
+        assert_ne!(
+            expected, doc_id_only,
+            "the seed must distinguish index order from a flat DocID sort, \
+         otherwise this test cannot fail"
+        );
+        let mut doc_id_within_rank = seeded.clone();
+        doc_id_within_rank.sort();
+        let doc_id_within_rank: Vec<String> =
+            doc_id_within_rank.into_iter().map(|(_, id)| id).collect();
+        assert_ne!(
+            expected, doc_id_within_rank,
+            "the seed must have a same-rank pair whose DocIDs sort against their \
+         creation order, otherwise a DocID tie-break within one key passes"
+        );
+
+        let txn = db.new_txn(true).await.unwrap();
+        let got = DbDocFetcher::new(txn)
+            .get_by_index_scan(
+                COLLECTION,
+                &IndexScanParams {
+                    index_name: INDEX.to_string(),
+                    scan_type: IndexScanType::InScan {
+                        values: vec![NormalValue::String(CATEGORY.to_string())],
+                        suffix_values: vec![],
+                    },
+                    limit: None,
+                    offset: 0,
+                    value_filter: None,
+                    cursor_seek: None,
+                },
+            )
+            .await
+            .expect("the prefix scan must run")
+            .into_doc_ids();
+
+        assert_eq!(
+            got, expected,
+            "a partial `_in` must return index order (rank, then creation), not a \
+         DocID sort spanning distinct ranks"
+        );
+    })
+    .unwrap()
+}

@@ -22,7 +22,7 @@ What must never happen:
 * the expected time to a useful fetch is unbounded for a provider that is
   never useful (`expected_useful_le`).
 
-Rust anchors: `advance` in `crates/p2p/src/sync/arbitration/occupancy.rs` (the
+Rust anchors: `advance` in `crates/database/p2p/src/sync/arbitration/occupancy.rs` (the
 steady input over missed ticks), `RootEstimates::observe` in `root.rs` (weight
 `1/2`), `expected_useful` in `provider.rs`. Nothing reads an average to set a
 deadline, a backoff or a share, so no lemma here models one.

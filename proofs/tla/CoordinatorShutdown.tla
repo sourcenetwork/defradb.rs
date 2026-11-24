@@ -51,7 +51,7 @@
 \*      - INV_ErrMeansCancelled;
 \*   4. a caller of shutdown waits forever - LIVE_CallersReturn.
 \*
-\* Correspondence with the Rust code (crates/p2p/src/sync/coordinator/mod.rs
+\* Correspondence with the Rust code (crates/database/p2p/src/sync/coordinator/mod.rs
 \* unless named):
 \*
 \*   | Model             | Rust                                                     |
@@ -64,8 +64,8 @@
 \*   |                   | and moved it into the drain future                       |
 \*   | Spawn             | shutdown: `if let Err(drain) = self.network()            |
 \*   |                   | .try_spawn(drain) { drain.await }`; Network::try_spawn   |
-\*   |                   | (crates/p2p/src/network.rs) calls Edge::try_spawn        |
-\*   |                   | (crates/edge/src/handle.rs), which hands the future back |
+\*   |                   | (crates/database/p2p/src/network.rs) calls Edge::try_spawn        |
+\*   |                   | (crates/foundation/edge/src/handle.rs), which hands the future back |
 \*   |                   | unstarted when admit() finds the gate closed             |
 \*   | edgeOpen          | the edge's gate admits work (Edge::is_closed); EdgeClose |
 \*   |                   | is Scope::close, Scope::drain or the runtime's shutdown  |
@@ -84,7 +84,7 @@
 \*   | CancelCaller      | a caller's shutdown future dropped at `complete.await`   |
 \*   | Teardown          | the edge runtime dropped before the drain task finished  |
 \*   | CancelWinner      | the winner's shutdown future dropped at `drain.await`    |
-\*   | life, loc         | a TrackedTask (crates/p2p/src/tracked_task.rs): whether  |
+\*   | life, loc         | a TrackedTask (crates/database/p2p/src/tracked_task.rs): whether  |
 \*   |                   | its future still runs (MarkFinished sets `finished` when |
 \*   |                   | it drops), and where its handle is                       |
 \*   | RegCheck          | spawn_task: `if self.is_shutting_down() { return false }`|

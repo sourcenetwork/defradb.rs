@@ -1,0 +1,361 @@
+mod common;
+
+use std::path::Path;
+use std::process::{Child, Command, Stdio};
+use std::time::Duration;
+
+use crypto::KeyType;
+use serde_json::Value;
+
+struct RunningNode {
+    child: Child,
+    url: String,
+    client: net::http::Client,
+}
+
+impl Drop for RunningNode {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
+impl RunningNode {
+    async fn start(root: &Path, key_type: &str, flags: &[&str]) -> Self {
+        Self::start_with_store(root, "memory", key_type, flags).await
+    }
+
+    /// [`Self::start`] on the given datastore. `--store` takes one value, so
+    /// a second one in `flags` cannot replace the first.
+    async fn start_with_store(root: &Path, store: &str, key_type: &str, flags: &[&str]) -> Self {
+        let log_path = root.join("node.log");
+        let (log, output) = common::NodeLog::create(log_path.clone());
+        let child = Command::new(env!("CARGO_BIN_EXE_defradb"))
+            .arg("--rootdir")
+            .arg(root)
+            .args(["--url", common::ANY_PORT])
+            .args(common::LOG_FLAGS)
+            .args([
+                "start",
+                "--store",
+                store,
+                "--no-p2p",
+                "--default-key-type",
+                key_type,
+            ])
+            .args(flags)
+            .env("DEFRA_KEYRING_SECRET", "node-identity-test-secret")
+            // The bound address is logged at info.
+            .env("RUST_LOG", "info")
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(output)
+            .spawn()
+            .expect("start node");
+        let mut node = Self {
+            child,
+            url: String::new(),
+            client: net::http::Client::builder(edge::testing::edge())
+                .no_proxy()
+                .timeout(Duration::from_secs(5))
+                .build()
+                .unwrap(),
+        };
+        // `node` owns the child from here, so a failed wait still kills it.
+        let address = log.http_address(Duration::from_secs(15));
+        node.url = format!("http://{address}");
+        nuclei::time::timeout(Duration::from_secs(15), async {
+            loop {
+                assert!(
+                    node.child.try_wait().unwrap().is_none(),
+                    "node exited during startup: {}",
+                    std::fs::read_to_string(&log_path).unwrap_or_default()
+                );
+                if let Ok(response) = node
+                    .client
+                    .get(format!("{}/health-check", node.url))
+                    .send()
+                    .await
+                {
+                    if response.status().is_success() {
+                        break;
+                    }
+                }
+                nuclei::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .expect("node did not become healthy");
+        node
+    }
+
+    async fn identity(&self) -> Value {
+        self.client
+            .get(format!("{}/api/v0/node/identity", self.url))
+            .send()
+            .await
+            .unwrap()
+            .error_for_status()
+            .unwrap()
+            .json()
+            .await
+            .unwrap()
+    }
+
+    async fn query(&self, query: &str) -> Value {
+        let result: Value = self
+            .client
+            .post(format!("{}/api/v0/graphql", self.url))
+            .json(&serde_json::json!({"query": query}))
+            .send()
+            .await
+            .unwrap()
+            .error_for_status()
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert!(result["errors"].is_null(), "query failed: {result}");
+        result["data"].clone()
+    }
+}
+
+#[nuclei::test]
+async fn development_node_uses_the_requested_identity_key_type_without_p2p() {
+    for (name, expected) in [
+        ("ed25519", KeyType::Ed25519),
+        ("secp256k1", KeyType::Secp256k1),
+        ("secp256r1", KeyType::Secp256r1),
+    ] {
+        let root = tempfile::tempdir().unwrap();
+        let node = RunningNode::start(root.path(), name, &["--development", "--no-keyring"]).await;
+        let response = node.identity().await;
+        let did = response["DID"].as_str().expect("generated node identity");
+        assert_eq!(crypto::parse_did_key(did).unwrap().0, expected);
+        assert!(response["PeerID"].is_null());
+    }
+}
+
+#[nuclei::test]
+async fn persisted_node_identity_survives_a_default_key_type_change() {
+    let root = tempfile::tempdir().unwrap();
+    let node = RunningNode::start(root.path(), "secp256r1", &[]).await;
+    let before = node.identity().await;
+    let did = before["DID"].as_str().expect("persisted node identity");
+    assert_eq!(crypto::parse_did_key(did).unwrap().0, KeyType::Secp256r1);
+    drop(node);
+
+    let restarted = RunningNode::start(root.path(), "ed25519", &[]).await;
+    assert_eq!(restarted.identity().await["DID"], before["DID"]);
+}
+
+#[nuclei::test]
+async fn generated_identity_signs_commits_unless_signing_is_disabled() {
+    for no_signing in [false, true] {
+        let root = tempfile::tempdir().unwrap();
+        let mut flags = vec!["--development", "--no-keyring"];
+        if no_signing {
+            flags.push("--no-signing");
+        }
+        let node = RunningNode::start(root.path(), "secp256k1", &flags).await;
+        let identity = node.identity().await;
+        let did = identity["DID"].as_str().unwrap();
+        let (key_type, public_bytes) = crypto::parse_did_key(did).unwrap();
+        let public_key = crypto::public_key_from_bytes(key_type, &public_bytes).unwrap();
+        node.client
+            .post(format!("{}/api/v0/collections", node.url))
+            .body("type Users { name: String }")
+            .send()
+            .await
+            .unwrap()
+            .error_for_status()
+            .unwrap();
+        node.query(r#"mutation { add_Users(input: {name: "Alice"}) { _docID } }"#)
+            .await;
+        let result = node
+            .query("query { _commits { signature { identity } } }")
+            .await;
+        let commits = result["_commits"].as_array().unwrap();
+        assert!(!commits.is_empty());
+        let signed: Vec<_> = commits
+            .iter()
+            .filter(|commit| !commit["signature"].is_null())
+            .collect();
+        if no_signing {
+            assert!(signed.is_empty(), "--no-signing was ignored: {result}");
+        } else {
+            assert!(
+                !signed.is_empty(),
+                "generated identity did not sign: {result}"
+            );
+            for commit in signed {
+                assert_eq!(
+                    commit["signature"]["identity"],
+                    hex::encode(public_key.raw())
+                );
+            }
+        }
+        let options: Value = node
+            .client
+            .get(format!("{}/api/v0/node/options", node.url))
+            .send()
+            .await
+            .unwrap()
+            .error_for_status()
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert_eq!(options["DB"]["Identity"], "<redacted>");
+        assert_eq!(options["DB"]["EnableSigning"], !no_signing);
+    }
+}
+
+#[nuclei::test]
+async fn generated_identity_does_not_authenticate_http_requests() {
+    let root = tempfile::tempdir().unwrap();
+    let node = RunningNode::start(
+        root.path(),
+        "secp256k1",
+        &[
+            "--development",
+            "--no-keyring",
+            "--document-acp-type",
+            "local",
+        ],
+    )
+    .await;
+    assert!(node.identity().await["DID"].is_string());
+
+    let response = node
+        .client
+        .post(format!("{}/api/v0/acp/document/policy", node.url))
+        .body("")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), net::http::StatusCode::BAD_REQUEST);
+    assert!(response
+        .text()
+        .await
+        .unwrap()
+        .contains("policy creator can not be empty"));
+}
+
+#[nuclei::test]
+async fn explicit_identity_overrides_the_generation_default() {
+    use crypto::Key;
+    use identity::Identity;
+
+    let root = tempfile::tempdir().unwrap();
+    let key = crypto::generate_ed25519().unwrap();
+    let key_hex = hex::encode(key.raw());
+    let expected = identity::RawIdentity::from_private_key(key)
+        .unwrap()
+        .did()
+        .unwrap();
+    let node = RunningNode::start(
+        root.path(),
+        "invalid",
+        &["--no-keyring", "--identity", &key_hex],
+    )
+    .await;
+    assert_eq!(node.identity().await["DID"], expected.as_str());
+}
+
+#[nuclei::test]
+async fn production_without_keyring_or_explicit_identity_stays_anonymous() {
+    let root = tempfile::tempdir().unwrap();
+    let node = RunningNode::start(root.path(), "ed25519", &["--no-keyring"]).await;
+    assert!(node.identity().await.get("DID").is_none());
+}
+
+/// Node ACP enabled on a store stays enforced when the node restarts without
+/// `--node-acp-enable`, as Go's `defradb start` loads the stored state
+/// (`db_nac.go`): its routes answer, and an anonymous caller is refused.
+#[test]
+fn nac_state_survives_restart_without_flag() {
+    use crypto::Key;
+
+    workers::block_on(async {
+        let root = tempfile::tempdir().unwrap();
+        let key = crypto::generate_ed25519().unwrap();
+        let owner_hex = hex::encode(key.raw());
+
+        let status = |node: &RunningNode| {
+            let token = cli::commands::client::generate_auth_token(&owner_hex, &node.url).unwrap();
+            let request = node
+                .client
+                .get(format!("{}/api/v0/acp/node/status", node.url))
+                .bearer_auth(token);
+            async move {
+                let body: Value = request
+                    .send()
+                    .await
+                    .unwrap()
+                    .error_for_status()
+                    .unwrap()
+                    .json()
+                    .await
+                    .unwrap();
+                body
+            }
+        };
+
+        let node = RunningNode::start_with_store(
+            root.path(),
+            "regolith",
+            "ed25519",
+            &["--node-acp-enable", "--identity", &owner_hex],
+        )
+        .await;
+        let before = status(&node).await;
+        assert_eq!(
+            before["Status"], "enabled",
+            "status before restart: {before}"
+        );
+        drop(node);
+
+        let node = RunningNode::start_with_store(root.path(), "regolith", "ed25519", &[]).await;
+        let after = status(&node).await;
+        assert_eq!(after["Status"], "enabled", "status after restart: {after}");
+
+        let response = node
+            .client
+            .post(format!("{}/api/v0/collections", node.url))
+            .body("type Users { name: String }")
+            .send()
+            .await
+            .unwrap();
+        let code = response.status();
+        let body = response.text().await.unwrap();
+        assert_eq!(
+            code,
+            net::http::StatusCode::UNAUTHORIZED,
+            "an anonymous caller was not refused by NAC: {body}"
+        );
+        assert!(
+            body.contains("not authorized to perform operation"),
+            "the refusal is not a NAC denial: {body}"
+        );
+
+        let token = cli::commands::client::generate_auth_token(&owner_hex, &node.url).unwrap();
+        let collections = node
+            .client
+            .get(format!("{}/api/v0/collections", node.url))
+            .bearer_auth(token)
+            .send()
+            .await
+            .unwrap()
+            .error_for_status()
+            .unwrap()
+            .text()
+            .await
+            .unwrap();
+        assert!(
+            !collections.contains("Users"),
+            "the refused collection was added: {collections}"
+        );
+    })
+    .unwrap();
+}

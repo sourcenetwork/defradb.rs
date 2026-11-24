@@ -1,8 +1,8 @@
-# Survey: `crates/crdt/`
+# Survey: `crates/building-blocks/crdt/`
 
 ## Purpose
 Field CRDTs for DefraDB.rs field/document conflict resolution, one `FieldCrdt`
-implementation per type (`crates/crdt/src/field/`): the LWW register and the P/PN
+implementation per type (`crates/building-blocks/crdt/src/field/`): the LWW register and the P/PN
 counters (Int64 wrapping, Float32 at `f32`, Float64). Each answers what an operation
 does, what its block carries, how its state is stored and how two states merge;
 every write, merge, storage operand and replay path dispatches through it. The local

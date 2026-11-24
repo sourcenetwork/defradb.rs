@@ -1,0 +1,919 @@
+//! An index on a counter is deferred: an increment owes the index an update
+//! instead of moving the entry, and a read through the index checks owed
+//! documents live, so it never sees a stale value (`proofs/tla/DeferredIndex.tla`).
+
+use std::sync::Arc;
+
+use db::{AutoCommitMutator, LensedAutoCommitFetcher, DB};
+use document::NormalValue;
+use query::mutator::DocMutator;
+use query::{QueryExecutor, QueryRequest, QueryRunner};
+use schema::{
+    CType, CollectionVersion, FieldDescription, FieldKind, IndexKind, IndexedFieldDescription,
+    OrderedIndexDescription,
+};
+use storage::corekv::{IterOptions, Iterator as _};
+use storage::keys::{IndexDataStoreKey, IndexedField};
+use storage::RegolithStore;
+
+mod drop_history;
+mod plan_size;
+mod requests;
+mod upgrade;
+
+const COLLECTION: &str = "Tallies";
+
+fn collection() -> CollectionVersion {
+    CollectionVersion::new(
+        COLLECTION,
+        "v1",
+        "col-deferred-tallies",
+        vec![
+            FieldDescription::new("1", "_docID", FieldKind::doc_id(), CType::LwwRegister),
+            FieldDescription::new("2", "count", FieldKind::int(), CType::PCounter),
+            FieldDescription::new("3", "name", FieldKind::string(), CType::LwwRegister),
+        ],
+    )
+}
+
+struct Node {
+    db: Arc<DB<RegolithStore>>,
+    queries: Arc<dyn QueryExecutor>,
+    index_id: u32,
+}
+
+impl Node {
+    async fn on(store: RegolithStore, fresh: bool) -> Self {
+        let db = Arc::new(DB::open(store).await.unwrap());
+        Self::with(db, fresh).await
+    }
+
+    /// A node on `db`, whose collection and index already exist.
+    async fn on_db(db: Arc<DB<RegolithStore>>) -> Self {
+        Self::with(db, false).await
+    }
+
+    async fn with(db: Arc<DB<RegolithStore>>, fresh: bool) -> Self {
+        let index_id = if fresh {
+            db.create_collection(collection()).await.unwrap();
+            db.create_index(
+                COLLECTION,
+                Some("by_count"),
+                vec![IndexedFieldDescription {
+                    name: "count".to_string(),
+                    descending: false,
+                }],
+                IndexKind::Ordered(OrderedIndexDescription { unique: false }),
+            )
+            .await
+            .unwrap()
+            .id
+        } else {
+            db.require_collection(COLLECTION).unwrap().schema().indexes[0].id
+        };
+        let schema = db.require_collection(COLLECTION).unwrap().schema().clone();
+        let queries: Arc<dyn QueryExecutor> = Arc::new(
+            QueryRunner::new(LensedAutoCommitFetcher::new(Arc::clone(&db)), vec![schema])
+                .with_mutator(
+                    Arc::new(AutoCommitMutator::new(Arc::clone(&db))) as Arc<dyn DocMutator>
+                ),
+        );
+        Self {
+            db,
+            queries,
+            index_id,
+        }
+    }
+
+    async fn open() -> Self {
+        Self::on(RegolithStore::in_memory().unwrap(), true).await
+    }
+
+    async fn run(&self, request: &str) -> serde_json::Value {
+        let response = self.queries.execute(QueryRequest::new(request)).await;
+        assert!(
+            response.errors.is_empty(),
+            "{request}: {:?}",
+            response.errors
+        );
+        response.data.unwrap()
+    }
+
+    async fn create(&self, name: &str, count: i64) -> String {
+        let data = self
+            .run(&format!(
+                r#"mutation {{ add_Tallies(input: {{name: "{name}", count: {count}}}) {{ _docID }} }}"#
+            ))
+            .await;
+        data["add_Tallies"][0]["_docID"]
+            .as_str()
+            .unwrap()
+            .to_owned()
+    }
+
+    async fn increment(&self, id: &str, by: i64) {
+        self.run(&format!(
+            r#"mutation {{ update_Tallies(docID: "{id}", input: {{count: {by}}}) {{ _docID }} }}"#
+        ))
+        .await;
+    }
+
+    /// The names a filter through the index returns, in the order it returns them.
+    async fn names(&self, filter: &str, order: &str) -> Vec<String> {
+        let data = self
+            .run(&format!(
+                "query {{ Tallies(filter: {filter}, order: {order}) {{ name }} }}"
+            ))
+            .await;
+        data["Tallies"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|doc| doc["name"].as_str().unwrap().to_owned())
+            .collect()
+    }
+
+    /// How many stored entries hold `value`.
+    async fn stored_at(&self, value: i64) -> usize {
+        let short_id = self
+            .db
+            .require_collection(COLLECTION)
+            .unwrap()
+            .schema()
+            .resolved_root_id();
+        let prefix = IndexDataStoreKey::new(
+            short_id,
+            self.index_id,
+            vec![IndexedField::ascending(NormalValue::Int(value))],
+        )
+        .try_bytes()
+        .unwrap();
+        count_keys(&self.db, prefix).await
+    }
+
+    async fn drain(&self) {
+        self.db.drain_deferred_indexes().await.unwrap();
+    }
+}
+
+async fn count_keys(db: &DB<RegolithStore>, prefix: Vec<u8>) -> usize {
+    let txn = db.new_txn(true).await.unwrap();
+    let datastore = txn.datastore().unwrap();
+    let mut iter = datastore
+        .iterator(IterOptions::new().with_prefix(prefix))
+        .await
+        .unwrap();
+    let mut count = 0;
+    while iter.next().await.unwrap().is_some() {
+        count += 1;
+    }
+    count
+}
+
+#[test]
+fn a_read_before_the_drain_finds_the_incremented_value() {
+    workers::block_on(async {
+        let node = Node::open().await;
+        let id = node.create("a", 1).await;
+        node.increment(&id, 4).await;
+
+        assert_eq!(
+            node.stored_at(1).await,
+            1,
+            "the stored entry is still owed its move"
+        );
+        assert_eq!(node.names("{count: {_eq: 5}}", "{count: ASC}").await, ["a"]);
+        assert!(node
+            .names("{count: {_eq: 1}}", "{count: ASC}")
+            .await
+            .is_empty());
+
+        node.drain().await;
+        assert_eq!((node.stored_at(1).await, node.stored_at(5).await), (0, 1));
+        assert_eq!(node.names("{count: {_eq: 5}}", "{count: ASC}").await, ["a"]);
+    })
+    .unwrap();
+}
+
+#[test]
+fn a_range_read_keeps_its_order_with_owed_documents() {
+    workers::block_on(async {
+        let node = Node::open().await;
+        let a = node.create("a", 10).await;
+        node.create("b", 20).await;
+        node.create("c", 30).await;
+        node.increment(&a, 15).await;
+
+        assert_eq!(
+            node.names("{count: {_gt: 12}}", "{count: ASC}").await,
+            ["b", "a", "c"]
+        );
+        assert_eq!(
+            node.names("{count: {_gt: 12}}", "{count: DESC}").await,
+            ["c", "a", "b"]
+        );
+        assert_eq!(
+            node.names("{count: {_lt: 22}}", "{count: ASC}").await,
+            ["b"]
+        );
+    })
+    .unwrap();
+}
+
+#[test]
+fn concurrent_increments_of_an_indexed_counter_all_land() {
+    workers::block_on(async {
+        let node = Node::open().await;
+        let id = node.create("a", 0).await;
+        let conflicts = telemetry::storage_event_count(telemetry::StorageEvent::AbortConflict);
+
+        futures::future::join_all((0..32).map(|_| node.increment(&id, 1))).await;
+
+        assert_eq!(
+            telemetry::storage_event_count(telemetry::StorageEvent::AbortConflict),
+            conflicts,
+            "an increment of an indexed counter reads nothing a concurrent one writes"
+        );
+        assert_eq!(
+            node.names("{count: {_eq: 32}}", "{count: ASC}").await,
+            ["a"]
+        );
+        node.drain().await;
+        assert_eq!((node.stored_at(0).await, node.stored_at(32).await), (0, 1));
+    })
+    .unwrap();
+}
+
+#[test]
+fn a_deleted_document_leaves_the_index() {
+    workers::block_on(async {
+        let node = Node::open().await;
+        let id = node.create("a", 3).await;
+        node.increment(&id, 1).await;
+        node.run(&format!(
+            r#"mutation {{ delete_Tallies(docID: "{id}") {{ _docID }} }}"#
+        ))
+        .await;
+
+        assert!(node
+            .names("{count: {_eq: 4}}", "{count: ASC}")
+            .await
+            .is_empty());
+        node.drain().await;
+        assert_eq!((node.stored_at(3).await, node.stored_at(4).await), (0, 0));
+    })
+    .unwrap();
+}
+
+#[test]
+fn dropping_the_index_leaves_no_record_and_no_log() {
+    workers::block_on(async {
+        let node = Node::open().await;
+        let id = node.create("a", 3).await;
+        node.increment(&id, 1).await;
+        let short_id = node
+            .db
+            .require_collection(COLLECTION)
+            .unwrap()
+            .schema()
+            .resolved_root_id();
+
+        node.db.drop_index(COLLECTION, "by_count").await.unwrap();
+
+        let records = storage::keys::index_position_prefix(short_id, node.index_id);
+        let log = storage::keys::index_pending_log(short_id, node.index_id);
+        assert_eq!(count_keys(&node.db, records).await, 0);
+        assert_eq!(count_keys(&node.db, log.entry_prefix().to_vec()).await, 0);
+    })
+    .unwrap();
+}
+
+#[test]
+fn work_owed_at_a_restart_is_drained_after_it() {
+    workers::block_on(async {
+        let dir = tempfile::tempdir().unwrap();
+        let id = {
+            let node = Node::on(RegolithStore::open(dir.path()).unwrap(), true).await;
+            let id = node.create("a", 1).await;
+            node.increment(&id, 2).await;
+            node.db.close().await.unwrap();
+            id
+        };
+        let node = Node::on(RegolithStore::open(dir.path()).unwrap(), false).await;
+        assert_eq!(
+            node.names("{count: {_eq: 3}}", "{count: ASC}").await,
+            ["a"],
+            "{id}"
+        );
+        node.drain().await;
+        assert_eq!((node.stored_at(1).await, node.stored_at(3).await), (0, 1));
+    })
+    .unwrap();
+}
+
+#[test]
+fn a_transaction_reads_its_own_increment_through_the_index() {
+    use db::txn::registry::DbTransactionRegistry;
+    use query::planner::index_selection::{IndexScanParams, IndexScanType};
+    use query::txn::TransactionRegistry;
+
+    workers::block_on(async {
+        let node = Node::open().await;
+        let id = node.create("a", 1).await;
+        let registry = DbTransactionRegistry::new(Arc::clone(&node.db));
+        let handle = registry.begin(false).await.unwrap();
+        let found = crate::common::owned::in_txn(&registry, &handle, {
+            let schema = node.db.require_collection(COLLECTION).unwrap().schema_arc();
+            move |ctx| {
+                Box::pin(async move {
+                    let mut doc = document::Document::new(schema);
+                    doc.set_id(document::DocID::from_string(&id).unwrap());
+                    doc.edit("count", document::FieldOp::Increment(NormalValue::Int(4)))
+                        .unwrap();
+                    let mut changed = rapidhash::RapidHashSet::default();
+                    changed.insert("count".to_string());
+                    ctx.doc_mutator()
+                        .unwrap()
+                        .update(COLLECTION, doc, changed)
+                        .await
+                        .unwrap();
+                    let at = |value: i64| IndexScanParams {
+                        index_name: "by_count".to_string(),
+                        scan_type: IndexScanType::ExactMatch {
+                            values: vec![NormalValue::Int(value)],
+                        },
+                        limit: None,
+                        offset: 0,
+                        value_filter: None,
+                        cursor_seek: None,
+                    };
+                    let fetcher = ctx.doc_fetcher();
+                    let new = fetcher.get_by_index_scan(COLLECTION, &at(5)).await.unwrap();
+                    let old = fetcher.get_by_index_scan(COLLECTION, &at(1)).await.unwrap();
+                    (new.doc_ids().len(), old.doc_ids().len())
+                })
+            }
+        })
+        .await;
+        registry.commit(&handle).await.unwrap();
+        assert_eq!(
+            found,
+            (1, 0),
+            "the transaction's own increment, not the old value"
+        );
+    })
+    .unwrap();
+}
+
+#[test]
+fn a_unique_index_on_a_counter_keeps_one_winner() {
+    workers::block_on(async {
+        let db = Arc::new(DB::new(RegolithStore::in_memory().unwrap()).unwrap());
+        db.create_collection(collection()).await.unwrap();
+        db.create_index(
+            COLLECTION,
+            Some("by_count"),
+            vec![IndexedFieldDescription {
+                name: "count".to_string(),
+                descending: false,
+            }],
+            IndexKind::Ordered(OrderedIndexDescription { unique: true }),
+        )
+        .await
+        .unwrap();
+        let node = Node::on_db(db).await;
+        let a = node.create("a", 1).await;
+        node.create("b", 2).await;
+
+        let taken = node
+            .queries
+            .execute(QueryRequest::new(format!(
+                r#"mutation {{ update_Tallies(docID: "{a}", input: {{count: 1}}) {{ _docID }} }}"#
+            )))
+            .await;
+        assert!(!taken.errors.is_empty(), "2 is held by b");
+        node.increment(&a, 5).await;
+        assert_eq!(node.names("{count: {_eq: 6}}", "{count: ASC}").await, ["a"]);
+        assert!(node
+            .names("{count: {_eq: 1}}", "{count: ASC}")
+            .await
+            .is_empty());
+    })
+    .unwrap();
+}
+
+#[test]
+fn a_drain_does_not_abort_a_transaction_that_read_through_the_index() {
+    use db::txn::registry::DbTransactionRegistry;
+    use query::planner::index_selection::{IndexScanParams, IndexScanType};
+    use query::txn::TransactionRegistry;
+
+    workers::block_on(async {
+        let node = Node::open().await;
+        let a = node.create("a", 1).await;
+        let b = node.create("b", 7).await;
+        node.increment(&a, 4).await;
+        let registry = DbTransactionRegistry::new(Arc::clone(&node.db));
+        let handle = registry.begin(false).await.unwrap();
+        let found = crate::common::owned::in_txn(&registry, &handle, move |ctx| {
+            Box::pin(async move {
+                let at_five = IndexScanParams {
+                    index_name: "by_count".to_string(),
+                    scan_type: IndexScanType::ExactMatch {
+                        values: vec![NormalValue::Int(5)],
+                    },
+                    limit: None,
+                    offset: 0,
+                    value_filter: None,
+                    cursor_seek: None,
+                };
+                ctx.doc_fetcher()
+                    .get_by_index_scan(COLLECTION, &at_five)
+                    .await
+                    .unwrap()
+                    .doc_ids()
+                    .len()
+            })
+        })
+        .await;
+        assert_eq!(found, 1, "the owed document is found at its live value");
+
+        node.drain().await;
+        assert_eq!(node.stored_at(5).await, 1, "the drain moved the record");
+
+        let schema = node.db.require_collection(COLLECTION).unwrap().schema_arc();
+        crate::common::owned::in_txn(&registry, &handle, move |ctx| {
+            Box::pin(async move {
+                let mut doc = document::Document::new(schema);
+                doc.set_id(document::DocID::from_string(&b).unwrap());
+                doc.set("name", NormalValue::String("renamed".to_string()))
+                    .unwrap();
+                let mut changed = rapidhash::RapidHashSet::default();
+                changed.insert("name".to_string());
+                ctx.doc_mutator()
+                    .unwrap()
+                    .update(COLLECTION, doc, changed)
+                    .await
+                    .unwrap();
+            })
+        })
+        .await;
+        registry
+            .commit(&handle)
+            .await
+            .expect("the record the read used decides nothing, so the drain is no conflict");
+    })
+    .unwrap();
+}
+
+/// A lens that multiplies `count` by ten, and fails on the document named
+/// "poison" while `poison` is set.
+#[derive(Default)]
+struct TimesTen {
+    ids: regolith::sync::HopscotchMap<lens::TransformId, (), rapidhash::fast::RandomState>,
+    poison: Arc<std::sync::atomic::AtomicBool>,
+    failures: Arc<std::sync::atomic::AtomicUsize>,
+}
+
+#[async_trait::async_trait]
+impl lens::TransformStore for TimesTen {
+    fn new_isolated_store(&self) -> Arc<dyn lens::TransformStore> {
+        Arc::new(Self {
+            poison: Arc::clone(&self.poison),
+            failures: Arc::clone(&self.failures),
+            ..Self::default()
+        })
+    }
+
+    async fn add(&self, config: lens::LensConfig) -> lens::Result<lens::TransformId> {
+        let id = lens::TransformId::new(format!("times-ten-{}", config.lenses.len()));
+        self.ids.insert(id.clone(), ());
+        Ok(id)
+    }
+
+    async fn add_with_id(
+        &self,
+        id: lens::TransformId,
+        _config: lens::LensConfig,
+    ) -> lens::Result<()> {
+        self.ids.insert(id, ());
+        Ok(())
+    }
+
+    async fn list(&self) -> lens::Result<rapidhash::RapidHashMap<String, Vec<lens::LensModule>>> {
+        Ok(rapidhash::RapidHashMap::default())
+    }
+
+    fn transform(
+        &self,
+        id: &lens::TransformId,
+        docs: lens::LensDocStream,
+    ) -> lens::Result<lens::LensDocResultStream> {
+        use futures::StreamExt;
+        if !self.has_transform(id) {
+            return Err(lens::Error::TransformNotFound(id.to_string()));
+        }
+        let (poison, failures) = (Arc::clone(&self.poison), Arc::clone(&self.failures));
+        Ok(Box::pin(docs.map(move |mut doc| {
+            if poison.load(std::sync::atomic::Ordering::Relaxed)
+                && doc.get("name").and_then(serde_json::Value::as_str) == Some("poison")
+            {
+                failures.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                return Err(lens::Error::WasmExecution("poisoned".to_string()));
+            }
+            if let Some(count) = doc.get("count").and_then(serde_json::Value::as_i64) {
+                doc.insert("count".to_string(), serde_json::json!(count * 10));
+            }
+            Ok(doc)
+        })))
+    }
+
+    fn inverse(
+        &self,
+        id: &lens::TransformId,
+        docs: lens::LensDocStream,
+    ) -> lens::Result<lens::LensDocResultStream> {
+        self.transform(id, docs)
+    }
+
+    fn has_transform(&self, id: &lens::TransformId) -> bool {
+        self.ids.contains_key(id)
+    }
+
+    async fn remove(&self, id: &lens::TransformId) -> lens::Result<()> {
+        self.ids.remove(id);
+        Ok(())
+    }
+}
+
+/// Stores a document at the collection version `version`, owed to the index,
+/// as a peer's increment of a document no one migrated leaves it.
+async fn seed_owed_at(db: &Arc<DB<RegolithStore>>, version: &str, name: &str, count: i64) {
+    let collection = db.require_collection(COLLECTION).unwrap();
+    let manager = db::index::IndexManager::from_collection(
+        collection.resolved_root_id(),
+        collection.schema(),
+        &crdt::Crdts::default(),
+    )
+    .unwrap();
+    let mut doc = document::Document::new(collection.schema_arc());
+    doc.set_id(document::DocID::new_v0_from_seed(&format!("old-{name}")));
+    doc.set("name", NormalValue::String(name.to_string()))
+        .unwrap();
+    doc.set("count", NormalValue::Int(count)).unwrap();
+    doc.set_collection_version_id(version);
+    let txn = db.new_txn(false).await.unwrap();
+    let datastore = txn.datastore().unwrap();
+    let systemstore = txn.systemstore().unwrap();
+    let short_id = db::docid::map::next_doc_short_id(&systemstore)
+        .await
+        .unwrap();
+    db::docid::map::set_doc_id_mapping(
+        &systemstore,
+        collection.resolved_root_id(),
+        short_id,
+        &doc.id().unwrap().to_string(),
+    )
+    .await
+    .unwrap();
+    collection
+        .create_with_indexes(&datastore, &doc, short_id, &manager)
+        .await
+        .unwrap();
+    collection
+        .save_with_datastore(&datastore, &doc, short_id)
+        .await
+        .unwrap();
+    manager
+        .on_document_update(&datastore, &doc, &doc, short_id, collection.schema())
+        .await
+        .unwrap();
+    drop((datastore, systemstore));
+    txn.commit().await.unwrap();
+}
+
+#[test]
+fn a_drain_indexes_an_old_document_at_its_migrated_value() {
+    workers::block_on(async {
+        let mut raw = DB::new(RegolithStore::in_memory().unwrap()).unwrap();
+        raw.set_lens_store(Arc::new(TimesTen::default()));
+        let db = Arc::new(raw);
+        let node = Node::with(Arc::clone(&db), true).await;
+        let v1 = db
+            .require_collection(COLLECTION)
+            .unwrap()
+            .version_id()
+            .to_string();
+        db.patch_collection(
+            &defra_core::RequestContext::default(),
+            r#"[{"op":"add","path":"/Tallies/Fields/-","value":{"Name":"note","Kind":"String"}}]"#,
+            None,
+        )
+        .await
+        .unwrap();
+        let v2 = db
+            .require_collection(COLLECTION)
+            .unwrap()
+            .version_id()
+            .to_string();
+        db.set_migration(
+            lens::LensConfig::new(
+                &v1,
+                &v2,
+                lens::LensModule::from_bytes(b"\0asm\x01\0\0\0".to_vec()),
+            ),
+            None,
+        )
+        .await
+        .unwrap();
+        seed_owed_at(&db, &v1, "a", 1).await;
+
+        assert_eq!(
+            node.names("{count: {_eq: 10}}", "{count: ASC}").await,
+            ["a"],
+            "a read checks the owed document at its migrated value"
+        );
+        node.drain().await;
+        assert_eq!(
+            (node.stored_at(1).await, node.stored_at(10).await),
+            (0, 1),
+            "the drain indexes the value backfill would"
+        );
+    })
+    .unwrap();
+}
+
+/// A node whose collection moved to a second version through [`TimesTen`],
+/// with that lens store, whose switch poisons the migration.
+async fn migrated(options: db::DbOptions) -> (Node, String, Arc<TimesTen>) {
+    let lenses = Arc::new(TimesTen::default());
+    let mut raw = DB::with_options(RegolithStore::in_memory().unwrap(), options).unwrap();
+    raw.set_lens_store(Arc::clone(&lenses) as Arc<dyn lens::TransformStore>);
+    let db = Arc::new(raw);
+    let node = Node::with(Arc::clone(&db), true).await;
+    let v1 = db
+        .require_collection(COLLECTION)
+        .unwrap()
+        .version_id()
+        .to_string();
+    db.patch_collection(
+        &defra_core::RequestContext::default(),
+        r#"[{"op":"add","path":"/Tallies/Fields/-","value":{"Name":"note","Kind":"String"}}]"#,
+        None,
+    )
+    .await
+    .unwrap();
+    let v2 = db
+        .require_collection(COLLECTION)
+        .unwrap()
+        .version_id()
+        .to_string();
+    db.set_migration(
+        lens::LensConfig::new(
+            &v1,
+            &v2,
+            lens::LensModule::from_bytes(b"\0asm\x01\0\0\0".to_vec()),
+        ),
+        None,
+    )
+    .await
+    .unwrap();
+    (node, v1, lenses)
+}
+
+impl Node {
+    /// Waits until one stored entry holds `value`.
+    async fn settled_at(&self, value: i64) {
+        let start = std::time::Instant::now();
+        while self.stored_at(value).await != 1 {
+            assert!(
+                start.elapsed() < std::time::Duration::from_secs(10),
+                "the write at {value} drained"
+            );
+            workers::sleep(std::time::Duration::from_millis(20))
+                .unwrap()
+                .await;
+        }
+    }
+
+    /// How many entries the index's log holds.
+    async fn owed_entries(&self) -> usize {
+        let short_id = self
+            .db
+            .require_collection(COLLECTION)
+            .unwrap()
+            .schema()
+            .resolved_root_id();
+        let log = storage::keys::index_pending_log(short_id, self.index_id);
+        count_keys(&self.db, log.entry_prefix().to_vec()).await
+    }
+}
+
+/// A document whose migration fails stays owed at the log's tail, and the
+/// documents planned with it drain. Once it migrates, it drains too.
+#[test]
+fn a_document_that_fails_to_migrate_does_not_hold_back_the_others() {
+    workers::block_on(async {
+        let (node, v1, lenses) = migrated(db::DbOptions::default()).await;
+        let poison = &lenses.poison;
+        seed_owed_at(&node.db, &v1, "poison", 1).await;
+        seed_owed_at(&node.db, &v1, "a", 2).await;
+        let b = node.create("b", 3).await;
+        node.increment(&b, 4).await;
+        poison.store(true, std::sync::atomic::Ordering::Relaxed);
+
+        let error = node
+            .db
+            .drain_deferred_indexes()
+            .await
+            .unwrap_err()
+            .to_string();
+
+        let poisoned = document::DocID::new_v0_from_seed("old-poison").to_string();
+        assert!(error.contains(&poisoned), "{error}");
+        assert_eq!(
+            (node.stored_at(2).await, node.stored_at(20).await),
+            (0, 1),
+            "the old document planned with it drained"
+        );
+        assert_eq!((node.stored_at(3).await, node.stored_at(7).await), (0, 1));
+        assert_eq!(node.stored_at(1).await, 1, "its stale entry stays");
+        assert_eq!(node.owed_entries().await, 1, "only it is owed");
+
+        assert!(node.db.drain_deferred_indexes().await.is_err());
+        assert_eq!(node.owed_entries().await, 1, "a retry keeps it owed once");
+
+        poison.store(false, std::sync::atomic::Ordering::Relaxed);
+        node.drain().await;
+        assert_eq!((node.stored_at(1).await, node.stored_at(10).await), (0, 1));
+        assert_eq!(node.owed_entries().await, 0);
+        assert_eq!(
+            node.names("{count: {_gt: 0}}", "{count: ASC}").await,
+            ["b", "poison", "a"]
+        );
+    })
+    .unwrap();
+}
+
+/// The drain task keeps draining the writes it is asked for while a document
+/// fails to migrate, and leaves that document to the sweep.
+#[test]
+fn the_task_leaves_a_document_that_fails_to_migrate_to_the_sweep() {
+    super::deferred_task::on_pool(|| async {
+        let options = db::DbOptions::default()
+            .with_pool(crate::common::worker_io::pool().clone())
+            .with_deferred_index_sweep(std::time::Duration::from_secs(3600));
+        let (node, v1, lenses) = migrated(options).await;
+        lenses
+            .poison
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+        seed_owed_at(&node.db, &v1, "poison", 1).await;
+        let b = node.create("b", 3).await;
+        let task = Arc::clone(&node.db).start_deferred_index_task();
+        node.increment(&b, 4).await;
+        node.settled_at(7).await;
+        let tried = lenses.failures.load(std::sync::atomic::Ordering::Relaxed);
+        assert!(tried > 0, "the settle at start tried it");
+        node.increment(&b, 1).await;
+        node.settled_at(8).await;
+
+        assert_eq!(
+            lenses.failures.load(std::sync::atomic::Ordering::Relaxed),
+            tried,
+            "a request does not try it again"
+        );
+        assert_eq!((node.stored_at(1).await, node.owed_entries().await), (1, 1));
+        task.abort();
+    });
+}
+
+/// A document that fails to migrate and is then deleted drains its removal.
+#[test]
+fn a_document_that_fails_to_migrate_drains_once_deleted() {
+    workers::block_on(async {
+        let (node, v1, lenses) = migrated(db::DbOptions::default()).await;
+        let poison = &lenses.poison;
+        seed_owed_at(&node.db, &v1, "poison", 1).await;
+        poison.store(true, std::sync::atomic::Ordering::Relaxed);
+        assert!(node.db.drain_deferred_indexes().await.is_err());
+
+        // As a peer's delete lands, with no migration on its way.
+        AutoCommitMutator::new(Arc::clone(&node.db))
+            .delete(COLLECTION, &document::DocID::new_v0_from_seed("old-poison"))
+            .await
+            .unwrap();
+        node.drain().await;
+
+        assert_eq!(node.stored_at(1).await, 0);
+        assert_eq!(node.owed_entries().await, 0);
+    })
+    .unwrap();
+}
+
+/// A backfill that writes an old document back at its migrated value owes
+/// the counter index, and asks for the drain itself.
+#[test]
+fn a_backfill_write_back_is_drained_with_no_call_to_drain() {
+    super::deferred_task::on_pool(|| async {
+        let options = db::DbOptions::default()
+            .with_pool(crate::common::worker_io::pool().clone())
+            .with_deferred_index_sweep(std::time::Duration::from_secs(3600));
+        let mut raw = DB::with_options(RegolithStore::in_memory().unwrap(), options).unwrap();
+        raw.set_lens_store(Arc::new(TimesTen::default()));
+        let db = Arc::new(raw);
+        let node = Node::with(Arc::clone(&db), true).await;
+        let v1 = db
+            .require_collection(COLLECTION)
+            .unwrap()
+            .version_id()
+            .to_string();
+        db.patch_collection(
+            &defra_core::RequestContext::default(),
+            r#"[{"op":"add","path":"/Tallies/Fields/-","value":{"Name":"note","Kind":"String"}}]"#,
+            None,
+        )
+        .await
+        .unwrap();
+        let v2 = db
+            .require_collection(COLLECTION)
+            .unwrap()
+            .version_id()
+            .to_string();
+        db.set_migration(
+            lens::LensConfig::new(
+                &v1,
+                &v2,
+                lens::LensModule::from_bytes(b"\0asm\x01\0\0\0".to_vec()),
+            ),
+            None,
+        )
+        .await
+        .unwrap();
+        let task = Arc::clone(&db).start_deferred_index_task();
+        // Past the settle at start, so only a request drains what follows.
+        workers::sleep(std::time::Duration::from_millis(300))
+            .unwrap()
+            .await;
+        seed_owed_at(&db, &v1, "a", 1).await;
+        assert_eq!(node.stored_at(1).await, 1);
+
+        db.create_index(
+            COLLECTION,
+            Some("by_name"),
+            vec![IndexedFieldDescription {
+                name: "name".to_string(),
+                descending: false,
+            }],
+            IndexKind::Ordered(OrderedIndexDescription { unique: false }),
+        )
+        .await
+        .unwrap();
+
+        let start = std::time::Instant::now();
+        while (node.stored_at(1).await, node.stored_at(10).await) != (0, 1) {
+            assert!(
+                start.elapsed() < std::time::Duration::from_secs(10),
+                "the write-back asked for the drain"
+            );
+            workers::sleep(std::time::Duration::from_millis(20))
+                .unwrap()
+                .await;
+        }
+        task.abort();
+    });
+}
+
+#[test]
+fn a_truncate_leaves_no_record_and_no_log() {
+    workers::block_on(async {
+        let node = Node::open().await;
+        let a = node.create("a", 1).await;
+        node.create("b", 2).await;
+        node.increment(&a, 4).await;
+        let short_id = node
+            .db
+            .require_collection(COLLECTION)
+            .unwrap()
+            .schema()
+            .resolved_root_id();
+        let records = storage::keys::index_position_prefix(short_id, node.index_id);
+        let log = storage::keys::index_pending_log(short_id, node.index_id);
+        assert_eq!(count_keys(&node.db, records.clone()).await, 2);
+        assert_eq!(count_keys(&node.db, log.entry_prefix().to_vec()).await, 1);
+
+        node.db
+            .truncate_collection_as(&defra_core::RequestContext::ambient(), COLLECTION, None)
+            .await
+            .unwrap();
+
+        assert_eq!(count_keys(&node.db, records).await, 0);
+        assert_eq!(count_keys(&node.db, log.entry_prefix().to_vec()).await, 0);
+        let c = node.create("c", 3).await;
+        node.increment(&c, 2).await;
+        assert_eq!(node.names("{count: {_eq: 5}}", "{count: ASC}").await, ["c"]);
+        node.drain().await;
+        assert_eq!((node.stored_at(3).await, node.stored_at(5).await), (0, 1));
+        assert_eq!(node.names("{count: {_gt: 0}}", "{count: ASC}").await, ["c"]);
+    })
+    .unwrap();
+}

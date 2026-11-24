@@ -1,0 +1,55 @@
+name: Queue failure labels
+
+# A merge-queue run that fails ejects its pull request. This labels the pull
+# request with the ci:* label of every failed job, so its next push runs those
+# jobs on the pull request instead of waiting for the queue to find them again.
+# A label added with GITHUB_TOKEN starts no workflow, so nothing runs until then.
+on:
+  workflow_run:
+    workflows: [CI, CI (macOS)]
+    types: [completed]
+
+permissions:
+  actions: read
+  issues: write
+  pull-requests: write
+
+jobs:
+  label:
+    name: Label the ejected pull request
+    if: github.event.workflow_run.event == 'merge_group' && github.event.workflow_run.conclusion == 'failure'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/github-script@v9
+        with:
+          script: |
+            const run = context.payload.workflow_run;
+            // The queue branch is gh-readonly-queue/main/pr-<number>-<base sha>.
+            const issue_number = Number(/\/pr-(\d+)-/.exec(run.head_branch)[1]);
+            const jobs = await github.paginate(github.rest.actions.listJobsForWorkflowRunAttempt, {
+              ...context.repo, run_id: run.id, attempt_number: run.run_attempt,
+            });
+            // Jobs a pull request already runs (lint, unit tests, in-process
+            // testo, the aggregate checks) map to nothing.
+            const rules = run.name === 'CI (macOS)'
+              ? [[/./, 'ci:macos']]
+              : [
+                  [/^Feature checks /, 'ci:feature-checks'],
+                  [/^Feature tests$/, 'ci:feature-tests'],
+                  [/^WASM Build Check$/, 'ci:wasm'],
+                  [/^Lean Conformance$/, 'ci:lean'],
+                  [/^Conformance/, 'ci:conformance'],
+                  [/^Integration \(/, 'ci:integration'],
+                  [/^P2P Integration \(Linux\)/, 'ci:p2p'],
+                  [/^(Conformance|P2P Integration \(Linux\)) \(/, 'ci:io-variants'],
+                  [/^Testo \(rust-http\)$/, 'ci:testo-rust-http'],
+                  [/^Testo \(go-http\)$/, 'ci:testo-go-http'],
+                  [/^Testo \(cli\)$/, 'ci:testo-cli'],
+                  [/^Legacy integration binaries$/, 'ci:testo-legacy'],
+                ];
+            const failed = jobs.filter((j) => j.conclusion === 'failure' || j.conclusion === 'timed_out');
+            const labels = [...new Set(failed.flatMap((j) => rules.filter(([re]) => re.test(j.name)).map(([, l]) => l)))];
+            core.info(`#${issue_number}: failed ${failed.map((j) => j.name).join(', ') || 'nothing'} -> ${labels.join(', ') || 'no label'}`);
+            if (labels.length) {
+              await github.rest.issues.addLabels({ ...context.repo, issue_number, labels });
+            }

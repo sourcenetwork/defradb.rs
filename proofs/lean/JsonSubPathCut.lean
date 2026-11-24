@@ -36,10 +36,10 @@ that run is the same (`newRun_eq_mainRun`).
 
 Rust anchors:
 - `Planner::relation_filter_paths` and `Planner::relation_prefix`
-  (`crates/query/src/planner/joins/relation_paths.rs`);
-- `validate_select` (`crates/query/src/runner/plan_validation.rs`), and the
+  (`crates/engine/query/src/planner/joins/relation_paths.rs`);
+- `validate_select` (`crates/engine/query/src/runner/plan_validation.rs`), and the
   same check in `Planner::apply_selection_relation_join`
-  (`crates/query/src/planner/joins/selection_join.rs`).
+  (`crates/engine/query/src/planner/joins/selection_join.rs`).
 -/
 
 namespace JsonSubPathCut

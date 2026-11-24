@@ -43,9 +43,6 @@ impl Op for WaitForSync {
     }
     fn run(&self, state: &State) -> Result<Value, Failure> {
         self.common.plain(Self::name())?;
-        if self.updated_fields {
-            return Err(Failure::unsupported("WaitForSync argument updatedFields"));
-        }
         let node = state.node(self.common.node())?;
         let events = node.events().map_err(Failure::unsupported)?;
         if let (Some(doc_id), Some(cid)) = (&self.doc_id, &self.cid) {
@@ -66,6 +63,9 @@ impl Op for WaitForSync {
         let cids = state
             .block_on(events.next_updates(&keys, UPDATE_EVENT))
             .map_err(Failure::operation)?;
+        if let (true, Some(cid)) = (self.updated_fields, cids.first()) {
+            return Ok(json!({ "cid": cid, "fieldCIDs": events.field_cids(cid) }));
+        }
         if self.doc_id.is_some() {
             return Ok(json!({ "cid": cids.first() }));
         }

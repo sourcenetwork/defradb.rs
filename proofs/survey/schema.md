@@ -1,4 +1,4 @@
-# Survey: crates/schema
+# Survey: crates/foundation/schema
 
 ## Purpose
 Schema definition types for DefraDB: `FieldKind`/`ScalarKind`/`CType` (numeric values

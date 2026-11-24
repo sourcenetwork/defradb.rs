@@ -35,7 +35,7 @@ the publish, is the TLA+ model `proofs/tla/PendingCache.tla`
 
 Rust anchors: `Segment::push`, `Segment::supersede`, `Copy::caught_up` and
 `Copy::for_each_latest_through`
-(`crates/db/src/index/vector/engine/diskann/pending_cache.rs`).
+(`crates/database/db/src/index/vector/engine/diskann/pending_cache.rs`).
 -/
 
 

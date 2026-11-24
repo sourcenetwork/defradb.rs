@@ -1,0 +1,176 @@
+[package]
+name = "cli"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[package.metadata.cargo-machete]
+ignored = ["bytes", "futures", "getrandom", "rand", "serde_bytes", "serde_ipld_dagcbor"]
+
+[lib]
+bench = false
+name = "cli"
+path = "src/lib.rs"
+
+[[bin]]
+name = "defradb"
+path = "src/main.rs"
+
+[dependencies]
+rapidhash.workspace = true
+# Internal crates
+acp = { path = "../../engine/acp" }
+bytes.workspace = true
+defra-core = { path = "../../foundation/defra-core" }
+storage = { path = "../../engine/storage" }
+blockstore = { path = "../../engine/blockstore" }
+crypto = { path = "../../foundation/crypto" }
+identity = { path = "../../building-blocks/identity" }
+kms = { path = "../../database/kms" }
+p2p = { path = "../../database/p2p", features = ["libp2p-transport"] }
+defra-p2p-adapter = { path = "../../surfaces/p2p-adapter", default-features = false, features = ["libp2p", "kms"] }
+defra-http = { path = "../../surfaces/http" }
+edge = { path = "../../foundation/edge" }
+# The worker pool the node's data path runs on.
+workers = { path = "../../foundation/workers" }
+query = { path = "../../engine/query" }
+replication-filter = { path = "../../database/replication-filter" }
+db = { path = "../../database/db" }
+schema = { path = "../../foundation/schema" }
+events = { path = "../../foundation/events" }
+lens = { path = "../../foundation/lens" }
+document = { path = "../../building-blocks/document" }
+keyring = { path = "../../foundation/keyring" }
+orbis = { path = "../../building-blocks/orbis", optional = true }
+vera = { path = "../../engine/vera", optional = true }
+vera-embedded = { path = "../../engine/vera-embedded", optional = true, features = ["node"] }
+defra-version = { path = "../../foundation/defra-version" }
+pg-compat = { path = "../../database/pg-compat", optional = true }
+telemetry = { path = "../../building-blocks/telemetry", default-features = false }
+
+# CLI
+clap = { version = "4.5", features = ["derive", "env"] }
+
+# Async runtime
+nuclei.workspace = true
+futures = { workspace = true }
+async-trait = { workspace = true }
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_yaml = "0.9"
+
+# Logging
+tracing = { workspace = true }
+
+rustls = { workspace = true, features = ["ring"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+tracing-chrome = { version = "0.7", optional = true }
+
+# Error handling
+thiserror = { workspace = true }
+regolith = { workspace = true }
+
+# File system
+dirs = "7.0"
+
+# Random number generation
+getrandom = "0.2"
+
+# Hex encoding/decoding
+hex = "0.4"
+
+# Zeroizing wrapper for the searchable-encryption key passed to db::merge
+zeroize = "1"
+
+# Base64 encoding/decoding (JWK export/import)
+base64 = { workspace = true }
+
+# IPLD
+serde_ipld_dagcbor = { workspace = true }
+serde_bytes = { workspace = true }
+
+# libp2p (for P2P keypair types)
+libp2p = { workspace = true }
+
+# HTTP client for CLI client commands
+# HTTP on nuclei sockets.
+net = { path = "../../building-blocks/net" }
+
+# URL parsing
+url = "2.5"
+
+# URL encoding for query parameters
+urlencoding = "2.1"
+
+[dependencies.iroh-net]
+package = "iroh"
+version = "1.0.0-rc.0"
+optional = true
+
+[dependencies.rand]
+version = "0.10"
+optional = true
+
+# The `defra` binary's process allocator (src/main.rs).
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+mimalloc.workspace = true
+
+# Raises the open-file soft limit at `start` (commands::start::fd_limit).
+[target.'cfg(unix)'.dependencies]
+rlimit = "0.11"
+
+# Reads `kern.maxfilesperproc`, the per-process ceiling `setrlimit` is
+# capped by on these systems (commands::start::fd_limit).
+[target.'cfg(any(target_os = "macos", target_os = "ios", target_os = "freebsd", target_os = "dragonfly"))'.dependencies]
+libc = "0.2"
+
+[features]
+default = []
+release-full = ["postgres", "vera", "orbis"]
+postgres = ["dep:pg-compat"]
+# Vera/vera.rs on-chain document ACP (`--document-acp-type vera|verars`).
+vera = ["dep:vera"]
+# Run a single-validator Vera node in the `defradb` process
+# (`--document-acp-type verars-embedded`). The Vera node builds a runtime of
+# its own; see AGENTS.md.
+embedded-vera = ["vera", "dep:vera-embedded"]
+sourcehub = ["vera"]
+# Orbis ring threshold signing (`--signer-type orbis`).
+orbis = ["dep:orbis"]
+iroh = ["p2p/iroh-transport", "p2p/kms", "defra-p2p-adapter/iroh", "defra-p2p-adapter/kms", "dep:iroh-net", "dep:rand"]
+# Host an iroh relay server (`net.iroh_relay_server`) alongside the endpoint.
+iroh-relay-server = ["iroh", "p2p/iroh-relay-server"]
+profiling = ["dep:tracing-chrome"]
+# Log the P2P delivery trace events proofs/tla/Trace_P2PDelivery.tla replays.
+model-trace = ["p2p/model-trace"]
+# OpenTelemetry OTLP exporter. Mirrors Go's `//go:build telemetry`: compile-time
+# opt-in. When built with this feature, runtime default is on (Go parity); use
+# `--no-telemetry` to disable at runtime.
+otel = ["telemetry/otlp"]
+
+[[test]]
+name = "embedded_vera"
+required-features = ["embedded-vera"]
+
+[[test]]
+name = "embedded_vera_config"
+required-features = ["embedded-vera"]
+
+[dev-dependencies]
+edge = { path = "../../foundation/edge", features = ["testing"] }
+axum.workspace = true
+tower = { workspace = true, features = ["util"] }
+defra-http = { path = "../../surfaces/http", features = ["test-utils"] }
+kovan-channel.workspace = true
+rcgen = "0.14"
+toml = "1.1"
+tempfile = "3.17"
+portpicker = "0.1"
+
+[lints]
+workspace = true

@@ -7,6 +7,10 @@ use serde_json::{json, Value};
 use testo::prelude::*;
 
 /// Lists the queued collection actions, or starts listening for their events, or waits for the list to fill.
+///
+/// `listen` is Go's `action.events.start`: it records the node's action
+/// events, which `Wait { expectedAction }` then reads. `expectedAction` is
+/// Go's `action.listAfterEventAsync`, which lists while an action runs.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ListActions {
@@ -37,7 +41,10 @@ impl Op for ListActions {
     }
 
     fn run(&self, state: &State) -> Result<Value, Failure> {
-        let identity = self.check_arguments()?;
+        let identity = self.common.client_identity(Self::name())?;
+        if let Some(staged) = self.staged(state) {
+            return staged;
+        }
         state
             .block_on(
                 state
@@ -50,23 +57,41 @@ impl Op for ListActions {
 }
 
 impl ListActions {
-    /// Fails on listening, which needs the node's action events.
-    fn check_arguments(&self) -> Result<Option<u64>, Failure> {
-        let identity = self.common.client_identity(Self::name())?;
-        match self.listen || self.after_action.is_some() {
-            true => Err(Failure::unsupported(format!(
-                "{} argument listen",
-                Self::name()
-            ))),
-            false => Ok(identity),
+    /// The staged forms' results; `None` for a plain listing.
+    ///
+    /// A list taken while an action runs is refused: the node can finish a
+    /// truncate or a view refresh before any list reads it, and nothing holds
+    /// an action in progress, so the result would depend on timing.
+    fn staged(&self, state: &State) -> Option<Result<Value, Failure>> {
+        if self.listen {
+            return Some(self.listen(state).map(|()| json!({})));
         }
+        if self.after_action.is_some() {
+            return Some(Err(Failure::unsupported(format!(
+                "{} argument expectedAction: nothing holds an action in progress for a list to see",
+                Self::name()
+            ))));
+        }
+        None
+    }
+
+    /// Go's `action.events.start`: record the node's action events from now.
+    fn listen(&self, state: &State) -> Result<(), Failure> {
+        state
+            .node(self.common.node())?
+            .listen_actions()
+            .map(drop)
+            .map_err(Failure::unsupported)
     }
 }
 
 impl HttpRun for ListActions {
     fn execute_http(&self, state: &mut State) {
         crate::scenario::execute_with(self, state, |action, state| {
-            let identity = action.check_arguments()?;
+            let identity = action.common.client_identity(Self::name())?;
+            if let Some(staged) = action.staged(state) {
+                return staged;
+            }
             state
                 .http_as(action.common.node(), identity, |client| async move {
                     client.action_list().await
@@ -80,7 +105,10 @@ impl HttpRun for ListActions {
 impl CliRun for ListActions {
     fn execute_cli(&self, state: &mut State) {
         crate::scenario::execute_with(self, state, |action, state| {
-            let identity = action.check_arguments()?;
+            let identity = action.common.client_identity(Self::name())?;
+            if let Some(staged) = action.staged(state) {
+                return staged;
+            }
             state
                 .defra_client_as(action.common.node(), None, identity, &["action", "list"])
                 .map(|actions| json!({ "actions": actions }))

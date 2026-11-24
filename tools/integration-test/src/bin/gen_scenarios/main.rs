@@ -17,6 +17,7 @@ mod go_source;
 mod lifecycle;
 mod literal;
 mod mantra;
+mod multiplier_excludes;
 mod names;
 mod not_applying;
 mod parallel;
@@ -33,7 +34,10 @@ use tree::Tree;
 
 /// Go test files that are ported by hand, with their own test file. They are
 /// not generated, but stay in the module tree.
-const HAND_PORTED: &[&str] = &["tests/integration/collection_version/similarity_test.go"];
+const HAND_PORTED: &[&str] = &[
+    "tests/integration/collection_version/similarity_test.go",
+    "tests/integration/net/simple/peer/subscribe/document/with_add_remove_test.go",
+];
 
 #[derive(Default)]
 struct Args {

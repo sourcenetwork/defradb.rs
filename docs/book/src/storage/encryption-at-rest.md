@@ -27,12 +27,12 @@ engine: with a random nonce per value, identical plaintexts differ in bytes, so 
 value-validated reads and content-addressed block identity all broke, and merge operators
 saw ciphertext, making counters and head sets impossible. That wrapper was deleted, and a
 one-time rewrite migrates old stores at open
-(`crates/storage/src/backends/regolith/rewrite/`).
+(`crates/engine/storage/src/backends/regolith/rewrite/`).
 
 ## Where keys come from
 
 defradb.rs implements regolith's `KeyProvider`
-([`crates/storage/src/backends/regolith/encryption.rs`](https://github.com/sourcenetwork/defradb.rs/blob/main/crates/storage/src/backends/regolith/encryption.rs)):
+([`crates/engine/storage/src/backends/regolith/encryption.rs`](https://github.com/sourcenetwork/defradb.rs/blob/main/crates/engine/storage/src/backends/regolith/encryption.rs)):
 
 - `current()` returns the active key id: the first 4 bytes of a domain-separated SHA-256
   of the key material.
@@ -45,7 +45,7 @@ under the current key, so rotation completes as data churns.
 
 Keys enter through the node builders (`with_at_rest_encryption_key`,
 `with_previous_at_rest_encryption_keys` on both the `defra-node` and `embedded`
-builders), and the CLI fetches them from the keyring (`crates/keyring`: file (JWE),
+builders), and the CLI fetches them from the keyring (`crates/foundation/keyring`: file (JWE),
 OS keyring, or systemd-creds backends; standard names `encryption-key` and
 `encryption-key-previous`).
 

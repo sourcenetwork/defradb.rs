@@ -1,0 +1,319 @@
+//! Lensed auto-committing document fetcher.
+//!
+//! This fetcher combines auto-commit transaction management with lens migrations.
+//! Registered lenses transform returned values; reads never persist those transformations.
+
+mod fetch;
+pub mod migration;
+mod migration_cache;
+mod scan;
+pub mod stream;
+mod vector;
+
+use bytes::Bytes;
+use std::sync::Arc;
+
+use async_trait::async_trait;
+use document::Document;
+use query::fetcher::CommitsQueryOptions;
+use query::planner::index_selection::IndexScanParams;
+use query::runner::{DocFetcher, FetchByIdsResult};
+use storage::corekv::Store;
+
+use crate::database::DB;
+
+use migration_cache::MigrationCache;
+
+/// Document fetcher that auto-commits and applies lens migrations.
+///
+/// Combines the auto-commit behavior of AutoCommitFetcher with lens
+/// migration support from LensedDocFetcher.
+pub struct LensedAutoCommitFetcher<S: Store> {
+    db: Arc<DB<S>>,
+    /// Migration contexts keyed by `"{collection_id}:{version_id}"`, as one
+    /// snapshot per committed migration-graph generation.
+    migration_cache: MigrationCache,
+}
+
+impl<S: Store> LensedAutoCommitFetcher<S> {
+    /// Create a new lensed auto-committing fetcher.
+    pub fn new(db: Arc<DB<S>>) -> Self {
+        Self {
+            db,
+            migration_cache: MigrationCache::default(),
+        }
+    }
+
+    /// Build a lightweight fetcher for use by a `DocStream` that outlives a
+    /// single `&self` call. `migration_cache` starts fresh rather than
+    /// shared: it is pure memoization (`load_migration_context` recomputes on
+    /// a miss), so a cold cache costs nothing correctness-wise.
+    pub(super) fn clone_for_stream(&self) -> Self {
+        Self {
+            db: self.db.clone(),
+            migration_cache: MigrationCache::default(),
+        }
+    }
+}
+
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+impl<S: Store + 'static> DocFetcher for LensedAutoCommitFetcher<S> {
+    async fn get_document_updates(
+        &self,
+        options: &query::fetcher::DocumentUpdateOptions,
+        reader: &query::fetcher::DocumentReader<'_>,
+    ) -> query::error::Result<query::fetcher::DocumentUpdatePage> {
+        let txn = self
+            .db
+            .new_txn(true)
+            .await
+            .map_err(|error| query::error::QueryError::execution(error.to_string()))?;
+        let result = crate::event::updates::read(Some(&self.db), &txn, options, reader)
+            .await
+            .map_err(crate::event::updates::query_error);
+        let _ = txn.discard();
+        result
+    }
+
+    async fn get_document_arrivals(
+        &self,
+        options: &query::fetcher::DocumentArrivalOptions,
+    ) -> query::error::Result<query::fetcher::DocumentArrivalPage> {
+        let txn = self
+            .db
+            .new_txn(true)
+            .await
+            .map_err(|e| query::error::QueryError::execution(e.to_string()))?;
+        let result = crate::event::arrivals::read(&txn, options)
+            .await
+            .map_err(|e| query::error::QueryError::execution(e.to_string()));
+        let _ = txn.discard();
+        result
+    }
+
+    async fn get_json_conflicts(
+        &self,
+        options: &query::fetcher::JsonConflictOptions,
+    ) -> query::error::Result<Vec<query::fetcher::JsonConflict>> {
+        let txn = self
+            .db
+            .new_txn(true)
+            .await
+            .map_err(|e| query::error::QueryError::execution(e.to_string()))?;
+        let result = crate::read::json_conflicts::read(&txn, options)
+            .await
+            .map_err(|e| query::error::QueryError::execution(e.to_string()));
+        let _ = txn.discard();
+        result
+    }
+
+    async fn get_all(&self, collection_name: &str) -> query::error::Result<Vec<Document>> {
+        self.get_all_impl(collection_name).await
+    }
+
+    async fn get_all_with_deleted(
+        &self,
+        collection_name: &str,
+        show_deleted: bool,
+    ) -> query::error::Result<Vec<(Document, bool)>> {
+        self.get_all_with_deleted_impl(collection_name, show_deleted)
+            .await
+    }
+
+    async fn stream_all_with_deleted(
+        &self,
+        collection_name: &str,
+        show_deleted: bool,
+    ) -> query::error::Result<Box<dyn query::doc_stream::DocStream>> {
+        self.stream_all_with_deleted_impl(collection_name, show_deleted)
+            .await
+    }
+
+    async fn stream_index_scan(
+        &self,
+        collection_name: &str,
+        params: &IndexScanParams,
+        show_deleted: bool,
+    ) -> query::error::Result<Option<Box<dyn query::doc_stream::DocStream>>> {
+        self.stream_index_scan_impl(collection_name, params, show_deleted)
+            .await
+    }
+
+    async fn stream_by_doc_short_ids(
+        &self,
+        collection_name: &str,
+        doc_short_ids: &[u64],
+        show_deleted: bool,
+    ) -> query::error::Result<Box<dyn query::doc_stream::DocStream>> {
+        self.stream_by_doc_short_ids_impl(collection_name, doc_short_ids, show_deleted)
+            .await
+    }
+
+    async fn get_by_ids(
+        &self,
+        collection_name: &str,
+        doc_ids: &[String],
+    ) -> query::error::Result<FetchByIdsResult> {
+        self.get_by_ids_impl(collection_name, doc_ids).await
+    }
+
+    async fn get_by_field_value(
+        &self,
+        collection_name: &str,
+        field_name: &str,
+        value: &str,
+    ) -> query::error::Result<Vec<Document>> {
+        self.get_by_field_value_impl(collection_name, field_name, value)
+            .await
+    }
+
+    async fn get_commits(
+        &self,
+        options: &CommitsQueryOptions,
+    ) -> query::error::Result<Vec<document::CommitRow>> {
+        self.get_commits_impl(options).await
+    }
+
+    async fn get_by_index_scan(
+        &self,
+        collection_name: &str,
+        params: &IndexScanParams,
+    ) -> query::error::Result<query::fetcher::IndexScanResult> {
+        self.get_by_index_scan_impl(collection_name, params).await
+    }
+
+    fn supports_index_queries(&self) -> bool {
+        true
+    }
+
+    async fn index_prefix_entries(
+        &self,
+        collection_name: &str,
+        index_name: &str,
+        prefix: &[document::NormalValue],
+    ) -> query::error::Result<Option<Vec<query::fetcher::IndexEntryValues>>> {
+        self.index_prefix_entries_impl(collection_name, index_name, prefix)
+            .await
+            .map(Some)
+    }
+
+    async fn estimate_index_scan(
+        &self,
+        collection_name: &str,
+        params: &IndexScanParams,
+        cap: u64,
+    ) -> query::error::Result<Option<u64>> {
+        self.estimate_index_scan_inner(collection_name, params, cap)
+            .await
+    }
+
+    async fn vector_search(
+        &self,
+        collection_name: &str,
+        index_id: u32,
+        query_vector: &[f64],
+        k: usize,
+        effort: Option<usize>,
+    ) -> query::error::Result<Vec<u64>> {
+        self.vector_search_impl(collection_name, index_id, query_vector, k, effort)
+            .await
+    }
+
+    fn supports_vector_search(&self) -> bool {
+        true
+    }
+
+    async fn get_document_at_cid(
+        &self,
+        cid: &str,
+        expected_doc_id: Option<&str>,
+        collection: &std::sync::Arc<schema::CollectionVersion>,
+        caller_identity: Option<&identity::Did>,
+    ) -> query::error::Result<Document> {
+        self.get_document_at_cid_impl(cid, expected_doc_id, collection, caller_identity)
+            .await
+    }
+
+    async fn get_documents_at_cid(
+        &self,
+        collection: &std::sync::Arc<schema::CollectionVersion>,
+        cid: &str,
+        expected_doc_id: Option<&str>,
+        caller_identity: Option<&identity::Did>,
+    ) -> query::error::Result<Vec<Document>> {
+        self.get_documents_at_cid_impl(collection, cid, expected_doc_id, caller_identity)
+            .await
+    }
+
+    async fn search_fulltext_scored(
+        &self,
+        collection_name: &str,
+        field_name: &str,
+        query: &str,
+    ) -> query::error::Result<rapidhash::RapidHashMap<String, f64>> {
+        let collection = self
+            .db
+            .get_collection(collection_name)
+            .map_err(|e| query::error::QueryError::execution(format!("db error: {}", e)))?
+            .ok_or_else(|| query::error::QueryError::collection_not_found(collection_name))?;
+
+        let txn = self.db.new_txn(true).await.map_err(|e| {
+            query::error::QueryError::execution(format!("failed to create txn: {}", e))
+        })?;
+
+        let datastore = txn.datastore().map_err(|e| {
+            query::error::QueryError::execution(format!("failed to get datastore: {}", e))
+        })?;
+
+        let short_id = collection.resolved_root_id();
+        let index_manager = crate::index::IndexManager::from_indexes(
+            short_id,
+            collection.schema(),
+            collection.write_indexes(),
+            collection.crdts(),
+        )
+        .map_err(|e| {
+            query::error::QueryError::execution(format!("failed to create index manager: {}", e))
+        })?;
+
+        let idx_name = crate::index::fulltext_index_name(field_name);
+        let ft_index = index_manager
+            .get_index(&idx_name)
+            .and_then(|idx| idx.as_fulltext())
+            .ok_or_else(|| {
+                query::error::QueryError::execution(format!(
+                    "fulltext index for field '{}' not found on collection '{}'",
+                    field_name, collection_name
+                ))
+            })?;
+
+        let result = match ft_index.search_scored(&datastore, query).await {
+            Ok(scores) => match txn.systemstore() {
+                Ok(systemstore) => crate::docid::map::resolve_doc_id_scores(&systemstore, scores)
+                    .await
+                    .map_err(|e| {
+                        query::error::QueryError::execution(format!(
+                            "doc ID resolution error: {}",
+                            e
+                        ))
+                    }),
+                Err(e) => Err(query::error::QueryError::execution(format!(
+                    "failed to get systemstore: {}",
+                    e
+                ))),
+            },
+            Err(e) => Err(query::error::QueryError::execution(format!(
+                "fulltext search error: {}",
+                e
+            ))),
+        };
+
+        let _ = txn.discard();
+        result
+    }
+
+    async fn get_view_cache_items(&self, collection_id: u32) -> query::error::Result<Vec<Bytes>> {
+        self.get_view_cache_items_impl(collection_id).await
+    }
+}

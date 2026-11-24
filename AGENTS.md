@@ -2,7 +2,7 @@
 
 ## 0. The North Star: 1.0 Release
 
-**The Go compatibility baseline lives in `crates/defra-version/src/lib.rs`, not
+**The Go compatibility baseline lives in `crates/foundation/defra-version/src/lib.rs`, not
 here.** Three constants define it: `GO_COMPAT_BRANCH`, `GO_COMPAT_COMMIT`, and
 `GO_COMPAT_TAG`. An empty tag means CI builds the pinned commit from source
 instead of downloading a release binary. `.github/workflows/ci.yml` greps those
@@ -36,7 +36,7 @@ This codebase is designed for **AI-human pair programming**. Every structural ch
 | **Present** | What the code does now | Working tree |
 | **Future** | What we might do next | GitHub issues |
 
-**No commented-out code. No TODO comments (create issues instead). No speculative docs.**
+**No commented-out code. No TODO comments unless linked to a GitHub issue. No speculative docs.**
 
 ## 3. No Documentation Files
 
@@ -50,49 +50,65 @@ No `ROADMAP.md`, `DEVELOPMENT.md`, `docs/` directories, or planning documents.
 
 ### Crate Structure
 
+Crates are grouped by level (see `crates/README.md`). A crate may only depend
+on the crates below it: on any lower level, and on the crates listed after it in
+its own level.
+
 ```
 crates/
-├── acp/                # Access Control Policy
-├── bitswap/            # Bitswap block exchange, wire-compatible with Go
-├── chunk-split/        # @chunk splitter and the parent's chunk list
-├── blockstore/         # IPLD block storage
-├── cli/                # Command-line interface
-├── crdt/               # CRDT implementations
-├── crypto/             # Cryptographic operations
-├── cursor/             # Opaque cursor token codec for GraphQL pagination
-├── datastore/          # Data persistence abstractions
-├── db/                 # Database core, one module per execution role:
-│                       #   txn/ (the transaction seam), read/, write/,
-│                       #   collection/, block/, definition/, access/,
-│                       #   database/, docid/, downsample/, view/,
-│                       #   event/, error/, plus the folded former crates:
-│                       #   backup/, block/builder/, index/, merge/, nac/,
-│                       #   search/. src/ holds only lib.rs; every test
-│                       #   lives in db/tests/.
-├── defra-core/         # Core types and traits
-├── defra-node/         # The node assembly: NodeBuilder, libp2p/iroh, FFI base
-├── defra-version/      # Version metadata and Go compat tracking
-├── document/           # Document handling
-├── events/             # Pub/sub event bus (subscriptions)
-├── ffi/                # C-compatible FFI bindings
-├── http/               # HTTP API server
-├── identity/           # Identity and JWT management
-├── keyring/            # Key storage
-├── kms/                # DEK generation, wrapping, and distribution under NAC/DAC
-├── net/                # HTTP, TLS and gRPC on nuclei sockets: server loop, HTTP client, gRPC channel
-├── lens/               # Schema migration via WASM transforms
-├── orbis/              # Threshold BLS signing (Orbis ring client)
-├── p2p/                # P2P networking (libp2p + optional Iroh)
-├── p2p-adapter/        # The P2P operation surface every edge calls, and its adapters
-├── pg-compat/          # Postgres wire protocol compatibility
-├── query/              # Query engine (GraphQL, BM25)
-├── replication-filter/ # Query-filter-backed replication matcher
-├── schema/             # Schema validation
-├── vera/               # Vera on-chain ACP client (Cosmos/EVM)
-├── storage/            # Storage layer over regolith, the one engine
-├── telemetry/          # OpenTelemetry exporter setup
-├── wasm/               # Browser client (WebAssembly)
-└── zanzibar/           # Google Zanzibar permission engine
+├── entry-points/
+│   ├── ffi/                # C-compatible FFI bindings
+│   ├── cli/                # Command-line interface
+│   └── defra-node/         # The node assembly: NodeBuilder, libp2p/iroh, FFI base
+├── surfaces/
+│   ├── http/               # HTTP API server
+│   ├── wasm/               # Browser client (WebAssembly)
+│   └── p2p-adapter/        # The P2P operation surface every edge calls, and its adapters
+├── database/
+│   ├── db/                 # Database core, one module per execution role:
+│   │                       #   txn/ (the transaction seam), read/, write/,
+│   │                       #   collection/, block/, definition/, access/,
+│   │                       #   database/, docid/, downsample/, view/,
+│   │                       #   event/, error/, plus the folded former crates:
+│   │                       #   backup/, block/builder/, index/, merge/, nac/,
+│   │                       #   search/. src/ holds only lib.rs; every test
+│   │                       #   lives in db/tests/.
+│   ├── replication-filter/ # Query-filter-backed replication matcher
+│   ├── p2p/                # P2P networking (libp2p + optional Iroh)
+│   ├── kms/                # DEK generation, wrapping, and distribution under NAC/DAC
+│   └── pg-compat/          # Postgres wire protocol compatibility
+├── engine/
+│   ├── query/              # Query engine (GraphQL, BM25)
+│   ├── vera-embedded/      # Transports to a Vera node hosted in the same process
+│   ├── vera/               # Vera on-chain ACP client (Cosmos/EVM)
+│   ├── vera-delegation/    # Vera delegations and the policy commands they digest, without the provider
+│   ├── acp/                # Access Control Policy
+│   ├── datastore/          # Data persistence abstractions
+│   ├── blockstore/         # IPLD block storage
+│   └── storage/            # Storage layer over regolith, the one engine
+├── building-blocks/
+│   ├── crdt/               # CRDT implementations
+│   ├── inputs/             # Remote inputs: single-flight, batching, bounded cache, deadlines, retries
+│   ├── orbis/              # Threshold BLS signing (Orbis ring client)
+│   ├── telemetry/          # OpenTelemetry exporter setup
+│   ├── zanzibar/           # Google Zanzibar permission engine
+│   ├── document/           # Document handling
+│   ├── identity/           # Identity and JWT management
+│   ├── bitswap/            # Bitswap block exchange, wire-compatible with Go
+│   ├── net/                # HTTP, TLS and gRPC on nuclei sockets: server loop, HTTP client, gRPC channel
+│   └── chunk-split/        # @chunk splitter and the parent's chunk list
+└── foundation/
+    ├── edge/               # The network runtime behind a narrow handle
+    ├── events/             # Pub/sub event bus (subscriptions)
+    ├── schema/             # Schema validation
+    ├── crypto/             # Cryptographic operations
+    ├── defra-core/         # Core types and traits
+    ├── lens/               # Schema migration via WASM transforms
+    ├── workers/            # Thread-per-core worker pool
+    ├── keyring/            # Key storage
+    ├── cursor/             # Opaque cursor token codec for GraphQL pagination
+    ├── defra-version/      # Version metadata and Go compat tracking
+    └── prolly/             # History-independent prolly tree: build, insert/remove, diff
 
 tools/
 ├── apple/                  # Apple embedding: .xcframework build + Swift import smoke test
@@ -100,13 +116,14 @@ tools/
 ├── hf_embedding_server.py  # Local HuggingFace embedding server for embedding benchmarks
 ├── integration-test/       # Rust-native integration tests (primary validation)
 ├── lens-host/              # Standalone WASM Lens transform runner (JSON stdin → stdout)
+├── lenses/                 # WASM lens modules the integration tests load (own workspace, `just build-lenses`)
 ├── otel-smoke/             # OTLP exporter smoke tests against a Compose-run collector
 ├── pg-compat-harness/      # Drizzle ORM harness for the Postgres wire protocol
 └── vector-bench/           # Corpus, warm-up, memory-cap and usearch tools for vector_disk_cost
 ```
 
 Only `ffi-test`, `integration-test`, and `lens-host` are workspace members; the
-rest are scripts and non-Rust harnesses.
+rest are scripts, non-Rust harnesses, and `lenses`, a wasm32 workspace of its own.
 
 ### File Size Guidelines
 
@@ -128,9 +145,9 @@ rest are scripts and non-Rust harnesses.
 
 **Minimal comments. Code should be self-documenting.**
 
-✅ Comment: Non-obvious WHY, safety invariants, public API docs (`///`)
+✅ Comment: Non-obvious WHY, safety invariants, todos, public API docs (`///`)
 
-❌ Don't: What the code does, TODO/FIXME, commented-out code, change history
+❌ Don't: What the code does, commented-out code, change history
 
 ## 7. Git Worktree Workflow
 
@@ -230,17 +247,17 @@ Disjoint parts of one document never conflict. A read that validates more than i
 ### Execution boundaries to preserve
 
 - Preserve the embedded autocommit owner in
-  [`execute_autocommit_request`](crates/defra-node/src/lib.rs) and its signed
-  caller in [`signed_query`](crates/defra-node/src/signed_query/mod.rs).
+  [`execute_autocommit_request`](crates/entry-points/defra-node/src/lib.rs) and its signed
+  caller in [`signed_query`](crates/entry-points/defra-node/src/signed_query/mod.rs).
   `prepare_request` and `resolve_retry_input` run on the caller, outside database
   workers; `execute_prepared` routes the database attempt. Replacing this sequence
   with `PooledExecutor::execute` moves remote preparation onto a database worker.
-  The placement contract is in [`PooledExecutor`](crates/query/src/pooled/mod.rs);
+  The placement contract is in [`PooledExecutor`](crates/engine/query/src/pooled/mod.rs);
   the one-preparation/one-attempt regression is in
-  [`request_preparation_tests`](crates/defra-node/src/request_preparation_tests.rs).
+  [`request_preparation_tests`](crates/entry-points/defra-node/src/request_preparation_tests.rs).
 - Preserve the worker-local commit path in
-  [`WorkerIo`](crates/storage/src/backends/regolith/worker_io/mod.rs) and
-  [`RegolithTxn::commit`](crates/storage/src/backends/regolith/transaction.rs).
+  [`WorkerIo`](crates/engine/storage/src/backends/regolith/worker_io/mod.rs) and
+  [`RegolithTxn::commit`](crates/engine/storage/src/backends/regolith/transaction.rs).
   A cache-only transaction commits with `commit_nowait`; its I/O queue completes
   the ticket. Do not move commit validation to `Pool::spawn_blocking`, call
   blocking `Transaction::commit` on a database worker, or move the transaction to
@@ -329,6 +346,16 @@ that is correct but slower is not done.
   that binds its own tokio sockets and takes none of ours (iroh, libp2p's QUIC and DNS, the vera.rs clients) runs
   inside `edge::compat`, the one place that tokio runtime is entered. The edge's owner thread builds it, so its workers
   and the blocking threads they start later run on the whole edge CPU set, in the ledger; async-compat starts none.
+- One exception to "no other runtime is built": the embedded Vera node. With the `embedded-vera` feature of `defra-node`
+  or of `cli` (`defradb start --document-acp-type verars-embedded`) a single-validator Vera node runs in the process
+  on a runtime of its own, because Commonware 2026.10's runner always
+  builds its own tokio runtime and takes none from outside. The exception is bounded. `vera-embedded`'s `HostedNode` is
+  its only entry. It pins the node thread to the edge's CPUs (`Edge::pin_current_thread`) before that runtime is built,
+  so where a thread inherits its creator's CPUs, as on Linux, the node's workers, blocking threads, verification pool
+  and history store threads run on the edge cores, in the ledger, and share no core with a database worker; a refused
+  pin fails the start. Its worker and verification threads are capped at the edge's thread count, pinned or not, and
+  `HostedNode::threads` reports what it runs. Shutdown stops it with a deadline (`proofs/tla/EmbeddedVeraStop.tla`).
+  #2847 removes the exception by moving the node onto the edge runtime.
 - The data-path crates (storage, datastore, blockstore, crdt, defra-core, query, db, acp, zanzibar, lens, kms, events)
   do not depend on a runtime: no `nuclei::spawn`, `nuclei::time`, `block_on`, and no tokio at all.
 - A network task that panics fails only its own request. Every completion a worker waits on carries a deadline.
@@ -358,6 +385,15 @@ that is correct but slower is not done.
   error. The check path writes nothing. The policy snapshot is an `Atom`, swapped on load and reload.
 - Read-only queries decide ACP at the same snapshot as their rows. Remote ACP (Vera) stays at the network edge, with
   its staleness documented.
+
+### Requirements and tests
+
+- A change to what DefraDB does (a fix or a feature) starts in `reqs/`: the requirements it fulfils or adds say what
+  done means, error text included, before the code changes (`reqs/README.md`).
+- Every requirement a change adds or fulfils has a testo test under `tools/integration-test/tests/testo/` tagged with its
+  ID. Unit tests alone do not cover a behaviour change; a new integration test is always a testo test.
+- Exempt: refactors, speedups with identical results, CI, docs, proofs, and internal code no client can reach. A PR
+  that relies on the exemption says why.
 
 ### Proofs
 
@@ -415,8 +451,8 @@ that is correct but slower is not done.
 
 ## Build Dependencies
 
-- **Rust** (1.99+): `rustup`
-- **protoc**: `brew install protobuf` — required by `crates/orbis`, whose `build.rs` compiles `proto/orbis.proto` via `tonic-prost-build`
+- **Rust**: `rustup`, which installs the version pinned in `rust-toolchain.toml`. Bumping that pin is a deliberate change of its own, never automatic.
+- **protoc**: `brew install protobuf` — required by `crates/building-blocks/orbis`, whose `build.rs` compiles `proto/orbis.proto` via `tonic-prost-build`
 - **cbindgen**: `cargo install cbindgen` — generates C headers for FFI
 - **cargo-nextest**: `cargo install cargo-nextest --locked` — runs the tests; `.config/nextest.toml` builds the `defradb` binaries node tests launch once per run, then runs those tests in parallel
 - **Go** (1.26+): Required for FFI compatibility tests, and to build the pinned `GO_COMPAT_COMMIT`, which declares `go 1.26.10`
@@ -531,16 +567,15 @@ git log origin/develop --oneline --since="1 week ago"
 
 The Go repo has two remotes:
 - `origin` → `sourcenetwork/defradb` (upstream)
-- `fork` → `edjroz/defradb` (our fork; the rustffi client branches
-  `edjroz/ffi-rust-compat` and `jack/ffi-rust-compat` both live on `origin`)
+- `fork` → `edjroz/defradb` (our fork)
+
+The rustffi client `ffi-test` runs is the commit `GO_FFI_CLIENT_COMMIT` in
+`crates/foundation/defra-version/src/lib.rs` names on `origin`.
 
 `DEFRADB_GO_REPO` covers the shell commands above and `ffi-test`, which also
-accepts `--go-path <PATH>` to override it. Integration tests that consume Go
-build artifacts resolve them at compile time under
-`$HOME/go/src/github.com/sourcenetwork/defradb` — see `COPY_WASM_PATH` in
-`tools/integration-test/tests/legacy/p2p_iroh/sync/version.rs`. A checkout elsewhere
-needs a symlink at that path, or the `p2p_iroh` lens tests fail on a missing
-WASM binary.
+accepts `--go-path <PATH>` to override it. The WASM lens modules the
+integration tests load live in `tools/lenses`; `just build-lenses` builds them
+(`just integration` and `just integration-suite` do so first).
 
 ### Git Worktrees
 

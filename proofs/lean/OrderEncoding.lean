@@ -9,7 +9,7 @@ import OrderEncoding.InLookup
 # OrderEncoding_DESIGN — order-preserving key-encoding monotonicity (Lean slice)
 
 Mathlib-free Lean model of the **order-preserving value encoding** in
-`crates/storage/src/encoding/` (CockroachDB-style, used for DefraDB secondary-index
+`crates/engine/storage/src/encoding/` (CockroachDB-style, used for DefraDB secondary-index
 keys). This is the canonical Lean target named in `proofs/survey/storage.md` and the
 Coverage backlog row #1 in `proofs/README.md`:
 
@@ -52,7 +52,7 @@ This file proves three:
 ## Source anchors (Rust this worktree / Go `origin/develop`)
 
 Markers (`OrderEncoding.Markers`):
-* Rust `crates/storage/src/encoding/mod.rs:27-51` (`ENCODED_NULL=0 … FLOAT32_NAN_DESC=16`,
+* Rust `crates/engine/storage/src/encoding/mod.rs:27-51` (`ENCODED_NULL=0 … FLOAT32_NAN_DESC=16`,
   `INT_MIN=0x80`, `INT_ZERO=136`, `INT_MAX=0xfd`, `ENCODED_NULL_DESC=0xff`).
 * Go `internal/encoding/encoding.go` `iota` block + `IntMin/intZero/IntMax`
   (`git -C …/defradb show origin/develop:internal/encoding/encoding.go`). Byte-identical.
@@ -78,7 +78,7 @@ Bytes/string (`BytesEnc.encByte/encBytesBody`):
   `ascendingBytesEscapes`).
 
 Comparison substrate (`Bytes.Lex`): the `memcmp` order every backend uses on raw keys
-(e.g. `crates/storage/src/backends/memory` `BTreeMap<Vec<u8>, …>`).
+(e.g. `crates/engine/storage/src/backends/memory` `BTreeMap<Vec<u8>, …>`).
 
 ## Boundary / honest reach
 
@@ -239,5 +239,8 @@ from the byte-emitting definitions. -/
 #print axioms OrderEncoding.reversed_lookups_strictly_decreasing
 #print axioms OrderEncoding.mem_lookups
 #print axioms OrderEncoding.lookups_nodup
+#print axioms OrderEncoding.mem_written
+#print axioms OrderEncoding.written_sublist
+#print axioms OrderEncoding.written_nodup
 #print axioms OrderEncoding.neg_written_order_not_increasing
 #print axioms OrderEncoding.neg_keep_dup_not_increasing
