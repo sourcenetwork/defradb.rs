@@ -129,6 +129,7 @@ mod one_to_many {
     mod with_group_related_id_alias;
     mod with_id_field;
     mod with_limit;
+    mod with_limit_aggregate;
     mod with_max;
     mod with_min;
     mod with_order_filter;

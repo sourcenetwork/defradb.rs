@@ -32,6 +32,7 @@ section is the **diff**: what is proven vs. the accepted gap.
 | Storage failure classification | TLA+ / Lean | storage, db, query, http |
 | B3 filtered replication | TLA+ | p2p, db-merge |
 | Explicit transactions in the request context | TLA+ / Lean | client, db, query, http, ffi, wasm, defra-node |
+| Explicit transaction link reads | TLA+ / Lean | db, datastore, query |
 | Transactional document relationships | TLA+ / Lean | acp, query, http, defra-node |
 | Transactional node source grants | TLA+ / Lean | acp, query, http, defra-node |
 | Held-bounded node permission delegation | Lean | acp, db, defra-node |
