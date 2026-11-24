@@ -59,6 +59,9 @@ pub struct NodeSpec {
     pub signing: Option<crate::actions::shared::KeyType>,
     /// How long an idle explicit transaction lives and the sweep interval.
     pub txn_ttl: Option<(Duration, Duration)>,
+    /// How many times the node re-runs a transaction that lost a race, if
+    /// not the default.
+    pub max_txn_retries: Option<u32>,
     /// The node's own searchable-encryption key, as Go's harness gives each
     /// node one under `EnableSearchableEncryption`.
     pub se_key: Option<[u8; 32]>,
@@ -369,6 +372,9 @@ fn build(spec: &NodeSpec, listen: &str, http: Option<HttpConfig>) -> Result<Node
         builder = builder.with_http(config);
     } else if let Some((ttl, tick)) = spec.txn_ttl {
         builder = builder.with_transaction_idle_timeout(ttl, tick);
+    }
+    if let Some(retries) = spec.max_txn_retries {
+        builder = builder.with_max_txn_retries(retries);
     }
     if let Some(gate) = &spec.index_gate {
         builder = builder.with_index_build_gate(gate.clone());
