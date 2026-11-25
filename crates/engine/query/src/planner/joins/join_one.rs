@@ -51,7 +51,9 @@ impl Planner {
 
         let mut join_provides_ordering: Option<bool> = None;
         // The child scan orders by the first condition only, so later ones still need a sort.
+        // The selection's own order would also rank the index ahead of the parent's.
         let join_orders_parent = child.child_scan_orders_parent
+            && nested_select.order_by.is_none()
             && select
                 .order_by
                 .as_ref()

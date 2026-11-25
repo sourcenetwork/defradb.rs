@@ -39,16 +39,17 @@ The TLA model is grounded in ACP tuple storage and Vera cache behavior:
   write and delete tuples.
 - `crates/engine/acp/src/local.rs:390-439`: local P2P export/replace reconciles
   document-scoped relationships while preserving owner.
-- `crates/engine/vera/src/access_cache.rs:10-16`: positive access decisions are
-  cached by actor/policy/resource/doc/permission.
-- `crates/engine/vera/src/access_cache.rs:46-61`: cache hits return unexpired
-  allowed decisions.
-- `crates/engine/vera/src/access_cache.rs:85-95`: object invalidation clears cached
-  decisions for a document.
-- `crates/engine/vera/src/cosmos/dac.rs:186-223`: Vera ACP checks read from
-  cache first, then calls `verify_access`, and caches only successful results.
-- `crates/engine/vera/src/cosmos/dac.rs:250-307`: Vera relationship grant and
-  revoke invalidate cached access for the object.
+- `crates/engine/vera/src/access_cache.rs` `AccessCache`: positive access decisions
+  are cached by actor/policy/resource/doc/permission.
+- `crates/engine/vera/src/access_cache.rs` `AccessCache::get`: cache hits return
+  unexpired allowed decisions.
+- `crates/engine/vera/src/access_cache.rs` `AccessCache::invalidate_policy`:
+  invalidation clears the cached decisions of a policy, a check in flight included.
+- `crates/engine/vera/src/dac.rs` `VeraDocumentACP::check_doc_access`: Vera ACP checks
+  read from cache first, then call `verify_access`, and cache only successful results.
+- `crates/engine/vera/src/dac.rs` `VeraDocumentACP::add_relationship`,
+  `delete_relationship`: a relationship grant or revoke invalidates the cached access
+  of its policy.
 
 ## Brainstorming Outcome
 
@@ -107,9 +108,9 @@ Main theorems:
 - `Acp.check_deterministic` and `Acp.eval_terminates`: executable checks are
   deterministic and return a finite Boolean result for every budget.
 
-The existing lakefile only declares `lean_lib DefraConvergence`; it was not
-edited.  Integrator action: add `lean_lib Acp` if ACP should be included in
-`lake build`.
+The lakefile builds every top-level `.lean` file as a root of one library, so
+ACP is included automatically; no lakefile edit is needed (build with
+`lake build -R`).
 
 Lean command run:
 

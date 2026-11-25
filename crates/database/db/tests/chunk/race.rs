@@ -137,7 +137,7 @@ fn a_filtered_truncate_runs_a_page_again_after_a_concurrent_write() {
             serde_json::json!({"body": {"_like": "%first%"}}).into();
         // The page's last staged write, after the truncate's bookkeeping and
         // every read the page decides on.
-        armed.store(44, Ordering::SeqCst);
+        armed.store(41, Ordering::SeqCst);
         db.truncate_collection_as(
             &defra_core::RequestContext::ambient(),
             "Article",

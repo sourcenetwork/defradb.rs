@@ -3,7 +3,7 @@
 use document::{DocID, NormalValue};
 use storage::corekv::Store;
 
-use crate::chunk::list::distinct;
+use crate::chunk::hash::distinct;
 use crate::chunk::split::split;
 use crate::chunk::sync::ChunkCollection;
 use crate::database::DB;
