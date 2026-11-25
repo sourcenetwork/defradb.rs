@@ -66,7 +66,7 @@ A unique composite index allows several documents with null in either or both fi
 - **Parents:** ["go.index.query"]
 - **Scenarios:** ["index::composite_none::composite_index_with_none_on_second_field_uses_first_field", "index::composite_none::none_on_second_field_without_index_matches", "index::composite_none::composite_index_with_only_none_on_second_field_scans", "index::composite_none::only_none_without_index_matches"]
 
-A filter with `_eq` on the first field of a composite index and `_none` on its second (array) field uses the index to narrow by the first field, applies `_none` to the fetched documents, and returns the same documents as without the index (sourcenetwork/defradb#3401). `_none` on the second field alone does not use the index and still returns the right documents.
+A filter with `_eq` on the first field of a composite index and `_none` on its second (array) field uses the index to narrow by the first field, applies `_none` to the fetched documents, and returns the same documents as without the index (sourcenetwork/defradb#3401). `_none` on the second field alone does not use the index and still returns the right documents. The indexed `_eq` plus `_none`-on-a-later-field shape is also covered, without an unindexed twin, by `go.index.array.composite` (`index::array_composite::array_composite_index_with_filter_on_indexed_array_using_none_should_use_index`).
 
 # `go.index.query.combined`: Indexed and non-indexed conditions together
 
