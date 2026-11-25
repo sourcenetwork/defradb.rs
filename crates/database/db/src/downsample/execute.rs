@@ -653,7 +653,6 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use schema::{FieldDescription, FieldKind};
     use storage::RegolithStore;
 
     #[test]
@@ -662,50 +661,18 @@ mod tests {
             let db = Arc::new(crate::DB::new(RegolithStore::in_memory().unwrap()).unwrap());
             // Exercise persistence directly so background scheduling cannot hide a
             // stale processor behind a process-local series lock.
-            let target = CollectionVersion::new(
-                "Window",
-                "window-v1",
-                "window",
-                vec![
-                    FieldDescription::new(
-                        "1",
-                        "_docID",
-                        FieldKind::doc_id(),
-                        schema::CType::LwwRegister,
-                    ),
-                    FieldDescription::new(
-                        "2",
-                        "source_doc_id",
-                        FieldKind::string(),
-                        schema::CType::LwwRegister,
-                    ),
-                    FieldDescription::new(
-                        "3",
-                        "source_height",
-                        FieldKind::int(),
-                        schema::CType::LwwRegister,
-                    ),
-                    FieldDescription::new(
-                        "4",
-                        "window_start",
-                        FieldKind::datetime(),
-                        schema::CType::LwwRegister,
-                    ),
-                    FieldDescription::new(
-                        "5",
-                        "window_end",
-                        FieldKind::datetime(),
-                        schema::CType::LwwRegister,
-                    ),
-                    FieldDescription::new(
-                        "6",
-                        "count",
-                        FieldKind::int(),
-                        schema::CType::LwwRegister,
-                    ),
-                ],
-            );
-            db.create_collection(target).await.unwrap();
+            db.add_collection(
+                &defra_core::RequestContext::ambient(),
+                "type Window {
+                    source_doc_id: String
+                    source_height: Int
+                    window_start: DateTime
+                    window_end: DateTime
+                    count: Int
+                }",
+            )
+            .await
+            .unwrap();
             let target = db
                 .get_collection("Window")
                 .unwrap()

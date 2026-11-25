@@ -1,3 +1,4 @@
+use crate::common::schema::parsed;
 use db::DB;
 use db::{AutoCommitMutator, DbDocFetcher, DbDocMutator};
 use document::Document;
@@ -8,28 +9,13 @@ use query::planner::index_selection::{IndexScanParams, IndexScanType};
 use query::runner::DocFetcher;
 use rapidhash::RapidHashSet;
 use schema::CollectionVersion;
-use schema::FieldDescription;
-use schema::FieldKind;
-use schema::IndexDescription;
 use std::sync::Arc;
 use storage::RegolithStore;
 
+const PATCH_SDL: &str = "type Patch { left: Int right: Int }";
+
 fn test_collection() -> CollectionVersion {
-    CollectionVersion::new(
-        "Patch",
-        "v1",
-        "col-patch",
-        vec![
-            FieldDescription::new(
-                "1",
-                "_docID",
-                FieldKind::doc_id(),
-                schema::CType::LwwRegister,
-            ),
-            FieldDescription::new("2", "left", FieldKind::int(), schema::CType::LwwRegister),
-            FieldDescription::new("3", "right", FieldKind::int(), schema::CType::LwwRegister),
-        ],
-    )
+    parsed(PATCH_SDL)
 }
 
 /// A query plan materializes the document before entering the auto-commit
@@ -41,9 +27,9 @@ fn test_collection() -> CollectionVersion {
 fn stale_disjoint_field_update_without_precondition_preserves_committed_fields() {
     workers::block_on(async {
         let db = Arc::new(DB::new(RegolithStore::in_memory().unwrap()).expect("create db"));
-        db.create_collection(
-            test_collection()
-                .with_index(IndexDescription::new("by_left").with_field("left", false)),
+        db.add_collection(
+            &defra_core::RequestContext::ambient(),
+            r#"type Patch { left: Int @index(name: "by_left") right: Int }"#,
         )
         .await
         .expect("schema");
@@ -98,9 +84,9 @@ fn stale_disjoint_field_update_without_precondition_preserves_committed_fields()
 fn explicit_disjoint_field_updates_on_one_document_both_commit() {
     workers::block_on(async {
         let db = Arc::new(DB::new(RegolithStore::in_memory().unwrap()).expect("create db"));
-        db.create_collection(
-            test_collection()
-                .with_index(IndexDescription::new("by_left").with_field("left", false)),
+        db.add_collection(
+            &defra_core::RequestContext::ambient(),
+            r#"type Patch { left: Int @index(name: "by_left") right: Int }"#,
         )
         .await
         .expect("schema");
@@ -167,13 +153,7 @@ fn explicit_disjoint_field_updates_on_one_document_both_commit() {
 fn stale_update_uses_fresh_unmodified_composite_index_component() {
     workers::block_on(async {
         let db = Arc::new(DB::new(RegolithStore::in_memory().unwrap()).expect("create db"));
-        db.create_collection(
-            test_collection().with_index(
-                IndexDescription::new("by_left_right")
-                    .with_field("left", false)
-                    .with_field("right", false),
-            ),
-        )
+        db.add_collection(&defra_core::RequestContext::ambient(), r#"type Patch @index(name: "by_left_right", includes: [{field: "left"}, {field: "right"}]) { left: Int right: Int }"#)
         .await
         .expect("schema");
         let mutator = AutoCommitMutator::new(Arc::clone(&db));
@@ -241,9 +221,9 @@ fn stale_update_uses_fresh_unmodified_composite_index_component() {
 fn explicit_same_indexed_field_updates_conflict_on_the_old_index_entry() {
     workers::block_on(async {
         let db = Arc::new(DB::new(RegolithStore::in_memory().unwrap()).expect("create db"));
-        db.create_collection(
-            test_collection()
-                .with_index(IndexDescription::new("by_left").with_field("left", false)),
+        db.add_collection(
+            &defra_core::RequestContext::ambient(),
+            r#"type Patch { left: Int @index(name: "by_left") right: Int }"#,
         )
         .await
         .expect("schema");
@@ -296,7 +276,7 @@ fn explicit_same_indexed_field_updates_conflict_on_the_old_index_entry() {
 fn stale_conditional_update_returns_conflict() {
     workers::block_on(async {
         let db = Arc::new(DB::new(RegolithStore::in_memory().unwrap()).expect("create db"));
-        db.create_collection(test_collection())
+        db.add_collection(&defra_core::RequestContext::ambient(), PATCH_SDL)
             .await
             .expect("schema");
         let mutator = AutoCommitMutator::new(Arc::clone(&db));
@@ -358,7 +338,7 @@ fn stale_conditional_update_returns_conflict() {
 fn conditional_update_of_concurrently_deleted_document_returns_conflict() {
     workers::block_on(async {
         let db = Arc::new(DB::new(RegolithStore::in_memory().unwrap()).expect("create db"));
-        db.create_collection(test_collection())
+        db.add_collection(&defra_core::RequestContext::ambient(), PATCH_SDL)
             .await
             .expect("schema");
         let mutator = AutoCommitMutator::new(Arc::clone(&db));
@@ -463,7 +443,9 @@ fn update_reads_fresh_values_in_the_transaction_that_writes_them() {
             pending: AtomOption::none(),
         });
         let db = Arc::new(DB::open_from_arc(store.clone()).await.unwrap());
-        db.create_collection(test_collection()).await.unwrap();
+        db.add_collection(&defra_core::RequestContext::ambient(), PATCH_SDL)
+            .await
+            .unwrap();
         let mutator = AutoCommitMutator::new(db.clone());
         let created = mutator
             .create(

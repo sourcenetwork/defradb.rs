@@ -1,6 +1,7 @@
 //! Which merged blocks reach the update journal: a block that changed the
 //! document, once, however often it is delivered.
 
+use super::merge_handler_tests::{users_collection_id, users_version_id};
 use std::sync::Arc;
 
 use blockstore::Blockstore as _;
@@ -59,7 +60,7 @@ impl PeerUpdate {
         ciborium::into_writer(&NormalValue::String(name.into()), &mut value).unwrap();
         let delta = CrdtDelta::Lww(LwwDeltaPayload {
             field_name: "name".into(),
-            collection_version_id: "v1".into(),
+            collection_version_id: users_version_id().to_string(),
             priority,
             data: value,
         });
@@ -70,7 +71,7 @@ impl PeerUpdate {
             .await
             .unwrap();
         let payload = CompositeDeltaPayload {
-            collection_version_id: "v1".into(),
+            collection_version_id: users_version_id().to_string(),
             priority,
             status: 1,
         };
@@ -96,7 +97,7 @@ impl PeerUpdate {
     async fn merge(&self, handler: &Handler, doc_id: &str) {
         let metadata = BlockMetadata::normal(
             doc_id,
-            "col-users",
+            users_collection_id(),
             "did:key:z6MkrBatchMergeTest",
             None,
             false,
@@ -111,12 +112,12 @@ impl PeerUpdate {
 async fn document(handler: &Handler) -> (String, db::block::builder::BlockResult) {
     let collection = handler
         .db()
-        .find_collection_by_id("col-users")
+        .find_collection_by_id(users_collection_id())
         .unwrap()
         .unwrap();
     let mut doc = Document::new(collection.schema_arc());
     doc.set("name", "before").unwrap();
-    doc.set_collection_version_id("v1");
+    doc.set_collection_version_id(users_version_id());
     let (doc_id, _, created) = create_doc_locally(handler, &collection, &mut doc).await;
     (doc_id.to_string(), created)
 }
@@ -188,7 +189,7 @@ fn a_block_whose_field_was_merged_on_its_own_first_still_gets_its_row() {
                 &txn.headstore().unwrap(),
                 &update.field_cid,
                 &update.field,
-                Some("col-users"),
+                Some(users_collection_id()),
                 &id,
                 doc_short_id,
             )

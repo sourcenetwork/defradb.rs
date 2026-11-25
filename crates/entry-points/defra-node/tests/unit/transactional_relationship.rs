@@ -17,10 +17,17 @@ fn actor(did: &str) -> RequestContext {
 
 async fn fixture() -> (Node, String) {
     let node = Node::builder().build().await.unwrap();
-    let policy = node.add_dac_policy_as(&actor(OWNER), POLICY).await.unwrap();
-    node.add_collection(&format!(
-        "type Record @policy(id: \"{policy}\", resource: \"rows\") {{ pending: Boolean }}"
-    ))
+    let owner_context = actor(OWNER);
+    let policy = node
+        .add_dac_policy_as(&owner_context, POLICY)
+        .await
+        .unwrap();
+    node.add_collection(
+        &owner_context,
+        &format!(
+            "type Record @policy(id: \"{policy}\", resource: \"rows\") {{ pending: Boolean }}"
+        ),
+    )
     .await
     .unwrap();
     let result = node
@@ -251,9 +258,10 @@ fn revoking_node_relationship_authority_conflicts_with_pending_grant() {
 fn revoking_a_manager_conflicts_with_its_pending_relationship_grant() {
     workers::block_on(async {
         let node = Node::builder().build().await.unwrap();
-        let policy = node.add_dac_policy_as(&actor(OWNER),
+        let owner_context = actor(OWNER);
+        let policy = node.add_dac_policy_as(&owner_context,
             "name: Rows\nresources:\n  - name: rows\n    relations:\n      - name: reader\n      - name: manager\n        manages: [reader]\n    permissions:\n      - name: read\n        expr: reader\n      - name: update\n      - name: delete\n").await.unwrap();
-        node.add_collection(&format!("type Record @policy(id: \"{policy}\", resource: \"rows\") {{ pending: Boolean }}")).await.unwrap();
+        node.add_collection(&owner_context, &format!("type Record @policy(id: \"{policy}\", resource: \"rows\") {{ pending: Boolean }}")).await.unwrap();
         let result = node.execute_request(
             query::QueryRequest::new("mutation { add_Record(input: {pending: true}) { _docID } }")
                 .with_identity(Some(Did::new(OWNER).unwrap()))

@@ -1,40 +1,30 @@
+use crate::common::schema::parsed;
 use db::collection::retriever::*;
 use db::database::DB;
 use db::write::doc::DbDocMutator;
 use document::Document;
 use query::mutator::DocMutator;
 use schema::CollectionVersion;
-use schema::FieldDescription;
-use schema::FieldKind;
-use schema::PolicyDescription;
 use std::sync::Arc;
 use storage::RegolithStore;
 
+const TEST_COLLECTION_WITH_POLICY_SDL: &str =
+    r#"type TestDoc @policy(id: "policy-abc", resource: "users") { x: Int }"#;
+
 fn test_collection_with_policy() -> CollectionVersion {
-    CollectionVersion::new(
-        "TestDoc",
-        "v1",
-        "col-test-doc",
-        vec![
-            FieldDescription::new(
-                "1",
-                "_docID",
-                FieldKind::doc_id(),
-                schema::CType::LwwRegister,
-            ),
-            FieldDescription::new("2", "x", FieldKind::int(), schema::CType::LwwRegister),
-        ],
-    )
-    .with_policy(PolicyDescription::new("policy-abc", "users"))
+    parsed(TEST_COLLECTION_WITH_POLICY_SDL)
 }
 
 #[test]
 fn resolves_collection_for_known_doc() {
     workers::block_on(async {
         let db = Arc::new(DB::new(RegolithStore::in_memory().unwrap()).expect("create db"));
-        db.create_collection(test_collection_with_policy())
-            .await
-            .expect("create collection");
+        db.add_collection(
+            &defra_core::RequestContext::ambient(),
+            TEST_COLLECTION_WITH_POLICY_SDL,
+        )
+        .await
+        .expect("create collection");
 
         let txn = db.new_txn(false).await.expect("new_txn");
         let mutator = DbDocMutator::new(Arc::clone(&db), txn);

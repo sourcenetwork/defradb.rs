@@ -13,10 +13,9 @@ use db::merge::merge_handler::DbMergeHandler;
 use defra_core::block::{Block, DAGLink, Signature, SignatureHeader, SignatureType};
 use defra_core::merge::{MergeBlock, MergeOutcome};
 use document::{Document, NormalValue};
-use schema::{CollectionVersion, FieldDescription, FieldKind};
 use storage::RegolithStore;
 
-use super::replicated::{logs, merge, stored};
+use super::replicated::{log_collection_id, logs, merge, stored, LOG_SDL};
 
 /// `block` signed with `key`: its signature block stored in `blockstore`,
 /// its own bytes and CID.
@@ -45,8 +44,7 @@ async fn signed(
 #[mantra_macros::req_test("defra.orphan_gc.signature_merged")]
 fn a_merged_document_owns_its_signature_blocks_and_they_read_as_merged() {
     workers::block_on(async {
-        // The sender's Log has blockNumber; the receiver's, mid-upgrade, only address.
-        let sender_schema = logs("col-log");
+        let sender_schema = logs();
         let scratch = Arc::new(DefraBlockstore::new(
             Arc::new(RegolithStore::in_memory().unwrap()),
             false,
@@ -64,28 +62,11 @@ fn a_merged_document_owns_its_signature_blocks_and_they_read_as_merged() {
         .await
         .unwrap();
 
-        let receiver_schema = CollectionVersion::new(
-            "Log",
-            "v1",
-            "col-log",
-            vec![
-                FieldDescription::new(
-                    "1",
-                    "_docID",
-                    FieldKind::doc_id(),
-                    schema::CType::LwwRegister,
-                ),
-                FieldDescription::new(
-                    "2",
-                    "address",
-                    FieldKind::string(),
-                    schema::CType::LwwRegister,
-                ),
-            ],
-        );
         let store = Arc::new(RegolithStore::in_memory().unwrap());
         let db = Arc::new(DB::from_arc_with_options(store.clone(), DbOptions::new()).unwrap());
-        db.create_collection(receiver_schema).await.unwrap();
+        db.add_collection(&defra_core::RequestContext::ambient(), LOG_SDL)
+            .await
+            .unwrap();
         let received = Arc::new(DefraBlockstore::new(store, true));
         let handler = DbMergeHandler::new(db.clone(), received.clone());
 
@@ -123,7 +104,7 @@ fn a_merged_document_owns_its_signature_blocks_and_they_read_as_merged() {
             cid,
             block_data: bytes::Bytes::from(bytes),
             doc_id: doc_id.clone(),
-            collection_id: "col-log".to_string(),
+            collection_id: log_collection_id().to_string(),
             creator: "did:key:z6MkrSignatureTest".to_string(),
             sender_peer: Some("peer1".to_string()),
             is_explicit_replicator: false,
@@ -132,7 +113,7 @@ fn a_merged_document_owns_its_signature_blocks_and_they_read_as_merged() {
         };
         assert_eq!(merge(&handler, &block).await, MergeOutcome::Merged);
         assert!(
-            stored(&handler, "col-log", &doc_id).await,
+            stored(&handler, log_collection_id(), &doc_id).await,
             "stored under the sender's DocID"
         );
 

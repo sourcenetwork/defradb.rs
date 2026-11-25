@@ -32,8 +32,8 @@ use db::{DbDocMutator, DB};
 use document::{Document, NormalValue};
 use query::mutator::DocMutator;
 use schema::{
-    CollectionVersion, DistanceMetric, FieldDescription, FieldKind, IndexDescription,
-    IndexedFieldDescription, VectorAlgorithm, VectorIndexDescription,
+    CollectionVersion, DistanceMetric, IndexDescription, IndexedFieldDescription, VectorAlgorithm,
+    VectorIndexDescription,
 };
 use storage::corekv::{Error, Store};
 use storage::index::CollectionIndex;
@@ -239,28 +239,14 @@ async fn index_run(dimensions: usize, writers: u64, inserts: u64, straddle: bool
     .await
 }
 
-fn collection(dimensions: usize) -> CollectionVersion {
-    let mut version = CollectionVersion::new(
-        COLLECTION_NAME,
-        "bafkdiskannwrite",
-        "diskann-write",
-        vec![
-            FieldDescription::new(
-                "1",
-                "_docID",
-                FieldKind::doc_id(),
-                schema::CType::LwwRegister,
-            ),
-            FieldDescription::new(
-                "2",
-                "embedding",
-                FieldKind::float32_array(),
-                schema::CType::LwwRegister,
-            ),
-        ],
-    );
-    version.indexes = vec![description(dimensions)];
-    version
+/// `Embeddings`, with the DiskANN index of `dimensions` on `embedding` that
+/// [`description`] describes.
+fn collection_sdl(dimensions: usize) -> String {
+    format!(
+        r#"type {COLLECTION_NAME} {{
+            embedding: [Float32!] @index(name: "by_embedding", vector: {{dimensions: {dimensions}, diskann: {{metric: COSINE}}}})
+        }}"#
+    )
 }
 
 fn embedding(version: &Arc<CollectionVersion>, vector: Vec<f32>) -> Document {
@@ -274,7 +260,12 @@ fn embedding(version: &Arc<CollectionVersion>, vector: Vec<f32>) -> Document {
 async fn explicit_run(dimensions: usize, writers: u64, inserts: u64) -> Run {
     let dir = tempfile::tempdir().unwrap();
     let db = Arc::new(DB::new(RegolithStore::open(dir.path()).unwrap()).unwrap());
-    db.create_collection(collection(dimensions)).await.unwrap();
+    db.add_collection(
+        &defra_core::RequestContext::ambient(),
+        &collection_sdl(dimensions),
+    )
+    .await
+    .unwrap();
     let version = Arc::new(
         db.get_collection(COLLECTION_NAME)
             .unwrap()

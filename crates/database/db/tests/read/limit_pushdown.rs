@@ -13,7 +13,7 @@
 //! this boundary, and is not observed here.
 
 use crate::common::counting_store::CountingStore;
-use crate::common::schema::users_schema;
+use crate::common::schema::{users_schema, USERS_SDL};
 use db::AutoCommitMutator;
 use db::LensedAutoCommitFetcher;
 use db::DB;
@@ -30,7 +30,9 @@ const LIMIT: usize = 10;
 
 async fn seeded_db<S: Store + 'static>(store: S) -> Arc<DB<CountingStore<S>>> {
     let db = Arc::new(DB::new(CountingStore::new(store)).unwrap());
-    db.create_collection(users_schema()).await.unwrap();
+    db.add_collection(&defra_core::RequestContext::ambient(), USERS_SDL)
+        .await
+        .unwrap();
 
     let docs = (0..COLLECTION_SIZE)
         .map(|i| {

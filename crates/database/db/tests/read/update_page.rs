@@ -2,7 +2,7 @@
 //! scan, however many they are.
 
 use crate::common::counting_store::CountingStore;
-use crate::common::schema::users_schema;
+use crate::common::schema::{users_schema, USERS_SDL};
 use db::{AutoCommitMutator, LensedAutoCommitFetcher, DB};
 use document::Document;
 use query::{DocMutator, QueryExecutor, QueryRequest};
@@ -15,7 +15,9 @@ type Db = Arc<DB<CountingStore<RegolithStore>>>;
 
 async fn updated_document() -> Db {
     let db = Arc::new(DB::new(CountingStore::new(RegolithStore::in_memory().unwrap())).unwrap());
-    db.create_collection(users_schema()).await.unwrap();
+    db.add_collection(&defra_core::RequestContext::ambient(), USERS_SDL)
+        .await
+        .unwrap();
     let mutator = AutoCommitMutator::new(db.clone());
     let mut doc = Document::new(users_schema());
     doc.set("name", "initial").unwrap();

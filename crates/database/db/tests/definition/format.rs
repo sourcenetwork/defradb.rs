@@ -1,7 +1,8 @@
 //! Opening a store upgrades older secondary-index encodings.
 
+use crate::common::schema::parsed;
 use db::definition::migration::format::{CURRENT_INDEX_FORMAT, INDEX_FORMAT_KEY};
-use schema::{CollectionVersion, FieldDescription, FieldKind};
+use schema::CollectionVersion;
 use storage::RegolithStore;
 
 /// The marker byte every encoded time key starts with, per `encoding::mod`.
@@ -70,21 +71,10 @@ fn a_fresh_store_opens_clean() {
     .unwrap()
 }
 
+const SIMPLE_SDL: &str = "type Tallies { count: Int }";
+
 fn simple_schema() -> CollectionVersion {
-    CollectionVersion::new(
-        "Tallies",
-        "tallies-v1",
-        "tallies-collection",
-        vec![
-            FieldDescription::new(
-                "1",
-                "_docID",
-                FieldKind::doc_id(),
-                schema::CType::LwwRegister,
-            ),
-            FieldDescription::new("2", "count", FieldKind::int(), schema::CType::LwwRegister),
-        ],
-    )
+    parsed(SIMPLE_SDL)
 }
 
 /// Older and unstamped stores are rebuilt and stamped on open.
@@ -94,7 +84,9 @@ fn older_index_formats_are_upgraded() {
         for format in [None, Some(1u32), Some(2), Some(3)] {
             let store = RegolithStore::in_memory().unwrap();
             let db = db::DB::open(store.clone()).await.unwrap();
-            db.create_collection(simple_schema()).await.unwrap();
+            db.add_collection(&defra_core::RequestContext::ambient(), SIMPLE_SDL)
+                .await
+                .unwrap();
             let txn = db.new_txn(false).await.unwrap();
             let systemstore = txn.systemstore().unwrap();
             match format {
@@ -144,7 +136,7 @@ fn upgrade_rebuilds_entries_without_deleting_legacy_keys() {
     use db::AutoCommitMutator;
     use document::{Document, NormalValue};
     use query::DocMutator;
-    use schema::IndexDescription;
+
     use std::sync::Arc;
     use storage::corekv::{IterOptions, Iterator as _};
     use storage::keys::IndexDataStoreKey;
@@ -152,15 +144,18 @@ fn upgrade_rebuilds_entries_without_deleting_legacy_keys() {
     workers::block_on(async {
         let store = RegolithStore::in_memory().unwrap();
         let db = Arc::new(db::DB::open(store.clone()).await.unwrap());
-        let schema =
-            simple_schema().with_index(IndexDescription::new("counts").with_field("count", false));
-        db.create_collection(schema.clone()).await.unwrap();
+        db.add_collection(
+            &defra_core::RequestContext::ambient(),
+            r#"type Tallies { count: Int @index(name: "counts") }"#,
+        )
+        .await
+        .unwrap();
         let collection = db.require_collection("Tallies").unwrap();
         let prefix = IndexDataStoreKey::index_prefix(
             collection.resolved_root_id(),
             collection.schema().indexes[0].id,
         );
-        let mut doc = Document::new(schema);
+        let mut doc = Document::new(simple_schema());
         doc.set("count", NormalValue::Int(42)).unwrap();
         AutoCommitMutator::new(db.clone())
             .create("Tallies", doc)
@@ -186,8 +181,8 @@ fn upgrade_rebuilds_entries_without_deleting_legacy_keys() {
             .await
             .unwrap();
         let system = txn.systemstore().unwrap();
-        system.set(b"/reindex/owed/tallies-collection", br#"{"token":17,"migration_destination":null}"#).await.unwrap();
-        system.set(b"/reindex/progress/tallies-collection", br#"{"token":17,"stage":{"Walk":{"fence":null,"last":18446744073709551615}},"deferred":[]}"#).await.unwrap();
+        system.set(format!("/reindex/owed/{}", simple_schema().collection_id).as_bytes(), br#"{"token":17,"migration_destination":null}"#).await.unwrap();
+        system.set(format!("/reindex/progress/{}", simple_schema().collection_id).as_bytes(), br#"{"token":17,"stage":{"Walk":{"fence":null,"last":18446744073709551615}},"deferred":[]}"#).await.unwrap();
         drop(system);
         drop(data);
         txn.commit().await.unwrap();
@@ -218,7 +213,9 @@ fn a_collection_created_without_open_is_reopenable() {
     workers::block_on(async {
         let store = RegolithStore::in_memory().unwrap();
         let db = db::DB::new(store.clone()).expect("construct");
-        db.create_collection(simple_schema()).await.expect("schema");
+        db.add_collection(&defra_core::RequestContext::ambient(), SIMPLE_SDL)
+            .await
+            .expect("schema");
         drop(db);
 
         let db = db::DB::open(store).await.expect("reopen");

@@ -77,7 +77,7 @@ resources:
             }
         }
         let policy = node.add_dac_policy_as(&admin, POLICY).await.unwrap();
-        node.add_collection(&format!("type Replacement @policy(id: \"{policy}\", resource: \"records\") {{ session: String @immutable, agent: String @immutable, content: String }}\ntype Marker @policy(id: \"{policy}\", resource: \"records\") {{ name: String }}")).await.unwrap();
+        node.add_collection(&admin, &format!("type Replacement @policy(id: \"{policy}\", resource: \"records\") {{ session: String @immutable, agent: String @immutable, content: String }}\ntype Marker @policy(id: \"{policy}\", resource: \"records\") {{ name: String }}")).await.unwrap();
         let schema = node.get_collection("Replacement").unwrap().unwrap();
         let input = json!({"session":"session-doc", "agent":"agent-doc", "content":"approved"});
         let prepared = db::block::builder::ClientCreateSignatures::from_input(&storage::Crdts::default(), &schema, &input, &user_config).unwrap();
@@ -191,7 +191,7 @@ fn verified_update_and_delete_use_exact_actor_and_transaction_state() {
             node.add_nac_actor_relationship_as(&admin_context, permission.as_str(), &user_did).await.unwrap();
         }
         let policy = node.add_dac_policy_as(&admin_context, POLICY).await.unwrap();
-        node.add_collection(&format!("type VerifiedRecord @policy(id: \"{policy}\", resource: \"records\") {{ name: String }}\ntype VerifiedMarker @policy(id: \"{policy}\", resource: \"records\") {{ name: String }}")).await.unwrap();
+        node.add_collection(&admin_context, &format!("type VerifiedRecord @policy(id: \"{policy}\", resource: \"records\") {{ name: String }}\ntype VerifiedMarker @policy(id: \"{policy}\", resource: \"records\") {{ name: String }}")).await.unwrap();
         let schema = node.get_collection("VerifiedRecord").unwrap().unwrap();
         let crdts = storage::Crdts::default();
         let input = json!({"name":"before"});
@@ -314,7 +314,7 @@ fn signed_writes_are_refused_once_requests_have_drained() {
         let (agent, agent_config) = actor();
         let (user, signing) = actor();
         let node = Node::builder().enable_signing().build().await.unwrap();
-        node.add_collection("type DrainedRecord { name: String }").await.unwrap();
+        node.add_collection(&defra_core::RequestContext::ambient(), "type DrainedRecord { name: String }").await.unwrap();
         let schema = node.get_collection("DrainedRecord").unwrap().unwrap();
         let input = json!({"name":"late"});
         let crdts = storage::Crdts::default();
@@ -351,7 +351,7 @@ fn verified_create_allows_disabled_nac_and_unbound_collection() {
     edge::testing::edge().block_on(async {
         let (user, signing) = actor();
         let node = Node::builder().enable_signing().build().await.unwrap();
-        node.add_collection("type PlainVerifiedRecord { name: String }").await.unwrap();
+        node.add_collection(&defra_core::RequestContext::ambient(), "type PlainVerifiedRecord { name: String }").await.unwrap();
         let schema = node.get_collection("PlainVerifiedRecord").unwrap().unwrap();
         let input = json!({"name":"plain"});
         let crdts = storage::Crdts::default();
@@ -375,7 +375,7 @@ fn verified_create_on_an_identity_only_node_is_signed_by_its_caller() {
         let (user, signing) = actor();
         let user_did = user.did().unwrap().to_string();
         let node = Node::builder().enable_signing().with_identity_only().build().await.unwrap();
-        node.add_collection("type PlainVerifiedRecord { name: String }").await.unwrap();
+        node.add_collection(&defra_core::RequestContext::ambient(), "type PlainVerifiedRecord { name: String }").await.unwrap();
         let schema = node.get_collection("PlainVerifiedRecord").unwrap().unwrap();
         let input = json!({"name":"identity-only"});
         let crdts = storage::Crdts::default();

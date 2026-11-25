@@ -380,10 +380,7 @@ pub(super) mod tests {
     use document::{DocID, Document, FieldOp, NormalValue};
     use query::DocMutator;
     use rapidhash::{HashSetExt, RapidHashSet};
-    use schema::{
-        CType, CollectionVersion, FieldDescription, FieldKind, IndexKind, IndexedFieldDescription,
-        OrderedIndexDescription,
-    };
+    use schema::{IndexKind, IndexedFieldDescription, OrderedIndexDescription};
     use storage::RegolithStore;
 
     use super::*;
@@ -394,15 +391,10 @@ pub(super) mod tests {
 
     pub(crate) async fn indexed() -> (Arc<DB<RegolithStore>>, u32, u32) {
         let db = Arc::new(DB::new(RegolithStore::in_memory().unwrap()).unwrap());
-        db.create_collection(CollectionVersion::new(
-            NAME,
-            "v1",
-            "col-drain-tallies",
-            vec![
-                FieldDescription::new("1", "_docID", FieldKind::doc_id(), CType::LwwRegister),
-                FieldDescription::new("2", "count", FieldKind::int(), CType::PCounter),
-            ],
-        ))
+        db.add_collection(
+            &defra_core::RequestContext::ambient(),
+            r#"type Tallies { count: Int @crdt(type: "pcounter") }"#,
+        )
         .await
         .unwrap();
         let index = db
