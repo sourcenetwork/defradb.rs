@@ -61,7 +61,7 @@ const DHT_BOOTSTRAP_DEBOUNCE: Duration = Duration::from_millis(100);
 const DEFAULT_CONNECTION_MANAGER_GRACE_PERIOD: Duration = Duration::from_secs(20);
 
 /// Frequency for checking whether the active connection set should be pruned.
-const CONNECTION_PRUNE_INTERVAL: Duration = Duration::from_secs(5);
+pub const CONNECTION_PRUNE_INTERVAL: Duration = Duration::from_secs(5);
 
 /// Go ResourceManager minimum FD cap. See go-libp2p resource-manager defaults.
 const GO_RESOURCE_MANAGER_MIN_FD_LIMIT: u64 = 256;
