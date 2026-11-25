@@ -14,6 +14,8 @@ const GRACE_PERIOD_MS: u64 = 200;
 const READY_TIMEOUT: Duration = Duration::from_secs(30);
 const P2P_TIMEOUT: Duration = Duration::from_secs(15);
 const POLL_INTERVAL: Duration = Duration::from_millis(100);
+/// Three of the host's five-second prune ticks.
+const HOLD_OVER_HIGH_WATER: Duration = Duration::from_secs(15);
 
 struct RustNodeWithStartArgs {
     binary_path: PathBuf,
@@ -195,6 +197,69 @@ async fn rust_connection_manager_prunes_to_low_water() {
             "connection manager did not prune to low water",
         )
         .await;
+    })
+    .await;
+}
+
+/// #3357: a trim used to be undone about 500ms later, when Kademlia's
+/// automatic bootstrap redialed the peers it had just pruned, and the next
+/// pass trimmed the peers it had kept, which were redialed in turn. The flaps
+/// last milliseconds, too short for `active-peers` polls to see, so the test
+/// reads the target's own connection log: pushed over high water once and
+/// held for several prune intervals, the target connects to each peer once
+/// and disconnects only the two oldest, once.
+#[nuclei::test]
+#[mantra_macros::req_test("defra.net.peers.connection_manager_settles")]
+async fn rust_connection_manager_pruned_peers_stay_disconnected() {
+    edge::compat(async {
+        let (temp_dir, nodes) = start_pruning_cluster().await;
+        let clients = nodes.iter().map(client).collect::<Vec<_>>();
+        let target = &clients[0];
+        let target_addr = first_p2p_addr(target);
+        let peer_ids = clients[1..]
+            .iter()
+            .map(|peer| peer_id_from_addr(&first_p2p_addr(peer)))
+            .collect::<Vec<_>>();
+
+        for (peer_client, peer_id) in clients[1..].iter().zip(peer_ids.iter()) {
+            peer_client
+                .p2p_connect(&[&target_addr])
+                .expect("peer failed to connect to the target");
+            wait_for_active_peer(target, peer_id).await;
+            nuclei::time::sleep(Duration::from_millis(GRACE_PERIOD_MS + 75)).await;
+        }
+        poll_until(
+            || active_peer_ids(target).len() <= LOW_WATER as usize,
+            Duration::from_secs(10),
+            POLL_INTERVAL,
+            "connection manager did not prune to low water",
+        )
+        .await;
+        nuclei::time::sleep(HOLD_OVER_HIGH_WATER).await;
+
+        let log = std::fs::read_to_string(temp_dir.path().join("node-0/logs/stdout.log"))
+            .expect("read the target's log");
+        let count = |event: &str, peer_id: &str| {
+            log.matches(&format!(
+                "p2p::host::p2p_host::swarm: Peer {event} peer_id={peer_id}"
+            ))
+            .count()
+        };
+        for (index, peer_id) in peer_ids.iter().enumerate() {
+            assert_eq!(
+                count("connected", peer_id),
+                1,
+                "the target connected to peer {} again after the trim",
+                index + 1
+            );
+            let pruned = usize::from(index < 2);
+            assert_eq!(
+                count("disconnected", peer_id),
+                pruned,
+                "the trim must close only the two oldest peers, once (peer {})",
+                index + 1
+            );
+        }
     })
     .await;
 }

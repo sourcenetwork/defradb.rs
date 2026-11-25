@@ -4520,6 +4520,15 @@ pub const PROPERTIES: &[Property] = &[
         bound_by: "crates/database/p2p/tests/iroh/gossip_raw_origin.rs sealed_payload_opens_to_its_origin, a_truncated_seal_is_refused_not_passed_through, an_unsealed_cbor_payload_passes_through",
     },
     Property {
+        family: "Connection manager trims",
+        name: "INV_NoRedialOfPruned / INV_TrimsSpaced: neither end's Kademlia redials a peer inside the silence period of the trim that pruned it, and two trims are at least a silence period apart, as go-libp2p's connmgr",
+        axis: Tla,
+        anchor: "crates/database/p2p/src/host/p2p_host/connection_manager.rs prune_candidates, silenced; crates/database/p2p/src/behaviour/dual_kademlia.rs on_swarm_event, refuse_held_dial; crates/database/p2p/src/behaviour/redial_hold.rs hold, is_held",
+        model_ref: "MC_ConnmgrTrimSilence_{Green,Red_NoSilence,Red_NoHold}.cfg",
+        tiers: &[Boundary],
+        bound_by: "crates/database/p2p/src/host/p2p_host/connection_manager.rs no_trim_runs_during_the_silence_period, a_trim_that_closes_nothing_does_not_silence_the_next; crates/database/p2p/src/behaviour/redial_hold.rs a_hold_lasts_until_its_deadline, a_later_disconnect_restarts_the_hold",
+    },
+    Property {
         family: "ActivePeers listen addresses",
         name: "INV_ListenAddress / INV_NotHeldByLater / LIVE_Answered: ActivePeers never lists a peer that was waiting at the call at its source port while its Identify may still come, a peer that dials in after the call never holds it, and every call is answered",
         axis: Tla,

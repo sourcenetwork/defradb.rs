@@ -9,11 +9,14 @@ use libp2p::{
     identity::PublicKey,
     kad::{self, store::MemoryStore},
     swarm::{
-        ConnectionDenied, ConnectionId, FromSwarm, NetworkBehaviour, THandler, THandlerInEvent,
-        THandlerOutEvent, ToSwarm,
+        behaviour::DialFailure, ConnectionDenied, ConnectionId, DialError, FromSwarm,
+        NetworkBehaviour, THandler, THandlerInEvent, THandlerOutEvent, ToSwarm,
     },
     Multiaddr, PeerId, StreamProtocol,
 };
+
+use super::redial_hold::RedialHold;
+use crate::rt::time::Instant;
 
 /// Kademlia query parallelism. Matches Go's `dht.Concurrency(10)`
 /// (`go-p2p/host.go:44`). rust-libp2p defaults to `ALPHA_VALUE` = 3.
@@ -78,6 +81,7 @@ impl DefraKademliaEvent {
 pub struct DefraKademlia {
     network: KademliaNetwork,
     inner: kad::Behaviour<MemoryStore>,
+    redial_hold: RedialHold,
 }
 
 impl DefraKademlia {
@@ -103,9 +107,34 @@ impl DefraKademlia {
             KademliaNetwork::Wan => inner.set_mode(None),
         }
 
-        Self { network, inner }
+        Self {
+            network,
+            inner,
+            redial_hold: RedialHold::default(),
+        }
+    }
+
+    /// Tell Kademlia its dial to a held peer failed, without dialing.
+    ///
+    /// The query that wanted the peer moves on to the next one, as after any
+    /// refused dial; the peer stays in the routing table.
+    fn refuse_held_dial(&mut self, peer_id: PeerId, connection_id: ConnectionId) {
+        let error = DialError::Denied {
+            cause: ConnectionDenied::new(HeldRedial),
+        };
+        self.inner
+            .on_swarm_event(FromSwarm::DialFailure(DialFailure {
+                peer_id: Some(peer_id),
+                error: &error,
+                connection_id,
+            }));
     }
 }
+
+/// Why a Kademlia dial to a just-disconnected peer was not made.
+#[derive(Debug, thiserror::Error)]
+#[error("peer disconnected less than 10s ago; Kademlia redial held")]
+struct HeldRedial;
 
 // Deref is only for ergonomic access to kad methods; swarm dispatch uses the
 // explicit NetworkBehaviour impl below.
@@ -185,6 +214,11 @@ impl NetworkBehaviour for DefraKademlia {
     }
 
     fn on_swarm_event(&mut self, event: FromSwarm) {
+        if let FromSwarm::ConnectionClosed(closed) = &event {
+            if closed.remaining_established == 0 {
+                self.redial_hold.hold(closed.peer_id, Instant::now());
+            }
+        }
         self.inner.on_swarm_event(event);
     }
 
@@ -202,12 +236,23 @@ impl NetworkBehaviour for DefraKademlia {
         &mut self,
         cx: &mut Context<'_>,
     ) -> Poll<ToSwarm<Self::ToSwarm, THandlerInEvent<Self>>> {
-        self.inner.poll(cx).map(|event| {
-            event.map_out(|event| match self.network {
+        loop {
+            let event = match self.inner.poll(cx) {
+                Poll::Ready(ToSwarm::Dial { opts }) => match opts.get_peer_id() {
+                    Some(peer_id) if self.redial_hold.is_held(&peer_id, Instant::now()) => {
+                        self.refuse_held_dial(peer_id, opts.connection_id());
+                        continue;
+                    }
+                    _ => ToSwarm::Dial { opts },
+                },
+                Poll::Ready(event) => event,
+                Poll::Pending => return Poll::Pending,
+            };
+            return Poll::Ready(event.map_out(|event| match self.network {
                 KademliaNetwork::Lan => DefraKademliaEvent::Lan(event),
                 KademliaNetwork::Wan => DefraKademliaEvent::Wan(event),
-            })
-        })
+            }));
+        }
     }
 }
 
