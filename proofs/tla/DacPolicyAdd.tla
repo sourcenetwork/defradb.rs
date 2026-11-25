@@ -44,7 +44,7 @@
 \*                           the store
 \*   parse, build            check 5: the policy's shape and expressions
 \*   DacPolicies::keep       the local store, and guard 6 (policies.rs)
-\*   RemotePolicies::add_policy  the remote create (crates/engine/acp/src/policy_lookup.rs, Vera's impl in crates/engine/vera/src/cosmos/dac.rs)
+\*   RemotePolicies::add_policy  the remote create (crates/engine/acp/src/policy_lookup.rs, Vera's impl in crates/engine/vera/src/dac.rs)
 EXTENDS Naturals, Sequences   \* Seq and indexing, for the checks in Go's order
 
 CONSTANTS

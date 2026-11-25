@@ -23,149 +23,10 @@ are plumbing covered by integration tests / Go-FFI parity / unit tests. The poin
 section is the **diff**: what is proven vs. the accepted gap.
 
 ### Modeled families
-| Family | Tool | Crates it covers |
-|---|---|---|
-| Explicit embedded signing | TLA+ / Lean | defra-node, query, db |
-| Verified client graph transaction | TLA+ / Lean | defra-node, query, db, acp, vera |
-| HTTP client-signed create | TLA+ / Lean | http, query, db |
-| HTTP client-signed update | TLA+ / Lean | http, query, db |
-| HTTP client-signed conditional update | Lean | http, query |
-| SSE loss and error delivery | TLA+ / Lean | events, http, query, ffi |
-| Filter input validation | Lean | query |
-| Receipt-ordered event dispatch | TLA+ | storage, events, db |
-| Change delivery | TLA+ | events, db, db-merge, query, http |
-| Storage failure classification | TLA+ / Lean | storage, db, query, http |
-| B3 filtered replication | TLA+ | p2p, db-merge |
-| Explicit transactions in the request context | TLA+ / Lean | client, db, query, http, ffi, wasm, defra-node |
-| Explicit transaction link reads | TLA+ / Lean | db, datastore, query |
-| Transactional document relationships | TLA+ / Lean | acp, query, http, defra-node |
-| Transactional node source grants | TLA+ / Lean | acp, query, http, defra-node |
-| Held-bounded node permission delegation | Lean | acp, db, defra-node |
-| Schema-evolution operations in the core | TLA+ / Lean | client, db, lens, query, http, cli, ffi, defra-node |
-| DAG convergence (partition / eviction / restart) | TLA+ | p2p, db-merge, blockstore |
-| CRDT merge laws | Lean | crdt, defra-core |
-| Secondary index equal-key order | Lean | db, storage |
-| Replicator lifecycle (no-loss / resume) | TLA+ | p2p, db-merge, embedded |
-| Sync ownership transfer (head hint / receiver pull) | TLA+ / Lean | p2p, db-merge, storage, embedded, defra-node |
-| Pull sync (doc-sync / sync-branchable) | TLA+ | p2p |
-| Multi-instance claim | TLA+ | gents |
-| Block integrity / signatures | TLA+ | db-merge, defra-core, blockstore |
-| KMS key distribution | TLA+ / Lean | kms, db, db-merge |
-| Node identity and signing | Lean | defra-node, http |
-| Encrypted LWW restart/replay | TLA+ + existing LWW Lean law | kms, p2p, db-merge, crdt |
-| Management-channel auth (NAC gate) | TLA+ | http, db-nac, pg-compat |
-| ACP soundness + revocation + dual-path commits | TLA+ & Lean | acp, zanzibar, vera, query, db |
-| Storage transaction validation | TLA+ | storage |
-| P2P explicit-replay capability gate | TLA+ | p2p |
-| NAC lifecycle privilege-escalation | TLA+ | acp, db-nac |
-| Transaction & merge-queue concurrency | TLA+ | db, db-merge |
-| Document materialization status convergence | TLA+ & Lean | db-merge, crdt, db |
-| JWT issuer / algorithm binding | TLA+ | identity |
-| CID content-addressing determinism + Block canonicalization | Lean | defra-core |
-| Deferred-ACP overlay consistency | TLA+ | query |
-| ACP outbox and owed registrations | TLA+ & Lean | acp, db, query, defra-node, storage, vera (owed relationship changes specified before the code, #2954; owed counts in staged and settled parts, #3070; the drainer's in-flight mark, journal and batches, #3065) |
-| Order-preserving key encoding | Lean | storage |
-| vera.rs actor spelling | Lean | vera |
-| vera.rs policy creation | TLA+ | vera, vera-embedded |
-| Policy nonce text | Lean | acp |
-| vera.rs delegation signing | Lean | vera |
-| vera.rs delegation window | Lean | vera, acp |
-| vera.rs embedded transport | TLA+ / Lean | vera-embedded |
-| vera.rs deployment terms | Lean | vera |
-| vera.rs receipt wait | Boundary + Contract | over the loop's turns, the node's finalized height and the light client's verified height, with time counted only while the loop waits; that the node serves a receipt from the moment it publishes its block's header is vera.rs's property; unit tests in `crates/engine/vera/src/vera_rs/receipt_wait_tests.rs`, in-process node test `crates/engine/vera-embedded/tests/receipt_wait.rs`; the temporal side is `ReceiptWait.tla` |
-| DiskANN resident code table | Lean | db-index |
-| DiskANN walk cutoff | Lean | db-index (vector) |
-| PQ distance four sums | Lean | db-index (vector) |
-| Query fragment nesting bound | Lean | query |
-| Patch lens settlement | TLA+ | db |
-| Missing relation filters | TLA+ & Lean | query |
-| Float filter equality | TLA+ & Lean | query, storage |
-| Index-maintenance consistency | Lean + TLA+ | db-index, db-merge |
-| Concurrent collection-head transitions | TLA+ & Lean | db-block-builder, storage |
-| Commit-ordered document arrivals | TLA+ | db, storage (pinned regolith) |
-| Committed document update discovery | TLA+ & Lean | db, db-merge, query |
-| DiskANN pending cache | TLA+ & Lean | db-index (vector), storage |
-| DiskANN shared quantizer | TLA+ & Lean | db-index (vector), db-write |
-| RobustPrune blocked covered checks | Lean | db-index (vector), defra-core |
-| DiskANN back-edges in place | Lean | db-index (vector) |
-| Retry input and marker fencing | TLA+ & Lean | db, query, storage, p2p, p2p-adapter |
-| Collection schema-version OCC | TLA+ | db |
-| Schema publication completion | TLA+ / Lean | storage, db |
-| Peer connection observation | TLA+ / Lean | p2p |
-| Iroh peer identity cache | TLA+ / Lean | p2p |
-| HTTP router composition | TLA+ / Lean | http, defra-node |
-| Explicit transaction statement atomicity | TLA+ | query, db, storage |
-| One-to-many child paging | TLA+ | query; a child limit/offset applies per parent so a later parent keeps its page; `crates/engine/query/src/plan/type_join/type_join_many/children.rs` |
-| Engine ticker export | TLA+ & Lean | telemetry, storage |
-| Worker pool CPU ledger | TLA+ & Lean | workers |
-| Signing identity store | TLA+ & Lean | defra-core, defra-node, ffi |
-| Worker default pool | TLA+ & Lean | workers |
-| Node shutdown order | TLA+ / Lean | defra-node, embedded, edge, vera-embedded, acp, http, query, db, storage |
-| Inbound stream admission | TLA+, Lean | p2p |
-| Vector index link maintenance | TLA+ | storage, db-index |
-| Peer fetch stats | Lean | p2p |
-| DAG fetch provider ranking | TLA+, Lean | p2p |
-| DAG fetch arbitration (EWMA) | Lean | p2p |
-| Gossip connection ownership | TLA+, Lean | p2p |
-| Iroh service records | TLA+, Lean | p2p |
-| Iroh solicited replies | TLA+ | p2p |
-| Pubsub RPC reply addressing | TLA+, Lean | p2p |
-| Reply-driven DAG fetch | TLA+ | p2p |
-| Depth-cut DAG fetch | TLA+, Lean | p2p |
-| Have-set DAG fetch | TLA+, Lean | p2p |
-| Index drop during backfill | TLA+ | db-index |
-| Index build gate and close | TLA+ | db-index, db |
-| Purge by DocID | TLA+ | db |
-| Replication filter | TLA+ | db-merge |
-| Node startup | TLA+, Lean | defra-node, storage |
-| Text CRDT convergence | TLA+ & Lean | crdt, db-merge |
-| JSON CRDT per-path merge | TLA+ & Lean | crdt, db-merge (specified before the code, #2129) |
-| Custom CRDT types | TLA+ & Lean | crdt, schema, db-merge, p2p (#2183) |
-| Document write pipeline | TLA+ | db, db-block-builder |
-| Text chunking | TLA+ / Lean | chunk-split, schema, db, query |
-| Prolly tree catch-up | TLA+ / Lean | prolly (the p2p pull is not wired yet, #2977) |
-| Prolly tree node store and cache | TLA+ / Lean | prolly, storage |
-| Postgres wire connection loop | TLA+ | pg-compat |
-| HTTP client redirects and body deadline | Lean | net |
-| Connect fallback race | TLA+ | net |
-| ActivePeers listen addresses | TLA+ | p2p |
-| Coordinator shutdown drain | TLA+ | p2p, edge |
-| Edge completion | TLA+ | edge |
-| Edge gate continuation | TLA+ | edge, net (#2546) |
-| Iroh dial outcome | TLA+ | p2p, p2p-adapter |
-| Server drain | TLA+ | net, pg-compat, edge, http (#2779) |
-| Document topic ingress | TLA+ | p2p, p2p-adapter (#2545) |
-| Add collection | TLA+ | db |
-| Index changes in a transaction | TLA+ | db, defra-node, http, cli |
-| Encrypted index changes outside a transaction | TLA+ | db, defra-node, cli |
-| Gossip announcement audience | TLA+ | p2p |
-| Collection truncate | TLA+ & Lean | db, storage |
-| Relation-filtered mutation | TLA+ | query, datastore, db |
-| Add DAC policy | TLA+ | db, acp, vera, http, cli, ffi, defra-node |
-| Add view with a lens transform | TLA+ & Lean | defra-node, db, schema, lens (#2724; NAC before the create transaction is a known gap, #2736) |
-| Verify block signature | TLA+ | defra-node, db, acp (#2724) |
-| Node access control operations | TLA+ & Lean | db, acp, http, cli, ffi, defra-node |
-| Filter relation paths and scalar leaves | Lean | query (#2427, #2430) |
-| Relation filter with no matching child | Lean | query (#3087) |
-| Joins on a parent read by key | Lean | query (#3042) |
-| Commits depth traversal | Lean | query, db (#2098) |
-| Orphan block sweep | TLA+ & Lean | db, storage |
-| Per-peer stream cap | TLA+ | p2p |
-| Receive gate | TLA+ | p2p, db |
-| P2P delivery liveness | TLA+ | p2p, p2p-adapter, db-merge, storage |
-| Document save | TLA+ & Lean | query, defra-node |
-| Per-parent child paging | TLA+ / Lean | query |
-| Mutation value checks | Lean | document, defra-core, query |
-| Cursor tokens | Lean | cursor |
-| Peer key loading | TLA+ / Lean | defra-node, ffi |
-| FFI transaction turns | TLA+ / Lean | ffi |
-| FFI options structs | Lean | ffi |
-| Vector index defaults | Lean | schema |
-| Go config layout | Lean | cli |
-| Selected collection version | TLA+ / Lean | db, query, ffi |
-| Per-operation signing choice | Lean | defra-core, http, ffi, cli |
-| DNS resolver fallback | Lean | p2p |
-| Backup import write path | TLA+ / Lean | db, defra-node, http, ffi, cli |
+
+Each modeled family has one file in [`src/registry/`](src/registry/) naming the crates its
+models cover; read that directory for the current inventory, or print the table on
+demand with `cargo run --profile super-dev -p conformance --example families`.
 
 ### Backlog — current retry-era gaps
 This inventory includes legacy models and does not mean every current mechanism is
@@ -197,7 +58,10 @@ proofs/verify-all.sh
 
 # or each half on its own:
 cd proofs/tla && ./run-all.sh   # all TLA+ models (red+green oracle, non-zero on any mismatch)
-cd proofs/lean && lake build    # all Lean proofs (builds clean, zero `sorry`)
+cd proofs/lean && lake build -R # all Lean proofs (builds clean, zero `sorry`)
+                               # a new top-level `.lean` file is built with no
+                               # lakefile edit; `-R` makes Lake list the
+                               # directory again
 ```
 
 `proofs/tla/tools/tla2tools.jar` is git-ignored; the wrapper re-downloads it if missing.
@@ -215,15 +79,17 @@ shipped code, on two axes matching the two tools:
 | **Lean (auto)** | `lean/Conformance.lean` emits a JSON contract (vocabularies derived from the Lean models); the live Rust types are asserted to still match — anti-drift | no | `tests/lean_conformance.rs` |
 | **TLA (behavioral)** | each family's invariant is driven against the **running DefraDB binary** via the backbone `defra-harness` | yes | `tests/tla_conformance.rs` |
 
-[`src/registry.rs`] (`PROPERTIES`) is the spine: every *Modeled* family above maps
-to its headline invariant, source anchor, the model that proves it, and its
-binding tier (`Behavioral` / `Contract` / `Boundary`). `Boundary` marks what is
+[`src/registry.rs`](src/registry.rs) is the spine: every *Modeled* family maps
+to its family file under [`src/registry/`](src/registry) — its headline invariant,
+source anchor, the model that proves it, and its binding tier
+(`Behavioral` / `Contract` / `Boundary`). `Boundary` marks what is
 *assumed*, never asserted (crypto, eventual connectivity, bounded-N, foreign
 substrate) — so a green run never reads as "this was proven against the
 artifact." The modeled families are the registry's families, so adding a model
-is one `PROPERTIES` entry and one row above;
-`matrix::readme_lists_exactly_the_modeled_families` names any family that has
-one without the other. `anchor::every_registry_anchor_resolves` resolves each
+is one entry in its family file; a new family file names the crates its models
+cover in `CRATES`, and `build.rs` picks it up with no other edit.
+`matrix::every_family_names_its_crates` names any family that lands without
+its crates. `anchor::every_registry_anchor_resolves` resolves each
 anchor's files and symbols against the tree, so a rename that moves modeled code
 fails until its anchor follows it. A `Contract` or `Behavioral` row names the
 tests that bind it in `bound_by`, and `matrix::every_bound_tier_names_its_tests`
@@ -316,8 +182,9 @@ rules out cannot pass by checking nothing. The recorded runs
 `MC_P2PDelivery_Trace_TwoNode` and `MC_P2PDelivery_Trace_HubRelay` and eleven
 RED configurations of planted mutants (`MC_P2PDelivery_Trace_Mutants.tla`, one
 per replay guard) also run in `tla/run-all.sh`, so the replay is checked
-without a binary. Their rows say where the replay must end: `TRACE:<n>` walks
-`n` states (events + 1) with no error, `DEADLOCK:<l>` stops at event `l`.
+without a binary. Their `\* run-all:` headers say where the replay must end:
+`TRACE:<n>` walks `n` states (events + 1) with no error, `DEADLOCK:<l>` stops
+at event `l`.
 
 To add a trace for a new scenario:
 
@@ -331,8 +198,11 @@ To add a trace for a new scenario:
 3. Assert the steps you meant to exercise are in the trace (`Trace::count`,
    `Trace::steps`), so an empty run cannot pass.
 4. To pin the run, copy the generated `MC_P2PDelivery_Trace_<Scenario>.{tla,cfg}`
-   into `tla/`, add a `TRACE:<events + 1>` row to `run-all.sh`, and plant RED
-   mutants of it in a mutants module, each with a `DEADLOCK:<index>` row.
+   into `tla/`, put a `\* run-all: <module> TRACE:<events + 1>` header as the
+   cfg's first line, and plant RED mutants of it in a mutants module, each with
+   a `\* run-all: <module> DEADLOCK:<index>` header as its cfg's first line.
+   `run-all.sh` discovers every top-level `tla/*.cfg` and takes the module and
+   verdict from that header alone; a cfg without one fails the run.
 5. A code path that takes a model step nobody logs yet gets a
    `p2p::model_trace!(Variant { .. })` at its site, a case in
    `Trace_P2PDelivery.tla`'s `Replay`, and, for a new field, a line in
@@ -407,7 +277,7 @@ Read this before trusting a verdict; it states the model's honest reach.
 Document arrivals use the pinned engine's `Transaction::append`, with the document
 arrival marker as `once_key`. `crates/database/db/src/event/arrivals.rs` never allocates a
 position itself; rows and their cursor positions appear only after commit. The
-binding in `src/registry.rs` is to
+binding in `src/registry/commit_ordered_document_arrivals.rs` is to
 [CommitOrderedAppend.tla](https://github.com/sourcenetwork/regolith/blob/e844baefe838f3af76403afd46c4b42f1a0b98a5/proofs/tla/CommitOrderedAppend.tla).
 Its GREEN Groups/Pipeline/Faults configurations cover dense numbering, commit
 order, at-most-once keys and snapshot prefixes. Counter, OnceFromView and
