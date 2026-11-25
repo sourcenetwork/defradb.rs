@@ -255,7 +255,7 @@ property to the real Rust binary.
   this run matched within a line or two.
 - **Regression oracle is automated for TLA.** `run-all.sh` discovers every
   top-level `*.cfg`, takes each one's expected red/green verdict from its
-  `\* run-all:` header or its name, and exits non-zero on any mismatch — a
+  `\* run-all:` header, and exits non-zero on any mismatch — a
   CI-ready gate that covers every TLA config including the
   replication-convergence family.
 - **Lean is `sorry`-free with audited axioms.** All five Lean libs build clean; axiom
