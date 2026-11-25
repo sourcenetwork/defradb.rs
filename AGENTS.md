@@ -80,7 +80,7 @@ crates/
 ├── engine/
 │   ├── query/              # Query engine (GraphQL, BM25)
 │   ├── vera-embedded/      # Transports to a Vera node hosted in the same process
-│   ├── vera/               # Vera on-chain ACP client (Cosmos/EVM)
+│   ├── vera/               # Vera document ACP provider (native vera.rs)
 │   ├── vera-delegation/    # Vera delegations and the policy commands they digest, without the provider
 │   ├── acp/                # Access Control Policy
 │   ├── datastore/          # Data persistence abstractions
@@ -347,7 +347,7 @@ that is correct but slower is not done.
   inside `edge::compat`, the one place that tokio runtime is entered. The edge's owner thread builds it, so its workers
   and the blocking threads they start later run on the whole edge CPU set, in the ledger; async-compat starts none.
 - One exception to "no other runtime is built": the embedded Vera node. With the `embedded-vera` feature of `defra-node`
-  or of `cli` (`defradb start --document-acp-type verars-embedded`) a single-validator Vera node runs in the process
+  or of `cli` (`defradb start --document-acp-type vera-embedded`) a single-validator Vera node runs in the process
   on a runtime of its own, because Commonware 2026.10's runner always
   builds its own tokio runtime and takes none from outside. The exception is bounded. `vera-embedded`'s `HostedNode` is
   its only entry. It pins the node thread to the edge's CPUs (`Edge::pin_current_thread`) before that runtime is built,
@@ -476,7 +476,7 @@ cargo nextest run -p integration-test --test legacy -- acp::basic::rust_acp_basi
 ```
 
 Integration tests live in `tools/integration-test/tests/` and build into three
-test binaries: `testo`, `legacy` and `verars`. Each top-level module is an area, so a
+test binaries: `testo`, `legacy` and `vera`. Each top-level module is an area, so a
 test's name starts with its area (`query::simple::…`), and `just
 integration-suite <area>` runs one area in both binaries.
 
@@ -484,7 +484,7 @@ integration-suite <area>` runs one area in both binaries.
 |--------|--------|------|
 | `testo` | `tests/testo/` | testo scenarios (`TestCase` + actions), run under every client by `DEFRA_CLIENT` (in-process, rust-http, go-http, cli). Most are generated from the Go corpus by `scripts/generate_scenarios.sh`. Every new integration test goes here. Areas: `acp`, `backup`, `chunk`, `collection`, `collection_version`, `cursor`, `encryption`, `explain`, `index`, `issues`, `mutation`, `net`, `node`, `query`, `searchable_encryption`, `signature`, `subscription`, `txn`, `view`, plus the framework self-tests `matchers` and `export`. |
 | `legacy` | `tests/legacy/` | hand-written `TestCluster`/`DefraClient` tests, deleted as testo covers them. Areas below. |
-| `verars` | `tests/verars/` | vera.rs native ACP tests (compartments, native_worker, p2p_acp, policy_generations, policy_lifecycle, smoke, verified_records). Its own binary so the Native consumer workflow builds only these in release; run with `--test verars`. |
+| `vera` | `tests/vera/` | vera.rs native ACP tests (chunk_access, compartments, encryption_acp, iroh_dac, native_worker, p2p_acp, policy_generations, policy_lifecycle, smoke, verified_records). Its own binary so the Native consumer workflow builds only these in release; run with `--test vera`. |
 
 Legacy areas with submodules:
 
@@ -501,7 +501,6 @@ Legacy areas with submodules:
 | Encryption | `encryption::` | acp, block_verify, cross_runtime_p2p, index, key_management, se_cross_runtime |
 | Identity | `identity::` | keyring_dev_mode, keyring_lifecycle, lifecycle, negative, node_identity, types |
 | Backup | `backup::` | dev_mode, dump, purge, restore |
-| Vera | `vera::` | acp_tuning, chunk_access, compartments, encryption_acp, p2p_acp, policy_lifecycle, resilience, smoke |
 
 Single-purpose legacy areas, one file each:
 
