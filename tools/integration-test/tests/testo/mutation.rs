@@ -42,6 +42,7 @@ mod add {
     mod with_version;
 }
 mod delete_relation_filter;
+mod error_code;
 mod delete {
     mod with_filter_unknown;
     mod field_kinds {

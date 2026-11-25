@@ -55,6 +55,7 @@ mod default {
     mod dagscan;
     mod delete;
     mod delete_with_error;
+    mod filter_applied_once;
     mod group;
     mod group_with_average;
     mod group_with_doc_id;

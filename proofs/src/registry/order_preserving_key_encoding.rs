@@ -19,6 +19,24 @@ pub(super) const PROPERTIES: &[Property] = &[
         bound_by: "",
     },
     Property {
+        family: "Order-preserving key encoding",
+        name: "JsonPathMarker.PropertyIsNotIndex / IndexIsIndex",
+        axis: Tla,
+        anchor: "crates/engine/storage/src/encoding/json.rs decode_json_ascending, decode_json_descending",
+        model_ref: "MC_JsonPathMarker_{Green,Red_Range}.cfg",
+        tiers: &[Boundary],
+        bound_by: "crates/engine/storage/src/encoding/json_array_path_tests.rs descending_json_unicode_property_and_array_path_round_trip",
+    },
+    Property {
+        family: "Order-preserving key encoding",
+        name: "descending_json_sentinels_bracket_values / utf8_lead_is_not_array_marker",
+        axis: Lean,
+        anchor: "crates/engine/storage/src/encoding/json.rs encode_json_descending, decode_json_descending",
+        model_ref: "OrderEncoding.JsonPath (lake build)",
+        tiers: &[Boundary],
+        bound_by: "crates/engine/storage/src/encoding/json_array_path_tests.rs descending_json_sentinels_bracket_values, descending_json_unicode_property_and_array_path_round_trip",
+    },
+    Property {
         // `order_in_values` is private to the planner, so no contract test
         // reaches it; crates/entry-points/defra-node/tests/in_filter_order.rs runs the
         // queries it orders over an ASC, a DESC and no index, and the testo

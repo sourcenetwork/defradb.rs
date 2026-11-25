@@ -4,18 +4,27 @@ use std::time::Duration;
 use integration_test::node::{
     start_node, DefraNode, KeyringBackend, NodeConfig, RunningNode, RustNode,
 };
-use integration_test::ports::allocate_node_ports;
 use integration_test::{poll_until, rust_binary, DefraClient, NodeKind};
+use p2p::host::CONNECTION_PRUNE_INTERVAL;
 
 const NODE_COUNT: usize = 5;
 const LOW_WATER: u32 = 2;
 const HIGH_WATER: u32 = 3;
 const GRACE_PERIOD_MS: u64 = 200;
+/// A prune runs on the swarm event that crosses high water, or at the latest
+/// on the next periodic tick once the grace period has passed.
+const PRUNE_DEADLINE: Duration =
+    Duration::from_millis(GRACE_PERIOD_MS + 2 * CONNECTION_PRUNE_INTERVAL.as_millis() as u64);
 const READY_TIMEOUT: Duration = Duration::from_secs(30);
 const P2P_TIMEOUT: Duration = Duration::from_secs(15);
 const POLL_INTERVAL: Duration = Duration::from_millis(100);
-/// Three of the host's five-second prune ticks.
-const HOLD_OVER_HIGH_WATER: Duration = Duration::from_secs(15);
+/// The line the HTTP server logs with the address it bound (`server.rs`).
+const HTTP_READY: &str = "Providing HTTP API at http://";
+/// The line the host logs once a peer's last connection closes (`swarm.rs`).
+const PEER_DISCONNECTED: &str = "Peer disconnected";
+/// Three of the host's prune ticks.
+const HOLD_OVER_HIGH_WATER: Duration =
+    Duration::from_secs(3 * CONNECTION_PRUNE_INTERVAL.as_secs());
 
 struct RustNodeWithStartArgs {
     binary_path: PathBuf,
@@ -94,25 +103,55 @@ async fn wait_for_active_peer(client: &DefraClient, peer_id: &str) {
     .await;
 }
 
+fn node_log(node: &RunningNode) -> String {
+    std::fs::read_to_string(node.rootdir.with_file_name("logs").join("stdout.log"))
+        .unwrap_or_else(|error| panic!("{} log: {error}", node.name))
+}
+
+/// The address the node's HTTP server bound, from the line it logs once it
+/// listens.
+fn bound_http_addr(node: &RunningNode) -> String {
+    let log = node_log(node);
+    let rest = &log[log
+        .find(HTTP_READY)
+        .unwrap_or_else(|| panic!("{} logged no HTTP address", node.name))
+        + HTTP_READY.len()..];
+    rest.split_whitespace()
+        .next()
+        .expect("HTTP address")
+        .to_string()
+}
+
+/// Peers whose last connection the node closed after byte `since` of its
+/// log, as the log records them.
+fn disconnected_peers(node: &RunningNode, since: usize, peer_ids: &[String]) -> Vec<String> {
+    let log = node_log(node);
+    peer_ids
+        .iter()
+        .filter(|peer_id| {
+            log[since..]
+                .lines()
+                .any(|line| line.contains(PEER_DISCONNECTED) && line.contains(peer_id.as_str()))
+        })
+        .cloned()
+        .collect()
+}
+
 async fn start_pruning_cluster() -> (tempfile::TempDir, Vec<RunningNode>) {
     let binary_path = rust_binary();
     let temp_dir = tempfile::tempdir().expect("create temp dir");
-    let mut ports = allocate_node_ports(NODE_COUNT).expect("allocate node ports");
     let mut nodes = Vec::with_capacity(NODE_COUNT);
 
-    // Node 0 is the constrained target; nodes 1..=4 are peer dialers.
-    for (index, port) in ports.iter_mut().enumerate() {
+    // Node 0 is the constrained target; nodes 1..=4 are peer dialers. Every
+    // node binds port 0 and reports what it got, so no port is picked for it
+    // that another process can take before it binds (#2798, #2932).
+    for index in 0..NODE_COUNT {
         let name = format!("rust-connmgr-{index}");
         let rootdir = temp_dir.path().join(format!("node-{index}/data"));
         let log_dir = temp_dir.path().join(format!("node-{index}/logs"));
-        let mut config = NodeConfig::new(
-            name.clone(),
-            rootdir,
-            log_dir,
-            format!("127.0.0.1:{}", port.http),
-        );
+        let mut config = NodeConfig::new(name.clone(), rootdir, log_dir, "127.0.0.1:0");
         config.p2p_enabled = true;
-        config.p2p_addr = Some(format!("/ip4/127.0.0.1/tcp/{}", port.p2p));
+        config.p2p_addr = Some("/ip4/127.0.0.1/tcp/0".to_string());
         config.keyring = KeyringBackend::None;
 
         let extra_start_args = if index == 0 {
@@ -129,10 +168,10 @@ async fn start_pruning_cluster() -> (tempfile::TempDir, Vec<RunningNode>) {
         };
 
         let node = RustNodeWithStartArgs::new(binary_path.clone(), extra_start_args);
-        port.release();
-        let running = start_node(&node, config, READY_TIMEOUT)
+        let mut running = start_node(&node, config, READY_TIMEOUT)
             .await
-            .unwrap_or_else(|error| panic!("failed to start {name}: {error}"));
+            .unwrap_or_else(|error| panic!("failed to start {name}: {error:?}"));
+        running.http_addr = bound_http_addr(&running);
         nodes.push(running);
     }
 
@@ -182,19 +221,21 @@ async fn rust_connection_manager_prunes_to_low_water() {
             "expected first three peers to be active before pruning: {active_before_prune:?}"
         );
 
+        let log_before_prune = node_log(&nodes[0]).len();
         clients[4]
             .p2p_connect(&[&target_addr])
             .expect("fourth peer failed to connect");
-        wait_for_active_peer(target, &peer_ids[3]).await;
 
-        // The endpoint reports unique peers while watermarks count physical connections.
-        // Exact oldest-first selection is covered by the connection manager unit tests.
-        // A pruned peer may reconnect after the trim, so only require observing low water.
+        // Four peers against a high water of three: the trim sheds the two
+        // oldest peers, 1 and 2, down to low water. A snapshot of active peers
+        // cannot tell which peers the trim closed; the disconnects the target
+        // logged are the trim itself.
+        let pruned = &peer_ids[..(NODE_COUNT - 1) - LOW_WATER as usize];
         poll_until(
-            || active_peer_ids(target).len() <= LOW_WATER as usize,
-            Duration::from_secs(10),
+            || disconnected_peers(&nodes[0], log_before_prune, pruned).len() == pruned.len(),
+            PRUNE_DEADLINE,
             POLL_INTERVAL,
-            "connection manager did not prune to low water",
+            "connection manager did not prune the oldest peers to low water",
         )
         .await;
     })
@@ -212,7 +253,7 @@ async fn rust_connection_manager_prunes_to_low_water() {
 #[mantra_macros::req_test("defra.net.peers.connection_manager_settles")]
 async fn rust_connection_manager_pruned_peers_stay_disconnected() {
     edge::compat(async {
-        let (temp_dir, nodes) = start_pruning_cluster().await;
+        let (_temp_dir, nodes) = start_pruning_cluster().await;
         let clients = nodes.iter().map(client).collect::<Vec<_>>();
         let target = &clients[0];
         let target_addr = first_p2p_addr(target);
@@ -230,15 +271,14 @@ async fn rust_connection_manager_pruned_peers_stay_disconnected() {
         }
         poll_until(
             || active_peer_ids(target).len() <= LOW_WATER as usize,
-            Duration::from_secs(10),
+            PRUNE_DEADLINE,
             POLL_INTERVAL,
             "connection manager did not prune to low water",
         )
         .await;
         nuclei::time::sleep(HOLD_OVER_HIGH_WATER).await;
 
-        let log = std::fs::read_to_string(temp_dir.path().join("node-0/logs/stdout.log"))
-            .expect("read the target's log");
+        let log = node_log(&nodes[0]);
         let count = |event: &str, peer_id: &str| {
             log.matches(&format!(
                 "p2p::host::p2p_host::swarm: Peer {event} peer_id={peer_id}"
