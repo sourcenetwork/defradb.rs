@@ -811,7 +811,7 @@ pub trait DocumentACP: MaybeSendSync {
     /// A delete calls this only on a provider that reads a missing object as
     /// denied ([`Self::unregistered_documents_are_public`] false): elsewhere
     /// the object keeps deciding who reads the history the node retains, and
-    /// is removed only with that history (a purge or a truncate).
+    /// is removed only when a purge removes that history.
     ///
     /// Providers backed by shared authorization state may keep the object
     /// registered after a local document tombstone: a replica's delete can be

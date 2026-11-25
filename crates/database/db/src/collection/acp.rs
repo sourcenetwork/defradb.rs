@@ -240,8 +240,7 @@ pub async fn unregister_doc_if_needed(
 }
 
 /// Remove the ACP objects of the documents `doc_ids` names, whose history
-/// the transaction `acpstore` belongs to removes from this node (a purge or
-/// a truncate), so a document added again under the same DocID takes no
+/// the transaction `acpstore` belongs to purges from this node, so a document added again under the same DocID takes no
 /// earlier owner or grant. Only a provider that joins the transaction holds
 /// this node's objects; a remote provider's object is shared with the other
 /// nodes that still hold the document, and stays.

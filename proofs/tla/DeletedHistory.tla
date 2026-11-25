@@ -18,7 +18,7 @@
 \* this changes when the node restarts: the object lives in the same store.
 \*
 \* A deleted document's DocID cannot be added again while its history is
-\* there: the create is refused. A purge (or a truncate) removes the
+\* there: the create is refused. A purge removes the
 \* history, and with it the object, so the same content can be added again
 \* under the same DocID; that new document belongs to its creator alone and
 \* takes no grant from the one that was purged.
@@ -36,7 +36,7 @@
 \*   crates/database/db/src/merge/merge_handler/composite_persist.rs  handle_deletion (a
 \*       delete merged from a peer keeps the object too)
 \*   crates/database/db/src/collection/acp.rs               release_purged_doc_objects (a
-\*       purge or a truncate removes the object with the history)
+\*       purge removes the object with the history; a truncate keeps it, as Go does)
 \*   crates/database/db/src/write/autocommit/helpers.rs     register_created_doc (refuses
 \*       "a document with the given ID has been deleted": the fence)
 \*   crates/engine/acp/src/read_access.rs                   DirectChecker::object_access

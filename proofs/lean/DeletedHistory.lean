@@ -21,7 +21,7 @@ Code this models:
 * `archive_deleted_doc` in `crates/database/db/src/write/autocommit/helpers.rs`
   (a delete keeps the object),
 * `release_purged_doc_objects` in `crates/database/db/src/collection/acp.rs`
-  (a purge or truncate removes it),
+  (a purge removes it; a truncate keeps it, as Go does),
 * `register_created_doc` in `crates/database/db/src/write/autocommit/helpers.rs`
   (a deleted DocID is refused),
 * `DirectChecker::object_access` in `crates/engine/acp/src/read_access.rs`

@@ -6,7 +6,7 @@
 \* namespace:
 \*   * a local provider joins the transaction (DocumentACP::bind_transaction) and registers
 \*     or unregisters through the transaction's view (register_created_doc in
-\*     crates/database/db/src/write/autocommit/helpers.rs; a purge's or truncate's
+\*     crates/database/db/src/write/autocommit/helpers.rs; a purge's
 \*     release_purged_doc_objects in crates/database/db/src/collection/acp.rs: a delete
 \*     keeps the object, DeletedHistory.tla);
 \*   * an external provider cannot join, so the create records the registration it owes in
@@ -175,7 +175,7 @@ Register(t, d, o) ==
   /\ ops'  = [ops  EXCEPT ![t] = @ + 1]
   /\ UNCHANGED << committed, status, reads, rbDirtied >>
 
-\* release_purged_doc_objects (a purge or truncate): set the txn-local projection to
+\* release_purged_doc_objects (a purge): set the txn-local projection to
 \* Unregistered.
 Unregister(t, d) ==
   /\ status[t] = "active"

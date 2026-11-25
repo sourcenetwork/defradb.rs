@@ -67,7 +67,7 @@ Vera makes the registration parent immutable. A relationship edit cannot remove 
 
 - **Parents:** ["defra.acp"]
 
-Deleting a document in a collection with a policy keeps its access-control object: its owner and its relationships stay, so its retained history (its `_commits`, its blocks by CID, what P2P serves of it) is read under the same decision as before the delete, as Go keeps them. Only removing the document's history from the node (a purge or a truncate) removes the object as well.
+Deleting a document in a collection with a policy keeps its access-control object: its owner and its relationships stay, so its retained history (its `_commits`, its blocks by CID, what P2P serves of it) is read under the same decision as before the delete, as Go keeps them. Only a purge, which removes the document's history from the node, removes the object as well; a truncate keeps it, as Go's does (`go.collection.truncate.acp`).
 
 # `defra.acp.deleted_history.hidden`: A deleted document's history stays hidden from an actor without access
 

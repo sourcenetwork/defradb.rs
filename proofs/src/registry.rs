@@ -109,9 +109,9 @@ pub const PROPERTIES: &[Property] = &[
     },
     Property {
         // A delete keeps the document's ACP object, so the history the node
-        // retains reads under the same decision as before; a purge or a
-        // truncate removes the object with the history, and a deleted DocID
-        // cannot be added again until then.
+        // retains reads under the same decision as before; a purge removes
+        // the object with the history (a truncate keeps it, as Go does), and
+        // a deleted DocID cannot be added again until then.
         family: "ACP soundness + revocation + dual-path commits",
         name: "INV_NoUnintendedRead: nobody reads a document's history whom its current owner has not let read it, across delete, revocation, purge and re-creation",
         axis: Tla,

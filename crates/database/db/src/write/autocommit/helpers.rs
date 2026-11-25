@@ -638,7 +638,8 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
 /// A delete keeps the document's ACP object: its owner and relationships
 /// still decide who reads the history the node retains (`_commits`, blocks,
 /// P2P serving), as Go keeps them, and a later revocation still applies.
-/// Only removing that history (a purge or a truncate) removes the object.
+/// Only purging that history removes the object; a truncate keeps it, as
+/// Go's does.
 /// A remote provider that archives a deleted document's object
 /// ([`acp::DocumentACP::stages_archive_on_delete`], vera.rs) reads a missing
 /// object as denied, and is owed the archive in this transaction, as
