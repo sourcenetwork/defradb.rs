@@ -5,10 +5,7 @@ use db::DB;
 use defra_http::{AppState, AppStateBuilder, ExtractIdentity};
 use query::mutator::DocMutator;
 use query::{QueryExecutor, QueryRequest, QueryRunner};
-use schema::{
-    CType, CollectionVersion, FieldDescription, FieldKind, IndexKind, IndexedFieldDescription,
-    OrderedIndexDescription,
-};
+use schema::{IndexKind, IndexedFieldDescription, OrderedIndexDescription};
 use storage::corekv::Store;
 use storage::{RegolithStore, RegolithStoreOptions};
 use telemetry::ConflictMetricsSnapshot;
@@ -33,23 +30,6 @@ pub fn chunk_max_chars() -> Option<u32> {
                 .parse()
                 .expect("DEFRA_BASELINE_CHUNK_MAX_CHARS is a number")
         })
-}
-
-async fn create_plain(db: &DB<RegolithStore>) {
-    let collection = CollectionVersion::new(
-        COLLECTION,
-        "write-baseline-v1",
-        "write-baseline",
-        vec![
-            FieldDescription::new("1", "_docID", FieldKind::doc_id(), CType::LwwRegister),
-            FieldDescription::new("2", "label", FieldKind::string(), CType::LwwRegister),
-            FieldDescription::new("3", "left", FieldKind::string(), CType::LwwRegister),
-            FieldDescription::new("4", "right", FieldKind::string(), CType::LwwRegister),
-            FieldDescription::new("5", "count", FieldKind::int(), CType::LwwRegister)
-                .with_crdt_type(CType::PnCounter),
-        ],
-    );
-    db.create_collection(collection).await.unwrap();
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -142,22 +122,20 @@ impl Fixture {
         if projector::requested() {
             projector::install(&db);
         }
-        match chunk_max_chars() {
-            Some(max_chars) => {
-                let sdl = format!(
-                    r#"type {COLLECTION} {{
-                        label: String
-                        left: String @chunk(maxChars: {max_chars})
-                        right: String
-                        count: Int @crdt(type: "pncounter")
-                    }}"#
-                );
-                db.add_collection(&defra_core::RequestContext::ambient(), &sdl)
-                    .await
-                    .unwrap();
-            }
-            None => create_plain(&db).await,
-        }
+        let chunk = chunk_max_chars()
+            .map(|max_chars| format!("@chunk(maxChars: {max_chars})"))
+            .unwrap_or_default();
+        let sdl = format!(
+            r#"type {COLLECTION} {{
+                label: String
+                left: String {chunk}
+                right: String
+                count: Int @crdt(type: "pncounter")
+            }}"#
+        );
+        db.add_collection(&defra_core::RequestContext::ambient(), &sdl)
+            .await
+            .unwrap();
         if matches!(scenario, Scenario::CountersIndexes) {
             db.create_index(
                 COLLECTION,

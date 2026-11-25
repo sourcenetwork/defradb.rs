@@ -3,47 +3,25 @@
 //! value (the P-counter max reconcile, applied once); a counter that allows
 //! decrements trusts its accumulator; nothing else under `/data/` moves.
 
+use crate::common::schema::parsed;
 use db::{AutoCommitMutator, LensedAutoCommitFetcher, DB};
 use document::{DocID, Document, NormalValue};
 use query::mutator::DocMutator;
 use query::runner::DocFetcher;
 use rapidhash::{RapidHashMap, RapidHashSet};
-use schema::{CType, CollectionVersion, FieldDescription, FieldKind};
+use schema::CollectionVersion;
 use std::sync::Arc;
 use storage::corekv::{IterOptions, Key, Store};
 use storage::keys::CRDTValueKey;
 use storage::merge::{counter_f64, counter_i64};
 use storage::RegolithStore;
 
-const VERSION: &str = "tally-v1";
 const MARKER: &[u8] = b"s/migration/counter-values/v1";
 
+const TALLY_SDL: &str = r#"type Tally { up: Int @crdt(type: "pcounter") net: Int @crdt(type: "pncounter") ratio: Float @crdt(type: "pncounter") name: String }"#;
+
 fn tally() -> CollectionVersion {
-    CollectionVersion::new(
-        "Tally",
-        VERSION,
-        "col-tally",
-        vec![
-            FieldDescription::new(
-                "1",
-                "_docID",
-                FieldKind::doc_id(),
-                schema::CType::LwwRegister,
-            ),
-            FieldDescription::new("2", "up", FieldKind::int(), schema::CType::LwwRegister)
-                .with_crdt_type(CType::PCounter),
-            FieldDescription::new("3", "net", FieldKind::int(), schema::CType::LwwRegister)
-                .with_crdt_type(CType::PnCounter),
-            FieldDescription::new(
-                "4",
-                "ratio",
-                FieldKind::float64(),
-                schema::CType::LwwRegister,
-            )
-            .with_crdt_type(CType::PnCounter),
-            FieldDescription::new("5", "name", FieldKind::string(), schema::CType::LwwRegister),
-        ],
-    )
+    parsed(TALLY_SDL)
 }
 
 async fn create(db: &Arc<DB<RegolithStore>>, json: &str) -> DocID {
@@ -66,7 +44,7 @@ async fn write_accumulators(store: &RegolithStore, values: &[(&str, &str, Legacy
     for (doc_id, field, value) in values {
         let key = [
             b"d".as_slice(),
-            &CRDTValueKey::new(VERSION, doc_id.as_bytes(), *field).bytes(),
+            &CRDTValueKey::new(&tally().version_id, doc_id.as_bytes(), *field).bytes(),
         ]
         .concat();
         match value {
@@ -115,7 +93,9 @@ fn accumulators_move_into_their_documents_once() {
     workers::block_on(async {
         let store = Arc::new(RegolithStore::in_memory().unwrap());
         let db = Arc::new(DB::from_arc(store.clone()).unwrap());
-        db.create_collection(tally()).await.unwrap();
+        db.add_collection(&defra_core::RequestContext::ambient(), TALLY_SDL)
+            .await
+            .unwrap();
         let behind = create(&db, r#"{"up": 5, "name": "behind"}"#)
             .await
             .to_string();
@@ -130,7 +110,7 @@ fn accumulators_move_into_their_documents_once() {
 
         let lww = [
             b"d".as_slice(),
-            &CRDTValueKey::new(VERSION, behind.as_bytes(), "name").bytes(),
+            &CRDTValueKey::new(&tally().version_id, behind.as_bytes(), "name").bytes(),
         ]
         .concat();
         let lww_priority = [lww.as_slice(), b"/priority"].concat();
@@ -219,7 +199,9 @@ fn a_store_without_accumulators_only_records_completion() {
     workers::block_on(async {
         let store = Arc::new(RegolithStore::in_memory().unwrap());
         let db = Arc::new(DB::from_arc(store.clone()).unwrap());
-        db.create_collection(tally()).await.unwrap();
+        db.add_collection(&defra_core::RequestContext::ambient(), TALLY_SDL)
+            .await
+            .unwrap();
         let doc = create(&db, r#"{"up": 3}"#).await.to_string();
         let reopened = Arc::new(DB::open_from_arc(store.clone()).await.unwrap());
         assert_eq!(

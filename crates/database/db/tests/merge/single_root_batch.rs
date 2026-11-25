@@ -1,6 +1,7 @@
 //! A single announced head can contain hundreds of historical revisions.
 
 use super::merge_handler_tests::{create_doc_locally, make_handler_with_schema_and_bus};
+use super::merge_handler_tests::{users_collection_id, users_version_id};
 use blockstore::Blockstore;
 use defra_core::merge::{MergeBlock, MergeHandler, MergeOutcome};
 use defra_core::{Block, CompositeDeltaPayload, CrdtDelta, DAGLink, LwwDeltaPayload};
@@ -14,13 +15,13 @@ fn single_root_history_uses_bounded_commits_not_one_per_revision() {
     let (handler, blockstore, bus) = make_handler_with_schema_and_bus().await;
     let collection = handler
         .db()
-        .find_collection_by_id("col-users")
+        .find_collection_by_id(users_collection_id())
         .unwrap()
         .unwrap();
     let mut doc = Document::new(collection.schema_arc());
     doc.set("name", NormalValue::String("initial".to_string()))
         .unwrap();
-    doc.set_collection_version_id("v1");
+    doc.set_collection_version_id(users_version_id());
     let (doc_id, _, initial) = create_doc_locally(&handler, &collection, &mut doc).await;
     let mut field_heads = initial.field_cids;
     let mut composite_heads = vec![initial.cid];
@@ -31,7 +32,7 @@ fn single_root_history_uses_bounded_commits_not_one_per_revision() {
         let field = Block::new(
             CrdtDelta::Lww(LwwDeltaPayload {
                 field_name: "name".into(),
-                collection_version_id: "v1".into(),
+                collection_version_id: users_version_id().to_string(),
                 priority,
                 data,
             }),
@@ -45,7 +46,7 @@ fn single_root_history_uses_bounded_commits_not_one_per_revision() {
             .unwrap();
         let composite = Block::new(
             CrdtDelta::Composite(CompositeDeltaPayload {
-                collection_version_id: "v1".into(),
+                collection_version_id: users_version_id().to_string(),
                 priority,
                 status: 1,
             }),
@@ -75,7 +76,7 @@ fn single_root_history_uses_bounded_commits_not_one_per_revision() {
             cid,
             block_data: data.into(),
             doc_id: doc_id.to_string(),
-            collection_id: "col-users".into(),
+            collection_id: users_collection_id().to_string(),
             creator: "did:key:z6MkrDeepCompositeReplay".into(),
             sender_peer: None,
             is_explicit_replicator: false,

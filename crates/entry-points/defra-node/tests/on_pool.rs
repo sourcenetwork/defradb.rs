@@ -20,9 +20,12 @@ fn api_calls_make_no_storage_call_off_the_pool() {
         let node = NodeBuilder::default().build().await.unwrap();
         let before = off_pool_calls(&node);
 
-        node.add_collection("type Note { title: String }")
-            .await
-            .unwrap();
+        node.add_collection(
+            &defra_core::RequestContext::ambient(),
+            "type Note { title: String }",
+        )
+        .await
+        .unwrap();
         let added = node
             .execute_as(
                 &RequestContext::ambient(),

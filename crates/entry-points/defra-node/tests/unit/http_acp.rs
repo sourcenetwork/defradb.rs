@@ -66,9 +66,12 @@ async fn exercise_http_relationships() -> Vec<Value> {
         .unwrap();
     let context = defra_core::RequestContext::default().with_identity(Some(owner_did.to_string()));
     let policy = node.add_dac_policy_as(&context, POLICY).await.unwrap();
-    node.add_collection(&format!(
-        "type Record @policy(id: \"{policy}\", resource: \"records\") {{ value: String }}"
-    ))
+    node.add_collection(
+        &context,
+        &format!(
+            "type Record @policy(id: \"{policy}\", resource: \"records\") {{ value: String }}"
+        ),
+    )
     .await
     .unwrap();
     let created = node
@@ -256,9 +259,12 @@ async fn exercise_transactional_http_relationships() -> Vec<Value> {
         .unwrap();
     let context = defra_core::RequestContext::default().with_identity(Some(owner_did.to_string()));
     let policy = node.add_dac_policy_as(&context, POLICY).await.unwrap();
-    node.add_collection(&format!(
-        "type Record @policy(id: \"{policy}\", resource: \"records\") {{ value: String }}"
-    ))
+    node.add_collection(
+        &context,
+        &format!(
+            "type Record @policy(id: \"{policy}\", resource: \"records\") {{ value: String }}"
+        ),
+    )
     .await
     .unwrap();
     let created = node
@@ -888,9 +894,12 @@ fn embedded_events_require_node_permission() {
                 .build()
                 .await
                 .unwrap();
-            node.add_collection("type Note { text: String }")
-                .await
-                .unwrap();
+            node.add_collection(
+                &defra_core::RequestContext::ambient(),
+                "type Note { text: String }",
+            )
+            .await
+            .unwrap();
             let client = http_client();
             let events = format!("http://{address}/api/v0/events?event=update");
             let anonymous = client.get(&events).send().await.unwrap();
@@ -1014,7 +1023,7 @@ fn embedded_encrypted_index_list_refusal_is_unauthorized() {
                 .await
                 .unwrap();
             let owner = defra_core::RequestContext::default().with_identity(Some(owner_did));
-            node.add_collection_as(&owner, "type Note { text: String }")
+            node.add_collection(&owner, "type Note { text: String }")
                 .await
                 .unwrap();
             node.add_nac_actor_relationship_as(

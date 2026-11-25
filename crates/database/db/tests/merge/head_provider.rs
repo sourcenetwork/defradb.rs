@@ -9,9 +9,6 @@ use defra_core::CrdtDelta;
 use document::Document;
 use p2p::sync::DocumentHeadProvider;
 use query::mutator::DocMutator;
-use schema::CollectionVersion;
-use schema::FieldDescription;
-use schema::FieldKind;
 use std::sync::Arc;
 use storage::corekv::Key;
 use storage::keys::headstore::HeadstorePriorityKey;
@@ -32,21 +29,10 @@ fn batch_create_docs_expose_composite_heads() {
     workers::block_on(async {
         let store = Arc::new(RegolithStore::in_memory().unwrap());
         let db = Arc::new(DB::from_arc(store).unwrap());
-        db.create_collection(CollectionVersion::new(
-            "Transcript",
-            "v1",
-            "col-transcript",
-            vec![
-                FieldDescription::new(
-                    "1",
-                    "_docID",
-                    FieldKind::doc_id(),
-                    schema::CType::LwwRegister,
-                ),
-                FieldDescription::new("2", "body", FieldKind::string(), schema::CType::LwwRegister),
-                FieldDescription::new("3", "idx", FieldKind::int(), schema::CType::LwwRegister),
-            ],
-        ))
+        db.add_collection(
+            &defra_core::RequestContext::ambient(),
+            "type Transcript { body: String idx: Int }",
+        )
         .await
         .unwrap();
 
@@ -78,21 +64,10 @@ fn falls_back_to_priority_index_when_composite_head_entry_is_missing() {
     workers::block_on(async {
         let store = Arc::new(RegolithStore::in_memory().unwrap());
         let db = Arc::new(DB::from_arc(store).unwrap());
-        db.create_collection(CollectionVersion::new(
-            "Transcript",
-            "v1",
-            "col-transcript",
-            vec![
-                FieldDescription::new(
-                    "1",
-                    "_docID",
-                    FieldKind::doc_id(),
-                    schema::CType::LwwRegister,
-                ),
-                FieldDescription::new("2", "body", FieldKind::string(), schema::CType::LwwRegister),
-                FieldDescription::new("3", "idx", FieldKind::int(), schema::CType::LwwRegister),
-            ],
-        ))
+        db.add_collection(
+            &defra_core::RequestContext::ambient(),
+            "type Transcript { body: String idx: Int }",
+        )
         .await
         .unwrap();
 
@@ -123,21 +98,10 @@ fn falls_back_to_blockstore_scan_when_head_indexes_are_missing() {
     workers::block_on(async {
         let store = Arc::new(RegolithStore::in_memory().unwrap());
         let db = Arc::new(DB::from_arc(store).unwrap());
-        db.create_collection(CollectionVersion::new(
-            "Transcript",
-            "v1",
-            "col-transcript",
-            vec![
-                FieldDescription::new(
-                    "1",
-                    "_docID",
-                    FieldKind::doc_id(),
-                    schema::CType::LwwRegister,
-                ),
-                FieldDescription::new("2", "body", FieldKind::string(), schema::CType::LwwRegister),
-                FieldDescription::new("3", "idx", FieldKind::int(), schema::CType::LwwRegister),
-            ],
-        ))
+        db.add_collection(
+            &defra_core::RequestContext::ambient(),
+            "type Transcript { body: String idx: Int }",
+        )
         .await
         .unwrap();
 

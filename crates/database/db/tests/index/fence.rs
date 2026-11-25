@@ -14,7 +14,7 @@ use rapidhash::RapidHashSet;
 use super::create::{by_name, create_user, entries_for, index_entries, open_with_collection};
 
 fn named(name: &str) -> Document {
-    let mut doc = Document::new(super::create::users_schema("Users", "v1", "col-users"));
+    let mut doc = Document::new(super::create::users_schema("Users"));
     doc.set("name", NormalValue::String(name.to_owned()))
         .unwrap();
     doc
@@ -25,7 +25,7 @@ fn named(name: &str) -> Document {
 #[test]
 fn an_explicit_create_spanning_index_creation_conflicts() {
     workers::block_on(async {
-        let (_store, db) = open_with_collection("SpanCreate", "span-create-v1", "col-span-c").await;
+        let (_store, db) = open_with_collection("SpanCreate").await;
         let writer = DbDocMutator::new(db.clone(), db.new_txn(false).await.unwrap());
         writer
             .create("SpanCreate", named("spanning"))
@@ -62,7 +62,7 @@ fn an_explicit_create_spanning_index_creation_conflicts() {
 #[test]
 fn an_explicit_update_spanning_index_creation_conflicts() {
     workers::block_on(async {
-        let (_store, db) = open_with_collection("SpanUpdate", "span-update-v1", "col-span-u").await;
+        let (_store, db) = open_with_collection("SpanUpdate").await;
         let doc_id = create_user(&AutoCommitMutator::new(db.clone()), "SpanUpdate", "before").await;
 
         let writer = DbDocMutator::new(db.clone(), db.new_txn(false).await.unwrap());
@@ -106,7 +106,7 @@ fn an_explicit_update_spanning_index_creation_conflicts() {
 #[test]
 fn a_snapshot_before_the_definition_never_commits_above_the_fence_unindexed() {
     workers::block_on(async {
-        let (_store, db) = open_with_collection("SpanLate", "span-late-v1", "col-span-l").await;
+        let (_store, db) = open_with_collection("SpanLate").await;
         // A transaction pins its snapshot when it begins.
         let writer = DbDocMutator::new(db.clone(), db.new_txn(false).await.unwrap());
 

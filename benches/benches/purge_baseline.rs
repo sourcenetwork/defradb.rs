@@ -26,7 +26,7 @@ use defra_perf::emit::{Family, Group, Row, Trust};
 use defra_perf::measure::{median, min_max, percentile_ms};
 use document::{Document, NormalValue};
 use query::mutator::DocMutator;
-use schema::{CollectionVersion, FieldDescription, FieldKind};
+use schema::CollectionVersion;
 use storage::corekv::Store;
 use storage::{RegolithStore, RegolithStoreOptions};
 
@@ -34,39 +34,16 @@ mod common;
 use common::{counts, positive};
 
 const COLLECTION: &str = "Sample";
-const COLLECTION_ID: &str = "purge-baseline";
+const COLLECTION_SDL: &str = "type Sample { label: String writer: Int shared: String }";
 
 fn collection() -> CollectionVersion {
-    CollectionVersion::new(
-        COLLECTION,
-        "purge-baseline-v1",
-        COLLECTION_ID,
-        vec![
-            FieldDescription::new(
-                "1",
-                "_docID",
-                FieldKind::doc_id(),
-                schema::CType::LwwRegister,
-            ),
-            FieldDescription::new(
-                "2",
-                "label",
-                FieldKind::string(),
-                schema::CType::LwwRegister,
-            ),
-            FieldDescription::new("3", "writer", FieldKind::int(), schema::CType::LwwRegister),
-            FieldDescription::new(
-                "4",
-                "shared",
-                FieldKind::string(),
-                schema::CType::LwwRegister,
-            ),
-        ],
-    )
+    query::parse_sdl(COLLECTION_SDL)
+        .expect("the benchmark schema to parse")
+        .remove(0)
 }
 
-fn document(writer: usize, index: usize) -> Document {
-    let mut doc = Document::new(collection());
+fn document(version: &CollectionVersion, writer: usize, index: usize) -> Document {
+    let mut doc = Document::new(version.clone());
     doc.set("label", NormalValue::String(format!("w{writer}-{index}")))
         .unwrap();
     doc.set("writer", NormalValue::Int(writer as i64)).unwrap();
@@ -99,7 +76,9 @@ impl Fixture {
                 .unwrap(),
         );
         let db = Arc::new(DB::open_from_arc(store.clone()).await.unwrap());
-        db.create_collection(collection()).await.unwrap();
+        db.add_collection(&defra_core::RequestContext::ambient(), COLLECTION_SDL)
+            .await
+            .unwrap();
         Self {
             store,
             db,
@@ -111,14 +90,15 @@ impl Fixture {
 async fn merges(writers: usize, operations: usize) -> Sample {
     let fixture = Fixture::new().await;
     let blockstore = Arc::new(DefraBlockstore::new(fixture.store.clone(), false));
+    let version = collection();
     let mut work = Vec::with_capacity(writers);
     for writer in 0..writers {
         let mut blocks = Vec::with_capacity(operations);
         for index in 0..operations {
             let built = db::block::builder::build_blocks_from_document(
                 &storage::Crdts::default(),
-                &document(writer, index),
-                &collection(),
+                &document(&version, writer, index),
+                &version,
                 &blockstore,
             )
             .await
@@ -128,15 +108,17 @@ async fn merges(writers: usize, operations: usize) -> Sample {
         work.push(blocks);
     }
     let handler = Arc::new(DbMergeHandler::new(fixture.db.clone(), blockstore));
+    let collection_id = version.collection_id;
     measure(&fixture, writers, |writer| {
         let handler = handler.clone();
+        let collection_id = collection_id.clone();
         let blocks = std::mem::take(&mut work[writer]);
         async move {
             let mut latencies = Vec::with_capacity(blocks.len());
             for built in blocks {
                 let metadata = BlockMetadata::normal(
                     &built.doc_id,
-                    COLLECTION_ID,
+                    &collection_id,
                     "did:key:z6MkrPurgeBaseline",
                     Some("peer"),
                     false,
@@ -158,10 +140,11 @@ async fn merges(writers: usize, operations: usize) -> Sample {
 async fn truncates(writers: usize, operations: usize) -> Sample {
     let fixture = Fixture::new().await;
     let mutator = db::AutoCommitMutator::new(fixture.db.clone());
+    let version = collection();
     for writer in 0..writers {
         for index in 0..operations {
             mutator
-                .create(COLLECTION, document(writer, index))
+                .create(COLLECTION, document(&version, writer, index))
                 .await
                 .unwrap();
         }

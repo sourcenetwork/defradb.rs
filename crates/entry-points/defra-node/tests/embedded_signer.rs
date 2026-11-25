@@ -66,7 +66,7 @@ fn selected_actor_signs_create_update_and_respects_transaction_finality() {
         let signer = EmbeddedSigner::from_config(actor_key).unwrap();
         let other_signer = EmbeddedSigner::from_config(other_key).unwrap();
         let node = Node::builder().with_node_identity_did(&node_did).build().await.unwrap();
-        node.add_collection("type SignedFact { value: String }").await.unwrap();
+        node.add_collection(&defra_core::RequestContext::ambient(), "type SignedFact { value: String }").await.unwrap();
         let create = node.execute_request(signer.attach(request(r#"mutation { add_SignedFact(input: {value: "one"}) { _docID } }"#, &actor))).await;
         assert!(!create.has_errors(), "{:?}", create.errors);
         let doc = create.data.unwrap()["add_SignedFact"][0]["_docID"].as_str().unwrap().to_owned();
@@ -133,9 +133,12 @@ fn a_context_carrying_a_callers_key_signs_as_that_actor() {
             .build()
             .await
             .unwrap();
-        node.add_collection("type SignedFact { value: String }")
-            .await
-            .unwrap();
+        node.add_collection(
+            &defra_core::RequestContext::ambient(),
+            "type SignedFact { value: String }",
+        )
+        .await
+        .unwrap();
         let context = defra_core::RequestContext::default()
             .with_identity(Some(actor.clone()))
             .with_signing(Some(actor_key));
@@ -227,9 +230,12 @@ fn a_secp256k1_key_signs_as_its_actor() {
             .build()
             .await
             .unwrap();
-        node.add_collection("type SignedFact { value: String }")
-            .await
-            .unwrap();
+        node.add_collection(
+            &defra_core::RequestContext::ambient(),
+            "type SignedFact { value: String }",
+        )
+        .await
+        .unwrap();
         let create = node
             .execute_request(signer.attach(request(
                 r#"mutation { add_SignedFact(input: {value: "one"}) { _docID } }"#,
@@ -273,11 +279,12 @@ fn selected_signer_does_not_bypass_document_acp() {
         let (other, other_key) = key();
         defra_core::signing::store_identity(&node_did, node_key).expect("the store takes the identity");
         let node = Node::builder().with_node_identity_did(&node_did).build().await.unwrap();
+        let owner_context = defra_core::RequestContext::default().with_identity(Some(owner.clone()));
         let policy = node.add_dac_policy_as(
-            &defra_core::RequestContext::default().with_identity(Some(owner.clone())),
+            &owner_context,
             "name: Rows\nresources:\n  - name: rows\n    relations:\n      - name: reader\n    permissions:\n      - name: read\n        expr: reader\n      - name: update\n      - name: delete\n",
         ).await.unwrap();
-        node.add_collection(&format!("type Protected @policy(id: \"{policy}\", resource: \"rows\") {{ value: String }}")).await.unwrap();
+        node.add_collection(&owner_context, &format!("type Protected @policy(id: \"{policy}\", resource: \"rows\") {{ value: String }}")).await.unwrap();
         let signer = EmbeddedSigner::from_config(owner_key).unwrap();
         let other_signer = EmbeddedSigner::from_config(other_key).unwrap();
         let create = node.execute_request(signer.attach(request(r#"mutation { add_Protected(input: {value: "one"}) { _docID } }"#, &owner))).await;
@@ -316,7 +323,10 @@ fn native_admission_matches_executed_lean_model() {
             .build()
             .await
             .unwrap();
-        node.add_collection("type ModelFact { value: String }")
+        node.add_collection(
+            &defra_core::RequestContext::ambient(),
+            "type ModelFact { value: String }"
+        )
             .await
             .unwrap();
         let (secp_actor, secp_key) = secp256k1_key();
@@ -401,7 +411,7 @@ fn an_identity_only_node_signs_only_with_a_callers_key() {
             .build()
             .await
             .unwrap();
-        node.add_collection("type SignedFact { value: String }")
+        node.add_collection(&defra_core::RequestContext::ambient(), "type SignedFact { value: String }")
             .await
             .unwrap();
         let composite_cid = |doc: String| {
@@ -465,9 +475,12 @@ fn an_identity_only_node_runs_requests_in_the_transactions_it_begins() {
             .build()
             .await
             .unwrap();
-        node.add_collection("type TxnFact { value: String }")
-            .await
-            .unwrap();
+        node.add_collection(
+            &defra_core::RequestContext::ambient(),
+            "type TxnFact { value: String }",
+        )
+        .await
+        .unwrap();
         let add = |value: &str| {
             format!(r#"mutation {{ add_TxnFact(input: {{value: "{value}"}}) {{ _docID }} }}"#)
         };

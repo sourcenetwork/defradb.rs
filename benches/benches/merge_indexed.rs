@@ -15,37 +15,27 @@ use db::merge::DbMergeHandler;
 use db::DB;
 use defra_core::merge::{BlockMetadata, MergeHandler, MergeOutcome};
 use document::{DocID, Document, NormalValue};
-use schema::{
-    CType, CollectionVersion, FieldDescription, FieldKind, IndexKind, IndexedFieldDescription,
-    OrderedIndexDescription,
-};
+use schema::{CollectionVersion, IndexKind, IndexedFieldDescription, OrderedIndexDescription};
 use storage::RegolithStore;
 use storage::Store;
 
 mod common;
 
 const COLLECTION: &str = "Notes";
-const COLLECTION_ID: &str = "col-notes";
+const COLLECTION_SDL: &str = "type Notes { meta: JSON @crdt(type: json) title: String }";
 const CREATOR: &str = "did:key:z6MkrMergeIndexedBench";
 const DEPTH: usize = 16;
 
 type BenchHandler = DbMergeHandler<RegolithStore, DefraBlockstore<RegolithStore>>;
 
 fn collection() -> CollectionVersion {
-    CollectionVersion::new(
-        COLLECTION,
-        "v1",
-        COLLECTION_ID,
-        vec![
-            FieldDescription::new("1", "_docID", FieldKind::doc_id(), CType::LwwRegister),
-            FieldDescription::new("2", "meta", FieldKind::json(), CType::Json),
-            FieldDescription::new("3", "title", FieldKind::string(), CType::LwwRegister),
-        ],
-    )
+    query::parse_sdl(COLLECTION_SDL)
+        .expect("the benchmark schema to parse")
+        .remove(0)
 }
 
-fn document(revision: usize) -> Document {
-    let mut doc = Document::new(collection());
+fn document(collection: &CollectionVersion, revision: usize) -> Document {
+    let mut doc = Document::new(collection.clone());
     doc.set(
         "meta",
         NormalValue::Json(serde_json::json!({ "rev": revision, "tag": "note" })),
@@ -59,6 +49,7 @@ fn document(revision: usize) -> Document {
 /// A composite tip and every block below it.
 struct Dag {
     tip: (Cid, Bytes),
+    collection_id: String,
     doc_id: String,
     blocks: Vec<(Cid, Bytes)>,
 }
@@ -81,7 +72,7 @@ async fn build_dag() -> Dag {
     let mut result = db::block::builder::write_document_blocks(
         &blockstore,
         &headstore,
-        &document(0),
+        &document(&collection, 0),
         &collection,
         identity,
         None,
@@ -95,7 +86,7 @@ async fn build_dag() -> Dag {
     let mut cids = vec![result.cid];
     cids.extend(result.field_cids.iter().copied());
     for revision in 1..DEPTH {
-        let mut doc = document(revision);
+        let mut doc = document(&collection, revision);
         doc.set_id(DocID::from_string(&doc_id).unwrap());
         result = db::block::builder::write_document_blocks(
             &blockstore,
@@ -121,6 +112,7 @@ async fn build_dag() -> Dag {
     }
     Dag {
         tip: (result.cid, result.block),
+        collection_id: collection.collection_id,
         doc_id,
         blocks,
     }
@@ -131,7 +123,9 @@ async fn build_dag() -> Dag {
 async fn seed(dag: &Dag, indexed: bool) -> BenchHandler {
     let store = Arc::new(RegolithStore::in_memory().unwrap());
     let db = Arc::new(DB::from_arc(store.clone()).unwrap());
-    db.create_collection(collection()).await.unwrap();
+    db.add_collection(&defra_core::RequestContext::ambient(), COLLECTION_SDL)
+        .await
+        .unwrap();
     if indexed {
         db.create_index(
             COLLECTION,
@@ -171,8 +165,13 @@ fn bench_merge_indexed(c: &mut Criterion) {
                 || rt.block_on(seed(&dag, indexed)),
                 |handler| {
                     rt.block_on(async {
-                        let metadata =
-                            BlockMetadata::normal(&dag.doc_id, COLLECTION_ID, CREATOR, None, false);
+                        let metadata = BlockMetadata::normal(
+                            &dag.doc_id,
+                            &dag.collection_id,
+                            CREATOR,
+                            None,
+                            false,
+                        );
                         let outcome = handler
                             .handle_block(&dag.tip.0, &dag.tip.1, metadata)
                             .await

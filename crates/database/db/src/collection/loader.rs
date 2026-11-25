@@ -435,57 +435,20 @@ mod tests {
         assert!(same_schema_except_indexes(expected.schema(), &schema));
     }
 
-    fn diskann_collection() -> CollectionVersion {
-        let mut version = CollectionVersion::new(
-            "Embeddings",
-            "version",
-            "collection",
-            vec![
-                schema::FieldDescription::new(
-                    "1",
-                    "_docID",
-                    schema::FieldKind::doc_id(),
-                    schema::CType::LwwRegister,
-                ),
-                schema::FieldDescription::new(
-                    "2",
-                    "embedding",
-                    schema::FieldKind::float32_array(),
-                    schema::CType::LwwRegister,
-                ),
-            ],
-        );
-        version.indexes = vec![IndexDescription {
-            name: "by_embedding".to_string(),
-            id: 1,
-            fields: vec![schema::IndexedFieldDescription {
-                name: "embedding".to_string(),
-                descending: false,
-            }],
-            unique: false,
-            kind: None,
-            auto_generated: false,
-        }
-        .as_vector(schema::VectorIndexDescription {
-            algorithm: schema::VectorAlgorithm::DiskAnn,
-            metric: schema::DistanceMetric::Cosine,
-            dimensions: 8,
-            hnsw: None,
-            ivfpq: None,
-            ivfflat: None,
-            ssg: None,
-            diskann: Some(schema::DiskAnnParams::default()),
-        })];
-        version
-    }
-
     /// An explicit transaction's writes load their index manager here, so it
     /// must share the database's DiskANN quantizers as autocommit writes do.
     #[test]
     fn a_loaded_index_manager_shares_the_database_vector_caches() {
         workers::block_on(async {
             let db = crate::DB::new(storage::RegolithStore::in_memory().unwrap()).unwrap();
-            db.create_collection(diskann_collection()).await.unwrap();
+            db.add_collection(
+                &defra_core::RequestContext::ambient(),
+                r#"type Embeddings {
+                    embedding: [Float32!] @index(name: "by_embedding", vector: {dimensions: 8, diskann: {metric: COSINE}})
+                }"#,
+            )
+            .await
+            .unwrap();
             let before = db.vector_codes().len();
             let mut txn = db.new_txn(false).await.unwrap();
             txn.make_explicit();
