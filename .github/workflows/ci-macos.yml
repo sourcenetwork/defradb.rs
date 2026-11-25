@@ -84,14 +84,18 @@ jobs:
        (github.event_name == 'merge_group' && needs.reuse.outputs.reused != 'true'))
     uses: ./.github/workflows/unit-tests.yml
     with:
-      os: macos-latest
+      # Fred's pull requests run on his ephemeral Tart runner: a fresh VM per job,
+      # deleted after it (#3344). Everything else runs on GitHub's macOS runners.
+      os: ${{ github.event_name == 'pull_request' && github.event.pull_request.user.login == 'fredcarle' && 'macos-fred' || 'macos-latest' }}
 
   # Records the tree the pull request run tested (the merge commit with its
   # base), so the queue reuses this macOS run only for that exact tree.
   stamp:
     name: macOS passed
     needs: unit-tests
-    if: github.event_name == 'pull_request' && needs.unit-tests.result == 'success'
+    # always(): reuse is skipped on a pull request, and a skipped ancestor skips
+    # every job whose if has no status function.
+    if: always() && github.event_name == 'pull_request' && needs.unit-tests.result == 'success'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/github-script@v9
