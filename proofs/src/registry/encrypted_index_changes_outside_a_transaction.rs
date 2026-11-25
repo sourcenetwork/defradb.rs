@@ -1,5 +1,8 @@
 use super::{Axis::*, Property, Tier::*};
 
+/// The crates this family's models cover.
+pub(super) const CRATES: &str = "db, defra-node, cli";
+
 pub(super) const PROPERTIES: &[Property] = &[
     Property {
         family: "Encrypted index changes outside a transaction",

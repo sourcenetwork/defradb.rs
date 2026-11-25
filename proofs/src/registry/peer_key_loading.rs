@@ -1,5 +1,8 @@
 use super::{Axis::*, Property, Tier::*};
 
+/// The crates this family's models cover.
+pub(super) const CRATES: &str = "defra-node, ffi";
+
 pub(super) const PROPERTIES: &[Property] = &[
     Property {
         // A peer key the caller hands in for one start (Go's P2PPrivateKey)

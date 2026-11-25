@@ -1,5 +1,8 @@
 use super::{Axis::*, Property, Tier::*};
 
+/// The crates this family's models cover.
+pub(super) const CRATES: &str = "p2p, p2p-adapter (#2545)";
+
 pub(super) const PROPERTIES: &[Property] = &[
     Property {
         // An update on a document's topic is applied only while the node

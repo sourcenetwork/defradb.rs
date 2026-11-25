@@ -1,5 +1,8 @@
 use super::{Axis::*, Property, Tier::*};
 
+/// The crates this family's models cover.
+pub(super) const CRATES: &str = "db, db-merge";
+
 pub(super) const PROPERTIES: &[Property] = &[
     Property {
         // No-loss / no-double-apply under concurrent same-document mutation is now

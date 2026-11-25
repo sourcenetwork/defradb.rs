@@ -1,5 +1,8 @@
 use super::{Axis::*, Property, Tier::*};
 
+/// The crates this family's models cover.
+pub(super) const CRATES: &str = "ffi";
+
 pub(super) const PROPERTIES: &[Property] = &[
     Property {
         // Calls a C caller makes on one explicit transaction run one at a

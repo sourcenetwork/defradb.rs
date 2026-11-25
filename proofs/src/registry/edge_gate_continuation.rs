@@ -1,5 +1,8 @@
 use super::{Axis::*, Property, Tier::*};
 
+/// The crates this family's models cover.
+pub(super) const CRATES: &str = "edge, net (#2546)";
+
 pub(super) const PROPERTIES: &[Property] = &[
     Property {
         // Work that continues a request already admitted (an outbound

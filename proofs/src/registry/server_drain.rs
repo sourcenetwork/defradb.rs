@@ -1,5 +1,8 @@
 use super::{Axis::*, Property, Tier::*};
 
+/// The crates this family's models cover.
+pub(super) const CRATES: &str = "net, pg-compat, edge, http (#2779)";
+
 pub(super) const PROPERTIES: &[Property] = &[
     Property {
         // A server's connections are tasks the drain waits for: a request in

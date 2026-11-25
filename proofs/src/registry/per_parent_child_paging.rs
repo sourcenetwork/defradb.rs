@@ -1,5 +1,8 @@
 use super::{Axis::*, Property, Tier::*};
 
+/// The crates this family's models cover.
+pub(super) const CRATES: &str = "query";
+
 pub(super) const PROPERTIES: &[Property] = &[
     Property {
         // One-to-many child paging (#3051): the scan stays unbounded and each

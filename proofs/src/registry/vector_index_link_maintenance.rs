@@ -1,5 +1,8 @@
 use super::{Axis::*, Property, Tier::*};
 
+/// The crates this family's models cover.
+pub(super) const CRATES: &str = "storage, db-index";
+
 pub(super) const PROPERTIES: &[Property] = &[
     Property {
         family: "Vector index link maintenance",

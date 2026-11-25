@@ -1,5 +1,8 @@
 use super::{Axis::*, Property, Tier::*};
 
+/// The crates this family's models cover.
+pub(super) const CRATES: &str = "query (#3087)";
+
 pub(super) const PROPERTIES: &[Property] = &[
     Property {
         family: "Relation filter with no matching child",

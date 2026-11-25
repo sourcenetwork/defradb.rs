@@ -1,5 +1,8 @@
 use super::{Axis::*, Property, Tier::*};
 
+/// The crates this family's models cover.
+pub(super) const CRATES: &str = "defra-core";
+
 pub(super) const PROPERTIES: &[Property] = &[
     Property {
         family: "CID content-addressing determinism + Block canonicalization",

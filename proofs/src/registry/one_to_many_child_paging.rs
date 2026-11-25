@@ -1,5 +1,8 @@
 use super::{Axis::*, Property, Tier::*};
 
+/// The crates this family's models cover.
+pub(super) const CRATES: &str = "query; a child limit/offset applies per parent so a later parent keeps its page; `crates/engine/query/src/plan/type_join/type_join_many/children.rs`";
+
 pub(super) const PROPERTIES: &[Property] = &[
     Property {
         family: "One-to-many child paging",

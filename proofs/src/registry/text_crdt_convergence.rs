@@ -1,5 +1,8 @@
 use super::{Axis::*, Property, Tier::*};
 
+/// The crates this family's models cover.
+pub(super) const CRATES: &str = "crdt, db-merge";
+
 pub(super) const PROPERTIES: &[Property] = &[
     Property {
         // Peers that merged the same blocks show the same text, a peer's text

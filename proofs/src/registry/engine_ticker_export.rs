@@ -1,5 +1,8 @@
 use super::{Axis::*, Property, Tier::*};
 
+/// The crates this family's models cover.
+pub(super) const CRATES: &str = "telemetry, storage";
+
 pub(super) const PROPERTIES: &[Property] = &[
     Property {
         // Every open store exports its engine's commit and policy tickers. A
