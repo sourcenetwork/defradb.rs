@@ -4001,6 +4001,7 @@ dependencies = [
  "kovan-map",
  "kovan-queue",
  "lens",
+ "mantra-macros",
  "net",
  "nuclei",
  "query",
