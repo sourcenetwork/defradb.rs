@@ -230,7 +230,6 @@ async fn injected_transport_keeps_the_submission_and_receipt_checks() {
             "parent_hash": format!("{:#x}", B256::ZERO),
             "height": 1,
             "timestamp": 1,
-            "state_root": format!("{:#x}", B256::ZERO),
             "module_state_root": format!("{:#x}", B256::ZERO),
             "epoch": 0,
             "view": 1,

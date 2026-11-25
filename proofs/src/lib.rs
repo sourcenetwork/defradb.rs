@@ -9,11 +9,14 @@
 //!   running release binary via the backbone `defra-harness`.
 //!   See `tests/tla_conformance.rs`.
 //!
-//! [`registry::PROPERTIES`] is the spine and its families are the modeled
-//! families; [`matrix`] asserts the README lists exactly those, so a model
-//! cannot land without a conformance hook. [`anchor`] resolves every registry
-//! anchor against the tree, and [`constants`] holds the P2P constants the
-//! models depend on to the code that sets them.
+//! [`registry`] is the spine — one file per family under `registry/` — and its
+//! families are the modeled families; [`matrix::families_table`] prints them
+//! (`cargo run -p conformance --example families`), and
+//! `matrix::every_family_names_its_crates` makes each new family name the
+//! crates its models cover, so a model cannot land without a conformance
+//! hook. [`anchor`] resolves every registry anchor against the tree, and
+//! [`constants`] holds the P2P constants the models depend on to the code
+//! that sets them.
 
 pub mod anchor;
 pub mod constants;
