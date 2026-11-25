@@ -1,5 +1,8 @@
 use super::{Axis::*, Property, Tier::*};
 
+/// The crates this family's models cover.
+pub(super) const CRATES: &str = "defra-node, db, acp (#2724)";
+
 pub(super) const PROPERTIES: &[Property] = &[
     Property {
         // #2724: verify-signature's NAC, document ACP and block checks decide

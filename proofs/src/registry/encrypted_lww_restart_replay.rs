@@ -1,5 +1,8 @@
 use super::{Axis::*, Property, Tier::*};
 
+/// The crates this family's models cover.
+pub(super) const CRATES: &str = "kms, p2p, db-merge, crdt";
+
 pub(super) const PROPERTIES: &[Property] = &[
     Property {
         // Encryption reuses PriorityReconcile.lwwCM unchanged: ciphertext and

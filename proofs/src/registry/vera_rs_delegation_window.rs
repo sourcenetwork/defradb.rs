@@ -1,5 +1,8 @@
 use super::{Axis::*, Property, Tier::*};
 
+/// The crates this family's models cover.
+pub(super) const CRATES: &str = "vera, acp";
+
 pub(super) const PROPERTIES: &[Property] = &[
     Property {
         family: "vera.rs delegation window",

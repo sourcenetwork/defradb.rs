@@ -1,7 +1,9 @@
 //! Collects the registry's family files (`src/registry/*.rs`) into
 //! `OUT_DIR/registry_families.rs`: one `mod` per family file, and `FAMILIES`,
-//! the files in name order. A family file dropped into `src/registry/` is
-//! picked up with no other edit.
+//! the files in name order, each a `Family` of its `CRATES` and
+//! `PROPERTIES`. A family file dropped into `src/registry/` is picked up
+//! with no other edit here; `matrix::every_family_names_its_crates` makes
+//! sure it declares its crates.
 
 use std::env;
 use std::fs;
@@ -41,11 +43,13 @@ fn main() {
             "#[path = {:?}]\nmod {stem};\n",
             file.canonicalize().expect("the registry file exists")
         ));
-        families.push_str(&format!("    {stem}::PROPERTIES,\n"));
+        families.push_str(&format!(
+            "    Family {{ crates: {stem}::CRATES, properties: {stem}::PROPERTIES }},\n"
+        ));
     }
 
     let out = PathBuf::from(env::var("OUT_DIR").unwrap()).join("registry_families.rs");
-    text.push_str("\npub const FAMILIES: &[&[Property]] = &[\n");
+    text.push_str("\npub const FAMILIES: &[Family] = &[\n");
     text.push_str(&families);
     text.push_str("];\n");
     fs::write(out, text).expect("registry_families.rs is writable");

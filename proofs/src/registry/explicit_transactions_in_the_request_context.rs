@@ -1,5 +1,8 @@
 use super::{Axis::*, Property, Tier::*};
 
+/// The crates this family's models cover.
+pub(super) const CRATES: &str = "client, db, query, http, ffi, wasm, defra-node";
+
 pub(super) const PROPERTIES: &[Property] = &[
     Property {
         // A transaction ID travels in the request context. Only the caller

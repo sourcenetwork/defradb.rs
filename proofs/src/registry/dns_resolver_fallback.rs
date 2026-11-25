@@ -1,5 +1,8 @@
 use super::{Axis::*, Property, Tier::*};
 
+/// The crates this family's models cover.
+pub(super) const CRATES: &str = "p2p";
+
 pub(super) const PROPERTIES: &[Property] = &[
     Property {
         // #2924: a host resolver configuration is read the way Go reads it

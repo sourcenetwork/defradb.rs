@@ -1,5 +1,8 @@
 use super::{Axis::*, Property, Tier::*};
 
+/// The crates this family's models cover.
+pub(super) const CRATES: &str = "defra-node, storage";
+
 pub(super) const PROPERTIES: &[Property] = &[
     Property {
         // A node checks its config before it opens anything, hands

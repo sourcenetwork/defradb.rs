@@ -1,5 +1,8 @@
 use super::{Axis::*, Property, Tier::*};
 
+/// The crates this family's models cover.
+pub(super) const CRATES: &str = "p2p, p2p-adapter";
+
 pub(super) const PROPERTIES: &[Property] = &[
     Property {
         // An iroh dial answers from its connection's outcome: a refusal that

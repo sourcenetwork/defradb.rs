@@ -1,5 +1,8 @@
 use super::{Axis::*, Property, Tier::*};
 
+/// The crates this family's models cover.
+pub(super) const CRATES: &str = "db, storage";
+
 pub(super) const PROPERTIES: &[Property] = &[
     Property {
         // The orphan block sweep: a fetched block's to-merge mark

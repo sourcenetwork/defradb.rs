@@ -1,5 +1,8 @@
 use super::{Axis::*, Property, Tier::*};
 
+/// The crates this family's models cover.
+pub(super) const CRATES: &str = "p2p";
+
 pub(super) const PROPERTIES: &[Property] = &[
     Property {
         family: "Pull sync (doc-sync / sync-branchable)",

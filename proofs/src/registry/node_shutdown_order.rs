@@ -1,5 +1,8 @@
 use super::{Axis::*, Property, Tier::*};
 
+/// The crates this family's models cover.
+pub(super) const CRATES: &str = "defra-node, embedded, edge, vera-embedded, acp, http, query, db, storage";
+
 pub(super) const PROPERTIES: &[Property] = &[
     Property {
         // A node's shutdown aborts every task it holds and waits for each to

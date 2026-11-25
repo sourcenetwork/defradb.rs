@@ -1,5 +1,8 @@
 use super::{Axis::*, Property, Tier::*};
 
+/// The crates this family's models cover.
+pub(super) const CRATES: &str = "crdt, db-merge (specified before the code, #2129)";
+
 pub(super) const PROPERTIES: &[Property] = &[
     Property {
         // The JSON CRDT (#2129). Each path is a register: racing edits resolve

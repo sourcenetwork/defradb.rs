@@ -1,5 +1,8 @@
 use super::{Axis::*, Property, Tier::*};
 
+/// The crates this family's models cover.
+pub(super) const CRATES: &str = "db, datastore, query";
+
 pub(super) const PROPERTIES: &[Property] = &[
     Property {
         family: "Explicit transaction link reads",

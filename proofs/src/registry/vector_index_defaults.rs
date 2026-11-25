@@ -1,5 +1,8 @@
 use super::{Axis::*, Property, Tier::*};
 
+/// The crates this family's models cover.
+pub(super) const CRATES: &str = "schema";
+
 pub(super) const PROPERTIES: &[Property] = &[
     Property {
         // A vector index description's stored form is the normalized one:

@@ -1,5 +1,8 @@
 use super::{Axis::*, Property, Tier::*};
 
+/// The crates this family's models cover.
+pub(super) const CRATES: &str = "ffi";
+
 pub(super) const PROPERTIES: &[Property] = &[
     Property {
         // The C API's options structs grow only at their end and default to

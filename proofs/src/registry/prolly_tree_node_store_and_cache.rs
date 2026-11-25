@@ -1,5 +1,8 @@
 use super::{Axis::*, Property, Tier::*};
 
+/// The crates this family's models cover.
+pub(super) const CRATES: &str = "prolly, storage";
+
 pub(super) const PROPERTIES: &[Property] = &[
     Property {
         // Node contents are not modelled: a node is named by its hash, so a

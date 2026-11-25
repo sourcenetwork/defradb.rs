@@ -1,5 +1,8 @@
 use super::{Axis::*, Property, Tier::*};
 
+/// The crates this family's models cover.
+pub(super) const CRATES: &str = "query (#2427, #2430)";
+
 pub(super) const PROPERTIES: &[Property] = &[
     Property {
         // Pure functions over the schema; the Rust side is exercised by

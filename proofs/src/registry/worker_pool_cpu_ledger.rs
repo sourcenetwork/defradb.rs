@@ -1,5 +1,8 @@
 use super::{Axis::*, Property, Tier::*};
 
+/// The crates this family's models cover.
+pub(super) const CRATES: &str = "workers";
+
 pub(super) const PROPERTIES: &[Property] = &[
     Property {
         // A placed pool claims its CPUs in the process's ledger, one counter

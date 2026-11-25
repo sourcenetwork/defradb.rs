@@ -1,5 +1,8 @@
 use super::{Axis::*, Property, Tier::*};
 
+/// The crates this family's models cover.
+pub(super) const CRATES: &str = "defra-node, http";
+
 pub(super) const PROPERTIES: &[Property] = &[
     Property {
         // `execute_as` signs a node's writes through the shared signed-query
