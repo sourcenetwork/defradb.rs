@@ -1,3 +1,4 @@
+mod cid_check;
 mod gossip_admission;
 mod iroh_large_update;
 mod stream_protocols;

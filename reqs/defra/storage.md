@@ -368,6 +368,13 @@ A node with a replication filter also asks it in the P2P receive path. On arriva
 
 Gossip has no reply and no retry, so a gossip head a node refuses for its per-peer rate limit or its pending-DAG capacity is kept as a durable pending record that takes no slot, and is fetched once a slot frees: a burst over both limits loses no document. These records are bounded by bytes, per source peer (`gossip_deferral_peer_bytes`) and in all (`gossip_deferral_total_bytes`). Past a budget the head is dropped, and the node reports a `p2p-gossip-head-dropped` event naming the peer and the root, so the application can resync it.
 
+# `defra.p2p.cid_check`: A block that does not hash to its CID is refused on every arrival path
+
+- **Parents:** ["defra"]
+- **Scenarios:** ["net::cid_check::a_pushed_block_not_matching_its_cid_stores_no_document", "p2p::sync::coordinator::access_tests::cid_check::a_pushed_head_not_matching_its_cid_is_refused", "p2p::sync::coordinator::access_tests::cid_check::the_receive_gate_leaves_a_head_not_matching_its_cid_to_the_ingest", "p2p::sync::coordinator::access_tests::cid_check::a_synced_block_not_matching_its_cid_is_refused", "p2p::sync::coordinator::access_tests::cid_check::a_fetched_car_with_a_block_not_matching_its_cid_is_refused", "p2p::sync::manager::process::gossip_deferral::tests::a_deferred_gossip_head_not_matching_its_cid_is_refused"]
+
+A block a peer sends whose bytes do not hash to the CID it names is refused before anything of it is stored, whichever way it arrives: a PushLog (gossip, pubsub or a replicator's direct push), a gossip head kept for later, a block fetched by block sync, or a fetched CAR, which is refused whole. A push is answered with `block CID verification failed for <cid>: content hash does not match`, and no document is stored from it. The receive gate does not judge such a head, so a push it would refuse is still answered with that error rather than as a handled skip. A CAR refused this way leaves its document waiting for another provider.
+
 # `defra.p2p.iroh_large_update`: An update too large for gossip still replicates over iroh
 
 - **Parents:** ["defra"]

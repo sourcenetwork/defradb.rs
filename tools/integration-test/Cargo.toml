@@ -57,6 +57,7 @@ rapidhash.workspace = true
 cid = { workspace = true }
 base64 = "0.23"
 hex = "0.4"
+ciborium = { workspace = true }
 # Holds a stopped Go node's P2P port with SO_REUSEPORT until it restarts.
 socket2 = { version = "0.6", features = ["all"] }
 identity = { path = "../../crates/building-blocks/identity" }
@@ -83,7 +84,6 @@ vera = { path = "../../crates/engine/vera" }
 # The Vera node the in-process provider tests host themselves.
 vera-embedded = { path = "../../crates/engine/vera-embedded", features = ["node"] }
 libc = "0.2"
-ciborium = { workspace = true }
 serial_test = "4"
 
 [lints]

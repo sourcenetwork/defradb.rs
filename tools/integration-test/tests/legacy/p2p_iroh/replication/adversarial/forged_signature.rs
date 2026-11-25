@@ -1,8 +1,8 @@
 use serial_test::serial;
 
-use super::blocks::{author, forged_signature, genesis, user, Signing};
-use super::peer::HostilePeer;
 use super::receiver::{start_public, user_by_id, users, wait_for_user};
+use integration_test::hostile::blocks::{author, forged_signature, genesis, user, Signing};
+use integration_test::hostile::peer::HostilePeer;
 
 #[nuclei::test]
 #[serial]
