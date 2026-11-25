@@ -238,6 +238,11 @@ impl State {
             .slot(name)
             .map(|slot| (slot.node.is_some(), slot.spec.dir.is_some()))
             .ok_or_else(|| Failure::operation(format!("no node {name} to restart")))?;
+        // A store latches a failed log sync until it reopens: the node starts
+        // again on its files with the fault gone.
+        if let Some(fault) = self.slot(name).and_then(|slot| slot.spec.fault.clone()) {
+            fault.disarm();
+        }
         if running {
             if !persistent {
                 return Ok(());

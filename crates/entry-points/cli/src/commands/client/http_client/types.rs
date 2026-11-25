@@ -50,6 +50,38 @@ pub struct TxBeginResponse {
 #[derive(Debug, Deserialize)]
 pub struct ErrorResponse {
     pub error: String,
+    /// The server's machine-readable error code, such as `STORAGE_FULL`.
+    #[serde(default)]
+    pub code: Option<String>,
+    /// The commit outcome of a failed write (`aborted`, `indeterminate`).
+    #[serde(default)]
+    pub outcome: Option<String>,
+}
+
+impl ErrorResponse {
+    /// The client error for this body: [`Error::Server`] when it carries
+    /// only text, [`Error::Reply`] when it carries a code or an outcome.
+    pub fn into_error(self) -> crate::error::Error {
+        reply_error(self.error, self.code, self.outcome.as_deref())
+    }
+}
+
+/// [`crate::error::Error::Server`] for bare text, `Reply` with the code and the
+/// outcome a wire value names otherwise.
+pub fn reply_error(
+    message: String,
+    code: Option<String>,
+    outcome: Option<&str>,
+) -> crate::error::Error {
+    let outcome = outcome.and_then(defra_core::CommitOutcome::from_wire);
+    match (code, outcome) {
+        (None, None) => crate::error::Error::Server(message),
+        (code, outcome) => crate::error::Error::Reply {
+            message,
+            code,
+            outcome,
+        },
+    }
 }
 
 impl GraphQLResponse {

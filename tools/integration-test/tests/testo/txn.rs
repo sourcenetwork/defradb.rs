@@ -2,6 +2,7 @@ mod add_collection;
 mod add_doc;
 mod add_lens;
 mod add_view;
+mod commit_outcome;
 mod delete_doc;
 mod delete_encrypted_index;
 mod delete_index;

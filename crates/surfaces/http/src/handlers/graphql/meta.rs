@@ -39,6 +39,7 @@ pub async fn schema(
                 Json(crate::error::ErrorResponse {
                     error: "Failed to retrieve schema".to_string(),
                     code: None,
+                    outcome: None,
                 }),
             )
                 .into_response())

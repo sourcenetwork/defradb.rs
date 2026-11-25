@@ -79,6 +79,9 @@ pub struct NodeSpec {
     /// An in-process iroh node serving these stream protocols, in place of
     /// the libp2p one `network` starts.
     pub iroh: Option<crate::actions::stream::IrohSpec>,
+    /// The env the node's store opens its files through, armed by
+    /// `ArmCommitFault`; it lives across a restart, disarmed.
+    pub fault: Option<Arc<storage::testing::FaultEnv>>,
 }
 
 /// A running node: the node itself for the in-process client, or the URL the
@@ -349,6 +352,11 @@ fn build(spec: &NodeSpec, listen: &str, http: Option<HttpConfig>) -> Result<Node
     let mut builder = Node::builder();
     if let Some(dir) = &spec.dir {
         builder = builder.data_path(dir.path());
+    }
+    if let Some(fault) = &spec.fault {
+        let mut options = storage::RegolithStoreOptions::default();
+        options.engine = options.engine.env(fault.clone());
+        builder = builder.with_regolith_options(options);
     }
     if spec.network && spec.iroh_network {
         builder = builder.with_p2p(defra_node::P2PConfig {

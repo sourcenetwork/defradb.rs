@@ -332,16 +332,22 @@ fn storage_query_error(error: Error, context: &str) -> query::error::QueryError 
         | Error::Datastore(datastore::Error::Storage(storage::Error::Io(cause))) => {
             query::error::QueryError::Storage(storage::Error::Io(cause.with_context(context)))
         }
+        Error::Storage(cause @ storage::Error::CommitIndeterminate(_))
+        | Error::Datastore(datastore::Error::Storage(
+            cause @ storage::Error::CommitIndeterminate(_),
+        )) => query::error::QueryError::Storage(cause),
         other => query::error::QueryError::execution(format!("{context}: {other}")),
     }
 }
 
 pub(crate) fn transaction_error(error: Error) -> query::error::TransactionError {
     match error {
-        Error::Storage(cause @ storage::Error::Io(_))
-        | Error::Datastore(datastore::Error::Storage(cause @ storage::Error::Io(_))) => {
-            query::error::TransactionError::Storage(cause)
-        }
+        Error::Storage(
+            cause @ (storage::Error::Io(_) | storage::Error::CommitIndeterminate(_)),
+        )
+        | Error::Datastore(datastore::Error::Storage(
+            cause @ (storage::Error::Io(_) | storage::Error::CommitIndeterminate(_)),
+        )) => query::error::TransactionError::Storage(cause),
         other => query::error::TransactionError::execution(other.to_string()),
     }
 }

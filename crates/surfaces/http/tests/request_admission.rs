@@ -208,3 +208,45 @@ fn a_route_added_by_router_transform_stays_admitted_until_it_ends() {
         "a route added by the transform was not counted"
     );
 }
+
+/// A request the stopped edge no longer runs is answered 503, marked
+/// indeterminate, so a client never resends a write that may have committed
+/// (`defra.txn.commit_outcome.no_resend`).
+#[test]
+fn a_request_on_a_stopped_edge_is_answered_indeterminate() {
+    let edge = edge::testing::edge();
+    let scope = edge.scope();
+    let router = Server::with_config(
+        HeldExecutor(Arc::new(Held::default())),
+        ServerConfig::default(),
+        scope.edge().clone(),
+    )
+    .router()
+    .unwrap();
+    let (status, marked, body) = edge
+        .block_on(async {
+            assert!(scope.drain(Duration::from_secs(3)).await.is_complete());
+            let request = Request::post("/api/v0/graphql")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    r#"{"query": "mutation { add_User(input: {}) { _docID } }"}"#,
+                ))
+                .unwrap();
+            let response = router.oneshot(request).await.unwrap();
+            let status = response.status();
+            let marked = response.headers().get(defra_core::OUTCOME_HEADER).cloned();
+            let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+                .await
+                .unwrap();
+            (status, marked, body)
+        })
+        .unwrap();
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(
+        marked.as_ref().map(|v| v.to_str().unwrap()),
+        Some("indeterminate")
+    );
+    let body: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(body["outcome"], "indeterminate");
+    assert_eq!(body["error"], "node is shutting down");
+}

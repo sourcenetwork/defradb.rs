@@ -56,6 +56,8 @@ workers = { path = "../../crates/foundation/workers" }
 testo = { git = "https://github.com/sourcenetwork/testo.rs", rev = "dc53fa515d5c39511845407dcd42a7650c07f66c" }
 kovan.workspace = true
 regolith.workspace = true
+# `storage::testing::FaultEnv`, the store env NewNode's `commitFault` installs.
+storage = { path = "../../crates/engine/storage", features = ["testing"] }
 rapidhash.workspace = true
 cid = { workspace = true }
 base64 = "0.23"

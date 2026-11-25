@@ -89,6 +89,31 @@ impl<S: Store + 'static> DbTransactionRegistry<S> {
             }
         }
     }
+
+    /// A commit the owner could not take: `transaction not found`, with what
+    /// the registry retains about the transaction. Only a retained abort says
+    /// nothing committed; anything else (a commit retained, nothing retained,
+    /// a reply lost) may have (`defra.txn.commit_outcome.no_open_txn`).
+    fn commit_unavailable(
+        &self,
+        context: &RequestContext,
+        id: TxnId,
+        error: crate::txn::owner::Unavailable,
+        handle: &TransactionHandle,
+    ) -> TransactionError {
+        let error = unavailable(error, handle);
+        if !matches!(error, TransactionError::NotFound(_)) {
+            return error;
+        }
+        let retained = self
+            .owners()
+            .ok()
+            .and_then(|owners| owners.outcome(id, &self.caller(context)));
+        error.with_commit_outcome(match retained {
+            Some(crate::txn::owner::Outcome::Aborted) => defra_core::CommitOutcome::NotCommitted,
+            _ => defra_core::CommitOutcome::Indeterminate,
+        })
+    }
 }
 
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
@@ -256,19 +281,19 @@ impl<S: Store + 'static> TransactionRegistry for DbTransactionRegistry<S> {
                     Box::pin(async move {
                         report_slow_phase("commit", "queue", queued);
                         let started = Instant::now();
-                        let result = owned.commit().await;
+                        let result = owned
+                            .commit()
+                            .await
+                            .map_err(|error| commit_error(&label, error));
                         if let Some(outcome) = outcome.as_ref() {
-                            match result {
-                                Ok(()) => crate::txn::owner::Outcome::Committed.store(outcome),
-                                Err(_) => crate::txn::owner::Outcome::Aborted.store(outcome),
-                            }
+                            crate::txn::owner::Outcome::of(&result).store(outcome);
                         }
                         report_slow_phase("commit", "execute", started);
-                        result.map_err(|error| commit_error(&label, error))
+                        result
                     })
                 })
                 .await
-                .map_err(|error| unavailable(error, handle))?
+                .map_err(|error| self.commit_unavailable(context, id, error, handle))?
         })
         .await
     }
@@ -297,19 +322,19 @@ impl<S: Store + 'static> TransactionRegistry for DbTransactionRegistry<S> {
                     Box::pin(async move {
                         report_slow_phase("commit", "queue", queued);
                         let started = Instant::now();
-                        let result = owned.commit().await;
+                        let result = owned
+                            .commit()
+                            .await
+                            .map_err(|error| commit_error(&label, error));
                         if let Some(outcome) = outcome.as_ref() {
-                            match result {
-                                Ok(()) => crate::txn::owner::Outcome::Committed.store(outcome),
-                                Err(_) => crate::txn::owner::Outcome::Aborted.store(outcome),
-                            }
+                            crate::txn::owner::Outcome::of(&result).store(outcome);
                         }
                         report_slow_phase("commit", "execute", started);
-                        result.map_err(|error| commit_error(&label, error))
+                        result
                     })
                 })
                 .await
-                .map_err(|error| unavailable(error, handle))?
+                .map_err(|error| self.commit_unavailable(context, id, error, handle))?
         })
         .await
     }
@@ -339,37 +364,31 @@ impl<S: Store + 'static> TransactionRegistry for DbTransactionRegistry<S> {
                         Box::pin(async move {
                             report_slow_phase("commit", "queue", queued);
                             let started = Instant::now();
-                            let ending =
-                                match owned.commit_unless_told().await {
-                                    crate::txn::owner::Ending::Ended(result) => {
-                                        if let Some(outcome) = outcome.as_ref() {
-                                            match result {
-                                                Ok(_) => crate::txn::owner::Outcome::Committed
-                                                    .store(outcome),
-                                                Err(_) => crate::txn::owner::Outcome::Aborted
-                                                    .store(outcome),
-                                            }
-                                        }
-                                        crate::txn::owner::Ending::Ended(
-                                            result.map_err(|error| commit_error(&label, error)),
-                                        )
+                            let ending = match owned.commit_unless_told().await {
+                                crate::txn::owner::Ending::Ended(result) => {
+                                    let result =
+                                        result.map_err(|error| commit_error(&label, error));
+                                    if let Some(outcome) = outcome.as_ref() {
+                                        crate::txn::owner::Outcome::of(&result).store(outcome);
                                     }
-                                    crate::txn::owner::Ending::Kept(owned, result) => {
-                                        if let Some(outcome) = outcome.as_ref() {
-                                            crate::txn::owner::Outcome::Open.store(outcome);
-                                        }
-                                        crate::txn::owner::Ending::Kept(
-                                            owned,
-                                            result.map_err(|error| commit_error(&label, error)),
-                                        )
+                                    crate::txn::owner::Ending::Ended(result)
+                                }
+                                crate::txn::owner::Ending::Kept(owned, result) => {
+                                    if let Some(outcome) = outcome.as_ref() {
+                                        crate::txn::owner::Outcome::Open.store(outcome);
                                     }
-                                };
+                                    crate::txn::owner::Ending::Kept(
+                                        owned,
+                                        result.map_err(|error| commit_error(&label, error)),
+                                    )
+                                }
+                            };
                             report_slow_phase("commit", "execute", started);
                             ending
                         })
                     })
                     .await
-                    .map_err(|error| unavailable(error, handle))?
+                    .map_err(|error| self.commit_unavailable(context, id, error, handle))?
             },
             |outcome| matches!(outcome, Ok(requests) if !requests.is_empty()),
         )
@@ -398,24 +417,18 @@ impl<S: Store + 'static> TransactionRegistry for DbTransactionRegistry<S> {
                 .map_err(|error| unavailable(error, handle))?
                 .finish(id, &self.caller(context), move |owned| {
                     Box::pin(async move {
-                        owned
+                        let result = owned
                             .commit_confirmed(&confirmations)
                             .await
-                            .map_err(|error| commit_error(&label, error))
-                            .inspect(|()| {
-                                if let Some(outcome) = outcome.as_ref() {
-                                    crate::txn::owner::Outcome::Committed.store(outcome);
-                                }
-                            })
-                            .inspect_err(|_| {
-                                if let Some(outcome) = outcome.as_ref() {
-                                    crate::txn::owner::Outcome::Aborted.store(outcome);
-                                }
-                            })
+                            .map_err(|error| commit_error(&label, error));
+                        if let Some(outcome) = outcome.as_ref() {
+                            crate::txn::owner::Outcome::of(&result).store(outcome);
+                        }
+                        result
                     })
                 })
                 .await
-                .map_err(|error| unavailable(error, handle))?
+                .map_err(|error| self.commit_unavailable(context, id, error, handle))?
         })
         .await
     }
@@ -894,12 +907,17 @@ impl<S: Store + 'static> TransactionRegistry for DbTransactionRegistry<S> {
                 crate::txn::owner::Outcome::Committing => TransactionOutcome::Committing,
                 crate::txn::owner::Outcome::Committed => TransactionOutcome::Committed,
                 crate::txn::owner::Outcome::Aborted => TransactionOutcome::Aborted,
+                crate::txn::owner::Outcome::Indeterminate => TransactionOutcome::Indeterminate,
             })
             .ok_or_else(|| TransactionError::not_found(format!("transaction '{handle}' not found")))
     }
 }
 
-/// A commit that lost a write conflict is a typed, retryable conflict.
+/// A commit that lost a write conflict is a typed, retryable conflict; a
+/// failure while the engine made it durable stays typed, so it reports that
+/// the commit may have landed. Every other failure refused the commit before
+/// anything of it was durable, so it reports `aborted`, the outcome the
+/// registry retains for it (`defra.txn.commit_outcome.not_committed`).
 fn commit_error(handle: &str, error: crate::error::Error) -> TransactionError {
     let message = format!("commit error for transaction '{handle}': {error}");
     if error.is_txn_conflict() {
@@ -908,10 +926,15 @@ fn commit_error(handle: &str, error: crate::error::Error) -> TransactionError {
         match crate::error::transaction_error(error) {
             TransactionError::Storage(storage::Error::Io(cause)) => {
                 TransactionError::Storage(storage::Error::Io(
-                    cause.with_context(format!("commit error for transaction '{handle}'")),
+                    cause
+                        .before_commit()
+                        .with_context(format!("commit error for transaction '{handle}'")),
                 ))
             }
-            _ => TransactionError::execution(message),
+            indeterminate @ TransactionError::Storage(storage::Error::CommitIndeterminate(_)) => {
+                indeterminate
+            }
+            _ => TransactionError::commit_refused(message),
         }
     }
 }
@@ -940,5 +963,60 @@ fn operation_error(error: crate::error::Error) -> TransactionError {
     match error {
         crate::error::Error::TransactionNotFound(message) => TransactionError::not_found(message),
         other => TransactionError::operation(other.to_string()),
+    }
+}
+
+#[cfg(test)]
+mod commit_error_tests {
+    use defra_core::CommitOutcome;
+
+    use super::commit_error;
+    use crate::txn::owner::Outcome;
+
+    /// Every commit failure that is not indeterminate was refused before
+    /// anything was durable: its answer says `aborted`, as the outcome the
+    /// registry retains for it does (`defra.txn.commit_outcome.not_committed`).
+    #[test]
+    fn a_commit_refusal_answers_aborted_as_its_retained_outcome_does() {
+        let io = || storage::Error::from(std::io::Error::from_raw_os_error(5));
+        for (error, outcome, retained) in [
+            (
+                crate::error::Error::Storage(storage::Error::DBClosed),
+                CommitOutcome::NotCommitted,
+                Outcome::Aborted,
+            ),
+            (
+                crate::error::Error::Datastore(datastore::Error::Storage(storage::Error::Backend(
+                    "content mismatch".into(),
+                ))),
+                CommitOutcome::NotCommitted,
+                Outcome::Aborted,
+            ),
+            (
+                crate::error::Error::TxnNotActive,
+                CommitOutcome::NotCommitted,
+                Outcome::Aborted,
+            ),
+            (
+                crate::error::Error::Storage(io()),
+                CommitOutcome::NotCommitted,
+                Outcome::Aborted,
+            ),
+            (
+                crate::error::Error::Storage(io().at_commit()),
+                CommitOutcome::Indeterminate,
+                Outcome::Indeterminate,
+            ),
+            (
+                crate::error::Error::Storage(storage::Error::TxnConflict),
+                CommitOutcome::NotCommitted,
+                Outcome::Aborted,
+            ),
+        ] {
+            let label = error.to_string();
+            let error = commit_error("1", error);
+            assert_eq!(error.commit_outcome(), Some(outcome), "{label}");
+            assert_eq!(Outcome::of(&Err::<(), _>(error)), retained, "{label}");
+        }
     }
 }

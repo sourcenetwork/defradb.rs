@@ -19,6 +19,11 @@ pub enum FailureKind {
 pub struct Failure {
     pub kind: FailureKind,
     pub message: String,
+    /// The commit outcome the client was told (`aborted`, `indeterminate`),
+    /// when the failure carried one.
+    pub outcome: Option<String>,
+    /// The CLI's exit status, when the failure came from the CLI.
+    pub exit_code: Option<i32>,
 }
 
 impl Failure {
@@ -29,6 +34,8 @@ impl Failure {
         Self {
             kind: FailureKind::Unsupported,
             message: what.into(),
+            outcome: None,
+            exit_code: None,
         }
     }
 
@@ -37,7 +44,32 @@ impl Failure {
             true => FailureKind::TransactionConflict,
             false => FailureKind::Operation,
         };
-        Self { kind, message }
+        Self {
+            kind,
+            message,
+            outcome: None,
+            exit_code: None,
+        }
+    }
+
+    /// The failure with the commit outcome its client reported.
+    pub fn with_outcome(mut self, outcome: Option<defra_core::CommitOutcome>) -> Self {
+        self.outcome = outcome.and_then(|outcome| outcome.failure_str().map(str::to_owned));
+        self
+    }
+
+    /// A failed CLI run: its stderr, and the outcome its exit status names.
+    pub fn cli(failure: crate::clients::CliFailure) -> Self {
+        let outcome = match failure.status {
+            Some(3) => Some("aborted".to_owned()),
+            Some(4) => Some("indeterminate".to_owned()),
+            _ => None,
+        };
+        Self {
+            outcome,
+            exit_code: failure.status,
+            ..Self::operation(failure.stderr)
+        }
     }
 }
 
@@ -79,6 +111,16 @@ pub trait Op:
     /// The op once its captures are resolved, before it runs.
     fn resolved(self) -> Self {
         self
+    }
+
+    /// The commit outcome the failure must carry (`aborted`, `indeterminate`).
+    fn expected_commit_outcome(&self) -> Option<&str> {
+        None
+    }
+
+    /// The CLI exit status the failure must have; checked only under the CLI.
+    fn expected_exit_code(&self) -> Option<i32> {
+        None
     }
 
     fn run(&self, _state: &State) -> Result<Value, Failure> {

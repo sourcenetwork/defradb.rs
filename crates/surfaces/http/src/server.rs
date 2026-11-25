@@ -550,9 +550,19 @@ impl Server {
                 async move {
                     match handled.await {
                         Ok(response) => response,
-                        Err(edge::EdgeError::Closed) => {
-                            StatusCode::SERVICE_UNAVAILABLE.into_response()
-                        }
+                        // The node stopped while the request was admitted: its
+                        // handler may have committed before it was cut off, so
+                        // the answer is marked indeterminate and never resent
+                        // (`defra.txn.commit_outcome.no_resend`).
+                        Err(edge::EdgeError::Closed) => (
+                            StatusCode::SERVICE_UNAVAILABLE,
+                            [(defra_core::OUTCOME_HEADER, "indeterminate")],
+                            axum::Json(serde_json::json!({
+                                "error": "node is shutting down",
+                                "outcome": "indeterminate",
+                            })),
+                        )
+                            .into_response(),
                         Err(error) => {
                             tracing::error!(%error, "HTTP request task failed");
                             StatusCode::INTERNAL_SERVER_ERROR.into_response()

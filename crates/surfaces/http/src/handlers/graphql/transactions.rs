@@ -110,23 +110,14 @@ pub async fn tx_commit(
 
 /// A typed registry conflict is decided before the storage commit record.
 /// Text-classified conflicts do not carry this receipt.
+/// Every failure says what the commit did when that is known: `aborted` or
+/// `indeterminate` (`defra.txn.commit_outcome`).
 fn commit_error_response(error: TransactionError) -> Response {
-    if commit_has_abort_receipt(Some(&error)) {
-        #[derive(Serialize)]
-        struct ConfirmedConflict {
-            error: &'static str,
-            outcome: &'static str,
-        }
-        return (
-            StatusCode::CONFLICT,
-            Json(ConfirmedConflict {
-                error: query::executor::TXN_CONFLICT_MESSAGE,
-                outcome: "transaction_conflict_aborted",
-            }),
-        )
-            .into_response();
-    }
-    HttpError::from(error).into_response()
+    let outcome = match commit_has_abort_receipt(Some(&error)) {
+        true => Some(defra_core::CommitOutcome::NotCommitted),
+        false => error.commit_outcome(),
+    };
+    HttpError::from(error).into_response_with(outcome)
 }
 
 fn commit_has_abort_receipt(error: Option<&TransactionError>) -> bool {

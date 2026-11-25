@@ -45,19 +45,23 @@ fn main() -> ExitCode {
         }
     };
     let edge = runtime.edge().clone();
+    // A failed write exits 3 when it did not commit and 4 when it may have
+    // (`defra.txn.commit_outcome.cli_exit`); any other failure exits 1.
     let outcome = edge
         .block_on(run(edge.clone()))
-        .map_err(|error| error.to_string())
-        .and_then(|result| result.map_err(|error| error.to_string()));
+        .map_err(|error| (error.to_string(), None))
+        .and_then(|result| result.map_err(|error| (error.to_string(), error.commit_outcome())));
     if let Err(error) = runtime.shutdown() {
         error!(%error, "network runtime did not shut down cleanly");
     }
     match outcome {
         Ok(()) => ExitCode::SUCCESS,
-        Err(e) => {
+        Err((e, commit)) => {
             error!("{e}");
             eprintln!("Error: {e}");
-            ExitCode::FAILURE
+            commit
+                .and_then(|commit| commit.failure_str().map(|_| commit.exit_code()))
+                .map_or(ExitCode::FAILURE, ExitCode::from)
         }
     }
 }

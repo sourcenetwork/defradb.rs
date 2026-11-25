@@ -92,3 +92,58 @@ fn an_outcome_is_visible_to_its_owner_and_malformed_ids_are_refused() {
     }
     .execute();
 }
+
+#[test]
+#[mantra_macros::req_test("defra.txn.outcome-query")]
+#[mantra_macros::req_test("defra.txn.commit_outcome.indeterminate")]
+fn an_indeterminate_commit_is_a_final_outcome_and_unknown_keeps_its_meaning() {
+    TestCase {
+        client_types: Some(&[ClientType::RustHttp]),
+        ..TestCase::from_actions(vec![
+            integration_test::actions::NewNode {
+                commit_fault: true,
+                ..Default::default()
+            }
+            .into(),
+            AddCollection {
+                sdl: SDL.into(),
+                ..Default::default()
+            }
+            .into(),
+            TxnBegin {
+                common: Common {
+                    identity_seed: Some(1),
+                    ..Default::default()
+                },
+                ..Default::default()
+            }
+            .into(),
+            integration_test::actions::AddDoc {
+                txn: Some(0),
+                collection: "Users".into(),
+                doc_map: Some(json!({ "name": "Shahzad" })),
+                common: Common {
+                    identity_seed: Some(1),
+                    ..Default::default()
+                },
+                ..Default::default()
+            }
+            .into(),
+            integration_test::actions::ArmCommitFault::default().into(),
+            TxnCommit {
+                txn: 0,
+                expected_error: Some("Input/output error".into()),
+                expected_commit_outcome: Some("indeterminate".into()),
+                common: Common {
+                    identity_seed: Some(1),
+                    ..Default::default()
+                },
+                ..Default::default()
+            }
+            .into(),
+            outcome_action(0, 1, json!({"outcome": "indeterminate"})),
+            outcome_action(0, 2, json!({"outcome": "unknown"})),
+        ])
+    }
+    .execute();
+}

@@ -625,6 +625,9 @@ pub enum TransactionOutcome {
     Committed,
     /// The transaction ended without a commit.
     Aborted,
+    /// The commit failed while the engine made it durable: it may have
+    /// landed. Final: only a read after a restart tells which.
+    Indeterminate,
 }
 
 impl TransactionOutcome {
@@ -635,6 +638,7 @@ impl TransactionOutcome {
             Self::Committing => "committing",
             Self::Committed => "committed",
             Self::Aborted => "aborted",
+            Self::Indeterminate => "indeterminate",
         }
     }
 }

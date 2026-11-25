@@ -231,6 +231,7 @@ impl IntoResponse for IdentityExtractionError {
             Json(ErrorResponse {
                 error: message,
                 code: None,
+                outcome: None,
             }),
         )
             .into_response()

@@ -7,6 +7,50 @@ use thiserror::Error;
 /// CLI result type
 pub type Result<T> = std::result::Result<T, Error>;
 
+impl Error {
+    /// The commit outcome the server answered with, or that the client
+    /// concluded for a write it got no answer to (`defra.txn.commit_outcome`).
+    pub fn commit_outcome(&self) -> Option<defra_core::CommitOutcome> {
+        match self {
+            Self::Reply { outcome, .. } => *outcome,
+            Self::Unanswered(_) => Some(defra_core::CommitOutcome::Indeterminate),
+            _ => None,
+        }
+    }
+
+    /// This server answer to a write, `indeterminate` unless the server said
+    /// what the commit did: the write may have committed before the server
+    /// failed (`defra.txn.commit_outcome.indeterminate`).
+    pub fn unless_outcome_known(self) -> Self {
+        let indeterminate = Some(defra_core::CommitOutcome::Indeterminate);
+        match self {
+            Self::Server(message) => Self::Reply {
+                message,
+                code: None,
+                outcome: indeterminate,
+            },
+            Self::Reply {
+                message,
+                code,
+                outcome: None,
+            } => Self::Reply {
+                message,
+                code,
+                outcome: indeterminate,
+            },
+            other => other,
+        }
+    }
+
+    /// The wire code the server answered with, such as `STORAGE_FULL`.
+    pub fn code(&self) -> Option<&str> {
+        match self {
+            Self::Reply { code, .. } => code.as_deref(),
+            _ => None,
+        }
+    }
+}
+
 /// CLI errors
 #[derive(Debug, Error)]
 #[non_exhaustive]
@@ -118,8 +162,23 @@ pub enum Error {
     #[error("HTTP request failed: {0}")]
     HttpRequest(#[from] net::http::Error),
 
+    /// A write that was sent and got no answer (a timeout, a connection
+    /// closed mid-reply): it may have committed. The same text as
+    /// [`Error::HttpRequest`].
+    #[error("HTTP request failed: {0}")]
+    Unanswered(net::http::Error),
+
     #[error("server returned error: {0}")]
     Server(String),
+
+    /// A server error that carried a wire code or a commit outcome, with the
+    /// same text as [`Error::Server`].
+    #[error("server returned error: {message}")]
+    Reply {
+        message: String,
+        code: Option<String>,
+        outcome: Option<defra_core::CommitOutcome>,
+    },
 
     #[error(transparent)]
     Documents(#[from] query::documents::Error),
