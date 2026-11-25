@@ -39,7 +39,7 @@
 \*     VeraRsProvider::adopt_existing       the check of the policy found
 \*   crates/engine/vera/src/vera_rs/provider/submission.rs
 \*     VeraRsProvider::confirm_tx            a send whose refusal is returned
-\*   crates/engine/vera/src/cosmos/dac.rs VeraDocumentACP::add_policy
+\*   crates/engine/vera/src/dac.rs VeraDocumentACP::add_policy
 \*                                          the "caller" guard
 \*   vera.rs vera_client::predict_policy_id  the id itself (abstract here)
 EXTENDS Naturals, FiniteSets   \* numbers, and counting the policies a request made

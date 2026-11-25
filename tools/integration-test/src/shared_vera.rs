@@ -87,22 +87,18 @@ impl SharedVera {
     /// The configuration a DefraDB node acting as `actor_key`, a secp256k1
     /// key, reaches this Vera node with. Its worker keeps its journal and key
     /// under `home`, which must outlive the node and survive its restarts.
-    pub fn config(
-        &self,
-        actor_key: &[u8],
-        home: &Path,
-    ) -> Result<defra_node::VeraRsConfig, String> {
+    pub fn config(&self, actor_key: &[u8], home: &Path) -> Result<defra_node::VeraConfig, String> {
         let node = self.node.as_ref().ok_or("the shared Vera node stopped")?;
         let keyring: Arc<dyn keyring::Keyring> = Arc::new(
             keyring::FileKeyring::open(home.join("keys"), b"test-password")
                 .map_err(|e| format!("Vera worker keyring: {e}"))?,
         );
-        Ok(defra_node::VeraRsConfig {
+        Ok(defra_node::VeraConfig {
             rpc_address: format!("http://{}", self.rpc),
             consensus_key: node.consensus_key().to_owned(),
             genesis_id: None,
             deployment_id: node.chain_id(),
-            actor: defra_node::VeraRsActor::Secp256k1Key(actor_key.to_vec()),
+            actor: defra_node::VeraActor::Secp256k1Key(actor_key.to_vec()),
             worker_dir: home.join("worker"),
             keyring,
             tuning: vera::AcpTuning::default(),

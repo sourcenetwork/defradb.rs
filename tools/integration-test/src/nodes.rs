@@ -414,7 +414,7 @@ fn build(spec: &NodeSpec, listen: &str, http: Option<HttpConfig>) -> Result<Node
         // as a Go node signs its remote ACP requests with its identity.
         let seed = spec.node_identity.or(spec.go_index).unwrap_or(u64::MAX);
         let key = crate::scenario::identity::node_private_key(seed);
-        builder = builder.with_vera_rs(vera.config(&key, home.path())?);
+        builder = builder.with_vera(vera.config(&key, home.path())?);
     }
     if spec.enable_nac {
         builder = match &spec.nac_owner {

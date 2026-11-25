@@ -430,14 +430,25 @@ where
         )
         .await?;
     }
-    // A reader owed with its registration was never added to the admission
-    // counts, so its settle takes nothing from them: both read the record.
-    if change.with_registration {
+    // A reader owed with its registration, and an archive, were never added
+    // to the admission counts, so their settles take nothing from them: both
+    // read the record.
+    if change.with_registration || change.outside_admission_counts {
         return Ok(());
     }
     merge(txn, keys::UNSETTLED_KEY, &delta(true, false)).await?;
     let actor = storage::merge::counter_i64(if settled { -1 } else { 1 });
     merge(txn, &keys::actor_key(&change.actor), &actor).await
+}
+
+/// What a change's record says about how it was staged, beside the change.
+#[derive(Clone, Copy, Debug, Default)]
+pub(super) struct StageMarks {
+    /// Owed with its object's registration ([`OwedChange::with_registration`]).
+    pub with_registration: bool,
+    /// An archive staged by its actor's own delete
+    /// ([`OwedChange::deleted_by_actor`]).
+    pub deleted_by_actor: bool,
 }
 
 /// Record `new` in `txn`. The tuple's head key is read before the sequence
@@ -449,7 +460,7 @@ pub(super) async fn stage<T>(
     txn: &T,
     sequences: &dyn Store,
     new: NewOwedChange,
-    with_registration: bool,
+    marks: StageMarks,
 ) -> Result<OwedChange>
 where
     T: Reader + Writer + ?Sized,
@@ -462,7 +473,9 @@ where
         .map_err(storage_error)?
         .start;
     let change = OwedChange {
-        with_registration,
+        with_registration: marks.with_registration,
+        deleted_by_actor: marks.deleted_by_actor,
+        outside_admission_counts: new.op == OwedOp::Archive,
         ..OwedChange::staged(seq, new)
     };
     let record = change.encode_admitted()?;

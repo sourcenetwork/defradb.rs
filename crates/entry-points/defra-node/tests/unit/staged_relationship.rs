@@ -58,9 +58,8 @@ pub(super) struct Remote {
     /// Its newest verified state is past the freshness limit: every decision
     /// fails as the vera.rs light client's does.
     pub(super) stale: AtomicBool,
-    /// The provider gives the node nothing to check a delegation against,
-    /// as the Cosmos provider does: it is passed its caller's token as it
-    /// is.
+    /// The provider gives the node nothing to check a delegation against:
+    /// it is passed its caller's token as it is.
     pub(super) unverifying: AtomicBool,
     /// A relationship write does not answer until `released`, and then
     /// fails as not delivered.

@@ -804,7 +804,7 @@ jobs:
         if: matrix.suite == 'go-compat'
         run: >-
           cargo nextest run --cargo-profile super-dev -p integration-test --test legacy -E
-          'test(/^(basic|query|acp|nac|backup|p2p|identity|encryption|vera)::/)'
+          'test(/^(basic|query|acp|nac|backup|p2p|identity|encryption)::/)'
           -- go_
           --skip go_acp_link_collection_nonexistent_policy_reject
           --skip go_acp_link_collection_nonexistent_resource_reject
@@ -965,7 +965,7 @@ jobs:
       DEFRA_TEST_TRACE: p2p=debug,defra_p2p_adapter=debug,warn
       TESTO_FILTER: binary(testo)
       # Not run anywhere: p2p_interop_bench, whose one test is an ignored
-      # benchmark that prints latencies, and verars, whose cluster needs the
+      # benchmark that prints latencies, and vera, whose cluster needs the
       # verad validator binary from vera.rs, which CI does not build.
       # c_rust_to_go_outage_replay (#2089) flips between runs: the Go receiver
       # sometimes misses the protected document written while it was down. A
