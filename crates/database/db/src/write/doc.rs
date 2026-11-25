@@ -346,13 +346,8 @@ impl<S: Store + 'static> DocMutator for DbDocMutator<S> {
         self.ensure_collection_can_write(collection_name, &collection)
             .await?;
         crate::chunk::user_writes::ensure_user_writable(collection.schema())?;
-        crate::chunk::user_writes::refuse_list_writes(collection.schema(), &doc, None)?;
-        let chunk_plans = crate::chunk::sync::set_lists(
-            collection.schema(),
-            &mut doc,
-            None,
-            context.encryption(),
-        )?;
+        let chunk_plans =
+            crate::chunk::sync::plan_chunks(collection.schema(), &doc, None, context.encryption())?;
 
         let inputs = Some(&self.prepared_inputs);
         pipeline::embed(&self.db, &collection, &mut doc, inputs).await?;
@@ -468,15 +463,10 @@ impl<S: Store + 'static> DocMutator for DbDocMutator<S> {
         self.ensure_collection_can_write(collection_name, &collection)
             .await?;
         crate::chunk::user_writes::ensure_user_writable(collection.schema())?;
-        crate::chunk::user_writes::refuse_list_writes(
+        let chunk_plans = crate::chunk::sync::plan_chunks(
             collection.schema(),
             &doc,
             Some(&modified_fields),
-        )?;
-        let chunk_plans = crate::chunk::sync::set_lists(
-            collection.schema(),
-            &mut doc,
-            Some(&mut modified_fields),
             context.encryption(),
         )?;
 

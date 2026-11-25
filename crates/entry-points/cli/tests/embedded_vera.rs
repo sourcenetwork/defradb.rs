@@ -3,6 +3,8 @@
 #![cfg(unix)]
 
 mod common;
+#[path = "embedded_vera/delegation.rs"]
+mod delegation;
 
 use std::path::Path;
 use std::process::Stdio;
@@ -56,7 +58,7 @@ impl RunningNode {
                 "memory",
                 "--no-p2p",
                 "--document-acp-type",
-                "verars-embedded",
+                "vera-embedded",
                 "--vera-deployment-id",
                 "9407",
             ])
