@@ -210,7 +210,7 @@ No cross-cluster contradiction found.
 
 4. **Lean build is a SEPARATE regression entry point from `run-all.sh`.** `run-all.sh`
    is TLA-only (it shells `tools/tlc`, never `lake`). The Lean half of the corpus is
-   gated by `cd proofs/lean && lake build` (documented in `proofs/README.md:71-72`).
+   gated by `cd proofs/lean && lake build -R` (documented in `proofs/README.md`).
    A unified one-shot "verify everything" entry point does not exist; CI must invoke both.
 
 5. **STALE/IMPRECISE ANCHORS (cosmetic, verified).**
@@ -276,7 +276,7 @@ property to the real Rust binary.
    Cid/OrderEncoding/Acp Lean→TLA discharges are prose. A harness exercising the real
    binary could *empirically* close these (run real concurrent merges, observe
    convergence) — turning two prose hand-offs into binary-tested obligations.
-4. **No unified verify entry point.** TLA (`run-all.sh`) and Lean (`lake build`) are
+4. **No unified verify entry point.** TLA (`run-all.sh`) and Lean (`lake build -R`) are
    separate; the harness wrapper should invoke both plus the future binary checks.
 5. **[CRYPTO]/[CONN]/[BOUND] boundaries are out of binary scope by construction** — the
    harness can validate the *guard structure* (e.g. "merge refuses an unsigned block",
