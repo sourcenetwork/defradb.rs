@@ -108,9 +108,9 @@ With `@exhaustive` and ordering by a relation field, the `orphanNode` reports `i
 # `go.explain.default.filter`: Filter pushdown into the scan
 
 - **Parents:** ["go.explain.default"]
-- **Scenarios:** ["explain.default.default-explain-request-with-greater-than-filter", "explain.default.default-explain-request-with-integer-equal-filter", "explain.default.default-explain-request-with-json-equal-filter-succeeds", "explain.default.default-explain-request-with-logical-compound-and-filter", "explain.default.default-explain-request-with-logical-compound-or-filter", "explain.default.default-explain-request-with-match-inside-list", "explain.default.default-explain-request-with-string-equal-filter"]
+- **Scenarios:** ["explain.default.default-explain-request-with-greater-than-filter", "explain.default.default-explain-request-with-integer-equal-filter", "explain.default.default-explain-request-with-json-equal-filter-succeeds", "explain.default.default-explain-request-with-logical-compound-and-filter", "explain.default.default-explain-request-with-logical-compound-or-filter", "explain.default.default-explain-request-with-match-inside-list", "explain.default.default-explain-request-with-string-equal-filter", "explain::default::filter_applied_once::explain_filter_with_order_and_limit_is_applied_only_at_the_scan"]
 
-A collection `filter` (string or integer `_eq`, `_gt`, `_and`, `_or`, `_in`, a JSON `_eq` on an object) appears verbatim as the `filter` attribute of the `scanNode`, with the collection prefix in `prefixes`.
+A collection `filter` (string or integer `_eq`, `_gt`, `_and`, `_or`, `_in`, a JSON `_eq` on an object) appears verbatim as the `filter` attribute of the `scanNode`, with the collection prefix in `prefixes`. The filter is applied once, at the scan: the `selectNode` above it shows `filter: null`, also when the request adds an `order` and a `limit`.
 
 # `go.explain.default.docid`: DocID selection
 
