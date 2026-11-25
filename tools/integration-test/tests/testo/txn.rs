@@ -23,6 +23,7 @@ mod request;
 mod returned_field;
 mod set_active_collection_version;
 mod set_migration;
+mod signed_doc_id;
 mod truncate;
 mod ttl;
 mod txn_context;

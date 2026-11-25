@@ -549,10 +549,14 @@ impl Error {
         }
     }
 
-    /// The stable code a client classifies this failure by, when it has one.
+    /// The stable code a client classifies this failure by, when it has one:
+    /// an added collection's refusal, or a document refusal as the HTTP API
+    /// reports it (`extensions.code`, the REST body's `code`).
     pub fn code(&self) -> Option<&'static str> {
         match self {
             Self::AddCollection(refused) => refused.code(),
+            Self::Documents(error) => error.code(),
+            Self::Query(error) => error.code(),
             _ => None,
         }
     }
