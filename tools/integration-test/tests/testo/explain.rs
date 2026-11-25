@@ -124,4 +124,5 @@ mod execute {
 mod simple {
     mod basic;
     mod with_index;
+    mod with_invalid_request;
 }

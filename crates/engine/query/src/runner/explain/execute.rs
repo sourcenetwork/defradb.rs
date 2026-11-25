@@ -81,7 +81,10 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
                     // are returned as top-level GQL errors, not wrapped in executionErrors.
                     if matches!(
                         &e,
-                        QueryError::Parse(_) | QueryError::UnknownMutationCollection(_)
+                        QueryError::Parse(_)
+                            | QueryError::UnknownMutationCollection(_)
+                            | QueryError::UnknownField(_)
+                            | QueryError::SubSelectionOnLeaf { .. }
                     ) {
                         return Err(e);
                     }
@@ -167,13 +170,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
             .await?
             .ok_or_else(|| QueryError::collection_not_found(&select.collection_name))?;
 
-        // Embedded-only types (interface types from view SDL) are not root-queryable
-        if collection.is_embedded_only {
-            return Err(QueryError::parse(format!(
-                "Cannot query field \"{}\" on type \"Query\".",
-                select.collection_name
-            )));
-        }
+        plan::validate_root_select(select, &collection)?;
 
         let fetcher = self.fetcher.as_ref();
 

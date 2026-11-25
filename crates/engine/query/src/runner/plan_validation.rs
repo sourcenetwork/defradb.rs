@@ -7,6 +7,18 @@ use crate::mapper::{Filter, Requestable, Select};
 
 use super::plan_formatting::format_graphql_conditions;
 
+/// The checks a root-level select passes before it runs or is explained:
+/// the collection is root-queryable and [`validate_select`] accepts it.
+pub(crate) fn validate_root_select(select: &Select, collection: &CollectionVersion) -> Result<()> {
+    if collection.is_embedded_only {
+        return Err(QueryError::parse(format!(
+            "Cannot query field \"{}\" on type \"Query\".",
+            select.collection_name
+        )));
+    }
+    validate_select(select, collection)
+}
+
 /// Validate that the select doesn't use unsupported features.
 pub(crate) fn validate_select(select: &Select, collection: &CollectionVersion) -> Result<()> {
     // Note: CID-based queries are now handled by execute_cid_query() before this validation
