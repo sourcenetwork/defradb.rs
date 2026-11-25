@@ -32,9 +32,9 @@ pub struct Request {
     pub expected_extensions: Value,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expected_error: Option<String>,
-    /// The `extensions.code` the error matching `expected_error` carries.
-    /// Go reports no code, so a case that sets it fails as unsupported
-    /// against a Go node.
+    /// The `extensions.code` the error matching `expected_error` carries; see
+    /// [`Op::expected_error_code`]. Go reports no code, so a case that sets it
+    /// fails as unsupported against a Go node.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expected_error_code: Option<String>,
     #[serde(flatten)]
@@ -85,7 +85,7 @@ impl Op for Request {
                     self.checked_extensions(extensions),
                 )
             })
-            .map_err(|e| Failure::operation(e.to_string()))
+            .map_err(|e| Failure::coded(e.to_string(), e.code()))
             .and_then(|envelope| self.typed(envelope))
     }
 }
@@ -251,7 +251,7 @@ impl HttpRun for Request {
                         action.checked_extensions(response.extensions),
                     )
                 })
-                .map_err(|e| Failure::operation(e.to_string()))
+                .map_err(|e| Failure::coded(e.to_string(), e.code()))
                 .and_then(|envelope| action.typed(envelope))
         });
     }

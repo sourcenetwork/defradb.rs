@@ -361,11 +361,11 @@ A transaction that reads document alice and updates her `age` to 10 commits succ
 
 A transaction runs `update_Snap(input: {status: "claimed"}) { content }` and gets `content: "init"`; another writer sets `content` to `"changed"` and commits first. The transaction still commits, and the document reads `status: "claimed"`, `content: "changed"`. What an update returns is read, not decided on, so it is not validated at commit. Go conflicts here.
 
-# `defra.document`: Building documents from client values
+# `defra.document`: Documents
 
 - **Parents:** ["defra"]
 
-How client values become document fields.
+What a document is, how it is named (`defra.document.id`, in `document-id.md`), and how client values become its fields, beyond what Go's tests check.
 
 # `defra.document.typed_nillable_arrays`: Typed lists fill nillable-element arrays
 
