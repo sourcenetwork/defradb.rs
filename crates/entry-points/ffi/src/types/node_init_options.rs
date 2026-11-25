@@ -199,6 +199,48 @@ pub struct NodeInitOptions {
     /// Reserved, so the struct has no padding: leave it zero. It never
     /// becomes a field; new fields go after the struct's last one.
     pub _reserved6: u32,
+    /// Optional host keyring holding the node's peer key instead of the
+    /// store: a platform keystore the host owns and secures. Set
+    /// `peer_keyring_get`, `peer_keyring_set` and `peer_keyring_delete`
+    /// together, or none of them. A `DefraKeyringGetCallback`, spelled out so
+    /// C sees a nullable function pointer.
+    ///
+    /// The node reads the key under the name `peer-key` when it starts, and
+    /// stores a new one there on its first start. A keyring failure stops
+    /// `defra_node_new`, which never falls back to the store; a store that
+    /// already holds a plaintext peer key is refused until it is migrated,
+    /// and a store started with a keyring is refused without one. A start
+    /// with `p2p_private_key` uses that key and leaves the keyring alone.
+    /// Use one keyring namespace per node.
+    ///
+    /// The callbacks may be called from any thread, so they must be
+    /// thread-safe, and they must not call back into DefraDB. They and
+    /// `peer_keyring_context` must stay valid until `defra_node_close`
+    /// returns.
+    pub peer_keyring_get: Option<
+        unsafe extern "C" fn(
+            context: usize,
+            name: *const c_char,
+            out_key: *mut u8,
+            out_key_capacity: usize,
+            out_key_len: *mut usize,
+        ) -> c_int,
+    >,
+    /// The host keyring's `DefraKeyringSetCallback`; see `peer_keyring_get`.
+    pub peer_keyring_set: Option<
+        unsafe extern "C" fn(
+            context: usize,
+            name: *const c_char,
+            key: *const u8,
+            key_len: usize,
+        ) -> c_int,
+    >,
+    /// The host keyring's `DefraKeyringDeleteCallback`; see
+    /// `peer_keyring_get`.
+    pub peer_keyring_delete:
+        Option<unsafe extern "C" fn(context: usize, name: *const c_char) -> c_int>,
+    /// Passed back to the host keyring's callbacks on every call.
+    pub peer_keyring_context: usize,
 }
 
 impl Default for NodeInitOptions {
@@ -273,6 +315,10 @@ impl Default for NodeInitOptions {
             p2p_max_streams_per_peer: 0,
             disable_p2p_listen: 0,
             _reserved6: 0,
+            peer_keyring_get: None,
+            peer_keyring_set: None,
+            peer_keyring_delete: None,
+            peer_keyring_context: 0,
         }
     }
 }

@@ -4,6 +4,28 @@ let defraSwiftSmokeCallback: DefraRemoteSignCallback = { _, _, _, _, _, _, _, _ 
     return 0
 }
 
+let defraSwiftKeyringGet: DefraKeyringGetCallback = { _, _, _, _, outLen in
+    outLen?.pointee = 0
+    return DEFRA_KEYRING_NOT_FOUND
+}
+
+let defraSwiftKeyringSet: DefraKeyringSetCallback = { _, _, _, _ in
+    return 0
+}
+
+let defraSwiftKeyringDelete: DefraKeyringDeleteCallback = { _, _ in
+    return DEFRA_KEYRING_NOT_FOUND
+}
+
+func defraSwiftKeyringSmoke() {
+    var options = DefraNodeInitOptions()
+    options.peer_keyring_get = defraSwiftKeyringGet
+    options.peer_keyring_set = defraSwiftKeyringSet
+    options.peer_keyring_delete = defraSwiftKeyringDelete
+    options.peer_keyring_context = 1
+    let _ = defra_node_new(options)
+}
+
 func defraSwiftSmoke(
     did: UnsafePointer<CChar>,
     publicKeyHex: UnsafePointer<CChar>,

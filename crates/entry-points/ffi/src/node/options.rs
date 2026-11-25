@@ -83,6 +83,7 @@ pub(crate) unsafe fn read(options: &NodeInitOptions) -> Result<NodeSetup, String
         chunk_size: positive_int(options.chunk_size).map(|size| size as usize),
         node_acp_enabled: options.enable_node_acp != 0,
         replication_filter: crate::replication_filter::from_options(options),
+        peer_keyring: crate::peer_keyring::from_options(options)?,
         ..Default::default()
     };
 
