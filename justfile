@@ -745,10 +745,25 @@ lint-wasm:
     cargo clippy -p defra-wasm --target wasm32-unknown-unknown --no-default-features --all-targets -- -D warnings
 
 # Docs must build without warnings; a broken intra-doc link fails CI.
-[doc("Build docs with warnings denied (broken links fail CI).")]
+# rustdoc's own landing page (--enable-index-page) is nightly-only, so the
+# recipe writes target/doc/index.html itself, one link per workspace crate.
+[doc("Build docs with warnings denied (broken links fail CI), plus an index.")]
 [group('check')]
 doc:
+    #!/usr/bin/env bash
+    set -euo pipefail
     RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --keep-going
+    dir="${CARGO_TARGET_DIR:-{{ root }}/target}/doc"
+    {
+        echo '<!doctype html><meta charset="utf-8"><title>defradb.rs crates</title>'
+        echo '<h1>defradb.rs crates</h1><ul>'
+        for page in "$dir"/*/index.html; do
+            name="$(basename "$(dirname "$page")")"
+            echo "<li><a href=\"$name/index.html\">$name</a></li>"
+        done
+        echo '</ul>'
+    } > "$dir/index.html"
+    echo "docs: $dir/index.html"
 
 # What to make green before asking for a review.
 [group('check')]
