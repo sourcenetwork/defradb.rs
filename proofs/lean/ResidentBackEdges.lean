@@ -33,7 +33,7 @@ on that list of ids; the count is carried beside it.
 Rust anchors: `codec::add_ids` and `codec::encode_id_list`
 (`crates/database/db/src/index/vector/engine/diskann/codec.rs`) and
 `DiskAnn::add_resident_back_edges` and `DiskAnn::presence`
-(`crates/database/db/src/index/vector/engine/diskann/graph.rs`). Checked by
+(`crates/database/db/src/index/vector/engine/diskann/back_edges.rs`). Checked by
 `resident_records_are_the_records_with_codes_left_out` and
 `a_back_edge_drops_a_neighbour_consolidated_away`
 (`crates/database/db/tests/vector/diskann_resident_back_edges.rs`) and
