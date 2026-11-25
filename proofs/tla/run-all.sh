@@ -328,6 +328,11 @@ RUNS=(
   "MC_HistoryTurns_Red_Events.cfg HistoryTurns.tla RED"
   "MC_HistoryTurns_Red_Reclaim.cfg HistoryTurns.tla RED"
   "MC_HistoryTurns_Red_Blocks.cfg HistoryTurns.tla RED"
+  "MC_HistoryAdmissionBounds_Green.cfg HistoryAdmissionBounds.tla GREEN" # #2273: admission waits end, drops leak no slot, an over-full index drains
+  "MC_HistoryAdmissionBounds_Red_NoDeadline.cfg HistoryAdmissionBounds.tla RED" # an admission wait without a deadline waits forever behind a stuck merge (LIVE_WaitEnds)
+  "MC_HistoryAdmissionBounds_Red_FailFirst.cfg HistoryAdmissionBounds.tla RED" # an over-full index fails before reclamation and never drains (LIVE_Recovers)
+  "MC_HistoryAdmissionBounds_Red_AdmitFull.cfg HistoryAdmissionBounds.tla RED" # a capped scan admits while the index is at capacity (INV_NoOverAdmit)
+  "MC_HistoryAdmissionBounds_Red_Leak.cfg HistoryAdmissionBounds.tla RED" # a dropped wait keeps a slot (INV_Permits)
   "MC_ReplicatorIncarnation_Green.cfg ReplicatorIncarnation.tla GREEN"
   "MC_ReplicatorIncarnation_Red_Error.cfg ReplicatorIncarnation.tla RED"
   "MC_ReplicatorIncarnation_Red_Rollback.cfg ReplicatorIncarnation.tla RED"

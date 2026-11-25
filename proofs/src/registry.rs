@@ -1256,6 +1256,15 @@ pub const PROPERTIES: &[Property] = &[
     },
     Property {
         family: "Sync ownership transfer (head hint / receiver pull)",
+        name: "LIVE_WaitEnds / LIVE_Recovers / INV_NoOverAdmit / INV_Permits — a merge admission wait ends at its deadline, a dropped wait keeps no slot, and an over-full history admission index drains without admitting at capacity",
+        axis: Tla,
+        anchor: "crates/database/db/src/merge/pooled.rs PooledMergeHandler::admit; crates/database/db/src/merge/merge_handler/history_registry.rs live_roots, reclaim_idle; crates/database/db/tests/merge/pooled_admission.rs; crates/database/db/tests/merge/long_history/admission.rs",
+        model_ref: "MC_HistoryAdmissionBounds_{Green,Red_NoDeadline,Red_FailFirst,Red_AdmitFull,Red_Leak}.cfg",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
+        family: "Sync ownership transfer (head hint / receiver pull)",
         name: "Ancestor publication is idempotent; cleanup and collection carriers preserve driver ownership",
         axis: Lean,
         anchor: "crates/database/db/src/merge/merge_handler/history.rs",

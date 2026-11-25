@@ -245,3 +245,92 @@ fn loss_of_root_eligibility_releases_existing_admission() {
     })
     .unwrap()
 }
+
+#[test]
+fn an_over_full_admission_index_recovers_after_idle_cleanup() {
+    workers::block_on(async {
+        let initial = make_handler().await;
+        let handler = DbMergeHandler::new_with_max_merge_depth(
+            initial.db().clone(),
+            initial.blockstore().clone(),
+            8,
+        );
+        let mut admitted = Vec::new();
+        for index in 0..64 {
+            let mut history = History::default();
+            history
+                .append(handler.blockstore().as_ref(), 16, &format!("full-{index}"))
+                .await;
+            let mut root = history.root().clone();
+            root.sender_peer = Some(format!("peer-{}", index / 16));
+            assert_eq!(
+                merge_turn(&handler, &root, false).await,
+                MergeOutcome::Yielded
+            );
+            admitted.push(root.cid);
+        }
+        let mut extra = Vec::new();
+        for index in 0..2 {
+            let mut history = History::default();
+            history
+                .append(handler.blockstore().as_ref(), 4, &format!("extra-{index}"))
+                .await;
+            extra.push(history.root().cid);
+        }
+        let txn = handler.db().new_txn(false).await.unwrap();
+        let system = txn.systemstore().unwrap();
+        for cid in &extra {
+            system
+                .set(
+                    format!("/merge-history/v1/admissions/{cid}").as_bytes(),
+                    b"null",
+                )
+                .await
+                .unwrap();
+            system
+                .set(
+                    format!("/merge-history/v1/{cid}/state").as_bytes(),
+                    br#"{"top":0,"nodes":0,"doc":null,"outcome":null,"last_active_unix":1}"#,
+                )
+                .await
+                .unwrap();
+        }
+        for cid in &admitted {
+            let key = format!("/merge-history/v1/{cid}/state").into_bytes();
+            let mut progress: serde_json::Value =
+                serde_json::from_slice(&system.get(&key).await.unwrap().unwrap()).unwrap();
+            progress["last_active_unix"] = serde_json::json!(1);
+            system
+                .set(&key, &serde_json::to_vec(&progress).unwrap())
+                .await
+                .unwrap();
+        }
+        drop(system);
+        txn.force_commit().await.unwrap();
+        assert_eq!(admitted_roots(&handler).await, 66);
+
+        let mut waiting = History::default();
+        waiting
+            .append(handler.blockstore().as_ref(), 16, "waiting")
+            .await;
+        for _ in 0..2 {
+            assert_eq!(
+                merge_turn(&handler, waiting.root(), false).await,
+                MergeOutcome::Yielded
+            );
+            assert!(
+                admitted_roots(&handler).await >= 64,
+                "a root was admitted while the index was over full"
+            );
+        }
+        super::fixture::converge(&handler, waiting.root(), false).await;
+        assert_eq!(
+            super::fixture::read_document(&handler, waiting.root())
+                .await
+                .unwrap()
+                .get("score"),
+            Some(&document::NormalValue::Int(16))
+        );
+    })
+    .unwrap()
+}
