@@ -150,7 +150,7 @@ On the receiving node, a secondary index on `age` covers replicated documents wh
 
 - **Parents:** ["go.encryption.peer"]
 - **Go-Tests:** ["encryption/peer_acp_test.go::TestDocEncryptionACP_IfUserAndNodeHaveAccess_ShouldFetch", "encryption/peer_acp_test.go::TestDocEncryptionACP_IfUserHasAccessButNotNode_ShouldNotFetch", "encryption/peer_acp_test.go::TestDocEncryptionACP_IfNodeHasAccessToSomeDocs_ShouldFetchOnlyThem", "encryption/peer_acp_test.go::TestDocEncryptionACP_IfClientNodeHasDocPermissionButServerNodeIsNotAvailable_ShouldNotFetch", "encryption/peer_acp_branchable_test.go::TestDocEncryptionACP_BranchableCollection_AuthorizedPeerCanFetch", "encryption/peer_acp_branchable_test.go::TestDocEncryptionACP_BranchableCollectionWithRemoteDAC_AuthorizedPeerCanFetch"]
-- **Scope:** "document ACP: remote DAC only, except the branchable local-DAC test which runs only with local DAC"
+- **Scope:** "document ACP: remote DAC only, except the branchable local-DAC test which runs only with local DAC. On vera.rs a document created without an identity is unregistered and denied to everyone, so a node granted `reader` on some docs sees exactly the shared private docs and no public ones"
 
 Keys and blocks for a private encrypted document reach a peer only when that peer's node identity has access: user and node with access read the doc; a user with access through a node without it reads nothing and the node has no commits; a node granted `reader` on some docs sees exactly the shared private docs plus public docs (encrypted or not); if the key-holding node is closed, a newly authorised peer gets nothing; on a private `@branchable` collection the collection owner reads the decrypted doc on the peer.
 

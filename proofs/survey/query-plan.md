@@ -26,7 +26,7 @@ the planner (builder, index selection, mapping), and the read/write boundary tra
 | Deferred-ACP overlay consistency | TLA+ | Within a txn, a projected `Registered{owner}` gates reads to that owner and `Unregistered` applies the backend's public-access rule, exactly as the post-commit ACP state would; on commit the projection applies (a registered doc becomes ACP-registered); on rollback no ACP state changes; a concurrent txn never observes another's uncommitted projection. No reader gains access the committed state would deny (fail-closed across the projected→committed boundary). | `DeferredAcp` (Commits/Acp slices reference `check_doc_access_with_projection` only as the gate call-site) | medium |
 
 The existing `DeferredAcp` model assumes a backend where unregistered objects are
-public, as in the local and Cosmos implementations. Native Vera denies missing
+public, as in the local implementation. Native Vera denies missing
 registrations; the model does not establish that behavior. The Rust overlay reads
 `DocumentACP::unregistered_documents_are_public()` and has separate regression
 coverage for native denial and branchable collection grants.

@@ -30,3 +30,8 @@ testo index::composite_in_order::in_on_descending_first_field_ordered_descending
 # the loser with "transaction conflict. Please retry".
 testo txn::new_encrypted_index_concurrent::a_concurrent_encrypted_index_delete_and_adds_all_land
 testo txn::new_encrypted_index_concurrent::concurrent_encrypted_index_adds_all_land
+# Ordered by an indexed field of the publisher, which holds the relation, Go returns a null `_publisherID`; Rust returns the ID.
+testo query::relation_order_with_filter::selected_relation_id::indexed
+testo query::relation_order_with_filter::selected_relation_id_unfiltered::indexed
+testo query::relation_order_with_filter::selected_relation_id_unfiltered_with_limit::indexed
+testo query::relation_order_with_filter::selected_relation_id_with_limit::indexed

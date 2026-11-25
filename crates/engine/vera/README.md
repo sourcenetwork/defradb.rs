@@ -1,8 +1,8 @@
 # Vera ACP provider
 
 Build the Defra CLI with `--features vera` and select
-`--document-acp-type verars`. Configure the service endpoint with
-`DEFRA_VERA_RS_ADDRESS`, and supply both `--vera-consensus-key` (hex) and
+`--document-acp-type vera`. Configure the service endpoint with
+`DEFRA_VERA_ADDRESS`, and supply both `--vera-consensus-key` (hex) and
 `--vera-deployment-id` from the deployment's operator configuration. Their
 corresponding environment variables are `DEFRA_VERA_CONSENSUS_KEY` and
 `DEFRA_VERA_DEPLOYMENT_ID`.
@@ -33,12 +33,16 @@ specification rules when reconstructed through the document ACP provider.
 Deleting a document archives its object on the deployment: the delete's
 transaction records the archive as an owed change, settled after the commit in
 order behind anything still in flight on the object, and Vera then removes every
-relationship on it and names no owner. Only the object's owner may archive, so a
-delete by anyone else (a writer the policy lets delete) is refused before it
-commits and nothing is deleted. Changes on the object not yet sent go with the
-delete, each with a note for its actor; from the commit until the archive
-settles, the object denies everyone, and only the owner that deleted the
-document still reads its commit history. A node that merges a replicated delete
+relationship on it and names no owner. Only the object's owner may archive, so
+the archive is always made as the owner, whoever the policy lets delete: it is
+signed with the owner's authority when the node holds it (a key for the owner's
+DID, or the owner's delegation on the owner's own delete) and otherwise waits,
+parked, until the owner hands one in. A writer's delete is never refused for
+not owning the document, and the archive is never sent under the writer's
+authority. Changes on the object not yet sent go with the delete, each with a
+note for its actor; from the commit until the archive settles, the object
+denies everyone, and only an owner that deleted the document itself still
+reads its commit history. A node that merges a replicated delete
 archives nothing. Vera keeps an archived registration: the same document
 identifier cannot be registered again, so a document re-created with identical
 content stays readable by nobody.
@@ -58,9 +62,9 @@ an actor identity retain independent worker identities and submission
 sequences.
 
 The native provider module is `vera::vera_rs`, and its integration suite is
-`cargo test -p integration-test --test verars`. Configure it with the `verars`
-provider selector, `--vera-rs-address`, `DEFRA_VERA_RS_ADDRESS`, or the
-`vera_rs_address` config key.
+`cargo test -p integration-test --test vera`. Configure it with the `vera`
+provider selector, `--vera-address`, `DEFRA_VERA_ADDRESS`, or the
+`vera_address` config key.
 
 The `Native consumer` workflow tests the provider against its pinned Vera runtime.
 Manual runs accept a full commit SHA in `vera_revision`; this selects the service

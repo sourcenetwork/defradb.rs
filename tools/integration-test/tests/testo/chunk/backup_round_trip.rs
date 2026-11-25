@@ -6,7 +6,7 @@ use integration_test::scenario::{captures, Common, Text};
 use integration_test::test_case::TestCase;
 use serde_json::json;
 
-use super::support::{add_article_on, body, chunks_are_listed, list_is, on, read_list, SCHEMA};
+use super::support::{add_article_on, body, chunks_are_listed, on, read_chunks, SCHEMA};
 
 fn node(name: &str) -> NewNode {
     NewNode {
@@ -34,7 +34,7 @@ fn a_backup_round_trip_rebuilds_the_chunks() {
         article_collection("db0").into(),
         article_collection("db1").into(),
         add_article_on(&text, "article", Some("db0")),
-        read_list("source", 5, Some("db0")),
+        read_chunks("source", 5, Some("db0")),
         ExportBackup {
             expected_data: json!({
                 "content": m::concat([
@@ -59,7 +59,6 @@ fn a_backup_round_trip_rebuilds_the_chunks() {
             ..Default::default()
         }
         .into(),
-        list_is("source", 5, Some("db1")),
         chunks_are_listed("source", 5, Some("db1")),
     ]);
     case.without_db = true;

@@ -62,11 +62,20 @@ jobs:
             core.info(`${files.length} changed files; run=${run}`);
             core.setOutput('run', run ? 'true' : 'false');
 
+  # A pull request run that would qualify waits for CI's approval (ci-approved.yml).
+  approval:
+    name: Wait for CI approval
+    needs: scope
+    if: ${{ !cancelled() && github.event_name == 'pull_request' && needs.scope.outputs.run != 'false' }}
+    permissions:
+      actions: read
+    uses: ./.github/workflows/ci-approved.yml
+
   native-consumer:
     name: Native ACP consumer
-    needs: scope
+    needs: [scope, approval]
     # A failed scope job leaves `run` empty, so the qualification runs rather than being skipped.
-    if: ${{ !cancelled() && needs.scope.outputs.run != 'false' }}
+    if: ${{ !cancelled() && needs.scope.outputs.run != 'false' && (github.event_name != 'pull_request' || needs.approval.outputs.approved == 'true') }}
     # Fat LTO with one codegen unit links each release binary in one rustc, so more cores
     # stop helping past 16; 64 GB leaves room for that link beside a full -j build. Only pull
     # requests take a spot runner, so a reclaim never fails a main push or a manual run.
@@ -74,7 +83,7 @@ jobs:
     # Full normal-release compilation is retained on a cache miss.
     timeout-minutes: 90
     env:
-      VERA_RUNTIME_REVISION: ${{ inputs.vera_revision || '1367a56b2471bc379fd0e5522b8492d4b4b6e5d8' }}
+      VERA_RUNTIME_REVISION: ${{ inputs.vera_revision || 'fc0bd8e47019a5f3175239884ab4ae935f3b973f' }}
     steps:
       # Routes actions/cache and rust-cache to RunsOn's S3 cache.
       - uses: runs-on/action@v2

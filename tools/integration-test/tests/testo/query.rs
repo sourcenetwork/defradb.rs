@@ -48,6 +48,7 @@ mod cyclic_fragments;
 mod mutation_introspection;
 mod optional_variables;
 mod relation_field_args;
+mod relation_order_with_filter;
 mod schema_descriptions;
 mod subscription_introspection;
 mod inline_array {

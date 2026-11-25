@@ -1,8 +1,5 @@
 //! Refuses user writes to what only a parent's own writes may set.
 
-use document::Document;
-use query::error::{QueryError, Result};
-use rapidhash::RapidHashSet;
 use schema::CollectionVersion;
 
 use crate::error::Error;
@@ -52,29 +49,6 @@ where
             .any(|other| other.name == parent.collection && !is_deleted(other));
         if is_deleted(version) && parent_stays {
             ensure_admin_changeable(version)?;
-        }
-    }
-    Ok(())
-}
-
-/// Refuses a write that sets a chunk list itself, because lists come only
-/// from the text. `modified` is `None` for a create.
-pub(crate) fn refuse_list_writes(
-    schema: &CollectionVersion,
-    doc: &Document,
-    modified: Option<&RapidHashSet<String>>,
-) -> Result<()> {
-    for chunked in &schema.chunked_fields {
-        let list_field = chunked.list_field();
-        let set_by_user = match modified {
-            Some(modified) => modified.contains(&list_field),
-            None => doc.get(&list_field).is_some(),
-        };
-        if set_by_user {
-            return Err(QueryError::execution(format!(
-                "{}.{list_field} is read-only: it is set from {} by every write that changes it",
-                schema.name, chunked.field_name
-            )));
         }
     }
     Ok(())

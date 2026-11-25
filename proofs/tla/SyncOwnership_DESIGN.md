@@ -359,7 +359,7 @@ an attempt's windows end (`WFail`: each window is bounded), a quantum ends
 `LIVE_AckedRootMerged` rests on an environment assumption, stated as strong
 fairness on some `WComplete`: a fetch that can complete eventually does.
 Reachability alone does not give it, since a reachable provider can answer
-busy every time. The assumption is a `Boundary` in `proofs/src/registry.rs`.
+busy every time. The assumption is a `Boundary` in `proofs/src/registry/`.
 `Dead` and `Trickle` providers never complete in the model. Their heads stay
 owned (`ACT_AckedRootLeavesOwned`) and keep being retried, but
 `LIVE_AckedRootMerged` promises them nothing; it promises that they do not
@@ -490,7 +490,7 @@ the shared peer's after the others: the worst case for a key-order sweep.
   peer's never-serving roots fill the store and every other peer's head is
   nacked for ever. With the quota they hold their peer's share for good: a
   durable record ends only at a merge or a quarantine, so four peers' such
-  roots still fill the store (a Boundary row in `registry.rs`).
+  roots still fill the store (a Boundary row in `src/registry/`).
 - The acknowledgement of a head on its durable record alone rests on the
   record the store committed (`Processed::DurablyRegistered`), not on the
   view: `PersistedView` learns of a commit in commit-receipt order, which an
