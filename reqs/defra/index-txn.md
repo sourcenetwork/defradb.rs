@@ -187,6 +187,13 @@ An index on `[Int]`, `[Float]`, `[Boolean]`, `[String]` and their nillable-eleme
 
 `_any` and `_all` filters on an indexed array (with `_eq`, `_in`, `_nin`) use the index and return the matching documents; `_none` returns correct results without using the index.
 
+# `defra.index.array.all-empty`: `_all` on an indexed array finds empty arrays
+
+- **Parents:** ["go.index.array.operators"]
+- **Scenarios:** ["index::all_empty_array::all_on_an_indexed_array_finds_an_empty_array", "index::all_empty_array::all_on_an_indexed_composite_array_finds_an_empty_array", "index::all_empty_array::all_with_a_range_on_an_indexed_array_finds_an_empty_array"]
+
+`_all` over an empty array is true, so `_all` (with `_eq`, `_in` or a range) on an indexed scalar array returns the documents whose array is empty, exactly as the same query on an unindexed array does, while still using the index; a null array and an array holding only failing elements are not returned. This holds when the array is the first field of a composite index. Go misses these documents (its index writes no entry for an empty array), so these scenarios do not run against Go.
+
 # `go.index.array.nil-elements`: Null elements in indexed arrays
 
 - **Parents:** ["go.index.array"]

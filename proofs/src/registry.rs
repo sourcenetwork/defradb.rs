@@ -4932,4 +4932,16 @@ pub const PROPERTIES: &[Property] = &[
         tiers: &[Contract],
         bound_by: "crates/database/p2p/src/host/transport/resolver_tests.rs a_failed_read_falls_back_to_the_localhost_nameservers, a_read_with_nameservers_passes_through_unchanged, a_systemd_resolved_stub_passes_through, an_unknown_option_keeps_the_hosts_nameserver, a_bad_nameserver_line_keeps_the_good_ones, a_bad_nameserver_line_never_uses_its_comment, an_unknown_directive_keeps_the_hosts_nameserver, a_bad_search_domain_keeps_the_others, a_file_without_nameservers_keeps_its_search_and_options, a_comment_that_is_not_utf8_keeps_the_hosts_nameserver, a_missing_file_falls_back_to_the_localhost_nameservers, the_fallback_matches_the_lean_model",
     },
+    Property {
+        // #3245: `_all` over an empty array is true, but an array index holds
+        // an empty array only under its null entry, so the element scan alone
+        // missed it; the scan also reads the null entry.
+        family: "Index selection",
+        name: "AllEmptyArray.widened_finds_all / element_scan_misses_empty / widened_adds_only_null",
+        axis: Lean,
+        anchor: "crates/engine/query/src/planner/index_selection/empty_array.rs with_empty_arrays; crates/database/db/src/index/manager/value_extraction.rs expand_value_for_indexing",
+        model_ref: "AllEmptyArray (lake build)",
+        tiers: &[Boundary],
+        bound_by: "tools/integration-test/tests/testo/index/all_empty_array.rs all_on_an_indexed_array_finds_an_empty_array, all_on_an_indexed_composite_array_finds_an_empty_array, all_with_a_range_on_an_indexed_array_finds_an_empty_array",
+    },
 ];
