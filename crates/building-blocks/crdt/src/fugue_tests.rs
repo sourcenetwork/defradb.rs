@@ -465,3 +465,86 @@ fn a_merge_over_a_long_text_splits_its_span_only_where_edits_land() {
     let got = merge_text(&current, base, &after, &[3]).unwrap();
     assert!(got.as_deref() == Some(want.as_str()), "merged text differs");
 }
+
+/// The text of a tree that keeps every character ever inserted: the replay
+/// before folding.
+fn unfolded(blocks: &[TextBlock]) -> String {
+    characters(blocks)
+        .unwrap()
+        .into_iter()
+        .filter(|c| !c.deleted)
+        .map(|c| c.ch)
+        .collect()
+}
+
+/// The steps found critical are the blocks every other block comes before or
+/// after.
+#[test]
+fn critical_steps_are_the_critical_blocks() {
+    for seed in 0..300 {
+        let peers = 1 + (seed % 3) as usize;
+        let blocks = history(seed, peers, 4 + (seed % 12) as usize);
+        let steps = History::of(&blocks, false).unwrap();
+        let critical = checkpoint::critical_steps(&steps.ancestry);
+        for (step, &index) in steps.order.iter().enumerate() {
+            assert_eq!(
+                critical[step],
+                is_critical(&blocks, index),
+                "seed {seed}, block {index}"
+            );
+        }
+    }
+}
+
+/// Folding the tree at critical blocks leaves the text a tree that keeps
+/// every character gives, across concurrency, merges, deletes and ops that
+/// reach past the end.
+#[test]
+fn a_folded_replay_matches_an_unfolded_one() {
+    let mut folded = 0;
+    for seed in 0..400 {
+        let peers = 1 + (seed % 3) as usize;
+        let blocks = history_of(seed, peers, 8 + (seed % 40) as usize, seed % 4 == 3);
+        let (text, most) = checkpoint::replay_folding(&blocks).unwrap();
+        assert_eq!(text, unfolded(&blocks), "seed {seed}");
+        let (tree, _) = build(&blocks, None).unwrap();
+        if most < tree.nodes.len() {
+            folded += 1;
+        }
+    }
+    assert!(folded > 100, "only {folded} replays folded");
+}
+
+/// A long linear history that keeps deleting what it types: the folded
+/// replay holds a few nodes beyond its text, however long the history, and
+/// gives the text its edits leave.
+#[test]
+fn a_long_churning_history_replays_in_bounded_nodes() {
+    let mut rng = Rng(11);
+    let mut blocks = Vec::new();
+    let mut text = String::new();
+    for n in 0..5_000u16 {
+        let len = text.chars().count() as u64;
+        let op = if len > 40 {
+            del(rng.below(len - 4), 5)
+        } else {
+            ins(rng.below(len + 1), "hello")
+        };
+        text = TextOp::apply_all(&text, std::slice::from_ref(&op));
+        blocks.push(TextBlock {
+            id: n.to_be_bytes().to_vec(),
+            parents: n
+                .checked_sub(1)
+                .map(|p| p.to_be_bytes().to_vec())
+                .into_iter()
+                .collect(),
+            ops: vec![op],
+        });
+    }
+    let (got, most) = checkpoint::replay_folding(&blocks).unwrap();
+    assert_eq!(got, text);
+    assert_eq!(got, unfolded(&blocks));
+    assert!(most <= 64, "the replay held {most} nodes");
+    let (tree, _) = build(&blocks, None).unwrap();
+    assert!(tree.nodes.len() > 10_000, "{} nodes", tree.nodes.len());
+}
