@@ -587,3 +587,10 @@ With `Book.author` / `Author.written` (`written_books`) and `Book.reviewedBy` / 
 - **Scenarios:** ["query::one_to_one::with_filter_secondary_relation_id::missing_relation_checks_all_conditions_against_null"]
 
 A missing relation's ID is null. An explicit ID predicate uses the ordinary null comparison rules, and other conditions on the same missing relation must also match.
+
+# `defra.query.relation_order.filter_other_field`: Ordering by one field of a relation while filtering on another
+
+- **Parents:** ["go.query.one_to_one.order"]
+- **Scenarios:** ["query::relation_order_with_filter::ascending::unindexed", "query::relation_order_with_filter::ascending::indexed", "query::relation_order_with_filter::descending::unindexed", "query::relation_order_with_filter::descending::indexed", "query::relation_order_with_filter::ascending_with_limit::unindexed", "query::relation_order_with_filter::ascending_with_limit::indexed", "query::relation_order_with_filter::descending_with_narrowing_filter::unindexed", "query::relation_order_with_filter::descending_with_narrowing_filter::indexed", "query::relation_order_with_filter::selected_relation::unindexed", "query::relation_order_with_filter::selected_relation::indexed", "query::relation_order_with_filter::same_field_filter::unindexed", "query::relation_order_with_filter::same_field_filter::indexed"]
+
+`Book(filter: {publisher: {rank: {_gt: 0}}}, order: {publisher: {score: ASC|DESC}})` returns the books whose related object passes the filter, ordered by the related `score`, whether or not the relation is selected, for a one-to-one relation and for the single side of a one-to-many one, with or without indexes on those fields. A `limit` takes the first rows of that order, and a selected relation renders only its selected fields.

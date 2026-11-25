@@ -79,5 +79,5 @@ Run from `proofs/tla`:
 ./tools/tlc -metadir states/replicator_resumable_green -config MC_Replicator_Resumable_Green.cfg MC_Replicator_Resumable_Green.tla
 ```
 
-These commands are intentionally not wired into `run-all.sh`; `prompt.md` says the
-integrator will add harness and README entries after this conflict-free slice lands.
+These configs run in `run-all.sh`, which discovers every top-level `*.cfg` and
+takes the module and verdict from each cfg's `\* run-all:` header.

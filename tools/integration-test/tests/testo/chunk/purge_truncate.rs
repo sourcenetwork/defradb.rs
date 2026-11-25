@@ -5,10 +5,7 @@ use integration_test::actions::{AddDoc, Truncate};
 use integration_test::test_case::TestCase;
 use serde_json::json;
 
-use super::support::{
-    add_article, add_article_collection, body, chunk_texts_are, chunks_are_listed, no_chunks,
-    read_list,
-};
+use super::support::{add_article, add_article_collection, body, chunk_texts_are, no_chunks};
 
 #[test]
 #[mantra_macros::req_test("defra.chunk.purge.truncate")]
@@ -16,8 +13,7 @@ fn truncating_the_parent_empties_its_chunks() {
     TestCase::from_actions(vec![
         add_article_collection(),
         add_article(&body(4, "caves"), "article"),
-        read_list("created", 4, None),
-        chunks_are_listed("created", 4, None),
+        chunk_texts_are(&[&body(4, "caves")], None),
         Truncate {
             collection: "Article".into(),
             ..Default::default()

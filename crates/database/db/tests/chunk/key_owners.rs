@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use db::chunk::list::text_hash;
+use db::chunk::hash::text_hash;
 use db::database::DB;
 use db::{AutoCommitMutator, DbBlockDocIDResolver};
 use defra_core::block::generate_cid_from_bytes;

@@ -23,7 +23,6 @@ default = []
 threshold = ["dep:orbis"]
 # Vera-attested release policy. M4.
 vera = ["dep:vera"]
-sourcehub = ["vera"]
 
 [lib]
 bench = false
