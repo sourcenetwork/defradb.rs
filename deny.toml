@@ -28,11 +28,6 @@ ignore = [
     # direct alloy pin is already at the latest workspace version.
     "RUSTSEC-2024-0436",
 
-    # rustls-pemfile 1.x — unmaintained (2.x is current). Pulled by
-    # reqwest 0.11 inside tendermint-rpc 0.40.4 (vera's Cosmos client).
-    # Removable when tendermint-rpc moves to reqwest 0.12.
-    "RUSTSEC-2025-0134",
-
     # unsafe-libyaml — unmaintained. Pulled by serde_yaml 0.9, itself
     # deprecated, which acp reads policies with. Removable when acp moves to
     # a maintained YAML crate.
@@ -51,7 +46,7 @@ ignore = [
 
     # crypto-bigint 0.5.5 has no patched release in its 0.5 line. It is
     # required by elliptic-curve 0.13 through k256, libp2p-identity,
-    # alloy and cosmrs. The 0.7 dependency is patched in Cargo.lock.
+    # and alloy. The 0.7 dependency is patched in Cargo.lock.
     # Remove when these upstream consumers move to patched RustCrypto
     # releases; the remaining timing side-channel exposure is tracked in #2261.
     { id = "RUSTSEC-2026-0387", reason = "Unpatched crypto-bigint 0.5 dependency through elliptic-curve 0.13; upstream migration tracked in #2261" },
@@ -61,22 +56,6 @@ ignore = [
     # libp2p-dns 0.44; removable with the libp2p 0.57 bump (#1875).
     "RUSTSEC-2026-0118",
     "RUSTSEC-2026-0119",
-
-    # h2 0.3 and rustls-webpki 0.101 — pulled by reqwest 0.11 inside
-    # tendermint-rpc 0.40.4 (vera's Cosmos client), already the latest
-    # release. Reached only over TLS to the configured Cosmos RPC endpoint.
-    # Removable when tendermint-rpc moves to reqwest 0.12.
-    "RUSTSEC-2026-0258",
-    "RUSTSEC-2026-0098",
-    "RUSTSEC-2026-0099",
-    "RUSTSEC-2026-0104",
-    # emSign intermediates: 0.101 has no fix; our direct 0.103 is on 0.103.16.
-    "RUSTSEC-2026-0382",
-    # rustls 0.21 from the same reqwest 0.11. 0346 needs a custom session
-    # store that logs with Debug, which we don't have; 0349 is fixed only in
-    # rustls 0.23.46, which our direct rustls is already on.
-    "RUSTSEC-2026-0346",
-    "RUSTSEC-2026-0349",
 
     # zstd 0.13 and zstd-safe 7 — pulled only by commonware-storage from the
     # iverc/commonware-upstream fork, through vera.rs and backbone's
@@ -154,7 +133,7 @@ deny = [
         "igd-next", "iroh", "iroh-dns", "iroh-relay", "jsonrpsee-client-transport",
         "jsonrpsee-core", "jsonrpsee-server", "libp2p-quic", "libp2p-swarm", "libp2p-tcp",
         "n0-dns-resolver", "n0-future", "netlink-sys", "netwatch", "noq", "opentelemetry_sdk",
-        "pgwire", "portmapper", "quinn", "reqwest", "rtnetlink", "tendermint-rpc",
+        "pgwire", "portmapper", "quinn", "reqwest", "rtnetlink",
         "test-infra", "tokio-native-tls", "tokio-rustls", "tokio-stream", "tokio-tungstenite",
         "tokio-util", "tokio-websockets", "tower", "vera-backend", "vera-client",
         "vera-consensus", "vera-executor", "vera-harness", "vera-jsonrpc", "vera-node",
@@ -181,15 +160,6 @@ highlight = "lowest-version"
 # crates/foundation/keyring colliding with the crates.io name. Not a duplicate.
 # ------------------------------------------------------------------
 skip = [
-    # prost 0.13 — cosmos-sdk-proto / tendermint / ics23 under cosmrs
-    # 0.22 (crates/engine/vera), and jmt under acp-light-client.
-    # Removable when that stack moves to prost 0.14.
-    { crate = "prost@0.13.5", reason = "hard-pinned by the cosmrs 0.22 / tendermint 0.40 stack; not ours to move" },
-
-    # sha2 0.9 — ed25519-consensus 2.1, via commonware-cryptography and
-    # tendermint. Only present in vera/backbone builds.
-    { crate = "sha2@0.9.9", reason = "ed25519-consensus 2.1 under commonware-cryptography and tendermint" },
-
     # sha2 0.11 — multihash-codetable 0.2.2 requires sha2 0.11 and sits
     # in the CID path via crates/engine/blockstore; ed25519-dalek 3.0.0-rc.0
     # (iroh) pulls it too. The 0.10 floor is held by libp2p-identity
@@ -207,14 +177,6 @@ skip = [
     # (iroh is opt-in); dies with #1341.
     { crate = "ed25519-dalek@3.0.0-rc.0", reason = "exact-pinned by iroh-base 1.0.1; libp2p-identity floor-pins 2.x — dies with #1341" },
     { crate = "curve25519-dalek@5.0.0-rc.0", reason = "exact-pinned by iroh-base 1.0.1 — dies with #1341" },
-
-    # reqwest 0.11 — one edge: tendermint-rpc 0.40.4 under cosmrs 0.22.
-    # It carries hyper 0.14, h2 0.3, rustls 0.21, tokio-rustls 0.24,
-    # hyper-rustls 0.24, rustls-webpki 0.101, system-configuration 0.5
-    # and untrusted 0.7 with it. cosmrs gates tendermint-rpc behind an
-    # optional `rpc` feature that is not in its defaults, so this may
-    # be removable — tracked separately under #1327.
-    { crate = "reqwest@0.11.27", reason = "tendermint-rpc 0.40.4 under cosmrs 0.22; cosmrs/rpc audit tracked under #1327" },
 
     # reqwest 0.13 — iroh 1.0.1 / iroh-relay. Dies with #1341.
     { crate = "reqwest@0.13.3", reason = "iroh 1.0.1 and iroh-relay — dies with #1341" },
@@ -244,11 +206,10 @@ skip = [
     { crate = "sysinfo@0.37.2", reason = "commonware-runtime; vera/backbone builds only" },
 
     # thiserror 1 — graphql-parser 0.4, josekit 0.8, lark-kv,
-    # cosmrs, jmt, tendermint-rpc,
     # proc-macro-crate 1.1 and quick-protobuf-codec. No first-party
     # crate declares v1 as of #1333; the duplicate is entirely
     # third-party.
-    { crate = "thiserror@1.0.69", reason = "graphql-parser, josekit, lark-kv, cosmrs, jmt; no first-party declaration remains" },
+    { crate = "thiserror@1.0.69", reason = "graphql-parser, josekit, lark-kv; no first-party declaration remains" },
 ]
 skip-tree = []
 

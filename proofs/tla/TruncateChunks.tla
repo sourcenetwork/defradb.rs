@@ -8,7 +8,7 @@
 \* are gone (INV_LiveParentHasChunks). While it runs, an article it is about to
 \* remove may already have lost its chunks; truncate is not one transaction.
 \* Chunks left behind with no live article are allowed: readers hide them,
-\* because no live article lists them.
+\* because no live article's text uses them.
 \*
 \* A purge is a second way to remove articles. It removes the chosen articles
 \* and their chunks in one transaction (it runs again if it conflicts, so it

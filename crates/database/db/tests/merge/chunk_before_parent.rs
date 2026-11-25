@@ -5,7 +5,7 @@ use std::sync::Arc;
 use document::{Document, NormalValue};
 use query::mutator::DocMutator;
 
-use super::chunk_forged::{chunks_of, list_of, merge, node, Node};
+use super::chunk_forged::{body_of, chunks_of, merge, node, Node};
 
 fn article(node: &Node, body: &str) -> Document {
     let collection = node.db.get_collection("Article").unwrap().unwrap();
@@ -48,8 +48,8 @@ fn creating_an_article_whose_chunks_already_arrived_succeeds() {
         assert_eq!(local.doc_id, created.doc_id);
         assert!(local.derived.is_empty());
         assert_eq!(
-            list_of(&peer, &local.doc_id).await,
-            list_of(&author, &created.doc_id).await
+            body_of(&peer, &local.doc_id).await,
+            body_of(&author, &created.doc_id).await
         );
     })
     .unwrap()

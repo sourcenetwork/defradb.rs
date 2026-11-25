@@ -21,7 +21,6 @@ native = ["db/native", "defra-node/native"]
 iroh = ["defra-node/p2p", "p2p/iroh-transport"]
 libp2p = ["db/p2p", "p2p/libp2p-transport", "defra-node/libp2p"]
 vera = ["defra-node/vera"]
-sourcehub = ["vera"]
 wasmtime-runtime = [
     "db/wasmtime-runtime",
     

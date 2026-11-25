@@ -9,7 +9,7 @@ use serde_json::json;
 
 use super::support::{
     add_article, add_article_collection, body, chunk_texts_are, chunks_are_listed, gql, in_txn,
-    list_is, no_chunks, read_list,
+    no_chunks, read_chunks,
 };
 
 #[test]
@@ -34,8 +34,7 @@ fn an_explicit_transaction_writes_chunks_on_commit() {
             ..Default::default()
         }
         .into(),
-        read_list("committed", 5, None),
-        chunks_are_listed("committed", 5, None),
+        chunk_texts_are(&[&body(5, "forests")], None),
     ])
     .execute();
 }
@@ -99,7 +98,7 @@ fn a_discarded_transaction_leaves_the_chunks_as_they_were() {
     TestCase::from_actions(vec![
         add_article_collection(),
         add_article(&rivers, "article"),
-        read_list("created", 4, None),
+        read_chunks("created", 4, None),
         TxnBegin::default().into(),
         update_in(0, &body(2, "lakes")),
         TxnDiscard {
@@ -114,8 +113,8 @@ fn a_discarded_transaction_leaves_the_chunks_as_they_were() {
             ..Default::default()
         }
         .into(),
-        list_is("created", 4, None),
         chunk_texts_are(&[&rivers], None),
+        chunks_are_listed("created", 4, None),
     ])
     .execute();
 }

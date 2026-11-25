@@ -72,15 +72,25 @@ jobs:
             }
             core.setOutput('reused', reused ? 'true' : 'false');
 
+  # A pull request run with macOS tests waits for CI's approval (ci-approved.yml).
+  approval:
+    name: Wait for CI approval
+    if: >-
+      github.event_name == 'pull_request' &&
+      (contains(github.event.pull_request.labels.*.name, 'ci:macos') || contains(github.event.pull_request.labels.*.name, 'ci:full'))
+    permissions:
+      actions: read
+    uses: ./.github/workflows/ci-approved.yml
+
   unit-tests:
     name: Unit tests
-    needs: reuse
-    # Main runs it; a pull request does with ci:macos or ci:full; a queue entry
-    # does unless it reuses its pull request run. It is not a required check.
+    needs: [reuse, approval]
+    # Main runs it; a pull request does with ci:macos or ci:full once approved; a
+    # queue entry does unless it reuses its pull request run. It is not a required check.
     if: >-
       always() &&
       (github.event_name == 'push' ||
-       (github.event_name == 'pull_request' && (contains(github.event.pull_request.labels.*.name, 'ci:macos') || contains(github.event.pull_request.labels.*.name, 'ci:full'))) ||
+       (github.event_name == 'pull_request' && needs.approval.outputs.approved == 'true') ||
        (github.event_name == 'merge_group' && needs.reuse.outputs.reused != 'true'))
     uses: ./.github/workflows/unit-tests.yml
     with:

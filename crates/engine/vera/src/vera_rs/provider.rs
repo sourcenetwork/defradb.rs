@@ -540,8 +540,8 @@ impl VeraProvider for VeraRsProvider {
 
     /// Nothing is archived after a delete commits: the node that deletes a
     /// document archives its object as an owed change staged in the
-    /// delete's transaction ([`Self::archives_owed_on_delete`]), refused
-    /// unless its caller owns the object, and a replica that merges the
+    /// delete's transaction ([`Self::archives_owed_on_delete`]), made as
+    /// the object's owner whoever deletes, and a replica that merges the
     /// delete archives nothing.
     fn archive_object_on_document_delete(&self) -> bool {
         false

@@ -1,0 +1,38 @@
+name: CI approved
+
+# Called by every pull request workflow but CI. One maintainer approval of the
+# CI run's ci-approval environment covers them all: until it is given, this
+# reports not approved and leaves a notice, and CI's `Start waiting workflows`
+# job re-runs the run that left it.
+on:
+  workflow_call:
+    outputs:
+      approved:
+        value: ${{ jobs.check.outputs.approved }}
+
+permissions:
+  actions: read
+
+jobs:
+  check:
+    name: Check
+    runs-on: ubuntu-latest
+    outputs:
+      approved: ${{ steps.decide.outputs.approved }}
+    steps:
+      - id: decide
+        uses: actions/github-script@v9
+        with:
+          script: |
+            const pr = context.payload.pull_request;
+            // GitHub's own fork approval starts every workflow of a fork's push at once.
+            let approved = pr.head.repo.full_name !== pr.base.repo.full_name;
+            if (!approved) {
+              const runs = (await github.rest.actions.listWorkflowRuns({ ...context.repo, workflow_id: 'ci.yml', head_sha: pr.head.sha, event: 'pull_request', per_page: 20 })).data.workflow_runs;
+              for (const run of runs) {
+                const jobs = await github.paginate(github.rest.actions.listJobsForWorkflowRun, { ...context.repo, run_id: run.id, filter: 'latest', per_page: 100 });
+                if (jobs.some((j) => j.name === 'Approve run' && j.conclusion === 'success')) approved = true;
+              }
+            }
+            if (!approved) core.notice('Approving the CI run re-runs this one.', { title: 'Waiting for CI approval' });
+            core.setOutput('approved', approved ? 'true' : 'false');

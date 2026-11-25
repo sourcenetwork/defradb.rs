@@ -14,7 +14,7 @@ use storage::keys::doc_id_index::DocRef;
 use storage::namespace::Namespace;
 
 use crate::block::builder::{compute_document_blocks, write_document_blocks_with_inputs};
-use crate::chunk::list::distinct;
+use crate::chunk::hash::distinct;
 use crate::chunk::split::{split, Chunk};
 use crate::chunk::sync::{chunk_document, ChunkCollection};
 use crate::collection::Collection;
