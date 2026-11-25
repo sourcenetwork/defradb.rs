@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use tracing::info;
 
-use super::server_acp::{open_vera_worker, vera_rs_setup, vera_rs_tuning, DocumentAcpSetup};
+use super::server_acp::{open_vera_worker, vera_setup, vera_tuning, DocumentAcpSetup};
 use crate::config::Config;
 use crate::error::{Error, Result};
 
@@ -48,7 +48,7 @@ pub(super) async fn setup(
     }
     // vera.rs takes the keys in ascending order.
     operator_keys.sort();
-    let tuning = vera_rs_tuning(config);
+    let tuning = vera_tuning(config);
 
     let node = vera_embedded::HostedNode::start(
         vera_embedded::HostConfig {
@@ -97,7 +97,7 @@ pub(super) async fn setup(
         .map_err(|error| invalid("provider", &error))?,
     );
     info!("Document ACP configured (embedded vera.rs)");
-    let mut setup = vera_rs_setup(provider, &tuning, store, zanzibar_store, edge);
+    let mut setup = vera_setup(provider, &tuning, store, zanzibar_store, edge);
     setup.embedded_vera = Some(node);
     Ok(setup)
 }

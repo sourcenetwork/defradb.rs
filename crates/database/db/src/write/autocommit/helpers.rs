@@ -638,9 +638,10 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
 /// Local ownership disappears in the same commit as the deletion marker. A
 /// remote provider that archives a deleted document's object
 /// ([`acp::DocumentACP::stages_archive_on_delete`], vera.rs) is owed the
-/// archive in this transaction, as `context`'s identity, so the delete and
-/// the archive commit together; the delete is refused, and nothing is
-/// deleted, unless that identity owns the object
+/// archive in this transaction, made as the object's owner whoever
+/// `context`'s identity is, so the delete and the archive commit together;
+/// the delete is refused, and nothing is deleted, when the archive cannot be
+/// staged (no identity, no owner, or the owner cannot be learned now)
 /// ([`acp::TransactionOutbox::stage_archive`], `proofs/tla/ArchiveOnDelete.tla`).
 /// Any other remote provider keeps the object: its registration, owed or
 /// held, stays, so the delete and every earlier change replicate to nodes

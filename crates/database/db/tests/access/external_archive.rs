@@ -1,6 +1,7 @@
 //! A deleted document's archive, while it is owed
-//! (`proofs/tla/ArchiveOnDelete.tla`): it denies every read of the document
-//! but one, its actor's read of the commit history, and a delete in a
+//! (`proofs/tla/ArchiveOnDelete.tla`): it is made as the document's owner,
+//! whoever the policy let delete, it denies every read of the document but
+//! one, a deleting owner's read of the commit history, and a delete in a
 //! transaction records it under that transaction.
 
 use std::sync::atomic::Ordering;
@@ -9,23 +10,24 @@ use acp::{
     DocumentACP as _, DocumentPermission, Identity, OwedDenial, OwedDenials, OwedFilter, OwedOp,
     OwedTuple, OwedWhat,
 };
+use datastore::BasicTxn;
+use identity::Did;
 use query::prepared::PreparedInputMemo;
 use query::txn::AcpRegistrationProjection;
-use query::QueryExecutor as _;
+use query::{QueryExecutor as _, QueryRequest};
 
 use super::external_outbox::{actor, owed, tuple, Outbox};
 use super::external_registration::{alice, bob, request, RemoteAcp, POLICY, RESOURCE};
-use super::external_staging::{Change, Staging};
+use super::external_staging::{carol, Change, Staging};
 
 const DOC: &str = "doc-1";
-const NOT_OWNER: &str = "permission denied: UNAUTHORIZED: not document owner, cannot archive the deleted document's object";
 
-/// Owe, as alice, the archive of [`DOC`].
+/// Owe, as alice, the archive of [`DOC`], staged by her own delete.
 async fn archive(outbox: &Outbox) {
     let (txn, changes) = outbox.begin().await;
     let tuple = OwedTuple::archive(POLICY, RESOURCE, DOC);
     changes
-        .stage_restored(owed(&tuple, OwedOp::Archive))
+        .stage_archive(owed(&tuple, OwedOp::Archive), true)
         .await
         .unwrap();
     txn.commit().await.unwrap();
@@ -218,38 +220,209 @@ fn an_owed_delete_of_the_actors_owner_relation_takes_its_commit_history_too() {
     .unwrap()
 }
 
+fn delete(doc: &str, actor: Did) -> QueryRequest {
+    request(
+        &format!(r#"mutation {{ delete_Users(docID: "{doc}") {{ _docID }} }}"#),
+        Some(actor),
+    )
+}
+
+/// The names `actor` reads in `Users`.
+async fn names(staging: &Staging, actor: Option<Did>) -> Vec<String> {
+    let read = staging
+        .node
+        .runner
+        .execute(request("query { Users { name } }", actor))
+        .await;
+    assert!(!read.has_errors(), "{:?}", read.errors);
+    read.data.unwrap()["Users"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|user| user["name"].as_str().unwrap().to_owned())
+        .collect()
+}
+
+/// The archive alice owes on `doc`: its actor and state.
+async fn owed_archive(staging: &Staging, doc: &str) -> Vec<(Did, acp::OwedState)> {
+    staging
+        .gate
+        .owed_entries(OwedFilter::Actor(&alice()))
+        .await
+        .unwrap()
+        .into_iter()
+        .filter(|entry| {
+            entry.object == doc
+                && matches!(
+                    entry.what,
+                    OwedWhat::Change {
+                        op: OwedOp::Archive,
+                        ..
+                    }
+                )
+        })
+        .map(|entry| (entry.actor, entry.state))
+        .collect()
+}
+
+/// Alice's document, which the policy lets bob delete too.
+async fn shared_with_bob(staging: &Staging) -> String {
+    staging.remote.archives.store(true, Ordering::SeqCst);
+    let doc = staging.create(alice(), "doomed", None).await;
+    staging
+        .on_provider(alice(), Change::new(alice(), &doc, OwedOp::Add, bob()))
+        .await;
+    assert_eq!(names(staging, Some(bob())).await, ["doomed"]);
+    doc
+}
+
+/// Bob deletes `doc`, which he does not own.
+async fn delete_as_bob(staging: &Staging, doc: &str) {
+    let deleted = staging.node.runner.execute(delete(doc, bob())).await;
+    assert!(!deleted.has_errors(), "{:?}", deleted.errors);
+    assert_eq!(
+        deleted.data.unwrap()["delete_Users"][0]["_docID"],
+        serde_json::json!(doc)
+    );
+}
+
 #[test]
 #[mantra_macros::req_test("defra.acp.vera_delete_archive")]
-fn a_delete_by_anyone_but_the_owner_is_refused_in_these_words() {
+fn a_permitted_non_owners_delete_commits_and_denies_the_document_to_everyone_at_once() {
     workers::block_on(async {
         let staging = Staging::new().await;
-        staging.remote.archives.store(true, Ordering::SeqCst);
-        let doc = staging.create(alice(), "kept", None).await;
-        staging
-            .on_provider(alice(), Change::new(alice(), &doc, OwedOp::Add, bob()))
-            .await;
-
-        let refused = staging
-            .node
-            .runner
-            .execute(request(
-                &format!(r#"mutation {{ delete_Users(docID: "{doc}") {{ _docID }} }}"#),
-                Some(bob()),
-            ))
-            .await;
-        let messages: Vec<&str> = refused
-            .errors
-            .iter()
-            .map(|error| error.message.as_str())
-            .collect();
-        assert_eq!(messages, [NOT_OWNER]);
-        let owed = staging
+        let doc = shared_with_bob(&staging).await;
+        delete_as_bob(&staging, &doc).await;
+        assert_eq!(
+            owed_archive(&staging, &doc).await,
+            [(alice(), acp::OwedState::Staged)],
+            "the archive is owed as the owner"
+        );
+        let bobs = staging
             .gate
             .owed_entries(OwedFilter::Actor(&bob()))
             .await
             .unwrap();
-        assert!(owed.is_empty(), "{owed:?}");
+        assert!(bobs.is_empty(), "the deleter owes nothing: {bobs:?}");
+        for actor in [Some(alice()), Some(bob()), Some(carol()), None] {
+            assert!(names(&staging, actor).await.is_empty());
+        }
+        let txn = BasicTxn::new(staging.store.as_ref(), 0, true)
+            .await
+            .unwrap();
+        assert_eq!(
+            OwedDenials::new(&txn.acpstore())
+                .archive_actor(POLICY, RESOURCE, &doc)
+                .await
+                .unwrap(),
+            None,
+            "an owner that did not delete keeps no commit history, nor does bob"
+        );
+        txn.discard().unwrap();
+
+        staging
+            .gate
+            .settle_owed_changes_once(acp::OwedScope::All)
+            .await
+            .unwrap();
+        let left = owed_archive(&staging, &doc).await;
+        assert!(left.is_empty(), "{left:?}");
+        assert_eq!(staging.remote.owner(&doc), None, "archived as alice");
+        assert!(!staging.remote.holds(&doc, &bob()));
+        for actor in [Some(alice()), Some(bob())] {
+            assert!(names(&staging, actor).await.is_empty());
+        }
+    })
+    .unwrap()
+}
+
+#[test]
+#[mantra_macros::req_test("defra.acp.vera_delete_archive")]
+fn a_non_owners_delete_parks_the_archive_until_the_owners_authority_appears() {
+    workers::block_on(async {
+        let staging = Staging::new().await;
+        let doc = shared_with_bob(&staging).await;
+        // From here the node signs only with the keys it holds: bob's.
+        staging.remote.credentials.store(true, Ordering::SeqCst);
+        staging.remote.hold_key(&bob());
+        delete_as_bob(&staging, &doc).await;
+        let parked = owed_archive(&staging, &doc).await;
+        assert_eq!(parked.len(), 1, "{parked:?}");
+        assert_eq!(parked[0].0, alice());
+        assert_eq!(
+            parked[0].1,
+            acp::OwedState::AwaitingAuthority,
+            "bob's key does not archive alice's object"
+        );
+        for actor in [Some(alice()), Some(bob()), None] {
+            assert!(names(&staging, actor).await.is_empty());
+        }
+        staging
+            .gate
+            .settle_owed_changes_once(acp::OwedScope::All)
+            .await
+            .unwrap();
+        assert_eq!(staging.remote.owner(&doc), Some(alice()), "nothing sent");
+
+        let entry = staging
+            .gate
+            .owed_entries(OwedFilter::Actor(&alice()))
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|entry| {
+                matches!(
+                    entry.what,
+                    OwedWhat::Change {
+                        op: OwedOp::Archive,
+                        ..
+                    }
+                )
+            })
+            .expect("the archive is owed")
+            .reference();
+        assert!(
+            staging.gate.reauthorize_owed(&bob(), &entry).await.is_err(),
+            "bob owes nothing"
+        );
+        staging.remote.hold_key(&alice());
+        staging
+            .gate
+            .reauthorize_owed(&alice(), &entry)
+            .await
+            .expect("the owner's authority is handed in");
+        staging
+            .gate
+            .settle_owed_changes_once(acp::OwedScope::All)
+            .await
+            .unwrap();
+        assert!(owed_archive(&staging, &doc).await.is_empty());
+        assert_eq!(staging.remote.owner(&doc), None, "archived as alice");
+        for actor in [Some(alice()), Some(bob())] {
+            assert!(names(&staging, actor).await.is_empty());
+        }
+    })
+    .unwrap()
+}
+
+#[test]
+#[mantra_macros::req_test("defra.acp.vera_delete_archive")]
+fn an_actor_without_the_delete_permission_is_refused_before_commit() {
+    workers::block_on(async {
+        let staging = Staging::new().await;
+        staging.remote.archives.store(true, Ordering::SeqCst);
+        let doc = staging.create(alice(), "kept", None).await;
+
+        let refused = staging.node.runner.execute(delete(&doc, carol())).await;
+        assert_eq!(
+            refused.data.map(|data| data["delete_Users"].clone()),
+            Some(serde_json::json!([])),
+            "carol deletes nothing: {:?}",
+            refused.errors
+        );
+        assert!(owed_archive(&staging, &doc).await.is_empty());
         assert_eq!(staging.remote.owner(&doc), Some(alice()));
+        assert_eq!(names(&staging, Some(alice())).await, ["kept"]);
     })
     .unwrap()
 }
