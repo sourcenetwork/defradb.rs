@@ -1,0 +1,75 @@
+warning: move the bounds on `Value` to a `where` clause
+  --> $DIR/bounds.rs:9:13
+   |
+LL | fn function<Value: Debug>(_: Value) {}
+   |             ^^^^^^^^^^^^
+   |
+   = help: keep type parameters in the generic list and put their trait bounds after `where`
+   = note: `#[warn(inline_generic_bounds)]` on by default
+
+warning: move the bounds on `Value` to a `where` clause
+  --> $DIR/bounds.rs:10:15
+   |
+LL | struct Record<Value: Debug>(Value);
+   |               ^^^^^^^^^^^^
+   |
+   = help: keep type parameters in the generic list and put their trait bounds after `where`
+
+warning: move the bounds on `Value` to a `where` clause
+  --> $DIR/bounds.rs:11:13
+   |
+LL | enum Choice<Value: Debug> { Value(Value) }
+   |             ^^^^^^^^^^^^
+   |
+   = help: keep type parameters in the generic list and put their trait bounds after `where`
+
+warning: move the bounds on `Value` to a `where` clause
+  --> $DIR/bounds.rs:12:14
+   |
+LL | trait Source<Value: Debug> {}
+   |              ^^^^^^^^^^^^
+   |
+   = help: keep type parameters in the generic list and put their trait bounds after `where`
+
+warning: move the bounds on `Value` to a `where` clause
+  --> $DIR/bounds.rs:13:13
+   |
+LL | type Values<Value: Debug> = Vec<Value>;
+   |             ^^^^^^^^^^^^
+   |
+   = help: keep type parameters in the generic list and put their trait bounds after `where`
+
+warning: move the bounds on `Value` to a `where` clause
+  --> $DIR/bounds.rs:14:6
+   |
+LL | impl<Value: Debug> Record<Value> {}
+   |      ^^^^^^^^^^^^
+   |
+   = help: keep type parameters in the generic list and put their trait bounds after `where`
+
+warning: move the bounds on `Element` to a `where` clause
+  --> $DIR/bounds.rs:30:21
+   |
+LL |         fn expanded<$value: $bound>(_: $value) {}
+   |                     ^^^^^^^^^^^^^^
+...
+LL | inline!(Element: Debug);
+   | ----------------------- in this macro invocation
+   |
+   = help: keep type parameters in the generic list and put their trait bounds after `where`
+   = note: this warning originates in the macro `inline` (in Nightly b$DIRlds, run with -Z macro-backtrace for more info)
+
+warning: move the bounds on `Value` to a `where` clause
+  --> $DIR/bounds.rs:47:25
+   |
+LL |         struct Authored<Value: Debug>(Value);
+   |                         ^^^^^^^^^^^^
+...
+LL | authored!();
+   | ----------- in this macro invocation
+   |
+   = help: keep type parameters in the generic list and put their trait bounds after `where`
+   = note: this warning originates in the macro `authored` (in Nightly b$DIRlds, run with -Z macro-backtrace for more info)
+
+warning: 8 warnings emitted
+

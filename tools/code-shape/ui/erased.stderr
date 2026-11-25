@@ -1,0 +1,83 @@
+warning: keep a concrete error type in this signature
+  --> $DIR/erased.rs:15:16
+   |
+LL | fn direct() -> Heap<dyn Failure> {
+   |                ^^^^^^^^^^^^^^^^^
+   |
+   = help: return a typed `thiserror` error and retain the original failure as its source
+   = note: `#[warn(erased_error_signature)]` on by default
+
+warning: keep a concrete error type in this signature
+  --> $DIR/erased.rs:19:15
+   |
+LL | fn alias() -> Erased {
+   |               ^^^^^^
+   |
+   = help: return a typed `thiserror` error and retain the original failure as its source
+
+warning: keep a concrete error type in this signature
+  --> $DIR/erased.rs:23:35
+   |
+LL | trait ErasedCallback: FnOnce() -> Erased {}
+   |                                   ^^^^^^
+   |
+   = help: return a typed `thiserror` error and retain the original failure as its source
+
+warning: keep a concrete error type in this signature
+  --> $DIR/erased.rs:26:45
+   |
+LL |     type Work: std::future::Future<Output = Result<(), Erased>>;
+   |                                             ^^^^^^^^^^^^^^^^^^
+   |
+   = help: return a typed `thiserror` error and retain the original failure as its source
+
+warning: keep a concrete error type in this signature
+  --> $DIR/erased.rs:32:21
+   |
+LL | fn specialized() -> Specialized {
+   |                     ^^^^^^^^^^^
+   |
+   = help: return a typed `thiserror` error and retain the original failure as its source
+
+warning: keep a concrete error type in this signature
+  --> $DIR/erased.rs:36:22
+   |
+LL | async fn nested() -> Option<Wrapped<dyn Failure>> {
+   |                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: return a typed `thiserror` error and retain the original failure as its source
+
+warning: keep a concrete error type in this signature
+  --> $DIR/erased.rs:58:21
+   |
+LL | fn exposed_input(_: Erased) {}
+   |                     ^^^^^^
+   |
+   = help: return a typed `thiserror` error and retain the original failure as its source
+
+warning: keep a concrete error type in this signature
+  --> $DIR/erased.rs:62:40
+   |
+LL |     Work: std::future::Future<Output = Result<(), Erased>>,
+   |                                        ^^^^^^^^^^^^^^^^^^
+   |
+   = help: return a typed `thiserror` error and retain the original failure as its source
+
+warning: keep a concrete error type in this signature
+  --> $DIR/erased.rs:67:13
+   |
+LL |     source: Heap<dyn Failure>,
+   |             ^^^^^^^^^^^^^^^^^
+   |
+   = help: return a typed `thiserror` error and retain the original failure as its source
+
+warning: keep a concrete error type in this signature
+  --> $DIR/erased.rs:87:18
+   |
+LL |     type Error = Heap<dyn Failure>;
+   |                  ^^^^^^^^^^^^^^^^^
+   |
+   = help: return a typed `thiserror` error and retain the original failure as its source
+
+warning: 10 warnings emitted
+

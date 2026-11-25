@@ -1,0 +1,11 @@
+warning: return the owning crate's `Result` at this public boundary
+  --> $DIR/reordered_results.rs:13:42
+   |
+LL | pub fn nested_success() -> Result<Error, std::result::Result<(), Error>> {
+   |                                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: keep specific errors internally; wrap typed causes at this crate's boundary, and wrap them again only at a facade boundary
+   = note: `#[warn(crate_result)]` on by default
+
+warning: 1 warning emitted
+

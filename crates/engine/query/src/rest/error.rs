@@ -6,39 +6,30 @@ use crate::error::QueryError;
 pub type RestResult<T> = std::result::Result<T, RestError>;
 
 /// Error type for REST operations.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, thiserror::Error)]
 pub enum RestError {
     /// Collection not found.
+    #[error("collection not found: {0}")]
     CollectionNotFound(String),
     /// Document not found.
+    #[error("document not found: {0}")]
     DocumentNotFound(String),
     /// Invalid document ID format.
+    #[error("invalid document ID: {0}")]
     InvalidDocId(String),
     /// Invalid input data.
+    #[error("invalid input: {0}")]
     InvalidInput(String),
     /// Permission denied (ACP check failed).
+    #[error("permission denied: {0}")]
     PermissionDenied(String),
     /// A transaction conflicted and may be retried.
+    #[error("{}", crate::executor::TXN_CONFLICT_MESSAGE)]
     TransactionConflict,
     /// Storage or execution error.
+    #[error("internal error: {0}")]
     Internal(String),
 }
-
-impl std::fmt::Display for RestError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::CollectionNotFound(name) => write!(f, "collection not found: {}", name),
-            Self::DocumentNotFound(id) => write!(f, "document not found: {}", id),
-            Self::InvalidDocId(id) => write!(f, "invalid document ID: {}", id),
-            Self::InvalidInput(msg) => write!(f, "invalid input: {}", msg),
-            Self::PermissionDenied(msg) => write!(f, "permission denied: {}", msg),
-            Self::TransactionConflict => f.write_str(crate::executor::TXN_CONFLICT_MESSAGE),
-            Self::Internal(msg) => write!(f, "internal error: {}", msg),
-        }
-    }
-}
-
-impl std::error::Error for RestError {}
 
 impl RestError {
     pub fn collection_not_found(name: impl Into<String>) -> Self {

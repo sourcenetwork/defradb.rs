@@ -4,6 +4,9 @@ mod errors;
 
 pub use errors::CursorError;
 
+/// A result from the cursor token codec.
+pub type Result<Value> = std::result::Result<Value, CursorError>;
+
 use base64::Engine;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -44,7 +47,7 @@ impl Cursor {
 
     /// Decode a token. Returns `EmptyDocId` if `d` is empty,
     /// `InvalidBase64`/`InvalidJson` for malformed input.
-    pub fn decode(token: &str) -> Result<Self, CursorError> {
+    pub fn decode(token: &str) -> Result<Self> {
         let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(token)?;
         let cursor: Cursor = serde_json::from_slice(&bytes)?;
         if cursor.doc_id.is_empty() {

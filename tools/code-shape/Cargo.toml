@@ -1,0 +1,26 @@
+[package]
+name = "defra_code_shape"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+dylint_linting = "=6.4.0"
+toml = "1.2"
+
+[dev-dependencies]
+async-trait = "=0.1.92"
+dylint_testing = "=6.4.0"
+tempfile = "3"
+thiserror = "2"
+
+[workspace]
+
+[package.metadata.rust-analyzer]
+rustc_private = true
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(dylint_lib, values("defra_code_shape"))', 'cfg(code_shape_ui)'] }

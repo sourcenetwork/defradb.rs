@@ -54,11 +54,11 @@ pub trait TxnTurn: MaybeSend {
 /// The work of one request on a transaction, run where the transaction lives.
 #[cfg(not(target_arch = "wasm32"))]
 pub type TxnJob<T> =
-    Box<dyn for<'t> FnOnce(&'t mut dyn TxnTurn) -> MaybeBoxFuture<'t, T> + Send + 'static>;
+    Box<dyn for<'turn> FnOnce(&'turn mut dyn TxnTurn) -> MaybeBoxFuture<'turn, T> + Send + 'static>;
 /// The work of one request on a transaction, run where the transaction lives.
 #[cfg(target_arch = "wasm32")]
 pub type TxnJob<T> =
-    Box<dyn for<'t> FnOnce(&'t mut dyn TxnTurn) -> MaybeBoxFuture<'t, T> + 'static>;
+    Box<dyn for<'turn> FnOnce(&'turn mut dyn TxnTurn) -> MaybeBoxFuture<'turn, T> + 'static>;
 
 /// Boxes `job` as a [`TxnJob`], its signature fixed for every borrow of the
 /// turn.

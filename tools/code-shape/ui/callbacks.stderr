@@ -1,0 +1,100 @@
+warning: name callback lifetime `'a` for what it borrows
+  --> $DIR/callbacks.rs:7:13
+   |
+LL | type Opaque<'a> = &'a dyn Fn(u8) -> u8;
+   |             ^^
+   |
+   = help: use a descriptive name such as `'request`, `'store`, or `'callback`
+   = note: `#[warn(callback_lifetime_name)]` on by default
+
+warning: give this callback shape a named trait or type alias
+  --> $DIR/callbacks.rs:20:27
+   |
+LL | fn unnamed(callback: impl RenamedFn(u8) -> u8) -> u8 {
+   |                           ^^^^^^^^^^^^^^^^^^^
+   |
+   = help: a named trait with a blanket implementation preserves capturing closures and their bounds
+   = note: `#[warn(anonymous_callback)]` on by default
+
+warning: give this callback shape a named trait or type alias
+  --> $DIR/callbacks.rs:26:15
+   |
+LL |     Callback: Fn(u8) -> u8,
+   |               ^^^^^^^^^^^^
+   |
+   = help: a named trait with a blanket implementation preserves capturing closures and their bounds
+
+warning: give this callback shape a named trait or type alias
+  --> $DIR/callbacks.rs:32:19
+   |
+LL |     call: Box<dyn Fn(u8) -> u8>,
+   |                   ^^^^^^^^^^^^
+   |
+   = help: a named trait with a blanket implementation preserves capturing closures and their bounds
+
+warning: give this function pointer a named type alias
+  --> $DIR/callbacks.rs:33:14
+   |
+LL |     pointer: fn(u8) -> u8,
+   |              ^^^^^^^^^^^^
+   |
+   = help: declare a type alias that retains the pointer's ABI, safety, arguments and result
+
+warning: give this callback shape a named trait or type alias
+  --> $DIR/callbacks.rs:54:15
+   |
+LL |     Callback: Fn(u8) -> u8,
+   |               ^^^^^^^^^^^^
+   |
+   = help: a named trait with a blanket implementation preserves capturing closures and their bounds
+
+warning: name callback lifetime `'a` for what it borrows
+  --> $DIR/callbacks.rs:60:17
+   |
+LL | trait Inherited<'a>: Borrowed<'a> {}
+   |                 ^^
+   |
+   = help: use a descriptive name such as `'request`, `'store`, or `'callback`
+
+warning: name callback lifetime `'b` for what it borrows
+  --> $DIR/callbacks.rs:61:21
+   |
+LL | type InheritedAlias<'b> = &'b dyn Inherited<'b>;
+   |                     ^^
+   |
+   = help: use a descriptive name such as `'request`, `'store`, or `'callback`
+
+warning: give this function pointer a named type alias
+  --> $DIR/callbacks.rs:75:22
+   |
+LL |     callback: Option<extern "C" fn(u8)>,
+   |                      ^^^^^^^^^^^^^^^^^
+   |
+   = help: declare a type alias that retains the pointer's ABI, safety, arguments and result
+
+warning: name callback lifetime `'a` for what it borrows
+  --> $DIR/callbacks.rs:114:15
+   |
+LL |     type Call<'a>: Fn(&'a u8) -> u8;
+   |               ^^
+   |
+   = help: use a descriptive name such as `'request`, `'store`, or `'callback`
+
+warning: name callback lifetime `'b` for what it borrows
+  --> $DIR/callbacks.rs:118:15
+   |
+LL |     type Call<'b> = &'b dyn Fn(&'b u8) -> u8;
+   |               ^^
+   |
+   = help: use a descriptive name such as `'request`, `'store`, or `'callback`
+
+warning: give this callback shape a named trait or type alias
+  --> $DIR/callbacks.rs:129:15
+   |
+LL |     Callback: Fn(u8) -> u8,
+   |               ^^^^^^^^^^^^
+   |
+   = help: a named trait with a blanket implementation preserves capturing closures and their bounds
+
+warning: 12 warnings emitted
+

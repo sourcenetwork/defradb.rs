@@ -196,6 +196,15 @@ lean_lib FetchStats where
 lean_lib ProviderHealth where
 
 @[default_target]
+lean_lib CodeShape where
+
+@[default_target]
+lean_lib CallbackShape where
+
+@[default_target]
+lean_lib ErrorBoundary where
+
+@[default_target]
 lean_lib GossipFrame where
 
 @[default_target]

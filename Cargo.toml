@@ -47,7 +47,10 @@ members = [
     "proofs",
     "benches",
 ]
-exclude = ["tools/lenses"]
+exclude = ["tools/lenses", "tools/code-shape"]
+
+[workspace.metadata.dylint]
+libraries = [{ path = "tools/code-shape" }]
 
 [workspace.package]
 version = "0.5.0"
@@ -69,6 +72,9 @@ repository = "https://github.com/sourcenetwork/defradb.rs"
 # contributors can't accidentally introduce it. Use `regolith::sync::Mutex`
 # (or restructure to drop the guard before awaiting) in any flagged
 # site.
+[workspace.lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(dylint_lib, values("defra_code_shape"))'] }
+
 [workspace.lints.clippy]
 await_holding_lock = "warn"
 await_holding_refcell_ref = "warn"

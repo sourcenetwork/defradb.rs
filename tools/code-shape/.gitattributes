@@ -1,0 +1,3 @@
+# Compiler UI snapshots retain the compiler's final blank line.
+ui/*.stderr whitespace=-blank-at-eof
+examples/*.stderr whitespace=-blank-at-eof

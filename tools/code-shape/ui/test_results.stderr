@@ -1,0 +1,11 @@
+warning: return `()` or the crate's `Result` from this test
+  --> $DIR/test_results.rs:10:29
+   |
+LL | fn foreign_test_result() -> std::io::Result<()> {
+   |                             ^^^^^^^^^^^^^^^^^^^
+   |
+   = help: keep specific errors internally; wrap typed causes at this crate's boundary, and wrap them again only at a facade boundary
+   = note: `#[warn(test_result)]` on by default
+
+warning: 1 warning emitted
+

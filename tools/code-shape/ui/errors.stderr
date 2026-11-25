@@ -1,0 +1,20 @@
+warning: derive this error with `thiserror`
+  --> $DIR/errors.rs:18:1
+   |
+LL | impl RenamedError for Handwritten {}
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: keep its display messages and source chain in the derived error's variants
+   = note: `#[warn(manual_error_impl)]` on by default
+
+warning: use the crate's typed errors instead of `anyhow`
+  --> $DIR/errors.rs:4:1
+   |
+LL | extern crate anyhow as renamed;
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: derive the crate's error enum with `thiserror` and preserve concrete error sources
+   = note: `#[warn(untyped_error)]` on by default
+
+warning: 2 warnings emitted
+

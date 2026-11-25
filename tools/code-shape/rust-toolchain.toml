@@ -1,0 +1,5 @@
+[toolchain]
+channel = "nightly-2026-08-20"
+targets = ["wasm32-unknown-unknown"]
+components = ["llvm-tools-preview", "rustc-dev", "rust-src", "rustfmt"]
+profile = "minimal"

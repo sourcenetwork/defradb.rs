@@ -699,6 +699,11 @@ fmt:
 fmt-check:
     cargo fmt --all -- --check
 
+# Check the compiler fixtures before the workspace cleanup rolls out.
+[group('check')]
+lint-code-shape:
+    .github/scripts/code-shape.sh preview
+
 # Every lint and feature check CI runs, in the same order.
 [group('check')]
 lint:

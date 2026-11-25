@@ -1,0 +1,163 @@
+warning: return the owning crate's `Result` at this public boundary
+  --> $DIR/results.rs:4:27
+   |
+LL | pub fn foreign_error() -> std::io::Result<()> {
+   |                           ^^^^^^^^^^^^^^^^^^^
+   |
+   = help: keep specific errors internally; wrap typed causes at this crate's boundary, and wrap them again only at a facade boundary
+   = note: `#[warn(crate_result)]` on by default
+
+warning: return the owning crate's `Result` at this public boundary
+  --> $DIR/results.rs:8:32
+   |
+LL | pub async fn asynchronous() -> std::io::Result<()> {
+   |                                ^^^^^^^^^^^^^^^^^^^
+   |
+   = help: keep specific errors internally; wrap typed causes at this crate's boundary, and wrap them again only at a facade boundary
+
+warning: return the owning crate's `Result` at this public boundary
+  --> $DIR/results.rs:13:28
+   |
+LL |     fn operation(&self) -> std::io::Result<()>;
+   |                            ^^^^^^^^^^^^^^^^^^^
+   |
+   = help: keep specific errors internally; wrap typed causes at this crate's boundary, and wrap them again only at a facade boundary
+
+warning: return the owning crate's `Result` at this public boundary
+  --> $DIR/results.rs:14:37
+   |
+LL |     async fn asynchronous(&self) -> std::io::Result<()>;
+   |                                     ^^^^^^^^^^^^^^^^^^^
+   |
+   = help: keep specific errors internally; wrap typed causes at this crate's boundary, and wrap them again only at a facade boundary
+
+warning: return the owning crate's `Result` at this public boundary
+  --> $DIR/results.rs:20:29
+   |
+LL |     pub fn method(&self) -> std::io::Result<()> {
+   |                             ^^^^^^^^^^^^^^^^^^^
+   |
+   = help: keep specific errors internally; wrap typed causes at this crate's boundary, and wrap them again only at a facade boundary
+
+warning: return the owning crate's `Result` at this public boundary
+  --> $DIR/results.rs:37:63
+   |
+LL | pub fn explicit_future() -> impl std::future::Future<Output = std::io::Result<()>> {
+   |                                                               ^^^^^^^^^^^^^^^^^^^
+   |
+   = help: keep specific errors internally; wrap typed causes at this crate's boundary, and wrap them again only at a facade boundary
+
+warning: return the owning crate's `Result` at this public boundary
+  --> $DIR/results.rs:41:77
+   |
+LL | pub fn boxed_future() -> std::pin::Pin<Box<dyn std::future::Future<Output = std::io::Result<()>>>> {
+   |                                                                             ^^^^^^^^^^^^^^^^^^^
+   |
+   = help: keep specific errors internally; wrap typed causes at this crate's boundary, and wrap them again only at a facade boundary
+
+warning: return the owning crate's `Result` at this public boundary
+  --> $DIR/results.rs:47:28
+   |
+LL | pub fn aliased_future() -> ForeignFuture<'static> {
+   |                            ^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: keep specific errors internally; wrap typed causes at this crate's boundary, and wrap them again only at a facade boundary
+
+warning: return the owning crate's `Result` at this public boundary
+  --> $DIR/results.rs:52:60
+   |
+LL |     fn request(&self) -> impl std::future::Future<Output = std::io::Result<()>>;
+   |                                                            ^^^^^^^^^^^^^^^^^^^
+   |
+   = help: keep specific errors internally; wrap typed causes at this crate's boundary, and wrap them again only at a facade boundary
+
+warning: return the owning crate's `Result` at this public boundary
+  --> $DIR/results.rs:66:44
+   |
+LL | pub fn generic_future<Work>(work: Work) -> Work
+   |                                            ^^^^
+   |
+   = help: keep specific errors internally; wrap typed causes at this crate's boundary, and wrap them again only at a facade boundary
+
+warning: return the owning crate's `Result` at this public boundary
+  --> $DIR/results.rs:80:54
+   |
+LL | pub fn borrowed_future<'request>(_: &'request ()) -> ForeignFuture<'request> {
+   |                                                      ^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: keep specific errors internally; wrap typed causes at this crate's boundary, and wrap them again only at a facade boundary
+
+warning: return the owning crate's `Result` at this public boundary
+  --> $DIR/results.rs:85:46
+   |
+LL |     fn borrowed<'request>(&'request self) -> ForeignFuture<'request>;
+   |                                              ^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: keep specific errors internally; wrap typed causes at this crate's boundary, and wrap them again only at a facade boundary
+
+warning: return the owning crate's `Result` at this public boundary
+  --> $DIR/results.rs:98:33
+   |
+LL | pub fn concrete_projection() -> std::result::Result<(), <u32 as std::str::FromStr>::Err> {
+   |                                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: keep specific errors internally; wrap typed causes at this crate's boundary, and wrap them again only at a facade boundary
+
+warning: return the owning crate's `Result` at this public boundary
+  --> $DIR/results.rs:102:43
+   |
+LL | pub async fn asynchronous_projection() -> std::result::Result<(), <u32 as std::str::FromStr>::Err> {
+   |                                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: keep specific errors internally; wrap typed causes at this crate's boundary, and wrap them again only at a facade boundary
+
+warning: return the owning crate's `Result` at this public boundary
+  --> $DIR/results.rs:106:65
+   |
+LL | pub fn opaque_projection() -> impl std::future::Future<Output = std::result::Result<(), <u32 as std::str::FromStr>::Err>> {
+   |                                                                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: keep specific errors internally; wrap typed causes at this crate's boundary, and wrap them again only at a facade boundary
+
+warning: return the owning crate's `Result` at this public boundary
+  --> $DIR/results.rs:110:30
+   |
+LL | pub fn named_projection() -> ForwardedFuture<'static, <u32 as std::str::FromStr>::Err> {
+   |                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: keep specific errors internally; wrap typed causes at this crate's boundary, and wrap them again only at a facade boundary
+
+warning: return the owning crate's `Result` at this public boundary
+  --> $DIR/results.rs:141:39
+   |
+LL |     pub fn projected_future(&self) -> <Self as FutureChoice>::Chosen {
+   |                                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: keep specific errors internally; wrap typed causes at this crate's boundary, and wrap them again only at a facade boundary
+
+warning: return the owning crate's `Result` at this public boundary
+  --> $DIR/results.rs:150:48
+   |
+LL |     pub fn borrowed_rejection<Value>(&self) -> std::result::Result<Value, Self> { Err(Self) }
+   |                                                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: keep specific errors internally; wrap typed causes at this crate's boundary, and wrap them again only at a facade boundary
+
+warning: return the owning crate's `Result` at this public boundary
+  --> $DIR/results.rs:163:28
+   |
+LL | pub fn wrapper_future() -> Wrapper<std::pin::Pin<Box<dyn std::future::Future<Output = ()>>>> {
+   |                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: keep specific errors internally; wrap typed causes at this crate's boundary, and wrap them again only at a facade boundary
+
+warning: return the owning crate's `Result` at this public boundary
+  --> $DIR/results.rs:171:35
+   |
+LL |         pub fn fallible(&self) -> std::io::Result<()> { Ok(()) }
+   |                                   ^^^^^^^^^^^^^^^^^^^
+   |
+   = help: keep specific errors internally; wrap typed causes at this crate's boundary, and wrap them again only at a facade boundary
+
+warning: 20 warnings emitted
+

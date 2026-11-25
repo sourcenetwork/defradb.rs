@@ -7,6 +7,7 @@ bash "${script_dir}/apt-update-without-nodesource.sh"
 sudo apt-get install -y --no-install-recommends \
   clang \
   cmake \
+  jq \
   libclang-dev \
   libdbus-1-dev \
   libssl-dev \

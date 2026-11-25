@@ -14,7 +14,10 @@ use crate::network::{DialResult, OutEvent};
 use crate::peer_state::PeerState;
 use crate::store::Store;
 
-impl<S: Store> Bitswap<S> {
+impl<S> Bitswap<S>
+where
+    S: Store,
+{
     /// Whether the swarm still holds a connection to `peer`.
     pub(super) fn is_connected(&self, peer: &PeerId) -> bool {
         self.connections
@@ -144,7 +147,7 @@ impl<S: Store> Bitswap<S> {
     pub(super) fn notify_connections(
         &mut self,
         peer: &PeerId,
-        event: impl Fn() -> BitswapHandlerIn,
+        event: impl NotifyConnectionsCallback,
     ) {
         let Some(connections) = self.connections.get(peer) else {
             return;
@@ -163,4 +166,11 @@ impl<S: Store> Bitswap<S> {
     pub(super) fn responsive(&self, peer: &PeerId) -> bool {
         matches!(self.peers.get(peer), Some(PeerState::Responsive(_, _)))
     }
+}
+
+pub(super) trait NotifyConnectionsCallback: Fn() -> BitswapHandlerIn {}
+
+impl<CallbackImplementation> NotifyConnectionsCallback for CallbackImplementation where
+    CallbackImplementation: Fn() -> BitswapHandlerIn + ?Sized
+{
 }
