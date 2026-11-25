@@ -1784,7 +1784,6 @@ dependencies = [
  "identity",
  "lens",
  "libp2p-identity",
- "lru 0.19.0",
  "mimalloc",
  "multihash",
  "net",
@@ -6493,7 +6492,7 @@ dependencies = [
  "iroh-base",
  "iroh-dns",
  "iroh-metrics",
- "lru 0.18.5",
+ "lru",
  "n0-error",
  "n0-future",
  "noq",
@@ -7715,15 +7714,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "lru"
-version = "0.19.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4a9f71e3591c7ec44d3e563e87bf14ddc2bada8519dca046e5b0e560cd004e2d"
-dependencies = [
- "hashbrown 0.17.1",
-]
-
-[[package]]
 name = "lru-slab"
 version = "0.1.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8069,7 +8059,7 @@ dependencies = [
  "derive_more",
  "ipconfig",
  "jni 0.22.4",
- "lru 0.18.5",
+ "lru",
  "n0-error",
  "n0-future",
  "ndk-context",
@@ -9155,7 +9145,6 @@ dependencies = [
  "kovan-queue",
  "libp2p",
  "libp2p-stream",
- "lru 0.19.0",
  "mantra-macros",
  "multihash-codetable",
  "n0-future",
