@@ -118,7 +118,7 @@ impl<S: Store + 'static> DbTransactionRegistry<S> {
         txn_id: &str,
         sdl: &str,
     ) -> Result<Vec<schema::CollectionVersion>> {
-        let to_error = |e: crate::AddCollectionError| Error::Other(e.to_string());
+        let to_error = Error::AddCollection;
         self.db
             .check_node_access_as(context, acp::nac::NodePermission::CollectionPatch)
             .await?;

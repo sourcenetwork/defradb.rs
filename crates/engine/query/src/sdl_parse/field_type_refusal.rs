@@ -41,6 +41,11 @@ pub enum FieldTypeRefusal {
     /// A list of a scalar that has no array kind (`[ID]`, `[Blob]`, `[JSON]`).
     #[error("no type found for given name. Field: {field}, Kind: [{type_name}]")]
     UnlistedScalar { field: String, type_name: String },
+    /// A field of a type no scalar or collection names (`NotAType`), refused
+    /// beside one of the refusals above, so the SDL keeps their code. Alone it
+    /// is a plain parse error.
+    #[error("no type found for given name. Field: {field}, Kind: {kind}")]
+    UnknownType { field: String, kind: String },
 }
 
 /// One or more refused field type declarations, one line each.

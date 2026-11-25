@@ -354,6 +354,7 @@ impl From<TransactionError> for HttpError {
                 HttpError::Internal(message)
             }
             TransactionError::NotSupported(_) => HttpError::BadRequest(message),
+            TransactionError::UnsupportedFieldType(refusals) => collection_refused(refusals.into()),
         }
     }
 }

@@ -26,3 +26,12 @@ impl From<db::AddCollectionError> for CollectionRefusal {
         }
     }
 }
+
+impl From<query::sdl_parse::FieldTypeRefusals> for CollectionRefusal {
+    fn from(refusals: query::sdl_parse::FieldTypeRefusals) -> Self {
+        Self {
+            code: Some(refusals.code()),
+            message: refusals.to_string(),
+        }
+    }
+}

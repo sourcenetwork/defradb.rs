@@ -841,6 +841,9 @@ fn nac_error(error: crate::NodeAcpError) -> TransactionError {
 fn operation_error(error: crate::error::Error) -> TransactionError {
     match error {
         crate::error::Error::TransactionNotFound(message) => TransactionError::not_found(message),
+        crate::error::Error::AddCollection(crate::AddCollectionError::UnsupportedFieldType(
+            refusals,
+        )) => TransactionError::UnsupportedFieldType(refusals),
         other => TransactionError::operation(other.to_string()),
     }
 }

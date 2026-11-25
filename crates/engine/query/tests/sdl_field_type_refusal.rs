@@ -109,3 +109,27 @@ fn an_unknown_list_type_names_its_list_kind() {
         .to_string()
         .contains("no type found for given name. Field: value, Kind: [NotAType]"));
 }
+
+#[test]
+fn an_unknown_type_beside_a_refused_list_keeps_the_code() {
+    let error = parse_sdl("type User { a: NotAType b: [ID] }")
+        .map(drop)
+        .unwrap_err();
+    let QueryError::UnsupportedFieldType(refusals) = &error else {
+        panic!("expected a typed refusal, got {error:?}");
+    };
+    assert_eq!(refusals.code(), "UNSUPPORTED_FIELD_TYPE");
+    assert_eq!(
+        error.to_string(),
+        "no type found for given name. Field: a, Kind: NotAType\n\
+         no type found for given name. Field: b, Kind: [ID]"
+    );
+}
+
+#[test]
+fn unknown_types_alone_carry_no_code() {
+    let error = parse_sdl("type User { a: NotAType b: [AlsoNot] }")
+        .map(drop)
+        .unwrap_err();
+    assert!(matches!(error, QueryError::Parse(_)), "{error:?}");
+}

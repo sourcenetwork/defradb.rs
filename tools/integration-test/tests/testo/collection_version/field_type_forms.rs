@@ -2,7 +2,7 @@
 //! refuses (#3267). A refusal has Go's text under every client, and a Rust
 //! node also gives it the code `UNSUPPORTED_FIELD_TYPE`.
 
-use integration_test::actions::AddCollection;
+use integration_test::actions::{Actions, AddCollection, TxnBegin};
 use integration_test::test_case::TestCase;
 use integration_test::ClientType;
 
@@ -35,18 +35,30 @@ fn accepted(sdl: String) {
 }
 
 fn refused(declared: &str, error: &str) {
-    TestCase {
-        client_types: Some(TEXT_CLIENTS),
-        ..TestCase::from_actions(vec![add(with_field(declared), Some(error), None).into()])
+    refused_sdl(with_field(declared), error, None);
+}
+
+/// Adding `sdl`, in a transaction begun first when `txn` names one, fails
+/// with `error` under every client, and with its code where a client sees one.
+fn refused_sdl(sdl: String, error: &str, txn: Option<usize>) {
+    for (clients, code) in [(TEXT_CLIENTS, None), (CODE_CLIENTS, Some(CODE))] {
+        let mut actions: Vec<Actions> = Vec::new();
+        if txn.is_some() {
+            actions.push(TxnBegin::default().into());
+        }
+        actions.push(
+            AddCollection {
+                txn,
+                ..add(sdl.clone(), Some(error), code)
+            }
+            .into(),
+        );
+        TestCase {
+            client_types: Some(clients),
+            ..TestCase::from_actions(actions)
+        }
+        .execute();
     }
-    .execute();
-    TestCase {
-        client_types: Some(CODE_CLIENTS),
-        ..TestCase::from_actions(vec![
-            add(with_field(declared), Some(error), Some(CODE)).into()
-        ])
-    }
-    .execute();
 }
 
 /// One `User` field per declared type.
@@ -231,5 +243,33 @@ fn a_nested_list_is_refused() {
     refused(
         "[[Int]]",
         "nested list types are not supported. Object: User, Field: value",
+    );
+}
+
+#[test]
+#[mantra_macros::req_test("go.collection_version.define.field_type_forms")]
+#[mantra_macros::req_test("defra.collection_version.define.field_type_code")]
+fn a_refusal_in_a_transaction_keeps_its_code() {
+    refused_sdl(
+        "type User { value: ID! }".to_owned(),
+        "NonNull fields are not currently supported",
+        Some(0),
+    );
+}
+
+#[test]
+#[mantra_macros::req_test("go.collection_version.define.field_type_forms")]
+#[mantra_macros::req_test("defra.collection_version.define.field_type_code")]
+fn an_unknown_type_beside_a_refused_list_keeps_the_code() {
+    let sdl = "type User { a: NotAType b: [ID] }";
+    refused_sdl(
+        sdl.to_owned(),
+        "no type found for given name. Field: a, Kind: NotAType",
+        None,
+    );
+    refused_sdl(
+        sdl.to_owned(),
+        "no type found for given name. Field: b, Kind: [ID]",
+        None,
     );
 }
