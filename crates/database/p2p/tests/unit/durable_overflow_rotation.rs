@@ -454,19 +454,8 @@ async fn a_peers_roots_take_its_place_in_turn(unservable_roots: usize, edge: edg
 
     let deadline = crate::rt::time::Instant::now() + Duration::from_secs(30 * 60);
     let mut merged = false;
-    let mut peer_place_freed = 0usize;
-    let mut holding = true;
     while !merged && crate::rt::time::Instant::now() < deadline {
         crate::rt::time::sleep(Duration::from_secs(1)).await;
-        let held = coordinator
-            .manager()
-            .pending_dag_cids()
-            .iter()
-            .any(|root| unservable.contains(root));
-        if holding && !held {
-            peer_place_freed += 1;
-        }
-        holding = held;
         merged = coordinator.manager().is_merged(&waiting).await.unwrap();
     }
 
@@ -475,13 +464,20 @@ async fn a_peers_roots_take_its_place_in_turn(unservable_roots: usize, edge: edg
     resync.join().await.unwrap();
     pump.abort();
 
-    assert!(
-        peer_place_freed > 0,
-        "the unservable roots never gave the peer's place up"
-    );
+    // The peer's one place started with an unservable root, so `waiting`
+    // merging means an unservable root gave it up. The freed place is filled
+    // in the same instant it is freed (the sweep is woken), so sampling the
+    // map cannot see it empty.
     assert!(
         merged,
-        "the waiting root never merged in 30 minutes; its peer freed its place {peer_place_freed} times"
+        "the waiting root never merged in 30 minutes: the unservable roots kept the peer's place"
+    );
+    let records = pending_store.load_all().await.unwrap();
+    assert!(
+        unservable
+            .iter()
+            .all(|root| records.iter().any(|(held, _)| held == root)),
+        "an unservable root gave its durable record up with its place"
     );
 }
 
@@ -675,5 +671,201 @@ async fn a_peer_held_at_its_quota_does_not_hold_back_other_peers() {
     assert!(
         merged,
         "the servable root never merged in 30 minutes; the unservable root freed its place {place_freed} times"
+    );
+}
+
+/// #2307: a one-place map holds a root whose provider never connects, and a
+/// servable durable root waits behind it. Once the first root has had its
+/// dispatches it gives its place up, and that wakes the sweep: the waiting
+/// root is admitted, fetched and merged well inside the sweep's 60-second
+/// tick, not at it.
+#[nuclei::test(start_paused = true)]
+async fn a_place_given_up_is_filled_before_the_sweeps_tick() {
+    let store = Arc::new(RegolithStore::in_memory().unwrap());
+    let blockstore = Arc::new(DefraBlockstore::new(store, true));
+    let pending_store = Arc::new(PendingDagStore::new(Arc::new(
+        RegolithStore::in_memory().unwrap(),
+    )));
+
+    let mut roots: Vec<_> = (0..2)
+        .map(|doc| head_missing_its_field(&format!("wake-doc-{doc}")))
+        .collect();
+    roots.sort_unstable_by_key(|(head, ..)| head.to_string());
+    let [(stalled, ..), (waiting, _, waiting_leaf, waiting_leaf_data)] =
+        roots.clone().try_into().unwrap();
+    for (index, (head, head_data, ..)) in roots.iter().enumerate() {
+        blockstore.put(head, head_data).await.unwrap();
+        let provider = if *head == stalled {
+            "never-connected"
+        } else {
+            "live"
+        };
+        pending_store
+            .put(head, &record(&format!("wake-doc-{index}"), provider))
+            .await
+            .unwrap();
+    }
+
+    let mut leaves = RapidHashMap::new();
+    leaves.insert(waiting_leaf, waiting_leaf_data);
+    let transport = TestTransport::new(
+        blockstore.clone(),
+        roots[0].0,
+        roots[0].1.clone(),
+        RapidHashMap::new(),
+        leaves,
+    );
+    transport.set_force_rooted_sync();
+    transport.set_connected_peers(vec![PeerId::new("live".to_string())]);
+
+    let config = SyncConfig {
+        max_pending_dags: 1,
+        ..SyncConfig::default()
+    };
+    let (coordinator, mut events) = SyncCoordinator::new(
+        transport,
+        blockstore.clone(),
+        crate::network::test_network(),
+        config,
+    )
+    .await
+    .unwrap();
+    let coordinator = Arc::new(coordinator);
+    coordinator
+        .install_pending_dag_store(pending_store.clone())
+        .await;
+    assert_eq!(coordinator.restore_pending_dags().await, 1);
+    assert_eq!(coordinator.manager().pending_dag_cids(), vec![stalled]);
+
+    let pump = {
+        let coordinator = Arc::clone(&coordinator);
+        crate::rt::spawn(async move {
+            let config = ReplicationConfig::default();
+            while !matches!(
+                ReplicationLoop::process_next(&coordinator, &mut events, &MergeAll, &config).await,
+                ReplicationResult::ChannelClosed
+            ) {}
+        })
+    };
+    let clock = {
+        let coordinator = Arc::clone(&coordinator);
+        crate::rt::spawn(async move {
+            coordinator
+                .run_pending_dag_retry_clock(Duration::from_secs(2))
+                .await
+                .unwrap();
+        })
+    };
+    let resync = {
+        let coordinator = Arc::clone(&coordinator);
+        crate::rt::spawn(async move {
+            coordinator
+                .run_pending_dag_resync(Duration::from_secs(60))
+                .await;
+        })
+    };
+
+    let started = crate::rt::time::Instant::now();
+    let mut given_up_at = None;
+    let mut merged_at = None;
+    while started.elapsed() < Duration::from_secs(10 * 60) {
+        crate::rt::time::sleep(Duration::from_millis(100)).await;
+        if given_up_at.is_none() && !coordinator.manager().pending_dag_cids().contains(&stalled) {
+            given_up_at = Some(started.elapsed());
+        }
+        if coordinator.manager().is_merged(&waiting).await.unwrap() {
+            merged_at = Some(started.elapsed());
+            break;
+        }
+    }
+
+    coordinator.shutdown().await;
+    clock.await;
+    resync.await;
+    pump.abort();
+
+    let given_up_at = given_up_at.expect("the stalled root never gave its place up");
+    let merged_at = merged_at.expect("the waiting root never merged");
+    assert!(
+        merged_at < Duration::from_secs(60),
+        "the stalled root gave its place up after {given_up_at:?}, but the waiting root \
+         merged only after {merged_at:?}, at the sweep's tick"
+    );
+}
+
+/// #2307: a local continuation holds a one-place map while a durable root
+/// waits on its record. When the continuation's turn ends without yielding
+/// again, its entry leaves and the resync sweep is woken for the waiting
+/// root, rather than left asleep until its next tick.
+#[nuclei::test(start_paused = true)]
+async fn an_ending_continuation_wakes_the_sweep_for_a_waiting_root() {
+    let store = Arc::new(RegolithStore::in_memory().unwrap());
+    let blockstore = Arc::new(DefraBlockstore::new(store, true));
+    let pending_store = Arc::new(PendingDagStore::new(Arc::new(
+        RegolithStore::in_memory().unwrap(),
+    )));
+    let (waiting, waiting_data, ..) = head_missing_its_field("waiting-doc");
+    blockstore.put(&waiting, &waiting_data).await.unwrap();
+    pending_store
+        .put(&waiting, &record("waiting-doc", "live"))
+        .await
+        .unwrap();
+    let (continuation, continuation_data, ..) = head_missing_its_field("pulled-doc");
+    blockstore
+        .put(&continuation, &continuation_data)
+        .await
+        .unwrap();
+
+    let transport = TestTransport::new(
+        blockstore.clone(),
+        waiting,
+        waiting_data,
+        RapidHashMap::new(),
+        RapidHashMap::new(),
+    );
+    let config = SyncConfig {
+        max_pending_dags: 1,
+        ..SyncConfig::default()
+    };
+    let (coordinator, _events) = SyncCoordinator::new(
+        transport,
+        blockstore.clone(),
+        crate::network::test_network(),
+        config,
+    )
+    .await
+    .unwrap();
+    coordinator
+        .install_pending_dag_store(pending_store.clone())
+        .await;
+    assert!(coordinator.manager().continue_merge(
+        &continuation,
+        Some(&BlockMetadata::normal(
+            "pulled-doc",
+            "collection",
+            "creator",
+            Some("live"),
+            false,
+        )),
+    ));
+    assert_eq!(
+        coordinator.restore_pending_dags().await,
+        0,
+        "the continuation holds the only place"
+    );
+    let _ = futures_lite::future::poll_once(coordinator.manager().durable_only_ready()).await;
+
+    drop(
+        coordinator
+            .manager()
+            .consume_pending_merge_continuation(&continuation),
+    );
+
+    assert!(coordinator.manager().pending_dag_cids().is_empty());
+    assert!(
+        futures_lite::future::poll_once(coordinator.manager().durable_only_ready())
+            .await
+            .is_some(),
+        "the continuation's entry left beside a waiting durable root without waking the sweep"
     );
 }

@@ -1,8 +1,8 @@
 //! Shared helpers for the chunk tests.
 
 use integration_test::actions::{
-    Actions, AddCollection, AddCollectionSubscription, AddDoc, AddReplicator, NewNode, Request,
-    WaitForPeersEvents,
+    Actions, AddCollection, AddCollectionSubscription, AddDoc, AddReplicator, AdmissionSpec,
+    NewNode, Request, WaitForPeersEvents,
 };
 use integration_test::scenario::{captures, Common, Eventually, Text};
 use integration_test::test_case::TestCase;
@@ -168,12 +168,21 @@ pub fn eventually(action: Actions) -> Actions {
 
 /// Two networked nodes, `db0` pushing `collections` to `db1`, both with the Article collection.
 pub fn replicated_pair(collections: &[&str]) -> Vec<Actions> {
+    replicated_pair_into(collections, None)
+}
+
+/// `replicated_pair`, with `db1` admitting what it is sent under `admission`.
+pub fn replicated_pair_into(
+    collections: &[&str],
+    admission: Option<AdmissionSpec>,
+) -> Vec<Actions> {
     let names: Vec<String> = collections.iter().map(|name| (*name).to_owned()).collect();
     let mut actions: Vec<Actions> = Vec::new();
     for node in ["db0", "db1"] {
         actions.push(
             NewNode {
                 network: true,
+                admission: (node == "db1").then(|| admission.clone()).flatten(),
                 common: on(Some(node)),
                 ..Default::default()
             }

@@ -511,6 +511,7 @@ Single-purpose legacy areas, one file each:
 | `p2p_admission_restart::` | hub restart must not lose success-acked pending-DAG registrations |
 | `p2p_admission_fairness::` | per-source-peer pending-DAG quotas under a noisy pusher |
 | `p2p_backlog::` | outbound push-backlog bounds and overload observability |
+| `p2p_burst_convergence::` | three full-mesh replicas converge after a burst fills their pending-DAG and push backlogs, and after a restart |
 | `p2p_push_storm::` | outbound push-storm reproduction and profiling harness |
 | `p2p_deep_catchup::` | deep full-DAG push under intake rate limiting |
 | `p2p_interop_bench::` | cross-runtime P2P replication cost |

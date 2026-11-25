@@ -40,6 +40,8 @@ pub(crate) struct PendingDagLease {
     persisted: Arc<PersistedView>,
     max_pending_dags: usize,
     max_per_peer: usize,
+    /// The resync loop's wake, for the place a rotation frees.
+    resync: Arc<regolith::sync::Notify>,
 }
 
 impl std::fmt::Debug for PendingDagLease {
@@ -120,6 +122,9 @@ impl PendingDagLease {
                 root_cid = %self.root_cid,
                 "Durable pending root gave its in-memory slot to a waiting one; its record stays"
             );
+            // The place is free now and a durable root waits for it: the
+            // sweep fills it at once, not at its next tick.
+            self.resync.notify_one();
         }
     }
 }
@@ -130,6 +135,8 @@ impl PendingDagLease {
 pub(crate) struct MergeTurn {
     root_cid: Cid,
     local: Option<Arc<SharedPendingDags>>,
+    persisted: Arc<PersistedView>,
+    resync: Arc<regolith::sync::Notify>,
 }
 
 impl Drop for MergeTurn {
@@ -144,11 +151,23 @@ impl Drop for MergeTurn {
             })
         };
         if pending.read(ended) {
-            pending.update(|registry| {
-                if ended(registry) {
-                    registry.remove(&root);
-                }
-            });
+            let freed =
+                pending.update(|registry| ended(registry) && registry.remove(&root).is_some());
+            // The entry's place is free: a durable root waiting for one
+            // takes it at once, not at the sweep's next tick.
+            let waits = || {
+                let persisted = &self.persisted;
+                persisted.len()
+                    > pending.read(|registry| {
+                        registry
+                            .keys()
+                            .filter(|root| persisted.contains(root))
+                            .count()
+                    })
+            };
+            if freed && waits() {
+                self.resync.notify_one();
+            }
         }
     }
 }
@@ -206,6 +225,7 @@ impl<B: Blockstore + 'static> SyncManager<B> {
             persisted: Arc::clone(&self.persisted),
             max_pending_dags: self.max_pending_dags,
             max_per_peer: self.max_pending_dags_per_peer(),
+            resync: Arc::clone(&self.durable_only_ready),
         }
     }
     /// Get the pending DAGs count (for testing/monitoring).
@@ -795,6 +815,8 @@ impl<B: Blockstore + 'static> SyncManager<B> {
             local: entry
                 .is_some_and(|(_, local)| local)
                 .then(|| Arc::clone(&self.pending_dags)),
+            persisted: Arc::clone(&self.persisted),
+            resync: Arc::clone(&self.durable_only_ready),
         }
     }
 

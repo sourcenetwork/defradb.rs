@@ -1298,6 +1298,8 @@ RUNS=(
   "MC_SyncOwnership_Red_NoDurablePeerQuota.cfg MC_SyncOwnership_Memory.tla RED" # one peer's never-serving roots fill the durable store and every other peer's head is nacked (LIVE_WrittenHeadMerged)
   "MC_SyncOwnership_Green_Memory_Quota.cfg MC_SyncOwnership_Memory.tla GREEN" # a peer's places go to its roots in turn: a root waiting on its peer's quota takes the place its peer frees
   "MC_SyncOwnership_Red_QuotaPassOver.cfg MC_SyncOwnership_Memory.tla RED" # each place goes to its own root, so a root of the same peer that sorts first re-takes the place its peer frees (LIVE_DurableRootMerged)
+  "MC_SyncOwnership_Red_RotateNoWake.cfg MC_SyncOwnership_Memory.tla RED" # a root gives its entry up and the sweep sleeps until its tick beside the place (INV_FreedPlaceArmed)
+  "MC_SyncOwnership_Red_ContinuationNoWake.cfg MC_SyncOwnership_Memory.tla RED" # a continuation ends and the sweep sleeps until its tick beside the place (INV_FreedPlaceArmed)
   "MC_Jwt_Green.cfg                MC_Jwt_Green.tla                GREEN" # token->DID binds genuine signer DID
   "MC_Jwt_Red_NoAlgBinding.cfg     MC_Jwt_Red_NoAlgBinding.tla     RED"   # alg-confusion: header alg not bound to key type
   "MC_Jwt_Red_NoIssBinding.cfg     MC_Jwt_Red_NoIssBinding.tla     RED"   # iss not bound to did(pubkey)

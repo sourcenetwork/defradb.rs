@@ -1894,6 +1894,22 @@ pub const PROPERTIES: &[Property] = &[
         bound_by: "",
     },
     Property {
+        // #2307: the resync sweep sleeps between its 60-second ticks. Whatever
+        // frees an in-memory place while a durable root waits for one wakes
+        // it: a record leaving, a root giving its entry up after its
+        // dispatches, and a local continuation ending. Without the wake a
+        // freed place stood empty for a whole tick, and after a write burst,
+        // with every place held in turn by roots waiting on another document,
+        // the replicas drained a few roots a minute.
+        family: "Sync ownership transfer (head hint / receiver pull)",
+        name: "INV_FreedPlaceArmed: a freed in-memory place wakes the resync sweep",
+        axis: Tla,
+        anchor: "crates/database/p2p/src/sync/manager/process/pending_dag.rs PendingDagLease::finish_attempt, MergeTurn; crates/database/p2p/src/sync/manager/process/mod.rs remove_persisted_pending; crates/database/p2p/src/sync/coordinator/mod.rs run_pending_dag_resync",
+        model_ref: "MC_SyncOwnership_{Green_Memory,Green_Memory_Quota,Green_TwoTierQuota,Red_RotateNoWake,Red_ContinuationNoWake}.cfg",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
         // A hub that merges an upstream head forwards it to its own
         // replicators before the merge discharges the upstream pending
         // record; a forward that fails leaves the root unmarked, and any

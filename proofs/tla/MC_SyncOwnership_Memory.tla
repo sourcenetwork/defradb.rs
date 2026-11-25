@@ -19,7 +19,16 @@
 \* the receiver (its answer to a hint, the clock's claims, fetches, merges,
 \* the resync sweep that admits durable roots into memory, a root giving its
 \* entry up), a pull-sync merge and its turns, the wall clock (a root's retry
-\* deadline passes), and a one-shot restart.
+\* deadline passes, and the sweep's own 60-second tick), and a one-shot
+\* restart.
+\*
+\* The sweep sleeps between runs. It runs at its tick, or at once when it is
+\* woken: a durable record left, or an entry gave its place up while a
+\* durable root waits for one (#2307). Waking is what keeps a freed place
+\* from standing empty for a whole tick while roots wait behind it: after a
+\* write burst, roots that wait on another document (a chunk whose parent has
+\* not merged) give their places up one after another, nothing merges, and
+\* without the wake each freed place stood empty until the next tick.
 \*
 \* What must never happen:
 \*   - the map holds more than it may (INV_MemoryBounded), or an acknowledged
@@ -28,6 +37,9 @@
 \*   - a local continuation is an acknowledged obligation
 \*     (INV_ContinuationsNeverAcked): ending one must drop nothing a sender
 \*     relies on;
+\*   - a place the sweep could fill stands empty with the sweep asleep
+\*     (INV_FreedPlaceArmed): whatever frees a place a waiting durable root
+\*     fits wakes the sweep;
 \* and what must eventually happen:
 \*   - every acknowledged durable head whose provider serves is merged, even
 \*     when roots whose providers never serve were restored first and fill
@@ -64,6 +76,10 @@
 \*   cursor     SyncManager::pending_resync_cursor (manager/process/mod.rs): the place
 \*              in key order at which the last sweep admitted a root last, as its
 \*              position (0: none).
+\*   armed      the sweep is running or woken: SyncManager::durable_only_ready
+\*              (manager/process/mod.rs) holds its permit, or
+\*              SyncCoordinator::run_pending_dag_resync (coordinator/mod.rs) is in a
+\*              sweep. FALSE: the loop sleeps until its tick.
 \*   peerCursor the shared peer's entry in SyncManager::pending_resync_peer_cursors
 \*              (manager/process/mod.rs): the root of that peer the sweep admitted
 \*              last, as its place in key order (0: none). Every other peer pushes
@@ -90,13 +106,16 @@
 \*     (admit durable roots: the places in key order after the place admitted last, and a
 \*     peer's places to its roots in turn after the one admitted last),
 \*     PendingDagLease::finish_attempt (a root that spent its dispatches gives its entry
-\*     up while a durable root waits and it holds a contended place),
+\*     up while a durable root waits and it holds a contended place, and wakes the sweep),
 \*     continue_merge (a local continuation), consume_pending_merge_continuation and
-\*     MergeTurn (the continuation ends when a turn does not yield again)
+\*     MergeTurn (the continuation ends when a turn does not yield again, and wakes the
+\*     sweep when a durable root waits), remove_persisted_pending (a record leaving
+\*     wakes the sweep)
+\*   coordinator/mod.rs  run_pending_dag_resync (the sweep: at its tick or woken)
 \*   manager/pending.rs  PendingOrigin, PENDING_ROTATE_AFTER_DISPATCHES
 \*   pending_store/shares.rs  held, charge, hand_over, give_back (each peer's durable roots)
 \*   replication/handlers.rs  handle_block_received, process_merge_batch (hold the turn)
-\* Rust tests: tests/unit/durable_overflow_rotation.rs (both tests), tests/unit/durable_share.rs
+\* Rust tests: tests/unit/durable_overflow_rotation.rs (every test; a_place_given_up_is_filled_before_the_sweeps_tick for the wake), tests/unit/durable_share.rs
 \*   (both tests), tests/unit/resync_waiting_root.rs, pending_store/tests.rs
 \*   a_registration_beside_another_of_its_peer_is_refused_at_the_share,
 \*   replication/continuation_tests.rs a_local_continuation_ends_on_a_non_terminal_skip.
@@ -111,7 +130,8 @@ CONSTANTS
   ContinuationMode, \* "EndOnStop": a turn that does not yield ends the continuation | "Retained": the bug, it keeps its entry
   AdmissionMode,   \* "TwoTier": a full map admits on the durable record alone | "MemoryOnly": the bug, a full map nacks
   PeerScopes,      \* the sending peers, each the set of scopes it pushes (PersistedPendingDag::source_peer)
-  DurableQuota     \* durable roots one peer may hold (max_persisted_pending_per_peer); Cap removes the quota
+  DurableQuota,    \* durable roots one peer may hold (max_persisted_pending_per_peer); Cap removes the quota
+  WakeMode         \* "Wake": a freed place wakes the sweep | "NoRotateWake": the bug, a root giving its entry up leaves the sweep asleep until its tick | "NoContinuationWake": the bug, an ending continuation does
 
 \* The map holds at least one entry and no more than the durable cap.
 ASSUME MemCap \in Nat /\ MemCap >= 1 /\ MemCap <= Cap
@@ -129,6 +149,8 @@ ASSUME ContinuationMode \in {"EndOnStop", "Retained"}
 ASSUME RegisterMode = "Durable"
 \* The admission knob takes one of its named values.
 ASSUME AdmissionMode \in {"TwoTier", "MemoryOnly"}
+\* The wake knob takes one of its named values.
+ASSUME WakeMode \in {"Wake", "NoRotateWake", "NoContinuationWake"}
 \* Every scope is pushed by exactly one peer.
 ASSUME /\ UNION PeerScopes = Scopes
        /\ \A P, Q \in PeerScopes : P # Q => P \cap Q = {}
@@ -146,10 +168,11 @@ VARIABLES
   dueOrder,   \* entries in mem whose next_retry_at has passed, in next_retry_at order
   backoff,    \* entries in mem whose next_retry_at is still ahead
   cursor,     \* the place in key order at which the last resync admitted a root last (0: none)
-  peerCursor  \* the shared peer's root the resync admitted last, as its place in key order (0: none)
+  peerCursor, \* the shared peer's root the resync admitted last, as its place in key order (0: none)
+  armed       \* the sweep is running or woken (TRUE), or asleep until its tick (FALSE)
 
 \* The variables this module adds.
-mvars == <<mem, conts, dispatches, dueOrder, backoff, cursor, peerCursor>>
+mvars == <<mem, conts, dispatches, dueOrder, backoff, cursor, peerCursor, armed>>
 \* Every variable, SyncOwnership's and this module's.
 allVars == <<vars, mvars>>
 
@@ -221,6 +244,13 @@ Offer(i) ==
   ELSE Places[i]
 \* The root the sweep offers its i-th place is waiting and fits.
 Admits(i) == Offer(i) \in Waiting /\ Fits(Offer(i))
+\* Some place the sweep offers could be filled now.
+CanAdmit == \E i \in 1..Len(KeyOrder) : Admits(i)
+\* The sweep after a step: it runs when it was running or this step woke it,
+\* and a sweep with nothing left to fill goes back to sleep at once
+\* (run_pending_dag_resync waits again). Every step of this module ends with
+\* it, so a sleeping sweep beside a place it could fill means nothing woke it.
+Rearm(wake) == armed' = ((armed \/ wake) /\ CanAdmit')
 \* A root the clock could hand the slot to: servable, with a provider, and no
 \* fetch running.
 CanClaim(r) ==
@@ -233,6 +263,8 @@ Reset(S) == [r \in Roots |-> IF r \in S THEN 0 ELSE dispatches[r]]
 
 \* A SyncOwnership step that does not admit anything: memory forgets what the
 \* step retired.
+\* A durable record that leaves while a durable root still has no entry
+\* wakes the sweep (remove_persisted_pending).
 M(A) ==
   /\ A
   /\ mem' = mem \cap pending'
@@ -240,6 +272,7 @@ M(A) ==
   /\ backoff' = backoff \cap pending'
   /\ dispatches' = Reset(mem \ pending')
   /\ UNCHANGED <<conts, cursor, peerCursor>>
+  /\ Rearm((pending \ pending') # {} /\ (pending' \ mem') # {})
 
 \* The first tier: the head takes an in-memory entry and its durable record
 \* (try_insert_pending_dag). A new root takes an entry, due at once, within
@@ -260,6 +293,7 @@ MRegister(s, v) ==
         /\ backoff' = backoff \ retired
         /\ dispatches' = Reset(retired \cup added)
   /\ UNCHANGED <<cursor, peerCursor>>
+  /\ Rearm(FALSE)
 
 \* The second tier: the map or the head's peer's quota is full, so the head
 \* takes its durable record
@@ -287,6 +321,7 @@ MRegisterDurable(s, v) ==
         /\ backoff' = backoff \ retired
         /\ dispatches' = Reset(retired)
   /\ UNCHANGED <<conts, cursor, peerCursor>>
+  /\ Rearm(FALSE)
 
 \* The nack (PendingDagCapacity): the sender keeps its marker and offers the
 \* head again. TwoTier nacks only a head its peer's durable quota has no room
@@ -325,12 +360,14 @@ MClaim(s, v) ==
   /\ backoff' = backoff \cup {<<s, v>>}
   /\ dispatches' = [dispatches EXCEPT ![<<s, v>>] = Min(@ + 1, RotateAfter)]
   /\ UNCHANGED <<mem, conts, cursor, peerCursor>>
+  /\ Rearm(FALSE)
 
 \* The end of a root's attempt (PendingDagLease::finish_attempt). A root that
 \* had RotateAfter dispatches gives its entry up, keeping its durable record,
 \* when a durable root has no entry and the map is full or the root's peer is at
 \* its quota; any other root waits out its backoff. An attempt whose result was
-\* lost has not ended.
+\* lost has not ended. Giving the entry up wakes the sweep, since a durable
+\* root waits for the place; NoRotateWake, the bug, leaves it asleep.
 EndAttempt(r) ==
   IF \* Retained, the rule before, never gives an acknowledged entry up.
      /\ OverflowMode # "Retained"
@@ -348,6 +385,7 @@ EndAttempt(r) ==
        /\ backoff' = backoff \ {r}
        /\ dispatches' = Reset({r})
        /\ UNCHANGED <<conts, cursor, peerCursor>>
+       /\ Rearm(WakeMode # "NoRotateWake")
   ELSE UNCHANGED mvars
 
 \* An attempt ends without the DAG: it failed, was shed as busy, or deferred
@@ -370,6 +408,7 @@ BecomeDue(s, v) ==
   /\ backoff' = backoff \ {<<s, v>>}
   /\ dueOrder' = Append(dueOrder, <<s, v>>)
   /\ UNCHANGED <<vars, mem, conts, dispatches, cursor, peerCursor>>
+  /\ Rearm(FALSE)
 
 \* The resync sweep admits the first waiting durable root it offers a place
 \* that fits, due at once, and passes the ones that do not
@@ -381,6 +420,8 @@ BecomeDue(s, v) ==
 \* root, so a root of a peer at its quota is passed by the places after it
 \* and a root of the same peer before it takes the place the peer frees.
 Resync ==
+  \* The sweep runs only at its tick or woken.
+  /\ armed
   /\ \E i \in 1..Len(KeyOrder) : Admits(i)
   /\ LET i == CHOOSE i \in 1..Len(KeyOrder) :
                  Admits(i) /\ \A j \in 1..(i - 1) : ~Admits(j)
@@ -392,7 +433,18 @@ Resync ==
                      THEN Position(Places[i]) ELSE cursor
         /\ peerCursor' = IF OverflowMode = "Rotate" /\ r \in SharedRoots
                          THEN Position(r) ELSE peerCursor
+  \* The sweep goes on to its next place, or sleeps when none is left.
   /\ UNCHANGED <<vars, conts, backoff>>
+  /\ Rearm(FALSE)
+
+\* The sweep's tick (run_pending_dag_resync's interval, 60 s) passes while it
+\* sleeps beside a place it could fill: it runs whether or not anything woke
+\* it. With every wake in place this never happens (INV_FreedPlaceArmed).
+Tick ==
+  /\ ~armed
+  /\ CanAdmit
+  /\ armed' = TRUE
+  /\ UNCHANGED <<vars, mem, conts, dispatches, dueOrder, backoff, cursor, peerCursor>>
 
 \* A pull-sync merge of a head nobody pushed yields its work budget and takes
 \* an in-memory entry for its next turn, within the map's cap and the quota of
@@ -404,18 +456,22 @@ PullYield(s, v) ==
   /\ Fits(<<s, v>>)
   /\ conts' = conts \cup {<<s, v>>}
   /\ UNCHANGED <<vars, mem, dispatches, dueOrder, backoff, cursor, peerCursor>>
+  /\ Rearm(FALSE)
 
 \* A continuation's next turn ends without yielding again: it merged, or it
 \* skipped or failed with no terminal outcome. EndOnStop removes the entry
 \* when the turn ends (MergeTurn); Retained, the rule before, leaves it, and
-\* the clock re-drives it, turn after turn.
+\* the clock re-drives it, turn after turn. An entry that leaves while a
+\* durable root waits wakes the sweep; NoContinuationWake, the bug, does not.
 ContinuationStop(s, v) ==
   /\ <<s, v>> \in conts
   /\ conts' = IF ContinuationMode = "EndOnStop" THEN conts \ {<<s, v>>} ELSE conts
   /\ UNCHANGED <<vars, mem, dispatches, dueOrder, backoff, cursor, peerCursor>>
+  /\ Rearm(WakeMode # "NoContinuationWake" /\ conts' # conts /\ Waiting # {})
 
 \* The restart: memory, the cursors and every continuation are gone; the
-\* durable roots stay, and from now on the map holds MemCap entries.
+\* durable roots stay, and from now on the map holds MemCap entries. The
+\* restore at start is a sweep (restore_pending_dags).
 MCrash ==
   /\ Crash
   /\ mem' = {}
@@ -425,6 +481,7 @@ MCrash ==
   /\ backoff' = {}
   /\ cursor' = 0
   /\ peerCursor' = 0
+  /\ Rearm(TRUE)
 
 \* Nothing in memory, no continuation, no sweep yet.
 MInit ==
@@ -436,6 +493,7 @@ MInit ==
   /\ backoff = {}
   /\ cursor = 0
   /\ peerCursor = 0
+  /\ armed = FALSE
 
 \* The receiver's answer to a hint from scope s: acknowledged as merged,
 \* registered in either tier, or nacked.
@@ -462,6 +520,7 @@ MNext ==
        \/ M(CompleteTerminal(s, v))
        \/ PullYield(s, v) \/ ContinuationStop(s, v)
   \/ Resync
+  \/ Tick
   \/ MCrash
   \/ M(Terminating)
 
@@ -486,6 +545,7 @@ MFairSpec ==
   /\ \A P \in PeerScopes : WF_allVars(\E s \in P : M(ReHintMarker(s)))
   /\ \A P \in PeerScopes : SF_allVars(\E s \in P, v \in 1..MaxV : Answer(s, v))
   /\ SF_allVars(Resync)
+  /\ WF_allVars(Tick)
   /\ WF_allVars(\E s \in Scopes, v \in 1..MaxV : MClaim(s, v))
   /\ SF_allVars(\E s \in Scopes, v \in 1..MaxV : MComplete(s, v))
   /\ SF_allVars(\E s \in Scopes, v \in 1..MaxV : M(ClaimMerge(s, v)))
@@ -505,6 +565,7 @@ INV_MemoryTypeOK ==
   /\ backoff \subseteq mem
   /\ cursor \in 0..Len(KeyOrder)
   /\ peerCursor \in 0..Len(KeyOrder)
+  /\ armed \in BOOLEAN
 
 \* Promise: an entry with no fetch running is either due or waiting out its
 \* backoff, never both and never neither, so no entry is lost to the clock.
@@ -513,6 +574,11 @@ INV_DueOrBackoff ==
 
 \* Promise: the map never holds more entries than it may.
 INV_MemoryBounded == Cardinality(Held) <= MemBound
+
+\* Promise: a place a waiting durable root fits never stands empty while the
+\* sweep sleeps: whatever freed it woke the sweep, so it is filled at once and
+\* not a whole tick later.
+INV_FreedPlaceArmed == CanAdmit => armed
 
 \* Promise: an acknowledged entry in memory always has its durable record.
 INV_MemoryHoldsDurable == mem \subseteq pending
