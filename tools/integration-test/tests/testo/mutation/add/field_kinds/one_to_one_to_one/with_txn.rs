@@ -7,8 +7,12 @@ use integration_test::scenario::{captures, Common, Text};
 use integration_test::test_case::TestCase;
 use serde_json::json;
 
+/// Each transaction's `Book { publisher }` join scans the books, and the
+/// other's book lands in that range; the join's read decides nothing, so both
+/// commit. Go validates that read and fails the second commit; this test is in
+/// `.github/testo/divergences.txt`.
 #[test]
-#[mantra_macros::req_test("go.mutation.txn.conflict")]
+#[mantra_macros::req_test("defra.txn.relation_join_read")]
 fn transactional_creation_and_linking_of_relational_documents_backward() {
     TestCase {
         id: integration_test::scenario_id!(),
@@ -168,7 +172,6 @@ fn transactional_creation_and_linking_of_relational_documents_backward() {
             .into(),
             TxnCommit {
                 txn: 1,
-                expected_error: Some("transaction conflict".into()),
                 ..Default::default()
             }
             .into(),
@@ -188,7 +191,11 @@ fn transactional_creation_and_linking_of_relational_documents_backward() {
                 .into(),
                 expected_data: json!({
                     "Publisher": [
-                        { "_docID": m::r("doc2_1"), "name": "Online", "published": null },
+                        {
+                            "_docID": m::r("doc2_1"),
+                            "name": "Online",
+                            "published": { "_docID": m::doc_id(), "name": "Book By Online" },
+                        },
                         {
                             "_docID": m::r("doc2_0"),
                             "name": "Website",

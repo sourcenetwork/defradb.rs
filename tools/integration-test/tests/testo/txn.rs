@@ -18,6 +18,7 @@ mod new_encrypted_index_concurrent;
 mod new_index;
 mod patch_collection;
 mod refresh_view;
+mod relation_join_read;
 mod request;
 mod returned_field;
 mod set_active_collection_version;

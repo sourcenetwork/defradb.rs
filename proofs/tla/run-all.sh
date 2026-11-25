@@ -1552,6 +1552,9 @@ RUNS=(
   "MC_DocumentSave_Red_SplitTxn.cfg DocumentSave.tla RED" # a delete between lookup and write forks the save (INV_NoFork)
   "MC_RelationLinkConflict_Green.cfg RelationLinkConflict.tla GREEN" # a validated link read commits when empty and conflicts after a later first link
   "MC_RelationLinkConflict_Red_Unvalidated.cfg RelationLinkConflict.tla RED" # an unvalidated link read lets both links commit (INV_SecondLinkIsRefused)
+  "MC_RelationJoinRead_Green.cfg RelationJoinRead.tla GREEN" # a query's join scan is not checked, a link's own uniqueness check is
+  "MC_RelationJoinRead_Red_JoinScanValidated.cfg RelationJoinRead.tla RED" # a validated join scan aborts a link to another publisher (INV_JoinReadDecidesNothing)
+  "MC_RelationJoinRead_Red_OwnEntryUnvalidated.cfg RelationJoinRead.tla RED" # two links to one publisher both commit (INV_OneBookPerPublisher)
   "MC_ChildLimitPaging_Green.cfg ChildLimitPaging.tla GREEN" # unordered scans run to completion before paging
   "MC_ChildLimitPaging_Ordered.cfg ChildLimitPaging.tla GREEN" # ordered scans can stop at offset plus limit
   "MC_ChildLimitPaging_Red_UnorderedStop.cfg ChildLimitPaging.tla RED" # stopping an unordered scan returns the wrong page (INV_CompletedPage)
