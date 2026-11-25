@@ -43,6 +43,16 @@ async fn admitted_roots(handler: &Handler) -> u64 {
     count
 }
 
+async fn is_admitted(handler: &Handler, root: &cid::Cid) -> bool {
+    let txn = handler.db().new_txn(true).await.unwrap();
+    txn.systemstore()
+        .unwrap()
+        .get(format!("/merge-history/v1/admissions/{root}").as_bytes())
+        .await
+        .unwrap()
+        .is_some()
+}
+
 struct ConcurrentAdmission {
     calls: std::sync::atomic::AtomicUsize,
     ready: regolith::sync::Barrier,
@@ -314,13 +324,19 @@ fn an_over_full_admission_index_recovers_after_idle_cleanup() {
             .append(handler.blockstore().as_ref(), 16, "waiting")
             .await;
         for _ in 0..2 {
+            let before = admitted_roots(&handler).await;
+            assert!(before >= 64, "the index must still be full for this turn");
             assert_eq!(
                 merge_turn(&handler, waiting.root(), false).await,
                 MergeOutcome::Yielded
             );
             assert!(
-                admitted_roots(&handler).await >= 64,
+                !is_admitted(&handler, &waiting.root().cid).await,
                 "a root was admitted while the index was over full"
+            );
+            assert!(
+                admitted_roots(&handler).await <= before,
+                "a turn on a full index only reclaims"
             );
         }
         super::fixture::converge(&handler, waiting.root(), false).await;
