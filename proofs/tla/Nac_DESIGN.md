@@ -123,8 +123,10 @@ invariant "is violated" with a concrete counterexample trace.
   policy, `proofs/README.md` "Model ≠ code"). Keep anchors in step manually if
   `lifecycle.rs` / `operations.rs` / `db-nac/src/lib.rs` change the disable
   persistence, the write-block, or the `is_admin` vs `is_admin_persisted` split.
-- **Integrator TODO (run-all):** add the four `MC_Nac_*` rows to
-  `proofs/tla/run-all.sh` (shared file, intentionally not edited by this slice).
+- **Integrator TODO (run-all):** the four `MC_Nac_*` configs above must run in
+  `proofs/tla/run-all.sh` (it now picks up every top-level `*.cfg`, taking the
+  module and verdict from each cfg's `\* run-all:` header, so no
+  row is added to the script itself).
 ```
   "MC_Nac_Green.cfg                  MC_Nac_Green.tla                  GREEN"  # nac lifecycle correct
   "MC_Nac_Red_WriteWhileDisabled.cfg MC_Nac_Red_WriteWhileDisabled.tla RED"   # nac: write while disabled
