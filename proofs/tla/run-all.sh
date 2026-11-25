@@ -15,11 +15,17 @@ cd "$(dirname "${BASH_SOURCE[0]}")"
 #
 # The module and verdict come from one place, the cfg's first line:
 #     \* run-all: <Module>.tla <GREEN|RED|TRACE:<n>|DEADLOCK:<n>>
-# The cfg's name says nothing to this script. A cfg whose first line is not
-# such a header is reported and fails the whole run; so is a header naming a
-# module that does not exist or a verdict that is not one of these.
+# A cfg whose first line is not such a header is reported and fails the whole
+# run; so is a header naming a module that does not exist or a verdict that is
+# not one of these.
+#
+# The cfg's name decides nothing, but it may not say otherwise: a name with a
+# Green word (underscore-separated) and no Red word needs a GREEN or TRACE
+# header, one with Red and no Green a RED or DEADLOCK header. A name that
+# disagrees with its header fails the whole run too.
 # --list prints the discovered `cfg module verdict` rows and nothing else, and
-# exits 2 when any cfg did not resolve to a module and verdict.
+# exits 2 when any cfg did not resolve to a module and verdict, or has a name
+# that disagrees with its header.
 
 list_only=
 [ "${1:-}" = "--list" ] && list_only=1
@@ -45,6 +51,20 @@ for cfg in *.cfg; do
     unresolved=$((unresolved+1))
     continue
   fi
+  # The header decides; a Green or Red word in the name must not contradict it.
+  named=''
+  case "_${cfg%.cfg}_" in
+    *_Green_*_Red_*|*_Red_*_Green_*) ;;
+    *_Green_*) named=Green ;;
+    *_Red_*)   named=Red ;;
+  esac
+  case "$named:$want" in
+    Green:RED|Green:DEADLOCK:*|Red:GREEN|Red:TRACE:*)
+      echo "run-all: $cfg: its name says $named but its header says $want; rename it or correct the header" >&2
+      unresolved=$((unresolved+1))
+      continue
+      ;;
+  esac
   RUNS+=("$cfg $mod $want")
 done
 

@@ -31,8 +31,9 @@ Run all configured models at once with `./run-all.sh` (red/green oracle, exits n
 on mismatch). It discovers every top-level `*.cfg` here and takes each one's module and
 expected verdict from the cfg's first line, a
 `\* run-all: <Module>.tla <GREEN|RED|TRACE:<n>|DEADLOCK:<n>>` header. Every cfg carries
-one; the cfg's name says nothing to the script, and a cfg without a valid header fails
-the run.
+one, and a cfg without a valid header fails the run. The cfg's name decides nothing, but
+it may not say otherwise: a name with a `Green` word (underscore-separated) needs a GREEN
+or TRACE header and one with a `Red` word a RED or DEADLOCK header, or the run fails.
 
 ---
 
