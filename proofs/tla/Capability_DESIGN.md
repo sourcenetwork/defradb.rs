@@ -83,7 +83,7 @@ Each weakening is a concrete bug a nearby implementation could ship.
 
 ## Scenarios, run commands, expected verdicts
 
-Run from `proofs/tla` (integrator wires these into `run-all.sh`; not edited here):
+Run from `proofs/tla` (`run-all.sh` picks these up from every top-level `*.cfg`):
 
 ```
 ./tools/tlc -metadir states/<x> -config <cfg> MC_Capability_Common.tla

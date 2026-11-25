@@ -124,8 +124,8 @@ with no HTTP route.
     registration is still owed is checked without the provider, so it can revoke on that
     document during an outage.
 - **Subjects the provider cannot be sent.** A change whose subject is of a kind the
-  provider cannot take (a userset or cross-object subject on the Cosmos provider, a typed
-  wildcard on either) fails with `UnsupportedSubject` and records nothing. It could never
+  provider cannot take (a userset or cross-object subject on a provider that takes none, a typed
+  wildcard on any) fails with `UnsupportedSubject` and records nothing. It could never
   be submitted, and a delete of it would deny for ever.
 - **One spelling.** The acting DID and an actor subject are stored in the provider's one
   spelling of the key (for vera.rs, the uncompressed `did:key` DefraDB derives), and the
@@ -184,7 +184,7 @@ with no HTTP route.
   `acp-owed-change-refused`, with the change, the provider's words and whether it stays
   parked. A change the provider cannot take at all is removed and counted in
   `discarded`, and is not published: the provider was asked nothing. A provider
-  without a journal (Cosmos, a host's own) is sent each change on its own with no
+  without a journal (a host's own) is sent each change on its own with no
   mark, as below. A change a node finds marked once it runs on such a provider has its
   mark cleared and is sent again: no journal is left to ask about its request, and it
   can take effect twice.
@@ -220,8 +220,7 @@ with no HTTP route.
   the later change only after the earlier one, and both providers take one signer's
   requests in order. vera.rs keeps one journaled request per worker and prepares the
   next only once that one has a verified receipt, so while the earlier submission is in
-  flight nothing else is sent; Cosmos orders one signer's transactions by account
-  sequence. A provider supplied by a host has to give the same guarantee
+  flight nothing else is sent. A provider supplied by a host has to give the same guarantee
   (`DocumentACP::submit_owed_change`). Two nodes that change one relationship through
   different workers are ordered by the provider alone, as they are for changes made
   outside a transaction.
@@ -406,8 +405,8 @@ order:
 A user without the permission, a reader who may read but not update, and a revoked
 writer are refused, and nothing is written; the refusal is the one an ordinary update or
 delete gets (the document is not found, or not authorized), or the provider's
-unavailability, not `WRITE_AUTHORITY_UNAVAILABLE`. On the Cosmos provider, which proves no
-decisions and keeps an access cache, `None` still needs a key the node holds.
+unavailability, not `WRITE_AUTHORITY_UNAVAILABLE`. On a provider that proves no
+decisions, or behind an access cache, `None` still needs a key the node holds.
 
 **Freshness and revocations.** The guarantee is the permission at the proof's revision,
 not at the moment of admission. A decision is read at the light client's newest verified
@@ -424,8 +423,8 @@ of its call: `RequestContext::with_bearer` for a plain delegation, or
 `RequestContext::with_request_delegation` for one bound to that one change. A
 request-bound delegation covers one command, so a create and a grant beside it need two.
 
-A provider that gives the node nothing to check a delegation against (the Cosmos
-provider, which is passed its caller's token as it is) admits a verified write with a key
+A provider that gives the node nothing to check a delegation against (a host's own,
+which is passed its caller's token as it is) admits a verified write with a key
 the node holds and with nothing else: `Delegation(token)` is refused there.
 
 What is recorded. The staged relationship change keeps its token in its record and is
@@ -514,7 +513,7 @@ returns a recorded credential.
 
   Every fresh credential is checked as a verified write's is, whatever write the entry
   came from: it will be used when no request is there to vouch for it. A provider that
-  gives the node nothing to check a delegation against (the Cosmos provider) therefore
+  gives the node nothing to check a delegation against (a host's own) therefore
   takes no delegation here. An entry there is sent again with a key the node holds
   (`SignerCredential::None`), or by a later request that itself carries the actor's
   bearer.
