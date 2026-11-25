@@ -636,7 +636,7 @@ onto main, run `ci:full`, then queue while nothing is ahead of it. A PR keeps
 its own commit only, so it is never rebased onto a queue entry. The queue
 reads the passed tree only from a `Merge gate` job of a `ci.yml` pull request
 run, never from a check run another workflow or app created.
-A push to main runs only the jobs that save caches.
+Main runs CI once a night (07:00 UTC, or by hand with `gh workflow run ci.yml`): it saves the caches pull requests restore and runs the heavy suite.
 
 ### Batches
 
