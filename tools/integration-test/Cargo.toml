@@ -43,6 +43,8 @@ async-channel = "2"
 cli = { path = "../../crates/entry-points/cli" }
 # The client-signing WebSocket handshake the signing-session action dials.
 defra-http = { path = "../../crates/surfaces/http" }
+# Reads the response the in-process client gets from an HTTP handler.
+axum.workspace = true
 async-tungstenite = "0.35.0"
 clap = "4.5"
 query = { path = "../../crates/engine/query" }
