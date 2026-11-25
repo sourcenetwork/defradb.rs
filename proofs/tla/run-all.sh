@@ -799,10 +799,15 @@ RUNS=(
   "MC_VerifiedRead_Red_BusyUncapped.cfg VerifiedRead.tla RED" # busy retry without a patience asks past BUSY_PATIENCE (INV_AttemptsBounded)
   "MC_VerifiedRead_Red_PausesOnly.cfg VerifiedRead.tla RED" # patience counts only the pauses: a slow busy node carries asks past BUSY_PATIENCE (INV_AttemptsBounded)
   "MC_VerifiedRead_Red_UndrawnPause.cfg VerifiedRead.tla RED" # patience checked against the shortest pause, the drawn one slept: an ask past BUSY_PATIENCE (INV_AttemptsBounded)
-  "MC_ArchiveOnDelete_Green.cfg ArchiveOnDelete.tla GREEN" # a deleted document grants nothing, no grant outlives the archive, and the archive settles
+  "MC_ArchiveOnDelete_Green.cfg ArchiveOnDelete.tla GREEN" # a permitted delete archives as the owner, a deleted document grants nothing, no grant outlives the archive, and the archive settles
   "MC_ArchiveOnDelete_Green_NoDrop.cfg ArchiveOnDelete.tla GREEN" # earlier changes kept: Vera's refusal alone keeps a renewed grant off the archived object
   "MC_ArchiveOnDelete_Red_GrantAfterArchive.cfg ArchiveOnDelete.tla RED" # changes kept and an archived object takes a grant: a renewed grant lands after the archive (INV_NoGrantAfterArchive)
-  "MC_ArchiveOnDelete_Red_DeleteWithoutAuthority.cfg ArchiveOnDelete.tla RED" # a writer deletes without authority to archive (INV_DeletedByOwner)
+  "MC_ArchiveOnDelete_Red_DeleteWithoutPermission.cfg ArchiveOnDelete.tla RED" # a stranger the policy does not let delete deletes (INV_DeletedByPermitted)
+  "MC_ArchiveOnDelete_Red_ArchiveAsDeleter.cfg ArchiveOnDelete.tla RED" # a writer's delete owes the archive as the writer, not the owner (INV_ArchiveAsOwner)
+  "MC_ArchiveOnDelete_Red_ArchiveChargesOwner.cfg ArchiveOnDelete.tla RED" # a writer's delete charges its archive to the owner's admission count (INV_DeleteChargesNobody)
+  "MC_ArchiveOnDelete_Red_ArchiveChargesNode.cfg ArchiveOnDelete.tla RED" # a writer's parked archives count against the node's admission, refusing everyone's new changes (INV_DeleteChargesNobody)
+  "MC_ArchiveOnDelete_Red_ArchiveChargesTxn.cfg ArchiveOnDelete.tla RED" # a transaction's archives count against what it may stage, refusing its own later changes (INV_DeleteChargesNobody)
+  "MC_ArchiveOnDelete_Red_HistoryForTheOwner.cfg ArchiveOnDelete.tla RED" # after a writer's delete the owner, the archive's actor, reads the history (INV_HistoryOnlyToDeleter)
   "MC_ArchiveOnDelete_Red_NoOverlay.cfg ArchiveOnDelete.tla RED" # an owed archive denies nobody: the reader is allowed on the deleted document (INV_DeletedGrantsNothing)
   "MC_ArchiveOnDelete_Red_HistoryForAll.cfg ArchiveOnDelete.tla RED" # an owed archive leaves the commit history to everyone: the reader reads a deleted document's history (INV_HistoryOnlyToDeleter)
   "MC_ArchiveOnDelete_Red_OwedRegistrationFirst.cfg ArchiveOnDelete.tla RED" # the owed registration decides before the owed archive: the creator reads its deleted document (INV_DeletedGrantsNothing)

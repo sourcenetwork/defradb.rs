@@ -3,8 +3,9 @@
 //! An owed archive (its document was deleted) denies everyone on its
 //! object, its owner and anonymous callers too, from the delete's commit
 //! until the provider holds it: a deleted document grants nothing
-//! (`proofs/tla/ArchiveOnDelete.tla`). One read is left: the actor that
-//! staged the archive still reads the document's commit history.
+//! (`proofs/tla/ArchiveOnDelete.tla`). One read is left when the owner
+//! deleted the document itself: that owner, the archive's actor, still
+//! reads the document's commit history.
 //!
 //! While any delete of a tuple is unsettled, its subject is denied on its
 //! object before the provider is asked, whatever the provider still holds:
@@ -45,9 +46,9 @@ pub enum OwedDenial {
     UnlessOwner,
     /// Denied: the owner relation itself is being taken from it.
     Always,
-    /// Denied: the object's archive is owed. Only the actor that staged the
-    /// archive ([`OwedDenials::archive_actor`]) is spared, and only for the
-    /// document's commit history.
+    /// Denied: the object's archive is owed. Only the archive's actor, when
+    /// it deleted the document itself ([`OwedDenials::archive_actor`]), is
+    /// spared, and only for the document's commit history.
     Archived,
 }
 
@@ -97,11 +98,13 @@ where
     Ok(denial(wide, named))
 }
 
-/// The actor that staged the archive owed on one object, while it is
-/// unsettled: the deleting owner may inspect its own commit history before
-/// the archive settles. A change staged on that tuple commits first aborts
-/// the decision. Nobody is named while a delete of that actor's owner
-/// relation is owed too: such a delete spares it nothing.
+/// The actor of the archive owed on one object, while it is unsettled and
+/// that actor, the owner, deleted the document itself: the deleting owner
+/// may inspect its own commit history before the archive settles. A change
+/// staged on that tuple commits first aborts the decision. Nobody is named
+/// for an archive staged for someone else's delete, nor while a delete of
+/// that actor's owner relation is owed too: such a delete spares it
+/// nothing.
 pub(super) async fn archive_actor<R>(
     reader: &R,
     policy_id: &str,
@@ -118,7 +121,7 @@ where
     let change: OwedChange = ops::change(reader, state.oldest).await?.ok_or_else(|| {
         crate::Error::Serialization(format!("owed ACP change {} has no record", state.oldest))
     })?;
-    if !matches!(change.op, OwedOp::Archive) {
+    if !matches!(change.op, OwedOp::Archive) || !change.deleted_by_actor {
         return Ok(None);
     }
     let key = keys::subject_key(policy_id, resource, object, &change.actor);
