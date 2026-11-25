@@ -511,12 +511,12 @@ RUNS=(
   "MC_ProllyNodeCache_Red_NoEvict.cfg ProllyNodeCache.tla RED" # the cache never evicts (CacheBounded)
   "MC_ProllyNodeCache_Red_CacheHuge.cfg ProllyNodeCache.tla RED" # a node over budget empties the cache (HugeEvictsNothing)
   "MC_ProllyNodeCache_Red_DropOnFail.cfg ProllyNodeCache.tla RED" # a failed write drops its nodes (GetFinds)
-  "MC_ProllyNodeCache_Red_PublishBeforeFlush.cfg ProllyNodeCache.tla RED" # a root goes out before its node is stored (PublishedStored)
+  "MC_ProllyNodeCache_Red_RootWithoutNodes.cfg ProllyNodeCache.tla RED" # the publishing transaction leaves the root's node pending (PublishedStored)
   "MC_ProllyNodeCache_Red_FinishAfterFail.cfg ProllyNodeCache.tla RED" # a build finishes after a failed put (BuildWhole)
   "MC_ProllyNodeReclaim_Green.cfg ProllyNodeReclaim.tla GREEN" # a sweep racing a publication never deletes a node the live root names (SweepKeepsLiveRoots)
   "MC_ProllyNodeReclaim_Red_FixedRoots.cfg ProllyNodeReclaim.tla RED" # the sweep marks from roots read before its transaction (SweepKeepsLiveRoots)
   "MC_ProllyNodeReclaim_Red_NoValidation.cfg ProllyNodeReclaim.tla RED" # a root published before the commit does not re-run the delete (SweepKeepsLiveRoots)
-  "MC_ProllyNodeReclaim_Red_PutAlone.cfg ProllyNodeReclaim.tla RED" # nodes committed before their root are swept (SweepKeepsLiveRoots)
+  "MC_ProllyNodeReclaim_Red_PutAlone.cfg ProllyNodeReclaim.tla RED" # an edit's nodes committed before their root are swept (SweepKeepsLiveRoots)
   "MC_ProllyNodeReclaim_Red_DeleteMarked.cfg ProllyNodeReclaim.tla RED" # the delete does not skip marked nodes (SweepKeepsLiveRoots)
   "MC_RetryPreparedInputs_Green.cfg RetryPreparedInputs.tla GREEN" # exact-context external answer survives commit retry
   "MC_RetryPreparedInputs_Red_Recompute.cfg RetryPreparedInputs.tla RED" # clearing prepared memo repeats provider work

@@ -7,19 +7,24 @@
 //! never changes once named, so any copy of one, here or in a
 //! [`prolly::Cached`] in front of this store, is never stale.
 //!
-//! Puts wait in memory, encoded, until they pass `pending_budget` bytes or the
-//! tree flushes, and are then written in one `transact`. A read finds a
-//! pending node before it looks in regolith, and the pending set is cleared
-//! only after its transaction commits, so a node put is always readable.
+//! Puts wait in memory, encoded, until [`ProllyNodes::publish`] writes them in
+//! the transaction that publishes the root naming them, so a node is never
+//! stored apart from a root. The pending set holds what one publish commits:
+//! a few nodes per level for an edit, every node of the tree for a build. A
+//! read finds a pending node before it looks in regolith, and the pending set
+//! is cleared only after that transaction commits, so a node put is always
+//! readable.
 //!
 //! [`ProllyNodes::reclaim`] sweeps one bounded page of the nodes no live root
-//! names (`proofs/tla/ProllyNodeReclaim.tla`). Its delete transaction reads
-//! the live roots itself, with validated reads, so a root published before it
-//! commits re-runs it against that root. `t` is a key family, not a
+//! names (`proofs/tla/ProllyNodeReclaim.tla`), and [`reclaim_every`] runs one
+//! page per period. Its delete transaction reads the live roots itself, with
+//! validated reads, so a root published before it commits re-runs it against
+//! that root. `t` is a key family, not a
 //! [`Namespace`](crate::namespace::Namespace), so the namespace walks (dump,
 //! purge) do not see it either; a purged store has no `t` key, and a restored
 //! one is rebuilt from its heads and reclaimed against those roots.
 
+use std::any::Any;
 use std::sync::Arc;
 
 use cid::{multihash::Multihash, Cid};
@@ -27,10 +32,14 @@ use prolly::{Hash, Node};
 use rapidhash::{HashMapExt, HashSetExt, RapidHashMap, RapidHashSet};
 
 use crate::corekv::{
-    engine_retry_options, transact, IterOptions, MaybeSendSync, RetryAttemptFn, RetryAttemptFuture,
-    RetryAttemptValue, RetryOptions, RetryTxn, Store,
+    engine_retry_options, transact, IterOptions, MaybeSendSync, RetryAttempt, RetryAttemptError,
+    RetryAttemptFn, RetryAttemptFuture, RetryAttemptValue, RetryOptions, RetryTxn, Store,
 };
 use defra_core::thread_bounds::MaybeBoxFuture;
+
+mod schedule;
+
+pub use schedule::reclaim_every;
 
 /// The multicodec of raw bytes.
 const RAW: u64 = 0x55;
@@ -73,19 +82,16 @@ pub trait LiveRoots: MaybeSendSync {
 pub struct ProllyNodes<S> {
     store: Arc<S>,
     retry: RetryOptions,
-    pending_budget: usize,
     pending: Arc<RapidHashMap<Hash, Vec<u8>>>,
     pending_bytes: usize,
 }
 
 impl<S> ProllyNodes<S> {
-    /// Nodes in `store`, written under `retry` once `pending_budget` bytes of
-    /// them wait.
-    pub fn new(store: Arc<S>, retry: RetryOptions, pending_budget: usize) -> Self {
+    /// Nodes in `store`, written with their root under `retry`.
+    pub fn new(store: Arc<S>, retry: RetryOptions) -> Self {
         Self {
             store,
             retry,
-            pending_budget,
             pending: Arc::new(RapidHashMap::new()),
             pending_bytes: 0,
         }
@@ -101,19 +107,37 @@ impl<S> ProllyNodes<S>
 where
     S: Store + 'static,
 {
+    /// Writes every node put since the last publish, and runs `root`, which
+    /// publishes the root that names them, in the same transaction. Nodes and
+    /// root commit together, so a reclaim page that reads the live roots
+    /// either sees the root or conflicts with it. A conflict re-runs both;
+    /// the value is that of the run of `root` that committed. Only a commit
+    /// clears the pending nodes, so a publish that fails or is dropped leaves
+    /// them readable for the next one.
+    pub async fn publish<T>(&mut self, root: RetryAttempt) -> Result<T, RetryAttemptError>
+    where
+        T: Any,
+    {
+        // The attempt shares the pending set instead of taking it, so a
+        // publish that fails or is dropped before its commit leaves every
+        // node pending and readable; only a commit clears them.
+        let attempt = Box::new(PublishNodes {
+            writes: Arc::clone(&self.pending),
+            root,
+        });
+        let published = transact(&*self.store, self.retry, None, attempt).await?;
+        self.pending = Arc::new(RapidHashMap::new());
+        self.pending_bytes = 0;
+        Ok(published)
+    }
+
     /// Sweeps one bounded page of `t`: deletes the page's keys that no root
     /// `roots` reads names. `start` resumes a stopped sweep.
     ///
     /// The roots are read in the delete transaction, so the page deletes
-    /// nothing a root published before its commit names. A node put is blind
-    /// and conflicts with nothing, so a node committed before its root is
-    /// published can be swept in between: a page is safe beside a writer
-    /// only when that writer publishes a root in the transaction that writes
-    /// the root's nodes. A tree edit flushes its nodes before it returns the
-    /// root, so a caller that publishes the root afterwards must not run a
-    /// page between an edit and the publication of its root. Moving that flush
-    /// into the publishing transaction is
-    /// <https://github.com/sourcenetwork/defradb.rs/issues/3279>.
+    /// nothing a root published before its commit names. A root's nodes
+    /// commit in the transaction that publishes it ([`publish`](Self::publish)),
+    /// so no stored node waits for a root the page cannot see yet.
     pub async fn reclaim<R>(
         store: &S,
         roots: Arc<R>,
@@ -288,43 +312,25 @@ where
             self.pending_bytes += bytes.len();
             Arc::make_mut(&mut self.pending).insert(hash, bytes);
         }
-        if self.pending_bytes >= self.pending_budget {
-            prolly::Store::flush(self).await?;
-        }
         Ok(hash)
     }
-
-    async fn flush(&mut self) -> prolly::Result<()> {
-        if self.pending.is_empty() {
-            return Ok(());
-        }
-        // The attempt shares the pending set instead of taking it, so a flush
-        // that fails or is dropped before its commit leaves every node pending
-        // and readable; only a commit clears them.
-        let attempt = Box::new(WriteNodes {
-            writes: Arc::clone(&self.pending),
-        });
-        let written: Result<(), _> = transact(&*self.store, self.retry, None, attempt).await;
-        written.map_err(|error| store_error(error.into_storage()))?;
-        self.pending = Arc::new(RapidHashMap::new());
-        self.pending_bytes = 0;
-        Ok(())
-    }
 }
 
-/// One attempt at writing the pending nodes. It owns them behind an `Arc`,
-/// so a re-run after a conflict writes the same bytes again.
-struct WriteNodes {
+/// One attempt at publishing a root with its nodes. It owns the nodes behind
+/// an `Arc`, so a re-run after a conflict writes the same bytes again, and
+/// then runs the caller's root write.
+struct PublishNodes {
     writes: Arc<RapidHashMap<Hash, Vec<u8>>>,
+    root: RetryAttempt,
 }
 
-impl RetryAttemptFn for WriteNodes {
+impl RetryAttemptFn for PublishNodes {
     fn run<'a>(&'a mut self, txn: &'a mut dyn RetryTxn) -> RetryAttemptFuture<'a> {
         Box::pin(async move {
             for (hash, bytes) in self.writes.iter() {
                 txn.set(&node_key(hash), bytes).await?;
             }
-            Ok(Box::new(()) as RetryAttemptValue)
+            self.root.run(txn).await
         })
     }
 }
@@ -332,3 +338,7 @@ impl RetryAttemptFn for WriteNodes {
 #[cfg(all(test, not(target_arch = "wasm32")))]
 #[path = "prolly_nodes_tests.rs"]
 mod tests;
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+#[path = "prolly_nodes_publish_tests.rs"]
+mod publish_tests;
