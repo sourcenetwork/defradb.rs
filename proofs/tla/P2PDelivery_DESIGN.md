@@ -317,7 +317,7 @@ generated configuration confirms the run is the known defect.
 | `MC_P2PDelivery_Trace_Red_DialerOnly` | a's connection to h serves only a (F27) | deadlock at the `Reconnect` (7) |
 | `MC_P2PDelivery_Trace_Red_Unsettled` | the run cut after the hub merged h2 | deadlock past the end (30) |
 
-Each RED row in `run-all.sh` names the index its replay must stop at
+Each RED cfg's `\* run-all:` header names the index its replay must stop at
 (`DEADLOCK:<l>`), so a mutant that slips past the event it plants and fails
 later does not count, and each GREEN row the depth it must reach
 (`TRACE:<events + 1>`), so a replay that starts from no state does not pass.

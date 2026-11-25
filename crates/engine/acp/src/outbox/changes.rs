@@ -7,7 +7,7 @@ use datastore::{NamespaceView, WeakNamespaceView};
 use storage::corekv::Store;
 
 use super::keys::OwedTupleState;
-use super::ops;
+use super::ops::{self, StageMarks};
 use super::record::{InFlight, NewOwedChange, OwedAuthority, OwedChange, OwedState, OwedTuple};
 use crate::error::{Error, Result};
 
@@ -15,12 +15,14 @@ use crate::error::{Error, Result};
 pub const MAX_OWED_CHANGES_PER_TRANSACTION: u32 = 256;
 
 /// The most changes a node holds unsettled, unless
-/// [`OwedChanges::with_node_limit`] sets another bound.
+/// [`OwedChanges::with_node_limit`] sets another bound. An archive is not
+/// counted ([`OwedChange::outside_admission_counts`]).
 pub const MAX_UNSETTLED_OWED_CHANGES: u64 = 10_000;
 
 /// The most changes one acting DID holds unsettled on a node. A change that
 /// is parked stays unsettled, so without this bound one actor's parked
-/// changes could take the whole of the node's.
+/// changes could take the whole of the node's. An archive is not counted
+/// against its actor ([`OwedChange::outside_admission_counts`]).
 pub const MAX_UNSETTLED_OWED_CHANGES_PER_ACTOR: u64 = 1_000;
 
 /// How close to the node's bound its count is read validated. Below that the
@@ -161,7 +163,7 @@ impl OwedChanges {
                 limit: MAX_UNSETTLED_OWED_CHANGES_PER_ACTOR,
             });
         }
-        let change = ops::stage(&view, self.sequences.as_ref(), new, false).await?;
+        let change = ops::stage(&view, self.sequences.as_ref(), new, StageMarks::default()).await?;
         self.staged.0.fetch_add(1, Ordering::Relaxed);
         Ok(change)
     }
@@ -174,19 +176,56 @@ impl OwedChanges {
     /// actor's admission counts when it is staged and when it settles
     /// (`TransactionOutbox::stage_with_registration`).
     pub async fn stage_with_registration(&self, new: NewOwedChange) -> Result<OwedChange> {
-        ops::stage(&self.active_view()?, self.sequences.as_ref(), new, true).await
+        ops::stage(
+            &self.active_view()?,
+            self.sequences.as_ref(),
+            new,
+            StageMarks {
+                with_registration: true,
+                ..StageMarks::default()
+            },
+        )
+        .await
     }
 
     /// Record, in this transaction, a change none of the bounds on new
     /// changes applies to, and give it its sequence: one the provider
     /// confirmed once and a switch of its deployment's active device voided
     /// (committed and counted when first staged; `ExternalDocumentAcp`'s
-    /// `owe_again`), or the archive of a deleted document, one per delete.
+    /// `owe_again`). It still adds to the transaction's count of staged
+    /// changes, so changes staged after it in the transaction are bounded.
     pub async fn stage_restored(&self, new: NewOwedChange) -> Result<OwedChange> {
         let view = self.active_view()?;
-        let change = ops::stage(&view, self.sequences.as_ref(), new, false).await?;
+        let change = ops::stage(&view, self.sequences.as_ref(), new, StageMarks::default()).await?;
         self.staged.0.fetch_add(1, Ordering::Relaxed);
         Ok(change)
+    }
+
+    /// Record, in this transaction, the archive of a deleted document's
+    /// object, one per delete, which none of the bounds on new changes
+    /// limits. It is left out of the node's admission count and its
+    /// actor's ([`OwedChange::outside_admission_counts`]), and out of the
+    /// transaction's count of staged changes, so a transaction that deletes
+    /// may still stage [`MAX_OWED_CHANGES_PER_TRANSACTION`] changes of its
+    /// own: the deletes bound the archives. `deleted_by_actor`
+    /// says the archive's actor made the delete itself, so it keeps the
+    /// document's commit history while the archive is owed
+    /// ([`OwedChange::deleted_by_actor`]).
+    pub async fn stage_archive(
+        &self,
+        new: NewOwedChange,
+        deleted_by_actor: bool,
+    ) -> Result<OwedChange> {
+        ops::stage(
+            &self.active_view()?,
+            self.sequences.as_ref(),
+            new,
+            StageMarks {
+                deleted_by_actor,
+                ..StageMarks::default()
+            },
+        )
+        .await
     }
 
     /// Drop, in this transaction, every change unsettled on one object that
@@ -309,7 +348,8 @@ impl OwedChanges {
         ops::unsettled_on(&self.active_view()?, policy_id, resource, object).await
     }
 
-    /// How many changes are unsettled on the node.
+    /// How many changes are unsettled on the node, archives left out: the
+    /// count its bound is checked against.
     pub async fn unsettled(&self) -> Result<u64> {
         ops::unsettled(&self.active_view()?).await
     }

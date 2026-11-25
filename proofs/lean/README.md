@@ -12,8 +12,13 @@ Run:
 
 ```bash
 cd proofs/lean
-lake build
+lake build -R
 ```
+
+A new top-level `.lean` file is built with no lakefile edit; `-R` makes Lake
+list the directory again (it caches the elaborated lakefile, so without `-R` a
+newly added file is not seen). After a rebase that adds or deletes a proof, a plain
+`lake build` can fail with `no such file or directory`; `lake build -R` fixes it.
 
 The model proves:
 

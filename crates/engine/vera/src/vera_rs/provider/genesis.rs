@@ -100,7 +100,6 @@ mod tests {
             parent_hash: format!("0x{}", "22".repeat(32)),
             height,
             timestamp: 0,
-            state_root: format!("0x{}", "00".repeat(32)),
             module_state_root: format!("0x{}", "00".repeat(32)),
             epoch: 0,
             view: 1,
