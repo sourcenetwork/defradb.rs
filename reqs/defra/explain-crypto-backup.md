@@ -375,7 +375,7 @@ The server asks for signatures in waves, `{"wave": <n>, "blocks": [<hex>, …]}`
 - **Parents:** ["defra.signature.client_session"]
 - **Scenarios:** ["signature::client_session::a_client_that_answers_a_wave_twice_is_refused"]
 
-An answer naming a wave the client already answered fails the session with `signing wave <n> was already signed`: the server signs nothing more in that session, so the mutation's response carries the error and nothing is written. Whether the repeated answer arrives between waves or in place of the next wave's answer, the error is the same.
+An answer naming a wave the client already answered fails the session with `signing wave <n> was already signed`: the server signs nothing more in that session, so the mutation's response carries the error and nothing is written. Whether the repeated answer arrives between waves or in place of the next wave's answer, the error is the same. A repeat of the last wave's answer (a create's `_C` wave, or the one wave of an update or a delete) arrives when the server asks for no further wave, so it is refused but cannot fail the mutation: the mutation commits with the blocks already signed and its response carries no error.
 
 # `defra.signature.client_session.outside_graph`: An answer outside the approved graph is refused
 

@@ -647,11 +647,11 @@ resources:
         let mut revoked_graph = graph();
         let signatures = revoked_graph.respond(&blocks).unwrap().iter().map(hex::encode).collect::<Vec<_>>();
         node.delete_dac_actor_relationship_as(&owner_context, "ProtectedSettings", &doc_id, "editor", &editor_did).await.unwrap();
-        socket.send(Message::Text(json!({"signatures":signatures}).to_string().into())).await.unwrap();
+        socket.send(Message::Text(json!({"wave":wave["wave"],"signatures":signatures}).to_string().into())).await.unwrap();
         let frame = edge::testing::edge().timeout(Duration::from_secs(5), socket.next()).await.unwrap().unwrap().unwrap();
         let Message::Text(frame) = frame else { panic!("expected denied response") };
         let response: Value = serde_json::from_str(&frame).unwrap();
-        assert!(!response["response"]["errors"].as_array().unwrap().is_empty(), "{response}");
+        assert_eq!(response["response"]["errors"], json!([{"message":"document not found: document not found or not authorized to access"}]), "{response}");
 
         node.add_dac_actor_relationship_as(&owner_context, "ProtectedSettings", &doc_id, "editor", &editor_did).await.unwrap();
         let handshake = defra_http::client_signed_create::websocket_request(&url, &format!("Bearer {editor_token}")).unwrap();
@@ -694,7 +694,11 @@ resources:
         let wave: Value = serde_json::from_str(&frame).unwrap();
         let blocks = wave["blocks"].as_array().unwrap().iter().map(|value| hex::decode(value.as_str().unwrap()).unwrap()).collect::<Vec<_>>();
         let signatures = uncertain.respond(&blocks).unwrap().iter().map(hex::encode).collect::<Vec<_>>();
-        socket.send(Message::Text(json!({"signatures":signatures}).to_string().into())).await.unwrap();
+        socket.send(Message::Text(json!({"wave":wave["wave"],"signatures":signatures}).to_string().into())).await.unwrap();
+        let frame = edge::testing::edge().timeout(Duration::from_secs(5), socket.next()).await.unwrap().unwrap().unwrap();
+        let Message::Text(frame) = frame else { panic!("expected committed response") };
+        let response: Value = serde_json::from_str(&frame).unwrap();
+        assert_eq!(response["response"], json!({"data":{"update_ProtectedSettings":[{"_docID":doc_id}]}}), "{response}");
         drop(socket);
         assert!(uncertain.is_complete());
         assert!(uncertain.respond(&blocks).is_err());
@@ -824,7 +828,11 @@ resources:
         let wave: Value = serde_json::from_str(&frame).unwrap();
         let blocks = wave["blocks"].as_array().unwrap().iter().map(|value| hex::decode(value.as_str().unwrap()).unwrap()).collect::<Vec<_>>();
         let signatures = unknown.respond(&blocks).unwrap().iter().map(hex::encode).collect::<Vec<_>>();
-        socket.send(Message::Text(json!({"signatures":signatures}).to_string().into())).await.unwrap();
+        socket.send(Message::Text(json!({"wave":wave["wave"],"signatures":signatures}).to_string().into())).await.unwrap();
+        let frame = edge::testing::edge().timeout(Duration::from_secs(5), socket.next()).await.unwrap().unwrap().unwrap();
+        let Message::Text(frame) = frame else { panic!("expected committed response") };
+        let response: Value = serde_json::from_str(&frame).unwrap();
+        assert_eq!(response["response"], json!({"data":{"delete_DeleteRecord":[{"_docID":unknown_id}]}}), "{response}");
         drop(socket);
         assert!(unknown.is_complete());
         assert!(unknown.respond(&blocks).is_err());

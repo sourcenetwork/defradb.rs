@@ -68,6 +68,20 @@ fn a_wave_answered_twice_is_refused_and_the_session_stays_refused() {
 }
 
 #[test]
+fn a_stray_answer_between_waves_refuses_the_next_wave() {
+    let mut session = session();
+    let children = blocks(&["name"]);
+    let composite = blocks(&["composite"]);
+    session.waves.open(&children).unwrap();
+    let answer = session.sign(1, &children);
+    session.waves.answer(answer).unwrap();
+    let stray = session.sign(3, &composite);
+    let refused = SigningWaveError::UnknownWave { wave: 3 };
+    assert_eq!(session.waves.answer(stray), Err(refused.clone()));
+    assert_eq!(session.waves.open(&composite), Err(refused));
+}
+
+#[test]
 fn an_earlier_wave_answered_while_a_later_one_is_open_is_refused() {
     let mut session = session();
     let children = blocks(&["name"]);
