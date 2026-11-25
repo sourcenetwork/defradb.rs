@@ -1533,9 +1533,12 @@ RUNS=(
   "MC_PubsubRpcReply_Green.cfg PubsubRpcReply.tla GREEN" # three peers, each request copy direct or relayed in every order: every answer reaches the asker, the deadline cuts off only an answer not yet sent or still on its way, the asker stops
   "MC_PubsubRpcReply_Red_AnswerRelay.cfg PubsubRpcReply.tla RED" # a peer answers the relay that handed it the request (INV_NoAnswerLost)
   "MC_PubsubRpcReply_Red_DeadlineCutsOff.cfg PubsubRpcReply.tla RED" # the same: every peer answered, one answer lost, the asker stops at its deadline (INV_AllAnswered)
-  "MC_ConnmgrTrimSilence_Green.cfg ConnmgrTrimSilence.tla GREEN" # four peers dialing in and Kademlia redialing around trims: no redial of a just-pruned peer, trims a silence period apart
+  "MC_ConnmgrTrimSilence_Green.cfg ConnmgrTrimSilence.tla GREEN" # three peers dialing, disconnecting and Kademlia redialing around trims: no redial of a just-closed peer, trims a silence period apart, explicit and in-flight dials never refused
   "MC_ConnmgrTrimSilence_Red_NoSilence.cfg ConnmgrTrimSilence.tla RED" # trims whenever over high water, so a peer back right after a trim is cut again at once (INV_TrimsSpaced)
   "MC_ConnmgrTrimSilence_Red_NoHold.cfg ConnmgrTrimSilence.tla RED" # Kademlia's bootstrap redials the peers a trim just pruned (INV_NoRedialOfPruned)
+  "MC_ConnmgrTrimSilence_Red_HoldAll.cfg ConnmgrTrimSilence.tla RED" # the hold refuses an explicit connect too (INV_ExplicitNeverRefused)
+  "MC_ConnmgrTrimSilence_Red_RefuseFirst.cfg ConnmgrTrimSilence.tla RED" # a held Kademlia dial is refused before the peer check, failing a query an in-flight dial still serves (INV_InFlightDialNotDenied)
+  "MC_ConnmgrTrimSilence_Red_TrimOnly.cfg ConnmgrTrimSilence.tla RED" # only a trim's peers are held, so the pruned end redials after its remote close (INV_NoRedialOfPruned)
   "MC_ActivePeersIdentify_Green.cfg ActivePeersIdentify.tla GREEN" # two peers dial in around an ActivePeers call: never a waiting peer at its source port, never held by a later peer, every call answered
   "MC_ActivePeersIdentify_Red_AnswerAtOnce.cfg ActivePeersIdentify.tla RED" # ActivePeers answers at once, before the Identify (INV_ListenAddress)
   "MC_ActivePeersIdentify_Red_WaitOnLater.cfg ActivePeersIdentify.tla RED" # the answer waits on peers that dialed in after the call (INV_NotHeldByLater)

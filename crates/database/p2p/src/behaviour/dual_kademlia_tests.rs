@@ -51,3 +51,85 @@ fn a_dial_that_failed_its_peer_condition_is_forgotten() {
 
     assert!(kademlia.own_dials.is_empty());
 }
+
+fn closed_last_connection(kademlia: &mut DefraKademlia, peer: PeerId, remaining: usize) {
+    let endpoint = libp2p::core::ConnectedPoint::Listener {
+        local_addr: "/ip4/127.0.0.1/tcp/4001".parse().expect("local address"),
+        send_back_addr: "/ip4/127.0.0.1/tcp/4002".parse().expect("remote address"),
+    };
+    kademlia.on_swarm_event(FromSwarm::ConnectionClosed(
+        libp2p::swarm::behaviour::ConnectionClosed {
+            peer_id: peer,
+            connection_id: ConnectionId::new_unchecked(10),
+            endpoint: &endpoint,
+            cause: None,
+            remaining_established: remaining,
+        },
+    ));
+}
+
+/// Every dial the inner Kademlia asks the swarm for until it has nothing
+/// more to do: the connection id and the peer of each.
+fn kademlia_dials(kademlia: &mut DefraKademlia) -> Vec<(ConnectionId, Option<PeerId>)> {
+    let mut cx = Context::from_waker(std::task::Waker::noop());
+    let mut dials = Vec::new();
+    while let Poll::Ready(event) = kademlia.poll(&mut cx) {
+        if let ToSwarm::Dial { opts } = event {
+            dials.push((opts.connection_id(), opts.get_peer_id()));
+        }
+    }
+    dials
+}
+
+/// A Kademlia that knows `peer` and has a query out that wants it.
+fn kademlia_looking_for(peer: PeerId) -> DefraKademlia {
+    let mut kademlia = DefraKademlia::new(PeerId::random(), KademliaNetwork::Wan);
+    kademlia.add_address(
+        &peer,
+        "/ip4/127.0.0.1/tcp/4003".parse().expect("peer address"),
+    );
+    kademlia.get_closest_peers(PeerId::random());
+    kademlia
+}
+
+#[test]
+fn every_dial_kademlia_asks_for_is_remembered_as_its_own() {
+    let peer = PeerId::random();
+    let mut kademlia = kademlia_looking_for(peer);
+
+    let dials = kademlia_dials(&mut kademlia);
+
+    assert!(dials.iter().any(|(_, dialed)| *dialed == Some(peer)));
+    for (connection_id, _) in &dials {
+        assert!(kademlia.own_dials.contains(connection_id));
+    }
+}
+
+#[test]
+fn kademlias_dial_after_the_last_connection_closes_is_refused() {
+    let peer = PeerId::random();
+    let mut kademlia = kademlia_looking_for(peer);
+    closed_last_connection(&mut kademlia, peer, 0);
+
+    let (connection_id, _) = kademlia_dials(&mut kademlia)
+        .into_iter()
+        .find(|(_, dialed)| *dialed == Some(peer))
+        .expect("Kademlia dials the peer its query wants");
+
+    assert!(pending_outbound(&mut kademlia, connection_id, peer).is_err());
+    assert_eq!(kademlia.held_refusals, 1);
+}
+
+#[test]
+fn closing_one_of_several_connections_holds_nothing() {
+    let peer = PeerId::random();
+    let mut kademlia = kademlia_looking_for(peer);
+    closed_last_connection(&mut kademlia, peer, 1);
+
+    let (connection_id, _) = kademlia_dials(&mut kademlia)
+        .into_iter()
+        .find(|(_, dialed)| *dialed == Some(peer))
+        .expect("Kademlia dials the peer its query wants");
+
+    assert!(pending_outbound(&mut kademlia, connection_id, peer).is_ok());
+}

@@ -86,6 +86,8 @@ pub struct DefraKademlia {
     /// Dials this Kademlia asked the swarm for that have not reached
     /// `handle_pending_outbound_connection` or failed before it.
     own_dials: RapidHashSet<ConnectionId>,
+    /// How many of its own dials this Kademlia refused as held.
+    held_refusals: u64,
 }
 
 impl DefraKademlia {
@@ -116,6 +118,7 @@ impl DefraKademlia {
             inner,
             redial_hold: RedialHold::default(),
             own_dials: RapidHashSet::default(),
+            held_refusals: 0,
         }
     }
 
@@ -135,12 +138,21 @@ impl DefraKademlia {
         if !self.own_dials.remove(&connection_id) {
             return Ok(());
         }
-        match maybe_peer {
-            Some(peer_id) if self.redial_hold.is_held(&peer_id, Instant::now()) => {
-                Err(ConnectionDenied::new(HeldRedial))
-            }
-            _ => Ok(()),
+        let Some(peer_id) = maybe_peer else {
+            return Ok(());
+        };
+        if !self.redial_hold.is_held(&peer_id, Instant::now()) {
+            return Ok(());
         }
+        self.held_refusals += 1;
+        tracing::debug!(
+            peer_id = %peer_id,
+            refused = self.held_refusals,
+            held = self.redial_hold.len(),
+            evicted = self.redial_hold.evicted(),
+            "Kademlia redial held"
+        );
+        Err(ConnectionDenied::new(HeldRedial))
     }
 }
 
