@@ -1,7 +1,7 @@
 //! Checks on chunk writes that arrive from peers.
 
 use document::{Document, NormalValue};
-use schema::{CHUNK_HASH_FIELD, CHUNK_TEXT_FIELD};
+use schema::{CHUNK_HASH_FIELD, CHUNK_SOURCE_ID_FIELD, CHUNK_TEXT_FIELD};
 
 use super::hash::text_hash;
 
@@ -25,9 +25,12 @@ pub fn check_chunk_merge(
     encrypted: bool,
 ) -> Result<(), ChunkMergeError> {
     if let Some(old) = old {
-        // Only stored fields count: a field outside the schema is dropped later.
-        if let Some(field) = old
-            .field_names()
+        // The fixed fields count even when unset, so a merge can't fill one in.
+        // Other unset fields don't: a field outside the schema is dropped later.
+        let fixed = [CHUNK_SOURCE_ID_FIELD, CHUNK_TEXT_FIELD, CHUNK_HASH_FIELD];
+        if let Some(field) = fixed
+            .into_iter()
+            .chain(old.field_names())
             .find(|field| old.get(field) != merged.get(field))
         {
             return Err(ChunkMergeError::Changed(field.to_string()));

@@ -54,6 +54,19 @@ fn a_chunk_cannot_change_after_its_create() {
 }
 
 #[test]
+fn a_merge_cannot_fill_in_a_fixed_field_the_stored_chunk_lacks() {
+    let text = "Some text.";
+    let mut old = Document::new(chunks());
+    old.set("text", NormalValue::String(text.into())).unwrap();
+    old.set("hash", NormalValue::String(text_hash(text)))
+        .unwrap();
+    assert!(matches!(
+        check_chunk_merge(Some(&old), &chunk("bae-p", text, &text_hash(text)), false),
+        Err(ChunkMergeError::Changed(field)) if field == "_sourceID"
+    ));
+}
+
+#[test]
 fn an_encrypted_chunk_this_node_cannot_read_is_not_hash_checked_here() {
     let mut doc = Document::new(chunks());
     doc.set("_sourceID", NormalValue::String("bae-p".into()))
