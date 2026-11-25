@@ -1454,6 +1454,7 @@ RUNS=(
   "MC_EdgeGateContinuation_Red_PlainSpawn.cfg EdgeGateContinuation.tla RED" # the code before (#2546): a request in flight is refused its connection (INV_InFlightContinues)
   "MC_EdgeGateContinuation_Red_NoSeal.cfg EdgeGateContinuation.tla RED" # no seal: a passing count lets a continuation in after the drain (INV_NothingAfterDrain)
   "MC_EdgeGateContinuation_Red_NoCas.cfg EdgeGateContinuation.tla RED" # no compare-and-swap: a continuation starts from an idle closed gate (INV_NoContinuationWhenIdle)
+  "MC_EdgeGateContinuation_Red_NoRefuse.cfg EdgeGateContinuation.tla RED" # new top-level work admitted while draining: the drain never ends (LIVE_DrainEnds)
   "MC_IrohDialOutcome_Green.cfg IrohDialOutcome.tla GREEN" # a refused dial answers from its close reason; connect_peer ends with the answer
   "MC_IrohDialOutcome_Green_Admitted.cfg IrohDialOutcome.tla GREEN" # an admitted dial answers ok
   "MC_IrohDialOutcome_Red_Poll.cfg IrohDialOutcome.tla RED" # the code before: connect_peer polls the connected set and misses a refused connection (LIVE_DialAnswered)
