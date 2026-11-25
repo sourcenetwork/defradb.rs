@@ -80,4 +80,4 @@ Run from `proofs/tla`:
 ```
 
 These configs run in `run-all.sh`, which discovers every top-level `*.cfg` and
-takes the module and verdict from each cfg's `\* run-all:` header or its name.
+takes the module and verdict from each cfg's `\* run-all:` header.

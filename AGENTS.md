@@ -413,7 +413,7 @@ that is correct but slower is not done.
   shrunk, never given a longer timeout or more shards.
 - Lean proofs use no `sorry`, `admit` or new `axiom`.
 - A model names the Rust code it models (file and function), and is run by `proofs/tla/run-all.sh`, which picks up
-  every `proofs/tla/*.cfg`, and has its family file under `proofs/src/registry/`. A model that no longer matches the code is a defect.
+  every `proofs/tla/*.cfg` and reads its module and verdict from the cfg's first line (`\* run-all: <Module>.tla <verdict>`), and has its family file under `proofs/src/registry/`. A model that no longer matches the code is a defect.
 - Proofs read ELI5, line by line, for someone who knows nothing about proofs or model checkers:
   - each file opens with a plain-words story: who acts, what can happen, what must never happen;
   - every line of a spec has a plain-words comment (`\*` in TLA+, `--` in Lean), and every definition, action and

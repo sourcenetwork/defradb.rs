@@ -29,10 +29,11 @@ grounded facts for B3 live in [DESIGN.md](DESIGN.md); each later slice has its o
 
 Run all configured models at once with `./run-all.sh` (red/green oracle, exits non-zero
 on mismatch). It discovers every top-level `*.cfg` here and takes each one's module and
-expected verdict from a `\* run-all: <Module>.tla <verdict>` header in the cfg or, when
-there is none, from the name: `MC_<Module>_<rest>.cfg` runs `<Module>.tla`, GREEN when
-`rest` has a `Green` word (underscore-separated) and no `Red` word, RED when it has
-`Red` and no `Green`.
+expected verdict from the cfg's first line, a
+`\* run-all: <Module>.tla <GREEN|RED|TRACE:<n>|DEADLOCK:<n>>` header. Every cfg carries
+one, and a cfg without a valid header fails the run. The cfg's name decides nothing, but
+it may not say otherwise: a name with a `Green` word (underscore-separated) needs a GREEN
+or TRACE header and one with a `Red` word a RED or DEADLOCK header, or the run fails.
 
 ---
 

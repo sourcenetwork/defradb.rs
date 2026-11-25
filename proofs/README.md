@@ -198,13 +198,11 @@ To add a trace for a new scenario:
 3. Assert the steps you meant to exercise are in the trace (`Trace::count`,
    `Trace::steps`), so an empty run cannot pass.
 4. To pin the run, copy the generated `MC_P2PDelivery_Trace_<Scenario>.{tla,cfg}`
-   into `tla/`, put a `\* run-all: <module> TRACE:<events + 1>` header line in
-   the cfg, and plant RED mutants of it in a mutants module, each with a
-   `\* run-all: <module> DEADLOCK:<index>` header in its cfg. `run-all.sh`
-   discovers every top-level `tla/*.cfg` and takes the module and verdict from
-   that header, or, without one, from the name: `MC_<Module>_<rest>.cfg` runs
-   `<Module>.tla`, GREEN when `rest` has a `Green` word and no `Red` word, RED
-   when it has `Red` and no `Green`.
+   into `tla/`, put a `\* run-all: <module> TRACE:<events + 1>` header as the
+   cfg's first line, and plant RED mutants of it in a mutants module, each with
+   a `\* run-all: <module> DEADLOCK:<index>` header as its cfg's first line.
+   `run-all.sh` discovers every top-level `tla/*.cfg` and takes the module and
+   verdict from that header alone; a cfg without one fails the run.
 5. A code path that takes a model step nobody logs yet gets a
    `p2p::model_trace!(Variant { .. })` at its site, a case in
    `Trace_P2PDelivery.tla`'s `Replay`, and, for a new field, a line in

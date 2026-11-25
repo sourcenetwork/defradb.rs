@@ -151,8 +151,8 @@ the named invariant "is violated" with a concrete two-txn counterexample trace.
   stops reading through the transaction's own view.
 - **Integrator TODO (run-all):** the four `MC_DeferredAcp_*` configs below
   must run in `proofs/tla/run-all.sh` (it now picks up every top-level
-  `*.cfg`, taking the module and verdict from each cfg's `\* run-all:` header
-  or its name, so no row is added to the script itself):
+  `*.cfg`, taking the module and verdict from each cfg's `\* run-all:` header,
+  so no row is added to the script itself):
 
 ```
   "MC_DeferredAcp_Green.cfg              MC_DeferredAcp_Green.tla              GREEN"  # deferred-acp overlay correct
