@@ -667,9 +667,11 @@ tla-model cfg module:
     cd proofs/tla && ./tools/tlc -config {{ cfg }} {{ module }}
 
 # Lean proofs. Must build clean with zero `sorry`.
+# A new top-level `.lean` file is built with no lakefile edit; `-R` makes Lake
+# list the directory again.
 [group('proofs')]
 lean:
-    cd proofs/lean && lake build
+    cd proofs/lean && lake build -R
 
 # Model-to-code binding. The Lean axis needs no binary; the TLA axis drives the
 # real release binary and is serial because each test spins up real nodes.
@@ -745,10 +747,31 @@ lint-wasm:
     cargo clippy -p defra-wasm --target wasm32-unknown-unknown --no-default-features --all-targets -- -D warnings
 
 # Docs must build without warnings; a broken intra-doc link fails CI.
-[doc("Build docs with warnings denied (broken links fail CI).")]
+# rustdoc's own landing page (--enable-index-page) is nightly-only, so the
+# recipe writes target/doc/index.html itself, one link per workspace crate,
+# from cargo metadata so dependency pages an earlier plain `cargo doc` left in
+# target/doc stay out of it.
+[doc("Build docs with warnings denied (broken links fail CI), plus an index.")]
 [group('check')]
 doc:
+    #!/usr/bin/env bash
+    set -euo pipefail
     RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --keep-going
+    dir="${CARGO_TARGET_DIR:-{{ root }}/target}/doc"
+    {
+        echo '<!doctype html><meta charset="utf-8"><title>defradb.rs crates</title>'
+        echo '<h1>defradb.rs crates</h1><ul>'
+        cargo metadata --no-deps --format-version 1 \
+            | jq -r '.packages[].targets[] | select(.kind | any(. != "test" and . != "bench" and . != "example" and . != "custom-build")) | .name | gsub("-"; "_")' \
+            | sort -u \
+            | while read -r name; do
+                if [ -f "$dir/$name/index.html" ]; then
+                    echo "<li><a href=\"$name/index.html\">$name</a></li>"
+                fi
+            done
+        echo '</ul>'
+    } > "$dir/index.html"
+    echo "docs: $dir/index.html"
 
 # What to make green before asking for a review.
 [group('check')]

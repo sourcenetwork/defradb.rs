@@ -273,6 +273,10 @@ where
             return Err(ClientSignedCreateError::MessageTooLarge);
         }
         if let Some(blocks) = value.get("blocks").and_then(Value::as_array) {
+            let wave = value
+                .get("wave")
+                .and_then(Value::as_u64)
+                .ok_or_else(|| ClientSignedCreateError::Protocol("missing wave number".into()))?;
             let blocks = blocks
                 .iter()
                 .map(|block| {
@@ -288,9 +292,12 @@ where
                 .collect::<Result<Vec<_>, _>>()?;
             let signatures = graph.respond(&blocks)?;
             let signatures = signatures.iter().map(hex::encode).collect::<Vec<_>>();
-            crate::client_signing_wire::send(socket, &json!({"signatures":signatures}))
-                .await
-                .map_err(map_wire_error)?;
+            crate::client_signing_wire::send(
+                socket,
+                &json!({"wave": wave, "signatures": signatures}),
+            )
+            .await
+            .map_err(map_wire_error)?;
         } else if let Some(response) = value.get("response") {
             let response: QueryResponse = serde_json::from_value(response.clone())
                 .map_err(|error| ClientSignedCreateError::Protocol(error.to_string()))?;

@@ -100,6 +100,7 @@ nuclei = { workspace = true, optional = true }
 db = { path = "../../database/db", default-features = false, features = ["native"] }
 
 [dev-dependencies]
+mantra-macros = "0.9"
 chunk-split = { path = "../../building-blocks/chunk-split" }
 regolith.workspace = true
 defra-core = { path = "../../foundation/defra-core", features = ["ambient"] }

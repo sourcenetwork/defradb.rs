@@ -15,3 +15,26 @@ A Rust key that is present in the same section wins over its Go spelling. Keys o
 - **Scenarios:** ["acp::dac::p2p::add::acp_p2_p_add_private_document_and_sync_after_adding_relationship_remote_dac", "acp::dac::p2p::update_by_non_creator_on_peer::acp_p2_p_non_creator_updates_indexed_field_on_peer_node_succeeds"]
 
 `defradb client --identity <key>` (or `--identity-name`) asks the node for `GET /api/v0/acp/status` first. When the answer names a `delegation` audience, the node's document ACP is a vera.rs deployment, and the client sends, as its `Authorization: Bearer` token, a Vera delegation the identity's key signs for that audience's worker and deployment, in place of the identity token it sends any other node. The node authenticates the caller from that delegation and acts on Vera for it: a document actor relationship the identity adds through the CLI is submitted under the identity's authority instead of failing with `no authority to submit ACP changes as <did>: the request's token is not a delegation`. When the status request fails, or its answer names no audience, the client sends the identity token, as before. A secp256k1 key (32 bytes) and an Ed25519 key (64 bytes) both sign delegations.
+
+# `defra.cli.query.error_code`: `client query` prints a GraphQL error's code
+
+- **Parents:** ["go.node"]
+- **Scenarios:** ["mutation::error_code::an_unknown_collection_mutation_carries_its_code", "mutation::error_code::a_retried_unknown_collection_mutation_carries_its_code"]
+
+`defradb client query` prints the GraphQL response a request with errors gets, as indented JSON on stdout, in the key order Go's `client query` prints: `errors`, then `data`, then `extensions` when the response has some. Each error keeps the `extensions` the server sent, so its `extensions.code` reaches the user; Go prints only each error's `message`, so the error `extensions` are defradb.rs's own. With a `User` collection and no `Nope` collection, `defradb client query 'mutation { add_Nope(input: {name: "x"}) { _docID } }'` prints
+
+```json
+{
+  "errors": [
+    {
+      "message": "parse error: Cannot query field \"add_Nope\" on type \"Mutation\".",
+      "extensions": {
+        "code": "UNKNOWN_MUTATION_COLLECTION"
+      }
+    }
+  ],
+  "data": null
+}
+```
+
+The in-process node and the Rust HTTP client report the same code on the same error. Go reports no code. As before this requirement, the command still exits non-zero and prints `Error: server returned error: <the messages, joined by "; ">` to stderr when the response has errors; Go exits zero.

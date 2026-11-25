@@ -743,6 +743,20 @@ pub trait QueryExecutor: MaybeSendSync {
         context.mirror(self.discard_txn(handle)).await
     }
 
+    /// Ask whether an explicit transaction's lost commit landed. Only its
+    /// owner gets a state; any other caller gets the same `unknown` answer as
+    /// an ID that does not exist.
+    async fn txn_outcome_as(
+        &self,
+        context: &RequestContext,
+        handle: &TransactionHandle,
+    ) -> std::result::Result<crate::txn::TransactionOutcome, TransactionError> {
+        let _ = (context, handle);
+        Err(TransactionError::not_supported(
+            "transaction outcomes are not supported by this executor",
+        ))
+    }
+
     /// [`TransactionRegistry::add_collection_as`](crate::txn::TransactionRegistry::add_collection_as).
     async fn add_collection_as(
         &self,

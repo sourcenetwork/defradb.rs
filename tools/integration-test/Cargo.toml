@@ -41,6 +41,9 @@ async-trait = { workspace = true }
 events = { path = "../../crates/foundation/events" }
 async-channel = "2"
 cli = { path = "../../crates/entry-points/cli" }
+# The client-signing WebSocket handshake the signing-session action dials.
+defra-http = { path = "../../crates/surfaces/http" }
+async-tungstenite = "0.35.0"
 clap = "4.5"
 query = { path = "../../crates/engine/query" }
 schema = { path = "../../crates/foundation/schema" }

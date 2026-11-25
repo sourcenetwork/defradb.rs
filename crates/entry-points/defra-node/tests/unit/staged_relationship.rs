@@ -728,9 +728,7 @@ fn a_local_provider_applies_in_the_transaction_and_a_remote_one_stages() {
             .unwrap());
         // A caller stages in a transaction of its own through its context.
         let own = node.runner().begin_txn_as(&owner, false).await.unwrap();
-        let in_own = owner
-            .clone()
-            .with_txn(own.as_str().parse().ok().map(defra_core::TxnId));
+        let in_own = owner.clone().with_txn(own.as_str().parse().ok());
         assert!(matches!(
             node.change_dac_actor_relationship_as(&in_own, "Record", &doc, "reader", READER, false)
                 .await,

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Single entry point: verify every formal-methods artifact and its binding to code.
 #   1. TLA+ models   — red/green oracle (proofs/tla/run-all.sh)
-#   2. Lean proofs   — builds clean, zero `sorry` (proofs/lean: lake build)
+#   2. Lean proofs   — builds clean, zero `sorry` (proofs/lean: lake build -R)
 #   3. Conformance   — models <-> code:
 #        - Lean axis (fast, no binary): contract vocab asserted against Rust types
 #        - TLA axis (behavioral): drives the real release binary; skipped if absent
@@ -12,8 +12,8 @@ ROOT="$(cd "$DIR/.." && pwd)"
 echo "== TLA+ models (proofs/tla/run-all.sh) =="
 ( cd "$DIR/tla" && ./run-all.sh ); tla=$?
 
-echo; echo "== Lean proofs (proofs/lean: lake build) =="
-( cd "$DIR/lean" && lake build && echo "lake build: OK" ); lean=$?
+echo; echo "== Lean proofs (proofs/lean: lake build -R) =="
+( cd "$DIR/lean" && lake build -R && echo "lake build -R: OK" ); lean=$?
 
 echo; echo "== Conformance: Lean axis + registry (cargo test, no binary) =="
 ( cd "$ROOT" && cargo test -p conformance --lib --test lean_conformance &&

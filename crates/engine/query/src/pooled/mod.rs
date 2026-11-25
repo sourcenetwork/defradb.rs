@@ -231,6 +231,14 @@ impl QueryExecutor for PooledExecutor {
         self.inner.discard_txn_as(context, handle).await
     }
 
+    async fn txn_outcome_as(
+        &self,
+        context: &RequestContext,
+        handle: &TransactionHandle,
+    ) -> std::result::Result<crate::txn::TransactionOutcome, TransactionError> {
+        self.inner.txn_outcome_as(context, handle).await
+    }
+
     async fn add_collection_as(
         &self,
         context: &RequestContext,
