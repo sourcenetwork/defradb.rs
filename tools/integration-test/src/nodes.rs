@@ -79,6 +79,9 @@ pub struct NodeSpec {
     /// An in-process iroh node serving these stream protocols, in place of
     /// the libp2p one `network` starts.
     pub iroh: Option<crate::actions::stream::IrohSpec>,
+    /// The Vera node the node decides document ACP on, and the directory
+    /// its Vera worker keeps its journal and key in across restarts.
+    pub vera: Option<crate::shared_vera::NodeVera>,
 }
 
 /// A running node: the node itself for the in-process client, or the URL the
@@ -405,6 +408,13 @@ fn build(spec: &NodeSpec, listen: &str, http: Option<HttpConfig>) -> Result<Node
     // signs only when the scenario turns signing on.
     if spec.node_identity.is_some() && spec.signing.is_none() {
         builder = builder.with_identity_only();
+    }
+    if let Some((vera, home)) = &spec.vera {
+        // The node acts on Vera as its own identity, Go's `NodeIdentity(i)`,
+        // as a Go node signs its remote ACP requests with its identity.
+        let seed = spec.node_identity.or(spec.go_index).unwrap_or(u64::MAX);
+        let key = crate::scenario::identity::node_private_key(seed);
+        builder = builder.with_vera_rs(vera.config(&key, home.path())?);
     }
     if spec.enable_nac {
         builder = match &spec.nac_owner {

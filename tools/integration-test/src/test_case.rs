@@ -31,6 +31,9 @@ pub struct State {
     pub streams: crate::actions::stream::KeptStreams,
     /// How many nodes the test has started, Go's next node index.
     pub go_nodes_started: u64,
+    /// The Vera node the test's nodes share for document ACP, once a
+    /// `NewNode { isDocumentAcpTest }` started it.
+    pub vera: Option<Arc<crate::shared_vera::SharedVera>>,
 }
 
 /// The transactions a test has begun. Shared by every clone of the state, and
@@ -273,6 +276,36 @@ impl State {
         }
     }
 
+    /// [`State::context_as`] for a request to node `node`. On a node that
+    /// decides document ACP on Vera, the acting identity also carries its
+    /// own Vera delegation to the node, as its bearer token does over HTTP:
+    /// the node acts on Vera for a caller only under the caller's authority.
+    pub fn context_as_on(
+        &self,
+        node: &str,
+        txn: Option<usize>,
+        identity: Option<u64>,
+    ) -> RequestContext {
+        let context = self.context_as(txn, identity);
+        let Some(seed) = identity else {
+            return context;
+        };
+        match self.vera_delegation(node, seed) {
+            Some(token) => {
+                context.with_bearer(Some(crate::scenario::identity::did(seed)), Some(token))
+            }
+            None => context,
+        }
+    }
+
+    /// The Vera delegation identity `seed` presents to node `name`, when the
+    /// node is a Rust node that decides document ACP on Vera.
+    pub fn vera_delegation(&self, name: &str, seed: u64) -> Option<String> {
+        let core = self.slot(name)?.node.as_ref()?.core()?;
+        crate::shared_vera::delegation(&core, seed)
+            .unwrap_or_else(|error| panic!("a Vera delegation for identity {seed}: {error}"))
+    }
+
     /// [`State::context_as`] for an in-process write to node `node`, carrying
     /// the acting client identity's own secp256k1 key when Go's in-process
     /// client would sign with it: Go's `contextForSigning` keeps a request
@@ -299,7 +332,7 @@ impl State {
         identity: Option<u64>,
         enable_signing: Option<bool>,
     ) -> RequestContext {
-        let context = self.context_as(txn, identity);
+        let context = self.context_as_on(node, txn, identity);
         let Some(seed) =
             identity.filter(|seed| *seed < crate::scenario::identity::NODE_IDENTITY_BASE)
         else {

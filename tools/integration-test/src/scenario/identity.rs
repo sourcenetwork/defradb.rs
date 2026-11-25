@@ -17,7 +17,7 @@ pub const NODE_IDENTITY_BASE: u64 = 1 << 48;
 
 /// The secp256k1 private key of client identity `seed`. Any 32 bytes below
 /// the curve order are a key, and these are.
-fn private_key(seed: u64) -> [u8; 32] {
+pub(crate) fn private_key(seed: u64) -> [u8; 32] {
     if let Some(node) = seed.checked_sub(NODE_IDENTITY_BASE) {
         return node_private_key(node);
     }

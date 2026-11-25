@@ -2506,6 +2506,7 @@ dependencies = [
  "url",
  "urlencoding",
  "vera",
+ "vera-delegation",
  "vera-embedded",
  "workers",
  "zeroize",

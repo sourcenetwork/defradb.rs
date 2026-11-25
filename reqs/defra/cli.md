@@ -8,3 +8,10 @@ A rootdir whose `config.yaml` Go DefraDB wrote starts a node with the settings i
 A node started from a Go config with `net.p2paddresses: [/ip4/127.0.0.1/tcp/<port>]` lists an address on that port in its peer info; one with `net.p2pdisabled: true` starts without P2P and its peer info is an empty list.
 
 A Rust key that is present in the same section wins over its Go spelling. Keys only Go has (`api.audience`, `log.caller`, `net.p2pblocksynctimeout`) are ignored, with one warning each when the value is not Go's default (`""`, `false`, `30`). `datastore.badger.valuelogfilesize` and viper's `""` rootdir key are dropped without a warning. `log.format: csv` still fails to load, with a parse error naming `csv`: defradb.rs has no CSV log format.
+
+# `defra.cli.identity.vera_delegation`: `--identity` acts on a vera.rs node under the identity's own Vera delegation
+
+- **Parents:** ["go.acp.dac.p2p.remote-dac"]
+- **Scenarios:** ["acp::dac::p2p::add::acp_p2_p_add_private_document_and_sync_after_adding_relationship_remote_dac", "acp::dac::p2p::update_by_non_creator_on_peer::acp_p2_p_non_creator_updates_indexed_field_on_peer_node_succeeds"]
+
+`defradb client --identity <key>` (or `--identity-name`) asks the node for `GET /api/v0/acp/status` first. When the answer names a `delegation` audience, the node's document ACP is a vera.rs deployment, and the client sends, as its `Authorization: Bearer` token, a Vera delegation the identity's key signs for that audience's worker and deployment, in place of the identity token it sends any other node. The node authenticates the caller from that delegation and acts on Vera for it: a document actor relationship the identity adds through the CLI is submitted under the identity's authority instead of failing with `no authority to submit ACP changes as <did>: the request's token is not a delegation`. When the status request fails, or its answer names no audience, the client sends the identity token, as before. A secp256k1 key (32 bytes) and an Ed25519 key (64 bytes) both sign delegations.

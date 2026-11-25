@@ -51,34 +51,40 @@ pub(super) struct Relationship<'a> {
 
 impl Relationship<'_> {
     pub fn in_process(&self, state: &State) -> Result<Value, Failure> {
-        let identity = self.common.client_identity(self.op)?;
-        let actor = identity
-            .map(crate::scenario::identity::did)
-            .unwrap_or_default();
+        let identity = self.common.acting_identity(self.op, state)?;
         let node = state.node_on(self.common.node())?;
         let (collection, doc_id, relation) = (self.collection, self.doc_id, self.relation);
-        let found = match self.change {
-            Change::Add => state.block_on(node.add_dac_actor_relationship(
-                &actor,
-                collection,
-                doc_id,
-                relation,
-                &self.target,
-            )),
-            Change::Delete => state.block_on(node.delete_dac_actor_relationship(
-                &actor,
-                collection,
-                doc_id,
-                relation,
-                &self.target,
-            )),
-        }
-        .map_err(|e| Failure::operation(e.to_string()))?;
+        let target = self.target.as_str();
+        // An identity acts with what the node needs to act for it, its Vera
+        // delegation included; no identity is the empty actor, as Go's
+        // in-process client sends no identity.
+        let found =
+            match (self.change, identity) {
+                (Change::Add, Some(_)) => {
+                    let context = state.context_as_on(self.common.node(), None, identity);
+                    state.block_on(node.add_dac_actor_relationship_as(
+                        &context, collection, doc_id, relation, target,
+                    ))
+                }
+                (Change::Delete, Some(_)) => {
+                    let context = state.context_as_on(self.common.node(), None, identity);
+                    state.block_on(node.delete_dac_actor_relationship_as(
+                        &context, collection, doc_id, relation, target,
+                    ))
+                }
+                (Change::Add, None) => state.block_on(
+                    node.add_dac_actor_relationship("", collection, doc_id, relation, target),
+                ),
+                (Change::Delete, None) => state.block_on(
+                    node.delete_dac_actor_relationship("", collection, doc_id, relation, target),
+                ),
+            }
+            .map_err(|e| Failure::operation(e.to_string()))?;
         Ok(json!({ self.change.key(): found }))
     }
 
     pub fn http(&self, state: &State) -> Result<Value, Failure> {
-        let identity = self.common.client_identity(self.op)?;
+        let identity = self.common.acting_identity(self.op, state)?;
         let change = self.change;
         let (collection, doc_id) = (self.collection.to_owned(), self.doc_id.to_owned());
         let (relation, target) = (self.relation.to_owned(), self.target.clone());
@@ -102,7 +108,7 @@ impl Relationship<'_> {
     }
 
     pub fn cli(&self, state: &State) -> Result<Value, Failure> {
-        let identity = self.common.client_identity(self.op)?;
+        let identity = self.common.acting_identity(self.op, state)?;
         let args = [
             "acp",
             "document",

@@ -60,6 +60,13 @@ hex = "0.4"
 # Holds a stopped Go node's P2P port with SO_REUSEPORT until it restarts.
 socket2 = { version = "0.6", features = ["all"] }
 identity = { path = "../../crates/building-blocks/identity" }
+# The Vera node a remote-DAC scenario's nodes share, its tuning, the keyring
+# each node's worker signs with, and the delegation audience a client
+# identity signs its Vera delegation for.
+vera-embedded = { path = "../../crates/engine/vera-embedded", features = ["node"] }
+vera = { path = "../../crates/engine/vera" }
+keyring = { path = "../../crates/foundation/keyring" }
+acp = { path = "../../crates/engine/acp" }
 
 [features]
 generator = ["serde_json/preserve_order"]
@@ -73,15 +80,10 @@ required-features = ["generator"]
 query = { path = "../../crates/engine/query", features = ["testing"] }
 vera-harness = { git = "https://github.com/sourcenetwork/vera.rs", rev = "f69d1b3747b65e3b3ff601958e856c574ac127e4" }
 mantra-macros = "0.9"
-keyring = { path = "../../crates/foundation/keyring" }
 vera-client = "0.2.0"
 vera-domain = "0.2.0"
 vera-modules = "0.2.0"
 alloy-sol-types.workspace = true
-acp = { path = "../../crates/engine/acp" }
-vera = { path = "../../crates/engine/vera" }
-# The Vera node the in-process provider tests host themselves.
-vera-embedded = { path = "../../crates/engine/vera-embedded", features = ["node"] }
 libc = "0.2"
 ciborium = { workspace = true }
 serial_test = "4"

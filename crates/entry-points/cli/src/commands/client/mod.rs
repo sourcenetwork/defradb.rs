@@ -17,6 +17,7 @@ mod purge;
 mod query;
 mod tx;
 mod validation;
+mod vera_delegation;
 pub mod view;
 
 use std::path::PathBuf;
@@ -168,12 +169,15 @@ impl ClientArgs {
 
         let auth_token = if let Some(ref key_bytes) = identity_key_bytes {
             let identity_name = self.identity_name.as_deref().unwrap_or("inline identity");
-            Some(generate_auth_token_from_key_bytes(
-                identity_name,
-                key_bytes,
-                &url,
-                authorized_account.as_deref(),
-            )?)
+            match vera_delegation::for_node(&url, identity_name, key_bytes, &edge).await? {
+                Some(delegation) => Some(delegation),
+                None => Some(generate_auth_token_from_key_bytes(
+                    identity_name,
+                    key_bytes,
+                    &url,
+                    authorized_account.as_deref(),
+                )?),
+            }
         } else {
             None
         };
