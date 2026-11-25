@@ -2,7 +2,8 @@
 
 > Historical survey of the pre-Regolith-adoption model set. The adapter-owned
 > SSI/range models and ConflictTracker anchors below have been retired. Consult
-> `proofs/README.md` and `proofs/src/registry.rs` for current bindings; this report
+> `proofs/README.md` and the family files under `proofs/src/registry/` for current
+> bindings; this report
 > is retained as historical analysis, not current verification evidence.
 
 Sweep of all 18 formal-model families across 5 clusters (replication-convergence,
