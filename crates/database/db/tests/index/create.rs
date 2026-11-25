@@ -294,16 +294,35 @@ fn create_index_backfills_more_documents_than_a_batch_holds() {
     .unwrap()
 }
 
-/// Counts the batches a backfill runs and never holds one.
+/// Records, at each batch boundary of a backfill, how many entries the index
+/// already holds, and never holds a batch.
 #[derive(Default)]
-struct BatchCounter {
-    batches: std::sync::atomic::AtomicUsize,
+struct BatchSizes {
+    db: regolith::sync::OnceCell<std::sync::Weak<DB<RegolithStore>>>,
+    indexed_before: regolith::sync::SegQueue<usize>,
 }
 
-impl IndexBuildGate for BatchCounter {
-    fn enter<'gate>(&'gate self, _collection_id: &'gate str, _index_id: u32) -> GateWait<'gate> {
-        self.batches.fetch_add(1, Ordering::SeqCst);
-        Box::pin(async {})
+impl BatchSizes {
+    /// The documents each batch indexed, from the counts at its boundaries
+    /// and the index's final count.
+    fn per_batch(&self, total: usize) -> Vec<usize> {
+        let mut counts = Vec::new();
+        while let Some(count) = self.indexed_before.pop() {
+            counts.push(count);
+        }
+        counts.push(total);
+        counts.windows(2).map(|pair| pair[1] - pair[0]).collect()
+    }
+}
+
+impl IndexBuildGate for BatchSizes {
+    fn enter<'gate>(&'gate self, _collection_id: &'gate str, index_id: u32) -> GateWait<'gate> {
+        Box::pin(async move {
+            if let Some(db) = self.db.get().and_then(std::sync::Weak::upgrade) {
+                self.indexed_before
+                    .push(index_entries(&db, "Batched", index_id).await);
+            }
+        })
     }
 }
 
@@ -313,12 +332,13 @@ fn create_index_honors_a_smaller_backfill_batch() {
     workers::block_on(async {
         let total = 8;
         let batch = 2;
-        let counter = Arc::new(BatchCounter::default());
+        let sizes = Arc::new(BatchSizes::default());
         let options = db::database::DbOptions::new()
             .with_backfill_batch_docs(batch)
-            .with_index_build_gate(counter.clone());
+            .with_index_build_gate(sizes.clone());
         let store = Arc::new(RegolithStore::in_memory().unwrap());
         let db = Arc::new(DB::from_arc_with_options(store, options).unwrap());
+        assert!(sizes.db.set(Arc::downgrade(&db)).is_ok());
         db.create_collection(users_schema("Batched", "batched-v1", "col-index-batched"))
             .await
             .unwrap();
@@ -340,10 +360,12 @@ fn create_index_honors_a_smaller_backfill_batch() {
             .unwrap()
             .contains_key(&index.id));
         assert!(!progress_recorded(&db, "col-index-batched", index.id).await);
+        let per_batch = sizes.per_batch(total);
         assert!(
-            counter.batches.load(Ordering::SeqCst) >= total / batch,
-            "no batch may index more than {batch} documents"
+            per_batch.iter().all(|&indexed| indexed <= batch),
+            "no batch may index more than {batch} documents: {per_batch:?}"
         );
+        assert!(per_batch.len() >= total / batch, "{per_batch:?}");
     })
     .unwrap()
 }
