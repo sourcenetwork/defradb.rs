@@ -56,7 +56,7 @@ async fn fixture() -> (Node, String, String) {
             .unwrap();
     }
     let policy = node.add_dac_policy_as(&owner, POLICY).await.unwrap();
-    node.add_collection_as(
+    node.add_collection(
         &owner,
         &format!(
             "type Record @policy(id: \"{policy}\", resource: \"rows\") {{ pending: Boolean }}"

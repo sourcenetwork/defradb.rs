@@ -128,9 +128,12 @@ async fn a_grant_still_in_flight_cannot_land_after_the_revocation_that_follows_i
             .await
             .expect("policy");
         drop(vera);
-        node.add_collection(&format!(
-            "type Users @policy(id: \"{policy}\", resource: \"users\") {{ name: String }}"
-        ))
+        node.add_collection(
+            &defra_core::RequestContext::ambient(),
+            &format!(
+                "type Users @policy(id: \"{policy}\", resource: \"users\") {{ name: String }}"
+            ),
+        )
         .await
         .expect("collection");
         let created = node

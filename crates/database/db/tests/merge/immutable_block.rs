@@ -10,12 +10,30 @@ use defra_core::block::{
 };
 use defra_core::merge::{BlockMetadata, MergeBlock, MergeHandler};
 use document::{DocID, Document, NormalValue};
-use schema::{CollectionVersion, FieldDescription, FieldKind};
 use storage::RegolithStore;
 
 type Handler = DbMergeHandler<RegolithStore, DefraBlockstore<RegolithStore>>;
 
-const COLLECTION_ID: &str = "col-records";
+const RECORDS_SDL: &str =
+    "type Records { author: String @immutable body: String kind: String @immutable }";
+/// The same collection without its `@immutable` flags. They do not change an
+/// ungoverned collection's version, so a peer that synced the definition, and
+/// so lost the flags, holds this version under the same IDs.
+const UNFLAGGED_RECORDS_SDL: &str = "type Records { author: String body: String kind: String }";
+
+fn records() -> schema::CollectionVersion {
+    crate::common::schema::parsed(RECORDS_SDL)
+}
+
+fn records_version_id() -> &'static str {
+    static ID: regolith::sync::Lazy<String> = regolith::sync::Lazy::new(|| records().version_id);
+    &ID
+}
+
+fn records_collection_id() -> &'static str {
+    static ID: regolith::sync::Lazy<String> = regolith::sync::Lazy::new(|| records().collection_id);
+    &ID
+}
 
 async fn make_handler() -> (Handler, Arc<DefraBlockstore<RegolithStore>>, Collection) {
     make_handler_with_flags(true).await
@@ -26,37 +44,18 @@ async fn make_handler() -> (Handler, Arc<DefraBlockstore<RegolithStore>>, Collec
 async fn make_handler_with_flags(
     immutable_flags: bool,
 ) -> (Handler, Arc<DefraBlockstore<RegolithStore>>, Collection) {
-    let field = |id: &str, name: &str| {
-        let field =
-            FieldDescription::new(id, name, FieldKind::string(), schema::CType::LwwRegister);
-        if immutable_flags {
-            field.as_immutable()
-        } else {
-            field
-        }
-    };
     let store = Arc::new(RegolithStore::in_memory().unwrap());
     let db = Arc::new(DB::from_arc(store.clone()).unwrap());
-    db.create_collection(CollectionVersion::new(
-        "Records",
-        "v1",
-        COLLECTION_ID,
-        vec![
-            FieldDescription::new(
-                "1",
-                "_docID",
-                FieldKind::doc_id(),
-                schema::CType::LwwRegister,
-            ),
-            field("2", "author"),
-            FieldDescription::new("3", "body", FieldKind::string(), schema::CType::LwwRegister),
-            field("4", "kind"),
-        ],
-    ))
-    .await
-    .unwrap();
+    let sdl = if immutable_flags {
+        RECORDS_SDL
+    } else {
+        UNFLAGGED_RECORDS_SDL
+    };
+    db.add_collection(&defra_core::RequestContext::ambient(), sdl)
+        .await
+        .unwrap();
     let collection = db
-        .find_collection_by_id(COLLECTION_ID)
+        .find_collection_by_id(records_collection_id())
         .unwrap()
         .expect("collection exists");
     let blockstore = Arc::new(DefraBlockstore::new(store, false));
@@ -74,7 +73,7 @@ fn record(collection: &Collection) -> Document {
     doc.set("body", NormalValue::String("hello".into()))
         .unwrap();
     doc.set("kind", NormalValue::String("note".into())).unwrap();
-    doc.set_collection_version_id("v1");
+    doc.set_collection_version_id(records_version_id());
     doc
 }
 
@@ -101,7 +100,7 @@ fn merge_block(cid: cid::Cid, block_data: bytes::Bytes, doc_id: &str) -> MergeBl
         cid,
         block_data,
         doc_id: doc_id.to_string(),
-        collection_id: COLLECTION_ID.to_string(),
+        collection_id: records_collection_id().to_string(),
         creator: "did:key:z6MkrImmutableBlock".to_string(),
         sender_peer: Some("peer1".to_string()),
         is_explicit_replicator: false,
@@ -131,7 +130,7 @@ async fn put_genesis(
         .unwrap();
     let mut composite = Block::new(
         CrdtDelta::Composite(CompositeDeltaPayload {
-            collection_version_id: "v1".into(),
+            collection_version_id: records_version_id().to_string(),
             priority: 1,
             status: 1,
         }),
@@ -267,7 +266,7 @@ fn remote_genesis_applies_immutable_block_fields() {
                         &built.block,
                         BlockMetadata::normal(
                             &built.doc_id,
-                            COLLECTION_ID,
+                            records_collection_id(),
                             "did:key:z6MkrImmutableBlock",
                             Some("peer1"),
                             false,
@@ -309,7 +308,7 @@ fn peer_without_immutable_flags_merges_and_chains_its_updates() {
             &blockstore,
             ImmutableDeltaPayload {
                 priority: 1,
-                collection_version_id: "v1".into(),
+                collection_version_id: records_version_id().to_string(),
                 fields: BTreeMap::from([
                     ("author".to_string(), cbor("did:key:alice")),
                     ("kind".to_string(), cbor("note")),
@@ -326,7 +325,7 @@ fn peer_without_immutable_flags_merges_and_chains_its_updates() {
                 &bytes,
                 BlockMetadata::normal(
                     &doc_id_str,
-                    COLLECTION_ID,
+                    records_collection_id(),
                     "did:key:z6MkrImmutableBlock",
                     None,
                     false,
@@ -429,7 +428,7 @@ fn later_immutable_block_cannot_change_a_value() {
         let forged = Block::new(
             CrdtDelta::Immutable(ImmutableDeltaPayload {
                 priority: 2,
-                collection_version_id: "v1".into(),
+                collection_version_id: records_version_id().to_string(),
                 fields: BTreeMap::from([("author".to_string(), cbor("did:key:mallory"))]),
             }),
             vec![],
@@ -442,7 +441,7 @@ fn later_immutable_block_cannot_change_a_value() {
             .unwrap();
         let update = Block::new(
             CrdtDelta::Composite(CompositeDeltaPayload {
-                collection_version_id: "v1".into(),
+                collection_version_id: records_version_id().to_string(),
                 priority: 2,
                 status: 1,
             }),
@@ -460,7 +459,7 @@ fn later_immutable_block_cannot_change_a_value() {
                 &update_bytes,
                 BlockMetadata::normal(
                     &doc_id_str,
-                    COLLECTION_ID,
+                    records_collection_id(),
                     "did:key:z6MkrImmutableBlock",
                     None,
                     false,
@@ -522,25 +521,10 @@ fn a_field_named_like_the_immutable_link_is_rejected() {
     workers::block_on(async {
         let db = DB::from_arc(Arc::new(RegolithStore::in_memory().unwrap())).unwrap();
         let created = db
-            .create_collection(CollectionVersion::new(
-                "Clash",
-                "v1",
-                "col-clash",
-                vec![
-                    FieldDescription::new(
-                        "1",
-                        "_docID",
-                        FieldKind::doc_id(),
-                        schema::CType::LwwRegister,
-                    ),
-                    FieldDescription::new(
-                        "2",
-                        IMMUTABLE_LINK_NAME,
-                        FieldKind::string(),
-                        schema::CType::LwwRegister,
-                    ),
-                ],
-            ))
+            .add_collection(
+                &defra_core::RequestContext::ambient(),
+                &format!("type Clash {{ {IMMUTABLE_LINK_NAME}: String }}"),
+            )
             .await;
         let error = created.expect_err("a field cannot take the immutable link name");
         assert!(error.to_string().contains("reserved"), "{error}");
@@ -657,7 +641,7 @@ fn an_encrypted_genesis_cannot_carry_an_immutable_block() {
         let encryption = Block::new(
             CrdtDelta::Immutable(ImmutableDeltaPayload {
                 priority: 1,
-                collection_version_id: "v1".into(),
+                collection_version_id: records_version_id().to_string(),
                 fields: BTreeMap::new(),
             }),
             vec![],
@@ -669,7 +653,7 @@ fn an_encrypted_genesis_cannot_carry_an_immutable_block() {
             &blockstore,
             ImmutableDeltaPayload {
                 priority: 1,
-                collection_version_id: "v1".into(),
+                collection_version_id: records_version_id().to_string(),
                 fields: BTreeMap::from([("author".to_string(), cbor("did:key:alice"))]),
             },
             Some(encryption),
@@ -684,7 +668,7 @@ fn an_encrypted_genesis_cannot_carry_an_immutable_block() {
                 &bytes,
                 BlockMetadata::normal(
                     &doc_id_str,
-                    COLLECTION_ID,
+                    records_collection_id(),
                     "did:key:z6MkrImmutableBlock",
                     None,
                     false,

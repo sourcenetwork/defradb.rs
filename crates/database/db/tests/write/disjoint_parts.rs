@@ -21,9 +21,9 @@ struct Node {
 impl Node {
     async fn new(sdl: &str) -> Self {
         let db = Arc::new(DB::new(RegolithStore::in_memory().unwrap()).unwrap());
-        for schema in query::parse_sdl(sdl).unwrap() {
-            db.create_collection(schema).await.unwrap();
-        }
+        db.add_collection(&defra_core::RequestContext::ambient(), sdl)
+            .await
+            .unwrap();
         let registry = Arc::new(DbTransactionRegistry::new(Arc::clone(&db)));
         let queries: Arc<dyn QueryExecutor> =
             Arc::new(query::QueryRunner::with_arc_registry_and_provider(
@@ -289,7 +289,16 @@ fn updates_of_a_downsample_source_both_commit() {
             &source[0],
         )));
         node.db.validate_downsample_collection(&rollup).unwrap();
-        node.db.create_collection(rollup).await.unwrap();
+        // As `AddView` registers a downsample: its SDL with its source query.
+        node.db
+            .create_view_collections_as(
+                &defra_core::RequestContext::ambient(),
+                vec![rollup],
+                None,
+                None,
+            )
+            .await
+            .unwrap();
     }
     let id = node
         .create(r#"mutation { add_Metric(input: {label: "cpu", note: "a", ts: "2026-01-01T00:00:00Z", value: 1}) { _docID } }"#)

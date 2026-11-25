@@ -2,37 +2,26 @@
 //! content-addressed and never conflict, so the DocID mapping read is the one
 //! race that decides: exactly one of the creates commits.
 
+use crate::common::schema::parsed;
 use db::{AutoCommitMutator, DbDocMutator, LensedAutoCommitFetcher, DB};
 use document::Document;
 use query::mutator::DocMutator;
 use query::runner::DocFetcher;
-use schema::{CollectionVersion, FieldDescription, FieldKind};
+use schema::CollectionVersion;
 use std::sync::Arc;
 use storage::RegolithStore;
 
 const DOC: &str = r#"{"name": "same", "size": 3}"#;
 
+const COLLECTION_SDL: &str = "type Twin { name: String size: Int }";
+
 fn collection() -> CollectionVersion {
-    CollectionVersion::new(
-        "Twin",
-        "twin-v1",
-        "col-twin",
-        vec![
-            FieldDescription::new(
-                "1",
-                "_docID",
-                FieldKind::doc_id(),
-                schema::CType::LwwRegister,
-            ),
-            FieldDescription::new("2", "name", FieldKind::string(), schema::CType::LwwRegister),
-            FieldDescription::new("3", "size", FieldKind::int(), schema::CType::LwwRegister),
-        ],
-    )
+    parsed(COLLECTION_SDL)
 }
 
 async fn open() -> Arc<DB<RegolithStore>> {
     let db = Arc::new(DB::new(RegolithStore::in_memory().unwrap()).expect("create db"));
-    db.create_collection(collection())
+    db.add_collection(&defra_core::RequestContext::ambient(), COLLECTION_SDL)
         .await
         .expect("create collection");
     db

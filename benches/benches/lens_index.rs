@@ -19,7 +19,6 @@ use document::{Document, NormalValue};
 use lens::{LensConfig, LensModule, MemoryTransformStore};
 use query::mutator::DocMutator;
 use query::{QueryExecutor, QueryRequest, QueryRunner};
-use schema::{CollectionVersion, FieldDescription, FieldKind, IndexDescription};
 use storage::RegolithStore;
 
 mod common;
@@ -27,26 +26,7 @@ mod common;
 const COLLECTION: &str = "User";
 const CORPUS: [usize; 2] = [1_000, 5_000];
 
-fn collection_version() -> CollectionVersion {
-    let mut version = CollectionVersion::new(
-        COLLECTION,
-        "bafklensindex",
-        "lensindex",
-        vec![
-            FieldDescription::new(
-                "1",
-                "_docID",
-                FieldKind::doc_id(),
-                schema::CType::LwwRegister,
-            ),
-            FieldDescription::new("2", "name", FieldKind::string(), schema::CType::LwwRegister),
-            FieldDescription::new("3", "age", FieldKind::int(), schema::CType::LwwRegister),
-        ],
-    );
-    version.indexes = vec![IndexDescription::new("idx_age").with_field("age", false)];
-    version.is_materialized = true;
-    version
-}
+const COLLECTION_SDL: &str = r#"type User { name: String age: Int @index(name: "idx_age") }"#;
 
 /// `count` documents with an index on `age`, then a patch and a migration
 /// onto the new version, settled before the runner is built.
@@ -55,7 +35,7 @@ async fn fixture(count: usize) -> impl QueryExecutor {
         DB::new(RegolithStore::in_memory().expect("an in-memory store")).expect("a database");
     raw.set_lens_store(Arc::new(MemoryTransformStore::new()));
     let db = Arc::new(raw);
-    db.create_collection(collection_version())
+    db.add_collection(&defra_core::RequestContext::ambient(), COLLECTION_SDL)
         .await
         .expect("the collection to register");
     let v1 = db

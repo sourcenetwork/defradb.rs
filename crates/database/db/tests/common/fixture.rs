@@ -1,4 +1,4 @@
-use crate::common::schema::test_schema;
+use crate::common::schema::{test_schema, USERS_SDL};
 use db::BasicTxn;
 use db::DbDocMutator;
 use db::DbTxn;
@@ -24,7 +24,9 @@ pub fn next_test_doc_short_id() -> u64 {
 
 pub async fn fixture_with_docs(n: usize) -> Arc<DB<RegolithStore>> {
     let db = Arc::new(DB::new(RegolithStore::in_memory().unwrap()).unwrap());
-    db.create_collection(test_schema()).await.unwrap();
+    db.add_collection(&defra_core::RequestContext::ambient(), USERS_SDL)
+        .await
+        .unwrap();
 
     for i in 0..n {
         let txn = db.new_txn(false).await.unwrap();

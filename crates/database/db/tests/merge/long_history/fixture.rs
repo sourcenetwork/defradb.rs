@@ -8,8 +8,26 @@ use defra_core::block::{
 };
 use defra_core::merge::{BlockMetadata, MergeBlock, MergeHandler, MergeOutcome};
 use document::{DocID, Document, NormalValue};
-use schema::{CType, CollectionVersion, FieldDescription, FieldKind};
+use schema::CollectionVersion;
 use storage::RegolithStore;
+
+pub const USERS_SDL: &str = r#"type Users { name: String score: Int @crdt(type: "pncounter") }"#;
+
+pub fn users_collection() -> CollectionVersion {
+    query::parse_sdl(USERS_SDL).unwrap().remove(0)
+}
+
+pub fn users_version_id() -> &'static str {
+    static ID: regolith::sync::Lazy<String> =
+        regolith::sync::Lazy::new(|| users_collection().version_id);
+    &ID
+}
+
+pub fn users_collection_id() -> &'static str {
+    static ID: regolith::sync::Lazy<String> =
+        regolith::sync::Lazy::new(|| users_collection().collection_id);
+    &ID
+}
 
 pub type Handler = DbMergeHandler<RegolithStore, DefraBlockstore<RegolithStore>>;
 
@@ -20,23 +38,9 @@ pub async fn make_handler() -> Handler {
 
 pub async fn make_handler_on(store: Arc<RegolithStore>) -> Handler {
     let db = Arc::new(DB::from_arc(store.clone()).unwrap());
-    db.create_collection(CollectionVersion::new(
-        "Users",
-        "v1",
-        "col-users",
-        vec![
-            FieldDescription::new(
-                "1",
-                "_docID",
-                FieldKind::doc_id(),
-                schema::CType::LwwRegister,
-            ),
-            FieldDescription::new("2", "name", FieldKind::string(), schema::CType::LwwRegister),
-            FieldDescription::new("3", "score", FieldKind::int(), CType::PnCounter),
-        ],
-    ))
-    .await
-    .unwrap();
+    db.add_collection(&defra_core::RequestContext::ambient(), USERS_SDL)
+        .await
+        .unwrap();
     DbMergeHandler::new(db, Arc::new(DefraBlockstore::new(store, true)))
 }
 
@@ -65,7 +69,7 @@ impl History {
             let field = Block::new(
                 CrdtDelta::Lww(LwwDeltaPayload {
                     field_name: "name".into(),
-                    collection_version_id: "v1".into(),
+                    collection_version_id: users_version_id().to_string(),
                     priority,
                     data,
                 }),
@@ -79,7 +83,7 @@ impl History {
             let counter = Block::new(
                 CrdtDelta::Counter(CounterDeltaPayload {
                     field_name: "score".into(),
-                    collection_version_id: "v1".into(),
+                    collection_version_id: users_version_id().to_string(),
                     priority,
                     data,
                     nonce: priority.try_into().unwrap(),
@@ -91,7 +95,7 @@ impl History {
             pending.push((counter_cid, counter.to_dag_cbor().unwrap()));
             let composite = Block::new(
                 CrdtDelta::Composite(CompositeDeltaPayload {
-                    collection_version_id: "v1".into(),
+                    collection_version_id: users_version_id().to_string(),
                     priority,
                     status: 1,
                 }),
@@ -113,7 +117,7 @@ impl History {
                 cid,
                 block_data: bytes.into(),
                 doc_id,
-                collection_id: "col-users".into(),
+                collection_id: users_collection_id().to_string(),
                 creator: "history-peer".into(),
                 sender_peer: Some("history-peer".into()),
                 is_explicit_replicator: false,
