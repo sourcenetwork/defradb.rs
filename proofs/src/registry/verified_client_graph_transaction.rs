@@ -1,5 +1,8 @@
 use super::{Axis::*, Property, Tier::*};
 
+/// The crates this family's models cover.
+pub(super) const CRATES: &str = "defra-node, query, db, acp, vera";
+
 pub(super) const PROPERTIES: &[Property] = &[
     Property {
         family: "Verified client graph transaction",

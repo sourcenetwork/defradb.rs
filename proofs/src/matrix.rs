@@ -1,19 +1,20 @@
 //! Coverage matrix over the registry.
 //!
 //! The "diff" the harness defends: the modeled families are the families of
-//! `registry::properties`, and `proofs/README.md`'s *Modeled families* table
-//! lists exactly those. A model that lands without a conformance binding, or a
-//! binding without its README row, fails `readme_lists_exactly_the_modeled_families`.
-//! A Contract or Behavioral tier with no test behind it fails
-//! `every_bound_tier_names_its_tests`. A `.cfg` that is deleted or renamed
-//! while a registry `model_ref` still names it fails `every_registry_cfg_exists`
-//! (run-all.sh discovers its configs, so a stale name would otherwise stop
-//! failing anything); the cfgs no registry entry names are the remaining gap,
-//! tracked by follow-up #3331.
+//! `registry::properties`, and [`families_table`] prints them with their
+//! tools and crates on demand (`cargo run -p conformance --example
+//! families`), instead of a hand-maintained README table. A family that
+//! lands without naming its crates fails
+//! `every_family_names_its_crates`; a Contract or Behavioral tier with no
+//! test behind it fails `every_bound_tier_names_its_tests`. A `.cfg` that is
+//! deleted or renamed while a registry `model_ref` still names it fails
+//! `every_registry_cfg_exists` (run-all.sh discovers its configs, so a stale
+//! name would otherwise stop failing anything); the cfgs no registry entry
+//! names are the remaining gap, tracked by follow-up #3331.
 //!
 //! The checks read the tree, not the built binary, so no test here runs TLC.
 
-use crate::registry::{properties, Property, Tier};
+use crate::registry::{properties, Axis, Property, Tier};
 
 /// The modeled families: each distinct `family` in the registry, in first-seen
 /// order.
@@ -33,6 +34,29 @@ pub fn properties_for(family: &'static str) -> impl Iterator<Item = &'static Pro
 
 pub fn count(tier: Tier) -> usize {
     properties().filter(|p| p.tiers.contains(&tier)).count()
+}
+
+/// The *Modeled families* table: one row per registry family, in file-name
+/// order. The Tool column is generated, not hand-written: a family that has
+/// properties on both axes reads `TLA+ / Lean`, one axis reads that tool.
+pub fn families_table() -> String {
+    let mut table = String::from("| Family | Tool | Crates it covers |\n|---|---|---|\n");
+    for family in crate::registry::FAMILIES {
+        let tool = match (
+            family.properties.iter().any(|p| p.axis == Axis::Tla),
+            family.properties.iter().any(|p| p.axis == Axis::Lean),
+        ) {
+            (true, true) => "TLA+ / Lean",
+            (true, false) => "TLA+",
+            (false, true) => "Lean",
+            (false, false) => unreachable!("every property has an axis"),
+        };
+        table.push_str(&format!(
+            "| {} | {tool} | {} |\n",
+            family.properties[0].family, family.crates
+        ));
+    }
+    table
 }
 
 #[cfg(test)]
@@ -75,16 +99,19 @@ mod tests {
     #[test]
     fn every_family_file_holds_one_family() {
         for family in crate::registry::FAMILIES {
-            let first = family.first().expect("a family file with no property");
+            let first = family
+                .properties
+                .first()
+                .expect("a family file with no property");
             assert!(
-                family.iter().all(|p| p.family == first.family),
+                family.properties.iter().all(|p| p.family == first.family),
                 "{} shares a file",
                 first.family
             );
         }
         let names: Vec<_> = crate::registry::FAMILIES
             .iter()
-            .map(|f| f[0].family)
+            .map(|family| family.properties[0].family)
             .collect();
         assert_eq!(
             names.len(),
@@ -211,37 +238,15 @@ mod tests {
     }
 
     #[test]
-    fn readme_lists_exactly_the_modeled_families() {
-        let section = include_str!("../README.md")
-            .split("### Modeled families")
-            .nth(1)
-            .and_then(|rest| rest.split("\n###").next())
-            .expect("README has a `### Modeled families` section");
-        let rows: Vec<&str> = section
-            .lines()
-            .filter_map(|line| line.strip_prefix("| "))
-            .filter_map(|line| line.split(" |").next())
-            .filter(|&family| family != "Family")
-            .collect();
-        let families = families();
-        let missing: Vec<_> = families
+    fn every_family_names_its_crates() {
+        let nameless: Vec<&str> = crate::registry::FAMILIES
             .iter()
-            .filter(|&family| !rows.contains(family))
-            .collect();
-        let extra: Vec<_> = rows
-            .iter()
-            .filter(|&family| !families.contains(family))
-            .collect();
-        let repeated: Vec<_> = rows
-            .iter()
-            .enumerate()
-            .filter(|&(at, family)| rows[..at].contains(family))
-            .map(|(_, family)| family)
+            .filter(|family| family.crates.trim().is_empty())
+            .map(|family| family.properties[0].family)
             .collect();
         assert!(
-            missing.is_empty() && extra.is_empty() && repeated.is_empty(),
-            "README Modeled families table: registry families with no row {missing:?}, \
-             rows with no registry entry {extra:?}, rows listed twice {repeated:?}"
+            nameless.is_empty(),
+            "families whose CRATES is empty or whitespace: {nameless:?}"
         );
     }
 }

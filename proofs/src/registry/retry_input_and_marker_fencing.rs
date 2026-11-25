@@ -1,5 +1,8 @@
 use super::{Axis::*, Property, Tier::*};
 
+/// The crates this family's models cover.
+pub(super) const CRATES: &str = "db, query, storage, p2p, p2p-adapter";
+
 pub(super) const PROPERTIES: &[Property] = &[
     Property {
         family: "Retry input and marker fencing",

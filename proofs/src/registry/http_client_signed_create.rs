@@ -1,5 +1,8 @@
 use super::{Axis::*, Property, Tier::*};
 
+/// The crates this family's models cover.
+pub(super) const CRATES: &str = "http, query, db";
+
 pub(super) const PROPERTIES: &[Property] = &[
     Property {
         family: "HTTP client-signed create",

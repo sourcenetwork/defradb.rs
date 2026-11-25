@@ -1,5 +1,8 @@
 use super::{Axis::*, Property, Tier::*};
 
+/// The crates this family's models cover.
+pub(super) const CRATES: &str = "acp, query, http, defra-node";
+
 pub(super) const PROPERTIES: &[Property] = &[
     Property {
         family: "Transactional node source grants",

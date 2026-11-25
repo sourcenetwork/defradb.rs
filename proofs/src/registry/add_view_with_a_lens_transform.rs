@@ -1,5 +1,8 @@
 use super::{Axis::*, Property, Tier::*};
 
+/// The crates this family's models cover.
+pub(super) const CRATES: &str = "defra-node, db, schema, lens (#2724; NAC before the create transaction is a known gap, #2736)";
+
 pub(super) const PROPERTIES: &[Property] = &[
     Property {
         // #2724: add_view accepts a transform CID only if it is non-empty and

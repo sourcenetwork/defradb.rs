@@ -1,5 +1,8 @@
 use super::{Axis::*, Property, Tier::*};
 
+/// The crates this family's models cover.
+pub(super) const CRATES: &str = "edge";
+
 pub(super) const PROPERTIES: &[Property] = &[
     Property {
         // A network task's completion says how the work ended: its own

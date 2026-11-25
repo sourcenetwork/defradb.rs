@@ -1,5 +1,8 @@
 use super::{Axis::*, Property, Tier::*};
 
+/// The crates this family's models cover.
+pub(super) const CRATES: &str = "storage";
+
 pub(super) const PROPERTIES: &[Property] = &[
     Property {
         // Lean marker values (mNull=0..mIntMax=253) verified to match the live

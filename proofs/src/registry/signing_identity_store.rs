@@ -1,5 +1,8 @@
 use super::{Axis::*, Property, Tier::*};
 
+/// The crates this family's models cover.
+pub(super) const CRATES: &str = "defra-core, defra-node, ffi";
+
 pub(super) const PROPERTIES: &[Property] = &[
     Property {
         // Every signing key lives in one process-wide store, one slot per

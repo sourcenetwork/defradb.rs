@@ -1,5 +1,8 @@
 use super::{Axis::*, Property, Tier::*};
 
+/// The crates this family's models cover.
+pub(super) const CRATES: &str = "crdt, defra-core";
+
 pub(super) const PROPERTIES: &[Property] = &[
     Property {
         family: "CRDT merge laws",

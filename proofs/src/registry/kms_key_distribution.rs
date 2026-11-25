@@ -1,5 +1,8 @@
 use super::{Axis::*, Property, Tier::*};
 
+/// The crates this family's models cover.
+pub(super) const CRATES: &str = "kms, db, db-merge";
+
 pub(super) const PROPERTIES: &[Property] = &[
     Property {
         // The unauthorized-denied leg is now observable: a serve-side

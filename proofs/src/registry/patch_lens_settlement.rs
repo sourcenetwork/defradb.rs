@@ -1,5 +1,8 @@
 use super::{Axis::*, Property, Tier::*};
 
+/// The crates this family's models cover.
+pub(super) const CRATES: &str = "db";
+
 pub(super) const PROPERTIES: &[Property] = &[
     Property {
         // #3052: a patch commits its version, registers any lens it staged,

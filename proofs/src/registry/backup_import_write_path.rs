@@ -1,5 +1,8 @@
 use super::{Axis::*, Property, Tier::*};
 
+/// The crates this family's models cover.
+pub(super) const CRATES: &str = "db, defra-node, http, ffi, cli";
+
 pub(super) const PROPERTIES: &[Property] = &[
     Property {
         // #2716: every create and relation patch of an import is a request

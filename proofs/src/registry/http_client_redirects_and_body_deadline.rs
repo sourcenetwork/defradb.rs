@@ -1,5 +1,8 @@
 use super::{Axis::*, Property, Tier::*};
 
+/// The crates this family's models cover.
+pub(super) const CRATES: &str = "net";
+
 pub(super) const PROPERTIES: &[Property] = &[
     Property {
         family: "HTTP client redirects and body deadline",

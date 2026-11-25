@@ -1,5 +1,8 @@
 use super::{Axis::*, Property, Tier::*};
 
+/// The crates this family's models cover.
+pub(super) const CRATES: &str = "p2p, db-merge, embedded";
+
 pub(super) const PROPERTIES: &[Property] = &[
     Property {
         // Two behavioral legs: backfill (a write that pre-dates the replicator is

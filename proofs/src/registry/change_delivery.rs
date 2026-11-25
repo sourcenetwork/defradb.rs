@@ -1,5 +1,8 @@
 use super::{Axis::*, Property, Tier::*};
 
+/// The crates this family's models cover.
+pub(super) const CRATES: &str = "events, db, db-merge, query, http";
+
 pub(super) const PROPERTIES: &[Property] = &[
     Property {
         family: "Change delivery",
