@@ -26,7 +26,7 @@ impl Planner {
         mapping: &mut DocumentMapping,
         parent_collection: &CollectionVersion,
         parent_filter: Option<&crate::mapper::Filter>,
-        selected_relations: &[&str],
+        joined_relations: &[&str],
     ) -> Result<Box<dyn PlanNode>> {
         let filter = match parent_filter {
             Some(f) => f,
@@ -36,10 +36,9 @@ impl Planner {
         // Get relations referenced by the filter
         for (relation_name, nested_conditions) in filter.relation_conditions() {
             // Relations already joined from the selection, including those nested
-            // inside `GROUP`. Joining one of those again would overwrite its child
-            // render mapping with this join's internal one (_docID, FK, filter
-            // fields), leaking those fields into the rendered relation.
-            if selected_relations.contains(&relation_name.as_str()) {
+            // inside `GROUP` and those joined only for ORDER BY. Joining one again
+            // would overwrite its child mapping with this join's slim one.
+            if joined_relations.contains(&relation_name.as_str()) {
                 continue;
             }
 

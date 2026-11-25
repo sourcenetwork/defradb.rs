@@ -19,7 +19,7 @@ Compatible with Go DefraDB v1.0.0-rc1. Full feature parity across CLI, HTTP API,
 
 - **GraphQL query engine** — queries, mutations, subscriptions, aggregates, explain - full coverage of the defradb test suite
 - **P2P replication** — `libp2p` (primary, go compatable) and [`iroh`](https://github.com/n0-computer/iroh) (optional) transports
-- **Access control** — local Zanzibar engine, on-chain via [Vera](https://github.com/sourcenetwork/vera) (Cosmos/EVM) and [`vera.rs`](https://github.com/sourcenetwork/vera.rs) (Commonware/EVM)
+- **Access control** — local Zanzibar engine, and remote via [`vera.rs`](https://github.com/sourcenetwork/vera.rs) (Commonware)
 - **Full-text search** — (rust only) BM25 ranking with language-aware tokenization
 - **Schema migration** — non-destructive evolution via WASM transforms (Lens)
 - **Searchable encryption** — encrypted indexes with ACP integration
@@ -220,15 +220,13 @@ cargo nextest run -p integration-test --test query                # A testo area
 cargo nextest run -p integration-test --test legacy -- acp::negative:: # A legacy module (tests/legacy/)
 ```
 
-Areas: `basic`, `query`, `acp`, `nac`, `p2p`, `fts`, `encryption`, `identity`, `backup`, `vera`, `verars`
+Areas: `basic`, `query`, `acp`, `nac`, `p2p`, `fts`, `encryption`, `identity`, `backup`, `vera`
 
-Vera integration uses the `vera` crate, Cargo feature, and test suite. Select it
-with `--document-acp-type vera` and configure endpoints with `--vera-*` flags,
-`DEFRA_VERA_*` environment variables, or `vera_*` configuration fields. Older
-`--source-hub-*` flags, `DEFRA_SOURCE_HUB_*` environment variables,
-`sourcehub_*` configuration fields, and the `source-hub` ACP selector remain
-accepted. Mobile JSON uses `vera` (`sourcehub` is an alias). The `sourcehub`
-Cargo feature remains an alias for `vera`.
+Vera integration uses the `vera` crate and Cargo feature, and the `vera` test
+suite. Select it with `--document-acp-type vera` and configure it with the
+`--vera-address`, `--vera-consensus-key` and `--vera-deployment-id` flags,
+their `DEFRA_VERA_*` environment variables, or the `vera_*` configuration
+fields (see `crates/engine/vera/README.md`).
 
 ### Go Compatibility Tests
 
@@ -333,6 +331,7 @@ API rather than the offline command for an at-rest-encrypted store.
 - [DefraDB (Go)](https://github.com/sourcenetwork/defradb) — concepts, architecture, specifications
 - [DefraDB Docs](https://docs.source.network/defradb) — user documentation
 - `AGENTS.md` — development workflow and conventions
+- [Getting a change to main](AGENTS.md#getting-a-change-to-main) — CI labels, review, the merge queue and batches
 
 ## License
 

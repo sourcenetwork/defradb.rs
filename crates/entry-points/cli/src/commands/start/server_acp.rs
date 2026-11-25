@@ -62,80 +62,11 @@ impl Node {
             }
 
             let signer_key_bytes = identity_key_bytes.ok_or_else(|| {
-                Error::InvalidConfig("node identity required for Vera ACP (use --identity)".into())
-            })?;
-
-            let tuning = vera::AcpTuning {
-                request_timeout: std::time::Duration::from_secs(config.acp.request_timeout),
-                circuit_breaker_threshold: config.acp.circuit_breaker_threshold,
-                circuit_breaker_reset_timeout: std::time::Duration::from_secs(
-                    config.acp.circuit_breaker_reset_timeout,
-                ),
-                cache_ttl: std::time::Duration::from_secs(config.acp.cache_ttl),
-                receipt_timeout: std::time::Duration::from_secs(config.acp.receipt_timeout),
-                ..vera::AcpTuning::default()
-            };
-
-            info!(
-                request_timeout_s = config.acp.request_timeout,
-                circuit_breaker_threshold = config.acp.circuit_breaker_threshold,
-                circuit_breaker_reset_timeout_s = config.acp.circuit_breaker_reset_timeout,
-                cache_ttl_s = config.acp.cache_ttl,
-                receipt_timeout_s = config.acp.receipt_timeout,
-                "Resolved ACP tuning (Vera)"
-            );
-
-            let provider = Arc::new(
-                vera::CosmosProvider::new_with_grpc(
-                    config.acp.vera_address.clone(),
-                    if config.acp.vera_grpc_address.is_empty() {
-                        config.acp.vera_address.clone()
-                    } else {
-                        config.acp.vera_grpc_address.clone()
-                    },
-                    config.acp.vera_comet_address.clone(),
-                    signer_key_bytes,
-                    &config.acp.vera_chain_id,
-                    &tuning,
-                    edge,
-                )
-                .map_err(|e| Error::InvalidConfig(format!("Vera provider: {}", e)))?,
-            );
-
-            let document_acp = vera::VeraDocumentACP::tuned(provider, &tuning, Some(edge));
-            let document_acp = if config.acp.vera_events_ws.is_empty() {
-                document_acp
-            } else {
-                document_acp
-                    .with_cosmos_event_invalidation(config.acp.vera_events_ws.clone(), edge)
-                    .map_err(|e| Error::InvalidConfig(format!("Vera event subscriber: {}", e)))?
-            };
-            let document_acp = Arc::new(document_acp);
-            let dac_policies = db::DacPolicies::remote(document_acp.clone(), zanzibar_store);
-
-            info!("Document ACP configured (Vera)");
-            return Ok(DocumentAcpSetup {
-                document_acp: gate_external_acp(document_acp, store, edge),
-                dac_policies: Arc::new(dac_policies),
-                #[cfg(feature = "embedded-vera")]
-                embedded_vera: None,
-            });
-        }
-
-        #[cfg(feature = "vera")]
-        if config.acp.document_type == AcpDocumentType::VeraRs {
-            if config.acp.vera_rs_address.is_empty() {
-                return Err(Error::InvalidConfig(
-                    "vera_rs_address required when document_type is verars".into(),
-                ));
-            }
-
-            let signer_key_bytes = identity_key_bytes.ok_or_else(|| {
                 Error::InvalidConfig(
                     "node identity required for vera.rs ACP (use --identity)".into(),
                 )
             })?;
-            let tuning = vera_rs_tuning(config);
+            let tuning = vera_tuning(config);
             let deployment = config.acp.vera_deployment_id.ok_or_else(|| {
                 Error::InvalidConfig(
                     "vera_deployment_id is required for native Vera submissions".into(),
@@ -144,7 +75,7 @@ impl Node {
             let worker = open_vera_worker(config, edge, deployment).await?;
             let provider = Arc::new(
                 vera::VeraRsProvider::new(
-                    config.acp.vera_rs_address.clone(),
+                    config.acp.vera_address.clone(),
                     &config.acp.vera_consensus_key,
                     vera_genesis(config)?,
                     signer_key_bytes,
@@ -158,17 +89,11 @@ impl Node {
             );
 
             info!("Document ACP configured (vera.rs)");
-            return Ok(vera_rs_setup(
-                provider,
-                &tuning,
-                store,
-                zanzibar_store,
-                edge,
-            ));
+            return Ok(vera_setup(provider, &tuning, store, zanzibar_store, edge));
         }
 
         #[cfg(feature = "embedded-vera")]
-        if config.acp.document_type == AcpDocumentType::VeraRsEmbedded {
+        if config.acp.document_type == AcpDocumentType::VeraEmbedded {
             return super::server_acp_embedded::setup(
                 config,
                 identity_key_bytes,
@@ -277,21 +202,14 @@ fn gate_external_acp(
 
 /// The timeouts of a vera.rs provider, from the ACP configuration.
 #[cfg(feature = "vera")]
-pub(super) fn vera_rs_tuning(config: &Config) -> vera::AcpTuning {
+pub(super) fn vera_tuning(config: &Config) -> vera::AcpTuning {
     info!(
         request_timeout_s = config.acp.request_timeout,
-        circuit_breaker_threshold = config.acp.circuit_breaker_threshold,
-        circuit_breaker_reset_timeout_s = config.acp.circuit_breaker_reset_timeout,
         receipt_timeout_s = config.acp.receipt_timeout,
-        "Resolved ACP tuning (vera.rs; access decision cache disabled)"
+        "Resolved ACP tuning (vera.rs)"
     );
     vera::AcpTuning {
         request_timeout: std::time::Duration::from_secs(config.acp.request_timeout),
-        circuit_breaker_threshold: config.acp.circuit_breaker_threshold,
-        circuit_breaker_reset_timeout: std::time::Duration::from_secs(
-            config.acp.circuit_breaker_reset_timeout,
-        ),
-        cache_ttl: std::time::Duration::from_secs(config.acp.cache_ttl),
         receipt_timeout: std::time::Duration::from_secs(config.acp.receipt_timeout),
         ..vera::AcpTuning::default()
     }
@@ -340,7 +258,7 @@ pub(super) async fn open_vera_worker(
 /// Document ACP over a vera.rs provider: verified decisions without an access
 /// cache, remote policies mirrored locally, owed registrations gated.
 #[cfg(feature = "vera")]
-pub(super) fn vera_rs_setup(
+pub(super) fn vera_setup(
     provider: Arc<vera::VeraRsProvider>,
     tuning: &vera::AcpTuning,
     store: Arc<storage::DynStore>,

@@ -25,4 +25,3 @@ mod p2p_push_storm;
 mod query;
 mod replicator_retry_common;
 mod vector;
-mod vera;

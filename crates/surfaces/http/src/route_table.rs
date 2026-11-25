@@ -30,6 +30,11 @@ pub struct Route {
     /// (`http/handler.go`): such a route checks `get-collection` before its
     /// own permission.
     pub collection_first: bool,
+    /// Whether the handler rejects a caller it cannot identify, whatever the
+    /// permission decides. `Dynamic` means the handler chooses, not that it
+    /// accepts an anonymous call, so the security block is mandatory here even
+    /// where the derived one is optional.
+    pub caller_required: bool,
 }
 
 impl Route {
@@ -66,6 +71,23 @@ const fn row(
         method,
         permission,
         collection_first,
+        caller_required: false,
+    }
+}
+
+/// A row whose handler needs an authenticated caller.
+const fn row_caller(
+    path: &'static str,
+    method: Option<Method>,
+    permission: RoutePermission,
+    collection_first: bool,
+) -> Route {
+    Route {
+        path,
+        method,
+        permission,
+        collection_first,
+        caller_required: true,
     }
 }
 
@@ -80,6 +102,7 @@ pub const ROUTES: &[Route] = &[
     // Exempt routes (no auth needed)
     row("/health-check", GET, Exempt, false),
     row("/openapi.json", GET, Exempt, false),
+    row("/openapi.rs.json", GET, Exempt, false),
     row("/api/v0/version", GET, Exempt, false),
     row("/api/v0/graphql/ws", ANY, Exempt, false),
     row("/api/v0/batch/verify", POST, Exempt, false),
@@ -176,12 +199,12 @@ pub const ROUTES: &[Route] = &[
     row("/api/v0/acp/node/status", GET, required(NodePermission::NacStatus), false),
     // The subject itself, an admin or a `NacStatus` holder: decided in the core.
     row("/api/v0/acp/node/explain", GET, Dynamic, false),
-    row("/api/v0/acp/node/enable", POST, Dynamic, false),
+    row_caller("/api/v0/acp/node/enable", POST, Dynamic, false),
     row("/api/v0/acp/node/relationship", POST, required(NodePermission::NacRelationAdd), false),
     row("/api/v0/acp/node/relationship", DELETE, required(NodePermission::NacRelationDelete), false),
     row("/api/v0/acp/node/relationships", POST, required(NodePermission::NacRelationAdd), false),
     // The transaction's source-grant job checks the caller per edge.
-    row("/api/v0/acp/node/source-permission", POST, Dynamic, false),
+    row_caller("/api/v0/acp/node/source-permission", POST, Dynamic, false),
     row("/api/v0/acp/node/disable", POST, Dynamic, false),
     row("/api/v0/acp/node/re-enable", POST, Dynamic, false),
     // Backup
