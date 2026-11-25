@@ -65,16 +65,6 @@ fn chunk_documents_and_settings_are_read_only() {
         }
         .into(),
         Request {
-            request: Text::concat([
-                Text::from(r#"mutation { update_Article(docID: ""#),
-                Text::reference("article"),
-                Text::from(r#"", input: {_body_chunks: ["forged"]}) { _docID } }"#),
-            ]),
-            expected_error: Some("Article._body_chunks is read-only: it is set from body by every write that changes it".into()),
-            ..Default::default()
-        }
-        .into(),
-        Request {
             request: format!("query {{ {CHUNKS}(order: {{hash: ASC}}) {{ _docID hash text }} }}")
                 .into(),
             expected_data: json!({ CHUNKS: m::r("before") }),

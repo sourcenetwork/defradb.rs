@@ -416,10 +416,6 @@ impl PlanNode for IndexScanNode {
         true
     }
 
-    fn has_residual_filter(&self) -> bool {
-        self.residual_filter.is_some()
-    }
-
     fn exec_info(&self) -> ExecInfo {
         let mut info = self.exec_info.clone();
         info.indexes_fetched = self.index_fetches;
@@ -455,6 +451,10 @@ impl PlanNode for IndexScanNode {
         obj.insert(
             "indexFetches".to_string(),
             serde_json::json!(self.index_fetches),
+        );
+        obj.insert(
+            "indexName".to_string(),
+            serde_json::Value::String(self.index_params.index_name.clone()),
         );
 
         serde_json::Value::Object(obj)

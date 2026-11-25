@@ -299,7 +299,7 @@ As in Go DefraDB, a one-to-many relation field such as `Author.published` is an 
 # `defra.index.range_filter`: A two-sided range filter fetches only the range
 
 - **Parents:** ["defra.index"]
-- **Scenarios:** ["index::range_filter::a_closed_range_fetches_only_the_range", "index::range_filter::an_open_range_on_a_descending_index_fetches_only_the_range", "index::range_filter::an_empty_range_fetches_nothing"]
+- **Scenarios:** ["index::range_filter::a_closed_range_returns_matching_rows", "index::range_filter::an_open_descending_range_returns_matching_rows", "index::range_filter::an_empty_range_returns_no_rows", "index::range_filter::a_closed_range_limits_index_fetches", "index::range_filter::an_open_descending_range_limits_index_fetches", "index::range_filter::an_empty_range_limits_index_fetches"]
 
 Over the index suite's ten users (ages 20, 23, 28, 30, 32, 33, 42, 44, 48, 55), `User(filter: {age: {_geq: 28, _leq: 33}}) { name }` on `age: Int @index` returns Fred, John, Islam, Andy with `indexFetches: 4`; `filter: {age: {_gt: 28, _lt: 44}}` on `age: Int @index(direction: DESC)` returns Addo, Andy, Islam, John with `indexFetches: 4`; and the empty range `{_gt: 44, _lt: 30}` returns `[]` with `indexFetches: 0`. Both bounds limit the index scan, not just the lower one.
 
@@ -308,6 +308,17 @@ Over the index suite's ten users (ages 20, 23, 28, 30, 32, 33, 42, 44, 48, 55), 
 - **Parents:** ["defra"]
 
 Transaction behaviour beyond what Go's integration suite checks.
+
+# `defra.txn.http_commit_bound`: A live server bounds its answer on a commit
+
+- **Parents:** ["defra.txn"]
+- **Scenarios:** ["http::commit_bound::a_commit_past_its_bound_answers_unknown_and_keeps_running", "http::commit_bound::the_bound_is_only_for_transaction_commits", "http::commit_bound::a_begin_is_not_bounded_as_a_commit", "txn::http_commit_bound::an_http_commit_past_its_bound_answers_unknown_and_lands"]
+
+The HTTP server bounds only how long it waits to answer an explicit transaction commit. Past that bound, it answers `503` with JSON naming the bound and `outcome: "unknown"`. It does not cancel the commit: the worker-local commit keeps its ticket and lands or fails on its own, so the caller must not treat this as an abort. A transaction begin is not bounded this way, and a bound of `0` disables it.
+
+The bound is `commit_timeout_ms`, in milliseconds, on the HTTP server, and it is opt in: `0`, the default, disables it.
+
+The CLI's `client tx commit` sends a commit once and never retries it, so it reports the bound's answer, `commit outcome unknown after <bound> milliseconds`, rather than a later attempt's "not found".
 
 # `defra.txn.no_neighbour_conflict`: Updating one document does not conflict with its neighbour
 

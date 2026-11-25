@@ -59,6 +59,27 @@ mod tests {
     }
 
     #[test]
+    fn parent_registration_binds_the_parent_to_the_request() {
+        let digest = |resource, object_id| {
+            request_digest(&command(PolicyAction::RegisterUnderParent {
+                resource,
+                object_id,
+            }))
+            .unwrap()
+        };
+        let expected = digest_of(&format!(
+            r#"{{"PolicyCommand":["{POLICY}",{{"RegisterUnderParent":{{"object":{{"resource":"users","id":"bae-1"}},"parent":{{"resource":"nodes","id":"n1"}}}}}}]}}"#
+        ));
+        assert_eq!(digest("nodes", "n1"), expected);
+        assert_ne!(digest("teams", "n1"), expected);
+        assert_ne!(digest("nodes", "n2"), expected);
+        assert_ne!(
+            request_digest(&command(PolicyAction::RegisterObject)).unwrap(),
+            expected
+        );
+    }
+
+    #[test]
     fn the_policy_is_named_without_its_prefix() {
         let prefixed = format!("0x{POLICY}");
         let other = PolicyCommand {

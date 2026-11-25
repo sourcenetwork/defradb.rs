@@ -442,27 +442,13 @@ where
                     .await?
                     .filter(|owed| self.same_actor(&owed.creator, actor))
                     .ok_or_else(|| Self::not_found(entry, actor))?;
-                let authority = asked.command_authority(
-                    actor,
-                    ProviderCommand::RegisterObject {
-                        policy_id,
-                        resource,
-                        object,
-                    },
-                )?;
+                let authority = asked.command_authority(actor, owed.command())?;
                 // Kept as it was presented: only one of the two ways of
                 // presenting a delegation admits it.
                 let request_bound = match &authority {
                     OwedAuthority::Delegation { token } => self
                         .presenting(&owed.creator, Some(token), true)
-                        .command_authority(
-                            &owed.creator,
-                            ProviderCommand::RegisterObject {
-                                policy_id,
-                                resource,
-                                object,
-                            },
-                        )
+                        .command_authority(&owed.creator, owed.command())
                         .is_ok(),
                     OwedAuthority::NodeKey => false,
                 };

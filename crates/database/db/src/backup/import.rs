@@ -186,9 +186,6 @@ where
                 Some(m) => m.clone(),
                 None => continue,
             };
-            for chunked in &schema.chunked_fields {
-                doc_map.remove(&chunked.list_field());
-            }
 
             // The file's identities become aliases of the fresh
             // genesis-derived identity.

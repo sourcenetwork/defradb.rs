@@ -23,7 +23,7 @@ use crate::dac::DocumentACP;
 use crate::error::{Error, Result};
 use crate::outbox::{OwedAuthority, OwedState};
 use crate::pending::PendingRegistration;
-use crate::provider_command::ProviderCommand;
+use crate::recovery::RecoveryFact;
 
 impl<S> ExternalDocumentAcp<S>
 where
@@ -62,16 +62,7 @@ where
             .is_doc_registered(&owed.policy_id, &owed.resource_name, &owed.doc_id)
             .await?;
         let held = registered
-            || match self
-                .registrar(owed, also)?
-                .register_doc_object(
-                    &owed.creator,
-                    &owed.policy_id,
-                    &owed.resource_name,
-                    &owed.doc_id,
-                )
-                .await
-            {
+            || match owed.submit(self.registrar(owed, also)?.as_ref()).await {
                 Ok(()) => false,
                 Err(error) if self.held_after_refusal(owed, &error).await => true,
                 Err(error) => return Err(error),
@@ -109,9 +100,22 @@ where
         if held {
             self.yield_replica_if_held_elsewhere(owed).await?;
         }
-        self.clear(owed).await?;
+        // An object the provider held already may be another owner's: its
+        // registration is this node's to restore only when the provider
+        // names the creator.
+        let ours = !held || self.owned_by_creator(owed).await?;
+        self.clear(owed, ours).await?;
         self.object_changed(&owed.policy_id, &owed.resource_name, &owed.doc_id);
         Ok(())
+    }
+
+    async fn owned_by_creator(&self, owed: &PendingRegistration) -> Result<bool> {
+        let owner = self
+            .provider
+            .get_doc_owner(&owed.policy_id, &owed.resource_name, &owed.doc_id)
+            .await?
+            .map(|owner| self.provider.canonical_actor(&owner));
+        Ok(owner == Some(self.provider.canonical_actor(&owed.creator)))
     }
 
     /// The provider serving a request that presents `token` for `actor`,
@@ -162,11 +166,7 @@ where
         owed: &PendingRegistration,
         also: Option<&str>,
     ) -> Result<(Arc<dyn DocumentACP>, bool)> {
-        let command = ProviderCommand::RegisterObject {
-            policy_id: &owed.policy_id,
-            resource: &owed.resource_name,
-            object: &owed.doc_id,
-        };
+        let command = owed.command();
         if self.carries_bearer_for(&owed.creator)
             && self
                 .provider
@@ -205,11 +205,7 @@ where
         owed: &PendingRegistration,
         also: Option<&str>,
     ) -> Result<Arc<dyn DocumentACP>> {
-        let command = ProviderCommand::RegisterObject {
-            policy_id: &owed.policy_id,
-            resource: &owed.resource_name,
-            object: &owed.doc_id,
-        };
+        let command = owed.command();
         let recorded = match &owed.authority {
             Some(OwedAuthority::Delegation { token }) => Some(token.as_str()),
             Some(OwedAuthority::NodeKey) | None => None,
@@ -319,7 +315,7 @@ where
 
     /// Clear `owed` unless its record is of another create by now: a record
     /// written again for a re-created document is not this one to clear.
-    async fn clear(&self, owed: &PendingRegistration) -> Result<()> {
+    async fn clear(&self, owed: &PendingRegistration, registered: bool) -> Result<()> {
         let key = owed.key();
         let mut txn = self.store.new_txn(false).await.map_err(storage_error)?;
         let current = txn.get(&key).await.map_err(storage_error)?;
@@ -332,6 +328,23 @@ where
             return Ok(());
         }
         txn.delete(&key).await.map_err(storage_error)?;
+        // The registration the provider now holds is kept for a recovery
+        // pass, in the commit that clears its record.
+        if registered {
+            let confirmed = RecoveryFact::registered(
+                &owed.policy_id,
+                &owed.resource_name,
+                &owed.doc_id,
+                self.provider.canonical_actor(&owed.creator),
+            )
+            .confirmed()?;
+            txn.set(&confirmed.key, &confirmed.value)
+                .await
+                .map_err(storage_error)?;
+            for intent in &confirmed.unanswered {
+                txn.delete(intent).await.map_err(storage_error)?;
+            }
+        }
         match txn.commit().await {
             Ok(()) => {
                 self.changed.notify_waiters();
@@ -424,6 +437,51 @@ mod tests {
         Some(OwedAuthority::Delegation {
             token: token.into(),
         })
+    }
+
+    #[test]
+    fn an_owed_parent_registration_confers_no_ownership_or_access() {
+        workers::block_on(async {
+            let gate = ExternalDocumentAcp::new(
+                Arc::new(Unreached),
+                Arc::new(RegolithStore::in_memory().unwrap()),
+            );
+            let creator = Did::new("did:key:creator").unwrap();
+            let mut owed = PendingRegistration::new(creator.clone(), "policy", "jobs", "child");
+            owed.parent = Some(crate::RegistrationParent {
+                resource: "nodes".into(),
+                object_id: "parent".into(),
+            });
+            let mut txn = gate.store.new_txn(false).await.unwrap();
+            txn.set(&owed.key(), &owed.encode().unwrap()).await.unwrap();
+            txn.commit().await.unwrap();
+
+            assert!(matches!(
+                gate.is_doc_registered("policy", "jobs", "child").await,
+                Err(Error::ProviderUnavailable(_))
+            ));
+            assert_eq!(
+                gate.get_doc_owner("policy", "jobs", "child").await.unwrap(),
+                None
+            );
+            for permission in [
+                DocumentPermission::Read,
+                DocumentPermission::Update,
+                DocumentPermission::Delete,
+            ] {
+                assert!(!gate
+                    .check_doc_access(
+                        &Identity::Authenticated(creator.clone()),
+                        permission,
+                        "policy",
+                        "jobs",
+                        "child"
+                    )
+                    .await
+                    .unwrap());
+            }
+        })
+        .unwrap()
     }
 
     #[test]

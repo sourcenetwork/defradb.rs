@@ -114,6 +114,7 @@ jobs:
           - { family: block, os: ubuntu-latest, target: x86_64-unknown-linux-gnu }
           - { family: block_write, os: ubuntu-latest, target: x86_64-unknown-linux-gnu }
           - { family: blockstore, os: ubuntu-latest, target: x86_64-unknown-linux-gnu }
+          - { family: child_page, os: ubuntu-latest, target: x86_64-unknown-linux-gnu }
           - { family: crypto, os: ubuntu-latest, target: x86_64-unknown-linux-gnu }
           - { family: contention, os: ubuntu-latest, target: x86_64-unknown-linux-gnu }
           - { family: cursor_codec, os: ubuntu-latest, target: x86_64-unknown-linux-gnu }

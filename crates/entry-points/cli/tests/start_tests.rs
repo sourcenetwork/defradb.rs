@@ -45,6 +45,7 @@ fn default_start_args() -> StartArgs {
         max_schema_size: None,
         max_backup_size: None,
         request_timeout: None,
+        commit_timeout_ms: None,
         max_concurrent_requests: None,
         max_msg_size: None,
         max_car_size: None,
@@ -180,6 +181,7 @@ fn test_apply_to_config_all_flags() {
         max_schema_size: Some(2048),
         max_backup_size: Some(4096),
         request_timeout: Some(120),
+        commit_timeout_ms: Some(45),
         max_concurrent_requests: Some(500),
         max_msg_size: Some(32 * 1024 * 1024),
         max_car_size: Some(128 * 1024 * 1024),
@@ -246,6 +248,7 @@ fn test_apply_to_config_all_flags() {
     assert_eq!(config.api.max_schema_size, 2048);
     assert_eq!(config.api.max_backup_size, 4096);
     assert_eq!(config.api.request_timeout, 120);
+    assert_eq!(config.api.commit_timeout_ms, 45);
     assert_eq!(config.api.max_concurrent_requests, 500);
     assert_eq!(config.net.peers, vec!["peer1", "peer2"]);
     assert_eq!(config.datastore.max_txn_retries, 10);
@@ -409,6 +412,7 @@ const HTTP_START_FLAGS: &[&str] = &[
     "max-schema-size",
     "max-backup-size",
     "request-timeout",
+    "commit-timeout-ms",
     "max-concurrent-requests",
     "transaction-idle-timeout",
     "transaction-cleanup-interval",

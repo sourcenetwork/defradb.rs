@@ -27,6 +27,18 @@ use crate::txn_id::TxnId;
 #[derive(Clone, Default)]
 pub struct RequestContext(Arc<Fields>);
 
+#[derive(Clone, Debug)]
+pub struct SharedTransportSentinel {
+    pub policy: String,
+    pub resource: String,
+    pub child: String,
+    pub parent: String,
+    pub device_node: String,
+    pub group: String,
+    pub account: String,
+    pub device: String,
+}
+
 /// Whether a request reads past document access control.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 enum DacBypass {
@@ -71,9 +83,18 @@ struct Fields {
     /// check that could not be answered fails the request instead of
     /// hiding the row.
     strict_access_reads: bool,
+    shared_transport_sentinel: Option<SharedTransportSentinel>,
 }
 
 impl RequestContext {
+    pub fn with_shared_transport_sentinel(mut self, selection: SharedTransportSentinel) -> Self {
+        Arc::make_mut(&mut self.0).shared_transport_sentinel = Some(selection);
+        self
+    }
+
+    pub fn shared_transport_sentinel(&self) -> Option<&SharedTransportSentinel> {
+        self.0.shared_transport_sentinel.as_ref()
+    }
     /// This context with strict access reads: a read that meets a document
     /// whose access check could not be answered (the ACP provider was
     /// unreachable, late, busy or stale after its waits, or the check broke)

@@ -70,3 +70,43 @@ fn ordinary_raw_subscription_remains_open_after_overflow() {
     })
     .unwrap();
 }
+
+/// The raw subscription `Node::subscribe` hands out counts a drop but wakes
+/// nobody: a reader that drained the queue and read a zero counter before
+/// the publisher recorded its overflow waits on, with the loss counted.
+/// The delivery contract names this subscription at-most-once for that
+/// reason (`ChangeDelivery.tla`, `Red_CounterNoWake`).
+#[test]
+fn raw_overflow_recorded_after_a_drain_is_counted_but_wakes_no_reader() {
+    workers::block_on(async {
+        let bus = ChannelBus::with_config(ChannelBusConfig::new().with_event_buffer_size(1));
+        let mut subscription = bus.subscribe(&[EventName::Merge]);
+        bus.publish(Message::merge());
+        let subscriber = bus
+            .subscribers
+            .load()
+            .get(&subscription.id())
+            .unwrap()
+            .clone();
+
+        assert!(matches!(
+            subscriber.sender.try_send(Message::merge()),
+            Err(TrySendError::Full(_))
+        ));
+        assert!(subscription.recv().await.is_some());
+        assert_eq!(subscription.check_and_reset_dropped(), 0);
+
+        let wakes = Arc::new(WakeCount::default());
+        let waker = Waker::from(wakes.clone());
+        let mut context = Context::from_waker(&waker);
+        let mut waiting = Box::pin(subscription.recv());
+        assert!(matches!(waiting.as_mut().poll(&mut context), Poll::Pending));
+
+        assert_eq!(subscriber.record_overflow(), 0);
+        assert_eq!(wakes.0.load(Ordering::Relaxed), 0);
+        assert!(matches!(waiting.as_mut().poll(&mut context), Poll::Pending));
+        drop(waiting);
+        assert_eq!(subscription.dropped_count(), 1);
+    })
+    .unwrap();
+}

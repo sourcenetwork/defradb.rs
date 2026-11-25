@@ -107,29 +107,29 @@ pub fn update_article_on(capture: &str, body: &str, node: Option<&str>) -> Actio
     .into()
 }
 
-/// Reads the parent's chunk list, which holds the text's hash and then `n`
-/// chunk hashes, and names them `<prefix>0` to `<prefix><n>`.
-pub fn read_list(prefix: &str, n: usize, node: Option<&str>) -> Actions {
-    let names: Vec<(String, String)> = (0..=n)
+/// Reads the `n` visible chunk hashes in hash order and names them
+/// `<prefix>1` to `<prefix><n>`.
+pub fn read_chunks(prefix: &str, n: usize, node: Option<&str>) -> Actions {
+    let names: Vec<(String, String)> = (1..=n)
         .map(|i| {
             (
                 format!("{prefix}{i}"),
-                format!("/data/Article/0/_body_chunks/{i}"),
+                format!("/data/{CHUNKS}/{}/hash", i - 1),
             )
         })
         .collect();
     let mut common = on(node);
     common.capture = names.into_iter().collect();
     Request {
-        request: "query { Article { _body_chunks } }".into(),
-        expected_data: json!({ "Article": [{ "_body_chunks": integration_test::m::length(n as u64 + 1) }] }),
+        request: format!("query {{ {CHUNKS}(order: {{hash: ASC}}) {{ hash }} }}").into(),
+        expected_data: json!({ CHUNKS: integration_test::m::length(n as u64) }),
         common,
         ..Default::default()
     }
     .into()
 }
 
-/// The visible chunks are exactly the `n` hashes `read_list` named.
+/// The visible chunks are exactly the `n` hashes `read_chunks` named.
 pub fn chunks_are_listed(prefix: &str, n: usize, node: Option<&str>) -> Actions {
     let hashes: Vec<Value> = (1..=n)
         .map(|i| json!({ "hash": integration_test::m::r(&format!("{prefix}{i}")) }))
@@ -149,20 +149,6 @@ pub fn no_chunks(node: Option<&str>) -> Actions {
     Request {
         request: format!("query {{ {CHUNKS} {{ hash }} }}").into(),
         expected_data: json!({ CHUNKS: [] }),
-        common: on(node),
-        ..Default::default()
-    }
-    .into()
-}
-
-/// The parent's chunk list is the one `read_list` named.
-pub fn list_is(prefix: &str, n: usize, node: Option<&str>) -> Actions {
-    let list: Vec<Value> = (0..=n)
-        .map(|i| integration_test::m::r(&format!("{prefix}{i}")))
-        .collect();
-    Request {
-        request: "query { Article { _body_chunks } }".into(),
-        expected_data: json!({ "Article": [{ "_body_chunks": list }] }),
         common: on(node),
         ..Default::default()
     }

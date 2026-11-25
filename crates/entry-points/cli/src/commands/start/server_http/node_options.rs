@@ -2,6 +2,10 @@ use serde_json::{json, Map, Value};
 
 use crate::config::{AcpDocumentType, Config, DatastoreType};
 
+fn millis_as_nanos(millis: u64) -> u64 {
+    millis.saturating_mul(1_000_000)
+}
+
 fn seconds_as_nanos(seconds: u64) -> u64 {
     seconds.saturating_mul(1_000_000_000)
 }
@@ -92,6 +96,7 @@ pub(super) fn sanitized_node_options(
             "TLSKeyPath": redacted_text(!config.api.privkey_path.is_empty()),
             "ReadTimeout": seconds_as_nanos(config.api.request_timeout),
             "WriteTimeout": seconds_as_nanos(config.api.request_timeout),
+            "CommitTimeout": millis_as_nanos(config.api.commit_timeout_ms),
             "IdleTimeout": 0,
             "TxnTTL": seconds_as_nanos(config.api.transaction_idle_timeout),
             "TxnTTLTick": seconds_as_nanos(config.api.transaction_cleanup_interval),

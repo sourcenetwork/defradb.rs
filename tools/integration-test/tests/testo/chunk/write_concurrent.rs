@@ -24,10 +24,10 @@ fn candidate_chunks(i: usize) -> Value {
     m::unordered(json!(rows))
 }
 
-/// The state after update `i` won: its text, its chunk list and its chunks, no others.
+/// The state after update `i` won: its text and its chunks, no others.
 fn won_by(i: usize) -> Value {
     json!({
-        "Article": [{ "body": candidate_body(i), "_body_chunks": m::length(paragraphs(i) as u64 + 1) }],
+        "Article": [{ "body": candidate_body(i) }],
         CHUNKS: candidate_chunks(i),
     })
 }
@@ -48,7 +48,7 @@ fn update(i: usize) -> Actions {
 
 fn read_state(expected: Value) -> Actions {
     Request {
-        request: format!("query {{ Article {{ body _body_chunks }} {CHUNKS} {{ text }} }}").into(),
+        request: format!("query {{ Article {{ body }} {CHUNKS} {{ text }} }}").into(),
         expected_data: expected,
         ..Default::default()
     }

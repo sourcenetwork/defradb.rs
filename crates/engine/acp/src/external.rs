@@ -43,15 +43,20 @@ use crate::dac::DocumentACP;
 use crate::error::{Error, Result};
 use crate::identity::Identity;
 use crate::outbox::deny::{owed_denial, OwedDenial};
-use crate::outbox::{OwedChanges, StagedCount, TransactionOutbox};
+use crate::outbox::{OwedChanges, OwedSubject, StagedCount, TransactionOutbox};
 use crate::pending::{pending_key, PendingRegistration, PENDING_PREFIX};
 use crate::permission::DocumentPermission;
+use crate::recovery::RecoveryFact;
 
+#[cfg(test)]
+#[path = "external/archive_tests.rs"]
+mod archive_tests;
 #[cfg(test)]
 #[path = "external/deadline_tests.rs"]
 mod deadline_tests;
 mod drain;
 mod owed;
+mod recovery;
 mod registration;
 mod registration_batch;
 mod replica;
@@ -236,7 +241,8 @@ where
         };
         match (denial, identity) {
             (OwedDenial::None, _) => Ok(false),
-            (OwedDenial::Always, _) | (OwedDenial::UnlessOwner, Identity::Anonymous) => Ok(true),
+            (OwedDenial::Always | OwedDenial::Archived, _)
+            | (OwedDenial::UnlessOwner, Identity::Anonymous) => Ok(true),
             (OwedDenial::UnlessOwner, Identity::Authenticated(actor)) => {
                 let owner = self
                     .provider
@@ -246,6 +252,26 @@ where
                 Ok(owner != Some(self.provider.canonical_actor(actor)))
             }
         }
+    }
+
+    /// Whether an archive is owed, unsettled, on an object.
+    async fn archive_owed(
+        &self,
+        policy_id: &str,
+        resource_name: &str,
+        object_id: &str,
+    ) -> Result<bool> {
+        let txn = self.store.new_txn(true).await.map_err(storage_error)?;
+        let denial = owed_denial(
+            &txn,
+            &*self.provider,
+            &Identity::Anonymous,
+            policy_id,
+            resource_name,
+            object_id,
+        )
+        .await?;
+        Ok(matches!(denial, OwedDenial::Archived))
     }
 
     /// Wait until nothing is owed on `tuple`, woken whenever a record of
@@ -457,12 +483,15 @@ where
         view: &datastore::NamespaceView,
         staged: StagedCount,
     ) -> Option<TransactionOutbox> {
-        Some(TransactionOutbox::new(
-            Arc::clone(&self.provider),
-            view,
-            Arc::new(self.store.clone()),
-            staged,
-        ))
+        Some(
+            TransactionOutbox::new(
+                Arc::clone(&self.provider),
+                view,
+                Arc::new(self.store.clone()),
+                staged,
+            )
+            .waking(Arc::clone(&self.wake)),
+        )
     }
 
     fn outbox_authority_provider(&self) -> Option<Arc<dyn DocumentACP>> {
@@ -526,6 +555,24 @@ where
     ) -> Result<()> {
         self.settle_replica_unit(policy_id, resource_name, doc_id)
             .await
+    }
+
+    fn stages_archive_on_delete(&self) -> bool {
+        self.provider.stages_archive_on_delete()
+    }
+
+    async fn archive_doc_object(
+        &self,
+        actor: &Did,
+        policy_id: &str,
+        resource_name: &str,
+        doc_id: &str,
+    ) -> Result<()> {
+        self.provider
+            .archive_doc_object(actor, policy_id, resource_name, doc_id)
+            .await?;
+        self.object_changed(policy_id, resource_name, doc_id);
+        Ok(())
     }
 
     fn submits_subject(&self, subject: &Subject) -> bool {
@@ -616,7 +663,40 @@ where
         identity: &Did,
         objects: &[crate::AcpObject<'_>],
     ) -> std::result::Result<(), crate::RegistrationFailure> {
-        self.provider.register_objects(identity, objects).await
+        let owner = self.provider.canonical_actor(identity);
+        let facts: Vec<RecoveryFact> = objects
+            .iter()
+            .map(|object| {
+                RecoveryFact::registered(
+                    object.policy_id,
+                    object.resource,
+                    object.object_id,
+                    owner.clone(),
+                )
+            })
+            .collect();
+        self.recovery_prepare(&facts)
+            .await
+            .map_err(|error| crate::RegistrationFailure::new(0, error))?;
+        let sent = self.provider.register_objects(identity, objects).await;
+        // The objects before a failure are registered. After a refusal the
+        // rest are not: the one refused, and the ones after it that were not
+        // tried. A provider that could not be reached may have taken the
+        // one it stopped at and every one after it, so their intents stay.
+        let (registered, answered) = match &sent {
+            Ok(()) => (facts.len(), facts.len()),
+            Err(failure) if matches!(failure.error, Error::ProviderUnavailable(_)) => {
+                (failure.index, failure.index)
+            }
+            Err(failure) => (failure.index, facts.len()),
+        };
+        let answers: Vec<(&RecoveryFact, bool)> = facts[..answered.min(facts.len())]
+            .iter()
+            .enumerate()
+            .map(|(index, fact)| (fact, index < registered))
+            .collect();
+        self.recovery_answered(&answers).await;
+        sent
     }
 
     async fn register_doc_object(
@@ -626,8 +706,52 @@ where
         resource_name: &str,
         doc_id: &str,
     ) -> Result<()> {
+        let fact = RecoveryFact::registered(
+            policy_id,
+            resource_name,
+            doc_id,
+            self.provider.canonical_actor(identity),
+        );
+        self.recorded(
+            fact,
+            self.provider
+                .register_doc_object(identity, policy_id, resource_name, doc_id),
+        )
+        .await
+    }
+
+    async fn registration_parent(
+        &self,
+        policy_id: &str,
+        child: &str,
+        id: &str,
+    ) -> Result<crate::RegistrationParent> {
         self.provider
-            .register_doc_object(identity, policy_id, resource_name, doc_id)
+            .registration_parent(policy_id, child, id)
+            .await
+    }
+
+    async fn registration_parent_rule(
+        &self,
+        policy_id: &str,
+        child: &str,
+        id: &str,
+    ) -> Result<(crate::RegistrationParent, String)> {
+        self.provider
+            .registration_parent_rule(policy_id, child, id)
+            .await
+    }
+
+    async fn register_under_parent(
+        &self,
+        identity: &Did,
+        policy_id: &str,
+        resource: &str,
+        object_id: &str,
+        parent: &crate::RegistrationParent,
+    ) -> Result<()> {
+        self.provider
+            .register_under_parent(identity, policy_id, resource, object_id, parent)
             .await
     }
 
@@ -638,9 +762,18 @@ where
         resource_name: &str,
         object_id: &str,
     ) -> Result<()> {
-        self.provider
-            .register_object(identity, policy_id, resource_name, object_id)
-            .await
+        let fact = RecoveryFact::registered(
+            policy_id,
+            resource_name,
+            object_id,
+            self.provider.canonical_actor(identity),
+        );
+        self.recorded(
+            fact,
+            self.provider
+                .register_object(identity, policy_id, resource_name, object_id),
+        )
+        .await
     }
 
     async fn is_doc_registered(
@@ -649,7 +782,13 @@ where
         resource_name: &str,
         doc_id: &str,
     ) -> Result<bool> {
-        if self.owed(policy_id, resource_name, doc_id).await?.is_some() {
+        if let Some(owed) = self.owed(policy_id, resource_name, doc_id).await? {
+            if owed.parent.is_some() {
+                // Returning false could expose this row through a branchable collection.
+                return Err(Error::ProviderUnavailable(
+                    "parent admission is awaiting confirmation".into(),
+                ));
+            }
             return Ok(true);
         }
         self.provider
@@ -664,7 +803,7 @@ where
         doc_id: &str,
     ) -> Result<Option<Did>> {
         if let Some(owed) = self.owed(policy_id, resource_name, doc_id).await? {
-            return Ok(Some(owed.creator));
+            return Ok(owed.parent.is_none().then_some(owed.creator));
         }
         self.provider
             .get_doc_owner(policy_id, resource_name, doc_id)
@@ -680,8 +819,14 @@ where
         doc_id: &str,
     ) -> Result<bool> {
         self.owed_layout().await?;
+        // A deleted document's owed archive denies before a registration
+        // still owed to its creator could grant it anything.
+        if self.archive_owed(policy_id, resource_name, doc_id).await? {
+            return Ok(false);
+        }
         if let Some(owed) = self.owed(policy_id, resource_name, doc_id).await? {
-            return Ok(matches!(identity, Identity::Authenticated(did) if *did == owed.creator));
+            return Ok(owed.parent.is_none()
+                && matches!(identity, Identity::Authenticated(did) if *did == owed.creator));
         }
         if self
             .revoked(identity, policy_id, resource_name, doc_id)
@@ -692,6 +837,74 @@ where
         self.provider
             .check_doc_access(identity, permission, policy_id, resource_name, doc_id)
             .await
+    }
+
+    async fn verify_transport_sentinel(
+        &self,
+        query: &crate::TransportSentinelQuery,
+    ) -> Result<bool> {
+        self.owed_layout().await?;
+        let mut deadline = Box::pin(
+            workers::delay(OBSERVATION_PATIENCE)
+                .map_err(|error| Error::Storage(error.to_string()))?,
+        );
+        let Some(_settling) = before(deadline.as_mut(), std::pin::pin!(self.settling.lock())).await
+        else {
+            return Err(unsettled_relationship());
+        };
+        for (resource, object) in [
+            (query.resource.as_str(), query.child.as_str()),
+            ("nodes", query.parent.as_str()),
+            ("nodes", query.device_node.as_str()),
+            ("device_groups", query.group.as_str()),
+        ] {
+            if self.owed(&query.policy, resource, object).await?.is_some() {
+                return Err(Error::ProviderUnavailable(
+                    "sentinel evidence has an unsettled registration".into(),
+                ));
+            }
+        }
+        let present = self.provider.verify_transport_sentinel(query).await?;
+        let device = Did::new(&query.device)
+            .map_err(|error| Error::ProviderUnavailable(error.to_string()))?;
+        let tuples = [
+            crate::outbox::OwedTuple {
+                policy_id: query.policy.clone(),
+                resource: query.resource.clone(),
+                object: query.child.clone(),
+                relation: "parent".into(),
+                subject: crate::outbox::OwedSubject::EntitySet {
+                    resource: "nodes".into(),
+                    object: query.parent.clone(),
+                    relation: String::new(),
+                },
+            },
+            crate::outbox::OwedTuple {
+                policy_id: query.policy.clone(),
+                resource: "nodes".into(),
+                object: query.device_node.clone(),
+                relation: "transport_publisher".into(),
+                subject: crate::outbox::OwedSubject::Actor {
+                    did: self.provider.canonical_actor(&device),
+                },
+            },
+            crate::outbox::OwedTuple {
+                policy_id: query.policy.clone(),
+                resource: "device_groups".into(),
+                object: query.group.clone(),
+                relation: "member".into(),
+                subject: crate::outbox::OwedSubject::Actor {
+                    did: self.provider.canonical_actor(&device),
+                },
+            },
+        ];
+        let txn = self.store.new_txn(true).await.map_err(storage_error)?;
+        for tuple in &tuples {
+            if crate::outbox::tuple_rest(&txn, tuple).await?.is_some() {
+                return Err(unsettled_relationship());
+            }
+        }
+        Ok(present)
     }
 
     async fn observe_actor_relationship(
@@ -768,6 +981,45 @@ where
         }
     }
 
+    async fn replica_group_member(
+        &self,
+        group: &crate::ReplicaGroup,
+        signer: &Did,
+    ) -> Result<bool> {
+        let receiver = self
+            .own_actor()
+            .ok_or(Error::UnsupportedReplicaMembership)?;
+        let _settling = self
+            .settling
+            .try_lock()
+            .ok_or_else(unsettled_relationship)?;
+        let member = self.provider.replica_group_member(group, signer).await?;
+        let txn = self.store.new_txn(true).await.map_err(storage_error)?;
+        if txn
+            .get(&pending_key(&group.policy, &group.resource, &group.object))
+            .await
+            .map_err(storage_error)?
+            .is_some()
+        {
+            return Err(unsettled_relationship());
+        }
+        for actor in [&receiver, signer] {
+            let tuple = crate::outbox::OwedTuple {
+                policy_id: group.policy.clone(),
+                resource: group.resource.clone(),
+                object: group.object.clone(),
+                relation: group.relation.clone(),
+                subject: crate::outbox::OwedSubject::Actor {
+                    did: self.provider.canonical_actor(actor),
+                },
+            };
+            if crate::outbox::tuple_rest(&txn, &tuple).await?.is_some() {
+                return Err(unsettled_relationship());
+            }
+        }
+        Ok(member)
+    }
+
     async fn check_named_permission(
         &self,
         subject: &Did,
@@ -838,16 +1090,25 @@ where
             .await?;
         self.refuse_revoked(requestor, policy_id, collection_id, doc_id)
             .await?;
+        let fact = self.relationship_fact(
+            requestor,
+            OwedSubject::try_from(subject)?,
+            (policy_id, collection_id, doc_id),
+            relation,
+            true,
+        );
         let changed = self
-            .provider
-            .add_actor_relationship(
-                requestor,
-                target,
-                policy_id,
-                collection_id,
-                doc_id,
-                relation,
-                managing_relations,
+            .recorded(
+                fact,
+                self.provider.add_actor_relationship(
+                    requestor,
+                    target,
+                    policy_id,
+                    collection_id,
+                    doc_id,
+                    relation,
+                    managing_relations,
+                ),
             )
             .await?;
         self.object_changed(policy_id, collection_id, doc_id);
@@ -870,16 +1131,25 @@ where
             .await?;
         self.refuse_revoked(requestor, policy_id, collection_id, doc_id)
             .await?;
+        let fact = self.relationship_fact(
+            requestor,
+            OwedSubject::try_from(target.clone())?,
+            (policy_id, collection_id, doc_id),
+            relation,
+            true,
+        );
         let changed = self
-            .provider
-            .add_relationship(
-                requestor,
-                target,
-                policy_id,
-                collection_id,
-                doc_id,
-                relation,
-                managing_relations,
+            .recorded(
+                fact,
+                self.provider.add_relationship(
+                    requestor,
+                    target,
+                    policy_id,
+                    collection_id,
+                    doc_id,
+                    relation,
+                    managing_relations,
+                ),
             )
             .await?;
         self.object_changed(policy_id, collection_id, doc_id);
@@ -903,16 +1173,25 @@ where
             .await?;
         self.refuse_revoked(requestor, policy_id, collection_id, doc_id)
             .await?;
+        let fact = self.relationship_fact(
+            requestor,
+            OwedSubject::try_from(subject)?,
+            (policy_id, collection_id, doc_id),
+            relation,
+            false,
+        );
         let changed = self
-            .provider
-            .delete_actor_relationship(
-                requestor,
-                target,
-                policy_id,
-                collection_id,
-                doc_id,
-                relation,
-                managing_relations,
+            .recorded(
+                fact,
+                self.provider.delete_actor_relationship(
+                    requestor,
+                    target,
+                    policy_id,
+                    collection_id,
+                    doc_id,
+                    relation,
+                    managing_relations,
+                ),
             )
             .await?;
         self.object_changed(policy_id, collection_id, doc_id);
@@ -935,16 +1214,25 @@ where
             .await?;
         self.refuse_revoked(requestor, policy_id, collection_id, doc_id)
             .await?;
+        let fact = self.relationship_fact(
+            requestor,
+            OwedSubject::try_from(target.clone())?,
+            (policy_id, collection_id, doc_id),
+            relation,
+            false,
+        );
         let changed = self
-            .provider
-            .delete_relationship(
-                requestor,
-                target,
-                policy_id,
-                collection_id,
-                doc_id,
-                relation,
-                managing_relations,
+            .recorded(
+                fact,
+                self.provider.delete_relationship(
+                    requestor,
+                    target,
+                    policy_id,
+                    collection_id,
+                    doc_id,
+                    relation,
+                    managing_relations,
+                ),
             )
             .await?;
         self.object_changed(policy_id, collection_id, doc_id);
@@ -957,8 +1245,11 @@ where
         resource_name: &str,
         doc_id: &str,
     ) -> Result<()> {
-        self.provider
-            .unregister_doc_object(policy_id, resource_name, doc_id)
-            .await
+        self.recorded(
+            RecoveryFact::unregistered(policy_id, resource_name, doc_id),
+            self.provider
+                .unregister_doc_object(policy_id, resource_name, doc_id),
+        )
+        .await
     }
 }

@@ -28,6 +28,9 @@ pub enum Error {
     #[error("document already registered: {0}")]
     DocumentAlreadyRegistered(String),
 
+    #[error("parent-authorized registration is unsupported by this provider")]
+    UnsupportedParentRegistration,
+
     /// Invalid relation name
     #[error("invalid relation: {0}")]
     InvalidRelation(String),
@@ -37,9 +40,16 @@ pub enum Error {
     #[error("unsupported subject for this backend: {0}")]
     UnsupportedSubject(String),
 
+    #[error("certified replica group membership is unsupported by this backend")]
+    UnsupportedReplicaMembership,
+
     /// The backend cannot evaluate named document permissions.
     #[error("named document permission checks are unsupported by this backend")]
     UnsupportedNamedPermission,
+
+    /// The backend archives no object for an owed change.
+    #[error("archiving an object is unsupported by this backend")]
+    UnsupportedArchive,
 
     /// The backend cannot list a document's relationships.
     #[error("listing document relationships is unsupported by this backend")]

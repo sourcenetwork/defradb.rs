@@ -98,7 +98,17 @@ struct Meta {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     closed: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    recoverable: Option<RecoveryNeed>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     replaying: Option<Replaying>,
+}
+
+/// Why a closed journal may be reopened from the node's own state.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum RecoveryNeed {
+    /// The term may have voided more than the journal keeps.
+    Uncovered,
 }
 
 /// A replay begun and not finished: the term it checks, and the first
@@ -303,6 +313,37 @@ impl Journal {
     pub(crate) fn close(&mut self, reason: String) -> Result<(), JournalError> {
         self.commit(Meta {
             closed: Some(reason),
+            recoverable: None,
+            ..self.meta.clone()
+        })
+    }
+
+    /// Records that the node cannot tell what a term voided, but can rebuild
+    /// what it should hold from its own state.
+    pub(crate) fn close_recoverable(&mut self, reason: String) -> Result<(), JournalError> {
+        self.commit(Meta {
+            closed: Some(reason),
+            recoverable: Some(RecoveryNeed::Uncovered),
+            ..self.meta.clone()
+        })
+    }
+
+    pub(crate) fn recovery_needed(&self) -> Option<RecoveryNeed> {
+        self.closed()
+            .is_some()
+            .then_some(self.meta.recoverable)
+            .flatten()
+    }
+
+    /// Records that the recovery pass handed its state to the outbox: the
+    /// term is checked, and the node decides again.
+    pub(crate) fn recovered(&mut self, term: u64) -> Result<(), JournalError> {
+        self.commit(Meta {
+            handled_term: self.meta.handled_term.max(term),
+            undelivered: Vec::new(),
+            closed: None,
+            recoverable: None,
+            replaying: None,
             ..self.meta.clone()
         })
     }

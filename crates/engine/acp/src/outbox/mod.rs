@@ -56,6 +56,7 @@ pub use report::{
     OwedAuthorityKind, OwedEntry, OwedFilter, OwedHold, OwedOutcome, OwedRef, OwedWait, OwedWhat,
 };
 pub use staging::{
-    prepare_relationship, PreparedRelationship, StageRelationship, Staged, TransactionOutbox,
+    prepare_relationship, PreparedRelationship, StageArchive, StageRelationship, Staged,
+    TransactionOutbox,
 };
 pub use submission::{submit_relationship, Submission};

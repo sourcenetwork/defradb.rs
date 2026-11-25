@@ -80,7 +80,7 @@ impl Node {
         vector: Option<VectorIndexDescription>,
         wait_for_build: bool,
     ) -> Result<IndexDescription> {
-        let caller = self.caller(context);
+        let caller = self.admitted_caller(context)?;
         if caller.txn().is_some() {
             let kind =
                 IndexManager::requested_kind(&fields, unique, vector).map_err(db::Error::from)?;
@@ -126,7 +126,7 @@ impl Node {
         context: &RequestContext,
         collection: &str,
     ) -> Result<Vec<IndexListing>> {
-        let caller = self.caller(context);
+        let caller = self.admitted_caller(context)?;
         if caller.txn().is_some() {
             let (version, actions) = self
                 .runner()
@@ -159,7 +159,7 @@ impl Node {
     /// The actions running or ended with an error. Go's `ListActions`.
     pub async fn list_actions_as(&self, context: &RequestContext) -> Result<Vec<ActionExecution>> {
         let database = Arc::clone(self.database());
-        let context = self.caller(context);
+        let context = self.admitted_caller(context)?;
         self.on_pool(move || async move { Ok(database.list_actions_as(&context).await?) })
             .await
     }
@@ -172,7 +172,7 @@ impl Node {
         collection: &str,
         name: &str,
     ) -> Result<()> {
-        let caller = self.caller(context);
+        let caller = self.admitted_caller(context)?;
         if caller.txn().is_some() {
             return self
                 .runner()

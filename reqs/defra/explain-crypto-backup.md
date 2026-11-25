@@ -55,6 +55,13 @@ One-to-one joins (single, two in parallel, two levels deep, and from the seconda
 
 With `@index` on `age`, filtering `age: {_eq: 30}` over three docs reports `scanNode{iterations: 3, docFetches: 2, fieldFetches: 4, indexFetches: 2}`; ordering by the indexed field, by an indexed relation field with `@exhaustive`, and a child ordered by an indexed related field report index fetches instead of a sort.
 
+# `defra.explain.index_name`: Index scans name their index in Rust plans
+
+- **Parents:** ["defra"]
+- **Scenarios:** ["explain.execute.index_name.a_rust_index_scan_names_its_index", "explain.execute.index_name.a_rust_direct_relation_lookup_names_its_index"]
+
+The Rust execution explain includes `indexName` on an index-backed `scanNode`. A direct foreign-key lookup names the index it uses; otherwise the child scan retains its index name. This is a deliberate Rust-only addition to the Go execute-explain shape.
+
 # `go.explain.execute.orphan`: Orphan node counters
 
 - **Parents:** ["go.explain.execute"]
@@ -342,6 +349,21 @@ Signing behaviour beyond what Go's integration suite checks.
 - **Scenarios:** ["signature::per_op_signing::signature_with_per_op_signing_enabled_on_a_node_not_signing_signs_every_commit"]
 
 A node that holds a node identity but was started without signing (`--no-signing`) writes unsigned blocks by default. An add or update sent with `enableSigning: true` (the HTTP `enableSigning` query parameter, the CLI `--enable-signing` flag, or the FFI `enableSigning` option) signs its blocks anyway: every field block and the `_C` block of a new document carry a signature from the request identity's key, or the node identity's when the request has none, as Go's `EnableSigning` option does. A node with no key at all writes unsigned blocks under either choice.
+
+# `defra.signature.embedded_caller_key`: An in-process write signs with the acting identity's own key
+
+- **Parents:** ["defra.signature"]
+- **Scenarios:** ["signature::caller_key::signature_in_process_write_signs_with_the_callers_key", "signature::caller_key::signature_in_process_write_without_identity_signs_with_the_node_key", "signature::caller_key::signature_in_process_field_and_delete_blocks_sign_with_the_callers_key", "signature::caller_key::signature_in_process_graphql_update_signs_with_the_callers_key", "signature::caller_key::signature_in_process_branchable_collection_block_signs_with_the_callers_key", "signature::caller_key::signature_in_process_backup_import_signs_with_the_callers_key"]
+
+An in-process (embedded) write whose request carries the acting client identity's own local secp256k1 key signs its blocks with that key whenever the write signs: the priority-1 field blocks, the `_C` block, and a `@branchable` collection's collection-level block, as Go's in-process client does with a `FullIdentity`. Verifying such a block against that identity's public key succeeds, and against the node's key fails with `signature was created by a different key`. The same holds for the `_C` block of a later update by that identity (through the document API and a GraphQL mutation), the `_C` block of a delete by that identity, and the priority-1 field blocks and `_C` block of a backup import by that identity, as Go's import of a document with a `FullIdentity` signs them. A write whose request carries no identity and no key signs with the node key: verifying its blocks against the node's key succeeds.
+
+# `go.signature.verify.acp`: Verification gated by access control
+
+- **Parents:** ["go.signature.verify"]
+- **Scenarios:** ["signature::acp::signature_acp_if_has_access_to_doc_validate_signature", "signature::acp::signature_acp_if_has_no_access_to_doc_should_error", "signature::acp_branchable::signature_acp_with_branchable_collection_if_has_collection_access_validate_signature", "signature::acp_branchable::signature_acp_with_branchable_collection_if_has_no_collection_access_should_error"]
+- **Scope:** "document tests: go client only; branchable tests: go and C clients only"
+
+On a DAC-protected collection, verifying a doc's block as an identity without access fails with `missing permission`, while the owner verifies it; on a private `@branchable` collection the collection-level block (no docID) is verifiable only by an identity with read access to the collection object.
 
 # `defra.encryption.peer.registered_identity`: A peer whose node identity the host registered fetches keys from a node with no identity
 

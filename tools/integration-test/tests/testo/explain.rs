@@ -103,6 +103,7 @@ mod execute {
     mod dagscan;
     mod delete;
     mod group;
+    mod index_name;
     mod query_deleted_docs;
     mod scan;
     mod top_level;

@@ -1840,6 +1840,282 @@ fn remote_composite_merge_rejects_immutable_field_change() {
     .unwrap()
 }
 
+async fn make_handler_with_parent_registration_schema() -> (
+    DbMergeHandler<RegolithStore, DefraBlockstore<RegolithStore>>,
+    Arc<DefraBlockstore<RegolithStore>>,
+) {
+    let store = Arc::new(RegolithStore::in_memory().unwrap());
+    let db = Arc::new(DB::from_arc(store.clone()).unwrap());
+
+    let mut schema = CollectionVersion::new(
+        "AgentDocs",
+        "v1",
+        "col-agentdocs",
+        vec![
+            FieldDescription::new(
+                "1",
+                "_docID",
+                FieldKind::doc_id(),
+                schema::CType::LwwRegister,
+            ),
+            FieldDescription::new(
+                "2",
+                "agent_did",
+                FieldKind::string(),
+                schema::CType::LwwRegister,
+            ),
+            FieldDescription::new("3", "body", FieldKind::string(), schema::CType::LwwRegister),
+        ],
+    );
+    let mut policy = schema::PolicyDescription::new("policy", "agentdocs");
+    policy.parent_field = Some("agent_did".into());
+    schema.policy = Some(policy);
+    db.create_collection(schema).await.unwrap();
+
+    let blockstore = Arc::new(DefraBlockstore::new(store, false));
+    let handler = DbMergeHandler::new(db, blockstore.clone());
+    (handler, blockstore)
+}
+
+#[test]
+fn remote_composite_merge_rejects_registration_parent_change() {
+    workers::block_on(async {
+        let (handler, blockstore) = make_handler_with_parent_registration_schema().await;
+        let collection = handler
+            .db()
+            .find_collection_by_id("col-agentdocs")
+            .unwrap()
+            .expect("agentdocs collection should exist");
+
+        let mut doc = Document::new(collection.schema_arc());
+        doc.set(
+            "agent_did",
+            NormalValue::String("did:key:alice".to_string()),
+        )
+        .unwrap();
+        doc.set("body", NormalValue::String("v1".to_string()))
+            .unwrap();
+        doc.set_collection_version_id("v1");
+
+        // Persist the initial document locally (agent_did = alice).
+        let (doc_id, _doc_short_id, create_blocks) =
+            create_doc_locally(&handler, &collection, &mut doc).await;
+        let doc_id_str = doc_id.to_string();
+
+        // Craft a higher-priority remote update that flips the immutable field.
+        let mut update_data = Vec::new();
+        ciborium::into_writer(
+            &NormalValue::String("did:key:bob".to_string()),
+            &mut update_data,
+        )
+        .unwrap();
+        let update_field_payload = LwwDeltaPayload {
+            field_name: "agent_did".to_string(),
+            collection_version_id: "v1".to_string(),
+            priority: 2,
+            data: update_data,
+        };
+        let update_field_block = Block::new(
+            CrdtDelta::Lww(update_field_payload),
+            create_blocks.field_cids.clone(),
+            vec![],
+        );
+        let update_field_cid = update_field_block.generate_cid().unwrap();
+        blockstore
+            .put(
+                &update_field_cid,
+                &update_field_block.to_dag_cbor().unwrap(),
+            )
+            .await
+            .unwrap();
+
+        let update_payload = CompositeDeltaPayload {
+            collection_version_id: "v1".to_string(),
+            priority: 2,
+            status: 1,
+        };
+        let update_composite_block = Block::new(
+            CrdtDelta::Composite(update_payload.clone()),
+            vec![create_blocks.cid],
+            vec![DAGLink::new("agent_did", update_field_cid)],
+        );
+        let update_composite_cid = update_composite_block.generate_cid().unwrap();
+        blockstore
+            .put(
+                &update_composite_cid,
+                &update_composite_block.to_dag_cbor().unwrap(),
+            )
+            .await
+            .unwrap();
+
+        let metadata = BlockMetadata::normal(
+            &doc_id_str,
+            "col-agentdocs",
+            "did:key:z6MkrRemoteImmutableMerge",
+            None,
+            false,
+        );
+        let outcome = handler
+            .process_composite_delta(
+                &update_composite_cid,
+                &update_composite_block,
+                &update_payload,
+                &metadata,
+                false,
+                0,
+            )
+            .await
+            .expect("an immutable-field rejection is a terminal skip, not a hard error");
+
+        // The rejection must be TERMINAL (skipped), not a transient Err — a hard
+        // error would leave the CID unmarked and re-fetched on every sync pass.
+        assert!(
+            outcome.is_terminal_skip(),
+            "remote merge changing an immutable field must be terminally skipped, got {outcome:?}"
+        );
+
+        // The locally-stored immutable value must be unchanged.
+        let stored = {
+            let txn = handler.db().new_txn(true).await.unwrap();
+            let stored = {
+                let datastore = txn.datastore().unwrap();
+                let systemstore = txn.systemstore().unwrap();
+                collection
+                    .get_by_doc_id(&datastore, &systemstore, &doc_id)
+                    .await
+                    .unwrap()
+                    .expect("document should still exist")
+            };
+            txn.force_discard().unwrap();
+            stored
+        };
+        assert_eq!(
+            stored.get("agent_did"),
+            Some(&NormalValue::String("did:key:alice".to_string())),
+            "immutable field must survive a rejected remote merge"
+        );
+    })
+    .unwrap()
+}
+
+#[test]
+fn remote_composite_merge_rejects_non_lww_registration_parent_delta() {
+    workers::block_on(async {
+        let (handler, blockstore) = make_handler_with_parent_registration_schema().await;
+        let collection = handler
+            .db()
+            .find_collection_by_id("col-agentdocs")
+            .unwrap()
+            .expect("agentdocs collection should exist");
+
+        let mut doc = Document::new(collection.schema_arc());
+        doc.set(
+            "agent_did",
+            NormalValue::String("did:key:alice".to_string()),
+        )
+        .unwrap();
+        doc.set("body", NormalValue::String("v1".to_string()))
+            .unwrap();
+        doc.set_collection_version_id("v1");
+
+        // Persist the initial document locally (agent_did = alice).
+        let (doc_id, _doc_short_id, create_blocks) =
+            create_doc_locally(&handler, &collection, &mut doc).await;
+        let doc_id_str = doc_id.to_string();
+
+        // A counter operation cannot change a registration parent register.
+        let mut update_data = Vec::new();
+        ciborium::into_writer(&1_i64, &mut update_data).unwrap();
+        let update_field_payload = CounterDeltaPayload {
+            field_name: "agent_did".to_string(),
+            collection_version_id: "v1".to_string(),
+            priority: 2,
+            data: update_data,
+            nonce: 99,
+        };
+        let update_field_block = Block::new(
+            CrdtDelta::Counter(update_field_payload),
+            create_blocks.field_cids.clone(),
+            vec![],
+        );
+        let update_field_cid = update_field_block.generate_cid().unwrap();
+        blockstore
+            .put(
+                &update_field_cid,
+                &update_field_block.to_dag_cbor().unwrap(),
+            )
+            .await
+            .unwrap();
+
+        let update_payload = CompositeDeltaPayload {
+            collection_version_id: "v1".to_string(),
+            priority: 2,
+            status: 1,
+        };
+        let update_composite_block = Block::new(
+            CrdtDelta::Composite(update_payload.clone()),
+            vec![create_blocks.cid],
+            vec![DAGLink::new("agent_did", update_field_cid)],
+        );
+        let update_composite_cid = update_composite_block.generate_cid().unwrap();
+        blockstore
+            .put(
+                &update_composite_cid,
+                &update_composite_block.to_dag_cbor().unwrap(),
+            )
+            .await
+            .unwrap();
+
+        let metadata = BlockMetadata::normal(
+            &doc_id_str,
+            "col-agentdocs",
+            "did:key:z6MkrRemoteImmutableMerge",
+            None,
+            false,
+        );
+        let outcome = handler
+            .process_composite_delta(
+                &update_composite_cid,
+                &update_composite_block,
+                &update_payload,
+                &metadata,
+                false,
+                0,
+            )
+            .await
+            .expect("an immutable-field rejection is a terminal skip, not a hard error");
+
+        // The rejection must be TERMINAL (skipped), not a transient Err — a hard
+        // error would leave the CID unmarked and re-fetched on every sync pass.
+        assert!(
+            outcome.is_terminal_skip(),
+            "remote merge changing an immutable field must be terminally skipped, got {outcome:?}"
+        );
+
+        // The locally-stored immutable value must be unchanged.
+        let stored = {
+            let txn = handler.db().new_txn(true).await.unwrap();
+            let stored = {
+                let datastore = txn.datastore().unwrap();
+                let systemstore = txn.systemstore().unwrap();
+                collection
+                    .get_by_doc_id(&datastore, &systemstore, &doc_id)
+                    .await
+                    .unwrap()
+                    .expect("document should still exist")
+            };
+            txn.force_discard().unwrap();
+            stored
+        };
+        assert_eq!(
+            stored.get("agent_did"),
+            Some(&NormalValue::String("did:key:alice".to_string())),
+            "immutable field must survive a rejected remote merge"
+        );
+    })
+    .unwrap()
+}
+
 /// Clearing an @immutable field (an empty/tombstone LWW delta) is also a
 /// change and must be rejected — not silently applied to the field store.
 #[test]

@@ -106,6 +106,37 @@ fn the_term_checked_what_is_owed_and_a_closure_are_kept() {
     assert_eq!(journal.closed(), Some("why"));
 }
 
+#[test]
+fn an_uncovered_journal_is_reopened_after_its_own_state_rebuilds_it() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut journal = Journal::open(directory.path(), 0).unwrap();
+    let owed = vec![Lost::Registration {
+        policy_id: "p".into(),
+        resource: "users".into(),
+        object: "bae-1".into(),
+        token: "t".into(),
+    }];
+    journal.handled(1, owed).unwrap();
+    journal
+        .close_recoverable("the journal cannot vouch for the cut".into())
+        .unwrap();
+    drop(journal);
+
+    let mut journal = Journal::open(directory.path(), 0).unwrap();
+    assert_eq!(
+        journal.recovery_needed(),
+        Some(RecoveryNeed::Uncovered),
+        "the pass is resumable across a restart"
+    );
+    journal.recovered(2).unwrap();
+    drop(journal);
+
+    let journal = Journal::open(directory.path(), 0).unwrap();
+    assert_eq!(journal.closed(), None);
+    assert_eq!(journal.recovery_needed(), None);
+    assert_eq!(journal.handled_term(), 2);
+}
+
 #[cfg(unix)]
 #[test]
 fn a_failed_write_leaves_what_the_journal_reports_as_it_was() {

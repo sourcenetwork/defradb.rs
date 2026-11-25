@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use axum::extract::DefaultBodyLimit;
 use axum::http::{header, HeaderValue, Method, StatusCode};
-use axum::response::IntoResponse;
+use axum::response::{IntoResponse, Json};
 use axum::Router;
 use edge::Edge;
 use nuclei::net::TcpListener;
@@ -36,6 +36,9 @@ use crate::router::{
 /// flag value could not raise the bound.
 pub const DEFAULT_MAX_BACKUP_SIZE: u64 = 100 * 1024 * 1024;
 
+/// Default server-side bound on waiting for a transaction commit: disabled.
+pub const DEFAULT_COMMIT_TIMEOUT_MS: u64 = 0;
+
 /// Server configuration options.
 #[derive(Debug, Clone)]
 pub struct ServerConfig {
@@ -60,6 +63,10 @@ pub struct ServerConfig {
     pub no_signing: bool,
     /// Request timeout in seconds (0 = no timeout).
     pub request_timeout: u64,
+    /// Bound on waiting for an explicit transaction commit in milliseconds
+    /// (0 = no bound). A commit still running when the bound passes keeps
+    /// running; the client is told its outcome is unknown.
+    pub commit_timeout_ms: u64,
     /// Max concurrent requests (0 = unlimited).
     pub max_concurrent_requests: usize,
     /// Maximum retries after an auto-commit transaction conflict.
@@ -77,6 +84,7 @@ impl Default for ServerConfig {
             max_backup_size: DEFAULT_MAX_BACKUP_SIZE,
             no_signing: false,
             request_timeout: 300,
+            commit_timeout_ms: DEFAULT_COMMIT_TIMEOUT_MS,
             max_concurrent_requests: 1000,
             query_limits: QueryLimits::default(),
         }
@@ -87,6 +95,22 @@ impl Default for ServerConfig {
 /// runs once per router construction, after native and extra routes are merged,
 /// including the native fallback. Its body is trusted application code.
 pub type RouterTransform = Arc<dyn Fn(Router) -> Router + Send + Sync>;
+
+/// Whether the request is an explicit transaction commit.
+fn is_commit_request(request: &axum::extract::Request) -> bool {
+    if request.method() != Method::POST {
+        return false;
+    }
+    crate::go_paths::API_PREFIXES.iter().any(|prefix| {
+        let Some(path) = request.uri().path().strip_prefix(prefix) else {
+            return false;
+        };
+        matches!(
+            path.split('/').collect::<Vec<_>>().as_slice(),
+            ["", "tx", _]
+        )
+    })
+}
 
 /// HTTP server for DefraDB.
 pub struct Server {
@@ -538,6 +562,39 @@ impl Server {
             },
         );
         router = router.layer(admitted.clone());
+
+        // Outside `admitted`: when the bound passes it drops only the wait on
+        // the handler's task, so every step of the commit still runs.
+        if self.config.commit_timeout_ms > 0 {
+            let limit = Duration::from_millis(self.config.commit_timeout_ms);
+            router = router.layer(axum::middleware::from_fn(
+                move |request: axum::extract::Request, next: axum::middleware::Next| async move {
+                    if !is_commit_request(&request) {
+                        return next.run(request).await;
+                    }
+                    match nuclei::time::timeout(limit, next.run(request)).await {
+                        Ok(response) => response,
+                        Err(_) => {
+                            tracing::error!(
+                                commit_timeout_ms = limit.as_millis(),
+                                "transaction commit exceeded its server-side bound"
+                            );
+                            (
+                                StatusCode::SERVICE_UNAVAILABLE,
+                                Json(serde_json::json!({
+                                    "error": format!(
+                                        "commit outcome unknown after {} milliseconds",
+                                        limit.as_millis()
+                                    ),
+                                    "outcome": "unknown",
+                                })),
+                            )
+                                .into_response()
+                        }
+                    }
+                },
+            ));
+        }
 
         // Apply concurrency limit (0 = unlimited)
         if self.config.max_concurrent_requests > 0 {

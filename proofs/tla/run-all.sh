@@ -11,6 +11,26 @@ cd "$(dirname "${BASH_SOURCE[0]}")"
 # event to the settled rest (depth = events + 1), and DEADLOCK:<l> stops with
 # event l next (past the end when l = events + 1).
 RUNS=(
+  "MC_RemovedLensOrigin_Green.cfg RemovedLensOrigin.tla GREEN"
+  "MC_RemovedLensOrigin_Red_Inverse.cfg RemovedLensOrigin.tla RED" # an inverse must not alter a native document
+  "MC_OfflineReconnect_Green.cfg OfflineReconnect.tla GREEN"
+  "MC_OfflineReconnect_Red_StalePark.cfg OfflineReconnect.tla RED"
+  "MC_OfflineReconnect_Red_StaleConnect.cfg OfflineReconnect.tla RED"
+  "MC_OfflineReconnect_Red_Failure.cfg OfflineReconnect.tla RED"
+  "MC_OfflineReconnect_Red_Expired.cfg OfflineReconnect.tla RED"
+  "MC_HeaderRetry_Green.cfg HeaderRetry.tla GREEN"
+  "MC_HeaderRetry_Red_Drop.cfg HeaderRetry.tla RED"
+  "MC_OrderedIndexPage_Green.cfg OrderedIndexPage.tla GREEN"
+  "MC_OrderedIndexPage_Red_DoubleOffset.cfg OrderedIndexPage.tla RED"
+  "MC_SyncedMigrationTransform_Green.cfg SyncedMigrationTransform.tla GREEN"
+  "MC_SyncedMigrationTransform_Red_Drop.cfg SyncedMigrationTransform.tla RED"
+  "MC_SyncedMigrationTransform_Red_Head.cfg SyncedMigrationTransform.tla RED"
+  "MC_AssignmentPosition_Green.cfg AssignmentPosition.tla GREEN"
+  "MC_AssignmentPosition_Red_Stale.cfg AssignmentPosition.tla RED"
+  "MC_AssignmentPosition_Red_Hash.cfg AssignmentPosition.tla RED"
+  "MC_ExplainIndexName_Green.cfg ExplainIndexName.tla GREEN"
+  "MC_ExplainIndexName_Green_Fallback.cfg ExplainIndexName.tla GREEN"
+  "MC_ExplainIndexName_Red_Lookup.cfg ExplainIndexName.tla RED" # direct FK lookup must name its index
   "MC_MissingRelationFilter_Green.cfg MissingRelationFilter.tla GREEN"
   "MC_MissingRelationFilter_Red_NoId.cfg MissingRelationFilter.tla RED"
   "MC_MissingRelationFilter_Red_Sibling.cfg MissingRelationFilter.tla RED"
@@ -91,8 +111,17 @@ RUNS=(
   "MC_HeldPubsubRequest_Red_LateWatch.cfg HeldPubsubRequest.tla RED" # the wake-up is armed after the publish (Delivered)
   "MC_HeldPubsubRequest_Red_NoDedupe.cfg HeldPubsubRequest.tla RED" # a resend's duplicate reply reaches the caller (OneReplyEach)
   "MC_HeldPubsubRequest_Red_ResendLate.cfg HeldPubsubRequest.tla RED" # a resend goes out after the deadline (NoResendAfterDeadline)
+  "MC_LensSettlement_Green.cfg LensSettlement.tla GREEN"
+  "MC_LensSettlement_Red_Early.cfg LensSettlement.tla RED" # settlement runs before the staged lens registers (INV_SettleAfterLens)
   "MC_FloatEquality_Green.cfg FloatEquality.tla GREEN"
   "MC_FloatEquality_Red_Epsilon.cfg FloatEquality.tla RED" # the old tolerance equates distinct values (INV_ExactOnly)
+  "MC_MigratedCounterMerge_Green.cfg MigratedCounterMerge.tla GREEN"
+  "MC_MigratedCounterMerge_Green_ForwardOnly.cfg MigratedCounterMerge.tla GREEN"
+  "MC_MigratedCounterMerge_Green_Scale.cfg MigratedCounterMerge.tla GREEN"
+  "MC_MigratedCounterMerge_Green_ScaleForwardOnly.cfg MigratedCounterMerge.tla GREEN"
+  "MC_MigratedCounterMerge_Red_Double.cfg MigratedCounterMerge.tla RED" # the active value is migrated twice (INV_TransformedOnce)
+  "MC_MigratedCounterMerge_Red_Stuck.cfg MigratedCounterMerge.tla RED" # a forward-only lens leaves the increment unmerged (INV_TransformedOnce)
+  "MC_MigratedCounterMerge_Red_ScaleForwardOnly.cfg MigratedCounterMerge.tla RED" # a forward-only doubling lens leaves receivers disagreeing, the recorded limit (INV_ReceiversAgree)
   "MC_VerifiedClientGraph_Green.cfg VerifiedClientGraph.tla GREEN"
   "MC_VerifiedClientGraph_Red_SingleMutation.cfg VerifiedClientGraph.tla RED" # a multi-mutation request is accepted (INV_SingleMutation)
   "MC_VerifiedClientGraph_Red_Unencrypted.cfg VerifiedClientGraph.tla RED" # the request adds encryption outside the approved graph (INV_Unencrypted)
@@ -186,12 +215,13 @@ RUNS=(
   "MC_SourceScopedNac_Red_BorrowNode.cfg SourceScopedNac.tla RED"
   "MC_SourceScopedNac_Red_UntrustedReplay.cfg SourceScopedNac.tla RED"
   "MC_EmbeddedSigner_Green.cfg EmbeddedSigner.tla GREEN"
-  "MC_EmbeddedSigner_Red_Actor.cfg EmbeddedSigner.tla RED"
-  "MC_EmbeddedSigner_Red_Match.cfg EmbeddedSigner.tla RED"
-  "MC_EmbeddedSigner_Red_Key.cfg EmbeddedSigner.tla RED"
-  "MC_EmbeddedSigner_Red_Owner.cfg EmbeddedSigner.tla RED"
-  "MC_EmbeddedSigner_Red_Acp.cfg EmbeddedSigner.tla RED"
-  "MC_EmbeddedSigner_Red_Bypass.cfg EmbeddedSigner.tla RED"
+  "MC_EmbeddedSigner_Red_Actor.cfg EmbeddedSigner.tla RED" # another actor's key signs (INV_NoForgery)
+  "MC_EmbeddedSigner_Red_Key.cfg EmbeddedSigner.tla RED" # a mismatched key signs (INV_Verifiable)
+  "MC_EmbeddedSigner_Red_KeyType.cfg EmbeddedSigner.tla RED" # an unsupported key type signs (INV_Verifiable)
+  "MC_EmbeddedSigner_Red_Bypass.cfg EmbeddedSigner.tla RED" # a bypassing caller signs (INV_UnderDac)
+  "MC_EmbeddedSigner_Red_Skip.cfg EmbeddedSigner.tla RED" # one entry point skips admission (INV_NoForgery)
+  "MC_EmbeddedSigner_Red_Registry.cfg EmbeddedSigner.tla RED" # a registry key for the request DID signs (INV_PresentedOnly)
+  "MC_EmbeddedSigner_Red_Vacuity.cfg EmbeddedSigner.tla RED" # admitted calls do write (NothingWritten)
   "MC_SigningCredential_Green.cfg SigningCredential.tla GREEN"
   "MC_SigningCredential_Red_Format.cfg SigningCredential.tla RED"
   "MC_SigningCredential_Red_Expiry.cfg SigningCredential.tla RED"
@@ -230,15 +260,14 @@ RUNS=(
   "MC_HttpRouterComposition_Red_Fallback.cfg HttpRouterComposition.tla RED"
   "MC_HttpRouterComposition_Red_Twice.cfg HttpRouterComposition.tla RED"
   "MC_HttpRouterComposition_Red_Overdeny.cfg HttpRouterComposition.tla RED"
-  "MC_ChunkMerge_Green.cfg ChunkMerge.tla GREEN" # readers cut the text when a peer merge kept another edit's list
-  "MC_ChunkMerge_Red_TrustList.cfg ChunkMerge.tla RED" # reader trusts the list instead of cutting the text (INV_ReadsMatchText)
+  "MC_ChunkMerge_Green.cfg ChunkMerge.tla GREEN" # readers cut the merged text and a merge builds the chunks it lacks
   "MC_ChunkMerge_Red_NoHashCheck.cfg ChunkMerge.tla RED" # merge stores a chunk whose hash does not match (INV_NoForgedChunk)
   "MC_ChunkMerge_Red_MutableChunk.cfg ChunkMerge.tla RED" # merge lets a stored chunk change (INV_ChunksNeverChange)
   "MC_ChunkMerge_Green_Delete.cfg ChunkMerge.tla GREEN" # a chunk delete waits until its article is gone here
-  "MC_ChunkMerge_Red_NoDeleteGuard.cfg ChunkMerge.tla RED" # merge takes a peer's chunk delete while the article is live (INV_ListedChunksStay)
-  "MC_ChunkMerge_Red_ListedDeleteOnly.cfg ChunkMerge.tla RED" # merge holds back only a listed chunk's delete (INV_ListedChunksStay)
+  "MC_ChunkMerge_Red_NoDeleteGuard.cfg ChunkMerge.tla RED" # merge takes a peer's chunk delete while the article is live (INV_UsedChunksStay)
+  "MC_ChunkMerge_Red_UsedDeleteOnly.cfg ChunkMerge.tla RED" # merge holds back only the delete of a chunk the text uses (INV_UsedChunksStay)
   "MC_ChunkMerge_Red_RefuseDelete.cfg ChunkMerge.tla RED" # merge refuses an early chunk delete for good (INV_DeletesNotLost)
-  "MC_ChunkMerge_Red_UnstoredDelete.cfg ChunkMerge.tla RED" # a chunk delete merges before its chunk's first block (INV_ListedChunksStay)
+  "MC_ChunkMerge_Red_UnstoredDelete.cfg ChunkMerge.tla RED" # a chunk delete merges before its chunk's first block (INV_UsedChunksStay)
   "MC_ChunkMerge_Red_NoRebuild.cfg ChunkMerge.tla RED" # a merge keeps another peer's text and builds none of its chunks (INV_TextChunksStored)
   "MC_ChunkMerge_Red_SignedChunkIds.cfg ChunkMerge.tla RED" # signed chunk blocks give one chunk a document per peer (INV_EachChunkOnce)
   "MC_ChunkMerge_Green_Encrypted.cfg ChunkMerge.tla GREEN" # an encrypted text's chunks come with its article, not from the rebuild
@@ -249,9 +278,8 @@ RUNS=(
   "MC_ChunkRead_Red_SharedMemo.cfg ChunkRead.tla RED" # parent decision outlives its query (INV_ShownIsLiveAndReadable)
   "MC_ChunkRead_Red_NoMergedCheck.cfg ChunkRead.tla RED" # a chunk that arrived first is served as public (INV_ServedIsReadable)
   "MC_ChunkRead_Red_NoGrantCheck.cfg ChunkRead.tla RED" # revoked reader still sees chunks (INV_ShownIsLiveAndReadable)
-  "MC_ChunkRead_Red_NoListCheck.cfg ChunkRead.tla RED" # chunks dropped by an edit still show (INV_ShownIsTheText)
+  "MC_ChunkRead_Red_NoCutCheck.cfg ChunkRead.tla RED" # chunks dropped by an edit still show (INV_ShownIsTheText)
   "MC_ChunkRead_Red_NoResolveCheck.cfg ChunkRead.tla RED" # a chunk of an unknown collection is served as public (INV_ServedIsReadable)
-  "MC_ChunkRead_Red_TrustList.cfg ChunkRead.tla RED" # a padded list shows chunks of old text (INV_ShownIsTheText)
   "MC_ChunkRead_Red_NoOwnAppCheck.cfg ChunkRead.tla RED" # chunk collection's own app check skipped (INV_ShownPassesOwnApp)
   "MC_ChunkRead_Red_DelegationScope.cfg ChunkRead.tla RED" # a chunk delegation gets the article's own keys (INV_DelegatedKeyInScope)
   "MC_SelectedUpdate_Green.cfg SelectedUpdate.tla GREEN" # an update of a selected document loses only to a change of a field it depends on
@@ -405,11 +433,10 @@ RUNS=(
   "MC_OwnerObservation_Red_RegistrationSnapshot.cfg OwnerObservation.tla RED"
   "MC_OwnerObservation_Red_Visibility.cfg OwnerObservation.tla RED"
   "MC_OwnerObservation_Red_VisibilitySnapshot.cfg OwnerObservation.tla RED"
-  "MC_ParentChunks_Green.cfg ParentChunks.tla GREEN" # #2241: list and missing chunks in the parent's transaction, cascade delete
-  "MC_ParentChunks_Red_SeparateTxn.cfg ParentChunks.tla RED" # chunks created in a follow-up transaction (INV_ListedChunksExist)
+  "MC_ParentChunks_Green.cfg ParentChunks.tla GREEN" # #2241: text and missing chunks in the parent's transaction, cascade delete
+  "MC_ParentChunks_Red_SeparateTxn.cfg ParentChunks.tla RED" # chunks created in a follow-up transaction (INV_TextChunksExist)
   "MC_ParentChunks_Red_NoCascade.cfg ParentChunks.tla RED" # delete leaves chunks behind (INV_NoChunkOfDeletedParent)
   "MC_ParentChunks_Red_NoValidation.cfg ParentChunks.tla RED" # stale update after a delete creates chunks (INV_NoChunkOfDeletedParent)
-  "MC_ParentChunks_Red_CreateWithoutList.cfg ParentChunks.tla RED" # signed create blocks without the list, first update ties (INV_ListMatchesText)
   "MC_ParentChunks_Red_NoLookup.cfg ParentChunks.tla RED" # a write creates chunks that arrived first, a valid create fails (INV_ValidWritesSucceed)
   "MC_ChunkFollow_Green.cfg ChunkFollow.tla GREEN" # #2310: a chunk's push and sync follow its parent
   "MC_ChunkFollow_Red_OwnFilter.cfg ChunkFollow.tla RED" # filter run on the chunk drops every chunk (INV_ChunksFollowParent)
@@ -530,8 +557,25 @@ RUNS=(
   "MC_StatementAtomicity_Red_NoSideEffectRollback.cfg StatementAtomicity.tla RED" # failed statement leaves callback side effects
   "MC_StatementAtomicity_Red_NextOperationSkipsCleanup.cfg StatementAtomicity.tla RED" # next statement crosses pending cancellation cleanup
   "MC_StatementAtomicity_Red_CommitSkipsCleanup.cfg StatementAtomicity.tla RED" # transaction commits before cancellation cleanup
-  "MC_EventOrder_Green.cfg EventOrder.tla GREEN"
-  "MC_EventOrder_Red_Arrival.cfg EventOrder.tla RED"
+  "MC_EventOrder_Green.cfg EventOrder.tla GREEN" # #3268: events go out in commit order, after hooks, only for commits, none lost
+  "MC_EventOrder_Red_Arrival.cfg EventOrder.tla RED" # dispatch ignores the floors (Ordered)
+  "MC_EventOrder_Red_ReceiptRegress.cfg EventOrder.tla RED" # a later commit gets a lower receipt (INV_CommitOrder)
+  "MC_EventOrder_Red_NoFloorClamp.cfg EventOrder.tla RED" # an empty commit goes out at its old snapshot (Ordered)
+  "MC_EventOrder_Red_DispatchBeforeAttach.cfg EventOrder.tla RED" # completes before the hand-over, events lost (INV_CommittedEventsKept)
+  "MC_EventOrder_Red_DispatchDuringHooks.cfg EventOrder.tla RED" # events go out while hooks run (INV_HooksBeforeEvents)
+  "MC_EventOrder_Red_AbortPublishes.cfg EventOrder.tla RED" # an aborted commit's events go out (INV_OnlyCommitted)
+  "MC_EventOrder_Red_NotMinSeq.cfg EventOrder.tla RED" # dispatch sends any ready commit (INV_CommitOrder)
+  "MC_ChangeDelivery_Green_Closing.cfg ChangeDelivery.tla GREEN" # #3268: subscribe, then read from the cursor on every wake: once, in order, eventually (SSE)
+  "MC_ChangeDelivery_Green_Coalescing.cfg ChangeDelivery.tla GREEN" # the same over document change notifications
+  "MC_ChangeDelivery_Red_SilentLoss.cfg ChangeDelivery.tla RED" # a drop nobody counts (INV_LossCounted)
+  "MC_ChangeDelivery_Red_ReadBeforeSubscribe.cfg ChangeDelivery.tla RED" # read, then subscribe (EventuallyObserved)
+  "MC_ChangeDelivery_Red_JournalSkipsMerge.cfg ChangeDelivery.tla RED" # a merge gets no row (EventuallyObserved)
+  "MC_ChangeDelivery_Red_ReMergeAppends.cfg ChangeDelivery.tla RED" # no once key: a re-merged block gets a second row (INV_ExactlyOnce)
+  "MC_ChangeDelivery_Red_CounterNoWake.cfg ChangeDelivery.tla RED" # Node::subscribe: a counted drop wakes nobody (EventuallyObserved)
+  "MC_ChangeDelivery_Red_WakeBeforeState.cfg ChangeDelivery.tla RED" # the wake precedes the visible update (EventuallyObserved)
+  "MC_ChangeDelivery_Red_CursorNotDurable.cfg ChangeDelivery.tla RED" # the cursor is not saved with what was observed (INV_ExactlyOnce)
+  "MC_ChangeDelivery_Red_GateOff.cfg ChangeDelivery.tla RED" # the gate shows a deleted or unreadable document's row (INV_HiddenNotShown)
+  "MC_ChangeDelivery_Red_HiddenStalls.cfg ChangeDelivery.tla RED" # a hidden row stops the cursor instead of being passed (EventuallyObserved)
   "MC_TransactionDecisions_Green.cfg TransactionDecisions.tla GREEN"
   "MC_TransactionDecisions_Red_OutsideRead.cfg TransactionDecisions.tla RED"
   "MC_DefraKeyClassifier_Green.cfg DefraKeyClassifier.tla GREEN"
@@ -608,7 +652,7 @@ RUNS=(
   "MC_EncryptedIndexAutocommit_Red_CacheRead.cfg EncryptedIndexAutocommit.tla RED" # decides from the cache and blind-writes: a concurrent add is lost (INV_NoLostIndex)
   "MC_EncryptedIndexAutocommit_Red_SingleAttempt.cfg EncryptedIndexAutocommit.tla RED" # one attempt: a valid add is refused with the conflict (INV_NoValidRefused)
   "MC_Truncate_Green.cfg Truncate.tla GREEN" # #2321: truncate checks nac and chunk, then for a filter branchable, txn and shape, before a delete that is durable at once and empties a view's cache
-  "MC_Truncate_Red_Chunk.cfg Truncate.tla RED" # chunk check left out: a truncate empties a chunk collection its parents still list (INV_NoRemovalFromChunks)
+  "MC_Truncate_Red_Chunk.cfg Truncate.tla RED" # chunk check left out: a truncate empties a chunk collection its parents still use (INV_NoRemovalFromChunks)
   "MC_Truncate_Red_Nac.cfg Truncate.tla RED" # permission check left out: a caller without CollectionTruncate removes documents (INV_NoRemovalWithoutPermission)
   "MC_Truncate_Red_Branchable.cfg Truncate.tla RED" # branchable check left out: a filtered truncate splits shared history (INV_FilteredNeverOnBranchable)
   "MC_Truncate_Red_Txn.cfg Truncate.tla RED" # transaction check left out, as before: a filter on the txn view removes an uncommitted match (INV_FilteredRemovesOnlyCommittedMatches)
@@ -675,6 +719,11 @@ RUNS=(
   "MC_LensIndexAnswer_Red_SkipIfOwed.cfg LensIndexAnswer.tla RED" # merge skips owing while a record stands (INV_IndexMatchesReads)
   "MC_LensIndexAnswer_Red_NoTokenCheck.cfg LensIndexAnswer.tla RED" # rebuild clears a newer record (INV_IndexMatchesReads)
   "MC_LensIndexAnswer_Red_TrustPlan.cfg LensIndexAnswer.tla RED" # scan trusts a plan made before an owing merge (INV_ScanMatchesReads)
+  "MC_LensIndexAnswer_Red_WalkStamps.cfg LensIndexAnswer.tla RED" # a settlement walk saves the document at the active version (INV_ReadsFollowWrites)
+  "MC_MaterializeResume_Green.cfg MaterializeResume.tla GREEN" # a rebuild walks every document at its level, whatever a stopped walk left
+  "MC_MaterializeResume_Red_Resume.cfg MaterializeResume.tla RED" # a materialization resumes an owed reindex's cursor (INV_RebuiltAll)
+  "MC_MaterializeResume_Red_ResumeAnyMode.cfg MaterializeResume.tla RED" # a write-back rebuild resumes a settlement's cursor (INV_RebuiltAll)
+  "MC_MaterializeResume_Red_SettleIgnoresMode.cfg MaterializeResume.tla RED" # a settlement resumes a write-back record without writing back (INV_RebuiltAll)
   "MC_VerifySignature_Green_Pool.cfg VerifySignature.tla GREEN" # #2724: with no transaction, NAC, block and document ACP read one read-only view
   "MC_VerifySignature_Green_Txn.cfg VerifySignature.tla GREEN" # #2724: in the caller's transaction, all three read its view, pending writes included
   "MC_VerifySignature_Red_NoNac.cfg VerifySignature.tla RED" # NAC check left out (INV_VerifiedAtOnePoint)
@@ -758,6 +807,14 @@ RUNS=(
   "MC_VerifiedRead_Red_BusyUncapped.cfg VerifiedRead.tla RED" # busy retry without a patience asks past BUSY_PATIENCE (INV_AttemptsBounded)
   "MC_VerifiedRead_Red_PausesOnly.cfg VerifiedRead.tla RED" # patience counts only the pauses: a slow busy node carries asks past BUSY_PATIENCE (INV_AttemptsBounded)
   "MC_VerifiedRead_Red_UndrawnPause.cfg VerifiedRead.tla RED" # patience checked against the shortest pause, the drawn one slept: an ask past BUSY_PATIENCE (INV_AttemptsBounded)
+  "MC_ArchiveOnDelete_Green.cfg ArchiveOnDelete.tla GREEN" # a deleted document grants nothing, no grant outlives the archive, and the archive settles
+  "MC_ArchiveOnDelete_Green_NoDrop.cfg ArchiveOnDelete.tla GREEN" # earlier changes kept: Vera's refusal alone keeps a renewed grant off the archived object
+  "MC_ArchiveOnDelete_Red_GrantAfterArchive.cfg ArchiveOnDelete.tla RED" # changes kept and an archived object takes a grant: a renewed grant lands after the archive (INV_NoGrantAfterArchive)
+  "MC_ArchiveOnDelete_Red_DeleteWithoutAuthority.cfg ArchiveOnDelete.tla RED" # a writer deletes without authority to archive (INV_DeletedByOwner)
+  "MC_ArchiveOnDelete_Red_NoOverlay.cfg ArchiveOnDelete.tla RED" # an owed archive denies nobody: the reader is allowed on the deleted document (INV_DeletedGrantsNothing)
+  "MC_ArchiveOnDelete_Red_HistoryForAll.cfg ArchiveOnDelete.tla RED" # an owed archive leaves the commit history to everyone: the reader reads a deleted document's history (INV_HistoryOnlyToDeleter)
+  "MC_ArchiveOnDelete_Red_OwedRegistrationFirst.cfg ArchiveOnDelete.tla RED" # the owed registration decides before the owed archive: the creator reads its deleted document (INV_DeletedGrantsNothing)
+  "MC_ArchiveOnDelete_Red_UnregisteredFirst.cfg ArchiveOnDelete.tla RED" # the unregistered rule decides before the owed archive: a dropped object's deleted document is public (INV_DeletedGrantsNothing)
   "MC_FollowDeployment_Green.cfg FollowDeployment.tla GREEN" # takeovers void any part of the chain: no void decision, a revocation always denies, nothing lost, owed again settles
   "MC_FollowDeployment_Green_Window.cfg FollowDeployment.tla GREEN" # a journal of one entry: a takeover that voids the pruned one fails closed
   "MC_FollowDeployment_Red_KeepsCache.cfg FollowDeployment.tla RED" # decisions cached by revision alone: one from the void chain is served (INV_NoVoidDecision)
@@ -768,6 +825,15 @@ RUNS=(
   "MC_FollowDeployment_Red_NoMark.cfg FollowDeployment.tla RED" # replay start not written down: a refused replay cut short is held and its revocation forgotten (INV_RevocationDenies)
   "MC_FollowDeployment_Red_NoDeliveryGate.cfg FollowDeployment.tla RED" # a checked term admits before its owed changes reach the outbox (INV_RevocationDenies)
   "MC_FollowDeployment_Red_CollapsesBatch.cfg FollowDeployment.tla RED" # only the first change of an object handed back together is owed: the revocation after it is lost (INV_RevocationDenies)
+  "MC_FollowDeploymentRecovery_Green.cfg FollowDeploymentRecovery.tla GREEN" # an uncovered takeover is rebuilt from the node's own ledger in pages, across a crash and a second takeover: nothing lost is left unowed when the node decides, a revocation denies, the pass ends
+  "MC_FollowDeploymentRecovery_Green_OneRecordPages.cfg FollowDeploymentRecovery.tla GREEN" # the same with pages of one record
+  "MC_FollowDeploymentRecovery_Red_NoGate.cfg FollowDeploymentRecovery.tla RED" # deciding while the journal is closed: a lost revocation not owed yet lets the grant through (INV_RevocationDenies)
+  "MC_FollowDeploymentRecovery_Red_NoHandOver.cfg FollowDeploymentRecovery.tla RED" # a page's lost records never reach the outbox: the node reopens with them unowed (INV_NothingLost)
+  "MC_FollowDeploymentRecovery_Red_CursorFirst.cfg FollowDeploymentRecovery.tla RED" # the cursor is written before the page is handed over: a crash between loses the page (INV_NothingLost)
+  "MC_FollowDeploymentRecovery_Red_CompleteEveryPage.cfg FollowDeploymentRecovery.tla RED" # a page that stopped at its limit marks the pass complete: later records are never checked (INV_NothingLost)
+  "MC_FollowDeploymentRecovery_Red_NeverDone.cfg FollowDeploymentRecovery.tla RED" # the source never says the pass is over: the node never reopens (LIVE_RecoveryEnds)
+  "MC_FollowDeploymentRecovery_Red_NoTermFence.cfg FollowDeploymentRecovery.tla RED" # a cursor of an older term is resumed: what a second takeover lost behind it is never checked (INV_NothingLost)
+  "MC_FollowDeploymentRecovery_Red_NoSharedFence.cfg FollowDeploymentRecovery.tla RED" # a pass that ends after a second outbox asked reopens: what the takeover voided of that node's is owed by nobody (INV_TheirsNotLost)
   "MC_TakeoverReport_Green.cfg TakeoverReport.tla GREEN" # a checked term is reported once, complete, with its own cut, and a closed check says so
   "MC_TakeoverReport_Red_NoPublish.cfg TakeoverReport.tla RED" # a checked term is not published (INV_Published)
   "MC_TakeoverReport_Red_NoReason.cfg TakeoverReport.tla RED" # an unrestorable replay is unnamed (INV_Classified)
@@ -904,7 +970,7 @@ RUNS=(
   "MC_AdministrativeRelationship_Red_Active.cfg AdministrativeRelationship.tla RED" # INV_Active
   "MC_ChildPagePerParent_Green.cfg ChildPagePerParent.tla GREEN" # each parent completes its exact ordered child page
   "MC_ChildPagePerParent_Green_ShortParent.cfg ChildPagePerParent.tla GREEN" # a parent with fewer children than the limit takes them all
-  "MC_ChildPagePerParent_Red_GlobalBound.cfg ChildPagePerParent.tla RED" # one global child bound lets the first parent consume the bound and leaves B without its page
+  "MC_ChildPagePerParent_Red_GlobalBound.cfg ChildPagePerParent.tla RED" # one global child bound lets the first parent consume the bound and leaves B without its page (INV_SecondParentKeepsPage)
   "MC_ChildPagePerParent_Red_NoEarlyStop.cfg ChildPagePerParent.tla RED" # the per-parent scan reads past a full page (INV_PageWithinLimit)
   "MC_AdministrativeRelationship_Red_NacBound.cfg AdministrativeRelationship.tla RED" # INV_NacBound
   "MC_AdministrativeRelationship_Red_Bypass.cfg AdministrativeRelationship.tla RED" # INV_Bypass
@@ -915,6 +981,12 @@ RUNS=(
   "MC_AdministrativeRelationship_Red_Revocation.cfg AdministrativeRelationship.tla RED" # INV_Revocation
   "MC_AdministrativeRelationship_Red_Rollback.cfg AdministrativeRelationship.tla RED" # INV_Rollback
   "MC_AdministrativeRelationship_Red_Route.cfg AdministrativeRelationship.tla RED" # INV_EmbedderRoute
+  "MC_ParentRegistration_Green.cfg ParentRegistration.tla GREEN" # a document is registered and linked only under a parent its actor is permitted on, and keeps one
+  "MC_ParentRegistration_Red_UngatedCreate.cfg ParentRegistration.tla RED" # AuthorizedAtWrite
+  "MC_ParentRegistration_Red_UngatedReplica.cfg ParentRegistration.tla RED" # AuthorizedAtWrite
+  "MC_ParentRegistration_Red_UngatedLink.cfg ParentRegistration.tla RED" # AuthorizedAtWrite
+  "MC_ParentRegistration_Red_LastUnlink.cfg ParentRegistration.tla RED" # RegistrationHasParent
+  "MC_ParentRegistration_Red_MovedField.cfg ParentRegistration.tla RED" # FieldNamesAdmittedParent
   "MC_GenesisReadAccess_Green.cfg GenesisReadAccess.tla GREEN" # a signed genesis grants its opted-in reader once, at the first registration
   "MC_GenesisReadAccess_Red_Replay.cfg GenesisReadAccess.tla RED" # INV_RevocationStands
   "MC_GenesisReadAccess_Red_Address.cfg GenesisReadAccess.tla RED" # INV_OptedIn
@@ -1085,6 +1157,9 @@ RUNS=(
   "MC_CommitFence_Red_UndoNoWake.cfg CommitFence.tla RED" # caller's undo reaches zero without a wake: a reader sleeps forever (LIVE_ReaderProceeds)
   "MC_CommitFence_Red_SkipBegun.cfg CommitFence.tla RED" # owner abandons a commit that began at hand-off once its caller left (INV_BegunEndRuns)
   "MC_CommitFence_Red_RunAbandoned.cfg CommitFence.tla RED" # owner commits an end whose caller left before it began (INV_AbandonedEndDiscarded)
+  "MC_CommitResponseWait_Green.cfg CommitResponseWait.tla GREEN" # a live server answers a wedged commit by its own bound, and unknown does not cancel the ticket
+  "MC_CommitResponseWait_Red_NoBound.cfg CommitResponseWait.tla RED" # no server bound: a wedged commit leaves the client waiting (ClientSettles)
+  "MC_CommitResponseWait_Red_Cancel.cfg CommitResponseWait.tla RED" # bound answers by cancelling the commit (UnknownIsNotAbort)
   "MC_TxnAdmission_Green.cfg TxnAdmission.tla GREEN" # the embedder reaches its transactions as any identity; HTTP only its own
   "MC_TxnAdmission_Red_IdentityOnFfi.cfg TxnAdmission.tla RED" # embedded registry keys by identity, #2335 (INV_FfiReaches)
   "MC_TxnAdmission_Red_EmbedderOnHttp.cfg TxnAdmission.tla RED" # HTTP registry gives every request one key (INV_HttpOwnerOnly)
@@ -1485,8 +1560,9 @@ RUNS=(
   "MC_DocumentSave_Red_SplitTxn.cfg DocumentSave.tla RED" # a delete between lookup and write forks the save (INV_NoFork)
   "MC_RelationLinkConflict_Green.cfg RelationLinkConflict.tla GREEN" # a validated link read commits when empty and conflicts after a later first link
   "MC_RelationLinkConflict_Red_Unvalidated.cfg RelationLinkConflict.tla RED" # an unvalidated link read lets both links commit (INV_SecondLinkIsRefused)
-  "MC_ChildLimitPaging_Green.cfg ChildLimitPaging.tla GREEN" # each ordered child page is collected per parent
-  "MC_ChildLimitPaging_Red_UnorderedStop.cfg ChildLimitPaging.tla RED" # an unordered early stop loses a later parent's page (INV_EveryParentHasPage)
+  "MC_ChildLimitPaging_Green.cfg ChildLimitPaging.tla GREEN" # unordered scans run to completion before paging
+  "MC_ChildLimitPaging_Ordered.cfg ChildLimitPaging.tla GREEN" # ordered scans can stop at offset plus limit
+  "MC_ChildLimitPaging_Red_UnorderedStop.cfg ChildLimitPaging.tla RED" # stopping an unordered scan returns the wrong page (INV_CompletedPage)
   "MC_BackupImportWritePath_Green.cfg BackupImportWritePath.tla GREEN" # every import write takes its edge's request path: signed, replicated, owned, drained as one request
   "MC_BackupImportWritePath_Red_OwnMutator.cfg BackupImportWritePath.tla RED" # the old private mutator writes unsigned blocks (INV_ImportSigned)
   "MC_BackupImportWritePath_Red_NoSigningChoice.cfg BackupImportWritePath.tla RED" # the import drops the node's signing choice (INV_ImportSigned)

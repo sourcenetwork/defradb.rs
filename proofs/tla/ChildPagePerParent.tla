@@ -8,6 +8,12 @@
 \* the shared scan bound, so a later parent can be left without its page.
 \* A page must also stop at the limit: a scan that kept reading past it would
 \* hand the parent more children than it asked for.
+\* What must never happen: the scan stops while a parent is still short of the
+\* page it was owed, or a page runs past the limit.
+\*
+\* The Rust it models: TypeJoinMany::next_per_parent in
+\* crates/engine/query/src/plan/type_join/type_join_many/children.rs, and
+\* TypeJoinMany::with_limit and with_offset in node.rs beside it.
 
 EXTENDS Naturals, FiniteSets, Sequences
 
@@ -83,10 +89,12 @@ Global ==
   /\ cursor' = cursor + 1                                    \* move to the next child
   /\ scans' = scans + 1                                      \* and spend one unit of the bound
 
-\* A step is a per-parent read, or a global read when the model runs in global mode.
+\* A step is a per-parent read in per-parent mode, and a read of the one shared
+\* scan in global mode: in global mode no parent restarts a scan of its own.
 Next ==
-  \/ \E p \in Parents : PerParent(p)
-  \/ (Mode = "Global" /\ Global)
+  IF Mode = "PerParent"
+    THEN \E p \in Parents : PerParent(p) \* each parent reads its own scan
+    ELSE Global                         \* every parent shares the global scan
 
 \* Start in Init, then take steps.
 Spec == Init /\ [][Next]_vars
@@ -110,8 +118,15 @@ INV_PageIsOrderedPrefix ==
 INV_PageWithinLimit ==
   \A p \in Parents : Len(page[p]) <= PageLen(p)
 
-\* RED check: once the global bound is spent, parent "b" must still have its
-\* full page. Global mode breaks it, since "a" spends the whole bound.
-INV_RedSecondParentKeepsPage == scans = Limit => page["b"] = RequiredPage("b")
+\* The scan has stopped: no read can take another child.
+Finished ==
+  IF Mode = "PerParent"
+    THEN \A p \in Parents : Len(page[p]) >= ScanStop(p) \* every per-parent scan is done
+    ELSE ~(scans < Limit /\ cursor <= 4)                \* the shared scan is spent or empty
+
+\* Promise: when the scan stops, the second parent holds the whole page it is
+\* owed, however much the first parent took before it. Global mode breaks it,
+\* since "a" spends the whole shared bound.
+INV_SecondParentKeepsPage == Finished => page["b"] = RequiredPage("b")
 
 ====

@@ -30,12 +30,20 @@ pub fn typed(command: &PolicyCommand<'_>) -> Result<PolicyCmd, CommandError> {
         PolicyAction::RegisterObject => {
             PolicyCmd::RegisterObject(object(command.resource, command.object_id))
         }
+        PolicyAction::RegisterUnderParent {
+            resource,
+            object_id,
+        } => PolicyCmd::RegisterUnderParent {
+            object: object(command.resource, command.object_id),
+            parent: object(resource, object_id),
+        },
         PolicyAction::SetRelationship { relation, subject } => {
             PolicyCmd::SetRelationship(relationship(relation, subject)?)
         }
         PolicyAction::DeleteRelationship { relation, subject } => {
             PolicyCmd::DeleteRelationship(relationship(relation, subject)?)
         }
+        PolicyAction::ArchiveObject => archive_object(command.resource, command.object_id),
     })
 }
 

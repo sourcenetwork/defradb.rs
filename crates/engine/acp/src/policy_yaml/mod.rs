@@ -37,7 +37,7 @@ fn hash_policy_fields(policy: &ParsedPolicy) -> Vec<u8> {
     let mut resources: Vec<_> = policy.resources.iter().collect();
     resources.sort_by(|a, b| a.name.cmp(&b.name));
 
-    for resource in resources {
+    for resource in &resources {
         hasher.update(resource.name.as_bytes());
 
         let mut relations: Vec<_> = resource.relations.iter().collect();
@@ -54,6 +54,60 @@ fn hash_policy_fields(policy: &ParsedPolicy) -> Vec<u8> {
         }
     }
 
+    let mut individual: Vec<_> = resources
+        .iter()
+        .flat_map(|resource| {
+            resource
+                .relations
+                .iter()
+                .map(move |relation| (resource.name.as_str(), relation))
+        })
+        .chain(
+            policy
+                .actor
+                .relations
+                .iter()
+                .map(|relation| ("actor", relation)),
+        )
+        .filter(|(_, relation)| {
+            relation
+                .types
+                .iter()
+                .any(|ty| ty.trim() == "actor:individual")
+        })
+        .collect();
+    individual.sort_by(|(a, b), (c, d)| (a, &b.name).cmp(&(c, &d.name)));
+    if !individual.is_empty() {
+        hasher.update(b"defra/individual-actor/v1\0");
+        for (resource, relation) in individual {
+            for part in [resource, relation.name.as_str()] {
+                hasher.update((part.len() as u64).to_be_bytes());
+                hasher.update(part.as_bytes());
+            }
+            let mut types = relation.types.clone();
+            types.sort();
+            hasher.update((types.len() as u64).to_be_bytes());
+            for ty in types {
+                hasher.update((ty.len() as u64).to_be_bytes());
+                hasher.update(ty.as_bytes());
+            }
+        }
+    }
+
+    if resources.iter().any(|r| r.create.is_some()) {
+        let mut gated = Sha256::new();
+        gated.update(b"defra/parent-registration/v1\0");
+        gated.update(hasher.finalize());
+        for resource in resources {
+            if let Some(rule) = &resource.create {
+                for part in [&resource.name, &rule.parent, &rule.requires] {
+                    gated.update((part.len() as u64).to_be_bytes());
+                    gated.update(part.as_bytes());
+                }
+            }
+        }
+        return gated.finalize().to_vec();
+    }
     hasher.finalize().to_vec()
 }
 
@@ -78,6 +132,7 @@ pub struct ParsedPolicy {
 #[serde(deny_unknown_fields)]
 pub struct PolicyResource {
     pub name: String,
+    pub create: Option<zanzibar::CreateRule>,
     #[serde(default)]
     pub description: String,
     #[serde(default)]
@@ -119,6 +174,7 @@ pub struct PolicyActor {
 ///
 /// Each type names an allowed subject shape:
 /// - `actor`               → an actor DID or the all-actors wildcard `*`
+/// - `actor:individual`    → an individual actor DID only
 /// - `resource`            → a cross-object edge to an object of `resource`
 /// - `resource->relation`  → a userset `resource:obj#relation`
 ///
@@ -133,6 +189,8 @@ fn build_subject_restriction(types: &[String]) -> crate::error::Result<Option<Su
         let ty = ty.trim();
         let restriction = if ty == "actor" {
             SubjectRestriction::Actor
+        } else if ty == "actor:individual" {
+            SubjectRestriction::Entity
         } else if let Some((resource, relation)) = ty.split_once("->") {
             if resource.is_empty() || relation.is_empty() {
                 return Err(crate::error::Error::InvalidRelation(format!(
@@ -263,6 +321,7 @@ pub fn build_policy(parsed: &ParsedPolicy, counter: u64) -> crate::error::Result
         resources.push(Resource {
             name: res.name.clone(),
             description: res.description.clone(),
+            create: res.create.clone(),
             relations,
         });
     }
@@ -275,6 +334,7 @@ pub fn build_policy(parsed: &ParsedPolicy, counter: u64) -> crate::error::Result
         description: parsed.description.clone(),
         actor: Some(Resource {
             name: "actor".into(),
+            create: None,
             description: String::new(),
             relations: parsed
                 .actor

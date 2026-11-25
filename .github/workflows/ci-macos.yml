@@ -20,11 +20,82 @@ concurrency:
   cancel-in-progress: ${{ github.event_name != 'merge_group' && github.ref != 'refs/heads/main' }}
 
 jobs:
+  # A queue entry skips macOS when it reuses its pull request run, the rule
+  # ci.yml's CI scope applies (#3315): a passed heavy suite stamped with this
+  # entry's tree, and a macOS run on the pull request stamped with that same tree.
+  reuse:
+    name: macOS reuse
+    if: github.event_name == 'merge_group'
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      checks: read
+      contents: read
+      pull-requests: read
+    outputs:
+      reused: ${{ steps.decide.outputs.reused }}
+    steps:
+      - id: decide
+        uses: actions/github-script@v9
+        with:
+          script: |
+            let reused = false;
+            const number = (context.payload.merge_group.head_ref.match(/\/pr-(\d+)-[0-9a-f]+$/) || [])[1];
+            if (number) {
+              const tree = (await github.rest.git.getCommit({ ...context.repo, commit_sha: context.sha })).data.tree.sha;
+              const head = (await github.rest.pulls.get({ ...context.repo, pull_number: Number(number) })).data.head.sha;
+              // A stamp counts only on a job of this repository's own pull_request run of
+              // the workflow, never on a check run another workflow or an app created.
+              const passed = async (workflow, sha, name) => {
+                const runs = (await github.rest.actions.listWorkflowRuns({ ...context.repo, workflow_id: workflow, head_sha: sha, event: 'pull_request', per_page: 20 })).data.workflow_runs;
+                const jobs = [];
+                for (const run of runs) {
+                  jobs.push(...(await github.paginate(github.rest.actions.listJobsForWorkflowRun, { ...context.repo, run_id: run.id, filter: 'latest', per_page: 100 }))
+                    .filter((j) => j.name === name && j.conclusion === 'success'));
+                }
+                return jobs;
+              };
+              const gates = await passed('ci.yml', head, 'Merge gate');
+              let stamped = false;
+              for (const gate of gates) {
+                const notes = await github.paginate(github.rest.checks.listAnnotations, { ...context.repo, check_run_id: gate.id });
+                if (notes.some((a) => a.title === 'Heavy suite passed' && a.message === `tree ${tree}`)) stamped = true;
+              }
+              let macos = false;
+              const stamps = await passed('ci-macos.yml', head, 'macOS passed');
+              for (const run of stamps) {
+                const notes = await github.paginate(github.rest.checks.listAnnotations, { ...context.repo, check_run_id: run.id });
+                if (notes.some((a) => a.message === `tree ${tree}`)) macos = true;
+              }
+              reused = stamped && macos;
+              core.info(`queue entry #${number}: stamped=${stamped} macOS stamped=${macos} reused=${reused}`);
+            }
+            core.setOutput('reused', reused ? 'true' : 'false');
+
   unit-tests:
     name: Unit tests
-    # Mirrors CI's heavy scope: the merge queue and main run it, a pull
-    # request does only with ci:macos or ci:full.
-    if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci:macos') || contains(github.event.pull_request.labels.*.name, 'ci:full')
+    needs: reuse
+    # Main runs it; a pull request does with ci:macos or ci:full; a queue entry
+    # does unless it reuses its pull request run. It is not a required check.
+    if: >-
+      always() &&
+      (github.event_name == 'push' ||
+       (github.event_name == 'pull_request' && (contains(github.event.pull_request.labels.*.name, 'ci:macos') || contains(github.event.pull_request.labels.*.name, 'ci:full'))) ||
+       (github.event_name == 'merge_group' && needs.reuse.outputs.reused != 'true'))
     uses: ./.github/workflows/unit-tests.yml
     with:
       os: macos-latest
+
+  # Records the tree the pull request run tested (the merge commit with its
+  # base), so the queue reuses this macOS run only for that exact tree.
+  stamp:
+    name: macOS passed
+    needs: unit-tests
+    if: github.event_name == 'pull_request' && needs.unit-tests.result == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/github-script@v9
+        with:
+          script: |
+            const tree = (await github.rest.git.getCommit({ ...context.repo, commit_sha: context.sha })).data.tree.sha;
+            core.notice(`tree ${tree}`, { title: 'macOS passed' });

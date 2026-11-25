@@ -61,6 +61,9 @@ pub struct DbOptions {
     /// The gate every index backfill passes before each batch. `None` lets
     /// every batch run.
     pub index_build_gate: Option<Arc<dyn crate::index::build_gate::IndexBuildGate>>,
+    /// The gate explicit transaction commits pass before they are handed to
+    /// their owner. `None` lets every commit run.
+    pub commit_gate: Option<Arc<dyn crate::txn::commit_gate::CommitGate>>,
     /// Documents an index backfill may index in one transaction. `None` uses
     /// the built-in page size.
     pub backfill_batch_size: Option<usize>,
@@ -89,6 +92,7 @@ impl std::fmt::Debug for DbOptions {
             .field("replication_filter", &self.replication_filter.is_some())
             .field("deferred_index_sweep", &self.deferred_index_sweep)
             .field("index_build_gate", &self.index_build_gate.is_some())
+            .field("commit_gate", &self.commit_gate.is_some())
             .field("backfill_batch_size", &self.backfill_batch_size)
             .finish()
     }
@@ -150,6 +154,13 @@ impl DbOptions {
         gate: Arc<dyn crate::index::build_gate::IndexBuildGate>,
     ) -> Self {
         self.index_build_gate = Some(gate);
+        self
+    }
+
+    /// Holds every explicit transaction commit at `gate` before it is handed
+    /// to its owner.
+    pub fn with_commit_gate(mut self, gate: Arc<dyn crate::txn::commit_gate::CommitGate>) -> Self {
+        self.commit_gate = Some(gate);
         self
     }
 

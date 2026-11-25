@@ -68,12 +68,9 @@ pub(super) fn validate_chunks_not_modified(
             }
         }
         for chunked in &old_col.chunked_fields {
-            let list = chunked.list_field();
-            if new_col.field_by_name(&chunked.field_name).is_none()
-                || new_col.field_by_name(&list).is_none()
-            {
+            if new_col.field_by_name(&chunked.field_name).is_none() {
                 errs.push(format!(
-                    "a chunked field and its chunk list cannot be removed. Field: {}.{}",
+                    "a chunked field cannot be removed. Field: {}.{}",
                     new_col.name, chunked.field_name
                 ));
             }

@@ -1,5 +1,5 @@
 use db::chunk::guard::{check_chunk_merge, ChunkMergeError};
-use db::chunk::list::text_hash;
+use db::chunk::hash::text_hash;
 use document::{Document, NormalValue};
 
 fn chunks() -> schema::CollectionVersion {

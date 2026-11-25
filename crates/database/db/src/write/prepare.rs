@@ -101,9 +101,6 @@ pub(crate) async fn prepare_keys_with_stores<S: Store + 'static>(
         return Ok(());
     }
     let Some(kms) = db.kms() else { return Ok(()) };
-    let collection = doc.collection().clone();
-    let config = crate::chunk::encryption::with_lists(config, &collection);
-    let config = config.as_deref();
     let mut prepared = WritePreparation::new(identity.collection_short_id, identity.doc_short_id);
     prepared.set_requires_kms_keys(true);
     let fields: Vec<_> = doc
@@ -331,6 +328,35 @@ where
             })
             .map_err(|error| query::error::QueryError::execution(error.to_string()))?;
             Ok(std::sync::Arc::from(response))
+        }
+        query::prepared::PreparedInputKind::RegistrationParent => {
+            let (actor, policy, child, parent, bearer): (
+                String,
+                String,
+                String,
+                String,
+                Option<String>,
+            ) = serde_json::from_slice(request.exact_request())
+                .map_err(|error| query::error::QueryError::execution(error.to_string()))?;
+            if context.creator().or(context.identity()) != Some(actor.as_str())
+                || context.bearer_token_for(&actor) != bearer
+            {
+                return Err(query::error::QueryError::permission_denied(
+                    "parent request differs from its creator",
+                ));
+            }
+            let provider = db
+                .document_acp()
+                .ok_or_else(|| query::error::QueryError::execution("missing document ACP"))?;
+            let actor = identity::Did::new(actor)
+                .map_err(|error| query::error::QueryError::execution(error.to_string()))?;
+            let resolved = acp::bound_to_request(provider, context)
+                .authorized_registration_parent(&actor, &policy, &child, &parent)
+                .await
+                .map_err(query::error::QueryError::from_acp)?;
+            let bytes = serde_json::to_vec(&resolved)
+                .map_err(|error| query::error::QueryError::execution(error.to_string()))?;
+            Ok(bytes.into())
         }
         query::prepared::PreparedInputKind::ProjectionAcp => {
             let fields: Vec<serde_json::Value> = serde_json::from_slice(request.exact_request())
@@ -702,12 +728,6 @@ impl<S: Store + 'static> crate::AutoCommitMutator<S> {
         mut modified_fields: Option<RapidHashSet<String>>,
     ) -> query::error::Result<Document> {
         let collection = self.get_collection_or_err(collection_name)?;
-        // Refuse before any key is minted or block signed for it.
-        crate::chunk::user_writes::refuse_list_writes(
-            collection.schema(),
-            &doc,
-            modified_fields.as_ref(),
-        )?;
         let generated_embeddings = if let Some(fields) = modified_fields.as_mut() {
             let generated = crate::search::embedding::set_embedding_with(
                 self.db.remote_inputs().embeddings(),
@@ -809,22 +829,9 @@ impl<S: Store + 'static> crate::AutoCommitMutator<S> {
                     .map_err(|e| query::error::QueryError::execution(e.to_string()))?,
             )
         };
-        // Sign a create with the chunk lists its attempt adds.
-        let mut with_lists = (modified_fields.is_none()
-            && !collection.schema().chunked_fields.is_empty())
-        .then(|| doc.clone());
-        if let Some(written) = with_lists.as_mut() {
-            crate::chunk::sync::set_lists(
-                collection.schema(),
-                written,
-                None,
-                context.encryption(),
-            )?;
-        }
-        let written = with_lists.as_mut().unwrap_or(&mut doc);
         prepare_keys_with_stores(
             &self.db,
-            written,
+            &mut doc,
             identity,
             modified_fields.as_ref(),
             context.encryption(),
@@ -833,14 +840,14 @@ impl<S: Store + 'static> crate::AutoCommitMutator<S> {
         )
         .await?;
 
-        let preparation = match written.write_preparation() {
+        let preparation = match doc.write_preparation() {
             Some(preparation) => Arc::clone(preparation),
             None => {
                 let preparation = Arc::new(WritePreparation::new(
                     identity.collection_short_id,
                     identity.doc_short_id,
                 ));
-                written.set_write_preparation(Arc::clone(&preparation));
+                doc.set_write_preparation(Arc::clone(&preparation));
                 preparation
             }
         };
@@ -851,7 +858,7 @@ impl<S: Store + 'static> crate::AutoCommitMutator<S> {
                     loop {
                         match crate::block::builder::compute_document_blocks_with_inputs(
                             collection.crdts(),
-                            written,
+                            &doc,
                             collection.schema(),
                             identity,
                             context.encryption(),
@@ -875,7 +882,7 @@ impl<S: Store + 'static> crate::AutoCommitMutator<S> {
                 } else {
                     crate::block::builder::compute_document_blocks(
                         collection.crdts(),
-                        written,
+                        &doc,
                         collection.schema(),
                         identity,
                         context.encryption(),
@@ -892,14 +899,8 @@ impl<S: Store + 'static> crate::AutoCommitMutator<S> {
                     schema: collection.schema_arc(),
                     computed: blocks,
                 }));
-                written.set_write_preparation(Arc::new(write));
+                doc.set_write_preparation(Arc::new(write));
             }
-        }
-        if let Some(preparation) = with_lists
-            .as_ref()
-            .and_then(|written| written.write_preparation())
-        {
-            doc.set_write_preparation(Arc::clone(preparation));
         }
         Ok(doc)
     }

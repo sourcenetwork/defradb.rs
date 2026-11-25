@@ -48,9 +48,11 @@ impl Submission {
             ) => Self::Refused {
                 reason: error.to_string(),
             },
-            Err(error @ Error::UnsupportedSubject(_)) => Self::Unsupported {
-                reason: error.to_string(),
-            },
+            Err(error @ (Error::UnsupportedSubject(_) | Error::UnsupportedArchive)) => {
+                Self::Unsupported {
+                    reason: error.to_string(),
+                }
+            }
             Err(
                 error @ (Error::OwedAuthorityUnavailable { .. }
                 | Error::DelegationOutsideWindow { .. }),
@@ -106,6 +108,15 @@ where
                 )
                 .await
         }
+        OwedOp::Archive => provider
+            .archive_doc_object(
+                &change.actor,
+                &tuple.policy_id,
+                &tuple.resource,
+                &tuple.object,
+            )
+            .await
+            .map(|()| true),
         OwedOp::Delete => {
             provider
                 .delete_relationship(

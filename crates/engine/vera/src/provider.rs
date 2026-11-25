@@ -158,6 +158,16 @@ pub trait VeraProvider: MaybeSendSync {
         true
     }
 
+    /// Whether a document's delete archives its object on this provider as
+    /// an owed change staged in the delete's transaction, refused before
+    /// commit unless the caller owns the object
+    /// (`acp::TransactionOutbox::stage_archive`). Such a provider archives
+    /// nothing after the commit ([`Self::archive_object_on_document_delete`]
+    /// is `false` for it).
+    fn archives_owed_on_delete(&self) -> bool {
+        false
+    }
+
     fn authorized_account(&self) -> String;
 
     async fn create_bearer_token(&self, did: &str) -> Result<String, ProviderError>;
@@ -273,6 +283,19 @@ pub trait VeraProvider: MaybeSendSync {
         resource: &str,
         object_id: &str,
     ) -> Result<(), ProviderError>;
+
+    async fn register_under_parent(
+        &self,
+        _bearer_token: &str,
+        _policy_id: &str,
+        _resource: &str,
+        _object_id: &str,
+        _parent: &acp::RegistrationParent,
+    ) -> Result<(), ProviderError> {
+        Err(ProviderError::Unsupported(
+            "parent-authorized registration".into(),
+        ))
+    }
 
     /// Register each of `objects` under `bearer_token` in one request the
     /// provider applies in order, all or none, at most
@@ -478,6 +501,25 @@ pub trait VeraProvider: MaybeSendSync {
         ))
     }
 
+    async fn verify_transport_sentinel(
+        &self,
+        _query: &acp::TransportSentinelQuery,
+    ) -> Result<bool, ProviderError> {
+        Err(ProviderError::Unsupported(
+            "verified transport sentinel".into(),
+        ))
+    }
+
+    async fn replica_group_member(
+        &self,
+        _group: &acp::ReplicaGroup,
+        _signer: &identity::Did,
+    ) -> Result<bool, ProviderError> {
+        Err(ProviderError::Unsupported(
+            "certified replica group membership".into(),
+        ))
+    }
+
     async fn verify_access(
         &self,
         policy_id: &str,
@@ -525,6 +567,11 @@ pub trait VeraProvider: MaybeSendSync {
     /// changes it confirmed on blocks a switch of its deployment's active
     /// device voided, to be owed again. A provider without terms takes none.
     fn owe_voided_to(&self, _sink: std::sync::Weak<dyn acp::OweAgain>) {}
+
+    /// Give the provider the node's own access-state source. A takeover that
+    /// may have voided more than the journal keeps rebuilds from it instead
+    /// of a new worker.
+    fn set_recovery_source(&self, _source: std::sync::Weak<dyn acp::RecoverySource>) {}
 
     /// What a caller's own delegation must name for this provider to act
     /// under it, with the deployment's genesis identity when the provider

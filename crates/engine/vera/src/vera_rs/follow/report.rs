@@ -5,21 +5,15 @@ use super::effect::Lost;
 /// A submission the deployment held again after it was sent again.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum Applied {
-    /// A registration or relationship change.
+    /// A registration, relationship change or archive.
     Change(Lost),
     /// A policy creation, named by its derived policy ID and its creator. A
     /// creation refused because the policy is there is held too.
     PolicyCreation { policy_id: String, creator: String },
-    /// An archive, named by the object it narrowed.
-    Archive {
-        policy_id: String,
-        resource: String,
-        object: String,
-        actor: Option<String>,
-    },
 }
 
-/// A submission whose effect the node cannot put back.
+/// A submission whose effect the node cannot put back. A refused archive is
+/// not one: the outbox owes it again like any change.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum Unrestorable {
     /// A policy creation refused when sent again: its documents cannot be
@@ -27,15 +21,6 @@ pub(crate) enum Unrestorable {
     PolicyCreation {
         policy_id: String,
         creator: String,
-        reason: String,
-    },
-    /// An archive refused when sent again: the access it narrowed may be
-    /// wide again.
-    Archive {
-        policy_id: String,
-        resource: String,
-        object: String,
-        actor: Option<String>,
         reason: String,
     },
 }

@@ -22,9 +22,8 @@
 \* finalized). A head older than the light client's freshness limit is not
 \* sent (head.rs recent): the light client would refuse it, and the node's
 \* next block brings a fresh one. The headers the node queued before the
-\* head was read are passed on behind it, less those the head makes old: one
-\* at or below the head in a term not above the head's (acp.rs
-\* headers_after). A header of a later term is passed on wherever it is: a
+\* head was read are passed on behind it (acp.rs prepend_head): verification
+\* of the fetched head can fail transiently. A later term is also passed on: a
 \* switch of the deployment's active device voids blocks above its cut, and
 \* the light client reads such a header below its head to learn its head
 \* was voided (acp-light-client header_sync.rs run_header_loop).
@@ -52,7 +51,7 @@
 \*                       accepted, so a block that finalizes in between is
 \*                       streamed (acp.rs subscribe_headers);
 \*   KeepLaterTerms      a queued header of a later term than the head is
-\*                       passed on even at or below it (acp.rs headers_after);
+\*                       passed on even at or below it (acp.rs prepend_head);
 \*   Verify              the light client's check of every header against
 \*                       its trusted key and freshness limit
 \*                       (acp-light-client header_sync.rs authenticate_header,
@@ -185,13 +184,11 @@ Forge ==
           queue' = Append(queue, Header(h, t, FALSE, TRUE, FALSE))    \* nothing certifies it
     /\ UNCHANGED <<finalized, term, staleTo, pc, head, lc, sentStale>>
 
-\* Whether the transport drops a queued header behind the head it sent: one
-\* the head makes old. With KeepLaterTerms only one of a term not above the
-\* head's; without it, any at or below the head.
+\* The transport keeps queued headers. The red mode drops a queued header
+\* at or below the prefetched head, including a later-term takeover.
 Dropped(h) ==
-    /\ ~h.first /\ head.height > 0                                    \* behind a sent head
+    /\ ~KeepLaterTerms /\ ~h.first /\ head.height > 0                 \* planted bug
     /\ h.height <= head.height                                        \* at or below it
-    /\ (h.term <= head.term \/ ~KeepLaterTerms)                       \* not a later term
 
 \* Whether the light client takes `h` over its head: a later term, or a
 \* greater height in the same term; with Verify only a certified, fresh one.

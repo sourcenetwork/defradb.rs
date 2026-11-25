@@ -44,6 +44,7 @@ mod policy_lookup;
 mod policy_nonce;
 pub mod projection;
 mod provider_command;
+pub mod recovery;
 pub mod replica;
 // Both persistent stores require `S: Store + Send + Sync`, which the wasm
 // LevelDB store cannot satisfy, so they are native-only.
@@ -72,12 +73,13 @@ pub use external::{
 };
 pub use identity::Identity;
 pub use local::{LocalDocumentACP, MemoryAcpStore};
-pub use object_registration::{AcpObject, RegistrationFailure};
+pub use object_registration::{AcpObject, RegistrationFailure, RegistrationParent};
 pub use outbox::{
     InFlight, NewOwedChange, OwedAuthority, OwedAuthorityKind, OwedChange, OwedChanges, OwedDenial,
     OwedDenials, OwedEntry, OwedFilter, OwedHold, OwedJournal, OwedOp, OwedOutcome, OwedRef,
     OwedState, OwedSubject, OwedTuple, OwedTupleState, OwedWait, OwedWhat, PreparedRequest,
-    RequestOutcome, StageRelationship, Staged, StagedCount, Submission, TransactionOutbox,
+    RequestOutcome, StageArchive, StageRelationship, Staged, StagedCount, Submission,
+    TransactionOutbox,
 };
 pub use pending::{PendingRegistration, PendingRegistrations};
 pub use permission::DocumentPermission;
@@ -85,15 +87,18 @@ pub use permission::DocumentPermission;
 pub use persistent::PersistentAcpStore;
 pub use policy_lookup::{
     AssignmentPosition, AssignmentQuery, AssignmentReadError, CertifiedAssignments,
-    LightClientStatus, PolicyLookup, RemotePolicies, StorePolicies,
+    LightClientStatus, PolicyLookup, RemotePolicies, StorePolicies, TransportSentinelQuery,
 };
 pub use policy_nonce::{PolicyNonce, PolicyNonceError, POLICY_NONCE_BYTES};
 pub use provider_command::ProviderCommand;
 pub use read_access::{check_doc_read_access, DirectChecker, DocAccess, ObjectAccessChecker};
+pub use recovery::{
+    Observed, RecoveryCursor, RecoveryPage, RecoverySource, RecoveryStep, RecoveryVerifier,
+};
 pub use relation::{
     RelationTuple, DELETER_RELATION, OWNER_RELATION, READER_RELATION, UPDATER_RELATION,
 };
-pub use replica::{ReplicaGrant, ReplicaOwed, ReplicaUnit};
+pub use replica::{ReplicaGrant, ReplicaGroup, ReplicaOwed, ReplicaUnit};
 pub use store::AcpStore;
 pub use target_subject::parse_target_subject;
 pub use validation::{validate_resource_interface, REQUIRED_DOCUMENT_PERMISSIONS};

@@ -58,15 +58,19 @@ UNIT_NAMES = (
     "delegation_parity::a_policy_identifier_parses_as_vera_rs_client_parses_it",
     "delegation_parity::the_acp_precompile_is_the_one_vera_rs_client_names",
     "follow::effect::policy_creation_tests::a_lost_policy_creation_names_its_derived_id",
+    "follow::effect::tests::a_voided_batch_keeps_every_archive_it_carried_and_counts_the_rest",
     "follow::effect::tests::an_archive_and_other_requests_are_told_apart",
     "follow::effect::tests::registrations_and_relationship_changes_are_read_back_with_their_delegation",
     "follow::journal::tests::a_failed_write_leaves_what_the_journal_reports_as_it_was",
     "follow::journal::tests::a_gap_in_the_sequences_is_refused",
     "follow::journal::tests::a_journal_begun_for_a_worker_that_signed_before_cannot_vouch_for_those_requests",
+    "follow::journal::tests::an_uncovered_journal_is_reopened_after_its_own_state_rebuilds_it",
     "follow::journal::tests::entries_survive_a_reopen_and_a_new_worker_starts_with_no_floor",
     "follow::journal::tests::pruning_keeps_the_newest_entries_and_records_the_floor_before_it_removes",
     "follow::journal::tests::the_term_checked_what_is_owed_and_a_closure_are_kept",
     "follow::lost::tests::a_policy_creation_refused_because_the_policy_is_there_is_held_not_lost",
+    "follow::lost::tests::a_refused_archive_is_owed_again_and_nothing_is_unrestorable",
+    "follow::lost::tests::a_refused_batch_owes_its_archives_and_counts_what_it_could_not_read",
     "follow::lost::tests::a_refused_replay_taints_the_later_ones_on_its_object_only",
     "follow::lost::tests::what_was_owed_before_a_replay_stopped_still_taints",
     "follow::owed::tests::a_lost_change_is_owed_as_its_delegations_issuer_under_the_key_the_node_holds_or_the_delegation",
@@ -79,7 +83,7 @@ UNIT_NAMES = (
     "follow::tests::a_replay_cut_short_still_owes_what_it_learnt_and_taints_its_object",
     "follow::tests::a_revocation_on_a_void_block_that_is_refused_again_is_owed_as_a_delete",
     "follow::tests::a_term_that_voided_nothing_of_this_node_is_checked_at_once",
-    "follow::tests::a_void_archive_that_is_refused_again_fails_closed",
+    "follow::tests::a_void_archive_that_is_refused_again_is_owed_again",
     "follow::tests::a_void_older_than_the_journal_fails_closed_for_good",
     "follow::tests::a_void_within_the_journal_after_pruning_is_checked",
     "follow::tests::every_term_is_a_new_epoch_for_cached_decisions",
@@ -92,6 +96,7 @@ UNIT_NAMES = (
     "outcome_note::tests::an_outcome_survives_a_reopen_and_the_oldest_is_pushed_out",
     "provider::audience_tests::a_provider_checks_the_genesis_identity_it_reports",
     "provider::assignments::tests::position_floor_rejects_replays_and_accepts_a_verified_new_term",
+    "provider::exact_relationship::tests::a_previous_owners_grant_is_not_issued_by_the_new_owner",
     "provider::exact_relationship::tests::a_proof_at_another_root_answers_nothing",
     "provider::exact_relationship::tests::an_absent_owner_refuses_as_a_registered_document_does",
     "provider::exact_relationship::tests::an_observation_overtaken_at_every_ask_ends_in_the_refusal",
@@ -101,6 +106,9 @@ UNIT_NAMES = (
     "provider::owed_request::tests::a_recorded_hash_names_the_request_and_bytes_alone_do_not",
     "provider::owed_request::tests::without_a_hash_the_bytes_name_the_request",
     "provider::reach::tests::a_transport_failure_is_told_from_an_answer",
+    "provider::recovery_tests::a_journal_closed_for_good_is_not_recovered",
+    "provider::recovery_tests::a_pass_a_second_outbox_joined_leaves_the_term_unrecorded",
+    "provider::recovery_tests::an_uncovered_journal_recovers_through_the_outbox_under_the_same_worker",
     "provider::registration_list::tests::a_list_beyond_what_vera_rs_applies_at_once_is_not_built",
     "provider::registration_list::tests::a_list_carries_each_registration_in_order_under_one_token",
     "provider::registration_list::tests::a_policy_identifier_that_names_no_policy_is_a_query_error_as_alone",
@@ -167,7 +175,7 @@ LIVE_CASES = (
 )
 CARGO = ["cargo", "+1.99.1"]
 BUILD = ["--release", "--frozen"]
-PUBLIC_FIELDS = ("phase", "exit_code", "seconds", "passed", "panic_site")
+PUBLIC_FIELDS = ("phase", "exit_code", "seconds", "passed", "panic_site", "error")
 
 
 def public_phase(record):
@@ -183,6 +191,24 @@ def panic_site(log):
                 file, row, column = match.groups()
                 return {"file": file, "line": int(row), "column": int(column)}
     return None
+
+
+class Guard(ValueError):
+    """A check of this driver that refused to go on, with a fixed message that names no path or value."""
+
+
+def guard_failure(error):
+    """The public name of a guard this driver raised itself.
+
+    Only `Guard` and the driver's own phase failure are named. Anything else comes from a library
+    and may carry private text: a decoding error holds the bytes it could not read, and a path
+    error holds both paths.
+    """
+    if type(error) is Guard and len(error.args) == 1 and isinstance(error.args[0], str):
+        return {"error": error.args[0]}
+    if type(error) is RuntimeError and error.args == ("qualification phase failed",):
+        return {"error": error.args[0]}
+    return {}
 
 
 def dependencies(text):
@@ -210,7 +236,7 @@ def git_pins(text):
             continue
         pin = spec.get("rev")
         if not isinstance(pin, str) or re.fullmatch(r"[0-9a-f]{40}", pin) is None:
-            raise ValueError("SDK revision must be immutable")
+            raise Guard("SDK revision must be immutable")
         pins.append(pin)
     return pins
 
@@ -227,7 +253,7 @@ def sdk_versions(text):
         if crate not in SDK_CRATES:
             continue
         if not isinstance(spec, str) or re.fullmatch(r"\d+\.\d+\.\d+", spec) is None:
-            raise ValueError("published native SDK declarations must be plain versions")
+            raise Guard("published native SDK declarations must be plain versions")
         versions.append(spec)
     return versions
 
@@ -240,18 +266,18 @@ def revision(root):
         pins += git_pins(text)
         versions += sdk_versions(text)
     if len(versions) != 6 or len(set(versions)) != 1:
-        raise ValueError("published native SDK declarations disagree or are missing")
+        raise Guard("published native SDK declarations disagree or are missing")
     if len(pins) != 1:
-        raise ValueError("native harness revision is missing or ambiguous")
+        raise Guard("native harness revision is missing or ambiguous")
     for name in NODE_MANIFESTS:
         if set(git_pins((root / name).read_text())) != {pins[0]}:
-            raise ValueError("node crates and the native harness pin different Vera revisions")
+            raise Guard("node crates and the native harness pin different Vera revisions")
     return pins[0]
 
 
 def runtime_revision(value):
     if not isinstance(value, str) or re.fullmatch(r"[0-9a-f]{40}", value) is None:
-        raise ValueError("runtime revision must be a full lowercase commit SHA")
+        raise Guard("runtime revision must be a full lowercase commit SHA")
     return value
 
 
@@ -293,12 +319,12 @@ def artifact(log, name, target):
                 continue
             if item.get("reason") == "compiler-artifact" and item.get("target", {}).get("name") == name and item.get("executable"):
                 if item["profile"]["debug_assertions"]:
-                    raise ValueError("non-release artifact")
+                    raise Guard("non-release artifact")
                 path = Path(item["executable"]).resolve()
                 path.relative_to(target.resolve())
                 found.append(path)
     if len(found) != 1 or not found[0].is_file():
-        raise ValueError("expected one executable")
+        raise Guard("expected one executable")
     return found[0]
 
 
@@ -313,7 +339,7 @@ def passed_tests(log, expected):
             if match:
                 summaries.append(tuple(map(int, match.groups())))
     if sorted(names) != sorted(expected) or summaries != [(len(expected), 0, 0)]:
-        raise ValueError("test selection or result differs")
+        raise Guard("test selection or result differs")
     return len(names)
 
 
@@ -321,7 +347,7 @@ def source(root):
     head = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True, stderr=subprocess.PIPE).strip()
     dirty = subprocess.check_output(["git", "status", "--porcelain", "--untracked-files=no"], cwd=root, stderr=subprocess.PIPE)
     if dirty:
-        raise ValueError("tracked source changed")
+        raise Guard("tracked source changed")
     return {"revision": head, "lock_sha256": digest(root / "Cargo.lock")}
 
 
@@ -356,7 +382,7 @@ class Runner:
         expected = self.sdk_revision if runtime_ref is None else runtime_revision(runtime_ref)
         self.sources = {"defra": source(root), "vera": source(vera)}
         if self.sources["vera"]["revision"] != expected:
-            raise ValueError("runtime does not match selected revision")
+            raise Guard("runtime does not match selected revision")
         self.private = Path(tempfile.mkdtemp(prefix="defra-native-consumer-", dir=temporary))
         self.summary = temporary / "native-consumer-summary.json"
         self.env = clean_environment(os.environ)
@@ -383,7 +409,7 @@ class Runner:
             return False
         binary = directory / "verad"
         if binary.is_symlink() or not binary.is_file() or digest(binary) != record["sha256"]:
-            raise ValueError("cached Vera runtime checksum differs")
+            raise Guard("cached Vera runtime checksum differs")
         shutil.copy2(binary, self.private / "verad")
         self.binaries["verad"] = {"sha256": record["sha256"]}
         self.env["VERAD_BINARY"] = str(self.private / "verad")
@@ -403,10 +429,10 @@ class Runner:
 
     def guard(self):
         if self.sources != {"defra": source(self.root), "vera": source(self.vera)}:
-            raise ValueError("source changed during qualification")
+            raise Guard("source changed during qualification")
         for name, item in self.binaries.items():
             if digest(self.private / name) != item["sha256"]:
-                raise ValueError("staged executable changed")
+                raise Guard("staged executable changed")
 
     def save(self):
         public = [public_phase(record) for record in self.records]
@@ -436,7 +462,7 @@ class Runner:
             site = panic_site(log)
             if site is not None:
                 record["panic_site"] = site
-                self.save()
+            self.save()
         print(json.dumps(public_phase(record)), flush=True)
         if record["exit_code"] != 0:
             raise RuntimeError("qualification phase failed")
@@ -509,7 +535,7 @@ def main():
         runner.save()
     except BaseException as error:
         (runner.private / "failure.txt").write_text(repr(error) + "\n")
-        runner.records.append({"phase": "qualification", "exit_code": 1})
+        runner.records.append({"phase": "qualification", "exit_code": 1, **guard_failure(error)})
         runner.save()
         print('{"phase":"qualification","exit_code":1}', flush=True)
         raise SystemExit(1) from None

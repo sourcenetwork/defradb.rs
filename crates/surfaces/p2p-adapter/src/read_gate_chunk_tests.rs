@@ -31,7 +31,7 @@ async fn plant_chunk(db: &db::DB<RegolithStore>, parent: &str) -> (cid::Cid, Vec
         .unwrap();
     chunk.set("text", NormalValue::String("t".into())).unwrap();
     chunk
-        .set("hash", NormalValue::String(db::chunk::list::text_hash("t")))
+        .set("hash", NormalValue::String(db::chunk::hash::text_hash("t")))
         .unwrap();
     let txn = db.new_txn(false).await.unwrap();
     let systemstore = txn.systemstore().unwrap();

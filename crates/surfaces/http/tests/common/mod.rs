@@ -70,6 +70,18 @@ pub fn router() -> Router {
     router_with(Arc::new(RecordingViewOps::default()))
 }
 
+/// A route template with every path parameter replaced by a literal, for
+/// probing whether the router serves it at all.
+pub fn concrete_path(path: &str) -> String {
+    [
+        "sender", "data", "name", "docID", "field", "index", "id", "peer_id",
+    ]
+    .into_iter()
+    .fold(path.to_string(), |path, parameter| {
+        path.replace(&format!("{{{parameter}}}"), "probe")
+    })
+}
+
 pub fn bearer_token() -> String {
     let private_key = crypto::generate_ed25519().unwrap();
     let identity = RawIdentity::from_private_key(private_key).unwrap();

@@ -111,6 +111,9 @@ pub struct CompositeMergeState {
     /// The document before this composite's field merges, read only when the
     /// collection has an index.
     pub(crate) indexed_before: Option<Option<Document>>,
+    /// A counter operation on another version was translated onto the active
+    /// representation. Its value must be stored there, not migrated again.
+    pub(crate) active_result: bool,
 }
 
 pub(super) enum CompositeMergePreparation {
@@ -504,20 +507,28 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
         collection_lookup: Option<Collection>,
         replica: ReplicaStep,
     ) -> std::result::Result<MergeOutcome, MergeError> {
-        self.with_merge_keys(block, Some(metadata))
-            .await
-            .process_composite_delta_keyed(
-                cid,
-                block,
-                payload,
-                metadata,
-                from_collection,
-                is_root,
-                doc_id_str,
-                collection_lookup,
-                replica,
-            )
-            .await
+        let mut handler = self.with_merge_keys(block, Some(metadata)).await;
+        loop {
+            match handler
+                .process_composite_delta_keyed(
+                    cid,
+                    block,
+                    payload,
+                    metadata,
+                    from_collection,
+                    is_root,
+                    doc_id_str,
+                    collection_lookup.clone(),
+                    replica.clone(),
+                )
+                .await
+            {
+                Err(MergeError::NeedsRegistration(lookup)) => {
+                    handler.resolve_registration(*lookup).await?
+                }
+                result => return result,
+            }
+        }
     }
 
     #[allow(clippy::too_many_arguments)]

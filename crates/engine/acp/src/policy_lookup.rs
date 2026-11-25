@@ -58,7 +58,16 @@ pub trait RemotePolicies: MaybeSendSync {
     ) -> Result<CertifiedAssignments, AssignmentReadError> {
         Err(AssignmentReadError::Unsupported)
     }
+
+    async fn verify_transport_sentinel(
+        &self,
+        _query: &TransportSentinelQuery,
+    ) -> Result<bool, AssignmentReadError> {
+        Err(AssignmentReadError::Unsupported)
+    }
 }
+
+pub type TransportSentinelQuery = defra_core::SharedTransportSentinel;
 
 #[derive(Debug, thiserror::Error)]
 pub enum AssignmentReadError {

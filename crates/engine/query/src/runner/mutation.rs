@@ -63,6 +63,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry + 'static> QueryRunner<F, R
             policy_id,
             resource_name,
             doc_id,
+            false,
             self.retry_inputs.as_ref(),
         )
         .await
@@ -352,6 +353,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry + 'static> QueryRunner<F, R
             policy_id,
             resource_name,
             doc_id,
+            false,
             prepared_inputs,
         )
         .await;

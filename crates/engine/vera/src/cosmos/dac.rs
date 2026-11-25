@@ -399,6 +399,21 @@ fn provider_err(error: impl std::borrow::Borrow<ProviderError>) -> acp::Error {
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl acp::RemotePolicies for VeraDocumentACP {
+    async fn verify_transport_sentinel(
+        &self,
+        query: &acp::TransportSentinelQuery,
+    ) -> std::result::Result<bool, acp::AssignmentReadError> {
+        self.provider
+            .verify_transport_sentinel(query)
+            .await
+            .map_err(|error| match error {
+                ProviderError::Unavailable(_) | ProviderError::ProofsOvertaken(_) => {
+                    acp::AssignmentReadError::Unavailable(error.to_string())
+                }
+                ProviderError::Unsupported(_) => acp::AssignmentReadError::Unsupported,
+                _ => acp::AssignmentReadError::Invalid(error.to_string()),
+            })
+    }
     async fn certified_assignments(
         &self,
         query: &acp::AssignmentQuery,
@@ -477,6 +492,12 @@ impl acp::RemotePolicies for VeraDocumentACP {
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl DocumentACP for VeraDocumentACP {
+    async fn verify_transport_sentinel(&self, query: &acp::TransportSentinelQuery) -> Result<bool> {
+        self.provider
+            .verify_transport_sentinel(query)
+            .await
+            .map_err(provider_err)
+    }
     fn caller_of_delegation(
         &self,
         token: &str,
@@ -588,6 +609,15 @@ impl DocumentACP for VeraDocumentACP {
         Some(Arc::new(owed_journal::VeraOwedJournal { acp }))
     }
 
+    async fn replica_group_member(&self, group: &acp::ReplicaGroup, signer: &Did) -> Result<bool> {
+        let (group, signer) = (group.clone(), signer.clone());
+        self.remote(
+            move |provider| async move { provider.replica_group_member(&group, &signer).await },
+        )
+        .await
+        .map_err(provider_err)
+    }
+
     async fn check_named_permission(
         &self,
         subject: &Did,
@@ -644,6 +674,67 @@ impl DocumentACP for VeraDocumentACP {
         self.remote(move |provider| async move {
             provider
                 .register_object(&bearer_token, &policy, &resource, &doc)
+                .await
+        })
+        .await
+        .map_err(provider_err)?;
+        self.invalidate_cached_access(policy_id);
+        Ok(())
+    }
+
+    async fn registration_parent(
+        &self,
+        policy_id: &str,
+        child: &str,
+        id: &str,
+    ) -> Result<acp::RegistrationParent> {
+        self.registration_parent_rule(policy_id, child, id)
+            .await
+            .map(|(parent, _)| parent)
+    }
+
+    async fn registration_parent_rule(
+        &self,
+        policy_id: &str,
+        child: &str,
+        id: &str,
+    ) -> Result<(acp::RegistrationParent, String)> {
+        let policy = self
+            .get_policy(policy_id)
+            .await
+            .map_err(provider_err)?
+            .ok_or_else(|| acp::Error::PolicyNotFound(policy_id.into()))?;
+        acp::RegistrationParent::with_requirement(&policy, child, id)
+            .map(|(parent, permission)| (parent, permission.to_owned()))
+    }
+
+    async fn register_under_parent(
+        &self,
+        identity: &Did,
+        policy_id: &str,
+        resource: &str,
+        object_id: &str,
+        parent: &acp::RegistrationParent,
+    ) -> Result<()> {
+        let token = self.create_bearer_token(identity.as_str()).await?;
+        self.admit_for(
+            identity.as_str(),
+            &token,
+            &PolicyCommand {
+                policy_id,
+                resource,
+                object_id,
+                action: PolicyAction::RegisterUnderParent {
+                    resource: &parent.resource,
+                    object_id: &parent.object_id,
+                },
+            },
+        )?;
+        let [policy, resource, object] = owned([policy_id, resource, object_id]);
+        let parent = parent.clone();
+        self.remote(move |provider| async move {
+            provider
+                .register_under_parent(&token, &policy, &resource, &object, &parent)
                 .await
         })
         .await
@@ -825,6 +916,40 @@ impl DocumentACP for VeraDocumentACP {
         self.invalidate_cached_access(policy_id);
 
         Ok(result)
+    }
+
+    fn stages_archive_on_delete(&self) -> bool {
+        self.provider.archives_owed_on_delete()
+    }
+
+    async fn archive_doc_object(
+        &self,
+        actor: &Did,
+        policy_id: &str,
+        resource_name: &str,
+        doc_id: &str,
+    ) -> Result<()> {
+        let bearer_token = self.create_bearer_token(actor.as_str()).await?;
+        self.admit_for(
+            actor.as_str(),
+            &bearer_token,
+            &PolicyCommand {
+                policy_id,
+                resource: resource_name,
+                object_id: doc_id,
+                action: PolicyAction::ArchiveObject,
+            },
+        )?;
+        let [policy, resource, doc] = owned([policy_id, resource_name, doc_id]);
+        self.remote(move |provider| async move {
+            provider
+                .archive_object(&bearer_token, &policy, &resource, &doc)
+                .await
+        })
+        .await
+        .map_err(provider_err)?;
+        self.invalidate_cached_access(policy_id);
+        Ok(())
     }
 
     async fn delete_actor_relationship(

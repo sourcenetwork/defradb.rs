@@ -24,7 +24,7 @@ where
     Ok(collections)
 }
 
-/// The DocIDs of every chunk of `parents`, old ones too, which the parents' lists no longer name.
+/// The DocIDs of every chunk of `parents`, old ones too, which their texts no longer use.
 pub(crate) async fn doc_ids<S>(
     txn: &DbTxn<S>,
     chunks_col: &Collection,

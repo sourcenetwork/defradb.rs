@@ -229,6 +229,13 @@ A migration from version 1 to 2 is applied to every document written at version 
 
 Migrations that set a scalar, mutate an inline array, remove a field (returned as `null`) or copy a field produce those values even when the source or destination field is not requested, and a later request for a different field set still sees unmutated fields.
 
+# `defra.collection_version.migrations.query.date_time_format`: Migrated DateTime values keep Go's format
+
+- **Parents:** ["go.collection_version.migrations.query"]
+- **Scenarios:** ["collection_version::migrations::query::with_date_time::collection_migration_query_renders_migrated_date_times_without_trailing_zeros"]
+
+A DateTime field of a document read through a migration returns as Go's `time.RFC3339Nano` writes it, the same as before the migration: no fractional seconds when they are zero and no trailing zeros otherwise. With `Users { required: DateTime! @index, optional: DateTime }` holding `{required: "2026-08-01T12:34:56Z", optional: "1999-12-31T23:59:59Z"}` and `{required: "2026-08-02T12:34:56.120Z", optional: "1999-12-31T23:59:59.000000001Z"}`, a patch whose `set-default` lens sets a new `migrated` field to `true` makes the query return `"2026-08-01T12:34:56Z"`, `"1999-12-31T23:59:59Z"`, `"2026-08-02T12:34:56.12Z"` and `"1999-12-31T23:59:59.000000001Z"`, never `"2026-08-01T12:34:56.000000000Z"`.
+
 # `go.collection_version.migrations.query.active_version`: Migrations follow the active version
 
 - **Parents:** ["go.collection_version.migrations.query"]
@@ -370,3 +377,10 @@ A truncate limited to certain documents removes only those (idempotently on retr
 - **Scenarios:** ["collection::truncate::other_collections::truncate_leaves_other_collections_indexes_intact"]
 
 Truncating a collection removes only its own documents and index entries: another collection's documents stay, and a filter on its indexed field still returns them, whatever short IDs the two collections have (with `Kept { name: String @index }` holding `{name: "Kept"}`, truncating each of 125 other indexed collections leaves `Kept(filter: {name: {_eq: "Kept"}})` returning that document, while the truncated collection's own indexed filter returns nothing).
+
+# `defra.collection_version.removed_transform_reindex`: Removing a transform reindexes an indexed collection
+
+- **Parents:** ["go.collection_version.migrations"]
+- **Scenarios:** ["collection_version::updates::remove::removed_transform_reindex::remove_source_transform_reindexes_an_indexed_collection", "collection_version::updates::remove::removed_transform_reindex::removing_transform_preserves_old_and_new_documents", "collection_version::updates::remove::removed_transform_reindex::removing_an_inactive_versions_transform_reindexes_the_active_version"]
+
+Removing a collection's source transform by patch (`{"op": "remove", "path": "/Users/PreviousVersion/Transform"}`) reindexes its indexed fields from the stored values, so a filter on an indexed field returns the values reads return, not values the removed transform produced: with `Users { name: String @index }` holding `{name: "Shahzad"}` and a patch whose `set-default` lens sets `name` to `"Fred"`, removing the transform makes `Users(filter: {name: {_eq: "Shahzad"}})` return that document. A document created at the active version keeps its value: with `age: Int @index`, an `increment` lens adding 5, `{name: "old", age: 20}` written before the lens and `{name: "new", age: 40}` after it, removing the transform makes a filter on `age: 20` return `old` and one on `age: 40` return `new`. The transform removed may be an inactive version's that the active version's history passes through: with the `increment` lens on the version that added `level`, and a later version adding `rank` without a lens, removing the `level` version's transform by its version ID makes a filter on `age: 20` return `old`. A value already materialized through the removed transform is retained, because its stored version alone does not tell it from a document created at the active version and a lens need not be reversible.

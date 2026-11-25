@@ -303,6 +303,11 @@ async fn route_limit_never_exceeds_the_global_limit() {
 
 const TEST_DID: &str = "did:key:z6MkTestNodeIdentity";
 
+#[test]
+fn the_commit_bound_is_disabled_by_default() {
+    assert_eq!(ServerConfig::default().commit_timeout_ms, 0);
+}
+
 fn signing_server(config: ServerConfig) -> Server {
     Server::with_config(MockQueryExecutor::new(), config, edge::testing::edge())
         .with_node_identity_did(TEST_DID.into())

@@ -255,7 +255,7 @@ pub struct AcpTakeoverSubmission {
 /// One submission a takeover voided that could not be restored.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AcpTakeoverUnrestorable {
-    /// `policy-creation` or `archive`.
+    /// `policy-creation`. A refused archive is owed again instead.
     pub kind: String,
     pub policy_id: String,
     pub resource: String,

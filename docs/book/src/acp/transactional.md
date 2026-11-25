@@ -631,3 +631,56 @@ public only when the node's configuration says so.
 > guarantee: if anything it rested on changed, the commit loses, exactly like a data
 > race. That symmetry is the entire trick, and the TLA+ models for ACP soundness and
 > the deferred-ACP overlay pin it.
+
+## Parent-authorized document creation
+
+A resource can declare which parent admits a new document. In this policy
+fragment, registering a job requires the creator to own the named node.
+
+```yaml
+- name: jobs
+  permissions: [{name: read}, {name: update}, {name: delete}]
+  relations: [{name: parent, types: [nodes]}]
+  create: {parent: parent, requires: owner}
+```
+
+Bind the child collection to the document field that carries the parent's ID.
+
+```graphql
+type Job @policy(id: "POLICY_ID", resource: "jobs", parentField: "nodeID") {
+  nodeID: String!
+}
+```
+
+The policy supplies the parent resource type. The field supplies one object ID.
+Local registration checks the creator against that parent and writes the owner
+and parent relationship in the document transaction. With Vera, the pending
+registration keeps both parent identifiers across a restart. A delegation
+bound to the registration covers both as well. Vera checks the acting identity
+when it executes the command. A later grant on the parent relation requires
+permission on the proposed target.
+
+A registered document keeps a parent. Local ACP refuses to delete its last
+parent relationship; the relationship goes when the document is deleted. An
+update that writes another value into the parent field is refused, so the
+document always names the parent it was admitted under.
+
+A receiver sharing the creator's Vera deployment waits for the object's
+registration. An embedder that enables foreign replica registration for the
+collection can register a signed genesis on its own deployment. The receiving
+node submits under its own identity, with the parent ID from the signed
+document. While parent admission is pending, ACP reports registration as
+unavailable and grants the submitter no owner access. Creator grants are
+delivered after the provider accepts the registration.
+
+An embedder with changing device membership can implement
+`ReplicaOwnership::allows_foreign_registration` to query the provider before
+registering or adopting a replica. For a known local signer or an unavailable
+membership lookup, the receiving node waits for ordinary registration and
+read access. A lookup failure never queues a registration or creator grant.
+
+For an account-owned group, `DocumentACP::replica_group_member` verifies
+the active owner and the account's direct grants at the same certified state.
+The receiver must itself hold a grant. Only then can an absent signer grant
+identify a nonmember. A missing group, wrong owner, receiver revocation, or
+unsettled local membership change leaves classification unavailable.
