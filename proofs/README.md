@@ -50,6 +50,7 @@ section is the **diff**: what is proven vs. the accepted gap.
 | Pull sync (doc-sync / sync-branchable) | TLA+ | p2p |
 | Multi-instance claim | TLA+ | gents |
 | Single-writer chain jail | TLA+ | design, p2p, defra-node |
+| Quorum certificate winner | TLA+ | design, p2p, defra-node |
 | Block integrity / signatures | TLA+ | db-merge, defra-core, blockstore |
 | KMS key distribution | TLA+ / Lean | kms, db, db-merge |
 | Node identity and signing | Lean | defra-node, http |
@@ -267,6 +268,7 @@ headstore); go↔go vs rust↔rust parity (`parity.rs`) localized it to Rust.
 | CRDT merge laws | Contract | `MergeResult` vocab; `DefraConvergence.MixedField` product proof; `MixedFieldMaterialization.tla` |
 | Multi-instance claim | Boundary | gents substrate, not this binary |
 | Single-writer chain jail | Boundary | design model; no fork detection or peer jail in the code yet |
+| Quorum certificate winner | Boundary | design model; no validator votes or certificates in the code yet |
 | Block integrity / signatures | Boundary | needs adversarial peer; Rust verify mandatory |
 | P2P capability replay gate | Boundary | P2P-wire internal |
 | JWT issuer / algorithm binding | Boundary | DID-binding via `acp.rs`; forge unreachable via CLI |
