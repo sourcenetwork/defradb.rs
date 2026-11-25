@@ -43,10 +43,7 @@
 //! sourcenetwork/defradb#5058 (sender never sees error replies - why the Go
 //! mode is silent). See defradb.rs#1134.
 
-#[path = "mutation.rs"]
-mod mutation;
-
-use crate::support;
+use crate::{mutation, support};
 use defra_harness::{DefraClient, NodeKind, TestCluster};
 use std::collections::BTreeSet;
 use std::time::{Duration, Instant};
@@ -766,12 +763,15 @@ async fn run_counter_3node_parity(cluster: TestCluster, label: &str) {
     );
 
     for n in 0..3 {
-        cluster
-            .client(n)
-            .query(&format!(
+        mutation::execute(
+            &cluster,
+            n,
+            &format!(
                 r#"mutation {{ update_Tally(docID: "{id}", input: {{hits: 10}}) {{ _docID }} }}"#
-            ))
-            .expect("increment");
+            ),
+        )
+        .await
+        .unwrap_or_else(|error| panic!("[{label}] node{n} increment: {error:#}"));
     }
 
     let converged = poll_all_tally_hits(&cluster, 3, 30, Duration::from_secs(40)).await;
@@ -1425,12 +1425,24 @@ fn account_create_fields(node: &DefraClient) -> [&'static str; 2] {
     }
 }
 
-fn create_account(node: &DefraClient, label: &str, handle: &str, seed: i64) -> String {
+async fn create_account(
+    cluster: &TestCluster,
+    node: usize,
+    label: &str,
+    handle: &str,
+    seed: i64,
+) -> String {
     let mut attempts = Vec::new();
-    for create_field in account_create_fields(node) {
-        match node.query(&format!(
-            r#"mutation {{ {create_field}(input: {{handle: "{handle}", seed: {seed}}}) {{ _docID }} }}"#
-        )) {
+    for create_field in account_create_fields(&cluster.client(node)) {
+        match mutation::execute(
+            cluster,
+            node,
+            &format!(
+                r#"mutation {{ {create_field}(input: {{handle: "{handle}", seed: {seed}}}) {{ _docID }} }}"#
+            ),
+        )
+        .await
+        {
             Ok(created) => {
                 if let Some(id) = created_user_doc_id(&created, create_field) {
                     return id.to_string();
@@ -1594,8 +1606,8 @@ async fn setup_unique_twins(cluster: &TestCluster, label: &str) -> (String, Stri
         .schema_add(UNIQUE_TWIN_SCHEMA)
         .expect("schema node1");
 
-    let id0 = create_account(&cluster.client(0), label, "twin", TWIN_SEED_SMALL);
-    let id1 = create_account(&cluster.client(1), label, "twin", TWIN_SEED_LARGE);
+    let id0 = create_account(cluster, 0, label, "twin", TWIN_SEED_SMALL).await;
+    let id1 = create_account(cluster, 1, label, "twin", TWIN_SEED_LARGE).await;
     assert_ne!(
         id0, id1,
         "[{label}] distinct docIDs required for a real twin conflict"
@@ -1613,8 +1625,8 @@ async fn setup_unique_twins(cluster: &TestCluster, label: &str) -> (String, Stri
 }
 
 async fn witness_account_replication(cluster: &TestCluster, label: &str) -> [String; 2] {
-    let canary0 = create_account(&cluster.client(0), label, "canary-node0", 100);
-    let canary1 = create_account(&cluster.client(1), label, "canary-node1", 101);
+    let canary0 = create_account(cluster, 0, label, "canary-node0", 100).await;
+    let canary1 = create_account(cluster, 1, label, "canary-node1", 101).await;
     let deadline = Instant::now() + Duration::from_secs(60);
 
     loop {
