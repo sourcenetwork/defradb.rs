@@ -292,6 +292,14 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryExecutor for QueryRun
         self.registry.discard_as(context, handle).await
     }
 
+    async fn txn_outcome_as(
+        &self,
+        context: &RequestContext,
+        handle: &TransactionHandle,
+    ) -> std::result::Result<crate::txn::TransactionOutcome, TransactionError> {
+        self.registry.outcome_as(context, handle).await
+    }
+
     async fn add_collection_as(
         &self,
         context: &RequestContext,

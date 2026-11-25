@@ -2,6 +2,7 @@ mod acp;
 mod acp_branchable;
 mod branchable;
 mod caller_key;
+mod client_session;
 mod commit;
 mod fallback_signer;
 mod peer;

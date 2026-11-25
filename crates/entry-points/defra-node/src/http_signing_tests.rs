@@ -100,7 +100,7 @@ fn http_client_signs_the_complete_agent_create_graph() {
             let txn = if explicit {
                 let response: Value = http.post(format!("http://{address}/api/v0/tx"))
                     .bearer_auth(&token).send().await.unwrap().json().await.unwrap();
-                Some(response["id"].as_u64().unwrap().to_string())
+                Some(response["id"].to_string())
             } else { None };
             let response = defra_http::client_signed_create::execute(
                 &format!("ws://{address}/api/v0/graphql/client-sign"), &authorization, request, txn.as_deref(), &mut graph,
@@ -289,7 +289,7 @@ resources:
                 parent_id,
                 node_did,
                 token,
-                txn["id"].as_u64().unwrap().to_string(),
+                txn["id"].to_string(),
             )
         })
         .await
@@ -476,7 +476,7 @@ fn http_client_signs_a_single_document_update() {
         let mut transactions = Vec::new();
         for _ in 0..2 {
             let value: Value = http.post(format!("http://{address}/api/v0/tx")).bearer_auth(&token).send().await.unwrap().json().await.unwrap();
-            transactions.push(value["id"].as_u64().unwrap().to_string());
+            transactions.push(value["id"].to_string());
         }
         for (txn, patch) in transactions.iter().zip([json!({"name":"disjoint"}), json!({"extra":"first"})]) {
             let mut graph = ClientUpdateSignatures::from_input(&storage::Crdts::default(), &schema, &doc_id, &patch, &latest, &signing).unwrap();
@@ -499,7 +499,7 @@ fn http_client_signs_a_single_document_update() {
         let mut transactions = Vec::new();
         for _ in 0..2 {
             let value: Value = http.post(format!("http://{address}/api/v0/tx")).bearer_auth(&token).send().await.unwrap().json().await.unwrap();
-            transactions.push(value["id"].as_u64().unwrap().to_string());
+            transactions.push(value["id"].to_string());
         }
         for (txn, patch) in transactions.iter().zip([json!({"name":"winner"}), json!({"name":"loser"})]) {
             let mut graph = ClientUpdateSignatures::from_input(&storage::Crdts::default(), &schema, &doc_id, &patch, &merged, &signing).unwrap();
@@ -525,7 +525,7 @@ fn http_client_signs_a_single_document_update() {
         let mut transactions = Vec::new();
         for _ in 0..2 {
             let value: Value = http.post(format!("http://{address}/api/v0/tx")).bearer_auth(&token).send().await.unwrap().json().await.unwrap();
-            transactions.push(value["id"].as_u64().unwrap().to_string());
+            transactions.push(value["id"].to_string());
         }
         let conditional_patch = json!({"extra":"conditional"});
         let mut conditional = ClientUpdateSignatures::from_input(&storage::Crdts::default(), &schema, &doc_id, &conditional_patch, &latest, &signing).unwrap();
@@ -647,11 +647,11 @@ resources:
         let mut revoked_graph = graph();
         let signatures = revoked_graph.respond(&blocks).unwrap().iter().map(hex::encode).collect::<Vec<_>>();
         node.delete_dac_actor_relationship_as(&owner_context, "ProtectedSettings", &doc_id, "editor", &editor_did).await.unwrap();
-        socket.send(Message::Text(json!({"signatures":signatures}).to_string().into())).await.unwrap();
+        socket.send(Message::Text(json!({"wave":wave["wave"],"signatures":signatures}).to_string().into())).await.unwrap();
         let frame = edge::testing::edge().timeout(Duration::from_secs(5), socket.next()).await.unwrap().unwrap().unwrap();
         let Message::Text(frame) = frame else { panic!("expected denied response") };
         let response: Value = serde_json::from_str(&frame).unwrap();
-        assert!(!response["response"]["errors"].as_array().unwrap().is_empty(), "{response}");
+        assert_eq!(response["response"]["errors"], json!([{"message":"document not found: document not found or not authorized to access"}]), "{response}");
 
         node.add_dac_actor_relationship_as(&owner_context, "ProtectedSettings", &doc_id, "editor", &editor_did).await.unwrap();
         let handshake = defra_http::client_signed_create::websocket_request(&url, &format!("Bearer {editor_token}")).unwrap();
@@ -694,7 +694,11 @@ resources:
         let wave: Value = serde_json::from_str(&frame).unwrap();
         let blocks = wave["blocks"].as_array().unwrap().iter().map(|value| hex::decode(value.as_str().unwrap()).unwrap()).collect::<Vec<_>>();
         let signatures = uncertain.respond(&blocks).unwrap().iter().map(hex::encode).collect::<Vec<_>>();
-        socket.send(Message::Text(json!({"signatures":signatures}).to_string().into())).await.unwrap();
+        socket.send(Message::Text(json!({"wave":wave["wave"],"signatures":signatures}).to_string().into())).await.unwrap();
+        let frame = edge::testing::edge().timeout(Duration::from_secs(5), socket.next()).await.unwrap().unwrap().unwrap();
+        let Message::Text(frame) = frame else { panic!("expected committed response") };
+        let response: Value = serde_json::from_str(&frame).unwrap();
+        assert_eq!(response["response"], json!({"data":{"update_ProtectedSettings":[{"_docID":doc_id}]}}), "{response}");
         drop(socket);
         assert!(uncertain.is_complete());
         assert!(uncertain.respond(&blocks).is_err());
@@ -779,13 +783,13 @@ resources:
         assert!(denied.is_err() || denied.unwrap().has_errors());
         let new_tx = |token: &str| http.post(format!("http://{address}/api/v0/tx")).bearer_auth(token);
         let other_tx: Value = new_tx(&other_token).send().await.unwrap().json().await.unwrap();
-        let other_tx = other_tx["id"].as_u64().unwrap().to_string();
+        let other_tx = other_tx["id"].to_string();
         let mut mismatch = make_graph(&owner_signing);
         let result = defra_http::client_signed_delete::execute(&ws, &auth(&owner_token), delete(), Some(&other_tx), &mut mismatch).await;
         assert!(result.is_err() || result.unwrap().has_errors());
         http.delete(format!("http://{address}/api/v0/tx/{other_tx}")).bearer_auth(&other_token).send().await.unwrap().error_for_status().unwrap();
         let owner_tx: Value = new_tx(&owner_token).send().await.unwrap().json().await.unwrap();
-        let owner_tx = owner_tx["id"].as_u64().unwrap().to_string();
+        let owner_tx = owner_tx["id"].to_string();
         let mut rolled_back = make_graph(&owner_signing);
         let deleted = defra_http::client_signed_delete::execute(&ws, &auth(&owner_token), delete(), Some(&owner_tx), &mut rolled_back).await.unwrap();
         assert!(!deleted.has_errors());
@@ -824,7 +828,11 @@ resources:
         let wave: Value = serde_json::from_str(&frame).unwrap();
         let blocks = wave["blocks"].as_array().unwrap().iter().map(|value| hex::decode(value.as_str().unwrap()).unwrap()).collect::<Vec<_>>();
         let signatures = unknown.respond(&blocks).unwrap().iter().map(hex::encode).collect::<Vec<_>>();
-        socket.send(Message::Text(json!({"signatures":signatures}).to_string().into())).await.unwrap();
+        socket.send(Message::Text(json!({"wave":wave["wave"],"signatures":signatures}).to_string().into())).await.unwrap();
+        let frame = edge::testing::edge().timeout(Duration::from_secs(5), socket.next()).await.unwrap().unwrap().unwrap();
+        let Message::Text(frame) = frame else { panic!("expected committed response") };
+        let response: Value = serde_json::from_str(&frame).unwrap();
+        assert_eq!(response["response"], json!({"data":{"delete_DeleteRecord":[{"_docID":unknown_id}]}}), "{response}");
         drop(socket);
         assert!(unknown.is_complete());
         assert!(unknown.respond(&blocks).is_err());
@@ -863,7 +871,7 @@ fn http_client_signs_large_document_in_an_explicit_transaction() {
         let http = net::http::Client::builder(edge::testing::edge()).no_proxy().build().unwrap();
         let txn: Value = http.post(format!("http://{address}/api/v0/tx")).bearer_auth(&token)
             .send().await.unwrap().json().await.unwrap();
-        let txn = txn["id"].as_u64().unwrap().to_string();
+        let txn = txn["id"].to_string();
         let mut doc = Document::new(schema);
         let text = "session history ✓".repeat(120_000);
         assert!(text.len() > 1024 * 1024);
@@ -914,7 +922,7 @@ fn incomplete_fragmented_signing_request_can_be_discarded_without_a_write() {
         let http = net::http::Client::builder(edge::testing::edge()).no_proxy().build().unwrap();
         let txn: Value = http.post(format!("http://{address}/api/v0/tx")).bearer_auth(&token)
             .send().await.unwrap().json().await.unwrap();
-        let txn = txn["id"].as_u64().unwrap().to_string();
+        let txn = txn["id"].to_string();
         let mut handshake = format!("ws://{address}/api/v0/graphql/client-sign").into_client_request().unwrap();
         handshake.headers_mut().insert("authorization", format!("Bearer {token}").parse().unwrap());
         let stream = net::connect(handshake.uri()).await.unwrap();

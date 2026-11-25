@@ -450,7 +450,7 @@ fn a_delete_in_a_transaction_owes_its_archive_under_that_transaction() {
         assert!(!deleted.has_errors(), "{:?}", deleted.errors);
         staging.commit(&handle).await;
 
-        let txn: u64 = handle.as_str().parse().unwrap();
+        let txn: u64 = handle.as_str().parse::<defra_core::TxnId>().unwrap().route;
         let owed = staging
             .gate
             .owed_entries(OwedFilter::Transaction(txn))
