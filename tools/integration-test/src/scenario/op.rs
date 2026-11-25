@@ -65,6 +65,12 @@ pub trait Op:
     /// A substring of the error the action must fail with.
     fn expected_error(&self) -> Option<&str>;
 
+    /// The `extensions.code` the GraphQL error matching `expected_error` must
+    /// carry.
+    fn expected_error_code(&self) -> Option<&str> {
+        None
+    }
+
     /// The response's `extensions` when the action checks them.
     fn expected_extensions(&self) -> &Value {
         &Value::Null
