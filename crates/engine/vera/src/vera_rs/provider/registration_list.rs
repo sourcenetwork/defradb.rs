@@ -5,7 +5,7 @@
 use alloy_primitives::Bytes;
 
 use super::{policy_cmd, ProviderError};
-use crate::cosmos::MAX_OWED_REQUEST_BYTES;
+use crate::dac::MAX_OWED_REQUEST_BYTES;
 use crate::provider::MAX_REGISTRATIONS_PER_REQUEST;
 use crate::{PolicyAction, PolicyCommand};
 
