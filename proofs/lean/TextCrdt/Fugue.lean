@@ -32,7 +32,7 @@ character as `Tree.place` does (`place_visible`, `place_root_first`) and marks a
 deleted one dead as `delete_visible` does; `Tree::attach` keeps siblings
 sorted by ID, block CID then offset, as `Tree.attach` and `insSorted` do
 (`attach_comm`); `Tree::traverse` reads the tree as `Tree.trav` does.
-`replay` builds the tree; `crates/building-blocks/crdt/src/field/text.rs` `TextField` replays
+`replay` (`crates/building-blocks/crdt/src/fugue_checkpoint.rs`) builds the tree; `crates/building-blocks/crdt/src/field/text.rs` `TextField` replays
 a field's history with it, and `crates/database/db/src/merge/merge_handler/field_causal.rs`
 `merge_field_causal` merges a received block through it.
 -/
