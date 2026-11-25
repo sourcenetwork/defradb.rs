@@ -598,7 +598,7 @@ Main moves only through the merge queue, and a person always puts a PR in it:
 nothing enqueues on its own. Agents never enqueue or merge unless asked to.
 
 ```
-open PR ──▶ lean CI ──▶ approval ──▶ "Merge when ready" ──▶ queue ──▶ main
+open PR ──▶ lean CI ──▶ review ────▶ "Merge when ready" ──▶ queue ──▶ main
                │                          ▲                   │
                └── ci:full (optional) ────┘     full CI, unless the tree
                                                 already passed ci:full
@@ -613,9 +613,9 @@ open PR ──▶ lean CI ──▶ approval ──▶ "Merge when ready" ──
 - **One commit.** Its subject is the PR title, or the title followed by `(#N)` for
   this PR. The queue rebase-merges, so every commit lands on main as it is:
   squash before queueing. A PR with several commits is a batch (below).
-- **Review.** One approval and every thread resolved. A changes request from a
-  reviewer with write access fails `Merge gate` until it is approved or
-  dismissed. A review or a title edit reruns only `Merge gate`.
+- **Review.** No approval is required, but every thread must be resolved. A
+  changes request from a reviewer with write access fails `Merge gate` until it
+  is approved or dismissed. A review or a title edit reruns only `Merge gate`.
 - **`Queue conflicts`** (advisory) names the first queue entry this PR
   conflicts with, and says whether the queue would reuse a `ci:full` run on
   this head. It is neutral when part of the queue could not be checked. It
@@ -638,8 +638,8 @@ A batch is one PR carrying several PRs, so they share one full run.
 
 - One commit per carried PR, each its squash, with the subject `<title> (#N)`,
   where #N is an open PR with that title. `Merge gate` checks only the subjects.
-- The batch PR needs its own approval, like any PR. Its reviewer checks that
-  each commit carries #N's change and nothing else.
+- Whoever reviews the batch checks that each commit carries #N's change and
+  nothing else.
 - PRs that touch the same lines go in a batch as a stack: B is based on A, so
   B's diff holds the resolution.
 - Once the batch lands, close each carried PR with `Landed in #<batch>`.
