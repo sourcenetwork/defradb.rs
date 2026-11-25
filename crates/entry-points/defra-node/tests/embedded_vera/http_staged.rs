@@ -117,7 +117,7 @@ impl Home {
             .unwrap();
         assert!(begun.status().is_success(), "{}", begun.status());
         let body: Value = begun.json().await.unwrap();
-        body["id"].as_u64().unwrap().to_string()
+        body["id"].to_string()
     }
 
     async fn finish(&self, auth: &str, tx: &str, commit: bool) -> u16 {

@@ -72,10 +72,10 @@ impl Node {
         actor_context: &defra_core::RequestContext,
         edge: &query::txn::SourcePermission,
     ) -> crate::Result<bool> {
-        let id = handle
+        let id: defra_core::TxnId = handle
             .as_str()
             .parse()
-            .map_err(|_| query::QueryError::execution("transaction ID must be numeric"))?;
+            .map_err(|_| query::QueryError::execution("invalid transaction ID"))?;
         let transaction_context = self.node_context().with_txn(Some(id));
         let actor_context = actor_context.clone();
         let ops = std::sync::Arc::clone(&self.acp_ops);
@@ -215,10 +215,10 @@ impl Node {
         relationship: crate::acp_ops::transactional::Relationship<'_>,
         delete: bool,
     ) -> crate::Result<RelationshipChange> {
-        let id = handle
+        let id: defra_core::TxnId = handle
             .as_str()
             .parse()
-            .map_err(|_| query::QueryError::execution("transaction ID must be numeric"))?;
+            .map_err(|_| query::QueryError::execution("invalid transaction ID"))?;
         let transaction_context = self.node_context().with_txn(Some(id));
         let actor_context = actor_context.clone();
         let ops = std::sync::Arc::clone(&self.acp_ops);

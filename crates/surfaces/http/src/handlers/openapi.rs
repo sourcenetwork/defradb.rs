@@ -1,21 +1,33 @@
 use axum::http::header::CONTENT_TYPE;
 use axum::response::IntoResponse;
 
-const OPENAPI_JSON: &str = include_str!("openapi-go-e152b5cab.json");
+/// Go's document at the compatibility baseline.
+///
+/// The one place the snapshot is named: `crate::openapi` merges it into the
+/// served document, and these tests hold the router to it. A baseline bump
+/// changes this file and `GO_COMPAT_COMMIT`, nothing else.
+pub(crate) const OPENAPI_GO: &str = include_str!("openapi-go-e152b5cab.json");
 
 /// GET /openapi.json
 ///
-/// Go's pinned document, byte for byte: a client generated from Go's spec keeps
-/// working, and `document_tracks_the_pinned_go_baseline` keeps it current.
+/// The API as this server serves it: Go's document with every route this node
+/// adds, generated from the route table (#3263). It used to be Go's file
+/// verbatim; `go_rust_http_contract` in the integration tests and
+/// [`crate::openapi`]'s tests hold Go's operations to coming out identical.
 pub async fn get() -> impl IntoResponse {
-    ([(CONTENT_TYPE, "application/json")], OPENAPI_JSON)
+    served()
 }
 
 /// GET /openapi.rs.json
 ///
-/// The same API as this server actually serves it: Go's operations carried
-/// verbatim, every route in `route_permissions::ROUTES` added (#3263).
+/// The same document, under the name it was introduced with. An alias for one
+/// release, so a client that switched to it when it was the only truthful one
+/// is not broken by the move.
 pub async fn generated() -> impl IntoResponse {
+    served()
+}
+
+fn served() -> impl IntoResponse {
     (
         [(CONTENT_TYPE, "application/json")],
         crate::openapi::document().to_string(),
@@ -25,6 +37,10 @@ pub async fn generated() -> impl IntoResponse {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The commit [`OPENAPI_GO`] was taken from. A baseline bump changes this
+    /// and `GO_COMPAT_COMMIT` together; either moving alone fails the pin.
+    const OPENAPI_GO_COMMIT: &str = "e152b5cab";
     use axum::body::{to_bytes, Body};
     use axum::http::{Method, Request, StatusCode};
     use serde_json::Value;
@@ -41,76 +57,94 @@ mod tests {
             })
     }
 
-    #[nuclei::test]
-    async fn serves_the_pinned_go_openapi_document() {
+    async fn fetch(uri: &str) -> (StatusCode, String, Value) {
         let response = Server::new(MockQueryExecutor::new(), edge::testing::edge())
             .router()
             .unwrap()
-            .oneshot(
-                Request::builder()
-                    .uri("/openapi.json")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
+            .oneshot(Request::builder().uri(uri).body(Body::empty()).unwrap())
             .await
             .unwrap();
-
-        assert_eq!(response.status(), StatusCode::OK);
-        assert_eq!(response.headers()[CONTENT_TYPE], "application/json");
+        let status = response.status();
+        let content_type = response.headers()[CONTENT_TYPE]
+            .to_str()
+            .unwrap_or_default()
+            .to_string();
         let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
-        let document: Value = serde_json::from_slice(&body).unwrap();
-        assert_eq!(document["openapi"], "3.0.3");
-        assert_eq!(document["paths"].as_object().unwrap().len(), 44);
-        assert_eq!(
-            document["paths"]
-                .as_object()
-                .unwrap()
-                .values()
-                .map(|path| path.as_object().unwrap().len())
-                .sum::<usize>(),
-            64
-        );
-        assert_eq!(body.as_ref(), OPENAPI_JSON.as_bytes());
+        let document = serde_json::from_slice(&body).expect("the document parses");
+        (status, content_type, document)
     }
 
-    /// The generated document is served, lists a route Go does not document,
-    /// and keeps Go's schemas for the routes Go does.
+    /// The served document describes this server, not only Go: it carries
+    /// routes Go has no equivalent for, which is why `/openapi.json` is no
+    /// longer Go's file byte for byte.
     #[nuclei::test]
-    async fn serves_the_document_generated_from_the_route_table() {
-        let response = Server::new(MockQueryExecutor::new(), edge::testing::edge())
-            .router()
-            .unwrap()
-            .oneshot(
-                Request::builder()
-                    .uri("/openapi.rs.json")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-
-        assert_eq!(response.status(), StatusCode::OK);
-        assert_eq!(response.headers()[CONTENT_TYPE], "application/json");
-        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
-        let document: Value = serde_json::from_slice(&body).unwrap();
-
+    #[mantra_macros::req_test("defra.http.openapi")]
+    async fn serves_a_document_that_describes_this_server() {
+        let (status, content_type, document) = fetch("/openapi.json").await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(content_type, "application/json");
         assert_eq!(document["openapi"], crate::openapi::OPENAPI_VERSION);
-        // Rust-only, so only this endpoint documents it.
         assert!(document["paths"]["/p2p/manage"]["post"].is_object());
-        // Root-mounted, so it cannot inherit the document's `/api/v0` servers.
-        assert_eq!(document["paths"]["/health-check"]["servers"][0]["url"], "/");
-        // Go-documented, so Go's request body rides along.
-        assert!(document["paths"]["/collections/{name}"]["post"]["requestBody"].is_object());
+        assert!(document["paths"]["/batch/start"]["post"].is_object());
     }
 
+    /// The alias introduced with the generated document serves the same thing,
+    /// so a client that adopted it keeps working.
     #[nuclei::test]
-    async fn every_documented_path_exists_in_the_rust_router() {
+    #[mantra_macros::req_test("defra.http.openapi")]
+    async fn the_short_lived_alias_serves_the_same_document() {
+        let (_, _, from_gos_name) = fetch("/openapi.json").await;
+        let (_, _, from_alias) = fetch("/openapi.rs.json").await;
+        assert_eq!(from_gos_name, from_alias);
+    }
+
+    /// Go's operations are carried verbatim, so a client generated from this
+    /// server's document is no worse off than one generated from Go's.
+    #[nuclei::test]
+    #[mantra_macros::req_test("defra.http.openapi")]
+    async fn gos_operations_survive_the_replacement() {
+        let (_, _, document) = fetch("/openapi.json").await;
+        let go: Value = serde_json::from_str(OPENAPI_GO).expect("the baseline parses");
+        let mut compared = 0;
+        for (path, item) in go["paths"].as_object().expect("paths") {
+            for (method, operation) in item.as_object().expect("path item") {
+                if !is_operation(method) {
+                    continue;
+                }
+                assert_eq!(
+                    &document["paths"][path][method], operation,
+                    "Go's {method} {path} did not survive"
+                );
+                compared += 1;
+            }
+        }
+        let operations = go["paths"]
+            .as_object()
+            .expect("paths")
+            .values()
+            .map(|item| {
+                item.as_object()
+                    .expect("path item")
+                    .keys()
+                    .filter(|key| is_operation(key))
+                    .count()
+            })
+            .sum::<usize>();
+        assert_eq!(compared, operations, "every operation of Go's document");
+    }
+
+    /// Every path Go documents still resolves in this router. The baseline is
+    /// read from the tree rather than from the served body: the served body is
+    /// generated from the route table, so comparing it with itself would prove
+    /// nothing about Go.
+    #[nuclei::test]
+    async fn every_go_documented_path_exists_in_the_rust_router() {
         let app = Server::new(MockQueryExecutor::new(), edge::testing::edge())
             .router()
             .unwrap();
-        let document: Value = serde_json::from_str(OPENAPI_JSON).unwrap();
+        let go: Value = serde_json::from_str(OPENAPI_GO).expect("the baseline parses");
 
-        for path in document["paths"].as_object().unwrap().keys() {
+        for path in go["paths"].as_object().expect("paths").keys() {
             let response = app
                 .clone()
                 .oneshot(
@@ -130,12 +164,21 @@ mod tests {
         }
     }
 
+    /// A baseline bump changes the snapshot and the constant together; this
+    /// fails if either moves alone.
     #[test]
     fn document_tracks_the_pinned_go_baseline() {
         assert_eq!(
+            OPENAPI_GO_COMMIT,
             defra_version::GO_COMPAT_COMMIT,
-            "e152b5cab",
-            "refresh the OpenAPI snapshot when the Go compatibility baseline changes"
+            "the snapshot was taken from the commit the baseline names"
         );
+    }
+
+    fn is_operation(key: &str) -> bool {
+        matches!(
+            key,
+            "get" | "put" | "post" | "delete" | "options" | "head" | "patch" | "trace"
+        )
     }
 }

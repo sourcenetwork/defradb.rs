@@ -8,6 +8,9 @@
         ],
         annotations: [
             { path: "tools/integration-test/", source: "content", pattern: "*.rs" },
+            // Unit tests that prove a requirement nothing in the integration
+            // suite can reach — the OpenAPI document is built in `defra-http`.
+            { path: "crates/surfaces/http/", source: "content", pattern: "*.rs" },
         ],
     }],
 }
