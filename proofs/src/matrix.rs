@@ -1,18 +1,19 @@
 //! Coverage matrix over the registry.
 //!
 //! The "diff" the harness defends: the modeled families are the families of
-//! `registry::PROPERTIES`, and `proofs/README.md`'s *Modeled families* table
+//! `registry::properties`, and `proofs/README.md`'s *Modeled families* table
 //! lists exactly those. A model that lands without a conformance binding, or a
 //! binding without its README row, fails `readme_lists_exactly_the_modeled_families`.
 //! A Contract or Behavioral tier with no test behind it fails
 //! `every_bound_tier_names_its_tests`.
 
-use crate::registry::{Property, Tier, PROPERTIES};
+use crate::registry::{properties, Property, Tier};
 
-/// The modeled families: each distinct `family` in `PROPERTIES`, in first-seen order.
+/// The modeled families: each distinct `family` in the registry, in first-seen
+/// order.
 pub fn families() -> Vec<&'static str> {
     let mut families: Vec<&'static str> = Vec::new();
-    for property in PROPERTIES {
+    for property in properties() {
         if !families.contains(&property.family) {
             families.push(property.family);
         }
@@ -21,14 +22,11 @@ pub fn families() -> Vec<&'static str> {
 }
 
 pub fn properties_for(family: &'static str) -> impl Iterator<Item = &'static Property> {
-    PROPERTIES.iter().filter(move |p| p.family == family)
+    properties().filter(move |p| p.family == family)
 }
 
 pub fn count(tier: Tier) -> usize {
-    PROPERTIES
-        .iter()
-        .filter(|p| p.tiers.contains(&tier))
-        .count()
+    properties().filter(|p| p.tiers.contains(&tier)).count()
 }
 
 #[cfg(test)]
@@ -37,7 +35,7 @@ mod tests {
 
     #[test]
     fn every_property_has_a_tier() {
-        let untiered: Vec<_> = PROPERTIES.iter().filter(|p| p.tiers.is_empty()).collect();
+        let untiered: Vec<_> = properties().filter(|p| p.tiers.is_empty()).collect();
         assert!(
             untiered.is_empty(),
             "properties with no tier: {:?}",
@@ -48,8 +46,7 @@ mod tests {
     #[test]
     fn every_bound_tier_names_its_tests() {
         let root = crate::anchor::repository_root();
-        let unbound: Vec<String> = PROPERTIES
-            .iter()
+        let unbound: Vec<String> = properties()
             .filter(|p| p.tiers.iter().any(|&t| t != Tier::Boundary) || !p.bound_by.is_empty())
             .filter_map(|p| {
                 let problems = crate::anchor::problems(&root, p.bound_by);
@@ -66,6 +63,27 @@ mod tests {
             unbound.is_empty(),
             "Contract or Behavioral properties whose tests are missing:\n{}",
             unbound.join("\n")
+        );
+    }
+
+    #[test]
+    fn every_family_file_holds_one_family() {
+        for family in crate::registry::FAMILIES {
+            let first = family.first().expect("a family file with no property");
+            assert!(
+                family.iter().all(|p| p.family == first.family),
+                "{} shares a file",
+                first.family
+            );
+        }
+        let names: Vec<_> = crate::registry::FAMILIES
+            .iter()
+            .map(|f| f[0].family)
+            .collect();
+        assert_eq!(
+            names.len(),
+            families().len(),
+            "a family is split over two files"
         );
     }
 

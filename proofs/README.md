@@ -214,13 +214,15 @@ shipped code, on two axes matching the two tools:
 | **Lean (auto)** | `lean/Conformance.lean` emits a JSON contract (vocabularies derived from the Lean models); the live Rust types are asserted to still match — anti-drift | no | `tests/lean_conformance.rs` |
 | **TLA (behavioral)** | each family's invariant is driven against the **running DefraDB binary** via the backbone `defra-harness` | yes | `tests/tla_conformance.rs` |
 
-[`src/registry.rs`] (`PROPERTIES`) is the spine: every *Modeled* family above maps
-to its headline invariant, source anchor, the model that proves it, and its
-binding tier (`Behavioral` / `Contract` / `Boundary`). `Boundary` marks what is
+[`src/registry.rs`](src/registry.rs) is the spine: every *Modeled* family above maps
+to its family file under [`src/registry/`](src/registry) — its headline invariant,
+source anchor, the model that proves it, and its binding tier
+(`Behavioral` / `Contract` / `Boundary`). `Boundary` marks what is
 *assumed*, never asserted (crypto, eventual connectivity, bounded-N, foreign
 substrate) — so a green run never reads as "this was proven against the
 artifact." The modeled families are the registry's families, so adding a model
-is one `PROPERTIES` entry and one row above;
+is one entry in its family file and one row above; `build.rs` picks up a new
+family file with no other edit.
 `matrix::readme_lists_exactly_the_modeled_families` names any family that has
 one without the other. `anchor::every_registry_anchor_resolves` resolves each
 anchor's files and symbols against the tree, so a rename that moves modeled code
@@ -406,7 +408,7 @@ Read this before trusting a verdict; it states the model's honest reach.
 Document arrivals use the pinned engine's `Transaction::append`, with the document
 arrival marker as `once_key`. `crates/database/db/src/event/arrivals.rs` never allocates a
 position itself; rows and their cursor positions appear only after commit. The
-binding in `src/registry.rs` is to
+binding in `src/registry/commit_ordered_document_arrivals.rs` is to
 [CommitOrderedAppend.tla](https://github.com/sourcenetwork/regolith/blob/e844baefe838f3af76403afd46c4b42f1a0b98a5/proofs/tla/CommitOrderedAppend.tla).
 Its GREEN Groups/Pipeline/Faults configurations cover dense numbering, commit
 order, at-most-once keys and snapshot prefixes. Counter, OnceFromView and
