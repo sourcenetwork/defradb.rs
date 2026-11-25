@@ -1201,6 +1201,12 @@ RUNS=(
   "MC_VersionPin_Red_WriteBackOnPin.cfg VersionPin.tla RED" # a read through an old version stores the migrated document back (INV_ReadNoSideEffect)
   "MC_CpuLedger_Green_Edge.cfg CpuLedger.tla GREEN" # a network runtime claims cores alone beside a pool, or gives up holding nothing
   "MC_CpuLedger_Red_EdgeNoCap.cfg CpuLedger.tla RED" # network runtime claims alone forever: its start never ends (LIVE_StartEnds)
+  "MC_WorkerHeartbeat_Green.cfg WorkerHeartbeat.tla GREEN" # task and hook polls each publish their own heartbeat: a report names the poll that runs, a task is marked only for its own long poll, an idle worker is never left marked
+  "MC_WorkerHeartbeat_Red_Main.cfg WorkerHeartbeat.tla RED" # main: the hook writes no heartbeat and the task's stays up, a slow hook is blamed on the task (INV_ReportTrue)
+  "MC_WorkerHeartbeat_Red_NoHookBeat.cfg WorkerHeartbeat.tla RED" # the hook writes no heartbeat of its own: its time is reported under the task's name (INV_ReportTrue)
+  "MC_WorkerHeartbeat_Red_FlagMark.cfg WorkerHeartbeat.tla RED" # the stuck mark is a bare flag: a mark landing late is taken by the next short task poll (INV_MarkTrue)
+  "MC_WorkerHeartbeat_Red_NoHookClear.cfg WorkerHeartbeat.tla RED" # a returning hook poll leaves its mark up: the idle worker stays routed around (INV_NotLeftStuck)
+  "MC_WorkerHeartbeat_Red_NoRecheck.cfg WorkerHeartbeat.tla RED" # the monitor does not look again after marking: a late mark stays on the idle worker (INV_NotLeftStuck)
   "MC_DefaultPool_Green.cfg DefaultPool.tla GREEN" # the first registered pool that runs is the default, else one pool started once; never a closing pool, a stop's deadline goes elsewhere, every call returns
   "MC_DefaultPool_Red_NoClosingCheck.cfg DefaultPool.tla RED" # running() keeps only the upgrade: a closing registered pool is handed out (INV_NeverHandsOutClosing)
   "MC_DefaultPool_Red_RegisterOverwrites.cfg DefaultPool.tla RED" # make_default swaps without looking: a running default is replaced (INV_FirstRunningWins)

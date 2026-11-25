@@ -121,6 +121,7 @@ pub(crate) struct Counters {
     pub tasks: AtomicU64,
     pub panics: AtomicU64,
     pub long_polls: AtomicU64,
+    pub long_hook_polls: AtomicU64,
     pub moved_out: AtomicU64,
     pub repins: AtomicU64,
     pub priority_resets: AtomicU64,
@@ -141,8 +142,10 @@ pub struct WorkerStats {
     pub tasks: u64,
     /// Tasks that panicked.
     pub panics: u64,
-    /// Polls that ran past the stuck limit.
+    /// Task polls that ran past the stuck limit.
     pub long_polls: u64,
+    /// I/O hook polls that ran past the stuck limit.
+    pub long_hook_polls: u64,
     /// Queued jobs moved off this worker while it was stuck.
     pub moved_out: u64,
     /// Times this worker found itself off its CPUs and pinned itself again.
@@ -151,12 +154,16 @@ pub struct WorkerStats {
     pub priority_resets: u64,
     /// Submissions admitted and not finished (queued plus running).
     pub load: usize,
-    /// Whether a poll is running past the stuck limit now.
+    /// Whether a poll (a task's or the I/O hook's) is running past the stuck
+    /// limit now.
     pub stuck: bool,
     /// How often the worker's thread was switched out so far; `None` where
     /// the platform does not say (only Linux does, per thread).
     pub switches: Option<ContextSwitches>,
 }
+
+/// [`WorkerShared`]'s stuck mark when no poll is marked.
+const NOT_STUCK: u64 = u64::MAX;
 
 pub(crate) struct WorkerShared {
     pub id: WorkerId,
@@ -168,10 +175,17 @@ pub(crate) struct WorkerShared {
     items_cap: usize,
     bytes_cap: usize,
     pub heartbeat: Heartbeat,
-    /// A poll is running past the limit; routing goes around this worker.
-    pub stuck: AtomicBool,
+    /// When the poll the monitor found past the limit started, or
+    /// [`NOT_STUCK`]; routing goes around this worker while one is marked.
+    /// Holding the start, not a flag, lets the worker clear only the mark
+    /// for its own poll: a mark the monitor raised for a poll that has
+    /// already ended is never charged to the poll after it.
+    stuck: AtomicU64,
     /// The task last reported stuck, so two monitors report it once.
     pub reported: AtomicU64,
+    /// When the hook poll last reported stuck started, so two monitors
+    /// report it once.
+    pub hook_reported: AtomicU64,
     /// Stop now, dropping what is left.
     pub abandon: AtomicBool,
     /// The worker has stopped: whoever finds a message after this fails it.
@@ -203,13 +217,34 @@ impl WorkerShared {
             items_cap: items,
             bytes_cap: bytes,
             heartbeat: Heartbeat::new(),
-            stuck: AtomicBool::new(false),
+            stuck: AtomicU64::new(NOT_STUCK),
             reported: AtomicU64::new(u64::MAX),
+            hook_reported: AtomicU64::new(u64::MAX),
             abandon: AtomicBool::new(false),
             exited: AtomicBool::new(false),
             counters: Counters::default(),
             thread: AtomicU64::new(0),
         }
+    }
+
+    /// Marks the poll that started at `start` as running past the limit.
+    pub(crate) fn mark_stuck(&self, start: u64) {
+        self.stuck.store(start, Ordering::SeqCst);
+    }
+
+    /// Clears the mark of the poll that started at `start`; whether that
+    /// poll was the one marked.
+    pub(crate) fn unmark(&self, start: u64) -> bool {
+        self.stuck.load(Ordering::SeqCst) == start
+            && self
+                .stuck
+                .compare_exchange(start, NOT_STUCK, Ordering::SeqCst, Ordering::SeqCst)
+                .is_ok()
+    }
+
+    /// Whether a poll is marked as running past the limit.
+    pub(crate) fn is_stuck(&self) -> bool {
+        self.stuck.load(Ordering::Relaxed) != NOT_STUCK
     }
 
     /// Records the calling thread as the one running this worker.
@@ -342,11 +377,12 @@ impl WorkerShared {
             tasks: read(&self.counters.tasks),
             panics: read(&self.counters.panics),
             long_polls: read(&self.counters.long_polls),
+            long_hook_polls: read(&self.counters.long_hook_polls),
             moved_out: read(&self.counters.moved_out),
             repins: read(&self.counters.repins),
             priority_resets: read(&self.counters.priority_resets),
             load: self.load(),
-            stuck: self.stuck.load(Ordering::Relaxed),
+            stuck: self.is_stuck(),
             switches: self.switches(),
         }
     }

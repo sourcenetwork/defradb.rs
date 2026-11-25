@@ -1,6 +1,7 @@
-//! The stuck-poll monitor. Each worker publishes when its current poll began;
-//! a scan on a timer finds a poll past the limit, reports it once per task
-//! (its name, its worker, how long), marks the worker stuck so routing sends
+//! The stuck-poll monitor. Each worker publishes when its current poll began
+//! and whether it is a task's or the I/O hook's; a scan on a timer finds a
+//! poll past the limit, reports it once per task or once per hook poll (its
+//! name, its worker, how long), marks the worker stuck so routing sends
 //! it nothing new, and moves the movable jobs still queued in its inbox to
 //! free workers on the same node. Bound jobs wait for their owner, and no
 //! running task is ever moved.
@@ -14,7 +15,7 @@ use std::sync::{Arc, Weak};
 use std::time::Duration;
 
 use super::PoolShared;
-use crate::worker::{micros, report_long_poll, REPORTED};
+use crate::worker::{micros, report_long_hook, report_long_poll, REPORTED};
 
 /// How many workers run the scan when no driver does.
 pub(crate) const WATCHERS: usize = 2;
@@ -82,17 +83,27 @@ pub(crate) fn scan(pool: &PoolShared, now: u64) -> usize {
             continue;
         }
         stuck += 1;
-        worker.stuck.store(true, Ordering::SeqCst);
+        worker.mark_stuck(beat.start);
         // The poll may have ended between the read and the mark, after the
-        // worker cleared its flag: a worker no longer in that poll is not
+        // worker looked for its mark: a worker no longer in that poll is not
         // left marked, or an idle worker would be routed around for good.
         if worker.heartbeat.read().map(|now| now.start) != Some(beat.start) {
-            worker.stuck.store(false, Ordering::SeqCst);
+            worker.unmark(beat.start);
         }
-        let task = beat.task & !REPORTED;
-        if beat.task & REPORTED == 0 && worker.reported.swap(task, Ordering::AcqRel) != task {
-            worker.counters.long_polls.fetch_add(1, Ordering::Relaxed);
-            report_long_poll(worker.id.index, beat.name, elapsed, pool.stuck_after);
+        if beat.hook {
+            if worker.hook_reported.swap(beat.start, Ordering::AcqRel) != beat.start {
+                worker
+                    .counters
+                    .long_hook_polls
+                    .fetch_add(1, Ordering::Relaxed);
+                report_long_hook(worker.id.index, elapsed, pool.stuck_after);
+            }
+        } else {
+            let task = beat.task & !REPORTED;
+            if beat.task & REPORTED == 0 && worker.reported.swap(task, Ordering::AcqRel) != task {
+                worker.counters.long_polls.fetch_add(1, Ordering::Relaxed);
+                report_long_poll(worker.id.index, beat.name, elapsed, pool.stuck_after);
+            }
         }
         while let Some(job) = worker.take_free() {
             match pool.reroute(job, worker) {

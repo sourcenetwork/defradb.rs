@@ -4,7 +4,6 @@
 use std::cell::{Cell, RefCell};
 use std::future::Future;
 use std::panic::{self, AssertUnwindSafe};
-use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::task::{Context, Poll, Waker};
 
@@ -14,7 +13,7 @@ use super::shared::{bump, Admitted, Job, LocalFuture, WorkerShared};
 use super::signal::TaskWaker;
 use super::slab::{Key, Slab};
 use super::timers::Timers;
-use super::{drop_quietly, micros, panic_message, report_long_poll, Tuning};
+use super::{drop_quietly, micros, panic_message, report_long_hook, report_long_poll, Tuning};
 use crate::clock::Clock;
 use crate::completion::{self, Completion, Fail};
 use crate::Error;
@@ -211,6 +210,7 @@ impl Local {
         bump(&self.shared.counters.polls);
         let mut cx = Context::from_waker(&waker);
         let result = panic::catch_unwind(AssertUnwindSafe(|| future.as_mut().poll(&mut cx)));
+        self.shared.heartbeat.idle();
         let long = self.after_poll(name, start, reported);
         match result {
             Ok(Poll::Pending) => match self.tasks.borrow_mut().get_mut(key) {
@@ -230,8 +230,7 @@ impl Local {
     /// the monitor while it ran, or measured here when nothing watches.
     fn after_poll(&self, name: &'static str, start: u64, reported: bool) -> bool {
         let shared = &self.shared;
-        if shared.stuck.load(Ordering::SeqCst) {
-            shared.stuck.store(false, Ordering::SeqCst);
+        if shared.unmark(start) {
             return true;
         }
         if self.tuning.monitored {
@@ -246,6 +245,25 @@ impl Local {
             report_long_poll(shared.id.index, name, elapsed, self.tuning.stuck_after);
         }
         true
+    }
+
+    /// Accounts for the hook poll that started at `start`, once it returned:
+    /// a mark the monitor set while it ran is the hook's and is cleared here,
+    /// so the next task is not blamed for it; when nothing watches, the poll
+    /// is measured here.
+    pub(super) fn after_hook(&self, start: u64) {
+        let shared = &self.shared;
+        if shared.unmark(start) {
+            return;
+        }
+        if self.tuning.monitored {
+            return;
+        }
+        let elapsed = self.now().saturating_sub(start);
+        if elapsed > micros(self.tuning.stuck_after) {
+            bump(&shared.counters.long_hook_polls);
+            report_long_hook(shared.id.index, elapsed, self.tuning.stuck_after);
+        }
     }
 
     fn finish(&self, key: Key, future: LocalFuture, panic: Option<String>) {

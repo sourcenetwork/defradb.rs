@@ -24,12 +24,17 @@ struct HookState {
 }
 
 impl HookState {
-    /// Polls the hook; the completions it delivered.
+    /// Polls the hook under its own heartbeat, so its time is never charged
+    /// to the task polled before it; the completions it delivered.
     fn poll(&mut self, local: &Local) -> usize {
         let Some(hook) = self.hook.as_mut() else {
             return 0;
         };
+        let start = local.now();
+        local.shared.heartbeat.begin_hook(start);
         let progress = hook.poll(self.budget);
+        local.shared.heartbeat.idle();
+        local.after_hook(start);
         self.due = progress
             .wake_in
             .map(|wait| local.now().saturating_add(micros(wait)));

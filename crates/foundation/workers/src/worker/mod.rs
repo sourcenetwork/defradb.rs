@@ -144,6 +144,17 @@ pub(crate) fn micros(duration: Duration) -> u64 {
     u64::try_from(duration.as_micros()).unwrap_or(u64::MAX)
 }
 
+/// Reports a poll of the I/O hook that held its worker past the limit: the
+/// worker's own I/O queue was slow, not a task.
+pub(crate) fn report_long_hook(worker: usize, elapsed: u64, limit: Duration) {
+    tracing::warn!(
+        worker,
+        elapsed_ms = elapsed / 1000,
+        limit_ms = u64::try_from(limit.as_millis()).unwrap_or(u64::MAX),
+        "the worker's I/O hook held its worker past the limit"
+    );
+}
+
 /// Reports a poll that held its worker past the limit: the one log line for
 /// it, wherever it was detected.
 pub(crate) fn report_long_poll(worker: usize, task: &str, elapsed: u64, limit: Duration) {
