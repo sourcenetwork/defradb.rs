@@ -1,6 +1,8 @@
-//! The stuck-poll monitor. Each worker publishes when its current poll began
-//! and whether it is a task's or the I/O hook's; a scan on a timer finds a
-//! poll past the limit, reports it once per task or once per hook poll (its
+//! The stuck-poll monitor. Each worker publishes which poll it is in: a task
+//! poll with when it began, or a hook poll, which the scan times from when
+//! it first sees it (so a slow hook is found up to one scan period late,
+//! and the worker reads no clock for it). A scan on a timer finds a poll
+//! past the limit, reports it once per task or once per hook poll (its
 //! name, its worker, how long), marks the worker stuck so routing sends
 //! it nothing new, and moves the movable jobs still queued in its inbox to
 //! free workers on the same node. Bound jobs wait for their owner, and no
@@ -75,23 +77,28 @@ pub(crate) fn scan(pool: &PoolShared, now: u64) -> usize {
     let limit = micros(pool.stuck_after);
     let mut stuck = 0;
     for worker in pool.workers.iter() {
+        worker.sweep_mark();
         let Some(beat) = worker.heartbeat.read() else {
             continue;
         };
-        let elapsed = now.saturating_sub(beat.start);
+        let elapsed = if beat.hook() {
+            worker.hook_elapsed(beat.number(), now)
+        } else {
+            now.saturating_sub(beat.start())
+        };
         if elapsed <= limit {
             continue;
         }
         stuck += 1;
-        worker.mark_stuck(beat.start);
+        worker.mark_stuck(beat.word);
         // The poll may have ended between the read and the mark, after the
         // worker looked for its mark: a worker no longer in that poll is not
         // left marked, or an idle worker would be routed around for good.
-        if worker.heartbeat.read().map(|now| now.start) != Some(beat.start) {
-            worker.unmark(beat.start);
+        if worker.heartbeat.word() != Some(beat.word) {
+            worker.unmark(beat.word);
         }
-        if beat.hook {
-            if worker.hook_reported.swap(beat.start, Ordering::AcqRel) != beat.start {
+        if beat.hook() {
+            if worker.hook_reported.swap(beat.word, Ordering::AcqRel) != beat.word {
                 worker
                     .counters
                     .long_hook_polls

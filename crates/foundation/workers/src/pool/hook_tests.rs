@@ -13,11 +13,11 @@ use super::{monitor, PoolShared};
 use crate::clock::{Clock, ManualClock};
 use crate::config::Config;
 use crate::hook::{Hook, HookProgress};
-use crate::worker::{Worker, WorkerStats, REPORTED};
+use crate::worker::{hook_word, task_word, Worker, WorkerStats, REPORTED};
 
 /// A hook whose first poll moves the clock past the stuck limit, as a slow
 /// block fetch would, and, when the worker is watched, runs the monitor's
-/// scan while it is in there.
+/// scan as it starts and again while it is in there.
 struct SlowOnce {
     pool: Arc<PoolShared>,
     clock: Arc<ManualClock>,
@@ -28,6 +28,13 @@ struct SlowOnce {
 impl Hook for SlowOnce {
     fn poll(&mut self, _budget: usize) -> HookProgress {
         if std::mem::take(&mut self.slow) {
+            if self.scan {
+                assert_eq!(
+                    monitor::scan(&self.pool, self.clock.now_micros()),
+                    0,
+                    "first seen now"
+                );
+            }
             self.clock.advance(50_000);
             if self.scan {
                 assert_eq!(monitor::scan(&self.pool, self.clock.now_micros()), 1);
@@ -61,7 +68,7 @@ impl Future for Short {
         self.seen_reported.borrow_mut().push(reported);
         self.polls += 1;
         if self.late_mark && self.polls == 2 {
-            self.pool.workers[0].mark_stuck(0);
+            self.pool.workers[0].mark_stuck(task_word(0));
         }
         if self.polls == 3 {
             return Poll::Ready(());
@@ -128,8 +135,15 @@ fn the_monitor_reports_a_hook_poll_once_and_routes_around_it() {
     let clock = Arc::new(ManualClock::default());
     let pool = bare(2, clock.clone());
     let worker = &pool.workers[0];
-    worker.heartbeat.begin_hook(0);
-    clock.advance(20_000);
+    worker.heartbeat.begin_hook(hook_word(1));
+    assert_eq!(monitor::scan(&pool, clock.now_micros()), 0, "first seen");
+    clock.advance(9_000);
+    assert_eq!(
+        monitor::scan(&pool, clock.now_micros()),
+        0,
+        "within the limit"
+    );
+    clock.advance(11_000);
     assert_eq!(monitor::scan(&pool, clock.now_micros()), 1);
     monitor::scan(&pool, clock.now_micros());
     assert_eq!(
@@ -139,15 +153,31 @@ fn the_monitor_reports_a_hook_poll_once_and_routes_around_it() {
     );
     assert_eq!(worker.stats().long_polls, 0);
     assert!(worker.is_stuck(), "routed around while slow");
-    worker.heartbeat.idle();
-    worker.heartbeat.begin_hook(30_000);
-    clock.advance(30_000);
+    worker.heartbeat.begin_hook(hook_word(2));
+    assert_eq!(
+        monitor::scan(&pool, clock.now_micros()),
+        0,
+        "a new hook poll"
+    );
+    assert!(!worker.is_stuck(), "the old poll's mark is swept");
+    clock.advance(20_000);
     monitor::scan(&pool, clock.now_micros());
     assert_eq!(
         worker.stats().long_hook_polls,
         2,
         "a later slow hook poll is new"
     );
+}
+
+#[test]
+fn a_scan_sweeps_a_mark_for_a_poll_no_longer_shown() {
+    let clock = Arc::new(ManualClock::default());
+    let pool = bare(2, clock.clone());
+    let worker = &pool.workers[0];
+    worker.mark_stuck(task_word(0));
+    assert!(worker.is_stuck());
+    assert_eq!(monitor::scan(&pool, clock.now_micros()), 0);
+    assert!(!worker.is_stuck(), "an idle worker is not left marked");
 }
 
 /// A hook whose every poll moves the clock a microsecond on, so each task
@@ -188,7 +218,7 @@ fn a_late_mark_for_an_ended_poll_is_not_charged_to_the_next_one() {
     while worker.turn() > 0 {}
     assert_eq!(*seen.borrow(), vec![false; 3], "the task is never marked");
     assert!(
-        pool.workers[0].unmark(0),
+        pool.workers[0].unmark(task_word(0)),
         "the stale mark waits for the monitor's recheck, untouched"
     );
 }

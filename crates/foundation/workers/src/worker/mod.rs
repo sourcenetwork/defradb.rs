@@ -11,6 +11,7 @@
 //! except [`WorkerShared`], its face to other threads.
 
 mod heartbeat;
+mod hook_beat;
 mod keyed;
 mod local;
 mod run;
@@ -30,6 +31,8 @@ use std::rc::Rc;
 use std::time::Duration;
 
 pub(crate) use heartbeat::REPORTED;
+#[cfg(test)]
+pub(crate) use heartbeat::{hook_word, task_word};
 use local::Local;
 pub(crate) use run::Worker;
 pub use shared::WorkerStats;

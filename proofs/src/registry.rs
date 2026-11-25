@@ -3127,14 +3127,15 @@ pub const PROPERTIES: &[Property] = &[
         bound_by: "",
     },
     Property {
-        // A worker polls a task, then its I/O hook, under heartbeats of their
-        // own, and takes down each poll's heartbeat as it returns; the
-        // monitor's stuck mark holds the start of the poll it is for, so a
-        // slow hook poll is never reported or remembered as the task's.
+        // A task poll hands the heartbeat to the hook poll after it in one
+        // store; the hook stays shown until the next task poll or the turn's
+        // end, and the monitor times it from its first sighting. The stuck
+        // mark names the poll it is for, so a slow hook poll is never
+        // reported or remembered as the task's.
         family: "Worker heartbeat attribution",
-        name: "INV_ReportTrue / INV_MarkTrue / INV_NotLeftStuck: the monitor reports only the poll that runs, past the limit; a task is remembered as reported only for a long poll of its own; an idle worker is never left marked",
+        name: "INV_ReportTrue / INV_MarkTrue / INV_NotLeftStuck: the monitor reports only a poll that is still the worker's and past the limit; a task is remembered as reported only for a long poll of its own; no mark outlives its poll and the worker's look",
         axis: Tla,
-        anchor: "crates/foundation/workers/src/worker/run.rs HookState::poll; crates/foundation/workers/src/worker/local.rs Local::poll, Local::after_poll, Local::after_hook; crates/foundation/workers/src/worker/heartbeat.rs Heartbeat::begin_hook; crates/foundation/workers/src/worker/shared.rs WorkerShared::mark_stuck, WorkerShared::unmark; crates/foundation/workers/src/pool/monitor.rs scan",
+        anchor: "crates/foundation/workers/src/worker/local.rs Local::poll, Local::after_poll; crates/foundation/workers/src/worker/hook_beat.rs Local::begin_hook, Local::close_hook, Local::end_beat; crates/foundation/workers/src/worker/run.rs HookState::poll, HookState::poll_begun; crates/foundation/workers/src/worker/heartbeat.rs Heartbeat::begin_hook; crates/foundation/workers/src/worker/shared.rs WorkerShared::mark_stuck, WorkerShared::unmark, WorkerShared::sweep_mark, WorkerShared::hook_elapsed; crates/foundation/workers/src/pool/monitor.rs scan",
         model_ref: "MC_WorkerHeartbeat_{Green,Red_Main,Red_NoHookBeat,Red_FlagMark,Red_NoHookClear,Red_NoRecheck}.cfg",
         tiers: &[Boundary],
         bound_by: "",

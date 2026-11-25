@@ -7,13 +7,14 @@ use std::panic::{self, AssertUnwindSafe};
 use std::sync::Arc;
 use std::task::{Context, Poll, Waker};
 
-use super::heartbeat::REPORTED;
+use super::heartbeat::{task_word, REPORTED};
+use super::hook_beat::NO_HOOK;
 use super::keyed::Keyed;
 use super::shared::{bump, Admitted, Job, LocalFuture, WorkerShared};
 use super::signal::TaskWaker;
 use super::slab::{Key, Slab};
 use super::timers::Timers;
-use super::{drop_quietly, micros, panic_message, report_long_hook, report_long_poll, Tuning};
+use super::{drop_quietly, micros, panic_message, report_long_poll, Tuning};
 use crate::clock::Clock;
 use crate::completion::{self, Completion, Fail};
 use crate::Error;
@@ -61,6 +62,14 @@ pub(crate) struct Local {
     live: Cell<usize>,
     pub(super) draining: Cell<bool>,
     closed: Cell<bool>,
+    /// Hook polls begun, numbering their heartbeat words.
+    pub(super) hooks: Cell<u64>,
+    /// The word of the hook poll the heartbeat still shows, not yet
+    /// accounted for, or [`NO_HOOK`].
+    pub(super) open_hook: Cell<u64>,
+    /// When that hook poll started, kept only when the worker times its own
+    /// polls.
+    pub(super) hook_start: Cell<u64>,
 }
 
 impl Local {
@@ -75,6 +84,9 @@ impl Local {
             live: Cell::new(0),
             draining: Cell::new(false),
             closed: Cell::new(false),
+            hooks: Cell::new(0),
+            open_hook: Cell::new(NO_HOOK),
+            hook_start: Cell::new(0),
         }
     }
 
@@ -188,7 +200,9 @@ impl Local {
     }
 
     /// Polls the task `key`; `false` when it no longer exists (a stale wake).
-    pub(super) fn poll(&self, key: Key) -> bool {
+    /// With `then_hook` the heartbeat moves straight on to the hook poll the
+    /// caller makes next; otherwise it goes idle.
+    pub(super) fn poll(&self, key: Key, then_hook: bool) -> bool {
         let taken = self.tasks.borrow_mut().get_mut(key).and_then(|task| {
             task.waker.clear();
             let future = task.future.take()?;
@@ -207,11 +221,17 @@ impl Local {
         self.shared
             .heartbeat
             .begin(start, key.to_bits() | flag, name);
+        self.close_hook(|| start);
         bump(&self.shared.counters.polls);
         let mut cx = Context::from_waker(&waker);
         let result = panic::catch_unwind(AssertUnwindSafe(|| future.as_mut().poll(&mut cx)));
-        self.shared.heartbeat.idle();
-        let long = self.after_poll(name, start, reported);
+        let end = self.own_now();
+        if then_hook {
+            self.begin_hook(end);
+        } else {
+            self.shared.heartbeat.idle();
+        }
+        let long = self.after_poll(name, start, end, reported);
         match result {
             Ok(Poll::Pending) => match self.tasks.borrow_mut().get_mut(key) {
                 Some(task) => {
@@ -226,17 +246,19 @@ impl Local {
         true
     }
 
-    /// Whether the poll that started at `start` ran past the limit: flagged by
-    /// the monitor while it ran, or measured here when nothing watches.
-    fn after_poll(&self, name: &'static str, start: u64, reported: bool) -> bool {
+    /// Whether the poll that started at `start` and ended at `end` ran past
+    /// the limit: marked by the monitor while it ran, or measured here when
+    /// nothing watches. The heartbeat has already left it, so a mark the
+    /// monitor raises from now on is not for it and is swept.
+    fn after_poll(&self, name: &'static str, start: u64, end: u64, reported: bool) -> bool {
         let shared = &self.shared;
-        if shared.unmark(start) {
+        if shared.unmark(task_word(start)) {
             return true;
         }
         if self.tuning.monitored {
             return false;
         }
-        let elapsed = self.now().saturating_sub(start);
+        let elapsed = end.saturating_sub(start);
         if elapsed <= micros(self.tuning.stuck_after) {
             return false;
         }
@@ -245,25 +267,6 @@ impl Local {
             report_long_poll(shared.id.index, name, elapsed, self.tuning.stuck_after);
         }
         true
-    }
-
-    /// Accounts for the hook poll that started at `start`, once it returned:
-    /// a mark the monitor set while it ran is the hook's and is cleared here,
-    /// so the next task is not blamed for it; when nothing watches, the poll
-    /// is measured here.
-    pub(super) fn after_hook(&self, start: u64) {
-        let shared = &self.shared;
-        if shared.unmark(start) {
-            return;
-        }
-        if self.tuning.monitored {
-            return;
-        }
-        let elapsed = self.now().saturating_sub(start);
-        if elapsed > micros(self.tuning.stuck_after) {
-            bump(&shared.counters.long_hook_polls);
-            report_long_hook(shared.id.index, elapsed, self.tuning.stuck_after);
-        }
     }
 
     fn finish(&self, key: Key, future: LocalFuture, panic: Option<String>) {
