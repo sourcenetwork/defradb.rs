@@ -5,8 +5,9 @@
 //!       [--go-repo DIR --pin COMMIT] [--area NAME]...
 //!
 //! With `--go-repo` and `--pin`, each test carries its Go `SupportedClientTypes`
-//! read at the pin, files are stamped with the pin, and a scenario already
-//! ported at the pin is generated even when its file drifted.
+//! and `MultiplierExcludes` read at the pin, files are stamped with the pin,
+//! and a scenario already ported at the pin is generated even when its file
+//! drifted.
 //!   gen_scenarios check --scenarios DIR --exported DIR [--drift FILE] [--pin COMMIT] [--area NAME]...
 
 mod check;
@@ -14,6 +15,7 @@ mod corpus;
 mod deviations;
 mod emit;
 mod error;
+mod go_excludes;
 mod go_source;
 mod lifecycle;
 mod literal;
@@ -110,6 +112,8 @@ fn generate(args: &Args) -> Result<()> {
     };
     let pin = go.as_ref().map(|go| go.pin().to_owned());
     let mut unresolved: Vec<String> = Vec::new();
+    let mut unresolved_excludes: Vec<String> = Vec::new();
+    let mut run_here: Vec<String> = Vec::new();
 
     let mut skipped_drift: Vec<String> = Vec::new();
     let mut unmapped: Vec<String> = Vec::new();
@@ -193,11 +197,35 @@ fn generate(args: &Args) -> Result<()> {
                 }
                 Some(go_source::Clients::All) | None => None,
             };
+            let source = &item.scenario.source;
+            let go_excludes = match go
+                .as_mut()
+                .map(|go| go.multiplier_excludes(&source.path, &source.test))
+            {
+                Some(go_excludes::Excludes::Listed(listed)) => listed,
+                Some(go_excludes::Excludes::Unresolved(reason)) => {
+                    unresolved_excludes.push(format!("{} ({reason})", item.scenario.id));
+                    Vec::new()
+                }
+                None => Vec::new(),
+            };
+            for exclude in &go_excludes {
+                if let Some(why) =
+                    multiplier_excludes::runs_here(&source.path, &source.test, exclude)
+                {
+                    run_here.push(format!(
+                        "{} {}: {why}",
+                        item.scenario.id, exclude.multiplier
+                    ));
+                }
+            }
+            let excludes = multiplier_excludes::resolve(&source.path, &source.test, &go_excludes);
             body.push_str(&emit::test_fn(
                 item,
                 &name,
                 leaf.map(|s| s.as_str()),
                 clients.as_deref(),
+                excludes.as_ref(),
                 &mut used,
             ));
             body.push('\n');
@@ -254,6 +282,17 @@ fn generate(args: &Args) -> Result<()> {
     println!("client types unresolved: {}", unresolved.len());
     for line in &unresolved {
         println!("  clients: {line}");
+    }
+    println!(
+        "multiplier excludes unresolved: {}",
+        unresolved_excludes.len()
+    );
+    for line in &unresolved_excludes {
+        println!("  excludes: {line}");
+    }
+    println!("Go multiplier excludes run here: {}", run_here.len());
+    for line in &run_here {
+        println!("  runs here: {line}");
     }
     println!("steps by op (corpus names):");
     for (op, count) in &ops {

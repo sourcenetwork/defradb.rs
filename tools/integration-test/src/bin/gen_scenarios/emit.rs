@@ -441,6 +441,7 @@ pub fn test_fn(
     name: &str,
     leaf: Option<&str>,
     clients: Option<&[&str]>,
+    excludes: Option<&(Vec<&str>, String)>,
     used: &mut Used,
 ) -> String {
     let (mut steps, deviation) =
@@ -534,8 +535,7 @@ pub fn test_fn(
             clients.join(", ")
         ));
     }
-    let source = &loaded.scenario.source;
-    if let Some((names, reason)) = super::multiplier_excludes::lookup(&source.path, &source.test) {
+    if let Some((names, reason)) = excludes {
         let names: Vec<String> = names.iter().map(|name| format!("{name:?}")).collect();
         out.push_str(&format!(
             "        // {reason}\n        multiplier_excludes: &[{}],\n",
