@@ -582,6 +582,13 @@ check-ffi-header header:
 check-c-api base="origin/main":
     bash .github/scripts/check-c-api.sh {{base}}
 
+# Check the Go OpenAPI snapshot the HTTP crate merges is Go's document at
+# GO_COMPAT_COMMIT, as CI's OpenAPI snapshot job does. Reads it from
+# DEFRADB_GO_REPO when that is set, from GitHub otherwise.
+[group('build')]
+check-openapi-snapshot:
+    bash .github/scripts/check-openapi-snapshot.sh
+
 # Apple .xcframework plus the Swift import smoke test.
 [group('build')]
 build-apple:
