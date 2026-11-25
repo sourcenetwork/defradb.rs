@@ -20,7 +20,6 @@ use defra_perf::emit::{Family, Group, Row, Trust};
 use defra_perf::measure::{median, min_max, percentile_ms};
 use query::mutator::DocMutator;
 use query::QueryRequest;
-use schema::{CollectionVersion, FieldDescription, FieldKind};
 use storage::corekv::Store;
 use storage::{RegolithStore, RegolithStoreOptions};
 use tower::ServiceExt;
@@ -29,6 +28,7 @@ mod common;
 use common::{counts, git, positive};
 
 const COLLECTION: &str = "User";
+const COLLECTION_SDL: &str = "type User { name: String age: Int }";
 const DOCUMENTS: usize = 1024;
 const PAGE: usize = 10;
 
@@ -99,23 +99,9 @@ impl Fixture {
             .await
             .unwrap(),
         );
-        db.create_collection(CollectionVersion::new(
-            COLLECTION,
-            "read-baseline-v1",
-            "read-baseline",
-            vec![
-                FieldDescription::new(
-                    "1",
-                    "_docID",
-                    FieldKind::doc_id(),
-                    schema::CType::LwwRegister,
-                ),
-                FieldDescription::new("2", "name", FieldKind::string(), schema::CType::LwwRegister),
-                FieldDescription::new("3", "age", FieldKind::int(), schema::CType::LwwRegister),
-            ],
-        ))
-        .await
-        .unwrap();
+        db.add_collection(&defra_core::RequestContext::ambient(), COLLECTION_SDL)
+            .await
+            .unwrap();
         let collection = db.get_collection(COLLECTION).unwrap().unwrap();
         let runner = query::QueryRunner::with_registry(
             db::LensedAutoCommitFetcher::new(db.clone()),

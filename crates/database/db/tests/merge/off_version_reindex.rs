@@ -4,6 +4,7 @@
 //! that merges several blocks in one transaction, owing it on the first,
 //! leaves the record standing.
 
+use crate::common::schema::parsed;
 use std::sync::Arc;
 
 use blockstore::{Blockstore, DefraBlockstore};
@@ -13,30 +14,23 @@ use db::DB;
 use defra_core::merge::{BlockMetadata, MergeHandler, MergeOutcome};
 use document::{Document, NormalValue};
 use lens::{LensConfig, LensModule, MemoryTransformStore};
-use schema::{CollectionVersion, FieldDescription, FieldKind, IndexDescription};
+use schema::CollectionVersion;
 use storage::{RegolithStore, Store};
 
-const V1: &str = "v1";
-const COLLECTION_ID: &str = "col-users";
 const CREATOR: &str = "did:key:z6MkrOffVersionReindex";
 
+fn version_id() -> String {
+    users().version_id
+}
+
+fn collection_id() -> String {
+    users().collection_id
+}
+
+const USERS_SDL: &str = r#"type Users { name: String @index(name: "idx_name") }"#;
+
 fn users() -> CollectionVersion {
-    let mut version = CollectionVersion::new(
-        "Users",
-        V1,
-        COLLECTION_ID,
-        vec![
-            FieldDescription::new(
-                "1",
-                "_docID",
-                FieldKind::doc_id(),
-                schema::CType::LwwRegister,
-            ),
-            FieldDescription::new("2", "name", FieldKind::string(), schema::CType::LwwRegister),
-        ],
-    );
-    version.indexes = vec![IndexDescription::new("idx_name").with_field("name", false)];
-    version
+    parsed(USERS_SDL)
 }
 
 async fn add_field(db: &DB<RegolithStore>, field: &str) -> String {
@@ -126,7 +120,8 @@ async fn merge_at_v1_owes(
         blockstore.put(&cid, &bytes).await.unwrap();
     }
     let handler = DbMergeHandler::new(db.clone(), blockstore);
-    let metadata = BlockMetadata::normal(&doc_id, COLLECTION_ID, CREATOR, None, false);
+    let collection_id = collection_id();
+    let metadata = BlockMetadata::normal(&doc_id, &collection_id, CREATOR, None, false);
     let outcome = handler
         .handle_block(&tip_cid, &tip_block, metadata)
         .await
@@ -140,7 +135,9 @@ async fn database() -> (Arc<DB<RegolithStore>>, Arc<RegolithStore>) {
     let mut raw = DB::from_arc(store.clone()).unwrap();
     raw.set_lens_store(Arc::new(MemoryTransformStore::new()));
     let db = Arc::new(raw);
-    db.create_collection(users()).await.unwrap();
+    db.add_collection(&defra_core::RequestContext::ambient(), USERS_SDL)
+        .await
+        .unwrap();
     (db, store)
 }
 
@@ -149,7 +146,7 @@ fn a_lens_into_the_active_version_owes_a_reindex() {
     workers::block_on(async {
         let (db, store) = database().await;
         let v2 = add_field(&db, "level").await;
-        migrate(&db, V1, &v2).await;
+        migrate(&db, &version_id(), &v2).await;
         assert!(merge_at_v1_owes(db, store, 1).await);
     })
     .unwrap()
@@ -160,7 +157,7 @@ fn a_collection_owed_a_reindex_is_still_found_by_its_root_id() {
     workers::block_on(async {
         let (db, store) = database().await;
         let v2 = add_field(&db, "level").await;
-        migrate(&db, V1, &v2).await;
+        migrate(&db, &version_id(), &v2).await;
         let root = db
             .get_collection("Users")
             .unwrap()
@@ -180,7 +177,7 @@ fn a_lens_behind_an_unlensed_active_version_owes_a_reindex() {
     workers::block_on(async {
         let (db, store) = database().await;
         let v2 = add_field(&db, "level").await;
-        migrate(&db, V1, &v2).await;
+        migrate(&db, &version_id(), &v2).await;
         let v3 = add_field(&db, "rank").await;
         assert_eq!(
             db.get_collection("Users").unwrap().unwrap().version_id(),
@@ -207,7 +204,7 @@ fn a_walk_of_several_blocks_owes_a_reindex() {
     workers::block_on(async {
         let (db, store) = database().await;
         let v2 = add_field(&db, "level").await;
-        migrate(&db, V1, &v2).await;
+        migrate(&db, &version_id(), &v2).await;
         assert!(merge_at_v1_owes(db, store, 4).await);
     })
     .unwrap()

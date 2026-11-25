@@ -11,7 +11,7 @@ use document::{DocID, Document, NormalValue};
 use schema::{IndexKind, IndexedFieldDescription, OrderedIndexDescription};
 use storage::RegolithStore;
 
-use super::{collection, COLLECTION};
+use super::{COLLECTION, COLLECTION_SDL};
 use crate::common::counting_store::CountingStore;
 
 type Store = CountingStore<RegolithStore>;
@@ -22,7 +22,9 @@ async fn open() -> Arc<DB<Store>> {
             .await
             .unwrap(),
     );
-    db.create_collection(collection()).await.unwrap();
+    db.add_collection(&defra_core::RequestContext::ambient(), COLLECTION_SDL)
+        .await
+        .unwrap();
     db.create_index(
         COLLECTION,
         Some("by_count"),

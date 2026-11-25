@@ -1,6 +1,7 @@
 //! A merged document's SE artifacts must be pushed to this node's replicators,
 //! on both the standalone and the batch merge path.
 
+use super::merge_handler_tests::{users_collection_id, users_version_id};
 use kovan::Atom;
 use std::sync::Arc;
 
@@ -12,10 +13,6 @@ use db::merge::SeArtifactRepusher;
 use defra_core::merge::BlockMetadata;
 use defra_core::merge::MergeHandler;
 use defra_core::merge::MergeOutcome;
-use schema::CollectionVersion;
-use schema::EncryptedIndexDescription;
-use schema::FieldDescription;
-use schema::FieldKind;
 use storage::RegolithStore;
 
 use super::merge_handler_tests::build_merge_block;
@@ -44,23 +41,12 @@ async fn make_handler_with_encrypted_index() -> (
     let store = Arc::new(RegolithStore::in_memory().unwrap());
     let db = Arc::new(DB::from_arc(store.clone()).unwrap());
 
-    let mut collection = CollectionVersion::new(
-        "Users",
-        "v1",
-        "col-users",
-        vec![
-            FieldDescription::new(
-                "1",
-                "_docID",
-                FieldKind::doc_id(),
-                schema::CType::LwwRegister,
-            ),
-            FieldDescription::new("2", "name", FieldKind::string(), schema::CType::LwwRegister),
-            FieldDescription::new("3", "age", FieldKind::int(), schema::CType::LwwRegister),
-        ],
-    );
-    collection.encrypted_indexes = vec![EncryptedIndexDescription::new("name")];
-    db.create_collection(collection).await.unwrap();
+    db.add_collection(
+        &defra_core::RequestContext::ambient(),
+        "type Users { name: String @encryptedIndex age: Int }",
+    )
+    .await
+    .unwrap();
 
     let blockstore = Arc::new(DefraBlockstore::new(store, false));
     let handler = DbMergeHandler::new(db, blockstore.clone());
@@ -78,7 +64,7 @@ fn standalone_merge_pushes_se_artifacts_for_the_merged_document() {
 
         let metadata = BlockMetadata::normal(
             &block.doc_id,
-            "col-users",
+            users_collection_id(),
             &block.creator,
             block.sender_peer.as_deref(),
             false,
@@ -91,7 +77,7 @@ fn standalone_merge_pushes_se_artifacts_for_the_merged_document() {
         assert_eq!(outcome, MergeOutcome::Merged);
         assert_eq!(
             repusher.calls.load_clone(),
-            vec![("col-users".to_string(), doc_id)]
+            vec![(users_collection_id().to_string(), doc_id)]
         );
     })
     .unwrap()
@@ -104,8 +90,8 @@ fn batch_merge_pushes_se_artifacts_for_every_merged_document() {
         let first = build_merge_block(&blockstore, "Alice", 30).await;
         let second = build_merge_block(&blockstore, "Bob", 31).await;
         let mut expected = vec![
-            ("col-users".to_string(), first.doc_id.clone()),
-            ("col-users".to_string(), second.doc_id.clone()),
+            (users_collection_id().to_string(), first.doc_id.clone()),
+            (users_collection_id().to_string(), second.doc_id.clone()),
         ];
 
         let results = handler.handle_block_batch(&[first, second]).await;
@@ -137,7 +123,7 @@ fn multi_commit_dag_pushes_se_artifacts_once_for_the_head() {
         let field = Block::new(
             CrdtDelta::Lww(LwwDeltaPayload {
                 field_name: "name".to_string(),
-                collection_version_id: "v1".to_string(),
+                collection_version_id: users_version_id().to_string(),
                 priority: 2,
                 data,
             }),
@@ -151,7 +137,7 @@ fn multi_commit_dag_pushes_se_artifacts_once_for_the_head() {
             .unwrap();
         let update = Block::new(
             CrdtDelta::Composite(CompositeDeltaPayload {
-                collection_version_id: "v1".to_string(),
+                collection_version_id: users_version_id().to_string(),
                 priority: 2,
                 status: 1,
             }),
@@ -164,7 +150,7 @@ fn multi_commit_dag_pushes_se_artifacts_once_for_the_head() {
 
         let metadata = BlockMetadata::normal(
             &create.doc_id,
-            "col-users",
+            users_collection_id(),
             &create.creator,
             create.sender_peer.as_deref(),
             false,
@@ -177,7 +163,7 @@ fn multi_commit_dag_pushes_se_artifacts_once_for_the_head() {
         assert_eq!(outcome, MergeOutcome::Merged);
         assert_eq!(
             repusher.calls.load_clone(),
-            vec![("col-users".to_string(), create.doc_id.clone())],
+            vec![(users_collection_id().to_string(), create.doc_id.clone())],
             "one push for the head, not one per merged parent"
         );
     })

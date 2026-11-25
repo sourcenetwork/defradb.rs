@@ -34,7 +34,9 @@ fn a_custom_field_keeps_the_greatest_value_written() {
             .build()
             .await
             .unwrap();
-        node.add_collection(SDL).await.unwrap();
+        node.add_collection(&defra_core::RequestContext::ambient(), SDL)
+            .await
+            .unwrap();
         let created = node
             .execute(r#"mutation { add_Score(input: {player: "ann", best: 5}) { _docID best } }"#)
             .await;
@@ -71,7 +73,9 @@ fn a_node_without_the_type_keeps_the_definition_and_hides_the_field() {
             .await
             .unwrap();
         let node = Node::builder().build().await.unwrap();
-        node.add_collection(SDL).await.unwrap();
+        node.add_collection(&defra_core::RequestContext::ambient(), SDL)
+            .await
+            .unwrap();
         let field = node
             .get_collection("Score")
             .unwrap()
@@ -163,7 +167,9 @@ fn a_store_holding_custom_values_opens_only_with_their_type() {
             builder.build()
         };
         let node = open(true).await.unwrap();
-        node.add_collection(SDL).await.unwrap();
+        node.add_collection(&defra_core::RequestContext::ambient(), SDL)
+            .await
+            .unwrap();
         let created = node
             .execute(r#"mutation { add_Score(input: {player: "ann", best: 5}) { _docID } }"#)
             .await;
