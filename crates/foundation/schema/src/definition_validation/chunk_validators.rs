@@ -49,6 +49,7 @@ pub(super) fn validate_chunks_not_modified(
                 new_col.name
             ));
         } else if old_col.is_generated() && new_col.vector_embeddings != old_col.vector_embeddings {
+            // TODO(https://github.com/sourcenetwork/defradb.rs/issues/3382): a way off a retired model.
             errs.push(format!(
                 "a generated chunk collection's embeddings cannot be mutated. Collection: {}",
                 new_col.name

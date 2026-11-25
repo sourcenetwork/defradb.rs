@@ -135,6 +135,7 @@ where
             // transaction's writes each time.
             let planned: RapidHashSet<&str> =
                 plan.chunks.iter().map(|(_, hash)| hash.as_str()).collect();
+            // TODO(https://github.com/sourcenetwork/defradb.rs/issues/3381): reuse trusts the vector of a chunk any peer sent.
             let existing = target.existing_of(parent_doc_id, &planned).await?;
             let mut docs = Vec::new();
             for (text, hash) in plan.chunks {
@@ -149,6 +150,7 @@ where
             }
             missing.push((target, encrypt, docs));
         }
+        // TODO(https://github.com/sourcenetwork/defradb.rs/issues/3380): one deadline bounds the whole wave.
         if let Some(miss) = first_miss {
             return Err(QueryError::NeedsInput(miss));
         }
