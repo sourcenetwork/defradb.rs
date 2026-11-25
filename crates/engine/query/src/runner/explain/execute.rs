@@ -461,9 +461,8 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
                     let field_fetches = (field_count * doc_fetches) as u64;
                     scan_obj.insert("fieldFetches".to_string(), serde_json::json!(field_fetches));
 
-                    // indexFetches is set by IndexScanNode::explain_inner() with
-                    // the actual index key lookup count. For regular scans without an
-                    // index, default to 0 (Go always includes this property).
+                    // Go always includes this property; a scan that already
+                    // counted its index lookups keeps that count.
                     if !scan_obj.contains_key("indexFetches") {
                         scan_obj.insert("indexFetches".to_string(), serde_json::json!(0u64));
                     }
