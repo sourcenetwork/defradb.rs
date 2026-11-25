@@ -71,7 +71,7 @@ fn explain_filter_with_order_and_limit_is_applied_only_at_the_scan() {
 }
 
 #[test]
-#[mantra_macros::req_test("go.explain.default.filter")]
+#[mantra_macros::req_test("go.query.simple.filter.equality.eq")]
 fn filter_with_order_and_limit_returns_only_matching_documents() {
     TestCase {
         id: integration_test::scenario_id!(),
