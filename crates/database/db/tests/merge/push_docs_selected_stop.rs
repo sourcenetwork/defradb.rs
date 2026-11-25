@@ -17,10 +17,15 @@ use p2p::message::PushLogReply;
 use p2p::transport::PeerId;
 use query::mutator::DocMutator;
 use rapidhash::RapidHashSet;
-use schema::{CollectionVersion, FieldDescription, FieldKind};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use storage::RegolithStore;
+
+const NOTE_SDL: &str = "type Note { body: String }";
+
+fn note_collection_id() -> String {
+    crate::common::schema::parsed(NOTE_SDL).collection_id
+}
 
 struct Fixture {
     db: Arc<DB<RegolithStore>>,
@@ -35,22 +40,9 @@ impl Fixture {
     async fn new(selected: usize, unselected: usize) -> Self {
         let db = Arc::new(DB::from_arc(Arc::new(RegolithStore::in_memory().unwrap())).unwrap());
         db.set_network(edge::testing::edge());
-        db.create_collection(CollectionVersion::new(
-            "Note",
-            "v1",
-            "notes",
-            vec![
-                FieldDescription::new(
-                    "1",
-                    "_docID",
-                    FieldKind::doc_id(),
-                    schema::CType::LwwRegister,
-                ),
-                FieldDescription::new("2", "body", FieldKind::string(), schema::CType::LwwRegister),
-            ],
-        ))
-        .await
-        .unwrap();
+        db.add_collection(&defra_core::RequestContext::ambient(), NOTE_SDL)
+            .await
+            .unwrap();
         let mutator = AutoCommitMutator::new(db.clone());
         let schema = db.get_collection("Note").unwrap().unwrap().schema_arc();
         let mut ids = Vec::new();
@@ -67,8 +59,11 @@ impl Fixture {
             );
         }
         let peer = PeerId::new("receiver".into());
-        let info =
-            p2p::ReplicatorInfo::from_raw(peer.as_str().to_owned(), vec!["notes".into()], vec![]);
+        let info = p2p::ReplicatorInfo::from_raw(
+            peer.as_str().to_owned(),
+            vec![note_collection_id()],
+            vec![],
+        );
         let peerstore = db.peerstore();
         peerstore
             .create_replicator(peer.as_str(), &info.to_bytes().unwrap())

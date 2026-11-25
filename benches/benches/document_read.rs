@@ -22,7 +22,6 @@ use db::DB;
 use document::{Document, NormalValue};
 use query::mutator::DocMutator;
 use query::DocFetcher;
-use schema::{CollectionVersion, FieldDescription, FieldKind};
 use storage::RegolithStore;
 
 mod common;
@@ -30,23 +29,7 @@ mod common;
 const COLLECTION: &str = "User";
 const CORPUS: [usize; 3] = [100, 1_000, 5_000];
 
-fn collection_version() -> CollectionVersion {
-    CollectionVersion::new(
-        COLLECTION,
-        "bafkdocread",
-        "docread",
-        vec![
-            FieldDescription::new(
-                "1",
-                "_docID",
-                FieldKind::doc_id(),
-                schema::CType::LwwRegister,
-            ),
-            FieldDescription::new("2", "name", FieldKind::string(), schema::CType::LwwRegister),
-            FieldDescription::new("3", "city", FieldKind::string(), schema::CType::LwwRegister),
-        ],
-    )
-}
+const COLLECTION_SDL: &str = "type User { name: String city: String }";
 
 type Fetcher = db::AutoCommitFetcher<RegolithStore>;
 
@@ -55,14 +38,16 @@ type Fetcher = db::AutoCommitFetcher<RegolithStore>;
 async fn fixture(count: usize) -> (Fetcher, Vec<String>) {
     let store = Arc::new(RegolithStore::in_memory().expect("an in-memory store"));
     let db = Arc::new(DB::open_from_arc(store).await.expect("a database"));
-    db.create_collection(collection_version())
+    let version = db
+        .add_collection(&defra_core::RequestContext::ambient(), COLLECTION_SDL)
         .await
-        .expect("the collection to register");
+        .expect("the collection to register")
+        .remove(0);
 
     let mutator = db::write::autocommit::AutoCommitMutator::new(db.clone());
     let mut ids = Vec::with_capacity(count);
     for seq in 0..count {
-        let mut doc = Document::new(collection_version());
+        let mut doc = Document::new(version.clone());
         doc.set("name", NormalValue::String(format!("person-{seq}")))
             .unwrap();
         doc.set("city", NormalValue::String(format!("city-{}", seq % 10)))

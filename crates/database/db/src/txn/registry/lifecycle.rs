@@ -426,7 +426,7 @@ impl<S: Store + 'static> TransactionRegistry for DbTransactionRegistry<S> {
         sdl: &str,
     ) -> std::result::Result<Vec<schema::CollectionVersion>, TransactionError> {
         let id = context_txn(context)?;
-        self.add_collection_in_txn_as(context, &id, sdl)
+        self.add_collection(context, &id, sdl)
             .await
             .map_err(operation_error)
     }

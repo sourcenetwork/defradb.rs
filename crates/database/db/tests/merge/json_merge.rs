@@ -23,10 +23,13 @@ use document::{DocID, Document, FieldOp, NormalValue};
 use query::mutator::DocMutator;
 use query::runner::DocFetcher;
 use rapidhash::RapidHashSet;
-use schema::{CType, CollectionVersion, FieldDescription, FieldKind};
 use storage::RegolithStore;
 
-const COLLECTION_ID: &str = "col-json-notes";
+fn collection_id() -> String {
+    crate::common::schema::parsed(NOTES_SDL).collection_id
+}
+
+const NOTES_SDL: &str = r#"type Notes { meta: JSON @crdt(type: "json") }"#;
 
 struct Node {
     db: Arc<DB<RegolithStore>>,
@@ -39,17 +42,9 @@ impl Node {
     async fn open() -> Self {
         let store = Arc::new(RegolithStore::in_memory().unwrap());
         let db = Arc::new(DB::from_arc(store.clone()).unwrap());
-        db.create_collection(CollectionVersion::new(
-            "Notes",
-            "v1",
-            COLLECTION_ID,
-            vec![
-                FieldDescription::new("1", "_docID", FieldKind::doc_id(), CType::LwwRegister),
-                FieldDescription::new("2", "meta", FieldKind::json(), CType::Json),
-            ],
-        ))
-        .await
-        .unwrap();
+        db.add_collection(&defra_core::RequestContext::ambient(), NOTES_SDL)
+            .await
+            .unwrap();
         let blocks = Arc::new(DefraBlockstore::new(store, false));
         let handler = DbMergeHandler::new(db.clone(), blocks.clone());
         let key = crypto::generate_ed25519().unwrap();
@@ -133,7 +128,7 @@ impl Node {
                 bytes,
                 BlockMetadata::normal(
                     &doc_id.to_string(),
-                    COLLECTION_ID,
+                    &collection_id(),
                     "did:key:z6MkrJsonMerge",
                     Some("peer"),
                     false,
@@ -324,7 +319,7 @@ fn a_json_block_delivered_again_after_restart_is_not_reapplied() {
                 &set.1,
                 BlockMetadata::normal(
                     &doc_id.to_string(),
-                    COLLECTION_ID,
+                    &collection_id(),
                     "did:key:z6MkrJsonMerge",
                     Some("peer"),
                     false,

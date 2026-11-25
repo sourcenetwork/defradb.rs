@@ -116,9 +116,12 @@ fn execute_as_signs_writes_and_keeps_the_caller_identity() {
             .build()
             .await
             .unwrap();
-        node.add_collection("type Widget { name: String }")
-            .await
-            .unwrap();
+        node.add_collection(
+            &defra_core::RequestContext::ambient(),
+            "type Widget { name: String }",
+        )
+        .await
+        .unwrap();
         assert!(node.node_identity_did().is_some());
         assert!(
             defra_core::signing::get_identity(node.node_identity_did().unwrap()).is_some(),
@@ -178,7 +181,10 @@ fn execute_as_signs_writes_and_keeps_the_caller_identity() {
 
         let unsigned_node = Node::builder().build().await.unwrap();
         unsigned_node
-            .add_collection("type Widget { name: String }")
+            .add_collection(
+                &defra_core::RequestContext::ambient(),
+                "type Widget { name: String }",
+            )
             .await
             .unwrap();
         let doc_id = create(&unsigned_node, &RequestContext::default(), "unsigned").await;

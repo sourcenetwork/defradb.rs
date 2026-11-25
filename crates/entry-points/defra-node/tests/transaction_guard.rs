@@ -7,9 +7,12 @@ const READ: &str = "{ Users { name } }";
 
 async fn node() -> Node {
     let node = Node::builder().build().await.unwrap();
-    node.add_collection("type Users { name: String }")
-        .await
-        .unwrap();
+    node.add_collection(
+        &defra_core::RequestContext::ambient(),
+        "type Users { name: String }",
+    )
+    .await
+    .unwrap();
     node
 }
 
@@ -112,9 +115,12 @@ fn owned_transaction_keeps_node_signing_context() {
             .build()
             .await
             .unwrap();
-        node.add_collection("type Users { name: String }")
-            .await
-            .unwrap();
+        node.add_collection(
+            &defra_core::RequestContext::ambient(),
+            "type Users { name: String }",
+        )
+        .await
+        .unwrap();
         let txn = node.begin_transaction_guard(false).await.unwrap();
         let response = txn.execute(CREATE).await;
         assert!(!response.has_errors(), "{:?}", response.errors);

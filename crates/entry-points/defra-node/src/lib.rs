@@ -779,13 +779,26 @@ impl Node {
     }
 
     /// Add a schema from a GraphQL SDL type definition.
-    pub async fn add_collection(&self, sdl: &str) -> Result<()> {
+    pub async fn add_collection(
+        &self,
+        context: &RequestContext,
+        sdl: &str,
+    ) -> Result<Vec<CollectionVersion>> {
+        let context = self.admitted_caller(context)?;
+        if context.txn().is_some() {
+            return self
+                .runner()
+                .add_collection_as(&context, sdl)
+                .await
+                .map_err(ops::transaction_error);
+        }
+
         let (ops, sdl, context) = (
             Arc::clone(&self.schema_ops),
             sdl.to_owned(),
-            self.node_context(),
+            self.txn_owner(&context),
         );
-        self.on_pool(move || async move { ops.add_collection(&context, &sdl).await.map(|_| ()) })
+        self.on_pool(move || async move { ops.add_collection(&context, &sdl).await })
             .await
     }
 

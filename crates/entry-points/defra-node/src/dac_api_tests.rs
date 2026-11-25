@@ -21,16 +21,16 @@ const DID_B: &str = "did:key:z6MkfXG2FkNy3u7Eg3jm8e2YQpGz7Z1JqWgHDAP1hLk9r2bR";
 
 async fn node_with_protected_users() -> (Node, String) {
     let node = Node::builder().build().await.unwrap();
+    let owner_context =
+        defra_core::RequestContext::ambient().with_identity(Some(String::from(DID_A)));
     let policy_id = node
-        .add_dac_policy_as(
-            &defra_core::RequestContext::ambient().with_identity(Some(String::from(DID_A))),
-            POLICY_YAML,
-        )
+        .add_dac_policy_as(&owner_context, POLICY_YAML)
         .await
         .unwrap();
-    node.add_collection(&format!(
-        "type Users @policy(id: \"{policy_id}\", resource: \"users\") {{ name: String }}"
-    ))
+    node.add_collection(
+        &owner_context,
+        &format!("type Users @policy(id: \"{policy_id}\", resource: \"users\") {{ name: String }}"),
+    )
     .await
     .unwrap();
 
@@ -105,6 +105,7 @@ fn add_collection_rejects_unregistered_policy_id() {
         let node = Node::builder().build().await.unwrap();
         let err = node
             .add_collection(
+                &defra_core::RequestContext::ambient(),
                 "type Users @policy(id: \"deadbeef\", resource: \"users\") { name: String }",
             )
             .await
@@ -115,9 +116,12 @@ fn add_collection_rejects_unregistered_policy_id() {
             "{err:#}"
         );
 
-        node.add_collection("type Plain { name: String }")
-            .await
-            .expect("a schema without @policy must not need the policy store");
+        node.add_collection(
+            &defra_core::RequestContext::ambient(),
+            "type Plain { name: String }",
+        )
+        .await
+        .expect("a schema without @policy must not need the policy store");
         node.shutdown().await.unwrap();
     })
     .unwrap()
@@ -127,9 +131,12 @@ fn add_collection_rejects_unregistered_policy_id() {
 fn add_view_rejects_unregistered_policy_id() {
     workers::block_on(async {
         let node = Node::builder().build().await.unwrap();
-        node.add_collection("type Plain { name: String }")
-            .await
-            .unwrap();
+        node.add_collection(
+            &defra_core::RequestContext::ambient(),
+            "type Plain { name: String }",
+        )
+        .await
+        .unwrap();
 
         let err = node
             .add_view(
@@ -249,9 +256,12 @@ fn dac_wildcard_grant_opens_document_to_every_actor() {
 fn dac_relationship_requires_a_collection_policy() {
     workers::block_on(async {
         let node = Node::builder().build().await.unwrap();
-        node.add_collection("type Plain { name: String }")
-            .await
-            .unwrap();
+        node.add_collection(
+            &defra_core::RequestContext::ambient(),
+            "type Plain { name: String }",
+        )
+        .await
+        .unwrap();
 
         let add = node
             .add_dac_actor_relationship(DID_A, "Plain", "doc-1", "reader", DID_B)
@@ -332,8 +342,9 @@ fn node_identity_does_not_bypass_protected_history_reads() {
         .build()
         .await
         .unwrap();
-    let policy_id = node.add_dac_policy_as(&defra_core::RequestContext::ambient().with_identity(Some(String::from(DID_A))), POLICY_YAML).await.unwrap();
-    node.add_collection(&format!(
+    let owner_context = defra_core::RequestContext::ambient().with_identity(Some(String::from(DID_A)));
+    let policy_id = node.add_dac_policy_as(&owner_context, POLICY_YAML).await.unwrap();
+    node.add_collection(&owner_context, &format!(
         "type Users @policy(id: \"{policy_id}\", resource: \"users\") {{ name: String }}"
     ))
     .await
@@ -453,14 +464,15 @@ fn policy_id_reproducible_with_explicit_counter() {
         .await
         .unwrap();
     assert_eq!(reproduced, id);
+    let owner_context = defra_core::RequestContext::ambient().with_identity(Some(String::from(DID_A)));
     let again = follower
-        .add_dac_policy_with_counter_as(&defra_core::RequestContext::ambient().with_identity(Some(String::from(DID_A))), POLICY_YAML, 1)
+        .add_dac_policy_with_counter_as(&owner_context, POLICY_YAML, 1)
         .await
         .unwrap();
     assert_eq!(again, id);
 
     follower
-        .add_collection(&format!(
+        .add_collection(&owner_context, &format!(
             "type Users @policy(id: \"{reproduced}\", resource: \"users\") {{ name: String }}"
         ))
         .await

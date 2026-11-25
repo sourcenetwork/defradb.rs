@@ -286,44 +286,8 @@ impl<S: Store> crate::database::DB<S> {
         Ok(schema)
     }
 
-    /// Create a new collection.
-    ///
-    /// This creates a new transaction, calls `create_collection_with_txn`, commits,
-    /// and updates the process-wide cache.
-    pub async fn create_collection(&self, schema: CollectionVersion) -> Result<()> {
-        let context = &defra_core::RequestContext::ambient();
-
-        self.check_node_access_as(context, acp::nac::NodePermission::CollectionPatch)
-            .await?;
-        let mut txn = self.new_txn(false).await?;
-        let existing = self.get_all_collection_versions_with_txn(&mut txn).await?;
-        schema::definition_validation::validate_new_collections_with_existing(
-            std::slice::from_ref(&schema),
-            &existing,
-        )
-        .map_err(Error::Other)?;
-
-        let finalized_schema = self.create_collection_with_txn(&mut txn, schema).await?;
-
-        let collection =
-            Collection::load_index_actions(finalized_schema.clone(), &txn.systemstore()?).await?;
-        let cache = std::sync::Arc::clone(&self.collections);
-        txn.on_commit(OnCommit::OrderedAndWait(Box::new(move || {
-            cache.rcu(|old| {
-                let mut cache = old.clone();
-                cache.put(collection.clone());
-                cache
-            });
-        })))?;
-        txn.commit().await?;
-        self.unforbid_collection_id(finalized_schema.collection_id.as_str())?;
-
-        Ok(())
-    }
-
     /// Create an AddView's view collections atomically, registering
-    /// branchable ACP before commit when `document_acp` is given. Unlike
-    /// [`Self::create_collection`] it does not check
+    /// branchable ACP before commit when `document_acp` is given. It does not check
     /// `patch-collection`: the caller checks `add-view`, the one permission
     /// Go's `AddView` needs.
     pub async fn create_view_collections_as(
@@ -531,7 +495,12 @@ mod tests {
             txn.discard().unwrap();
             assert!(db.schema_heads.get("HeadPublicationProbe").is_none());
 
-            db.create_collection(schema).await.unwrap();
+            db.add_collection(
+                &defra_core::RequestContext::ambient(),
+                "type HeadPublicationProbe { value: String }",
+            )
+            .await
+            .unwrap();
             assert!(db.schema_heads.get("HeadPublicationProbe").is_some());
         })
         .unwrap()

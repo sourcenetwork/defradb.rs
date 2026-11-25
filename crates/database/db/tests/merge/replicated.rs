@@ -7,37 +7,27 @@ use blockstore::DefraBlockstore;
 use db::merge::merge_handler::DbMergeHandler;
 use defra_core::merge::{BlockMetadata, MergeBlock, MergeHandler, MergeOutcome};
 use document::{DocID, Document, NormalValue};
-use schema::{CollectionVersion, FieldDescription, FieldKind};
+use schema::CollectionVersion;
 use storage::RegolithStore;
 
 pub(super) type Handler = DbMergeHandler<RegolithStore, DefraBlockstore<RegolithStore>>;
 
-pub(super) fn logs(collection_id: &str) -> CollectionVersion {
-    CollectionVersion::new(
-        "Log",
-        "v1",
-        collection_id,
-        vec![
-            FieldDescription::new(
-                "1",
-                "_docID",
-                FieldKind::doc_id(),
-                schema::CType::LwwRegister,
-            ),
-            FieldDescription::new(
-                "2",
-                "address",
-                FieldKind::string(),
-                schema::CType::LwwRegister,
-            ),
-            FieldDescription::new(
-                "3",
-                "blockNumber",
-                FieldKind::int(),
-                schema::CType::LwwRegister,
-            ),
-        ],
-    )
+pub(super) const LOG_SDL: &str = "type Log { address: String blockNumber: Int }";
+pub(super) const BRANCHABLE_LOG_SDL: &str =
+    "type Log @branchable { address: String blockNumber: Int }";
+
+pub(super) fn logs() -> CollectionVersion {
+    crate::common::schema::parsed(LOG_SDL)
+}
+
+pub(super) fn log_version_id() -> &'static str {
+    static ID: regolith::sync::Lazy<String> = regolith::sync::Lazy::new(|| logs().version_id);
+    &ID
+}
+
+pub(super) fn log_collection_id() -> &'static str {
+    static ID: regolith::sync::Lazy<String> = regolith::sync::Lazy::new(|| logs().collection_id);
+    &ID
 }
 
 /// A replicated create of a Log whose `blockNumber` is `height`, or unset.

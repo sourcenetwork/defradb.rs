@@ -23,11 +23,14 @@ impl Peer {
             .is_none()
         {
             self.node
-                .add_collection(&format!(
-                    "type Notes @policy(id: \"{}\", resource: \"users\") {{ \
+                .add_collection(
+                    &defra_core::RequestContext::ambient(),
+                    &format!(
+                        "type Notes @policy(id: \"{}\", resource: \"users\") {{ \
                      text: String addressee: String @immutable }}",
-                    self.policy
-                ))
+                        self.policy
+                    ),
+                )
                 .await
                 .expect("collection");
         }
