@@ -174,6 +174,7 @@ client_actions! {
         ReadKeptStream,
         Await,
         Benchmark,
+        ClientSigningSession,
         Close,
         DeleteCollection,
         GetNodeIdentity,
