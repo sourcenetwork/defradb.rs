@@ -4,10 +4,9 @@
 //! Byte-compatible with `github.com/lestrrat-go/jwx/v2/jwe`, which Go DefraDB's
 //! file keyring uses.
 
-use aes::Aes256;
 use aes_gcm::aead::AeadInOut;
 use aes_gcm::{Aes256Gcm, KeyInit};
-use aes_kw::Kek;
+use aes_kw::KwAes256;
 use base64::Engine;
 use rand::Rng;
 use sha2::Sha512;
@@ -49,9 +48,9 @@ const B64: base64::engine::general_purpose::GeneralPurpose =
 /// per RFC 7518 §4.8.1.1.
 ///
 /// The returned key is zeroized on drop, but note the limit of that guarantee:
-/// `Kek` and `Aes256Gcm` copy it into an expanded key schedule that neither
-/// `aes-kw` (no zeroize support at all) nor `aes` (only on the armv8 path)
-/// clears. Those schedules outlive the wrapper in freed memory.
+/// `KwAes256` and `Aes256Gcm` copy it into an expanded key schedule that
+/// neither `aes-kw` (built without its `zeroize` feature) nor `aes` (only on
+/// the armv8 path) clears. Those schedules outlive the wrapper in freed memory.
 fn derive_kek(password: &[u8], p2s: &[u8], p2c: u32) -> Zeroizing<[u8; DERIVED_KEY_LEN]> {
     let mut salt = Vec::with_capacity(ALG.len() + 1 + p2s.len());
     salt.extend_from_slice(ALG.as_bytes());
@@ -91,8 +90,8 @@ pub fn encrypt(password: &[u8], plaintext: &[u8]) -> Result<String> {
 
     let kek = derive_kek(password, &p2s, p2c);
     let mut wrapped = [0u8; WRAPPED_CEK_LEN];
-    Kek::<Aes256>::from(*kek)
-        .wrap(cek.as_ref(), &mut wrapped)
+    KwAes256::new((&*kek).into())
+        .wrap_key(cek.as_ref(), &mut wrapped)
         .map_err(|e| Error::Encryption(format!("failed to wrap content key: {e}")))?;
 
     let cipher = Aes256Gcm::new_from_slice(cek.as_ref())
@@ -208,8 +207,8 @@ pub fn decrypt(password: &[u8], token: &str) -> Result<Vec<u8>> {
 
     let kek = derive_kek(password, &p2s, p2c as u32);
     let mut cek = Zeroizing::new([0u8; CEK_LEN]);
-    Kek::<Aes256>::from(*kek)
-        .unwrap(&wrapped, cek.as_mut())
+    KwAes256::new((&*kek).into())
+        .unwrap_key(&wrapped, cek.as_mut())
         .map_err(|_| Error::Decryption("failed to unwrap content key".into()))?;
 
     let cipher = Aes256Gcm::new_from_slice(cek.as_ref())
