@@ -32,15 +32,14 @@ where
         else {
             return Ok(false);
         };
-        let (encrypt_doc, fields) = crate::block::builder::inherited_encryption_policy(
+        crate::block::builder::encrypts_field(
             &self.blockstore()?,
             &self.headstore()?,
             parent,
-            &[field.to_string()],
+            field,
         )
         .await
-        .map_err(QueryError::execution)?;
-        Ok(encrypt_doc || !fields.is_empty())
+        .map_err(QueryError::execution)
     }
 
     pub(super) async fn open(&self, name: &str) -> Result<ChunkCollection> {

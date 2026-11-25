@@ -268,40 +268,19 @@ pub(crate) fn compute_document_blocks_with_inputs(
         field_cids.push(block.cid);
     }
 
-    // Composite encryption CID for doc-level encryption
-    let composite_encryption_cid = if let Some(enc) = encryption_config {
-        if enc.encrypt_doc {
-            let key = encryption_key_prepared(&doc_ref_bytes, None, prepared_inputs)?;
-            let enc_block = Encryption { key: key.to_vec() };
-            let enc_bytes = enc_block
-                .to_dag_cbor()
-                .map_err(|e| format!("Failed to encode composite encryption block: {}", e))?;
-            let enc_cid = generate_cid_from_bytes(&enc_bytes)
-                .map_err(|e| format!("Failed to generate composite encryption CID: {}", e))?;
-            blockstore_entries.push((cid_bytes(&enc_cid), enc_bytes.into()));
-            Some(enc_cid)
-        } else {
-            None
-        }
-    } else {
-        None
-    };
-
-    if let Some(enc_cid) = composite_encryption_cid {
-        encryption_cids.push(enc_cid);
-    }
-
     let composite_payload = CompositeDeltaPayload {
         collection_version_id: collection_version_id.to_string(),
         priority,
         status: 1,
     };
 
+    // No encryption link, as Go's composite (store.go `addDelta` encrypts only
+    // field deltas): the DocID derives from this CID.
     let mut composite_block = Block::new_with_options(
         CrdtDelta::Composite(composite_payload),
         vec![],
         field_links,
-        composite_encryption_cid,
+        None,
         None,
     );
 

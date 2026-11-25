@@ -118,15 +118,14 @@ async fn encrypts(
     doc_short_id: u64,
     field: &str,
 ) -> Result<bool, MergeError> {
-    let (encrypt_doc, fields) = crate::block::builder::inherited_encryption_policy(
+    crate::block::builder::encrypts_field(
         blockstore,
         headstore,
         DocRef::new(parent.resolved_root_id(), doc_short_id),
-        &[field.to_string()],
+        field,
     )
     .await
-    .map_err(failed)?;
-    Ok(encrypt_doc || !fields.is_empty())
+    .map_err(failed)
 }
 
 // Unsigned and unencrypted, the chunk's blocks and DocID are the same on every

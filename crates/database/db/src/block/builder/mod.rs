@@ -41,7 +41,8 @@ pub use verified_client_mutation::{
 pub(crate) use write::{
     build_document_blocks, write_delete_block_with_inputs, write_document_blocks_with_inputs,
 };
-pub(crate) use write::{fresh_nonce, inherited_encryption_policy};
+pub(crate) use write::{doc_scope_fields, encrypts_field, fresh_nonce};
+pub use write::{field_encryption_source, DocScope, FieldEncryptionSource};
 pub use write::{write_delete_block, write_document_blocks};
 
 use immutable::{compute_immutable_block, immutable_field_names, immutable_for_pass};
@@ -491,6 +492,15 @@ impl DocHeadsSnapshot {
             .get(field_id)
             .cloned()
             .unwrap_or_default()
+    }
+
+    /// Every field's heads, the composite's (`C`) left out, in no set order.
+    /// An `@immutable` field's head is its Immutable block.
+    pub fn fields(&self) -> impl Iterator<Item = (&str, &[Cid])> {
+        self.heads_by_field
+            .iter()
+            .filter(|(field, _)| field.as_str() != "C")
+            .map(|(field, heads)| (field.as_str(), heads.as_slice()))
     }
 }
 

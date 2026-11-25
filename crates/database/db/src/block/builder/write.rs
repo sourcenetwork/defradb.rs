@@ -1,22 +1,18 @@
 use super::*;
 use crate::block::heads::document as doc_heads;
 
-/// The `Encryption` link a new block should carry forward, read off the
-/// previous block, when the write brings no config of its own.
+/// The `Encryption` link of a field's first encrypted head, which the field's
+/// next block reuses when the write brings no config for it.
 ///
-/// Mirrors the fallback half of Go's `determineBlockEncryption`
-/// (internal/core/block/store.go): the DAG, not any process-local state, is
-/// what records that a document is encrypted, and the existing link is reused
-/// so no new encryption block is written.
+/// This is Go's `determineBlockEncryption` without a config
+/// (internal/core/block/store.go): the DAG, not any process-local state,
+/// records that a field is encrypted, and the existing link is reused so no
+/// new encryption block is written. Heads with no encryption are skipped
+/// rather than ending the search, and an empty `heads` yields `None`.
 ///
 /// A head whose block cannot be read is an error rather than a miss: guessing
 /// "not encrypted" is exactly the silent downgrade this derivation exists to
 /// prevent. Matches Go, which returns `ErrCouldNotFindBlock` here.
-///
-/// Heads with no encryption are skipped rather than ending the search, and an
-/// empty `heads` yields `None`. A field with nothing of its own to inherit is
-/// not thereby in the clear: `write_document_blocks` falls back to the
-/// document-level policy the composite head records before writing plaintext.
 async fn inherited_encryption_cid(
     blockstore: &NamespaceView,
     heads: &[Cid],
@@ -38,6 +34,157 @@ async fn inherited_encryption_cid(
     Ok(None)
 }
 
+/// Where the next block of a field takes its encryption from.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FieldEncryptionSource {
+    /// The write's own config names the field: a fresh key, scoped to the
+    /// field itself when the config lists it individually.
+    Explicit { individual: bool },
+    /// The `Encryption` link of the field's first encrypted head, reused.
+    Inherit(Cid),
+    /// A field with no heads on a document whose every field is encrypted:
+    /// a fresh document-scope key.
+    DocScopeNew,
+    /// No config, and nothing encrypts the field.
+    Plaintext,
+}
+
+/// Whether a field with no heads gets a fresh document-scope key: decided
+/// once per write, either by a KMS preparation that read the heads the write
+/// builds on, or lazily from the document's heads the first time a field
+/// with no heads asks.
+pub struct DocScope<'a> {
+    snapshot: Option<&'a DocHeadsSnapshot>,
+    prepared: Option<&'a rapidhash::RapidHashSet<String>>,
+    pending: Option<&'a rapidhash::RapidHashMap<String, bool>>,
+    every_field_encrypted: Option<bool>,
+}
+
+impl<'a> DocScope<'a> {
+    /// A write's document scope. A KMS preparation's decision wins over the
+    /// snapshot, so the write never needs a document key that was not
+    /// prepared for it. Pass a preparation only when it read the heads this
+    /// write builds on: one taken before the attempt can be stale, and the
+    /// builder then decides on its own snapshot (`build_document_blocks`).
+    pub fn new(
+        snapshot: Option<&'a DocHeadsSnapshot>,
+        preparation: Option<&'a document::WritePreparation>,
+    ) -> Self {
+        Self {
+            snapshot,
+            prepared: preparation
+                .filter(|prepared| prepared.requires_kms_keys())
+                .map(|prepared| &prepared.doc_scope_fields),
+            pending: None,
+            every_field_encrypted: None,
+        }
+    }
+
+    /// The scope a KMS preparation decides, from the committed heads plus the
+    /// fields earlier writes of the same request prepared but have not
+    /// committed yet, each with whether it is encrypted.
+    fn preparing(
+        snapshot: &'a DocHeadsSnapshot,
+        pending: &'a rapidhash::RapidHashMap<String, bool>,
+    ) -> Self {
+        Self {
+            snapshot: Some(snapshot),
+            prepared: None,
+            pending: Some(pending),
+            every_field_encrypted: None,
+        }
+    }
+
+    async fn covers(&mut self, blockstore: &NamespaceView, field: &str) -> Result<bool, String> {
+        if let Some(prepared) = self.prepared {
+            return Ok(prepared.contains(field));
+        }
+        if let Some(known) = self.every_field_encrypted {
+            return Ok(known);
+        }
+        let known = every_field_encrypted(blockstore, self.snapshot, self.pending).await?;
+        self.every_field_encrypted = Some(known);
+        Ok(known)
+    }
+}
+
+/// Whether the document has at least one field and every field is encrypted:
+/// a pending field by what its write prepared, any other by its heads. Stops
+/// at the first field that is not.
+async fn every_field_encrypted(
+    blockstore: &NamespaceView,
+    snapshot: Option<&DocHeadsSnapshot>,
+    pending: Option<&rapidhash::RapidHashMap<String, bool>>,
+) -> Result<bool, String> {
+    let mut any = false;
+    if let Some(pending) = pending {
+        if pending.values().any(|encrypted| !encrypted) {
+            return Ok(false);
+        }
+        any = !pending.is_empty();
+    }
+    for (field, heads) in snapshot.into_iter().flat_map(DocHeadsSnapshot::fields) {
+        if pending.is_some_and(|pending| pending.contains_key(field)) {
+            continue;
+        }
+        if inherited_encryption_cid(blockstore, heads).await?.is_none() {
+            return Ok(false);
+        }
+        any = true;
+    }
+    Ok(any)
+}
+
+/// The one encryption decision for a field's next block, shared by the block
+/// builder and the KMS key preparation so the two cannot disagree:
+/// - an explicit config for the field wins;
+/// - a field with heads follows them, as Go's `determineBlockEncryption`
+///   does: the first encrypted head's link, or plaintext when none is;
+/// - a field with no heads gets a fresh document-scope key only when the
+///   document has a field and every field is encrypted, and is plaintext
+///   otherwise. Go writes it in plaintext; this is a deliberate divergence
+///   (`defra_core::encryption`).
+pub async fn field_encryption_source(
+    blockstore: &NamespaceView,
+    heads: &[Cid],
+    field: &str,
+    config: Option<&EncryptionConfig>,
+    doc_scope: &mut DocScope<'_>,
+) -> Result<FieldEncryptionSource, String> {
+    if let Some(config) = config.filter(|config| config.should_encrypt_field(field)) {
+        return Ok(FieldEncryptionSource::Explicit {
+            individual: config.should_encrypt_individual_field(field),
+        });
+    }
+    if !heads.is_empty() {
+        return Ok(match inherited_encryption_cid(blockstore, heads).await? {
+            Some(enc_cid) => FieldEncryptionSource::Inherit(enc_cid),
+            None => FieldEncryptionSource::Plaintext,
+        });
+    }
+    Ok(if doc_scope.covers(blockstore, field).await? {
+        FieldEncryptionSource::DocScopeNew
+    } else {
+        FieldEncryptionSource::Plaintext
+    })
+}
+
+/// Whether a document's next block of `field` is encrypted when the write
+/// carries no config of its own, by [`field_encryption_source`] over the
+/// document's current heads.
+pub(crate) async fn encrypts_field(
+    blockstore: &NamespaceView,
+    headstore: &NamespaceView,
+    identity: DocRef,
+    field: &str,
+) -> Result<bool, String> {
+    let snapshot = DocHeadsSnapshot::load(headstore, identity.doc_short_id).await?;
+    let heads = snapshot.field_heads(field);
+    let mut doc_scope = DocScope::new(Some(&snapshot), None);
+    let source = field_encryption_source(blockstore, &heads, field, None, &mut doc_scope).await?;
+    Ok(source != FieldEncryptionSource::Plaintext)
+}
+
 /// Last resort for an `Encryption` block neither block namespace holds: ask the
 /// configured KMS, which may keep it in a `KeyStore` of its own.
 ///
@@ -47,7 +194,7 @@ async fn kms_resolved_key(
     kms: Option<&std::sync::Arc<dyn kms::KmsService>>,
     enc_cid: Cid,
     prepared_inputs: Option<&query::prepared::PreparedInputMemo>,
-) -> Result<Option<([u8; 32], Cid)>, BuildError> {
+) -> Result<([u8; 32], Cid), BuildError> {
     let kms_svc = kms.ok_or_else(|| format!("Encryption block {} not found", enc_cid))?;
     if let Some(inputs) = prepared_inputs {
         let request = crate::write::prepare::kms_input_request(
@@ -76,7 +223,7 @@ async fn kms_resolved_key(
                 "KMS returned key for {returned_cid}, expected {enc_cid}"
             )));
         }
-        return Ok(Some((key, enc_cid)));
+        return Ok((key, enc_cid));
     }
     let key = kms_svc
         .get_keys(&kms::RequestContext::anonymous(), &[enc_cid])
@@ -88,25 +235,21 @@ async fn kms_resolved_key(
         .remove(&enc_cid)
         .ok_or_else(|| format!("Encryption block {} not found", enc_cid))?;
 
-    Ok(Some((key, enc_cid)))
+    Ok((key, enc_cid))
 }
 
-/// The inherited encryption link together with the key it points at, for the
-/// field deltas that actually need to encrypt with it.
+/// The key an inherited encryption link points at, for the field delta that
+/// encrypts with it.
 ///
 /// Reusing one key across a field's whole history is safe only because every
 /// delta is sealed with a fresh random nonce (see `encrypt_delta`). Do not make
 /// that nonce deterministic or counter-based without revisiting this.
 async fn inherited_encryption(
     blockstore: &NamespaceView,
-    heads: &[Cid],
+    enc_cid: Cid,
     kms: Option<&std::sync::Arc<dyn kms::KmsService>>,
     prepared_inputs: Option<&query::prepared::PreparedInputMemo>,
-) -> Result<Option<([u8; 32], Cid)>, BuildError> {
-    let Some(enc_cid) = inherited_encryption_cid(blockstore, heads).await? else {
-        return Ok(None);
-    };
-
+) -> Result<([u8; 32], Cid), BuildError> {
     // Encstore first, then blockstore: blocks arriving over P2P land in the
     // encstore while locally-written ones go to the blockstore. Mirrors the
     // merge decrypt path (`db-merge/src/merge_handler/encryption.rs`) and
@@ -142,31 +285,53 @@ async fn inherited_encryption(
         )
     })?;
 
-    Ok(Some((key, enc_cid)))
+    Ok((key, enc_cid))
 }
 
-pub(crate) async fn inherited_encryption_policy(
+/// What a KMS preparation decides for an update's fields, before the write:
+/// the fields whose source is [`FieldEncryptionSource::DocScopeNew`], for it
+/// to mint their document key, and every field with whether the write leaves
+/// it encrypted, for a later write of the same request to decide on.
+///
+/// `pending` holds the fields earlier writes of the same request prepared but
+/// have not committed: they count as fields with heads, encrypted as their
+/// write prepared them.
+pub(crate) async fn doc_scope_fields(
     blockstore: &NamespaceView,
     headstore: &NamespaceView,
     identity: DocRef,
     fields: &[String],
-) -> Result<(bool, rapidhash::RapidHashSet<String>), String> {
+    config: Option<&EncryptionConfig>,
+    pending: &rapidhash::RapidHashMap<String, bool>,
+) -> Result<
+    (
+        rapidhash::RapidHashSet<String>,
+        rapidhash::RapidHashMap<String, bool>,
+    ),
+    String,
+> {
     let snapshot = DocHeadsSnapshot::load(headstore, identity.doc_short_id).await?;
-    let heads = snapshot.field_heads("C");
-    let encrypt_doc = inherited_encryption_cid(blockstore, &heads)
-        .await?
-        .is_some();
-    let mut encrypted_fields = rapidhash::RapidHashSet::default();
+    let mut doc_scope = DocScope::preparing(&snapshot, pending);
+    let mut scoped = rapidhash::RapidHashSet::default();
+    let mut written = rapidhash::RapidHashMap::default();
     for field in fields {
-        let heads = snapshot.field_heads(field);
-        if inherited_encryption_cid(blockstore, &heads)
-            .await?
-            .is_some()
-        {
-            encrypted_fields.insert(field.clone());
-        }
+        let explicit = config.is_some_and(|config| config.should_encrypt_field(field));
+        let encrypted = match pending.get(field) {
+            Some(encrypted) => explicit || *encrypted,
+            None => {
+                let heads = snapshot.field_heads(field);
+                let source =
+                    field_encryption_source(blockstore, &heads, field, config, &mut doc_scope)
+                        .await?;
+                if source == FieldEncryptionSource::DocScopeNew {
+                    scoped.insert(field.clone());
+                }
+                source != FieldEncryptionSource::Plaintext
+            }
+        };
+        written.insert(field.clone(), encrypted);
     }
-    Ok((encrypt_doc, encrypted_fields))
+    Ok((scoped, written))
 }
 
 /// Mint a fresh key for a field, seal its delta with it, and queue the
@@ -408,17 +573,23 @@ pub(crate) async fn build_document_blocks(
             .field_heads("C")
     };
 
-    // The composite block's encryption link is set only for whole-document
-    // encryption, so its presence is what records that policy in the DAG. Read
-    // once, before the field loop, and reused for the composite block below.
-    // Skipped when this write sets the policy itself, since every field then
-    // takes the explicit path anyway.
-    let explicit_doc_encryption = encryption_config.is_some_and(|enc| enc.encrypt_doc);
-    let inherited_doc_encryption_cid = if explicit_doc_encryption {
-        None
-    } else {
-        inherited_encryption_cid(blockstore, &composite_heads).await?
-    };
+    // The composite carries no encryption link, as Go's (store.go `addDelta`
+    // encrypts only field deltas), so a field's encryption is decided from
+    // the field heads alone.
+    //
+    // With a memo the preparation ran before this attempt, so its headless
+    // decision can be stale: a merge that reached an earlier write's field
+    // in between changes what that write builds (rule (b)) but not what the
+    // later write prepared. The attempt decides on its own heads instead. A
+    // document key it needs that the preparation did not mint is a KMS input
+    // the memo lacks: the attempt ends, the key is prepared at the edge, and
+    // the next attempt decides again (`encrypt_with_new_key`).
+    let mut doc_scope = DocScope::new(
+        snapshot.as_ref(),
+        doc.write_preparation()
+            .map(AsRef::as_ref)
+            .filter(|_| prepared_inputs.is_none()),
+    );
 
     // The first signature this pass is missing; the pass goes on past it.
     let mut first_miss = None;
@@ -482,14 +653,23 @@ pub(crate) async fn build_document_blocks(
                 continue;
             };
 
-            let explicit = encryption_config.filter(|enc| enc.should_encrypt_field(field_name));
-            let (value_bytes, encryption_cid) = if let Some(enc) = explicit {
-                let key_field_name = if enc.should_encrypt_individual_field(field_name) {
-                    Some(field_name.as_str())
-                } else {
-                    None
-                };
-
+            let source = field_encryption_source(
+                blockstore,
+                &heads,
+                field_name,
+                encryption_config,
+                &mut doc_scope,
+            )
+            .await?;
+            let fresh_key_field = match source {
+                FieldEncryptionSource::Explicit { individual: true } => {
+                    Some(Some(field_name.as_str()))
+                }
+                FieldEncryptionSource::Explicit { individual: false }
+                | FieldEncryptionSource::DocScopeNew => Some(None),
+                FieldEncryptionSource::Inherit(_) | FieldEncryptionSource::Plaintext => None,
+            };
+            let (value_bytes, encryption_cid) = if let Some(key_field_name) = fresh_key_field {
                 let (encrypted, enc_cid) = match encrypt_with_new_key(
                     &mut blockstore_entries,
                     kms,
@@ -511,9 +691,9 @@ pub(crate) async fn build_document_blocks(
                 };
                 encryption_cids.push(enc_cid);
                 (encrypted, Some(enc_cid))
-            } else if let Some((key, enc_cid)) =
-                inherited_encryption(blockstore, &heads, kms, prepared_inputs).await?
-            {
+            } else if let FieldEncryptionSource::Inherit(enc_cid) = source {
+                let (key, enc_cid) =
+                    inherited_encryption(blockstore, enc_cid, kms, prepared_inputs).await?;
                 let encrypted = encrypt_retry_delta(&value_bytes, &key, prepared_inputs)?;
 
                 tracing::debug!(
@@ -522,31 +702,6 @@ pub(crate) async fn build_document_blocks(
                     "Encrypted field delta with the previous block's key"
                 );
 
-                (encrypted, Some(enc_cid))
-            } else if inherited_doc_encryption_cid.is_some() {
-                // The document is encrypted as a whole but this field has no
-                // history of its own to inherit from, so mint it a key under
-                // the document-level policy rather than dropping to plaintext.
-                let (encrypted, enc_cid) = match encrypt_with_new_key(
-                    &mut blockstore_entries,
-                    kms,
-                    &doc_ref_bytes,
-                    field_name,
-                    None,
-                    &value_bytes,
-                    doc.write_preparation().map(AsRef::as_ref),
-                    prepared_inputs,
-                )
-                .await
-                {
-                    Ok(sealed) => sealed,
-                    Err(BuildError::NeedsInput(request)) => {
-                        first_miss.get_or_insert(request);
-                        continue;
-                    }
-                    Err(error) => return Err(error),
-                };
-                encryption_cids.push(enc_cid);
                 (encrypted, Some(enc_cid))
             } else {
                 (value_bytes, None)
@@ -678,28 +833,12 @@ pub(crate) async fn build_document_blocks(
         status: 1,
     };
 
-    let composite_encryption_cid = if explicit_doc_encryption {
-        let key = encryption_key_prepared(&doc_ref_bytes, None, prepared_inputs)?;
-        let enc_block = Encryption { key: key.to_vec() };
-        let enc_bytes = enc_block
-            .to_dag_cbor()
-            .map_err(|e| format!("Failed to encode composite encryption block: {}", e))?;
-        let enc_cid = generate_cid_from_bytes(&enc_bytes)
-            .map_err(|e| format!("Failed to generate composite encryption CID: {}", e))?;
-        blockstore_entries.push((cid_bytes(&enc_cid), enc_bytes.into()));
-        encryption_cids.push(enc_cid);
-        Some(enc_cid)
-    } else {
-        // The composite payload is never encrypted with the key, only linked,
-        // so the CID alone is enough here.
-        inherited_doc_encryption_cid
-    };
-
+    // No encryption link, as Go's composite: the docID derives from this CID.
     let mut composite_block = Block::new_with_options(
         CrdtDelta::Composite(composite_payload),
         composite_heads.clone(),
         field_links,
-        composite_encryption_cid,
+        None,
         None,
     );
 
@@ -816,13 +955,12 @@ pub(crate) async fn write_delete_block_with_inputs(
         status: 2,
     };
 
-    let composite_encryption_cid = inherited_encryption_cid(blockstore, &composite_heads).await?;
-
+    // A tombstone links no encryption, as Go's: only field deltas are encrypted.
     let mut composite_block = Block::new_with_options(
         CrdtDelta::Composite(composite_payload),
         composite_heads.clone(),
         vec![],
-        composite_encryption_cid,
+        None,
         None,
     );
 

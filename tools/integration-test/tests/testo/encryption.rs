@@ -1,8 +1,10 @@
 mod commit;
 mod commit_relation;
+mod doc_id;
 mod field;
 mod field_commit;
 mod field_query;
+mod new_field;
 mod peer;
 mod peer_acp;
 mod peer_acp_branchable;
