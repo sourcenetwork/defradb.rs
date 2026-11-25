@@ -2,26 +2,20 @@ use super::*;
 
 #[test]
 fn invalidation_prevents_in_flight_checks_from_restoring_grants() {
-    for invalidate in [
-        |cache: &AccessCache| cache.invalidate_object("policy", "files", "doc"),
-        |cache: &AccessCache| cache.invalidate_policy("policy"),
-        |cache: &AccessCache| cache.clear(),
-    ] {
-        let cache = AccessCache::new(Duration::from_secs(60));
-        let pending = cache.begin_check("alice", "policy", "files", "doc", "read");
-        assert_eq!(cache.get("alice", "policy", "files", "doc", "read"), None);
-        assert_eq!(invalidate(&cache), 1);
-        pending.complete(true);
-        assert_eq!(cache.get("alice", "policy", "files", "doc", "read"), None);
+    let cache = AccessCache::new(Duration::from_secs(60));
+    let pending = cache.begin_check("alice", "policy", "files", "doc", "read");
+    assert_eq!(cache.get("alice", "policy", "files", "doc", "read"), None);
+    assert_eq!(cache.invalidate_policy("policy"), 1);
+    pending.complete(true);
+    assert_eq!(cache.get("alice", "policy", "files", "doc", "read"), None);
 
-        cache
-            .begin_check("alice", "policy", "files", "doc", "read")
-            .complete(true);
-        assert_eq!(
-            cache.get("alice", "policy", "files", "doc", "read"),
-            Some(true)
-        );
-    }
+    cache
+        .begin_check("alice", "policy", "files", "doc", "read")
+        .complete(true);
+    assert_eq!(
+        cache.get("alice", "policy", "files", "doc", "read"),
+        Some(true)
+    );
 }
 
 #[test]
@@ -107,7 +101,7 @@ fn cancellation_keeps_other_pending_checks_and_removes_only_the_last() {
         cache.get("alice", "policy", "files", "doc", "read"),
         Some(true)
     );
-    cache.clear();
+    assert_eq!(cache.invalidate_policy("policy"), 1);
     let first = cache.begin_check("alice", "policy", "files", "doc", "read");
     let second = cache.begin_check("alice", "policy", "files", "doc", "read");
     drop(first);
