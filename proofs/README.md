@@ -145,6 +145,7 @@ section is the **diff**: what is proven vs. the accepted gap.
 | Verify block signature | TLA+ | defra-node, db, acp (#2724) |
 | Node access control operations | TLA+ & Lean | db, acp, http, cli, ffi, defra-node |
 | Filter relation paths and scalar leaves | Lean | query (#2427, #2430) |
+| Aggregate join reuse | Lean | query (#3276) |
 | Relation filter with no matching child | Lean | query (#3087) |
 | Joins on a parent read by key | Lean | query (#3042) |
 | Commits depth traversal | Lean | query, db (#2098) |

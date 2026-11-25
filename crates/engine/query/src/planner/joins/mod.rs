@@ -10,6 +10,7 @@
 //! - `apply_multi_level_sub_joins()` - Sub-joins for multi-level filter paths
 //! - `apply_multi_level_filter_joins()` - Join chains for deep filter paths
 
+mod aggregate_join_reuse;
 mod aggregate_joins;
 mod child_mapping;
 mod child_plan;
