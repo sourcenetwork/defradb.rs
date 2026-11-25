@@ -5,18 +5,16 @@ use integration_test::node::{
     start_node, DefraNode, KeyringBackend, NodeConfig, RunningNode, RustNode,
 };
 use integration_test::{poll_until, rust_binary, DefraClient, NodeKind};
+use p2p::host::CONNECTION_PRUNE_INTERVAL;
 
 const NODE_COUNT: usize = 5;
 const LOW_WATER: u32 = 2;
 const HIGH_WATER: u32 = 3;
 const GRACE_PERIOD_MS: u64 = 200;
-/// `CONNECTION_PRUNE_INTERVAL` in `crates/database/p2p/src/host/p2p_host/mod.rs`:
-/// the periodic tick that prunes when no swarm event does.
-const PRUNE_INTERVAL: Duration = Duration::from_secs(5);
 /// A prune runs on the swarm event that crosses high water, or at the latest
 /// on the next periodic tick once the grace period has passed.
 const PRUNE_DEADLINE: Duration =
-    Duration::from_millis(GRACE_PERIOD_MS + 2 * PRUNE_INTERVAL.as_millis() as u64);
+    Duration::from_millis(GRACE_PERIOD_MS + 2 * CONNECTION_PRUNE_INTERVAL.as_millis() as u64);
 const READY_TIMEOUT: Duration = Duration::from_secs(30);
 const P2P_TIMEOUT: Duration = Duration::from_secs(15);
 const POLL_INTERVAL: Duration = Duration::from_millis(100);
