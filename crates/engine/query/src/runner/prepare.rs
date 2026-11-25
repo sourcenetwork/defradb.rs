@@ -201,6 +201,23 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
                         input.to_document_with_schema_and_time(collection, Some(request_time))
                     })
                     .collect::<Result<Vec<_>>>()?;
+                // Every chunk of a new document is new, so ask for their
+                // vectors now instead of in a wave after a wasted attempt.
+                let chunk_requests: Vec<_> = mutator
+                    .chunk_embedding_requests(&mutation.collection_name, &docs)
+                    .await?
+                    .into_iter()
+                    // A restore brings its vectors along, so the provider is not asked.
+                    .filter(|request| prepared.inputs.get(request).is_none())
+                    .collect();
+                if !chunk_requests.is_empty() {
+                    let answers = mutator
+                        .resolve_prepared_inputs_as(&context, chunk_requests.clone())
+                        .await?;
+                    for (request, answer) in chunk_requests.into_iter().zip(answers) {
+                        prepared.inputs.insert(request, answer);
+                    }
+                }
                 entry.creates.extend(
                     mutator
                         .prepare_creates_as(&context, &mutation.collection_name, docs)

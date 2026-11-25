@@ -152,17 +152,17 @@ fn waves_and_inputs() -> (u64, u64) {
 }
 
 #[test]
-fn a_create_of_several_articles_embeds_every_new_chunk_in_one_wave() {
+fn a_create_of_several_articles_fetches_every_chunk_vector_before_its_first_attempt() {
     workers::block_on(async {
         let provider = Provider::start();
         let (_db, runner) = setup(&provider.sdl("")).await;
-        let chunks = ARTICLES as u64 * chunk_count(&book(0, None));
-        let (waves, inputs) = waves_and_inputs();
+        let before = waves_and_inputs();
 
-        run(&runner, &add_articles(&books(ARTICLES))).await;
+        let data = run(&runner, &add_articles(&books(ARTICLES))).await;
 
-        assert_eq!(waves_and_inputs(), (waves + 1, inputs + chunks));
+        assert_eq!(waves_and_inputs(), before);
         assert_eq!(provider.requests(), 1);
+        assert_eq!(doc_ids(&data, "add_Article").len(), ARTICLES);
     })
     .unwrap()
 }
@@ -208,7 +208,7 @@ fn a_bad_article_after_one_that_waits_for_its_vectors_fails_with_its_own_error()
 }
 
 #[test]
-fn a_parent_with_two_chunked_fields_needs_one_wave() {
+fn a_create_with_two_chunked_fields_fetches_both_before_its_first_attempt() {
     workers::block_on(async {
         let provider = Provider::start();
         let summary = format!(
@@ -228,8 +228,8 @@ fn a_parent_with_two_chunked_fields_needs_one_wave() {
         )
         .await;
 
-        let chunks = chunk_count(&book(0, None)) + chunk_count(&book(1, None));
-        assert_eq!(waves_and_inputs(), (waves + 1, inputs + chunks));
+        assert_eq!(waves_and_inputs(), (waves, inputs));
+        assert_eq!(provider.requests(), 1);
     })
     .unwrap()
 }

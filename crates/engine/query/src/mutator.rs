@@ -658,6 +658,16 @@ pub trait DocMutator: MaybeSendSync {
         Ok(None)
     }
 
+    /// The embedding requests the chunks of these new documents will make,
+    /// so preparation can answer them before the first attempt.
+    async fn chunk_embedding_requests(
+        &self,
+        _collection_name: &str,
+        _docs: &[Document],
+    ) -> Result<Vec<crate::prepared::PreparedInputRequest>> {
+        Ok(Vec::new())
+    }
+
     /// Pins `version`, a collection version the request selected (possibly
     /// inactive), for the writes this mutator makes in its transaction, so
     /// they are recorded at that version. A mutator that cannot pin refuses,

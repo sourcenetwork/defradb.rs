@@ -6,8 +6,10 @@
 //! `proofs/tla/ParentChunks.tla` checks that this keeps them consistent.
 
 mod lookup;
+mod prefetch;
 mod write;
 
+pub(crate) use prefetch::embedding_requests;
 pub(crate) use write::chunk_document;
 
 use std::sync::Arc;

@@ -14,7 +14,9 @@
 \* commit from another request got in first, in which case it runs again. If
 \* some vector is missing the attempt ends without writing, the request asks
 \* the model for every missing vector at once (one wave, outside any
-\* transaction), and the attempt runs again.
+\* transaction), and the attempt runs again. A request that creates its
+\* articles may ask the model for all their chunks before its first attempt,
+\* also outside any transaction, so it needs no wave at all.
 \*
 \* What must never happen:
 \*   - the model is asked while a transaction is open (INV_NoModelCallInTxn);
@@ -48,6 +50,9 @@
 \*     crates/engine/query/src/runner/executor.rs QueryRunner::execute and
 \*     crates/engine/query/src/runner/mutation.rs QueryRunner::execute_mutation_with_identity_and_vars
 \*     (the wave between attempts)
+\*   crates/engine/query/src/runner/prepare.rs QueryRunner::prepare_mutations and
+\*     crates/database/db/src/chunk/sync/prefetch.rs embedding_requests
+\*     (a create's vectors, asked for before its first attempt)
 \* Commit validation is regolith's; the model takes it as given.
 EXTENDS Naturals, Sequences, FiniteSets, TLC
 
@@ -280,9 +285,30 @@ Wave(r) ==
   /\ pc' = [pc EXCEPT ![r] = "idle"]
   /\ UNCHANGED <<text, chunks, vecOf, snap, snapText, callInTxn>>
 
+\* Before its first attempt, a request that creates every article it writes
+\* asks the model for all the chunks their texts need, with no transaction
+\* open. A node with no model or URL asks for nothing.
+Prefetch(r) ==
+  \* The request is idle, has spent no wave and holds no answers yet,
+  /\ pc[r] = "idle"
+  /\ waves[r] = 0
+  /\ memo[r] = {}
+  \* every article it writes has no text yet, so it creates them all,
+  /\ \A a \in DOMAIN Job[r] : text[a] = None
+  \* and the node has a model to ask.
+  /\ ~Unconfigured
+  \* The answers go into the memo under the key an attempt looks them up by,
+  /\ memo' = [memo EXCEPT ![r] = {<<Key(n), n[2]>> : n \in Needed(r)}]
+  \* and asking for a chunk that already exists is noted.
+  /\ reEmbedded' = (reEmbedded \/ \E n \in Needed(r) : <<n[1], n[2]>> \in chunks)
+  \* Nothing is written and no wave is spent.
+  /\ UNCHANGED <<text, chunks, vecOf, pc, snap, snapText, wanted, waves, callInTxn>>
+
 \* Every step some request can take.
 Next ==
   \E r \in Requests :
+    \* ask for a create's vectors before any attempt,
+    \/ Prefetch(r)
     \* open an attempt,
     \/ Begin(r)
     \* end it on a miss, or ask the model inside it under the bug,

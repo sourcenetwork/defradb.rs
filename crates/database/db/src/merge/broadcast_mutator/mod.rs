@@ -654,6 +654,16 @@ impl<S: Store + 'static, B: Blockstore + 'static, T: P2PTransport> DocMutator
             .await
     }
 
+    async fn chunk_embedding_requests(
+        &self,
+        collection_name: &str,
+        docs: &[Document],
+    ) -> query::error::Result<Vec<query::prepared::PreparedInputRequest>> {
+        self.inner
+            .chunk_embedding_requests(collection_name, docs)
+            .await
+    }
+
     fn engine_retries_batches(&self) -> bool {
         true
     }
