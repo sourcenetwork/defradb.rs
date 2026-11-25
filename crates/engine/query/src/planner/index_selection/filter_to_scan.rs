@@ -606,8 +606,8 @@ fn path_low_end(path: &JsonPath, descending: bool) -> Bound {
     )))
 }
 
-/// A bound above every value at `path`. On a descending index `PathMin` is a
-/// null, the last value, so it stays inclusive.
+/// A bound above every value at `path`. On a descending index `PathMin`
+/// sorts after the nulls, the last values of the path.
 fn path_high_end(path: &JsonPath, descending: bool) -> Bound {
     if descending {
         Bound::Inclusive(NormalValue::JsonLeaf(JsonLeafValue::new(

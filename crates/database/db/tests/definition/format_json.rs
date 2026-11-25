@@ -1,6 +1,6 @@
-//! A store stamped with format 4 rebuilds its JSON indexes on open, so they
-//! gain the entries under empty arrays that format 5 adds, and leaves every
-//! other index as it is.
+//! A store stamped with format 5 rebuilds its JSON indexes on open, so they
+//! gain the entries under empty arrays that format 6 adds, and leaves every
+//! other index as it is. An older store still rebuilds every index.
 
 use std::sync::Arc;
 
@@ -55,7 +55,19 @@ async fn index_keys(db: &db::DB<RegolithStore>, prefix: &[u8]) -> Vec<Vec<u8>> {
 }
 
 #[test]
-fn a_format_4_store_rebuilds_only_its_json_indexes() {
+fn a_format_5_store_rebuilds_only_its_json_indexes() {
+    rebuilds_json_indexes_stamped(5, false);
+}
+
+#[test]
+fn a_format_4_store_rebuilds_every_index() {
+    rebuilds_json_indexes_stamped(4, true);
+}
+
+/// Opens a store stamped `stored` whose JSON index lacks its empty-array
+/// entry and whose count index lost its entries; `every` says whether the
+/// count index comes back too.
+fn rebuilds_json_indexes_stamped(stored: u32, every: bool) {
     workers::block_on(async {
         let store = RegolithStore::in_memory().unwrap();
         let db = Arc::new(db::DB::open(store.clone()).await.unwrap());
@@ -85,7 +97,7 @@ fn a_format_4_store_rebuilds_only_its_json_indexes() {
         let written = index_keys(&db, &customs).await;
         assert_eq!(written.iter().filter(|key| is_marker_entry(key)).count(), 1);
 
-        // Leave the store as format 4 wrote it, without the marker, and drop
+        // Leave the store as format `stored` wrote it, without the marker, and drop
         // the count entry to see that its index is not rebuilt.
         let txn = db.new_txn(false).await.unwrap();
         let data = txn.datastore().unwrap();
@@ -97,7 +109,7 @@ fn a_format_4_store_rebuilds_only_its_json_indexes() {
         }
         txn.systemstore()
             .unwrap()
-            .set(INDEX_FORMAT_KEY, &4u32.to_be_bytes())
+            .set(INDEX_FORMAT_KEY, &stored.to_be_bytes())
             .await
             .unwrap();
         drop(data);
@@ -113,7 +125,7 @@ fn a_format_4_store_rebuilds_only_its_json_indexes() {
         let rebuilt = index_keys(&db, &customs).await;
         assert_eq!(rebuilt.len(), written.len());
         assert_eq!(rebuilt.iter().filter(|key| is_marker_entry(key)).count(), 1);
-        assert!(index_keys(&db, &counts).await.is_empty());
+        assert_eq!(index_keys(&db, &counts).await.is_empty(), !every);
     })
     .unwrap()
 }

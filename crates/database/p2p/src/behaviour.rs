@@ -56,6 +56,7 @@ use crate::bitswap::{
 use crate::codec::PushLogCodec;
 use crate::message::{PushLogReply, PushLogRequest};
 
+pub mod disconnect_gate;
 mod dual_kademlia;
 
 pub use dual_kademlia::{
@@ -111,6 +112,9 @@ mod derived {
 
         /// LAN and WAN Kademlia DHTs for peer discovery and content routing.
         pub kademlia: DualKademlia,
+
+        /// Connection admission for explicitly disconnected peers.
+        pub(crate) disconnect_gate: disconnect_gate::DisconnectGate,
 
         /// Bitswap block exchange protocol (Go compatibility).
         pub bitswap: Bitswap<S>,
@@ -330,6 +334,7 @@ impl<S: Store + Clone + Send + Sync + 'static> DefraBehaviour<S> {
         Ok(Self {
             identify,
             kademlia,
+            disconnect_gate: disconnect_gate::DisconnectGate::default(),
             bitswap,
             pushlog,
             gossipsub,
@@ -418,6 +423,7 @@ impl<S: Store + Clone + Send + Sync + 'static> DefraBehaviour<S> {
         Ok(Self {
             identify,
             kademlia,
+            disconnect_gate: disconnect_gate::DisconnectGate::default(),
             bitswap,
             pushlog,
             gossipsub,

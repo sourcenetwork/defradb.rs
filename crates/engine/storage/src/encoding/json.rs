@@ -10,11 +10,9 @@
 use document::{JsonLeafValue, JsonPath, JsonPathPart, JsonScalarValue};
 
 use super::{
-    decode_bool_ascending, decode_bool_descending, decode_bytes_ascending, decode_bytes_descending,
-    decode_float64_ascending, decode_float64_descending, decode_if_null, decode_uvarint_ascending,
-    encode_bool_ascending, encode_bool_descending, encode_bytes_ascending, encode_bytes_descending,
-    encode_float64_ascending, encode_float64_descending, encode_null_ascending,
-    encode_null_descending, encode_uvarint_ascending, encode_uvarint_descending, peek_type,
+    decode_bool_ascending, decode_bytes_ascending, decode_float64_ascending, decode_if_null,
+    decode_uvarint_ascending, encode_bool_ascending, encode_bytes_ascending,
+    encode_float64_ascending, encode_null_ascending, encode_uvarint_ascending, peek_type,
     EncodedType, ESCAPED_TERM, INT_ZERO, JSON_MARKER,
 };
 use crate::corekv::{Error, Result};
@@ -33,7 +31,8 @@ pub const JSON_EMPTY_ARRAY: u8 = 0xfe;
 /// descending NaN is `FLOAT64_NAN_DESC` anyway.
 pub const JSON_EMPTY_ARRAY_DESC: u8 = !JSON_EMPTY_ARRAY;
 
-/// An array index in a path: uvarint 0, the same byte in both directions.
+/// An array index in a path: uvarint 0. Both directions write the path
+/// ascending, and no UTF-8 name starts with this continuation byte.
 const JSON_INDEX: u8 = INT_ZERO;
 
 /// Encode a JSON leaf value with path in ascending order.
@@ -80,34 +79,37 @@ pub fn encode_json_ascending(buf: Vec<u8>, leaf: &JsonLeafValue) -> Vec<u8> {
 /// Encode a JSON leaf value with path in descending order.
 ///
 /// Special sentinel values for range bounds:
-/// - PathMin: In descending order, this comes AFTER all values (inverted byte order)
-/// - PathMax: In descending order, this comes BEFORE all values (inverted byte order)
+/// - PathMax: the path terminator alone, before every value of that path
+/// - PathMin: the next separator byte and a descending null, after every value
 pub fn encode_json_descending(buf: Vec<u8>, leaf: &JsonLeafValue) -> Vec<u8> {
     let mut buf = buf;
     buf.push(JSON_MARKER);
 
-    // Encode path parts in descending order
-    buf = encode_path_descending(buf, &leaf.path);
+    // The path stays in ascending order so it can be decoded unambiguously;
+    // only the typed value is inverted for descending JSON indexes.
+    buf = encode_path_ascending(buf, &leaf.path);
 
     // Handle sentinel values specially
     // Note: For descending, byte order is inverted, so PathMax becomes lower bound
     match &leaf.value {
         JsonScalarValue::PathMax => {
-            // PathMax: in descending, use inverted (PATH_END + 1) to sort before all values
-            buf.push(!ESCAPED_TERM);
-            buf.push(!(JSON_PATH_END + 1));
+            // PathMax ends at the separator, so it sorts before every value
+            // whose body continues after that separator.
+            buf.push(ESCAPED_TERM);
+            buf.push(JSON_PATH_END);
             buf
         }
         JsonScalarValue::PathMin => {
-            // PathMin: in descending, encode null (which becomes highest after inversion)
-            buf.push(!ESCAPED_TERM);
-            buf.push(!JSON_PATH_END);
-            encode_null_descending(buf)
+            // The next separator byte is above every normal value marker, and a
+            // descending null is above every normal value that shares it.
+            buf.push(ESCAPED_TERM);
+            buf.push(JSON_PATH_END + 1);
+            encode_scalar_descending(buf, &JsonScalarValue::Null)
         }
         _ => {
             // Normal value
-            buf.push(!ESCAPED_TERM);
-            buf.push(!JSON_PATH_END);
+            buf.push(ESCAPED_TERM);
+            buf.push(JSON_PATH_END);
             encode_scalar_descending(buf, &leaf.value)
         }
     }
@@ -131,22 +133,6 @@ fn encode_path_ascending(mut buf: Vec<u8>, path: &JsonPath) -> Vec<u8> {
     buf
 }
 
-/// Encode the JSON path parts in descending order.
-fn encode_path_descending(mut buf: Vec<u8>, path: &JsonPath) -> Vec<u8> {
-    for part in path.iter() {
-        match part {
-            JsonPathPart::Property(name) => {
-                buf = encode_path_string_descending(buf, name);
-            }
-            JsonPathPart::Index => {
-                buf = encode_uvarint_descending(buf, 0);
-            }
-            _ => {}
-        }
-    }
-    buf
-}
-
 /// Encode a path property string with escaping (no marker prefix).
 fn encode_path_string_ascending(mut buf: Vec<u8>, s: &str) -> Vec<u8> {
     for byte in s.as_bytes() {
@@ -160,22 +146,6 @@ fn encode_path_string_ascending(mut buf: Vec<u8>, s: &str) -> Vec<u8> {
     // Terminator
     buf.push(0x00);
     buf.push(ESCAPED_TERM);
-    buf
-}
-
-/// Encode a path property string with escaping in descending order.
-fn encode_path_string_descending(mut buf: Vec<u8>, s: &str) -> Vec<u8> {
-    for byte in s.as_bytes() {
-        if *byte == 0x00 {
-            buf.push(!0x00);
-            buf.push(!0xff);
-        } else {
-            buf.push(!*byte);
-        }
-    }
-    // Terminator (inverted)
-    buf.push(!0x00);
-    buf.push(!ESCAPED_TERM);
     buf
 }
 
@@ -199,16 +169,15 @@ fn encode_scalar_ascending(buf: Vec<u8>, value: &JsonScalarValue) -> Vec<u8> {
 /// Encode a JSON scalar value in descending order.
 fn encode_scalar_descending(buf: Vec<u8>, value: &JsonScalarValue) -> Vec<u8> {
     match value {
-        JsonScalarValue::Null => encode_null_descending(buf),
-        JsonScalarValue::Bool(b) => encode_bool_descending(buf, *b),
-        JsonScalarValue::Number(n) => encode_float64_descending(buf, *n),
-        JsonScalarValue::String(s) => encode_bytes_descending(buf, s.as_bytes()),
+        JsonScalarValue::Null => super::encode_null_descending(buf),
+        JsonScalarValue::Bool(value) => super::encode_bool_descending(buf, *value),
+        JsonScalarValue::Number(value) => super::encode_float64_descending(buf, *value),
+        JsonScalarValue::String(value) => super::encode_bytes_descending(buf, value.as_bytes()),
         JsonScalarValue::EmptyArray => {
             let mut buf = buf;
             buf.push(JSON_EMPTY_ARRAY_DESC);
             buf
         }
-        // PathMin/PathMax are handled specially in encode_json_descending
         JsonScalarValue::PathMin | JsonScalarValue::PathMax | _ => buf,
     }
 }
@@ -233,7 +202,6 @@ pub fn decode_json_ascending(buf: &[u8]) -> Result<(&[u8], JsonLeafValue)> {
         if rest.len() < 2 {
             return Err(Error::Other("unexpected end of JSON path".into()));
         }
-
         // Check for path terminator: [ESCAPED_TERM][PATH_END]
         if rest[0] == ESCAPED_TERM && rest[1] == JSON_PATH_END {
             rest = &rest[2..];
@@ -270,41 +238,45 @@ pub fn decode_json_descending(buf: &[u8]) -> Result<(&[u8], JsonLeafValue)> {
     }
 
     let mut rest = &buf[1..];
+    let separator;
 
-    // Decode path parts until we hit the terminator (inverted)
+    // The path itself remains in ascending order.
     let mut path = JsonPath::new();
-    let term_inverted = !ESCAPED_TERM;
-    let path_end_inverted = !JSON_PATH_END;
-
     loop {
         if rest.len() < 2 {
             return Err(Error::Other("unexpected end of JSON path".into()));
         }
 
-        // Check for path terminator (inverted)
-        if rest[0] == term_inverted && rest[1] == path_end_inverted {
+        // The path stays ascending. Normal values and both sentinels use the
+        // ascending separator; PathMin uses the next separator byte.
+        if rest[0] == ESCAPED_TERM && (rest[1] == JSON_PATH_END || rest[1] == JSON_PATH_END + 1) {
+            separator = rest[1];
             rest = &rest[2..];
             break;
         }
 
-        // A descending index is the same byte as an ascending one, which is
-        // also a complemented `w`, so only a run of them right before the
-        // path end reads as indexes: an element's path, or an empty array's.
-        let indexes = rest.iter().take_while(|&&byte| byte == JSON_INDEX).count();
-        if indexes > 0 && rest[indexes..].starts_with(&[term_inverted, path_end_inverted]) {
-            for _ in 0..indexes {
-                path = path.append_index();
-            }
-            rest = &rest[indexes..];
+        // The path is ascending here too, so an index is the same one byte.
+        if rest[0] == JSON_INDEX {
+            path = path.append_index();
+            rest = &rest[1..];
         } else {
-            // Property name - decode as descending escaped string
-            let (remaining, name) = decode_path_string_descending(rest)?;
+            // Property name - decode as ascending escaped string
+            let (remaining, name) = decode_path_string_ascending(rest)?;
             path = path.append_property(&name);
             rest = remaining;
         }
     }
 
-    // Decode the value in descending order
+    if rest.is_empty() {
+        return Ok((rest, JsonLeafValue::new(path, JsonScalarValue::PathMax)));
+    }
+    if rest == [super::ENCODED_NULL_DESC] && separator == JSON_PATH_END + 1 {
+        return Ok((
+            &rest[1..],
+            JsonLeafValue::new(path, JsonScalarValue::PathMin),
+        ));
+    }
+
     let (rest, value) = decode_scalar_descending(rest)?;
 
     Ok((rest, JsonLeafValue::new(path, value)))
@@ -341,49 +313,6 @@ fn decode_path_string_ascending(buf: &[u8]) -> Result<(&[u8], String)> {
             }
         } else {
             result.push(buf[i]);
-            i += 1;
-        }
-    }
-
-    Err(Error::Other("unterminated path string".into()))
-}
-
-/// Decode a path property string (descending).
-fn decode_path_string_descending(buf: &[u8]) -> Result<(&[u8], String)> {
-    let mut result = Vec::new();
-    let mut i = 0;
-
-    let term_inverted = !0x00u8;
-    let escaped_term_inverted = !ESCAPED_TERM;
-    let escaped_00_inverted = !0xffu8;
-
-    while i < buf.len() {
-        if buf[i] == term_inverted {
-            if i + 1 >= buf.len() {
-                return Err(Error::Other("unexpected end of escaped string".into()));
-            }
-            match buf[i + 1] {
-                b if b == escaped_term_inverted => {
-                    // End of string
-                    let s = String::from_utf8(result)
-                        .map_err(|e| Error::Other(format!("invalid utf-8 in path: {}", e)))?;
-                    return Ok((&buf[i + 2..], s));
-                }
-                b if b == escaped_00_inverted => {
-                    // Escaped null byte
-                    result.push(0x00);
-                    i += 2;
-                }
-                other => {
-                    return Err(Error::Other(format!(
-                        "invalid escape sequence in descending path: 0x{:02x} 0x{:02x}",
-                        buf[i], other
-                    )));
-                }
-            }
-        } else {
-            // Invert the byte back
-            result.push(!buf[i]);
             i += 1;
         }
     }
@@ -434,31 +363,33 @@ fn decode_scalar_descending(buf: &[u8]) -> Result<(&[u8], JsonScalarValue)> {
     if let Some((&JSON_EMPTY_ARRAY_DESC, rest)) = buf.split_first() {
         return Ok((rest, JsonScalarValue::EmptyArray));
     }
-    match peek_type(buf) {
-        EncodedType::Null => {
-            let (rest, _) = decode_if_null(buf);
-            Ok((rest, JsonScalarValue::Null))
+    if buf.is_empty() {
+        return Err(Error::Other("empty buffer for JSON scalar".into()));
+    }
+
+    match buf[0] {
+        super::ENCODED_NULL_DESC => Ok((&buf[1..], JsonScalarValue::Null)),
+        super::TRUE_MARKER => Ok((&buf[1..], JsonScalarValue::Bool(false))),
+        super::FALSE_MARKER => Ok((&buf[1..], JsonScalarValue::Bool(true))),
+        marker if (super::FLOAT64_NAN..=super::FLOAT64_NAN_DESC).contains(&marker) => {
+            let (rest, value) = super::decode_float64_descending(buf)?;
+            Ok((rest, JsonScalarValue::Number(value)))
         }
-        EncodedType::Bool => {
-            let (rest, v) = decode_bool_descending(buf)?;
-            Ok((rest, JsonScalarValue::Bool(v)))
+        super::BYTES_DESC_MARKER => {
+            let (rest, bytes) = super::decode_bytes_descending(buf)?;
+            let value = String::from_utf8(bytes)
+                .map_err(|error| Error::Other(format!("invalid utf-8 in JSON string: {error}")))?;
+            Ok((rest, JsonScalarValue::String(value)))
         }
-        EncodedType::Float64 => {
-            let (rest, v) = decode_float64_descending(buf)?;
-            Ok((rest, JsonScalarValue::Number(v)))
-        }
-        EncodedType::BytesDesc => {
-            let (rest, v) = decode_bytes_descending(buf)?;
-            let s = String::from_utf8(v)
-                .map_err(|e| Error::Other(format!("invalid utf-8 in JSON string: {}", e)))?;
-            Ok((rest, JsonScalarValue::String(s)))
-        }
-        _ => Err(Error::Other(format!(
-            "cannot decode descending JSON scalar: marker 0x{:02x}",
-            buf.first().unwrap_or(&0)
+        marker => Err(Error::Other(format!(
+            "cannot decode descending JSON scalar: marker 0x{marker:02x}"
         ))),
     }
 }
+
+#[cfg(test)]
+#[path = "json_array_path_tests.rs"]
+mod json_array_path_tests;
 
 #[cfg(test)]
 mod tests {

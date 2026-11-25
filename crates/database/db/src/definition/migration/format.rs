@@ -17,13 +17,14 @@ use crate::DB;
 /// version 3 gives each deferred index entry its position record, which the
 /// check at every open does for the deferred indexes alone; version 4 tags the
 /// index keyspace so collection short IDs cannot collide with another family;
-/// version 5 adds an entry under each empty array in a JSON index, which only
-/// the JSON indexes of a version 4 store lack.
-pub const CURRENT_INDEX_FORMAT: u32 = 5;
+/// version 5 moves descending JSON paths back into ascending order; version 6
+/// adds an entry under each empty array in a JSON index, which only the JSON
+/// indexes of a version 5 store lack.
+pub const CURRENT_INDEX_FORMAT: u32 = 6;
 
 /// The format before JSON indexes held empty-array entries. A store stamped
 /// with it rebuilds only its JSON indexes; every other index is current.
-const FORMAT_WITHOUT_JSON_EMPTY_ARRAYS: u32 = 4;
+const FORMAT_WITHOUT_JSON_EMPTY_ARRAYS: u32 = 5;
 
 /// Systemstore key holding the format the indexes on disk were written with.
 pub use storage::keys::systemstore::INDEX_FORMAT_KEY;
@@ -70,7 +71,7 @@ pub(crate) async fn ensure_index_format_for_collection_creation(
         .map_err(Error::Storage)
 }
 
-/// Whether `index` covers a JSON field, whose entries changed in version 5.
+/// Whether `index` covers a JSON field, whose entries changed in version 6.
 fn has_json_field(index: &IndexDescription, schema: &CollectionVersion) -> bool {
     index.fields.iter().any(|indexed| {
         schema.fields.iter().any(|field| {

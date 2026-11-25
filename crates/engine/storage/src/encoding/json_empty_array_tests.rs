@@ -116,11 +116,9 @@ fn names_that_look_like_an_index_round_trip() {
             let (_, ascending) =
                 decode_json_ascending(&encode_json_ascending(vec![], &leaf)).unwrap();
             assert_eq!(ascending, leaf);
-            if !matches!(leaf.path.0.first(), Some(document::JsonPathPart::Index)) {
-                let (_, descending) =
-                    decode_json_descending(&encode_json_descending(vec![], &leaf)).unwrap();
-                assert_eq!(descending, leaf);
-            }
+            let (_, descending) =
+                decode_json_descending(&encode_json_descending(vec![], &leaf)).unwrap();
+            assert_eq!(descending, leaf);
         }
     }
 }

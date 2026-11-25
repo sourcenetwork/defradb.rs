@@ -10,7 +10,7 @@
 \* Each attempt uses a fresh reindex token. A pre-upgrade walk cursor is
 \* never resumed, and a retry starts rebuilding each collection again.
 \* A future format is refused before any migration writes.
-\* A store stamped with the previous format (4) differs from the current one
+\* A store stamped with the previous format (5) differs from the current one
 \* only in its JSON indexes, which lack the entries under empty arrays: it
 \* rebuilds those collections alone, the rest being current already.
 \*

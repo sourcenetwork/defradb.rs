@@ -34,9 +34,11 @@ What this file proves:
   (`marker_inside_path_asc`, `marker_inside_path_desc`);
 * the marker reads back as itself, and every value reads back as it did
   before (`decode_marker_asc`, `decode_value_asc`, and the descending pair).
-* descending, the array indexes in front of the path end read back as
-  indexes (`index_run_desc`), which the old rule never did
-  (`neg_old_rule_misses_the_index`), so a descending scan can read the marker.
+
+Both directions write the path ascending (`OrderEncoding.JsonPath`), so the
+array indexes in front of the marker read back by the ascending rule in a
+descending key too: an index is the byte 136, which no UTF-8 name starts with
+(`JsonPath.utf8_lead_is_not_array_marker`).
 
 The RED side: a marker on null's byte reads a stored null back as the marker
 (`neg_marker_on_null_reads_null_as_marker`), and a marker between the numbers
@@ -44,7 +46,8 @@ and the strings sorts below a string (`neg_marker_inside_values_breaks_order`).
 
 Rust owner: crates/engine/storage/src/encoding/json.rs `JSON_EMPTY_ARRAY`,
 `JSON_EMPTY_ARRAY_DESC`, `encode_scalar_ascending`, `encode_scalar_descending`,
-`decode_scalar_ascending`, `decode_scalar_descending`, `decode_json_descending`;
+`decode_scalar_ascending`, `decode_scalar_descending`, `encode_json_descending`,
+`decode_json_descending`;
 the markers come from
 crates/building-blocks/document/src/json_leaf.rs `json_empty_array_markers`.
 -/
@@ -142,7 +145,8 @@ def encDesc : Entry → Bytes
 -- The two bytes that end a path (`ESCAPED_TERM`, `JSON_PATH_END`).
 def pathEnd : Bytes := [1, 47]
 
--- A whole key: the path bytes, the path end, then the entry.
+-- A whole key: the path bytes, the path end, then the entry. Descending keys
+-- have the same layout: only the entry is written descending.
 def key (path : Bytes) (entry : Bytes) : Bytes := path ++ (pathEnd ++ entry)
 
 /-! ## A shared prefix does not change an order -/
@@ -218,26 +222,23 @@ theorem marker_inside_path_asc (path : Bytes) :
   -- the path end's 47 is below the bound's 48
   · rw [lex_append_left]; exact Lex.cons (Lex.head (by decide))
 
--- The lowest bound of a path descending (`PathMax` written descending): both path-end bytes complemented, the last lowered.
-def pathLowDesc (path : Bytes) : Bytes := path ++ [254, 207]
+-- The lowest bound of a path descending (`PathMax`): the path end and nothing after it.
+def pathLowDesc (path : Bytes) : Bytes := path ++ [1, 47]
 
--- The highest bound of a path descending (`PathMin` written descending): the path end and a descending null.
-def pathHighDesc (path : Bytes) : Bytes := path ++ [254, 208, 255]
-
--- A whole descending key: the path bytes, the complemented path end, then the entry.
-def keyDesc (path : Bytes) (entry : Bytes) : Bytes := path ++ ([254, 208] ++ entry)
+-- The highest bound of a path descending (`PathMin`): the path end with its last byte raised, then a descending null.
+def pathHighDesc (path : Bytes) : Bytes := path ++ [1, 48, 255]
 
 -- Promise: descending, the marker lies above the path's lowest bound and below its highest.
 theorem marker_inside_path_desc (path : Bytes) :
-    pathLowDesc path <ₗ keyDesc path (encDesc .emptyArray)
-    ∧ keyDesc path (encDesc .emptyArray) <ₗ pathHighDesc path := by
+    pathLowDesc path <ₗ key path (encDesc .emptyArray)
+    ∧ key path (encDesc .emptyArray) <ₗ pathHighDesc path := by
   -- both sides share the path, so compare what follows it
-  unfold pathLowDesc pathHighDesc keyDesc
+  unfold pathLowDesc pathHighDesc key
   constructor
-  -- the bound's 207 is below the path end's 208
+  -- the bound is the path end alone, a strict prefix of the marker's key
+  · rw [lex_append_left]; exact Lex.cons (Lex.cons Lex.nil)
+  -- the path end's 47 is below the bound's 48
   · rw [lex_append_left]; exact Lex.cons (Lex.head (by decide))
-  -- after the path end, the marker's 1 is below a descending null's 255
-  · rw [lex_append_left]; exact Lex.cons (Lex.cons (Lex.head (by decide)))
 
 /-! ## Reading a key back -/
 
@@ -299,69 +300,6 @@ theorem neg_marker_inside_values_breaks_order (path body : Bytes) :
   cases h with
   -- the first bytes decide: 6 < 5 is false
   | head h => exact absurd h (by decide)
-
-/-! ## Reading the array indexes of a path back
-
-An array index in a path is written as uvarint 0, the byte 136, in both
-directions. Descending, 136 is also a complemented `w`, so a name can start
-with it; the decoder reads 136s as indexes only when a run of them reaches the
-path end. The marker always sits right after such a run, and so does every
-array element's value. -/
-
--- `INT_ZERO`: the byte an array index is written as.
-def indexByte : Nat := 136
-
--- The descending path end: the two path-end bytes complemented.
-def pathEndDesc : Bytes := [254, 208]
-
--- The descending rule: count the leading index bytes, and read them as indexes
--- only when the path end follows; `none` sends the bytes to the name decoder.
-def indexRunDesc (bs : Bytes) : Option (Nat × Bytes) :=
-  -- how many index bytes lead
-  let n := (bs.takeWhile (· == indexByte)).length
-  -- indexes only when the path end comes right after them
-  if n > 0 ∧ (bs.drop n).take 2 = pathEndDesc then some (n, bs.drop n) else none
-
--- The run of index bytes stops at the first other byte: `n` index bytes in
--- front of a byte that is not one give a run of exactly `n`.
-theorem run_length (n : Nat) (b : Nat) (hb : b ≠ indexByte) (rest : Bytes) :
-    ((List.replicate n indexByte ++ b :: rest).takeWhile (· == indexByte)).length = n := by
-  -- one index byte at a time
-  induction n with
-  -- no index byte: `b` stops the run at once
-  | zero => simp [hb]
-  -- an index byte is taken, then the shorter run follows
-  | succ k ih => simp [List.replicate_succ, List.takeWhile_cons, ih, hb]
-
--- Promise: `n` indexes, the path end and any entry after them (an element's
--- value or the marker) read back as exactly `n` indexes, with the path end next.
-theorem index_run_desc (n : Nat) (hn : 0 < n) (entry : Bytes) :
-    indexRunDesc (List.replicate n indexByte ++ pathEndDesc ++ entry)
-      = some (n, pathEndDesc ++ entry) := by
-  -- the run stops at the path end's 254, which is not an index byte
-  have hrun := run_length n 254 (by decide) (208 :: entry)
-  -- the bytes are the run, then the path end, then the entry
-  have hbytes : List.replicate n indexByte ++ pathEndDesc ++ entry
-      = List.replicate n indexByte ++ 254 :: 208 :: entry := by simp [pathEndDesc]
-  -- after the run come the path end bytes, so the rule takes the index branch
-  rw [hbytes]
-  -- dropping the run leaves the path end and the entry
-  have hdrop : (List.replicate n indexByte ++ 254 :: 208 :: entry).drop n = 254 :: 208 :: entry :=
-    List.drop_left' (List.length_replicate n indexByte)
-  -- so the run has length `n`, and the two bytes after it are the path end
-  simp only [indexRunDesc, hrun, hdrop]
-  simp [hn, pathEndDesc]
-
--- The old descending rule: a byte is an index when its complement lies in the
--- integer band `[128, 253]`.
-def oldIndexRuleDesc (b : Nat) : Bool := decide (128 ≤ 255 - b ∧ 255 - b ≤ 253)
-
--- Promise, RED: the old rule never reads the index byte as an index, since its
--- complement, 119, lies below the band; so every descending array path failed
--- to read back, and with it any descending scan that met an empty array's marker.
-theorem neg_old_rule_misses_the_index : oldIndexRuleDesc indexByte = false := by
-  -- 255 - 136 = 119 < 128
-  decide
 
 end JsonEmptyArray
 

@@ -4,6 +4,7 @@ import OrderEncoding.PerType
 import OrderEncoding.BytesEnc
 import OrderEncoding.CrossType
 import OrderEncoding.InLookup
+import OrderEncoding.JsonPath
 import OrderEncoding.JsonEmptyArray
 
 /-!
@@ -240,6 +241,7 @@ from the byte-emitting definitions. -/
 #print axioms OrderEncoding.neg_swapped_bool_markers_not_order_preserving
 #print axioms OrderEncoding.neg_no_escape_bytes_collision
 #print axioms OrderEncoding.neg_shared_marker_breaks_cross_type
+#print axioms OrderEncoding.JsonPath.descending_json_sentinels_bracket_values
 #print axioms OrderEncoding.lookups_strictly_increasing
 #print axioms OrderEncoding.reversed_lookups_strictly_decreasing
 #print axioms OrderEncoding.mem_lookups
@@ -261,6 +263,3 @@ from the byte-emitting definitions. -/
 #print axioms OrderEncoding.JsonEmptyArray.decode_value_desc
 #print axioms OrderEncoding.JsonEmptyArray.neg_marker_on_null_reads_null_as_marker
 #print axioms OrderEncoding.JsonEmptyArray.neg_marker_inside_values_breaks_order
-#print axioms OrderEncoding.JsonEmptyArray.run_length
-#print axioms OrderEncoding.JsonEmptyArray.index_run_desc
-#print axioms OrderEncoding.JsonEmptyArray.neg_old_rule_misses_the_index
