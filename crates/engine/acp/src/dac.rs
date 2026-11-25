@@ -205,9 +205,9 @@ pub trait DocumentACP: MaybeSendSync {
 
     /// Whether deleting a document archives its object on this provider as
     /// an owed change staged in the delete's transaction
-    /// ([`crate::TransactionOutbox::stage_archive`]), so the delete is
-    /// refused before it commits when its caller may not archive. The
-    /// default archives nothing that way.
+    /// ([`crate::TransactionOutbox::stage_archive`]), made as the object's
+    /// owner whoever deletes; the delete is refused before it commits when
+    /// the archive cannot be staged. The default archives nothing that way.
     fn stages_archive_on_delete(&self) -> bool {
         false
     }
@@ -260,8 +260,7 @@ pub trait DocumentACP: MaybeSendSync {
     /// take effect after one made later through this provider: what is
     /// still in flight when the next is made has to execute before it or
     /// not at all. vera.rs holds one journaled request per worker and
-    /// prepares the next only once that one has a verified receipt; Cosmos
-    /// orders one signer's transactions by account sequence.
+    /// prepares the next only once that one has a verified receipt.
     async fn submit_owed_change(
         &self,
         change: &crate::outbox::OwedChange,

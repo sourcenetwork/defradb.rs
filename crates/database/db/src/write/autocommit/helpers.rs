@@ -642,11 +642,15 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
 /// Go's does.
 /// A remote provider that archives a deleted document's object
 /// ([`acp::DocumentACP::stages_archive_on_delete`], vera.rs) reads a missing
-/// object as denied, and is owed the archive in this transaction, as
-/// `context`'s identity, so the delete and the archive commit together; the
-/// delete is refused, and nothing is deleted, unless that identity owns the
-/// object ([`acp::TransactionOutbox::stage_archive`],
-/// `proofs/tla/ArchiveOnDelete.tla`).
+/// object as denied, and is owed the archive in this transaction, made as
+/// the object's owner whoever `context`'s identity is, so the delete and the
+/// archive commit together; the delete is refused, and nothing is deleted,
+/// when the archive cannot be staged (no identity, no owner, or the owner
+/// cannot be learned now) ([`acp::TransactionOutbox::stage_archive`],
+/// `proofs/tla/ArchiveOnDelete.tla`). Any other remote provider keeps the
+/// object too: its registration, owed or held, stays, so the delete and
+/// every earlier change replicate to nodes that wait for the provider to
+/// hold the document.
 pub(crate) async fn archive_deleted_doc(
     provider: Option<&Arc<dyn acp::DocumentACP>>,
     systemstore: &NamespaceView,

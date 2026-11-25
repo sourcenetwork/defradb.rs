@@ -5,8 +5,10 @@
 \* What must never happen: a block that changed its document has no row, a
 \* block has two rows, a block that changed nothing has a row, a page skips a
 \* row, or a reader is handed a row of a document it may not read or of one
-\* its page saw as deleted. Deleting unregisters a document, and the access
-\* check alone would then call it public.
+\* its page saw as deleted. A purge unregisters a document, and the access
+\* check alone would then call it public. (A delete keeps the registration,
+\* DeletedHistory.tla, so a deleted document stays denied; Delete below
+\* stands for the removal that unregisters: a purge.)
 \* The access provider either reads in the page's transaction, or stands
 \* outside it and answers from the state of the moment it is asked. A
 \* provider outside loses a document's registration in a step of its own,
@@ -121,9 +123,9 @@ Retry(u) ==
   /\ UNCHANGED <<stored, changed, deleted, unregistered>>
   /\ UNCHANGED <<past, page>>
 
-\* A document is deleted on this node. A provider that reads in the node's
-\* transactions loses the registration in that same commit; a provider
-\* outside keeps it until Unregister.
+\* A document is removed on this node (purged; see the header). A provider
+\* that reads in the node's transactions loses the registration in that same
+\* commit; a provider outside keeps it until Unregister.
 Delete(d) ==
   /\ d \in Docs \ deleted
   /\ deleted' = deleted \cup {d}
