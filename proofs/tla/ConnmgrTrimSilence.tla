@@ -11,7 +11,7 @@
 \* Code: crates/database/p2p/src/host/p2p_host/connection_manager.rs
 \* ActiveConnectionManager::prune_candidates and silenced;
 \* crates/database/p2p/src/behaviour/dual_kademlia.rs DefraKademlia::poll,
-\* on_swarm_event and refuse_held_dial;
+\* handle_pending_outbound_connection, on_swarm_event and refuse_held_dial;
 \* crates/database/p2p/src/behaviour/redial_hold.rs RedialHold::hold, is_held.
 \* Integers for times that start below zero; FiniteSets for set sizes.
 EXTENDS Integers, FiniteSets
@@ -54,9 +54,10 @@ DialIn(p) == /\ p \notin connected
 \* Is p's redial held right now (RedialHold::is_held)?
 Held(p) == now < heldUntil[p]
 \* Kademlia, on the node or on the peer, dials a known, disconnected peer.
-\* DefraKademlia::poll refuses the dial while the peer is held, on both ends,
-\* since each end held it when the connection closed; the "noHold" bug skips
-\* that check.
+\* DefraKademlia::refuse_held_dial refuses the dial while the peer is held,
+\* once the swarm takes it (a dial already in progress is not a new one), on
+\* both ends, since each end held it when the connection closed; the "noHold"
+\* bug skips that check.
 Redial(p) == /\ p \in known
              /\ p \notin connected
              /\ (Mode = "noHold" \/ ~Held(p))

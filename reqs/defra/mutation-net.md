@@ -223,7 +223,7 @@ Disconnecting from one or several connected peers leaves the active peer list em
 - **Parents:** ["go.net.peers"]
 - **Scenarios:** ["p2p::connection_manager::rust_connection_manager_pruned_peers_stay_disconnected"]
 
-A node started with `--connection-manager-low-water`, `--connection-manager-high-water` and `--connection-manager-grace-period-ms` that gets more connections than its high-water mark closes its oldest peers outside the grace period until it is back at low water. For the 10 seconds after that trim (go-libp2p connmgr's silence period) the node runs no other trim, and neither the node nor the pruned peers redial each other on their own (an explicit `client p2p connect` still does): the pruned peers stay out of `client p2p active-peers` and the peers it kept stay in it, so a node at high water settles instead of pruning and reconnecting.
+A node started with `--connection-manager-low-water`, `--connection-manager-high-water` and `--connection-manager-grace-period-ms` that gets more connections than its high-water mark closes its oldest peers outside the grace period until it is back at low water. For the 10 seconds after that trim (go-libp2p connmgr's silence period) the node runs no other trim, and neither the node's nor the pruned peers' Kademlia redials the other: with nothing else asking for a connection, the pruned peers stay out of `client p2p active-peers` and the peers it kept stay in it, so a node at high water settles instead of pruning and reconnecting. Only Kademlia's dials are held: an explicit `client p2p connect`, a replicator push or a Bitswap fetch that needs a pruned peer still reconnects to it.
 
 # `go.net.subscribe.collection_list`: Listing collection subscriptions
 
