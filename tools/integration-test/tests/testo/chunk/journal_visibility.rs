@@ -32,8 +32,12 @@ fn arrivals(args: &str, identity: Option<u64>, expected: Value) -> Actions {
     journal("_documentArrivals", args, identity, expected)
 }
 
-fn page(head: usize, next: usize, cursors: std::ops::RangeInclusive<usize>) -> Value {
+fn page<C>(head: usize, next: usize, cursors: C) -> Value
+where
+    C: IntoIterator<Item = usize>,
+{
     let entries: Vec<Value> = cursors
+        .into_iter()
         .map(|cursor| json!({ "cursor": cursor.to_string() }))
         .collect();
     json!({ "head": head.to_string(), "next": next.to_string(), "entries": entries })
@@ -54,10 +58,10 @@ fn a_chunks_arrival_is_passed_for_a_reader_who_may_not_read_its_parent() {
     actions.extend([
         arrivals(r#"after: "0""#, Some(ALICE), page(n, n, 1..=n)),
         arrivals(r#"after: "0", limit: 2"#, Some(ALICE), page(n, 2, 1..=2)),
-        arrivals(r#"after: "0""#, Some(BOB), page(n, n, 1..=0)),
-        arrivals(r#"after: "0", limit: 2"#, Some(BOB), page(n, 2, 1..=0)),
-        arrivals(r#"after: "2""#, Some(BOB), page(n, n, 1..=0)),
-        arrivals(r#"after: "0""#, None, page(n, n, 1..=0)),
+        arrivals(r#"after: "0""#, Some(BOB), page(n, n, [])),
+        arrivals(r#"after: "0", limit: 2"#, Some(BOB), page(n, 2, [])),
+        arrivals(r#"after: "2""#, Some(BOB), page(n, n, [])),
+        arrivals(r#"after: "0""#, None, page(n, n, [])),
     ]);
     let mut case = case(actions);
     case.id = integration_test::scenario_id!();
@@ -74,7 +78,7 @@ fn without_a_policy_only_the_chunks_of_a_live_parents_text_are_shown() {
         arrivals(r#"after: "0""#, Some(BOB), page(2, 2, 1..=2)),
         update_article("article", &body(2, "maps")),
         arrivals(r#"after: "0""#, None, page(4, 4, 3..=4)),
-        arrivals(r#"after: "0", limit: 2"#, None, page(4, 2, 1..=0)),
+        arrivals(r#"after: "0", limit: 2"#, None, page(4, 2, [])),
         DeleteDoc {
             collection: "Article".into(),
             doc_id: Text::reference("article"),
@@ -83,7 +87,7 @@ fn without_a_policy_only_the_chunks_of_a_live_parents_text_are_shown() {
         .into(),
     ];
     for identity in [None, Some(ALICE)] {
-        actions.push(arrivals(r#"after: "0""#, identity, page(4, 4, 1..=0)));
+        actions.push(arrivals(r#"after: "0""#, identity, page(4, 4, [])));
     }
     let mut case = case(actions);
     case.id = integration_test::scenario_id!();
