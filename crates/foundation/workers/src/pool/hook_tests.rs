@@ -130,6 +130,102 @@ fn an_unwatched_slow_hook_after_a_short_task_is_the_hooks_not_the_tasks() {
     assert!(!stuck);
 }
 
+/// Runs one turn of a worker with no task, so the turn polls the hook on
+/// its own, and that hook poll is slow; the worker's stats after, and
+/// whether it is left marked.
+fn run_hook_alone(monitored: bool) -> (WorkerStats, bool) {
+    let clock = Arc::new(ManualClock::default());
+    let pool = bare(2, clock.clone());
+    let hook = SlowOnce {
+        pool: pool.clone(),
+        clock: clock.clone(),
+        scan: monitored,
+        slow: true,
+    };
+    let mut worker = Worker::new(
+        pool.workers[0].clone(),
+        clock,
+        PoolShared::tuning(&Config::default(), monitored),
+        Some(Box::new(hook)),
+    )
+    .unwrap();
+    worker.turn();
+    (pool.workers[0].stats(), pool.workers[0].is_stuck())
+}
+
+#[test]
+fn a_watched_slow_hook_with_no_task_before_it_is_found() {
+    let (stats, stuck) = run_hook_alone(true);
+    assert_eq!(stats.long_hook_polls, 1, "the scan saw the hook poll");
+    assert_eq!(stats.long_polls, 0);
+    assert!(!stuck, "the hook's mark is cleared when the turn ends");
+}
+
+#[test]
+fn an_unwatched_slow_hook_with_no_task_before_it_is_found() {
+    let (stats, stuck) = run_hook_alone(false);
+    assert_eq!(
+        stats.long_hook_polls, 1,
+        "the worker timed its own hook poll"
+    );
+    assert_eq!(stats.long_polls, 0);
+    assert!(!stuck);
+}
+
+#[test]
+fn a_held_up_monitor_does_not_replace_the_mark_of_the_poll_shown_now() {
+    let clock = Arc::new(ManualClock::default());
+    let pool = bare(2, clock.clone());
+    let worker = &pool.workers[0];
+    let (older, newer) = (task_word(0), hook_word(1));
+    worker.heartbeat.begin_hook(newer);
+    worker.mark_stuck(newer);
+    worker.mark_stuck(older);
+    assert!(
+        !worker.unmark(older),
+        "the held-up monitor's recheck finds no mark of its own"
+    );
+    assert!(worker.is_stuck(), "the poll shown now stays marked");
+    assert!(worker.unmark(newer));
+}
+
+#[test]
+fn a_mark_for_a_poll_no_longer_shown_is_replaced() {
+    let clock = Arc::new(ManualClock::default());
+    let pool = bare(2, clock.clone());
+    let worker = &pool.workers[0];
+    worker.mark_stuck(task_word(0));
+    worker.heartbeat.begin_hook(hook_word(1));
+    worker.mark_stuck(hook_word(1));
+    assert!(worker.unmark(hook_word(1)), "the shown poll's mark landed");
+    assert!(!worker.is_stuck());
+}
+
+#[test]
+fn a_held_up_monitor_does_not_report_an_older_hook_poll_again() {
+    let clock = Arc::new(ManualClock::default());
+    let pool = bare(2, clock.clone());
+    let worker = &pool.workers[0];
+    let (first, second) = (hook_word(1), hook_word(2));
+    assert!(
+        worker.claim_hook_report(first),
+        "the first sighting reports"
+    );
+    assert!(
+        !worker.claim_hook_report(first),
+        "the other monitor does not"
+    );
+    assert!(
+        worker.claim_hook_report(second),
+        "a newer hook poll reports"
+    );
+    assert!(
+        !worker.claim_hook_report(first),
+        "a monitor held up since it read the first poll does not report it again"
+    );
+    assert!(!worker.claim_hook_report(second));
+}
+
 #[test]
 fn the_monitor_reports_a_hook_poll_once_and_routes_around_it() {
     let clock = Arc::new(ManualClock::default());

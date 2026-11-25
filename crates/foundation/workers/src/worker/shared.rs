@@ -18,6 +18,7 @@ use std::sync::Arc;
 use regolith::sync::{ArrayQueue, Semaphore};
 
 use super::heartbeat::Heartbeat;
+use super::hook_beat::NO_HOOK;
 use super::signal::Signal;
 use crate::completion::{self, Completion, Fail};
 use crate::os::ContextSwitches;
@@ -198,9 +199,9 @@ pub(crate) struct WorkerShared {
     stuck: AtomicU64,
     /// The task last reported stuck, so two monitors report it once.
     pub reported: AtomicU64,
-    /// The word of the hook poll last reported stuck, so two monitors
-    /// report it once.
-    pub hook_reported: AtomicU64,
+    /// The word of the latest hook poll reported stuck, or [`NO_HOOK`];
+    /// see [`claim_hook_report`](Self::claim_hook_report).
+    hook_reported: AtomicU64,
     /// The hook poll the monitors last saw and when they first saw it, as
     /// [`sighting`]: the hook reads no clock, so it is timed from here.
     hook_seen: AtomicU64,
@@ -237,7 +238,7 @@ impl WorkerShared {
             heartbeat: Heartbeat::new(),
             stuck: AtomicU64::new(NOT_STUCK),
             reported: AtomicU64::new(u64::MAX),
-            hook_reported: AtomicU64::new(u64::MAX),
+            hook_reported: AtomicU64::new(NO_HOOK),
             hook_seen: AtomicU64::new(u64::MAX),
             abandon: AtomicBool::new(false),
             exited: AtomicBool::new(false),
@@ -246,9 +247,28 @@ impl WorkerShared {
         }
     }
 
-    /// Marks the poll whose word is `word` as running past the limit.
+    /// Marks the poll whose word is `word` as running past the limit,
+    /// unless the mark already names the poll shown now: with two monitors,
+    /// one held up since it read an older poll must not replace a newer
+    /// poll's mark, or its recheck would take that mark down while the
+    /// newer poll is still stuck.
     pub(crate) fn mark_stuck(&self, word: u64) {
-        self.stuck.store(word, Ordering::SeqCst);
+        let mut mark = self.stuck.load(Ordering::SeqCst);
+        loop {
+            // A mark whose poll is no longer shown is never shown again, so
+            // it stays replaceable until the compare-and-swap; one that
+            // moved meanwhile fails it and is looked at again.
+            if mark == word || (mark != NOT_STUCK && self.heartbeat.word() == Some(mark)) {
+                return;
+            }
+            match self
+                .stuck
+                .compare_exchange_weak(mark, word, Ordering::SeqCst, Ordering::SeqCst)
+            {
+                Ok(_) => return,
+                Err(now) => mark = now,
+            }
+        }
     }
 
     /// Clears the mark of the poll whose word is `word`; whether that poll
@@ -271,6 +291,16 @@ impl WorkerShared {
                 self.stuck
                     .compare_exchange(mark, NOT_STUCK, Ordering::SeqCst, Ordering::Relaxed);
         }
+    }
+
+    /// Claims the report of the hook poll whose word is `word`: true at most
+    /// once per hook poll, and never for a poll older than one already
+    /// claimed, so a monitor held up since it read an older hook poll does
+    /// not report it again after the other monitor reported a newer one.
+    /// Hook words grow with the poll's number (wrapping only after 2^62
+    /// polls) and none is [`NO_HOOK`].
+    pub(crate) fn claim_hook_report(&self, word: u64) -> bool {
+        self.hook_reported.fetch_max(word, Ordering::AcqRel) < word
     }
 
     /// How long the monitors have seen the hook poll numbered `number`,

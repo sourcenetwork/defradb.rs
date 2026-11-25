@@ -98,7 +98,7 @@ pub(crate) fn scan(pool: &PoolShared, now: u64) -> usize {
             worker.unmark(beat.word);
         }
         if beat.hook() {
-            if worker.hook_reported.swap(beat.word, Ordering::AcqRel) != beat.word {
+            if worker.claim_hook_report(beat.word) {
                 worker
                     .counters
                     .long_hook_polls
