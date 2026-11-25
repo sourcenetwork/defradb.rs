@@ -32,6 +32,9 @@ pub enum BroadcastResult {
         /// Error from the document topic publish.
         document_error: String,
     },
+    /// No peer subscribed to either topic, so nothing was sent. Go publishes
+    /// such an update to no one, without an error.
+    NoSubscribers,
 }
 
 /// Broadcaster for sending block updates to the P2P network.
@@ -118,6 +121,16 @@ impl<T: P2PTransport> Broadcaster<T> {
                 Ok(BroadcastResult::PartialCollectionOnly {
                     document_error: e.to_string(),
                 })
+            }
+            (Err(doc_err), Err(col_err))
+                if doc_err.is_no_topic_peer() && col_err.is_no_topic_peer() =>
+            {
+                tracing::debug!(
+                    doc_id = %broadcast.doc_id,
+                    collection_id = %broadcast.collection_id,
+                    "No peer subscribed to the write's topics; nothing to announce"
+                );
+                Ok(BroadcastResult::NoSubscribers)
             }
             (Err(doc_err), Err(col_err)) => {
                 if doc_err.is_connection_like() && col_err.is_connection_like() {

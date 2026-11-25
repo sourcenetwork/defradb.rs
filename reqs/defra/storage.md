@@ -375,6 +375,13 @@ Gossip has no reply and no retry, so a gossip head a node refuses for its per-pe
 
 Over iroh, a create or an update whose head block is larger than one gossip broadcast holds (4,023 bytes of payload) reaches the same peers a small one would, every subscriber of the collection connected to the writer: a document of a 160-field collection, created with every field set or updated in every field on one node, is queried with the same values on the other. Such an update goes to every connected peer as a direct PushLog request instead of a broadcast; a peer that does not subscribe declines it, and the write's broadcast reports any subscriber that did not take it.
 
+# `defra.p2p.peerless_broadcast`: A write no peer subscribes to is not logged as a failure
+
+- **Parents:** ["defra"]
+- **Scenarios:** ["p2p::peerless_broadcast::rust_p2p_writes_without_peers_log_no_broadcast_error"]
+
+A node with P2P on announces each committed write on its document and collection topics. When no peer subscribes to either topic, as on a node with no peers, there is no one to announce it to: the write succeeds and the node logs nothing at WARN or ERROR for it, only `No peer subscribed to the write's topics; nothing to announce` at DEBUG, as Go publishes such a write silently. A publish that fails for any other reason, such as a transport error or a peer subscribed to a topic that the publish did not reach, is still logged at WARN or ERROR.
+
 # `defra.commits`: Commit history queries beyond Go
 
 - **Parents:** ["defra"]

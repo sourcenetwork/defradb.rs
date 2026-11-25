@@ -70,10 +70,7 @@ fn a_write_that_finds_no_subscriber_is_not_published_again() {
             );
         };
 
-        assert!(
-            matches!(&status, BroadcastStatus::Failed(error) if error.contains("InsufficientPeers")),
-            "{status:?}"
-        );
+        assert!(matches!(&status, BroadcastStatus::Success), "{status:?}");
         assert_eq!(transport.publishes(), 2, "one publish to each topic");
     })
     .unwrap()

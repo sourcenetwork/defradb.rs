@@ -916,7 +916,7 @@ impl p2p::P2PTransport for ConnectedPeerTransport {
     ) -> p2p::Result<p2p::transport::MessageId> {
         self.publishes.fetch_add(1, Ordering::SeqCst);
         Err(p2p::Error::GossipSubPublish(
-            "gossipsub publish error: InsufficientPeers".to_string(),
+            "InsufficientPeers".to_string(),
         ))
     }
 

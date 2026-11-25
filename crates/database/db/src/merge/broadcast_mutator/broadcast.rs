@@ -129,6 +129,7 @@ where
             );
             BroadcastStatus::Success
         }
+        Ok(BroadcastResult::NoSubscribers) => BroadcastStatus::Success,
         Ok(BroadcastResult::PartialDocumentOnly { collection_error }) => {
             tracing::warn!(
                 doc_id = %block_result.doc_id,
