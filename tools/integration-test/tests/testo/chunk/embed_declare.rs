@@ -35,6 +35,25 @@ const PARENT_SIMILARITY_ERROR: &str =
 
 #[test]
 #[mantra_macros::req_test("defra.chunk.embed.declare_only_field")]
+fn a_template_embedding_of_a_chunked_field_is_refused() {
+    TestCase::from_actions(vec![AddCollection {
+        sdl: r#"type Article {
+            body: String @chunk(maxChars: 64)
+            body_v: [Float32!] @embedding(template: "{{ .body }}", provider: "openai", model: "m")
+        }"#
+        .into(),
+        expected_error: Some(
+            "@embedding over a @chunk field must embed only that field. Field: Article.body_v"
+                .into(),
+        ),
+        ..Default::default()
+    }
+    .into()])
+    .execute();
+}
+
+#[test]
+#[mantra_macros::req_test("defra.chunk.embed.declare_only_field")]
 fn an_embedding_of_a_chunked_field_and_another_is_refused() {
     TestCase::from_actions(vec![AddCollection {
         sdl: r#"type Article {

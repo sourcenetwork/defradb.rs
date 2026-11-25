@@ -321,9 +321,9 @@ With `body: String @chunk` and `body_v: [Float32!] @embedding(fields: ["body"], 
 # `defra.chunk.embed.declare_only_field`: The embedding embeds the chunked field alone
 
 - **Parents:** ["defra.chunk.embed"]
-- **Scenarios:** ["chunk::embed_declare::an_embedding_of_a_chunked_field_and_another_is_refused"]
+- **Scenarios:** ["chunk::embed_declare::an_embedding_of_a_chunked_field_and_another_is_refused", "chunk::embed_declare::a_template_embedding_of_a_chunked_field_is_refused"]
 
-Adding `Article` with `body_v: [Float32!] @embedding(fields: ["title", "body"], ...)` over the chunked `body` fails with `@embedding over a @chunk field must embed only that field. Field: Article.body_v`. An embedding with a `template` over a chunked field fails the same way.
+Adding `Article` with `body_v: [Float32!] @embedding(fields: ["title", "body"], ...)` over the chunked `body` fails with `@embedding over a @chunk field must embed only that field. Field: Article.body_v`. An embedding whose `template` reads the chunked field, like `{{ .body }}`, fails the same way.
 
 # `defra.chunk.embed.patch`: A patch cannot move or change a chunk embedding
 

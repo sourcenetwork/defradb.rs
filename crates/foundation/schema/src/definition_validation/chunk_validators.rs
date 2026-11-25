@@ -56,10 +56,10 @@ pub(super) fn validate_chunks_not_modified(
         }
         // The SDL moves such an embedding onto the chunks; on the parent it would embed the whole text.
         for embedding in &new_col.vector_embeddings {
-            if embedding
-                .fields
+            if new_col
+                .chunked_fields
                 .iter()
-                .any(|source| new_col.chunked_field(source).is_some())
+                .any(|chunked| embedding.reads(&chunked.field_name))
             {
                 errs.push(format!(
                     "an embedding over a chunked field belongs to its chunk collection. Field: {}.{}",

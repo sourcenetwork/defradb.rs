@@ -7,8 +7,8 @@
 
 use graphql_parser::schema::Directive;
 use schema::{
-    chunk_collection_name, CType, ChunkSource, ChunkedField, CHUNK_HASH_FIELD, CHUNK_SOURCE_FIELD,
-    CHUNK_SOURCE_ID_FIELD, CHUNK_TEXT_FIELD,
+    chunk_collection_name, template_reads, CType, ChunkSource, ChunkedField, CHUNK_HASH_FIELD,
+    CHUNK_SOURCE_FIELD, CHUNK_SOURCE_ID_FIELD, CHUNK_TEXT_FIELD,
 };
 
 use crate::error::{QueryError, Result};
@@ -88,10 +88,10 @@ fn take_embedded_fields(parent: &mut ParsedTypeDef, chunked: &str) -> Result<Vec
     let (embedded, kept): (Vec<_>, Vec<_>) = std::mem::take(&mut parent.fields)
         .into_iter()
         .partition(|f| {
-            f.directives
-                .embedding
-                .as_ref()
-                .is_some_and(|embedding| embedding.fields.iter().any(|source| source == chunked))
+            f.directives.embedding.as_ref().is_some_and(|embedding| {
+                embedding.fields.iter().any(|source| source == chunked)
+                    || template_reads(&embedding.template, chunked)
+            })
         });
     parent.fields = kept;
     embedded

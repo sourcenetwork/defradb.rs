@@ -41,6 +41,22 @@ pub struct VectorEmbeddingDescription {
     pub url: String,
 }
 
+/// Whether a Go `template` reads `field`, as `.field` inside `{{ }}`.
+pub fn template_reads(template: &str, field: &str) -> bool {
+    let is_name = |c: char| c.is_alphanumeric() || c == '_';
+    template.split("{{").skip(1).any(|action| {
+        let action = action.split("}}").next().unwrap_or_default();
+        action.match_indices('.').any(|(at, _)| {
+            let before = action[..at].chars().next_back();
+            let rest = &action[at + 1..];
+            !before.is_some_and(is_name)
+                && rest
+                    .strip_prefix(field)
+                    .is_some_and(|after| !after.starts_with(is_name))
+        })
+    })
+}
+
 impl VectorEmbeddingDescription {
     /// Create a new vector embedding description.
     pub fn new(
@@ -68,6 +84,11 @@ impl VectorEmbeddingDescription {
     pub fn with_template(mut self, template: impl Into<String>) -> Self {
         self.template = template.into();
         self
+    }
+
+    /// Whether it embeds `field`, through `fields` or its template.
+    pub fn reads(&self, field: &str) -> bool {
+        self.fields.iter().any(|source| source == field) || template_reads(&self.template, field)
     }
 
     /// Set the API URL.
@@ -107,5 +128,18 @@ mod tests {
 
         let parsed: VectorEmbeddingDescription = serde_json::from_str(&json).unwrap();
         assert_eq!(embedding, parsed);
+    }
+
+    #[test]
+    fn a_template_reads_the_fields_it_names() {
+        assert!(template_reads("{{ .body }}", "body"));
+        assert!(template_reads(
+            "Title: {{.title}}\n{{ .body | trim }}",
+            "body"
+        ));
+        assert!(!template_reads("{{ .bodyText }}", "body"));
+        assert!(!template_reads("{{ .meta.body }}", "body"));
+        assert!(!template_reads("body .body", "body"));
+        assert!(!template_reads("", "body"));
     }
 }

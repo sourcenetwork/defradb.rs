@@ -301,6 +301,21 @@ fn an_embedding_of_a_chunked_field_with_a_template_is_refused() {
 }
 
 #[test]
+fn a_template_embedding_that_reads_a_chunked_field_is_refused() {
+    let sdl = r#"type Article {
+        body: String @chunk
+        body_v: [Float32!] @embedding(template: "{{ .body }}")
+    }"#;
+    let err = parse_sdl(sdl).unwrap_err().to_string();
+    assert!(
+        err.contains(
+            "@embedding over a @chunk field must embed only that field. Field: Article.body_v"
+        ),
+        "{err}"
+    );
+}
+
+#[test]
 fn chunk_declares_the_current_splitter_version() {
     let article = &parse_sdl(SDL).unwrap()[0];
     assert_eq!(

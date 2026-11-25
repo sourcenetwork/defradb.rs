@@ -381,3 +381,17 @@ fn an_embedding_of_a_chunked_field_on_the_parent_is_refused() {
         "{err}"
     );
 }
+
+#[test]
+fn a_template_embedding_that_reads_a_chunked_field_on_the_parent_is_refused() {
+    let mut patched = article();
+    let mut templated = embedding("body_v", "body", "m1");
+    templated.fields = vec![];
+    templated.template = "{{ .body }}".into();
+    patched.vector_embeddings.push(templated);
+    let err = check(vec![article(), chunk()], vec![patched, chunk()]).unwrap_err();
+    assert!(
+        err.contains("an embedding over a chunked field belongs to its chunk collection. Field: Article.body_v"),
+        "{err}"
+    );
+}
