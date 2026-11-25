@@ -4170,6 +4170,7 @@ dependencies = [
  "identity",
  "iroh",
  "js-sys",
+ "mantra-macros",
  "p2p",
  "query",
  "rapidhash",
