@@ -321,7 +321,7 @@ All target `MC_Integrity_Attacks.tla`.
 ## ACP Soundness Runs (Lean + TLA+)
 
 Design notes in [Acp_DESIGN.md](Acp_DESIGN.md). **Lean** (`../lean/Acp/Soundness.lean`,
-`cd ../lean && lake build`) proves the check algebra: `INV_CheckSound`, `INV_NoEscalation`,
+`cd ../lean && lake build -R`) proves the check algebra: `INV_CheckSound`, `INV_NoEscalation`,
 and `INV_PositiveRemovalNoGrant` — plus `buggyDifferenceOverGrants`, a negative theorem
 showing a mishandled exclusion operator over-grants. All `[propext, Quot.sound]`, no `sorry`.
 
