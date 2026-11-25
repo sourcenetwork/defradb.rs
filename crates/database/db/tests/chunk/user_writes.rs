@@ -6,7 +6,6 @@ use db::AutoCommitMutator;
 use document::Document;
 use query::mutator::{DocMutator, MutationBatchOperation};
 use query::txn::TransactionRegistry;
-use rapidhash::{HashSetExt, RapidHashSet};
 use storage::RegolithStore;
 
 use crate::common::fixture::make_test_db_with_bus;
@@ -51,27 +50,6 @@ async fn forbidden_writes(db: &DB<RegolithStore>, mutator: &dyn DocMutator) -> V
             .await
             .map(|_| ()),
     );
-    let listed = doc(
-        db,
-        "Article",
-        r#"{"body": "x", "_body_chunks": ["aa", "bb"]}"#,
-    );
-    errors.push(mutator.create("Article", listed).await.map(|_| ()));
-
-    let created = mutator
-        .create("Article", doc(db, "Article", r#"{"body": "x"}"#))
-        .await
-        .expect("a plain create");
-    let mut update = doc(db, "Article", r#"{"_body_chunks": ["aa", "bb"]}"#);
-    update.set_id(created.doc_id);
-    let mut modified = RapidHashSet::new();
-    modified.insert("_body_chunks".to_string());
-    errors.push(
-        mutator
-            .update("Article", update, modified)
-            .await
-            .map(|_| ()),
-    );
     errors
         .into_iter()
         .map(|result| result.expect_err("refused").to_string())
@@ -84,12 +62,10 @@ fn assert_refused(errors: &[String]) {
         "{}",
         errors[0]
     );
-    assert!(errors[1].contains("read-only"), "{}", errors[1]);
-    assert!(errors[2].contains("read-only"), "{}", errors[2]);
 }
 
 #[test]
-fn autocommit_writes_cannot_set_chunks_or_lists() {
+fn autocommit_writes_cannot_set_chunks() {
     workers::block_on(async {
         let db = chunked_db().await;
         let mutator = AutoCommitMutator::new(Arc::clone(&db));
@@ -99,7 +75,7 @@ fn autocommit_writes_cannot_set_chunks_or_lists() {
 }
 
 #[test]
-fn explicit_transaction_writes_cannot_set_chunks_or_lists() {
+fn explicit_transaction_writes_cannot_set_chunks() {
     workers::block_on(async {
         let db = chunked_db().await;
         let registry = DbTransactionRegistry::new(Arc::clone(&db));
@@ -120,7 +96,7 @@ fn explicit_transaction_writes_cannot_set_chunks_or_lists() {
 }
 
 #[test]
-fn batch_writes_cannot_set_chunks_or_lists() {
+fn batch_writes_cannot_set_chunks() {
     workers::block_on(async {
         let db = chunked_db().await;
         let mutator = AutoCommitMutator::new(Arc::clone(&db));

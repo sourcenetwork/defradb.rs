@@ -1,5 +1,5 @@
 //! Read checks for chunk documents outside a query plan. A chunk is readable
-//! only while its parent is live, lists it, and is readable.
+//! only while its parent is live, its text uses it, and it is readable.
 
 use std::sync::Arc;
 

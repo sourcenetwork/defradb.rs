@@ -181,14 +181,8 @@ pub(super) fn build_mutation_input_type(collection: &CollectionVersion) -> Input
 
     // Add fields from collection definition
     for field in &collection.fields {
-        // Skip _docID, which mutations generate, and `@chunk` lists, which are
-        // set from their text.
-        if field.name == "_docID"
-            || collection
-                .chunked_fields
-                .iter()
-                .any(|chunked| chunked.list_field() == field.name)
-        {
+        // Skip _docID, which mutations generate.
+        if field.name == "_docID" {
             continue;
         }
         let type_ref = field_kind_to_input_type_ref(&field.kind);

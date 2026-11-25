@@ -15,4 +15,4 @@ or its engine.
 | [identity](identity) | Identity and JWT management |
 | [bitswap](bitswap) | Bitswap block exchange, wire-compatible with Go |
 | [net](net) | HTTP, TLS and gRPC on nuclei sockets |
-| [chunk-split](chunk-split) | `@chunk` splitter and the parent's chunk list |
+| [chunk-split](chunk-split) | `@chunk` splitter |

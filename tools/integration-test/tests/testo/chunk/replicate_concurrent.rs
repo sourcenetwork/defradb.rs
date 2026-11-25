@@ -7,12 +7,11 @@ use integration_test::scenario::Text;
 use serde_json::{json, Value};
 
 use super::support::{
-    add_article_on, body, eventually, on, read_list, texts, update_article_on,
-    without_default_node, CHUNKS, SCHEMA,
+    add_article_on, body, eventually, on, texts, update_article_on, without_default_node, CHUNKS,
+    SCHEMA,
 };
 
-// The same length, so the text tie goes to "south" while the list tie goes to
-// the list of "north". Readers cut the text, so the chunks are still south's.
+// The same length, so the text tie goes to "south".
 const NORTH: &str = "north";
 const SOUTH: &str = "south";
 const PARAGRAPHS: usize = 3;
@@ -72,11 +71,8 @@ pub(super) fn sync(collection: &str, ids: Vec<Text>, node: &str) -> Actions {
     .into()
 }
 
-/// `node` shows `text`, the list `read_list` named `prefix`, and exactly the chunks of `text`.
-fn shows(node: &str, text: &str, prefix: &str) -> Actions {
-    let list: Vec<Value> = (0..=PARAGRAPHS)
-        .map(|i| integration_test::m::r(&format!("{prefix}{i}")))
-        .collect();
+/// `node` shows `text` and exactly the chunks of `text`.
+fn shows(node: &str, text: &str) -> Actions {
     let rows: Vec<Value> = texts(text)
         .into_iter()
         .map(|text| json!({ "text": text }))
@@ -85,10 +81,9 @@ fn shows(node: &str, text: &str, prefix: &str) -> Actions {
     common.unordered = vec![format!("/data/{CHUNKS}")];
     eventually(
         Request {
-            request: format!("query {{ Article {{ body _body_chunks }} {CHUNKS} {{ text }} }}")
-                .into(),
+            request: format!("query {{ Article {{ body }} {CHUNKS} {{ text }} }}").into(),
             expected_data: json!({
-                "Article": [{ "body": text, "_body_chunks": list }],
+                "Article": [{ "body": text }],
                 CHUNKS: rows,
             }),
             common,
@@ -110,12 +105,11 @@ fn peers_that_edit_apart_end_with_the_chunks_of_the_merged_text() {
         add_article_on(&body(2, "start"), "copy", Some("db1")),
         update_article_on("article", &north, Some("db0")),
         update_article_on("article", &south, Some("db1")),
-        read_list("north", PARAGRAPHS, Some("db0")),
         connect(),
         sync("Article", vec![Text::reference("article")], "db0"),
         sync("Article", vec![Text::reference("article")], "db1"),
-        shows("db0", &south, "north"),
-        shows("db1", &south, "north"),
+        shows("db0", &south),
+        shows("db1", &south),
     ]);
     without_default_node(actions).execute();
 }
@@ -129,10 +123,9 @@ fn a_peer_that_merges_a_newer_text_builds_its_chunks() {
         add_article_on(&body(2, "start"), "article", Some("db0")),
         add_article_on(&body(2, "start"), "copy", Some("db1")),
         update_article_on("article", &north, Some("db0")),
-        read_list("north", PARAGRAPHS, Some("db0")),
         connect(),
         sync("Article", vec![Text::reference("article")], "db1"),
-        shows("db1", &north, "north"),
+        shows("db1", &north),
     ]);
     without_default_node(actions).execute();
 }

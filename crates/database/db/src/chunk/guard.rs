@@ -3,7 +3,7 @@
 use document::{Document, NormalValue};
 use schema::{CHUNK_HASH_FIELD, CHUNK_SOURCE_ID_FIELD, CHUNK_TEXT_FIELD};
 
-use super::list::text_hash;
+use super::hash::text_hash;
 
 /// Why a merged chunk is refused.
 #[derive(Debug, thiserror::Error)]
