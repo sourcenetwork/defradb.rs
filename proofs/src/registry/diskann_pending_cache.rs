@@ -1,0 +1,58 @@
+use super::{Axis::*, Property, Tier::*};
+
+pub(super) const PROPERTIES: &[Property] = &[
+    Property {
+        family: "DiskANN pending cache",
+        name: "INV_NoHiddenPending — a search using the in-memory pending list never misses a vector its snapshot or its own transaction has pending",
+        axis: Tla,
+        anchor: "crates/database/db/src/index/vector/engine/diskann/graph.rs pending_candidates; crates/database/db/src/index/vector/engine/diskann/pending_cache.rs PendingCache; crates/database/db/src/index/vector/engine/diskann/mod.rs insert, delete; crates/database/db/src/index/vector/engine/diskann/merge.rs merge_plan, merge",
+        model_ref: "MC_PendingCache_Green.cfg (GREEN) / MC_PendingCache_Red_NoGeneration.cfg / MC_PendingCache_Red_OwnWrites.cfg / MC_PendingCache_Red_TruncateThroughHead.cfg (RED)",
+        tiers: &[Contract],
+        bound_by: "crates/database/db/tests/vector/diskann_pending_cache.rs later_inserts_catch_the_copy_up_without_a_reload, a_transaction_finds_its_own_uncommitted_insert, a_merge_truncates_the_log_it_absorbed, an_insert_during_a_merge_stays_pending",
+    },
+    Property {
+        family: "DiskANN pending cache",
+        name: "prefix_covered — a cache loaded once and caught up on every logged insert holds every vector a snapshot of its generation has pending, and a merge that cuts the log anywhere loses no live vector",
+        axis: Lean,
+        anchor: "crates/database/db/src/index/vector/engine/diskann/pending_cache.rs PendingCache; crates/database/db/src/index/vector/engine/diskann/mod.rs insert; crates/database/db/src/index/vector/engine/diskann/merge.rs merge_plan, merge",
+        model_ref: "PendingCache.Covers.prefix_covered / catch_up_in_steps / merge_keeps_every_vector / truncate_through_head_loses",
+        tiers: &[Contract],
+        bound_by: "crates/database/db/tests/vector/diskann_pending_cache.rs later_inserts_catch_the_copy_up_without_a_reload, a_catch_up_past_the_cap_is_refused, a_merge_truncates_the_log_it_absorbed",
+    },
+    Property {
+        family: "DiskANN pending cache",
+        name: "INV_ScoresLatest — a search scores each pending vector by the newest entry its snapshot or its own transaction holds, never an obsolete one or one from a cache ahead of it",
+        axis: Tla,
+        anchor: "crates/database/db/src/index/vector/engine/diskann/graph.rs pending_candidates, snapshot_pending; crates/database/db/src/index/vector/engine/diskann/pending_cache.rs Copy::for_each_latest_through, Copy::caught_up, Segment::push, Segment::supersede",
+        model_ref: "MC_PendingCache_Green.cfg (GREEN) / MC_PendingCache_Red_EveryVersion.cfg / MC_PendingCache_Red_FutureVersion.cfg / MC_PendingCache_Red_HeadBlindMarks.cfg / MC_PendingCache_Red_NoGapCheck.cfg / MC_PendingCache_Red_NoGeneration.cfg (RED)",
+        tiers: &[Contract],
+        bound_by: "crates/database/db/tests/vector/diskann_pending_cache.rs an_updated_vector_is_scored_by_its_latest_code, a_transaction_scores_its_own_update_by_its_latest_code, a_snapshot_behind_the_copy_scores_the_codes_it_can_see, a_superseded_marker_respects_the_readers_head",
+    },
+    Property {
+        family: "DiskANN pending cache",
+        name: "scored_is_last — the code kept for a vector is that of its last entry visited, and a copy cut at a search's head scores as the search's own log does",
+        axis: Lean,
+        anchor: "crates/database/db/src/index/vector/engine/diskann/graph.rs pending_candidates; crates/database/db/src/index/vector/engine/diskann/pending_cache.rs Copy::for_each_latest_through",
+        model_ref: "PendingCache.Latest.scored_is_last / scored_append / cut_scores_snapshot / uncut_scores_future",
+        tiers: &[Contract],
+        bound_by: "crates/database/db/tests/vector/diskann_pending_cache.rs an_updated_vector_is_scored_by_its_latest_code, a_snapshot_behind_the_copy_scores_the_codes_it_can_see",
+    },
+    Property {
+        family: "DiskANN pending cache",
+        name: "kept_is_newest — a search that skips an entry only when its superseded marker is at or before the search's head keeps exactly each vector's newest entry in reach",
+        axis: Lean,
+        anchor: "crates/database/db/src/index/vector/engine/diskann/pending_cache.rs Segment::push, Segment::supersede, Copy::for_each_latest_through",
+        model_ref: "PendingCache.Marks.kept_is_newest / newest_is_kept / one_kept_per_vector / next_decides / head_blind_marker_hides",
+        tiers: &[Contract],
+        bound_by: "crates/database/db/tests/vector/diskann_pending_cache.rs a_superseded_marker_respects_the_readers_head, racing_catch_ups_agree_on_markers, a_folded_copy_keeps_one_entry_per_vector",
+    },
+    Property {
+        family: "DiskANN pending cache",
+        name: "Evict — forgetting the pending cache at any moment, as an index or collection drop does, keeps every search's candidates complete and scored by their newest entry",
+        axis: Tla,
+        anchor: "crates/database/db/src/index/vector/engine/diskann/cache.rs CodeCaches::evict, evict_collection; crates/database/db/src/collection/ops/delete.rs delete_collection_as; crates/database/db/src/collection/ops/version.rs delete_collection_version_as",
+        model_ref: "MC_PendingCache_Green_Evict.cfg (GREEN)",
+        tiers: &[Contract],
+        bound_by: "crates/database/db/tests/vector/diskann_pending_cache.rs evicting_drops_only_the_named_caches",
+    },
+];
