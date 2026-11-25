@@ -50,20 +50,28 @@ where
             .any(|error| error.pointer("/extensions/code").and_then(Value::as_str) == Some(code))
 }
 
-fn with_retry<F>(call: F) -> Result<Value, Failure>
+/// Runs `call` again while it loses a transaction conflict. A response
+/// with GraphQL errors becomes the failure of its first error, unless
+/// `keeps_errors` asks for the response itself, as an action that checks an
+/// error's `extensions.code` does.
+fn with_retry<F>(call: F, keeps_errors: bool) -> Result<Value, Failure>
 where
     F: Fn() -> Result<Value, Failure>,
 {
     for attempt in 0..RETRIES {
-        let mut outcome = call();
-        if let Ok(value) = &outcome {
-            if let Some(first) = graphql_errors(value).first() {
-                outcome = Err(Failure::operation((*first).to_owned()));
-            }
-        }
-        let conflict = matches!(&outcome, Err(f) if f.kind == FailureKind::TransactionConflict);
+        let outcome = call();
+        let failure = match &outcome {
+            Ok(value) => graphql_errors(value)
+                .first()
+                .map(|first| Failure::operation((*first).to_owned())),
+            Err(failure) => Some(failure.clone()),
+        };
+        let conflict = matches!(&failure, Some(f) if f.kind == FailureKind::TransactionConflict);
         if !conflict || attempt + 1 == RETRIES {
-            return outcome;
+            return match failure {
+                Some(failure) if !keeps_errors || outcome.is_err() => Err(failure),
+                _ => outcome,
+            };
         }
         std::thread::sleep(RETRY_PAUSE);
     }
@@ -174,7 +182,10 @@ where
     let expected = expectation(&action);
     let outcome = match (&common.eventually, &expected) {
         (Some(timing), Some(expected)) => poll_until(state, &action, expected, timing, call),
-        _ if common.retry => with_retry(|| call(&action, state)),
+        _ if common.retry => {
+            let keeps_errors = action.expected_error_code().is_some();
+            with_retry(|| call(&action, state), keeps_errors)
+        }
         _ => call_mut(&action, state),
     };
     if let Err(failure) = &outcome {
@@ -294,5 +305,49 @@ fn clipped(value: &Value) -> String {
     match text.char_indices().nth(SHOWN_BYTES) {
         Some((end, _)) => format!("{}… ({} bytes)", &text[..end], text.len()),
         None => text,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::cell::Cell;
+
+    use super::*;
+
+    fn coded(message: &str) -> Value {
+        json!({"data": null, "errors": [{"message": message, "extensions": {"code": "CODE"}}]})
+    }
+
+    #[test]
+    fn a_retried_error_keeps_its_code_when_the_action_checks_one() {
+        let outcome = with_retry(|| Ok(coded("refused")), true);
+        assert!(carries_code::<crate::actions::Request>(
+            &outcome, "refused", "CODE"
+        ));
+    }
+
+    #[test]
+    fn a_retried_error_becomes_a_failure_when_the_action_checks_no_code() {
+        let outcome = with_retry(|| Ok(coded("refused")), false);
+        assert!(matches!(outcome, Err(f) if f.message == "refused"));
+    }
+
+    #[test]
+    fn a_conflict_runs_again_and_the_response_after_it_keeps_its_code() {
+        let calls = Cell::new(0);
+        let outcome = with_retry(
+            || {
+                calls.set(calls.get() + 1);
+                match calls.get() {
+                    1 => Ok(coded("transaction conflict")),
+                    _ => Ok(coded("refused")),
+                }
+            },
+            true,
+        );
+        assert_eq!(calls.get(), 2);
+        assert!(carries_code::<crate::actions::Request>(
+            &outcome, "refused", "CODE"
+        ));
     }
 }

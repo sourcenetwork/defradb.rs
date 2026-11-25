@@ -79,7 +79,7 @@ mod signer_credential;
 mod start_peer_key;
 mod transaction;
 #[cfg(feature = "vera")]
-mod vera_rs_config;
+mod vera_config;
 pub mod version;
 
 use std::sync::Arc;
@@ -110,8 +110,6 @@ pub use config::HttpConfig;
 pub use config::Libp2pConfig;
 #[cfg(any(feature = "p2p", feature = "libp2p"))]
 pub use config::SyncTuning;
-#[cfg(feature = "vera")]
-pub use config::VeraConfig;
 pub use config::{
     CommitGateHandle, DocumentAcpConfig, IndexBuildGateHandle, NodeConfig, NodeSigning,
     Persistence, ReplicationFilterHandle, SigningKey, TransportConfig,
@@ -153,7 +151,7 @@ pub use telemetry::{ConflictMetricsSnapshot, RetryLayerSnapshot};
 pub use telemetry::{TelemetryConfig, TelemetryHandle};
 pub use transaction::NodeTransaction;
 #[cfg(feature = "vera")]
-pub use vera_rs_config::{VeraRsActor, VeraRsConfig};
+pub use vera_config::{VeraActor, VeraConfig};
 pub use zeroize::Zeroizing;
 
 use network::NodeEdge;

@@ -26,22 +26,21 @@ pub struct GraphQLResponse {
     pub extensions: Option<JsonValue>,
 }
 
-/// GraphQL error
-#[derive(Debug, Deserialize)]
+/// GraphQL error: its message, and the server's extensions when it sent
+/// some. Go's client prints the message only; the printed `extensions` are
+/// ours.
+#[derive(Debug, Deserialize, Serialize)]
 pub struct GraphQLError {
     pub message: String,
     /// The server's machine-readable error code, which Go's error mapping reads.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub extensions: Option<GraphQLErrorExtensions>,
 }
 
-/// GraphQL error extensions.
-#[derive(Debug, Deserialize)]
-pub struct GraphQLErrorExtensions {
-    pub code: String,
-}
+/// GraphQL error extensions: the server's own, so every field it sends is kept.
+pub type GraphQLErrorExtensions = query::executor::QueryResponseErrorExtensions;
 
-/// Transaction begin response (matches Go's `CreateTxResponse`).
+/// Transaction begin response with the opaque ID later routes carry.
 #[derive(Debug, Deserialize)]
 pub struct TxBeginResponse {
     pub id: u64,

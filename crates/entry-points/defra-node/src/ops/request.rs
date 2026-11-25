@@ -239,12 +239,12 @@ mod tests {
         let context = RequestContext::ambient()
             .with_dac_bypass(true)
             .with_batch_session(Some("session".to_owned()))
-            .with_txn(Some(TxnId(3)));
+            .with_txn(Some(TxnId { start: 0, route: 3 }));
 
         let request = request_in(&context, None, QueryRequest::new("{ User { name } }"));
 
         assert!(request.context.dac_bypass());
         assert_eq!(request.context.batch_session(), Some("session"));
-        assert_eq!(request.context.txn(), Some(TxnId(3)));
+        assert_eq!(request.context.txn(), Some(TxnId { start: 0, route: 3 }));
     }
 }

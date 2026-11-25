@@ -7,6 +7,7 @@
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
+use rapidhash::RapidHashSet;
 use schema::CollectionVersion;
 use tracing::debug;
 
@@ -29,6 +30,7 @@ impl Planner {
         mapping: &mut DocumentMapping,
         select: &Select,
         parent_collection: &CollectionVersion,
+        synthetic_order_relations: &RapidHashSet<&str>,
     ) -> Result<Box<dyn PlanNode>> {
         let field_names = select
             .fields
@@ -69,14 +71,11 @@ impl Planner {
                 continue; // Only handle secondary relations
             }
 
-            // Check if this relation is already being joined (via a Select)
-            let already_joined = select.fields.iter().any(|f| {
-                if let Requestable::Select(s) = f {
-                    s.field.name == relation_name
-                } else {
-                    false
-                }
-            });
+            let already_joined = synthetic_order_relations.contains(relation_name)
+                || select
+                    .fields
+                    .iter()
+                    .any(|f| matches!(f, Requestable::Select(s) if s.field.name == relation_name));
 
             let filter_conditions = select
                 .filter
@@ -84,9 +83,8 @@ impl Planner {
                 .and_then(|filter| filter.conditions().get(field_name.as_str()));
 
             if already_joined {
-                // The selection join owns this relation. A secondary ID condition
-                // on it is attached there, so a second join would discard the
-                // relation's selected fields.
+                // The selection or order join owns this relation and fills its ID.
+                // A second join would discard the fields that join selected.
                 continue;
             }
 

@@ -346,13 +346,8 @@ impl<S: Store + 'static> DocMutator for DbDocMutator<S> {
         self.ensure_collection_can_write(collection_name, &collection)
             .await?;
         crate::chunk::user_writes::ensure_user_writable(collection.schema())?;
-        crate::chunk::user_writes::refuse_list_writes(collection.schema(), &doc, None)?;
-        let chunk_plans = crate::chunk::sync::set_lists(
-            collection.schema(),
-            &mut doc,
-            None,
-            context.encryption(),
-        )?;
+        let chunk_plans =
+            crate::chunk::sync::plan_chunks(collection.schema(), &doc, None, context.encryption())?;
 
         let inputs = Some(&self.prepared_inputs);
         pipeline::embed(&self.db, &collection, &mut doc, inputs).await?;
@@ -367,7 +362,10 @@ impl<S: Store + 'static> DocMutator for DbDocMutator<S> {
             // What the create records as owed names the transaction by its
             // handle, whether or not the request did.
             let recorded_in = match (context.txn(), txn.handle_id()) {
-                (None, Some(id)) => context.clone().with_txn(Some(defra_core::TxnId(id))),
+                (None, Some(id)) => context.clone().with_txn(Some(defra_core::TxnId {
+                    start: 0,
+                    route: id,
+                })),
                 _ => context.clone(),
             };
             let blockstore = txn.blockstore().map_err(|e| {
@@ -468,15 +466,10 @@ impl<S: Store + 'static> DocMutator for DbDocMutator<S> {
         self.ensure_collection_can_write(collection_name, &collection)
             .await?;
         crate::chunk::user_writes::ensure_user_writable(collection.schema())?;
-        crate::chunk::user_writes::refuse_list_writes(
+        let chunk_plans = crate::chunk::sync::plan_chunks(
             collection.schema(),
             &doc,
             Some(&modified_fields),
-        )?;
-        let chunk_plans = crate::chunk::sync::set_lists(
-            collection.schema(),
-            &mut doc,
-            Some(&mut modified_fields),
             context.encryption(),
         )?;
 
@@ -667,7 +660,10 @@ impl<S: Store + 'static> DocMutator for DbDocMutator<S> {
             // What the delete records as owed names the transaction by its
             // handle, whether or not the request did.
             let recorded_in = match (context.txn(), txn.handle_id()) {
-                (None, Some(id)) => context.clone().with_txn(Some(defra_core::TxnId(id))),
+                (None, Some(id)) => context.clone().with_txn(Some(defra_core::TxnId {
+                    start: 0,
+                    route: id,
+                })),
                 _ => context.clone(),
             };
             crate::write::autocommit::helpers::unregister_deleted_doc(

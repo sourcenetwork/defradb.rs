@@ -48,6 +48,7 @@ mod cyclic_fragments;
 mod mutation_introspection;
 mod optional_variables;
 mod relation_field_args;
+mod relation_order_with_filter;
 mod schema_descriptions;
 mod subscription_introspection;
 mod inline_array {
@@ -105,6 +106,7 @@ mod json {
 }
 mod many_to_many {
     mod simple;
+    mod with_aggregates;
     mod with_nested_query;
 }
 mod non_finite_float;
@@ -130,6 +132,7 @@ mod one_to_many {
     mod with_id_field;
     mod with_limit;
     mod with_limit_aggregate;
+    mod with_limited_selection_aggregates;
     mod with_max;
     mod with_min;
     mod with_order_filter;

@@ -58,6 +58,28 @@ pub(crate) fn validate_select(select: &Select, collection: &CollectionVersion) -
         }
     }
 
+    // Go's schema gives an aggregate one argument per list field of the type,
+    // so an argument naming no field of it fails GraphQL validation. A relation
+    // name declared only on the other side (`@relation(name: ...)`) is not a field.
+    for requestable in &select.fields {
+        if let Requestable::Aggregate(agg) = requestable {
+            for target in &agg.targets {
+                let names_host = target.host_name.is_empty()
+                    || target.host_name == "GROUP"
+                    || target.host_name == select.collection_name
+                    || collection.field_by_name(&target.host_name).is_some();
+                if !names_host {
+                    return Err(QueryError::invalid_argument(format!(
+                        "Unknown argument \"{}\" on field \"{}\" of type \"{}\".",
+                        target.host_name,
+                        agg.aggregate_type.as_str(),
+                        select.collection_name
+                    )));
+                }
+            }
+        }
+    }
+
     // Validate aggregate target fields exist in schema
     // Note: For relation-based aggregates (e.g., _sum(books: {field: score})),
     // the field belongs to the related collection, not the current one.

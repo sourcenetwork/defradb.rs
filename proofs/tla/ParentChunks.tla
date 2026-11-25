@@ -1,6 +1,5 @@
 ---- MODULE ParentChunks ----
-\* The story: an article has a long text field marked `@chunk`. defradb keeps,
-\* next to the text, a list naming the article's chunks in reading order, and
+\* The story: an article has a long text field marked `@chunk`. defradb keeps
 \* one small chunk document per piece of the text. Writers update the article's
 \* text or delete the article, several at the same time. Each write is one
 \* transaction: it reads a snapshot, decides, and commits only if nothing it
@@ -8,12 +7,11 @@
 \* and runs again.
 \*
 \* The hook that keeps chunks in step runs inside the parent's own transaction:
-\* an update writes the new text and its chunk list in one document write and
-\* creates the chunk documents the list names that don't exist yet; a delete
-\* deletes the article and all its chunks. Old chunks that the new list no
-\* longer names are kept (a deleted document ID can never be made again, and a
-\* later edit back to the old text reuses them); they are hidden because the
-\* list doesn't name them.
+\* an update writes the new text and creates the chunk documents of that text
+\* that don't exist yet; a delete deletes the article and all its chunks. Old
+\* chunks the new text no longer uses are kept (a deleted document ID can never
+\* be made again, and a later edit back to the old text reuses them); readers
+\* hide them because they cut the text and find only the chunks it uses.
 \*
 \* Who acts: a local user, who creates the article once; a peer, whose copy of
 \* the same article sends its chunks first (P2P order is arbitrary, so chunks
@@ -23,30 +21,21 @@
 \* Creating a chunk document that already exists is an error, so every write
 \* first looks up which of its chunks the article already has and skips those.
 \*
-\* Each field keeps a chain of blocks, and a write's block sits one priority
-\* above the field's newest block. The stored value is the one with the higher
-\* priority; two at the same priority are a tie that either may win. A signed
-\* create builds its blocks before its transaction runs, so those blocks must
-\* already hold the list, or the first update's list lands at priority 1 and
-\* can lose the tie to the create's own list.
-\*
 \* What must never happen:
-\*   - a live article whose list doesn't describe its text (INV_ListMatchesText);
-\*   - a live article whose list names a chunk that doesn't exist (INV_ListedChunksExist);
+\*   - a live article whose text uses a chunk that doesn't exist (INV_TextChunksExist);
 \*   - a chunk left behind after its article was deleted (INV_NoChunkOfDeletedParent);
 \*   - a valid create or update refused because one of its chunks exists (INV_ValidWritesSucceed).
 \*
 \* Code it models (crates/database/db/src/chunk/sync):
-\*   mod.rs      set_lists (the list in the parent's write), ChunkWrites::create_missing,
+\*   mod.rs      plan_chunks (the chunks a write's text needs), ChunkWrites::create_missing,
 \*               ChunkWrites::delete_all (missing chunks, and the cascade on delete)
 \*   lookup.rs   ChunkCollection::existing_of (which planned chunks exist, in one scan)
 \*   crates/database/db/src/write/autocommit/one_op.rs AutoCommitMutator::in_batch (a single write runs as one batch)
 \*   crates/database/db/src/write/autocommit/batch.rs  BatchMutator::update_as, delete_as (call the hook)
 \*   crates/database/db/src/write/doc.rs               DbDocMutator update and delete (call the hook)
-\*   crates/database/db/src/write/prepare.rs           prepare_request_write (a signed create's blocks hold its lists)
 \* Commit validation itself is regolith's (the deletion marker and the same
 \* document parts written by two updates conflict); the model takes it as given.
-EXTENDS Naturals, Sequences, FiniteSets
+EXTENDS Naturals, FiniteSets
 
 CONSTANTS
   Writers,   \* the writers, for example {w1, w2}
@@ -54,27 +43,23 @@ CONSTANTS
   Validate,  \* TRUE: a commit whose snapshot is stale aborts (regolith's validation)
   SameTxn,   \* TRUE: chunks are created in the parent's transaction; FALSE: in a follow-up one
   Cascade,   \* TRUE: deleting the article deletes its chunks in the same transaction
-  CreateListBlock, \* TRUE: the create's blocks hold the list, so the list has a block at priority 1
-  Lookup           \* TRUE: a write skips the chunks that exist; FALSE: it creates every chunk
+  Lookup     \* TRUE: a write skips the chunks that exist; FALSE: it creates every chunk
 
 \* Each writer finishes at least one write.
 ASSUME MaxOps \in Nat \ {0}
-\* The three switches are yes-or-no.
+\* The first three switches are yes-or-no.
 ASSUME Validate \in BOOLEAN /\ SameTxn \in BOOLEAN /\ Cascade \in BOOLEAN
-\* So are the last two.
-ASSUME CreateListBlock \in BOOLEAN /\ Lookup \in BOOLEAN
+\* So is the last one.
+ASSUME Lookup \in BOOLEAN
 
 \* The texts a writer may write. Each is cut into chunks named by their hash.
 Texts == {"t1", "t2", "t3"}
 
-\* What the splitter makes of each text, in reading order. "a" appears in two
-\* texts (an unchanged paragraph keeps its chunk); "b" appears in t1 and t3.
-Split == [t \in Texts |-> CASE t = "t1" -> <<"a", "b">>
-                           [] t = "t2" -> <<"a", "c">>
-                           [] t = "t3" -> <<"d", "b">>]
-
-\* The chunk hashes a text's list names, as a set.
-ChunksOf(t) == {Split[t][i] : i \in 1..Len(Split[t])}
+\* The chunk hashes the splitter cuts each text into. "a" appears in two texts
+\* (an unchanged paragraph keeps its chunk); "b" appears in t1 and t3.
+ChunksOf(t) == CASE t = "t1" -> {"a", "b"}
+                 [] t = "t2" -> {"a", "c"}
+                 [] t = "t3" -> {"d", "b"}
 
 \* Every chunk hash that can ever appear.
 Hashes == UNION {ChunksOf(t) : t \in Texts}
@@ -86,7 +71,6 @@ VARIABLES
   created,   \* the local user has created the article
   alive,     \* the article exists and is not deleted
   text,      \* the article's text
-  list,      \* the article's chunk list (the hashes in reading order)
   chunks,    \* the chunk documents that exist, by hash
   version,   \* how many writes to the article have committed (what validation compares)
   pc,        \* pc[w]: "idle", "active" (inside its transaction), or "follow" (follow-up pending)
@@ -95,17 +79,13 @@ VARIABLES
   snapAlive, \* snapAlive[w]: whether the writer's snapshot saw the article alive
   pending,   \* pending[w]: chunks a follow-up transaction still has to create
   done,      \* done[w]: how many writes the writer finished
-  listHead,  \* the priority of the list's newest block, 0 when it has none
-  listPrio,  \* the priority the stored list was written at, 0 before the create
   failed     \* a valid write was refused
 
-vars == <<created, alive, text, list, chunks, version, pc, op, snap, snapAlive, pending, done, listHead, listPrio, failed>>
+\* All the variables, for stuttering steps.
+vars == <<created, alive, text, chunks, version, pc, op, snap, snapAlive, pending, done, failed>>
 
 \* The most commits there can be: the create, then one per write.
 MaxVersion == 1 + MaxOps * Cardinality(Writers)
-
-\* The highest priority a write can reach: the create's, then one per write.
-MaxPrio == MaxVersion
 
 \* What each variable may hold.
 TypeOK ==
@@ -114,8 +94,6 @@ TypeOK ==
   /\ alive \in BOOLEAN
   \* its text is one of the texts;
   /\ text \in Texts
-  \* its list is one of the splitter's outputs;
-  /\ list \in {Split[t] : t \in Texts}
   \* chunks are a set of hashes;
   /\ chunks \subseteq Hashes
   \* the commit count stays within what the writers can do;
@@ -132,9 +110,6 @@ TypeOK ==
   /\ pending \in [Writers -> SUBSET Hashes]
   \* each writer has finished a bounded number of writes;
   /\ done \in [Writers -> 0..MaxOps]
-  \* the list's priorities stay within what the writes can reach;
-  /\ listHead \in 0..MaxPrio
-  /\ listPrio \in 0..MaxPrio
   \* and a refusal happened or not.
   /\ failed \in BOOLEAN
 
@@ -143,9 +118,8 @@ Init ==
   \* The article is not created,
   /\ created = FALSE
   /\ alive = FALSE
-  \* its text and list are placeholders until the create writes them,
+  \* its text is a placeholder until the create writes it,
   /\ text = "t1"
-  /\ list = Split["t1"]
   \* and no chunk exists.
   /\ chunks = {}
   \* No write has committed.
@@ -161,10 +135,7 @@ Init ==
   /\ pending = [w \in Writers |-> {}]
   \* and nothing finished.
   /\ done = [w \in Writers |-> 0]
-  \* The list has no value and no block yet,
-  /\ listPrio = 0
-  /\ listHead = 0
-  \* and nothing was refused.
+  \* Nothing was refused.
   /\ failed = FALSE
 
 \* The peer's chunks of the same article arrive before the article does.
@@ -173,27 +144,22 @@ Arrive ==
   /\ ~created
   \* t1's chunks merge in on their own.
   /\ chunks' = chunks \cup ChunksOf("t1")
-  /\ UNCHANGED <<created, alive, text, list, version, pc, op, snap, snapAlive, pending, done, listHead, listPrio, failed>>
+  /\ UNCHANGED <<created, alive, text, version, pc, op, snap, snapAlive, pending, done, failed>>
 
 \* Whether a write creating the chunks of text t succeeds: it skips the ones
 \* that exist, or none of them exists yet.
 ChunksFit(t) == Lookup \/ ChunksOf(t) \cap chunks = {}
 
-\* The local user creates the article with t1, its list and its chunks, in one transaction.
+\* The local user creates the article with t1 and its chunks, in one transaction.
 Create ==
   \* The article is not created yet, and its chunks fit.
   /\ ~created
   /\ ChunksFit("t1")
-  \* It is alive, holds t1, its list describes t1, and t1's chunks exist.
+  \* It is alive, holds t1, and t1's chunks exist.
   /\ created' = TRUE
   /\ alive' = TRUE
   /\ text' = "t1"
-  /\ list' = Split["t1"]
   /\ chunks' = chunks \cup ChunksOf("t1")
-  \* The create stored the list at priority 1, and gave it a block only when
-  \* its blocks hold the list.
-  /\ listPrio' = 1
-  /\ listHead' = IF CreateListBlock THEN 1 ELSE 0
   \* One commit more.
   /\ version' = version + 1
   /\ UNCHANGED <<pc, op, snap, snapAlive, pending, done, failed>>
@@ -206,7 +172,7 @@ CreateRefused ==
   \* The create is refused and the user gives up.
   /\ created' = TRUE
   /\ failed' = TRUE
-  /\ UNCHANGED <<alive, text, list, chunks, version, pc, op, snap, snapAlive, pending, done, listHead, listPrio>>
+  /\ UNCHANGED <<alive, text, chunks, version, pc, op, snap, snapAlive, pending, done>>
 
 \* Writer w starts a transaction for write o: it reads a snapshot of the article.
 Begin(w, o) ==
@@ -220,7 +186,7 @@ Begin(w, o) ==
   /\ snap' = [snap EXCEPT ![w] = version]
   /\ snapAlive' = [snapAlive EXCEPT ![w] = alive]
   \* Nothing in storage changes yet.
-  /\ UNCHANGED <<created, alive, text, list, chunks, version, pending, done, listHead, listPrio, failed>>
+  /\ UNCHANGED <<created, alive, text, chunks, version, pending, done, failed>>
 
 \* Writer w's snapshot is stale and validation is on: the commit aborts, and the
 \* write starts again from a fresh snapshot.
@@ -231,9 +197,9 @@ Abort(w) ==
   /\ snap[w] # version
   \* It goes back to idle, to begin again; nothing it wrote is kept.
   /\ pc' = [pc EXCEPT ![w] = "idle"]
-  /\ UNCHANGED <<created, alive, text, list, chunks, version, op, snap, snapAlive, pending, done, listHead, listPrio, failed>>
+  /\ UNCHANGED <<created, alive, text, chunks, version, op, snap, snapAlive, pending, done, failed>>
 
-\* Writer w commits an update: the text, its list, and (with SameTxn) its missing chunks.
+\* Writer w commits an update: the text, and (with SameTxn) its missing chunks.
 CommitUpdate(w) ==
   \* The writer is in its transaction doing an update,
   /\ pc[w] = "active"
@@ -244,16 +210,8 @@ CommitUpdate(w) ==
   /\ snapAlive[w]
   \* and its chunks fit, when it creates them now.
   /\ ~SameTxn \/ ChunksFit(op[w].text)
-  \* The text and its list are written in one document write. The list's
-  \* block sits one above its newest block. It replaces the stored list when
-  \* its priority is higher; on a tie either list may be kept.
+  \* The new text is written;
   /\ text' = op[w].text
-  /\ listHead' = listHead + 1
-  /\ \/ /\ listHead + 1 >= listPrio
-        /\ list' = Split[op[w].text]
-        /\ listPrio' = listHead + 1
-     \/ /\ listHead + 1 <= listPrio
-        /\ UNCHANGED <<list, listPrio>>
   \* with SameTxn the missing chunks are created now, in the same commit;
   /\ chunks' = IF SameTxn THEN chunks \cup ChunksOf(op[w].text) ELSE chunks
   \* without it, they are left for a follow-up transaction.
@@ -279,7 +237,7 @@ UpdateRefused(w) ==
   /\ failed' = TRUE
   /\ pc' = [pc EXCEPT ![w] = "idle"]
   /\ done' = [done EXCEPT ![w] = done[w] + 1]
-  /\ UNCHANGED <<created, alive, text, list, chunks, version, op, snap, snapAlive, pending, listHead, listPrio>>
+  /\ UNCHANGED <<created, alive, text, chunks, version, op, snap, snapAlive, pending>>
 
 \* Writer w commits a delete: the article goes, and (with Cascade) all its chunks.
 CommitDelete(w) ==
@@ -298,8 +256,8 @@ CommitDelete(w) ==
   /\ version' = version + 1
   /\ done' = [done EXCEPT ![w] = done[w] + 1]
   /\ pc' = [pc EXCEPT ![w] = "idle"]
-  \* The text and list are left as they were; a deleted article shows neither.
-  /\ UNCHANGED <<created, text, list, op, snap, snapAlive, pending, listHead, listPrio, failed>>
+  \* The text is left as it was; a deleted article shows nothing.
+  /\ UNCHANGED <<created, text, op, snap, snapAlive, pending, failed>>
 
 \* Writer w's write finds the article already deleted in its snapshot: nothing to do.
 NotFound(w) ==
@@ -311,7 +269,7 @@ NotFound(w) ==
   \* The write ends with nothing written.
   /\ pc' = [pc EXCEPT ![w] = "idle"]
   /\ done' = [done EXCEPT ![w] = done[w] + 1]
-  /\ UNCHANGED <<created, alive, text, list, chunks, version, op, snap, snapAlive, pending, listHead, listPrio, failed>>
+  /\ UNCHANGED <<created, alive, text, chunks, version, op, snap, snapAlive, pending, failed>>
 
 \* Without SameTxn: writer w's follow-up transaction creates the chunks it left behind.
 FollowUp(w) ==
@@ -322,7 +280,7 @@ FollowUp(w) ==
   \* and is done with them.
   /\ pending' = [pending EXCEPT ![w] = {}]
   /\ pc' = [pc EXCEPT ![w] = "idle"]
-  /\ UNCHANGED <<created, alive, text, list, version, op, snap, snapAlive, done, listHead, listPrio, failed>>
+  /\ UNCHANGED <<created, alive, text, version, op, snap, snapAlive, done, failed>>
 
 \* Every step the peer, the local user or some writer can take.
 Next ==
@@ -348,11 +306,8 @@ Next ==
 \* Start from Init and take any steps.
 Spec == Init /\ [][Next]_vars
 
-\* A live article's list is exactly what the splitter makes of its text.
-INV_ListMatchesText == alive => list = Split[text]
-
-\* A live article's list names only chunks that exist.
-INV_ListedChunksExist == alive => \A i \in 1..Len(list) : list[i] \in chunks
+\* Every chunk a live article's text uses exists.
+INV_TextChunksExist == alive => ChunksOf(text) \subseteq chunks
 
 \* A deleted article has no chunks left.
 INV_NoChunkOfDeletedParent == (created /\ ~alive /\ ~failed) => chunks = {}

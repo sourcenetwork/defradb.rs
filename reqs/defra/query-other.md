@@ -454,6 +454,13 @@ A parent filter on a child field (`Author(filter: {published: {rating: {_gt: 4.8
 
 `SUM(published: {field: rating, limit: 2})` and `{offset: 1, limit: 2}` sum the children in Go's internal (docID) order: 9.4 and 8.7 for John Grisham, and 4.8 / 0 for an author with one book.
 
+# `defra.query.one_to_many.aggregate.beside-paged-selection`: Aggregates beside a paged selection read every matching child
+
+- **Parents:** ["go.query.one_to_many.aggregate"]
+- **Scenarios:** ["query::one_to_many::with_limited_selection_aggregates::aggregates_after_count_ignore_a_limited_selection", "query::one_to_many::with_limited_selection_aggregates::aggregates_after_count_ignore_an_offset_selection", "query::one_to_many::with_limited_selection_aggregates::aggregates_after_count_ignore_an_ordered_limited_selection", "query::one_to_many::with_limited_selection_aggregates::aggregates_without_count_ignore_a_limited_selection", "query::one_to_many::with_limited_selection_aggregates::aggregates_with_different_filters_read_their_own_rows", "query::one_to_many::with_limited_selection_aggregates::aggregates_with_different_filters_and_no_selection_read_their_own_rows", "query::one_to_many::with_limited_selection_aggregates::unfiltered_aggregates_ignore_a_filtered_selection"]
+
+`COUNT`, `SUM`, `AVG`, `MIN` and `MAX` over a relation aggregate every child their own `filter` matches, whatever `limit`, `offset` or `order` a rendered selection of the same relation uses and in whatever order or combination the aggregates are requested. With books of 80, 120, 150 and 330 pages, `authoredBooks(filter: {pages: {_gt: 100}}, limit: 1)` renders one book while `COUNT` gives 3, `SUM` 600, `AVG` 200, `MIN` 120 and `MAX` 330 over `{pages: {_gt: 100}}`; aggregates with different filters in one query (`COUNT` over `_gt: 100` is 3, `SUM` over `_gt: 140` is 480, an unfiltered `MIN` is 80) each read their own children. A selection's filter never narrows an unfiltered aggregate either: beside `authoredBooks(filter: {pages: {_gt: 100}})`, `SUM(authoredBooks: {field: pages})` is 680 and `MIN` 80. An aggregate's filter never narrows a selection: `authoredBooks(order: {pages: ASC}, limit: 1)` beside `COUNT(authoredBooks: {filter: {pages: {_gt: 100}}})` still renders the 80-page book.
+
 # `go.query.one_to_one.join`: Resolving the relation in both directions
 
 - **Parents:** ["go.query.one_to_one"]
@@ -495,6 +502,13 @@ Both sides of a one-to-one expose the counterpart's docID: `Author { _publishedI
 - **Scenarios:** ["query.many_to_many.test-many-to-many-query-from-join-collection-should-succeed", "query.many_to_many.test-many-to-many-query-from-secondary-succeeds"]
 
 With `Enrollment { student: Student, course: Course }` (named relations), `Enrollment(filter: {course: {name: {_eq: "Math"}}}, order: {student: {name: ASC}})` returns enrolments in that order, and `Student { enrollments(order: {course: {name: ASC}}) { course { name } } }` traverses from the other side.
+
+# `go.query.many_to_many.aggregate`: Aggregates over the join collection
+
+- **Parents:** ["go.query.many_to_many"]
+- **Scenarios:** ["query::many_to_many::with_aggregates::aggregates_over_join_collection_relation", "query::many_to_many::with_aggregates::filtered_aggregates_over_join_collection_relation", "query::many_to_many::with_aggregates::aggregate_over_undeclared_relation_name_is_unknown_argument"]
+
+With `Student { enrollments: [Enrollment] @relation(name: "student_enrollments") }` and `Enrollment { student: Student, course: Course, grade: Int }`, `SUM`, `AVG`, `MIN` and `MAX` over `enrollments: {field: grade}` and `COUNT(enrollments: {})` aggregate each student's enrollments, with or without a `filter` on the enrollment's own fields or on its `course`. Several aggregates over the relation in one selection each apply only their own filter. An aggregate argument that names no field of the type, such as the relation name `student_enrollments` when `Student` declares no field for it, fails with `Unknown argument "student_enrollments" on field "SUM" of type "Student".`
 
 # `go.query.one_to_many_multiple.count`: COUNT across multiple relations
 
@@ -587,3 +601,10 @@ With `Book.author` / `Author.written` (`written_books`) and `Book.reviewedBy` / 
 - **Scenarios:** ["query::one_to_one::with_filter_secondary_relation_id::missing_relation_checks_all_conditions_against_null"]
 
 A missing relation's ID is null. An explicit ID predicate uses the ordinary null comparison rules, and other conditions on the same missing relation must also match.
+
+# `defra.query.relation_order.filter_other_field`: Ordering by one field of a relation while filtering on another
+
+- **Parents:** ["go.query.one_to_one.order"]
+- **Scenarios:** ["query::relation_order_with_filter::ascending::unindexed", "query::relation_order_with_filter::ascending::indexed", "query::relation_order_with_filter::descending::unindexed", "query::relation_order_with_filter::descending::indexed", "query::relation_order_with_filter::ascending_with_limit::unindexed", "query::relation_order_with_filter::ascending_with_limit::indexed", "query::relation_order_with_filter::descending_with_narrowing_filter::unindexed", "query::relation_order_with_filter::descending_with_narrowing_filter::indexed", "query::relation_order_with_filter::selected_relation::unindexed", "query::relation_order_with_filter::selected_relation::indexed", "query::relation_order_with_filter::same_field_filter::unindexed", "query::relation_order_with_filter::same_field_filter::indexed"]
+
+`Book(filter: {publisher: {rank: {_gt: 0}}}, order: {publisher: {score: ASC|DESC}})` returns the books whose related object passes the filter, ordered by the related `score`, whether or not the relation is selected, for a one-to-one relation and for the single side of a one-to-many one, with or without indexes on those fields. A `limit` takes the first rows of that order, and a selected relation renders only its selected fields.

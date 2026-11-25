@@ -10,6 +10,7 @@
 //! - `apply_multi_level_sub_joins()` - Sub-joins for multi-level filter paths
 //! - `apply_multi_level_filter_joins()` - Join chains for deep filter paths
 
+mod aggregate_join_reuse;
 mod aggregate_joins;
 mod child_mapping;
 mod child_plan;
@@ -94,6 +95,12 @@ impl Planner {
         for syn_select in &synthetic_order_selects {
             selects_to_process.push((syn_select, None));
         }
+        // The order join applies the relation filter too, so a filter-only join
+        // must not stack on it and replace its mapping without the sort fields.
+        let joined_relations: Vec<&str> = selects_to_process
+            .iter()
+            .map(|(s, _)| s.field.name.as_str())
+            .collect();
 
         let selection_join_info =
             selection::build_selection_join_info(selects_to_process.iter().map(|(s, _)| *s));
@@ -125,9 +132,15 @@ impl Planner {
             &mut mapping,
             parent_collection,
             parent_filter,
-            &already_selected,
+            &joined_relations,
         )?;
-        plan = self.apply_secondary_id_joins(plan, &mut mapping, select, parent_collection)?;
+        plan = self.apply_secondary_id_joins(
+            plan,
+            &mut mapping,
+            select,
+            parent_collection,
+            &synthetic_order_relations,
+        )?;
         plan = self.apply_aggregate_joins(
             plan,
             &mut mapping,

@@ -3,18 +3,19 @@
 //! Handles relation-based and inline-array aggregates — creates TypeJoinMany
 //! for aggregate data fetch, manages internal keys for collision handling.
 
-use rapidhash::{HashSetExt, RapidHashMap, RapidHashSet};
+use rapidhash::RapidHashMap;
 use std::sync::Arc;
 
 use schema::CollectionVersion;
 
 use crate::document::DocumentMapping;
 use crate::error::Result;
-use crate::mapper::{AggregateType, Filter, Requestable, Select};
+use crate::mapper::{Requestable, Select};
 use crate::plan::{JoinSide, ScanNode, TypeJoinMany};
 use crate::planner::PlanNode;
 
 use super::super::builder::Planner;
+use super::aggregate_join_reuse::{scan_filter, AggregateJoin};
 use super::SelectionJoinInfo;
 
 impl Planner {
@@ -32,7 +33,7 @@ impl Planner {
         parent_collection: &CollectionVersion,
         selection_join_info: &RapidHashMap<String, SelectionJoinInfo>,
     ) -> Result<Box<dyn PlanNode>> {
-        let mut aggregate_joined_relations: RapidHashSet<String> = RapidHashSet::new();
+        let mut aggregate_joins: Vec<AggregateJoin> = Vec::new();
         for requestable in &select.fields {
             if let Requestable::Aggregate(agg) = requestable {
                 for target in &agg.targets {
@@ -42,11 +43,27 @@ impl Planner {
                     }
 
                     let relation_field_name = &target.host_name;
+                    let scan_filter = scan_filter(agg.aggregate_type, target);
 
-                    // Check if this relation is already joined by a prior aggregate
-                    // or by a selection. Multiple aggregates on the same relation share
-                    // one TypeJoinMany; compute_relation_aggregates() handles per-aggregate
-                    // limit/offset/order in post-processing.
+                    // An aggregate whose scan filter and fields an earlier aggregate's join
+                    // already covers reads that join's rows, under that join's key.
+                    // compute_relation_aggregates() applies its own order, limit and offset.
+                    if let Some(join) = aggregate_joins
+                        .iter()
+                        .find(|join| join.serves(target, scan_filter.as_ref()))
+                    {
+                        if let Some(ref internal_key) = join.internal_key {
+                            aggregate_internal_keys.insert(
+                                agg.output_name().to_string(),
+                                (relation_field_name.clone(), internal_key.clone()),
+                            );
+                        }
+                        continue;
+                    }
+
+                    // An aggregate shares the selection's join when the selection reads
+                    // every child the aggregate's filter matches: same filter, no limit (an offset
+                    // is applied after the aggregates read the rows).
                     // Go also shares joins between selections and aggregates targeting
                     // the same relation (e.g., books(filter: X) + _count(books: {filter: X})).
                     //
@@ -56,26 +73,18 @@ impl Planner {
                     // own join instead. This diverges from Go, whose Targetable.equal
                     // ignores groupBy and silently degrades the grouped count.
                     let already_joined = target.group_by.is_none()
-                        && (aggregate_joined_relations.contains(relation_field_name.as_str())
-                            || selection_join_info
-                                .get(relation_field_name.as_str())
-                                .is_some_and(|info| {
-                                    if info.has_limit {
-                                        return false;
-                                    }
-                                    // If aggregate has no filter but specifies a field_name, it's a
-                                    // field-level operation (e.g. _avg(books: {field: rating})) that
-                                    // piggybacks on the selection's join. Share unconditionally.
-                                    if target.filter.is_none() {
-                                        return target.field_name.is_some();
-                                    }
-                                    // If aggregate has a filter, share only if it matches the
-                                    // selection's filter exactly.
-                                    let agg_filter_json = target.filter.as_ref().map(|f| {
-                                        serde_json::to_string(f.conditions()).unwrap_or_default()
-                                    });
-                                    info.filter_json == agg_filter_json
-                                }));
+                        && selection_join_info
+                            .get(relation_field_name.as_str())
+                            .is_some_and(|info| {
+                                // Filters compare as Go's Filter.equal does: an absent filter
+                                // matches only an absent one, so an unfiltered aggregate never
+                                // reads a filtered selection's rows. An average compares with
+                                // its not-null condition, as Go appends it before matching.
+                                let agg_filter_json = scan_filter.as_ref().map(|f| {
+                                    serde_json::to_string(f.conditions()).unwrap_or_default()
+                                });
+                                !info.has_limit && info.filter_json == agg_filter_json
+                            });
 
                     // Find the field in the parent collection
                     let relation_field = match parent_collection.field_by_name(relation_field_name)
@@ -330,29 +339,37 @@ impl Planner {
                     });
                     // A grouped target also needs a private slot: its child items carry the
                     // group fields, which must not surface in rendered relation output.
-                    let effective_relation_index =
-                        if selection_has_relation || target.group_by.is_some() {
-                            // Selection already uses relation_field_index with its own filter/limit.
-                            // Use a new index and a unique internal key for the aggregate's data
-                            // to avoid collision with the selection's data in rendered JSON.
+                    // So does a join beside another aggregate's join on the relation's own
+                    // slot, whose rows were scanned with a different filter.
+                    let relation_slot_taken = aggregate_joins.iter().any(|join| {
+                        join.internal_key.is_none() && join.relation == *relation_field_name
+                    });
+                    let internal_key = (selection_has_relation
+                        || target.group_by.is_some()
+                        || relation_slot_taken)
+                        .then(|| format!("__agg_{}_{}", relation_field_name, agg.output_name()));
+                    let effective_relation_index = match internal_key {
+                        // A private slot and key keep the aggregate's rows apart from the
+                        // selection's (or another aggregate's) rows in rendered JSON; the
+                        // runner finds them through aggregate_internal_keys.
+                        Some(ref internal_key) => {
                             let idx = mapping.next_index();
-                            let internal_key =
-                                format!("__agg_{}_{}", relation_field_name, agg.output_name());
                             mapping.add(idx, relation_field_name);
-                            mapping.add_render_key(idx, &internal_key);
-                            // Store the mapping so the runner can look up data using the internal key
+                            mapping.add_render_key(idx, internal_key);
                             aggregate_internal_keys.insert(
                                 agg.output_name().to_string(),
-                                (relation_field_name.clone(), internal_key),
+                                (relation_field_name.clone(), internal_key.clone()),
                             );
                             idx
-                        } else {
+                        }
+                        None => {
                             if mapping.first_index_of_name(relation_field_name).is_none() {
                                 mapping.add(relation_field_index, relation_field_name);
                             }
                             mapping.add_render_key(relation_field_index, relation_field_name);
                             relation_field_index
-                        };
+                        }
+                    };
 
                     // Build child plan (simple scan with fetcher)
                     let mut child_scan =
@@ -360,47 +377,7 @@ impl Planner {
                     if let Some(ref fetcher) = self.fetcher {
                         child_scan = child_scan.with_fetcher(fetcher.clone());
                     }
-                    // Apply aggregate target filter to the scan node.
-                    // Go places these filters on the scanNode in explain output.
-                    // Also synthesize {field: {_neq: null}} for Average aggregates
-                    // to exclude null values (matching Go behavior).
-                    let mut scan_filter = target.filter.clone();
-                    if agg.aggregate_type == AggregateType::Average {
-                        if let Some(ref field_name) = target.field_name {
-                            let neq_null_filter = Filter::from_conditions({
-                                let mut c = serde_json::Map::new();
-                                c.insert(
-                                    field_name.clone(),
-                                    serde_json::json!({"_neq": serde_json::Value::Null}),
-                                );
-                                c
-                            });
-                            scan_filter = Some(match scan_filter {
-                                Some(existing) => {
-                                    // Merge {field: {_neq: null}} into existing conditions
-                                    let mut merged = existing.conditions().clone();
-                                    merged
-                                        .entry(field_name.clone())
-                                        .and_modify(|v| {
-                                            if let serde_json::Value::Object(ref mut ops) = v {
-                                                ops.insert(
-                                                    "_neq".to_string(),
-                                                    serde_json::Value::Null,
-                                                );
-                                            }
-                                        })
-                                        .or_insert(
-                                            serde_json::json!({"_neq": serde_json::Value::Null}),
-                                        );
-                                    Filter::from_conditions_with_max_depth(
-                                        merged,
-                                        existing.max_depth(),
-                                    )
-                                }
-                                None => neq_null_filter,
-                            });
-                        }
-                    }
+                    // Go places aggregate target filters on the scanNode in explain output.
                     if let Some(ref filter) = scan_filter {
                         if !filter.has_relation_filters() {
                             child_scan = child_scan.with_filter(filter.clone());
@@ -560,9 +537,12 @@ impl Planner {
                         mapping.clone(),
                     )?);
 
-                    if target.group_by.is_none() {
-                        aggregate_joined_relations.insert(relation_field_name.to_string());
-                    }
+                    aggregate_joins.push(AggregateJoin::new(
+                        relation_field_name,
+                        scan_filter.as_ref(),
+                        &child_scan_mapping,
+                        internal_key,
+                    ));
                 }
             }
         }

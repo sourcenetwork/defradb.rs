@@ -4,7 +4,7 @@
 use std::fmt::Write as _;
 use std::path::PathBuf;
 
-use chunk_split::list::text_hash;
+use chunk_split::hash::text_hash;
 use chunk_split::split::{split, ChunkConfig, SplitterVersion};
 
 const SETTINGS: [(usize, usize); 6] = [(16, 0), (40, 0), (40, 1), (120, 2), (400, 1), (1000, 3)];

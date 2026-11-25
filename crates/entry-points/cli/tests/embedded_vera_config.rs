@@ -9,7 +9,7 @@ fn the_embedded_type_and_its_settings_come_from_flags_and_survive_a_round_trip()
     let cli = Cli::try_parse_from([
         "defradb",
         "--document-acp-type",
-        "verars-embedded",
+        "vera-embedded",
         "--vera-deployment-id",
         "9407",
         "--vera-embedded-operator",
@@ -25,18 +25,18 @@ fn the_embedded_type_and_its_settings_come_from_flags_and_survive_a_round_trip()
     .unwrap();
     let mut config = Config::default();
     config.apply_cli_flags(&cli).unwrap();
-    assert_eq!(config.acp.document_type, AcpDocumentType::VeraRsEmbedded);
-    assert!(config.acp.document_type.is_vera_rs());
+    assert_eq!(config.acp.document_type, AcpDocumentType::VeraEmbedded);
+    assert!(config.acp.document_type.is_vera());
     assert_eq!(config.acp.vera_deployment_id, Some(9407));
     assert_eq!(config.acp.vera_embedded_operators.len(), 2);
     assert_eq!(config.acp.vera_embedded_threshold, Some(2));
     assert_eq!(config.acp.vera_embedded_listen, "127.0.0.1:9777");
 
     let serialized = serde_json::to_value(&config.acp).unwrap();
-    assert_eq!(serialized["document_type"], "verars-embedded");
-    assert_eq!(config.acp.document_type.to_string(), "verars-embedded");
+    assert_eq!(serialized["document_type"], "vera-embedded");
+    assert_eq!(config.acp.document_type.to_string(), "vera-embedded");
     let restored: AcpConfig = serde_json::from_value(serialized).unwrap();
-    assert_eq!(restored.document_type, AcpDocumentType::VeraRsEmbedded);
+    assert_eq!(restored.document_type, AcpDocumentType::VeraEmbedded);
     assert_eq!(restored.vera_embedded_threshold, Some(2));
 }
 
@@ -46,12 +46,12 @@ fn the_defaults_are_one_operator_approval_on_a_loopback_port_the_system_picks() 
     assert!(acp.vera_embedded_operators.is_empty());
     assert_eq!(acp.vera_embedded_threshold, None);
     assert_eq!(acp.vera_embedded_listen, "127.0.0.1:0");
-    assert!(!AcpDocumentType::Local.is_vera_rs());
-    assert!(AcpDocumentType::VeraRs.is_vera_rs());
-    for spelling in ["verars-embedded", "VeraRs-Embedded", "verarsembedded"] {
+    assert!(!AcpDocumentType::Local.is_vera());
+    assert!(AcpDocumentType::Vera.is_vera());
+    for spelling in ["vera-embedded", "Vera-Embedded", "veraembedded"] {
         assert_eq!(
             spelling.parse::<AcpDocumentType>().unwrap(),
-            AcpDocumentType::VeraRsEmbedded
+            AcpDocumentType::VeraEmbedded
         );
     }
 }

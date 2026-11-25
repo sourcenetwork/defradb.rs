@@ -113,9 +113,10 @@
       "tools/integration-test/tests/testo/query/simple/with_filter/with_eq_string.rs::query_simple_with_string_filter_block",
       "tools/integration-test/tests/testo/query/simple/with_filter/with_eq_string.rs::query_simple_with_string_filter_block_and_select_select_different_field_than_filter_with_match",
       "tools/integration-test/tests/testo/query/simple/with_filter/with_eq_string.rs::query_simple_with_string_filter_block_and_select_select_multiple_fields_but_no_match",
-      "tools/integration-test/tests/testo/query/simple/with_filter/with_eq_string.rs::query_simple_with_string_filter_block_and_select_select_same_field_as_filter_with_match"
+      "tools/integration-test/tests/testo/query/simple/with_filter/with_eq_string.rs::query_simple_with_string_filter_block_and_select_select_same_field_as_filter_with_match",
+      "tools/integration-test/tests/testo/explain/default/filter_applied_once.rs::filter_with_order_and_limit_returns_only_matching_documents"
     ],
-    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2383).",
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2383). filter_applied_once.rs also passes on go-http (Testo go-http, actions run 45550400604).",
     "note": "Unverified end to end: Int, DateTime and Blob hex _eq; that documents with the field unset never match; no-match returns []; filtering on an unselected field (QueryCase docs all have names)."
   },
   {

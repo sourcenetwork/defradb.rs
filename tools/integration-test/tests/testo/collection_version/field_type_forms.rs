@@ -12,7 +12,7 @@ const CODE: &str = "UNSUPPORTED_FIELD_TYPE";
 const CODE_CLIENTS: &[ClientType] = &[ClientType::InProcess, ClientType::RustHttp];
 
 /// The clients a refusal is checked by its text alone: a Go node sends no
-/// code, and the CLI prints only the message.
+/// code, and `client collection add` prints only the message.
 const TEXT_CLIENTS: &[ClientType] = &[ClientType::GoHttp, ClientType::Cli];
 
 fn add(sdl: String, error: Option<&str>, code: Option<&str>) -> AddCollection {
