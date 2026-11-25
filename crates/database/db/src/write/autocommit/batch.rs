@@ -602,7 +602,7 @@ impl<S: Store + 'static> DocMutator for BatchMutator<S> {
         self.validate_collection_for_write(&collection).await?;
         ensure_collection_is_active(&self.db, collection_name, &collection)?;
         crate::chunk::user_writes::ensure_user_writable(collection.schema())?;
-        let chunk_plans = crate::chunk::sync::plan_chunks(
+        let mut chunk_plans = crate::chunk::sync::plan_chunks(
             collection.schema(),
             &doc,
             Some(&modified_fields),
@@ -664,6 +664,7 @@ impl<S: Store + 'static> DocMutator for BatchMutator<S> {
             doc_id: &doc_id_text,
         };
         let heads = super::helpers::load_update_heads(&datastore, doc_short_id).await?;
+        crate::chunk::sync::inherit_encryption(&mut chunk_plans, &blockstore, &heads).await?;
         update_pipeline::write_local(
             &self.db,
             &stores,

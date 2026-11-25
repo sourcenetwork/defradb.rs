@@ -81,6 +81,33 @@ pub(crate) fn plan_chunks(
     Ok(plans)
 }
 
+/// Marks the plans whose field the parent's earlier blocks encrypt, by
+/// document or by field, from `heads`, the parent's heads before this update.
+/// The update's new blocks inherit that encryption, so the chunks must too.
+/// A create has no earlier blocks, so its plans keep only the explicit config.
+pub(crate) async fn inherit_encryption(
+    plans: &mut [FieldChunks],
+    blockstore: &datastore::NamespaceView,
+    heads: &crate::block::builder::DocHeadsSnapshot,
+) -> Result<()> {
+    let fields: Vec<String> = plans
+        .iter()
+        .filter(|plan| !plan.encrypt)
+        .map(|plan| plan.field.clone())
+        .collect();
+    if fields.is_empty() {
+        return Ok(());
+    }
+    let (encrypt_doc, encrypted) =
+        crate::block::builder::inherited_encryption_at(blockstore, heads, &fields)
+            .await
+            .map_err(QueryError::execution)?;
+    for plan in plans {
+        plan.encrypt |= encrypt_doc || encrypted.contains(&plan.field);
+    }
+    Ok(())
+}
+
 /// What a chunk write needs from the parent's write.
 pub(crate) struct ChunkWrites<'a, S>
 where
@@ -113,7 +140,8 @@ where
         self
     }
 
-    /// Creates the chunk documents in `plans` that don't exist yet. An existing
+    /// Creates the chunk documents in `plans` that don't exist yet, encrypted
+    /// as each plan says (see [`inherit_encryption`]). An existing
     /// chunk is never rewritten, since the same hash means the same content.
     /// A new parent can have some already: they may arrive by P2P before it.
     pub(crate) async fn create_missing(
@@ -124,11 +152,6 @@ where
         let mut written = Vec::new();
         for plan in plans {
             let target = self.open(&plan.chunk_collection).await?;
-            // An update keeps the text encrypted when earlier writes did, even
-            // without the flag, so its chunks must be too.
-            let encrypt = plan.encrypt || self.parent_encrypts(parent_doc_id, &plan.field).await?;
-            // One scan per field: a lookup per chunk would cost a pass over the
-            // transaction's writes each time.
             let planned: RapidHashSet<&str> =
                 plan.chunks.iter().map(|(_, hash)| hash.as_str()).collect();
             let existing = target.existing_of(parent_doc_id, &planned).await?;
@@ -137,7 +160,7 @@ where
                     continue;
                 }
                 written.push(
-                    self.create(&target, parent_doc_id, text, hash, encrypt)
+                    self.create(&target, parent_doc_id, text, hash, plan.encrypt)
                         .await?,
                 );
             }

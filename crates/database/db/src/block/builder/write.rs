@@ -152,6 +152,15 @@ pub(crate) async fn inherited_encryption_policy(
     fields: &[String],
 ) -> Result<(bool, rapidhash::RapidHashSet<String>), String> {
     let snapshot = DocHeadsSnapshot::load(headstore, identity.doc_short_id).await?;
+    inherited_encryption_at(blockstore, &snapshot, fields).await
+}
+
+/// [`inherited_encryption_policy`] read from heads the caller already holds.
+pub(crate) async fn inherited_encryption_at(
+    blockstore: &NamespaceView,
+    snapshot: &DocHeadsSnapshot,
+    fields: &[String],
+) -> Result<(bool, rapidhash::RapidHashSet<String>), String> {
     let heads = snapshot.field_heads("C");
     let encrypt_doc = inherited_encryption_cid(blockstore, &heads)
         .await?

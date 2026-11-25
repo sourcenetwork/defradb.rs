@@ -42,3 +42,35 @@ fn an_update_creates_a_chunk_another_parent_already_has() {
     })
     .unwrap()
 }
+
+#[test]
+fn a_revert_after_many_edits_reuses_the_old_chunk() {
+    workers::block_on(async {
+        let (mutator, _db, _bus) = setup().await;
+        let first = "The first text of the article.";
+        let created = mutator
+            .create("Article", article("t", first))
+            .await
+            .unwrap();
+        // More old chunks than the scan reads before it looks hashes up one by one.
+        for edit in 0..20 {
+            let text = format!("Edit {edit} of the article.");
+            assert_eq!(
+                update_body(&mutator, &created.doc_id, &text)
+                    .await
+                    .derived
+                    .len(),
+                1
+            );
+        }
+
+        let back = update_body(&mutator, &created.doc_id, first).await;
+        let again = update_body(&mutator, &created.doc_id, "Edit 3 of the article.").await;
+        let fresh = update_body(&mutator, &created.doc_id, "A text never written before.").await;
+
+        assert!(back.derived.is_empty());
+        assert!(again.derived.is_empty());
+        assert_eq!(fresh.derived.len(), 1);
+    })
+    .unwrap()
+}

@@ -16,33 +16,13 @@ use crate::txn::DbTxn;
 
 use super::{ChunkCollection, ChunkWrites};
 
+/// About how many index entries a scan reads for the cost of one lookup.
+const SCAN_ENTRIES_PER_LOOKUP: usize = 8;
+
 impl<S> ChunkWrites<'_, S>
 where
     S: Store + 'static,
 {
-    /// Whether the parent's current blocks encrypt `field`, by document or by field.
-    pub(super) async fn parent_encrypts(&self, parent_doc_id: &str, field: &str) -> Result<bool> {
-        let systemstore = self
-            .txn
-            .systemstore()
-            .map_err(|e| QueryError::execution(e.to_string()))?;
-        let Some(parent) = crate::docid::map::get_doc_ref(&systemstore, parent_doc_id)
-            .await
-            .map_err(|e| QueryError::execution(e.to_string()))?
-        else {
-            return Ok(false);
-        };
-        let (encrypt_doc, fields) = crate::block::builder::inherited_encryption_policy(
-            &self.blockstore()?,
-            &self.headstore()?,
-            parent,
-            &[field.to_string()],
-        )
-        .await
-        .map_err(QueryError::execution)?;
-        Ok(encrypt_doc || !fields.is_empty())
-    }
-
     pub(super) async fn open(&self, name: &str) -> Result<ChunkCollection> {
         ChunkCollection::open(self.txn, name).await
     }
@@ -92,19 +72,27 @@ impl ChunkCollection {
     }
 
     /// Which of the `planned` hashes `parent` already has a chunk document for.
-    /// Only those are kept, since a parent's old chunks stay until it is deleted.
+    ///
+    /// A parent's old chunks stay until it is deleted, so its range of the
+    /// index grows with every edit. It is scanned while that costs about what
+    /// looking each planned hash up would; past that, the hashes the scan has
+    /// not found are looked up one by one.
     pub(crate) async fn existing_of(
         &self,
         parent: &str,
         planned: &RapidHashSet<&str>,
     ) -> Result<RapidHashSet<String>> {
+        let budget = planned.len().saturating_mul(SCAN_ENTRIES_PER_LOOKUP);
         let mut entries = self.scan_of(parent).await?;
         let mut existing = RapidHashSet::default();
-        while let Some(entry) = entries
-            .next()
-            .await
-            .map_err(|e| QueryError::execution(format!("chunk scan failed: {e}")))?
-        {
+        for _ in 0..budget {
+            let Some(entry) = entries
+                .next()
+                .await
+                .map_err(|e| QueryError::execution(format!("chunk scan failed: {e}")))?
+            else {
+                return Ok(existing);
+            };
             // An index key does not record that the hash was a string.
             let hash = match entry.values.into_iter().nth(1) {
                 Some(NormalValue::Bytes(hash)) => String::from_utf8(hash).ok(),
@@ -115,7 +103,26 @@ impl ChunkCollection {
                 existing.insert(hash);
             }
         }
+        for hash in planned {
+            if !existing.contains(*hash) && self.has(parent, hash).await? {
+                existing.insert((*hash).to_string());
+            }
+        }
         Ok(existing)
+    }
+
+    async fn has(&self, parent: &str, hash: &str) -> Result<bool> {
+        let mut entries = self
+            .scan(&[
+                NormalValue::String(parent.to_string()),
+                NormalValue::String(hash.to_string()),
+            ])
+            .await?;
+        let found = entries
+            .next()
+            .await
+            .map_err(|e| QueryError::execution(format!("chunk scan failed: {e}")))?;
+        Ok(found.is_some())
     }
 
     pub(super) async fn chunks_of(&self, parent: &str) -> Result<Vec<u64>> {
