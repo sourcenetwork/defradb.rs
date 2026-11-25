@@ -1,6 +1,7 @@
 //! An update that writes a field's current value adds no block for it, and an
 //! update that changes nothing writes nothing at all (#1986).
 
+use crate::common::schema::parsed;
 use db::AutoCommitMutator;
 use db::DbDocMutator;
 use db::DB;
@@ -9,38 +10,14 @@ use document::NormalValue;
 use query::mutator::DocMutator;
 use rapidhash::RapidHashSet;
 use schema::CollectionVersion;
-use schema::FieldDescription;
-use schema::FieldKind;
 use std::sync::Arc;
 use storage::corekv::IterOptions;
 use storage::RegolithStore;
 
+const STATUS_SDL: &str = "type Status { state: String detail: String }";
+
 fn status_collection() -> CollectionVersion {
-    CollectionVersion::new(
-        "Status",
-        "v1",
-        "col-status",
-        vec![
-            FieldDescription::new(
-                "1",
-                "_docID",
-                FieldKind::doc_id(),
-                schema::CType::LwwRegister,
-            ),
-            FieldDescription::new(
-                "2",
-                "state",
-                FieldKind::string(),
-                schema::CType::LwwRegister,
-            ),
-            FieldDescription::new(
-                "3",
-                "detail",
-                FieldKind::string(),
-                schema::CType::LwwRegister,
-            ),
-        ],
-    )
+    parsed(STATUS_SDL)
 }
 
 fn fields(names: &[&str]) -> RapidHashSet<String> {
@@ -61,7 +38,9 @@ async fn block_count(db: &DB<RegolithStore>) -> usize {
 
 async fn setup() -> (Arc<DB<RegolithStore>>, document::DocID) {
     let db = Arc::new(DB::new(RegolithStore::in_memory().unwrap()).unwrap());
-    db.create_collection(status_collection()).await.unwrap();
+    db.add_collection(&defra_core::RequestContext::ambient(), STATUS_SDL)
+        .await
+        .unwrap();
     let created = AutoCommitMutator::new(Arc::clone(&db))
         .create(
             "Status",

@@ -1,6 +1,7 @@
 //! `DbDocFetcher::vector_search` resolving a collection by name, which
 //! `read/routing.rs` bypasses with a hardcoded short id.
 
+use crate::common::schema::parsed;
 use db::database::DB;
 use db::DbDocFetcher;
 use db::DbDocMutator;
@@ -9,69 +10,16 @@ use document::NormalValue;
 use query::mutator::DocMutator;
 use query::runner::DocFetcher;
 use schema::CollectionVersion;
-use schema::DistanceMetric;
-use schema::FieldDescription;
-use schema::FieldKind;
-use schema::HnswParams;
-use schema::IndexDescription;
-use schema::IndexedFieldDescription;
-use schema::VectorAlgorithm;
-use schema::VectorIndexDescription;
 use std::sync::Arc;
 use storage::RegolithStore;
 
 const COLLECTION: &str = "docs";
-const DIMENSIONS: u32 = 4;
 const DOCUMENTS: usize = 40;
 
+const DOCS_SDL: &str = r#"type docs { title: String embedding: [Float!] @index(name: "by_embedding", vector: {dimensions: 4, hnsw: {metric: COSINE}}) }"#;
+
 fn schema() -> CollectionVersion {
-    let mut version = CollectionVersion::new(
-        COLLECTION,
-        "v1",
-        "col-docs",
-        vec![
-            FieldDescription::new(
-                "1",
-                "_docID",
-                FieldKind::doc_id(),
-                schema::CType::LwwRegister,
-            ),
-            FieldDescription::new(
-                "2",
-                "title",
-                FieldKind::string(),
-                schema::CType::LwwRegister,
-            ),
-            FieldDescription::new(
-                "3",
-                "embedding",
-                FieldKind::float64_array(),
-                schema::CType::LwwRegister,
-            ),
-        ],
-    );
-    version.indexes = vec![IndexDescription {
-        name: "by_embedding".to_string(),
-        id: 0,
-        fields: vec![IndexedFieldDescription {
-            name: "embedding".to_string(),
-            descending: false,
-        }],
-        unique: false,
-        kind: None,
-        auto_generated: false,
-    }
-    .as_vector(VectorIndexDescription {
-        algorithm: VectorAlgorithm::Hnsw,
-        metric: DistanceMetric::Cosine,
-        dimensions: DIMENSIONS,
-        hnsw: Some(HnswParams::default()),
-        ivfpq: None,
-        ivfflat: None,
-        ssg: None,
-        diskann: None,
-    })];
-    version
+    parsed(DOCS_SDL)
 }
 
 fn vector_at(i: usize) -> Vec<f64> {
@@ -81,7 +29,7 @@ fn vector_at(i: usize) -> Vec<f64> {
 
 async fn populated() -> (Arc<DB<RegolithStore>>, u32) {
     let db = Arc::new(DB::new(RegolithStore::in_memory().unwrap()).expect("a database"));
-    db.create_collection(schema())
+    db.add_collection(&defra_core::RequestContext::ambient(), DOCS_SDL)
         .await
         .expect("the collection must register");
 

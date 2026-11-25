@@ -14,14 +14,12 @@ fn a_patch_waits_for_the_full_predecessor_instead_of_rebuilding_it() {
     workers::block_on(async {
         let store = Arc::new(RegolithStore::in_memory().unwrap());
         let db = Arc::new(DB::from_arc(store.clone()).unwrap());
-        let defined = query::parse_sdl(
-            r#"type Agent @policy(id: "p1", resource: "agents") @branchable {
+        let defined_sdl = r#"type Agent @policy(id: "p1", resource: "agents") @branchable {
             did: String @immutable @index
-        }"#,
-        )
-        .unwrap()
-        .remove(0);
-        db.create_collection(defined).await.unwrap();
+        }"#;
+        db.add_collection(&defra_core::RequestContext::ambient(), defined_sdl)
+            .await
+            .unwrap();
         let blockstore = Arc::new(DefraBlockstore::new(store, false));
         let handler = DbMergeHandler::new(db.clone(), blockstore.clone());
         let held = db.get_collection("Agent").unwrap().unwrap();

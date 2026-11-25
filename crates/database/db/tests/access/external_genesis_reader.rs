@@ -11,13 +11,10 @@ use acp::{DocumentACP, OwedOp, OwedScope, OwedSubject};
 use db::{DocumentMutationContext, DocumentMutationProjector, GenesisReadAccess};
 use identity::Did;
 use query::QueryExecutor;
-use schema::PolicyDescription;
 use storage::corekv::Result as StoreResult;
 use storage::RegolithStore;
 
-use super::external_registration::{
-    alice, bob, gate, mallory, request, RemoteAcp, POLICY, RESOURCE,
-};
+use super::external_registration::{alice, bob, gate, mallory, request, RemoteAcp};
 use super::external_staging::Staging;
 
 /// The host's opt-in: `Records` and `Mutable` name their reader in
@@ -53,20 +50,22 @@ impl DocumentMutationProjector for Host {
     }
 }
 
-const SCHEMA: &str = "\
-type Records { name: String addressee: String @immutable }
-type Mutable { name: String addressee: String }
-type Board { name: String addressee: String @immutable }
-type Plain { name: String addressee: String @immutable }";
+const SCHEMA: &str = r#"
+type Records @policy(id: "remote-policy", resource: "users") { name: String addressee: String @immutable }
+type Mutable @policy(id: "remote-policy", resource: "users") { name: String addressee: String }
+type Board @policy(id: "remote-policy", resource: "users") { name: String addressee: String @immutable }
+type Plain @policy(id: "remote-policy", resource: "users") { name: String addressee: String @immutable }"#;
 
 async fn host() -> Staging {
     let store = Arc::new(RegolithStore::in_memory().unwrap());
     let remote = RemoteAcp::new();
     let staging = Staging::on(store.clone(), remote.clone(), false).await;
-    for mut schema in query::parse_sdl(SCHEMA).unwrap() {
-        schema.policy = Some(PolicyDescription::new(POLICY, RESOURCE));
-        staging.node.db.create_collection(schema).await.unwrap();
-    }
+    staging
+        .node
+        .db
+        .add_collection(&defra_core::RequestContext::ambient(), SCHEMA)
+        .await
+        .unwrap();
     let provider: Arc<dyn DocumentACP> = gate(&remote, store);
     staging
         .node

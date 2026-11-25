@@ -30,7 +30,7 @@ fn a_writers_delete_archives_the_object_as_its_owner_and_a_reader_may_not_delete
             .add_policy(owner.as_str(), POLICY, None)
             .await
             .expect("policy");
-        node.add_collection(&users(&policy))
+        node.add_collection(&defra_core::RequestContext::ambient(), &users(&policy))
             .await
             .expect("collection");
         let doc = created(node.execute_request(create_user("doomed", &owner)).await);

@@ -118,8 +118,9 @@ fn exercise_userset_manager() -> Vec<bool> {
                 node.add_nac_actor_relationship_as(&context(&root), permission.as_str(), subject).await.unwrap();
             }
         }
-        let policy = node.add_dac_policy_as(&context(&root), POLICY).await.unwrap();
-        node.add_collection(&format!("type ManagedNode @policy(id: \"{policy}\", resource: \"nodes\") {{name:String}}\ntype ManagedConfiguration @policy(id: \"{policy}\", resource: \"configuration\") {{name:String}}")) .await.unwrap();
+        let owner_context = context(&root);
+        let policy = node.add_dac_policy_as(&owner_context, POLICY).await.unwrap();
+        node.add_collection(&owner_context, &format!("type ManagedNode @policy(id: \"{policy}\", resource: \"nodes\") {{name:String}}\ntype ManagedConfiguration @policy(id: \"{policy}\", resource: \"configuration\") {{name:String}}")) .await.unwrap();
         let node_doc = create(&node, &node_signer, &owner, "ManagedNode", "primary").await;
         let other_doc = create(&node, &other_signer, &other, "ManagedNode", "other").await;
         let doc = create(&node, &config_signer, &config, "ManagedConfiguration", "target").await;

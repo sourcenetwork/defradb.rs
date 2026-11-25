@@ -100,7 +100,7 @@ fn main() {
                 .unwrap();
             let owner = RequestContext::default()
                 .with_identity(Some(node.node_identity_did().unwrap().to_owned()));
-            node.add_collection_as(&owner, &format!("type {COLLECTION} {{ label: String }}"))
+            node.add_collection(&owner, &format!("type {COLLECTION} {{ label: String }}"))
                 .await
                 .unwrap();
             let mut values: [Vec<f64>; 3] = Default::default();
