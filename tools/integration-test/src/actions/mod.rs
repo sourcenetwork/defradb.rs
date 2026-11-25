@@ -3,6 +3,7 @@ mod block;
 mod collection;
 mod dac;
 mod document;
+mod embedding;
 mod encrypted_index;
 mod expect;
 mod index;
@@ -26,6 +27,7 @@ pub use block::*;
 pub use collection::*;
 pub use dac::*;
 pub use document::*;
+pub use embedding::*;
 pub use encrypted_index::*;
 pub use index::*;
 pub use lens::*;
@@ -180,6 +182,7 @@ client_actions! {
         Benchmark,
         ClientSigningSession,
         Close,
+        EmbeddingModel,
         GetNodeIdentity,
         ListAllEncryptedIndexes,
         NewNode,
