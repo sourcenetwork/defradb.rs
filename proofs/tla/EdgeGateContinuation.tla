@@ -21,12 +21,16 @@
 \*     caller outside the edge spawns): each tries a plain admission
 \*     (Gate::admit), counting itself first and then reading `closed`. Before
 \*     closing it is admitted, runs, ends, and may come back as the next
-\*     request, for ever. After closing it backs out, and a caller told
-\*     Closed does not try again;
+\*     request, for ever. After closing it backs out, told Closed, and
+\*     nothing in the code stops it from trying again: each retry counts
+\*     itself for a moment before it reads `closed` and backs out once more;
 \*   * the closer, which closes the gate once;
 \*   * the drain, which waits for zero, seals the gate, looks again, and only
 \*     then says the gate is drained. The drain's report (crates/foundation/edge/src/handle.rs
 \*     drain_gate) is that result itself, not a later look at the count.
+\*     With a deadline it gives up when the deadline passes and reports what
+\*     is still counted then (drain_gate's `remaining`), a refused caller's
+\*     passing count included.
 \*
 \* What must never happen:
 \*   1. once the drain said the gate is drained, a permit is still held -
@@ -36,10 +40,19 @@
 \*   3. after closing, a continuation is admitted when nothing was in flight -
 \*      INV_NoContinuationWhenIdle;
 \*   4. the drain never says drained, although every piece of work it waits
-\*      for finishes on its own - LIVE_DrainEnds. A stream of new top-level
-\*      work admitted after closing would keep the count above zero for ever.
-\*      (Work that hangs is cut off by the drain's deadline, handle.rs
-\*      drain_gate; ServerDrain.tla models that deadline.)
+\*      for finishes on its own and refused callers stop retrying -
+\*      LIVE_DrainEndsOnceRetriesStop. A stream of new top-level work
+\*      admitted after closing would keep the count above zero for ever;
+\*   5. once the gate closed, the drain never returns, drained or cut off -
+\*      LIVE_DrainReturns. Only the deadline promises this: two refused
+\*      callers retrying in a loop can take turns counting themselves in, so
+\*      the count is above zero at every look and the drain alone would wait
+\*      for ever. That is a real gap in Gate::admit, which counts before it
+\*      reads `closed` even for a caller that was already told Closed; the
+\*      drain's deadline (handle.rs drain_gate, like ServerDrain.tla's
+\*      LIVE_ServerReturns) is what ends it, and the report then names the
+\*      retry's passing count as `remaining`. Red_RetryStorm shows it.
+\*      (Work that hangs is cut off by the same deadline.)
 \*
 \* The Rust code each guard models:
 \*   Seal      Gate::drain sets `sealed` before its last look at the count, and
@@ -50,7 +63,8 @@
 \*   Continue  net::rt::ClientExecutor spawns a connection driver through
 \*             Edge::spawn_continuation, not through a plain spawn;
 \*   Refuse    Gate::admit backs out once it reads `closed`, so new top-level
-\*             work is refused while the drain runs.
+\*             work is refused while the drain runs;
+\*   Deadline  drain_gate gives up when its deadline passes.
 
 EXTENDS Naturals
 
@@ -58,17 +72,18 @@ CONSTANTS
   Seal,      \* TRUE: the drain seals before its last look, and a continuation checks the seal
   Cas,       \* TRUE: a continuation counts itself only while the count is above zero
   Continue,  \* TRUE: a continuation is admitted through the continuation path
-  Refuse     \* TRUE: a plain admission backs out once the gate is closed
+  Refuse,    \* TRUE: a plain admission backs out once the gate is closed
+  Deadline   \* TRUE: the drain gives up when its deadline passes
 
 VARIABLES
   count,     \* the gate's count of admitted work, transient counts included
   closed,    \* the gate is closed
   sealed,    \* the drain sealed the gate
-  drain,     \* the drain: "wait" (for zero), "look" (sealed, looking again), "done" (said drained)
+  drain,     \* the drain: "wait" (for zero), "look" (sealed, looking again), "done" (said drained), "expired" (deadline passed)
   req,       \* the request: "out", "counted" (admit counted, closed not read yet), "held", "gone"
   rc,        \* the request's continuation: "none", "counted", "held", "refused", "gone"
   sc,        \* the stray continuation: "none", "counted", "held", "refused", "gone"
-  fresh,     \* each newcomer: "none" (not trying), "counted", "held", "refused" (told Closed)
+  fresh,     \* each newcomer: "none" (not trying), "counted", "held", "refused" (told Closed, may retry)
   rz,        \* (ghost) the request's continuation counted itself in from zero after closing
   sz,        \* (ghost) the stray counted itself in from zero after closing
   idleAdmit, \* (record) a continuation was admitted after closing with nothing in flight
@@ -154,11 +169,18 @@ FreshCount(n) ==
   /\ count' = count + 1                                 \* the gate's count goes up
   /\ UNCHANGED <<closed, sealed, drain, req, rc, sc, idleAdmit, liveRefused, rz, sz>>  \* the rest stays
 
+\* A newcomer told Closed tries again: Gate::admit counts it once more before it reads `closed`.
+FreshRetry(n) ==
+  /\ fresh[n] = "refused"                               \* told Closed before
+  /\ fresh' = [fresh EXCEPT ![n] = "counted"]           \* counted again
+  /\ count' = count + 1                                 \* the gate's count goes up for a moment
+  /\ UNCHANGED <<closed, sealed, drain, req, rc, sc, idleAdmit, liveRefused, rz, sz>>  \* the rest stays
+
 \* It reads `closed`: refused and backing out when the gate is closed, admitted otherwise.
 FreshDecide(n) ==
   /\ fresh[n] = "counted"                               \* counted itself
   /\ IF Refuse /\ closed                                \* MUTATION no_refuse: closed never refuses
-       THEN fresh' = [fresh EXCEPT ![n] = "refused"] /\ count' = count - 1  \* backs out, for good
+       THEN fresh' = [fresh EXCEPT ![n] = "refused"] /\ count' = count - 1  \* backs out, free to retry
        ELSE fresh' = [fresh EXCEPT ![n] = "held"] /\ UNCHANGED count        \* admitted: holds its permit
   /\ UNCHANGED <<closed, sealed, drain, req, rc, sc, idleAdmit, liveRefused, rz, sz>>  \* the rest stays
 
@@ -183,6 +205,13 @@ DrainSeesZero ==
        ELSE drain' = "done" /\ UNCHANGED sealed         \* MUTATION no_seal: drained at once
   /\ UNCHANGED <<count, closed, req, rc, sc, fresh, idleAdmit, liveRefused, rz, sz>>  \* the rest stays
 
+\* The drain's deadline passes while it still waits or looks; it gives up and reports.
+Expire ==
+  /\ Deadline /\ closed                                 \* draining, with a deadline
+  /\ drain \in {"wait", "look"}                         \* not finished yet
+  /\ drain' = "expired"                                 \* gave up; reports what is counted now
+  /\ UNCHANGED <<count, closed, sealed, req, rc, sc, fresh, idleAdmit, liveRefused, rz, sz>>  \* the rest stays
+
 \* The drain's last look: zero says drained; anything counted sends it back to waiting.
 DrainLook ==
   /\ drain = "look"                                     \* sealed
@@ -193,12 +222,13 @@ Next ==
   \/ ReqCount \/ ReqDecide \/ ReqEnd
   \/ RcCount \/ RcDecide \/ RcEnd
   \/ ScCount \/ ScDecide \/ ScEnd
-  \/ \E n \in Newcomers : FreshCount(n) \/ FreshDecide(n) \/ FreshEnd(n)
-  \/ Close \/ DrainSeesZero \/ DrainLook
+  \/ \E n \in Newcomers : FreshCount(n) \/ FreshRetry(n) \/ FreshDecide(n) \/ FreshEnd(n)
+  \/ Close \/ DrainSeesZero \/ DrainLook \/ Expire
 
 \* Fairness: whatever has started goes on. The closer closes, an admission
 \* that counted itself decides, admitted work ends, and the drain takes its
-\* steps once they stay possible. Nobody is forced to start new work.
+\* steps once they stay possible, and a deadline, when there is one, passes.
+\* Nobody is forced to start new work, and nobody is forced to stop retrying.
 Fairness ==
   /\ WF_vars(Close)                                     \* shutdown does begin
   /\ WF_vars(ReqDecide) /\ WF_vars(ReqEnd)              \* the request decides and ends
@@ -206,13 +236,14 @@ Fairness ==
   /\ WF_vars(ScDecide) /\ WF_vars(ScEnd)                \* the stray decides and ends
   /\ \A n \in Newcomers : WF_vars(FreshDecide(n)) /\ WF_vars(FreshEnd(n))  \* newcomers decide and end
   /\ WF_vars(DrainSeesZero) /\ WF_vars(DrainLook)       \* the drain looks once it can
+  /\ WF_vars(Expire)                                    \* the deadline comes
 
 Spec == Init /\ [][Next]_vars /\ Fairness               \* every fair behaviour
 
 TypeOK ==
   /\ count \in 0..5
   /\ closed \in BOOLEAN /\ sealed \in BOOLEAN
-  /\ drain \in {"wait", "look", "done"}
+  /\ drain \in {"wait", "look", "done", "expired"}
   /\ req \in {"out", "counted", "held", "gone"}
   /\ rc \in {"none", "counted", "held", "refused", "gone"}
   /\ sc \in {"none", "counted", "held", "refused", "gone"}
@@ -227,6 +258,12 @@ INV_NothingAfterDrain ==
 INV_InFlightContinues == ~liveRefused
 \* After closing, no continuation is counted in while nothing was in flight.
 INV_NoContinuationWhenIdle == ~idleAdmit
-\* When every piece of work finishes on its own, the drain says drained.
-LIVE_DrainEnds == <>(drain = "done")
+\* A step in which some refused newcomer tries again.
+SomeRetry == \E n \in Newcomers : FreshRetry(n)
+\* When every piece of work finishes on its own and, from some moment on, no
+\* refused caller tries again, the drain says drained. Without a deadline only:
+\* a deadline may end the drain first.
+LIVE_DrainEndsOnceRetriesStop == (<>[][~SomeRetry]_vars) => <>(drain = "done")
+\* Once the gate closed, the drain returns: drained, or cut off by its deadline.
+LIVE_DrainReturns == closed ~> (drain \in {"done", "expired"})
 ====
