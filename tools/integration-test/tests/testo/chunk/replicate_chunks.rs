@@ -5,7 +5,7 @@ use integration_test::scenario::{Common, Text};
 use serde_json::json;
 
 use super::support::{
-    add_article_on, body, chunks_are_listed, eventually, list_is, read_list, replicated_pair,
+    add_article_on, body, chunks_are_listed, eventually, read_chunks, replicated_pair,
     without_default_node, CHUNKS,
 };
 
@@ -15,8 +15,7 @@ fn a_peer_has_the_same_chunk_documents() {
     let mut actions = replicated_pair(&["Article", CHUNKS]);
     actions.extend([
         add_article_on(&body(5, "rivers"), "article", Some("db0")),
-        read_list("created", 5, Some("db0")),
-        eventually(list_is("created", 5, Some("db1"))),
+        read_chunks("created", 5, Some("db0")),
         eventually(chunks_are_listed("created", 5, Some("db1"))),
         UpdateDoc {
             collection: "Article".into(),
@@ -30,8 +29,7 @@ fn a_peer_has_the_same_chunk_documents() {
             ..Default::default()
         }
         .into(),
-        read_list("updated", 3, Some("db0")),
-        eventually(list_is("updated", 3, Some("db1"))),
+        read_chunks("updated", 3, Some("db0")),
         eventually(chunks_are_listed("updated", 3, Some("db1"))),
     ]);
     without_default_node(actions).execute();

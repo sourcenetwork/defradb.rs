@@ -4,14 +4,13 @@
 //! decides who may read them outside a query. [`window`] is an older
 //! fixed-size splitter that only the benchmark fixtures use.
 
-pub use chunk_split::{list, split};
+pub use chunk_split::{hash, split};
 
 pub use config::chunk_config;
 pub use user_writes::ensure_admin_changeable;
 
 pub mod access;
 mod config;
-pub(crate) mod encryption;
 pub(crate) mod follow;
 pub mod guard;
 pub(crate) mod peer_delete;

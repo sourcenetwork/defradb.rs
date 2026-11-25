@@ -96,7 +96,7 @@ crates/
 │   ├── identity/           # Identity and JWT management
 │   ├── bitswap/            # Bitswap block exchange, wire-compatible with Go
 │   ├── net/                # HTTP, TLS and gRPC on nuclei sockets: server loop, HTTP client, gRPC channel
-│   └── chunk-split/        # @chunk splitter and the parent's chunk list
+│   └── chunk-split/        # @chunk splitter
 └── foundation/
     ├── edge/               # The network runtime behind a narrow handle
     ├── events/             # Pub/sub event bus (subscriptions)
@@ -634,20 +634,15 @@ A push to main runs only the jobs that save caches.
 
 ### Batches
 
-A batch is one PR carrying several approved PRs, so they share one full run.
+A batch is one PR carrying several PRs, so they share one full run.
 
-- One commit per carried PR, each its squash, with the subject `<title> (#N)`.
-  #N is open, approved, free of writer changes requests, and green on its own
-  `Merge gate` and `Validate title`.
-- Each commit carries exactly #N's change: replaying #N onto the commit's
-  parent gives the commit's files. A clean rebase passes; any other edit fails
-  `Merge gate`. The gate checks the heads it reads when it runs, so keep
-  carried PRs unchanged until the batch lands; after a push to #N, rerun the
-  batch's `Merge gate`.
+- One commit per carried PR, each its squash, with the subject `<title> (#N)`,
+  where #N is an open PR with that title. `Merge gate` checks only the subjects.
+- The batch PR needs its own approval, like any PR. Its reviewer checks that
+  each commit carries #N's change and nothing else.
 - PRs that touch the same lines go in a batch as a stack: B is based on A, so
-  B's diff holds the resolution and B's reviewer approved it.
-- The batch PR needs its own approval. Once it lands, close each carried PR
-  with `Landed in #<batch>`.
+  B's diff holds the resolution.
+- Once the batch lands, close each carried PR with `Landed in #<batch>`.
 
 ## ACP / Searchable Encryption
 

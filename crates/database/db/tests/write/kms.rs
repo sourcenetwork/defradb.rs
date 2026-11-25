@@ -675,7 +675,7 @@ async fn field_encrypted(db: &DB<RegolithStore>, commit: &[u8], field: &str) -> 
 }
 
 #[test]
-fn encrypting_a_chunked_field_encrypts_its_chunk_list() {
+fn encrypting_a_chunked_field_encrypts_only_that_field() {
     workers::block_on(async {
         let db = Arc::new(DB::new(RegolithStore::in_memory().unwrap()).unwrap());
         db.set_kms(Arc::new(CountingKms::default()));
@@ -707,7 +707,6 @@ fn encrypting_a_chunked_field_encrypts_its_chunk_list() {
 
         let commit = created.commit_block.expect("the parent's commit");
         assert!(field_encrypted(&db, &commit, "body").await);
-        assert!(field_encrypted(&db, &commit, "_body_chunks").await);
         assert!(!field_encrypted(&db, &commit, "title").await);
     })
     .unwrap()

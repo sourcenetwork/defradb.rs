@@ -28,7 +28,7 @@ pub use paragraphs::{paragraphs, Para};
 pub use segments::{fence_before, segments, units, Unit, SEGMENT_CHUNKS};
 pub use version::{SplitterVersion, UnknownSplitterVersion};
 
-use crate::list::text_hash;
+use crate::hash::text_hash;
 
 /// Settings for one `@chunk` field.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

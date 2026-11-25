@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use chunk_split::list::text_hash as hash;
+use chunk_split::hash::text_hash as hash;
 use chunk_split::split::{split, ChunkConfig};
 use document::{DocID, Document, NormalValue};
 use schema::{
@@ -25,7 +25,7 @@ fn chunked(splitter_version: u32) -> ChunkedField {
 }
 
 fn parents_with(chunked: ChunkedField) -> CollectionVersion {
-    let mut parents = collection(PARENTS, &["body", "_body_chunks"]);
+    let mut parents = collection(PARENTS, &["body"]);
     parents.chunked_fields = vec![chunked];
     parents
 }
@@ -72,20 +72,17 @@ struct Store {
 }
 
 impl Store {
-    fn new(body: Option<&str>, list: Vec<String>) -> Self {
-        Self::with(body, list, false)
+    fn new(body: Option<&str>) -> Self {
+        Self::with(body, false)
     }
 
-    fn with(body: Option<&str>, list: Vec<String>, deleted: bool) -> Self {
+    fn with(body: Option<&str>, deleted: bool) -> Self {
         let fetcher = Arc::new(MockFetcher::new());
         let parent_id = DocID::new_v0_from_seed("parent").to_string();
         let mut parent = Document::new(parents(defra_core::DEFAULT_SPLITTER_VERSION));
         parent.set_id(DocID::from_string(&parent_id).unwrap());
         let body = body.map_or(NormalValue::Null, |body| NormalValue::String(body.into()));
         parent.set("body", body).unwrap();
-        parent
-            .set("_body_chunks", NormalValue::StringArray(list))
-            .unwrap();
         parent.set_deleted(deleted);
         fetcher.add_doc(PARENTS, parent);
         Self { fetcher, parent_id }
@@ -138,7 +135,7 @@ impl Store {
 fn a_chunk_claiming_the_texts_hash_for_other_text_hides() {
     workers::block_on(async {
         let text = piece("Real text.");
-        let store = Store::new(Some("Real text."), vec![hash("Real text."), hash(&text)]);
+        let store = Store::new(Some("Real text."));
         let chunk = store.chunk("forged", &hash(&text));
         assert!(!store.shows(&chunk).await);
     })
@@ -149,7 +146,7 @@ fn a_chunk_claiming_the_texts_hash_for_other_text_hides() {
 fn a_deleted_parent_shows_no_chunk() {
     workers::block_on(async {
         let text = piece("Some text.");
-        let store = Store::with(Some("Some text."), Vec::new(), true);
+        let store = Store::with(Some("Some text."), true);
         let chunk = store.chunk(&text, &hash(&text));
         assert!(!store.shows(&chunk).await);
     })
@@ -157,11 +154,11 @@ fn a_deleted_parent_shows_no_chunk() {
 }
 
 #[test]
-fn a_list_of_other_text_is_ignored_for_the_chunks_of_the_text() {
+fn a_chunk_of_other_text_hides_and_the_texts_own_chunk_shows() {
     workers::block_on(async {
         let mine = piece("Mine is short.");
         let theirs = piece("Theirs is short.");
-        let store = Store::new(Some("Mine is short."), vec![hash(&theirs), hash(&theirs)]);
+        let store = Store::new(Some("Mine is short."));
         let shown = store.chunk(&mine, &hash(&mine));
         let hidden = store.chunk(&theirs, &hash(&theirs));
         assert!(store.shows(&shown).await);
@@ -174,7 +171,7 @@ fn a_list_of_other_text_is_ignored_for_the_chunks_of_the_text() {
 fn a_parent_without_text_shows_no_chunk() {
     workers::block_on(async {
         let text = piece("Some text.");
-        let store = Store::new(None, vec![hash("Some text."), hash(&text)]);
+        let store = Store::new(None);
         let chunk = store.chunk(&text, &hash(&text));
         assert!(!store.shows(&chunk).await);
     })
@@ -185,7 +182,7 @@ fn a_parent_without_text_shows_no_chunk() {
 fn a_splitter_version_this_node_lacks_shows_no_chunk() {
     workers::block_on(async {
         let text = piece("Some text.");
-        let store = Store::new(Some("Some text."), Vec::new());
+        let store = Store::new(Some("Some text."));
         let chunk = store.chunk(&text, &hash(&text));
         let shown = store.gate(u32::MAX).allows(&chunk, None).await.unwrap();
         assert!(!shown);
@@ -197,7 +194,7 @@ fn a_splitter_version_this_node_lacks_shows_no_chunk() {
 fn a_gate_without_a_fetcher_or_parent_shows_no_chunk() {
     workers::block_on(async {
         let text = piece("Some text.");
-        let store = Store::new(Some("Some text."), Vec::new());
+        let store = Store::new(Some("Some text."));
         let chunk = store.chunk(&text, &hash(&text));
         let fetcher: Arc<dyn DocFetcher> = store.fetcher.clone();
         let no_parent = ChunkGate::new(Some(fetcher), &chunks(), None, None, None);
@@ -223,7 +220,7 @@ fn a_later_chunk_of_a_long_text_split_with_overlap_shows() {
         let pieces = split(body, &ChunkConfig::new(version, 24, 1).unwrap());
         let unshared = split(body, &ChunkConfig::new(version, 24, 0).unwrap());
         assert!(pieces.len() > 1 && pieces[1].hash != unshared[1].hash);
-        let store = Store::new(Some(body), Vec::new());
+        let store = Store::new(Some(body));
         let later = store.chunk(&pieces[1].text, &pieces[1].hash);
         let settings = ChunkedField {
             max_chars: 24,
@@ -240,7 +237,7 @@ fn a_later_chunk_of_a_long_text_split_with_overlap_shows() {
 fn two_copies_of_one_chunk_show_once_as_the_smallest_doc_id() {
     workers::block_on(async {
         let text = piece("Shared text.");
-        let store = Store::new(Some("Shared text."), Vec::new());
+        let store = Store::new(Some("Shared text."));
         let first = store.copy(&text, &hash(&text), " by one peer");
         let second = store.copy(&text, &hash(&text), " by another");
         let forged = store.copy("forged", &hash(&text), "");
@@ -259,7 +256,7 @@ fn two_copies_of_one_chunk_show_once_as_the_smallest_doc_id() {
 fn a_copy_whose_text_does_not_match_never_hides_the_real_chunk() {
     workers::block_on(async {
         let text = piece("Shared text.");
-        let store = Store::new(Some("Shared text."), Vec::new());
+        let store = Store::new(Some("Shared text."));
         let real = store.chunk(&text, &hash(&text));
         let unreadable = (0..)
             .map(|i| store.copy("ciphertext", &hash(&text), &format!(" {i}")))

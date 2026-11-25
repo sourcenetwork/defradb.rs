@@ -1,6 +1,6 @@
 //! Checks whether a parent's current text uses a chunk.
 
-use chunk_split::list::text_hash;
+use chunk_split::hash::text_hash;
 use chunk_split::split::{split, ChunkConfig};
 use document::{Document, NormalValue};
 use rapidhash::RapidHashSet;
@@ -47,8 +47,6 @@ pub(crate) fn parent_hashes(
     let parent_text = parent
         .get(&chunked.field_name)
         .and_then(NormalValue::as_str)?;
-    // The list is written by the parent's writer and merges apart from the text,
-    // so only a split of the text itself decides.
     let config = match ChunkConfig::new(
         chunked.splitter_version,
         chunked.max_chars as usize,

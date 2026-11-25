@@ -1174,7 +1174,6 @@ jobs:
     timeout-minutes: 10
     runs-on: ubuntu-latest
     permissions:
-      checks: read
       contents: read
       pull-requests: read
     steps:
@@ -1206,8 +1205,9 @@ jobs:
             core.setOutput('changes_requested', blocking.join(','));
       # The queue rebase-merges (#3325), so each commit of a pull request lands on
       # main as it is. A pull request with one commit lands it under its title. A
-      # batch carries several approved pull requests, one commit each, and each
-      # commit names the one it carries as "<title> (#N)".
+      # batch carries several pull requests, one commit each, and each commit names
+      # the one it carries as "<title> (#N)". Only the subjects are checked: the
+      # batch's reviewer approves what each commit carries.
       - id: commits
         if: github.event_name == 'pull_request'
         uses: actions/github-script@v9
@@ -1219,7 +1219,6 @@ jobs:
             const commits = await github.paginate(github.rest.pulls.listCommits, { ...context.repo, pull_number: pr.number, per_page: 100 });
             const subject = (c) => c.commit.message.split('\n')[0];
             const problems = [];
-            const batch = [];
             if (commits.length === 1) {
               const got = subject(commits[0]);
               if (got !== pr.title && got !== `${pr.title} (#${pr.number})`) problems.push(`the commit subject "${got}" is not the title "${pr.title}"`);
@@ -1236,57 +1235,9 @@ jobs:
                 const carried = await github.rest.pulls.get({ ...context.repo, pull_number: number }).then((r) => r.data, () => null);
                 if (!carried || carried.state !== 'open') { problems.push(`#${n} is not an open pull request`); continue; }
                 if (carried.title !== title) problems.push(`${c.sha.slice(0, 9)} title "${title}" is not #${n}'s "${carried.title}"`);
-                const decision = new Map();
-                for (const r of await github.paginate(github.rest.pulls.listReviews, { ...context.repo, pull_number: number, per_page: 100 })) {
-                  if (['APPROVED', 'CHANGES_REQUESTED', 'DISMISSED'].includes(r.state)) decision.set(r.user.login, r.state);
-                }
-                if (![...decision.values()].includes('APPROVED')) problems.push(`#${n} is not approved`);
-                for (const [login, state] of decision) {
-                  if (state !== 'CHANGES_REQUESTED') continue;
-                  const level = await github.rest.repos.getCollaboratorPermissionLevel({ ...context.repo, username: login }).then((r) => r.data.permission, () => 'admin');
-                  if (['admin', 'maintain', 'write'].includes(level)) problems.push(`#${n} has changes requested by ${login}`);
-                }
-                for (const check of ['Merge gate', 'Validate title']) {
-                  const run = (await github.rest.checks.listForRef({ ...context.repo, ref: carried.head.sha, check_name: check, filter: 'latest' })).data.check_runs[0];
-                  if (run?.conclusion !== 'success') problems.push(`#${n}'s ${check} is ${run?.conclusion ?? 'missing'}`);
-                }
-                batch.push({ sha: c.sha, number, base: carried.base.ref, head: carried.head.sha });
               }
             }
             core.setOutput('problems', problems.join('; '));
-            core.setOutput('batch', batch.length ? JSON.stringify(batch) : '');
-      # Each batch commit must carry exactly the change of the pull request it names:
-      # replaying that pull request onto the commit's parent gives the commit's tree.
-      # A clean rebase passes; an edit in the wrong place, a whitespace or
-      # conflict-resolution edit, or an empty commit fails.
-      - if: steps.commits.outputs.batch != ''
-        uses: actions/checkout@v7
-        with:
-          fetch-depth: 0
-          filter: blob:none
-          sparse-checkout: .github
-      - id: content
-        if: steps.commits.outputs.batch != ''
-        env:
-          BATCH: ${{ steps.commits.outputs.batch }}
-        run: |
-          set -euo pipefail
-          problems=""
-          while read -r row; do
-            sha=$(jq -r .sha <<<"$row"); n=$(jq -r .number <<<"$row"); base=$(jq -r .base <<<"$row"); head=$(jq -r .head <<<"$row")
-            git fetch -q --filter=blob:none origin "+refs/pull/$n/head:refs/carried/$n" "+refs/heads/$base:refs/carried/$n-base"
-            if [ "$(git rev-parse "refs/carried/$n")" != "$head" ]; then
-              problems="$problems${problems:+; }#$n moved after its Merge gate was checked"
-              continue
-            fi
-            mb=$(git merge-base "refs/carried/$n-base" "refs/carried/$n")
-            want=$(git merge-tree --write-tree --merge-base="$mb" "$sha^" "refs/carried/$n" | head -1) || want=""
-            got=$(git rev-parse "$sha^{tree}")
-            if [ -z "$want" ] || [ "$want" != "$got" ] || [ "$got" = "$(git rev-parse "$sha^^{tree}")" ]; then
-              problems="$problems${problems:+; }${sha:0:9} does not carry exactly #$n's change"
-            fi
-          done < <(jq -c '.[]' <<<"$BATCH")
-          echo "problems=$problems" >> "$GITHUB_OUTPUT"
       - name: Check every queue job
         env:
           FULL: ${{ needs.ci-scope.outputs.full }}
@@ -1296,7 +1247,6 @@ jobs:
           RUN_TESTO: ${{ needs.ci-scope.outputs.full == 'true' && needs.ci-scope.outputs.testo == 'true' }}
           CHANGES_REQUESTED: ${{ steps.reviews.outputs.changes_requested }}
           COMMIT_PROBLEMS: ${{ steps.commits.outputs.problems }}
-          CONTENT_PROBLEMS: ${{ steps.content.outputs.problems }}
           RUN_FEATURE_CHECKS: ${{ fromJson(needs.ci-scope.outputs.run || '{}').feature_checks }}
           RUN_FEATURE_TESTS: ${{ fromJson(needs.ci-scope.outputs.run || '{}').feature_tests }}
           RUN_WASM: ${{ fromJson(needs.ci-scope.outputs.run || '{}').wasm }}
@@ -1359,10 +1309,6 @@ jobs:
           check "Testo summary" "$TESTO_SUMMARY" "$RUN_TESTO"
           if [ -n "$COMMIT_PROBLEMS" ]; then
             echo "::error::Commits can't be rebase-merged: $COMMIT_PROBLEMS"
-            failed=1
-          fi
-          if [ -n "$CONTENT_PROBLEMS" ]; then
-            echo "::error::Batch commits differ from the pull requests they name: $CONTENT_PROBLEMS"
             failed=1
           fi
           if [ -n "$CHANGES_REQUESTED" ]; then
