@@ -23,8 +23,7 @@ const HTTP_READY: &str = "Providing HTTP API at http://";
 /// The line the host logs once a peer's last connection closes (`swarm.rs`).
 const PEER_DISCONNECTED: &str = "Peer disconnected";
 /// Three of the host's prune ticks.
-const HOLD_OVER_HIGH_WATER: Duration =
-    Duration::from_secs(3 * CONNECTION_PRUNE_INTERVAL.as_secs());
+const HOLD_OVER_HIGH_WATER: Duration = Duration::from_secs(3 * CONNECTION_PRUNE_INTERVAL.as_secs());
 
 struct RustNodeWithStartArgs {
     binary_path: PathBuf,
