@@ -315,7 +315,10 @@ impl<S: Store> P2PHost<S> {
 
         match event {
             kad::Event::RoutingUpdated {
-                peer, addresses, ..
+                peer,
+                addresses,
+                is_new_peer,
+                ..
             } => {
                 debug!(
                     peer_id = %peer,
@@ -323,6 +326,12 @@ impl<S: Store> P2PHost<S> {
                     dht = network.as_str(),
                     "Kademlia routing table updated"
                 );
+                if is_new_peer {
+                    let refresh = self.swarm.behaviour_mut().kademlia.refresh_if_low(network);
+                    if let Some(result) = refresh {
+                        debug!(?result, dht = network.as_str(), "Kademlia low-peer refresh");
+                    }
+                }
             }
 
             kad::Event::OutboundQueryProgressed { id, result, .. } => {

@@ -36,6 +36,7 @@ use super::services::{self, ALPN_MUX};
 use super::token::PincResponseToken;
 use super::transport::PincTransport;
 use super::wire::pinc_error;
+use crate::quiet_peers::QuietPeers;
 
 /// Events each dispatch class may queue before its senders wait.
 const EVENT_LANE_CAPACITY: usize = 64;
@@ -52,6 +53,25 @@ pub(super) const REPLY_DEADLINE: Duration = Duration::from_secs(60);
 /// How often owed replies past their deadline are reset.
 const SWEEP_INTERVAL: Duration = Duration::from_secs(5);
 pub(super) const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+/// The close code of a `DisconnectPeers`: the peer reads the hang-up as
+/// deliberate, so its peer exchange stops dialing this node too (#2992).
+/// Distinct from pinc's DENIED (3) and BUSY (0x42), and from 0, which every
+/// other close and a drop carry.
+pub(super) const CLOSE_DISCONNECTED: u64 = 8;
+
+/// Whether `connection` ended because its peer ran `DisconnectPeers`.
+pub(super) fn hung_up_on<H>(connection: &Connection<H>) -> bool
+where
+    H: Hosted,
+{
+    matches!(
+        connection.close_reason().map(|error| error.kind()),
+        Some(pinc::ErrorKind::Closed {
+            code: CLOSE_DISCONNECTED,
+            by_peer: true,
+        })
+    )
+}
 
 pub type EventSender = DispatchSender<TransportEvent<PincResponseToken>>;
 pub type EventReceiver = crate::sync::DispatchReceiver<TransportEvent<PincResponseToken>>;
@@ -202,6 +222,7 @@ async fn run(
         confirmed: RefCell::new(RapidHashSet::new()),
         next_query: Cell::new(1),
         next_connection: Cell::new(1),
+        quiet: RefCell::new(QuietPeers::default()),
     });
     let _ = ready.send(Ok(node.ep.local_addr()));
     let reply = node.serve(command_rx, running).await;
@@ -249,6 +270,9 @@ pub(super) struct Node<H: Hosted + 'static> {
     pub(super) confirmed: RefCell<RapidHashSet<String>>,
     pub(super) next_query: Cell<u64>,
     next_connection: Cell<u64>,
+    /// The peers a `DisconnectPeers` closed, on either side: peer exchange
+    /// never dials them, and only an explicit dial or allow lifts it (#2992).
+    pub(super) quiet: RefCell<QuietPeers<NodeId>>,
 }
 
 impl<H: Hosted + 'static> Node<H> {
@@ -507,6 +531,7 @@ impl<H: Hosted + 'static> Node<H> {
                 let dialer = Rc::clone(&self);
                 self.run_or_busy(reply, async move {
                     let peer = node_id(&peer_id)?;
+                    dialer.quiet.borrow_mut().remove(&peer);
                     dialer
                         .connection(&peer, socket_addrs(&addrs))
                         .await
@@ -516,7 +541,7 @@ impl<H: Hosted + 'static> Node<H> {
             Command::Disconnect { peer_id, reply } => {
                 let result = match node_id(&peer_id) {
                     Ok(peer) => {
-                        self.close_links(&peer).await;
+                        self.hang_up(&peer).await;
                         Ok(())
                     }
                     Err(error) => Err(error),
@@ -762,6 +787,7 @@ impl<H: Hosted + 'static> Node<H> {
         }
         // One thread runs both, so nothing lands between these two.
         self.allowlist.allow(peer);
+        self.quiet.borrow_mut().remove(&peer);
         self.ep.unrevoke(&peer);
         // The allowlist's answer changed: pinc drops the deny it cached.
         self.ep.admission_changed(&peer);
@@ -778,6 +804,35 @@ impl<H: Hosted + 'static> Node<H> {
         self.allowlist.remove(peer);
         self.close_links(peer).await;
         Ok(())
+    }
+
+    /// Hang up on `peer` on purpose: quiet it here, and close its links with
+    /// [`CLOSE_DISCONNECTED`] so the peer quiets this node too.
+    async fn hang_up(&self, peer: &NodeId) {
+        self.quiet.borrow_mut().insert(*peer);
+        let links: Vec<Connection<H>> = self
+            .peers
+            .borrow()
+            .get(peer)
+            .map(|links| links.iter().map(|link| link.connection.clone()).collect())
+            .unwrap_or_default();
+        for connection in links {
+            connection.close(CLOSE_DISCONNECTED).await;
+        }
+        self.close_links(peer).await;
+    }
+
+    /// Whether peer exchange must leave `peer` alone: this node hung up on
+    /// it, or it hung up on this node, and nothing explicit named it since.
+    /// The second half also reads a closed link the serve loop has not
+    /// forgotten yet, so a list that lands in that window cannot dial back.
+    pub(super) fn is_quiet(&self, peer: &NodeId) -> bool {
+        self.quiet.borrow().contains(peer)
+            || self
+                .peers
+                .borrow()
+                .get(peer)
+                .is_some_and(|links| links.iter().any(|link| hung_up_on(&link.connection)))
     }
 
     async fn close_links(&self, peer: &NodeId) {

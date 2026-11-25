@@ -54,9 +54,6 @@ const IDLE_CONNECTION_TIMEOUT: Duration = Duration::from_secs(60);
 /// Periodic DHT refresh interval.
 const DHT_BOOTSTRAP_INTERVAL: Duration = Duration::from_secs(5 * 60);
 
-/// Delay used to coalesce the initial connection burst before bootstrapping.
-const DHT_BOOTSTRAP_DEBOUNCE: Duration = Duration::from_millis(100);
-
 /// Go libp2p connection manager grace period before pruning new connections.
 const DEFAULT_CONNECTION_MANAGER_GRACE_PERIOD: Duration = Duration::from_secs(20);
 
@@ -174,47 +171,6 @@ fn validate_resource_manager_startup_limits(fd_limit: u64, memory_budget_bytes: 
     }
 
     Ok(())
-}
-
-/// Tracks the one-time initial bootstrap that complements periodic refresh.
-///
-/// Go wires periodic DHT refresh through `bootstrap.Bootstrap(...)`
-/// (`go-p2p/peer.go:149`). Rust keeps that periodic refresh in the host loop
-/// and adds a short kickstart so initial peers can exchange routing information
-/// without waiting for the longer interval.
-#[derive(Debug)]
-struct BootstrapScheduler {
-    pending: bool,
-    has_fired: bool,
-    debounce: Duration,
-}
-
-impl BootstrapScheduler {
-    fn new(debounce: Duration) -> Self {
-        Self {
-            pending: false,
-            has_fired: false,
-            debounce,
-        }
-    }
-
-    fn is_pending(&self) -> bool {
-        self.pending
-    }
-
-    fn schedule_initial(&mut self, now: Instant) -> Option<Instant> {
-        if self.pending || self.has_fired {
-            return None;
-        }
-
-        self.pending = true;
-        Some(now + self.debounce)
-    }
-
-    fn mark_fired(&mut self) {
-        self.pending = false;
-        self.has_fired = true;
-    }
 }
 
 /// Configuration options for P2P host construction.
@@ -715,8 +671,6 @@ impl<S: Store + Clone + Send + Sync + 'static> P2PHost<S> {
     }
 
     async fn drive(mut self) {
-        let mut bootstrap_scheduler = BootstrapScheduler::new(DHT_BOOTSTRAP_DEBOUNCE);
-        let mut bootstrap_deadline = Box::pin(time::sleep(DHT_BOOTSTRAP_DEBOUNCE));
         let mut bootstrap_interval = time::interval(DHT_BOOTSTRAP_INTERVAL);
         bootstrap_interval.set_missed_tick_behavior(MissedTickBehavior::Delay);
         bootstrap_interval.tick().await;
@@ -732,15 +686,7 @@ impl<S: Store + Clone + Send + Sync + 'static> P2PHost<S> {
                 biased;
 
                 event = self.swarm.select_next_some() => {
-                    if self.handle_swarm_event(event).await {
-                        if let Some(deadline) = bootstrap_scheduler.schedule_initial(Instant::now()) {
-                            bootstrap_deadline.as_mut().reset(deadline);
-                            debug!(
-                                delay_ms = DHT_BOOTSTRAP_DEBOUNCE.as_millis() as u64,
-                                "Scheduled initial Kademlia bootstrap"
-                            );
-                        }
-                    }
+                    self.handle_swarm_event(event).await;
                     self.prune_connections("swarm event");
                 }
                 // Handle two-stream protocol events (Go compatibility)
@@ -762,10 +708,6 @@ impl<S: Store + Clone + Send + Sync + 'static> P2PHost<S> {
                 }
                 result = self.spawned_tasks.join_next(), if !self.spawned_tasks.is_empty() => {
                     Self::report_spawned_task(result);
-                }
-                _ = &mut bootstrap_deadline, if bootstrap_scheduler.is_pending() => {
-                    bootstrap_scheduler.mark_fired();
-                    self.run_kademlia_bootstrap("initial connection");
                 }
                 _ = bootstrap_interval.tick() => {
                     self.run_kademlia_bootstrap("periodic");
@@ -825,7 +767,11 @@ impl<S: Store + Clone + Send + Sync + 'static> P2PHost<S> {
     /// or in flight, so a repeated connect cannot stack a second connection
     /// (#1449). Like Go's `Connect`, which returns nil once connected, a
     /// skipped dial is success rather than an error.
+    ///
+    /// Every caller names the peer explicitly (ConnectPeers, a replicator), so
+    /// this lifts a `DisconnectPeers` that kept Kademlia from dialing it (#2992).
     pub(super) fn dial_peer(&mut self, peer_id: PeerId, addrs: Vec<Multiaddr>) -> Result<()> {
+        self.swarm.behaviour_mut().kademlia.unquiet(&peer_id);
         let dial_addrs: Vec<Multiaddr> = addrs
             .into_iter()
             .map(|addr| {
@@ -959,26 +905,6 @@ mod tests {
         assert!(
             total < 16 * 1024 * 1024 * 1024 * 1024,
             "implausibly large system memory, expected bytes: {total}"
-        );
-    }
-
-    #[test]
-    fn bootstrap_scheduler_runs_once_after_initial_connection_burst() {
-        let mut scheduler = BootstrapScheduler::new(Duration::from_secs(30));
-        let now = Instant::now();
-
-        let scheduled: Vec<_> = (0..5)
-            .filter_map(|offset| scheduler.schedule_initial(now + Duration::from_secs(offset)))
-            .collect();
-
-        assert_eq!(scheduled, vec![now + Duration::from_secs(30)]);
-        assert!(scheduler.is_pending());
-
-        scheduler.mark_fired();
-        assert!(!scheduler.is_pending());
-        assert_eq!(
-            scheduler.schedule_initial(now + Duration::from_secs(31)),
-            None
         );
     }
 

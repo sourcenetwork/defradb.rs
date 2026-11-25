@@ -28,10 +28,7 @@ fn connection_path(endpoint: &ConnectedPoint) -> ConnectionPath {
 
 impl<S: Store> P2PHost<S> {
     /// Handle a swarm event.
-    ///
-    /// Returns `true` when the event added a peer address that may unblock the
-    /// one-time initial DHT bootstrap.
-    pub(super) async fn handle_swarm_event(&mut self, event: SwarmEvent<DefraEvent>) -> bool {
+    pub(super) async fn handle_swarm_event(&mut self, event: SwarmEvent<DefraEvent>) {
         match event {
             SwarmEvent::NewListenAddr { address, .. } => {
                 info!(address = %address, "Created LibP2P host");
@@ -41,7 +38,6 @@ impl<S: Store> P2PHost<S> {
                 {
                     warn!(address = %address, "Failed to send Listening event - receiver dropped");
                 }
-                false
             }
 
             SwarmEvent::ConnectionEstablished {
@@ -77,7 +73,7 @@ impl<S: Store> P2PHost<S> {
                 // about to disappear, and `PeerConnected` already fired for the
                 // connection that survives.
                 if superseded {
-                    return false;
+                    return;
                 }
 
                 // Store the remote peer's address from the connection endpoint.
@@ -127,7 +123,6 @@ impl<S: Store> P2PHost<S> {
                 if !self.forward_event(HostEvent::PeerConnected(peer_id)).await {
                     warn!(peer_id = %peer_id, "Failed to send PeerConnected event - receiver dropped");
                 }
-                true
             }
 
             SwarmEvent::ConnectionClosed {
@@ -138,27 +133,22 @@ impl<S: Store> P2PHost<S> {
             } => {
                 self.handle_connection_closed(peer_id, connection_id, num_established)
                     .await;
-                false
             }
 
             SwarmEvent::Behaviour(DefraEvent::Identify(identify_event)) => {
                 self.handle_identify_event(identify_event).await;
-                false
             }
 
             SwarmEvent::Behaviour(DefraEvent::PushLog(pushlog_event)) => {
                 self.handle_pushlog_event(pushlog_event).await;
-                false
             }
 
             SwarmEvent::Behaviour(DefraEvent::GossipSub(gossipsub_event)) => {
                 self.handle_gossipsub_event(gossipsub_event).await;
-                false
             }
 
             SwarmEvent::Behaviour(DefraEvent::Bitswap(bitswap_event)) => {
                 self.handle_bitswap_event(bitswap_event).await;
-                false
             }
 
             SwarmEvent::Behaviour(DefraEvent::Relay(relay_event)) => {
@@ -194,12 +184,10 @@ impl<S: Store> P2PHost<S> {
                         );
                     }
                 }
-                false
             }
 
             SwarmEvent::Behaviour(DefraEvent::Kademlia(kad_event)) => {
                 self.handle_kademlia_event(kad_event).await;
-                false
             }
 
             SwarmEvent::OutgoingConnectionError { peer_id, error, .. } => {
@@ -208,7 +196,6 @@ impl<S: Store> P2PHost<S> {
                     error = %error,
                     "Outgoing connection failed"
                 );
-                false
             }
 
             SwarmEvent::IncomingConnectionError {
@@ -223,7 +210,6 @@ impl<S: Store> P2PHost<S> {
                     error = %error,
                     "Incoming connection failed"
                 );
-                false
             }
 
             SwarmEvent::ListenerError { listener_id, error } => {
@@ -232,7 +218,6 @@ impl<S: Store> P2PHost<S> {
                     error = %error,
                     "Listener error"
                 );
-                false
             }
 
             SwarmEvent::ListenerClosed {
@@ -245,7 +230,6 @@ impl<S: Store> P2PHost<S> {
                     reason = ?reason,
                     "Listener closed"
                 );
-                false
             }
 
             SwarmEvent::ExpiredListenAddr {
@@ -257,7 +241,6 @@ impl<S: Store> P2PHost<S> {
                     address = %address,
                     "Listen address expired"
                 );
-                false
             }
 
             SwarmEvent::Dialing {
@@ -265,18 +248,15 @@ impl<S: Store> P2PHost<S> {
                 ..
             } => {
                 debug!(peer_id = %peer_id, "Dialing peer");
-                false
             }
 
             SwarmEvent::Dialing { peer_id: None, .. } => {
                 // Dialing without a specific peer ID (rare, usually has peer_id)
-                false
             }
 
             _ => {
                 // Other swarm events (e.g., Dialing, NewExternalAddrCandidate) are
                 // handled by libp2p internally and don't require explicit handling
-                false
             }
         }
     }
