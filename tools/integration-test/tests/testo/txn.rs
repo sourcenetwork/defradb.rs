@@ -17,6 +17,7 @@ mod neighbour;
 mod new_encrypted_index;
 mod new_encrypted_index_concurrent;
 mod new_index;
+mod outcome;
 mod patch_collection;
 mod refresh_view;
 mod request;

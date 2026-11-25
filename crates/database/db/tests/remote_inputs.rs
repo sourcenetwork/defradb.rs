@@ -37,26 +37,30 @@ async fn database() -> Arc<DB<RegolithStore>> {
 
 async fn database_on(store: Arc<RegolithStore>) -> Arc<DB<RegolithStore>> {
     let db = Arc::new(DB::from_arc(store).unwrap());
-    db.create_collection(things_schema()).await.unwrap();
+    db.add_collection(&defra_core::RequestContext::ambient(), &things_sdl())
+        .await
+        .unwrap();
     db
 }
 
+fn things_sdl() -> String {
+    let fields: String = FIELDS
+        .iter()
+        .map(|name| format!(" {name}: String"))
+        .collect();
+    format!("type Things {{{fields} }}")
+}
+
 fn things_schema() -> CollectionVersion {
-    let mut fields = vec![FieldDescription::new(
-        "1",
-        "_docID",
-        FieldKind::doc_id(),
-        schema::CType::LwwRegister,
-    )];
-    for (index, name) in FIELDS.iter().enumerate() {
-        fields.push(FieldDescription::new(
-            (index + 2).to_string(),
-            *name,
-            FieldKind::string(),
-            schema::CType::LwwRegister,
-        ));
-    }
-    CollectionVersion::new("Things", "v1", "col-things", fields)
+    query::parse_sdl(&things_sdl()).unwrap().remove(0)
+}
+
+fn version_id() -> String {
+    things_schema().version_id
+}
+
+fn collection_id() -> String {
+    things_schema().collection_id
 }
 
 /// A merge handler over one store, as a node has.
@@ -136,7 +140,7 @@ async fn encrypted_composite(
         let block = Block::new_with_options(
             CrdtDelta::Lww(LwwDeltaPayload {
                 field_name: field.to_string(),
-                collection_version_id: "v1".into(),
+                collection_version_id: version_id(),
                 priority: 1,
                 data: ciphertext,
             }),
@@ -155,7 +159,7 @@ async fn encrypted_composite(
     }
     let composite = Block::new(
         CrdtDelta::Composite(CompositeDeltaPayload {
-            collection_version_id: "v1".into(),
+            collection_version_id: version_id(),
             priority: 1,
             status: 1,
         }),
@@ -179,8 +183,14 @@ fn a_merged_composite_with_four_encrypted_fields_makes_one_kms_request() {
         });
         handler.set_kms(kms.clone());
         let doc_id = db::block::builder::derive_doc_id(&cid);
-        let metadata =
-            BlockMetadata::normal(&doc_id, "col-things", "did:key:z6MkMergeKeys", None, false);
+        let collection_id = collection_id();
+        let metadata = BlockMetadata::normal(
+            &doc_id,
+            &collection_id,
+            "did:key:z6MkMergeKeys",
+            None,
+            false,
+        );
 
         let outcome = handler.handle_block(&cid, &data, metadata).await.unwrap();
 
@@ -205,8 +215,14 @@ fn a_composite_merged_in_its_own_transaction_makes_one_kms_request() {
         });
         handler.set_kms(kms.clone());
         let doc_id = db::block::builder::derive_doc_id(&cid);
-        let metadata =
-            BlockMetadata::normal(&doc_id, "col-things", "did:key:z6MkMergeKeys", None, false);
+        let collection_id = collection_id();
+        let metadata = BlockMetadata::normal(
+            &doc_id,
+            &collection_id,
+            "did:key:z6MkMergeKeys",
+            None,
+            false,
+        );
         let block = Block::from_dag_cbor(&data).unwrap();
         let CrdtDelta::Composite(payload) = &block.delta else {
             unreachable!("built as a composite")
@@ -365,38 +381,16 @@ fn embedding_server() -> (HttpServer, Arc<AtomicUsize>, Arc<AtomicUsize>) {
 
 async fn embedded_database(url: &str) -> Arc<DB<RegolithStore>> {
     let db = Arc::new(DB::new(RegolithStore::in_memory().unwrap()).unwrap());
-    let mut collection = CollectionVersion::new(
-        "Texts",
-        "texts-v1",
-        "col-texts",
-        vec![
-            FieldDescription::new(
-                "1",
-                "_docID",
-                FieldKind::doc_id(),
-                schema::CType::LwwRegister,
-            ),
-            FieldDescription::new("2", "text", FieldKind::string(), schema::CType::LwwRegister),
-            FieldDescription::new(
-                "3",
-                "vector",
-                FieldKind::float64_array(),
-                schema::CType::LwwRegister,
-            ),
-            FieldDescription::new("4", "tag", FieldKind::string(), schema::CType::LwwRegister),
-        ],
+    let sdl = format!(
+        r#"type Texts {{
+            text: String
+            vector: [Float32!] @embedding(fields: ["text"], provider: "openai", model: "test-model", url: "{url}")
+            tag: String
+        }}"#
     );
-    collection
-        .vector_embeddings
-        .push(schema::VectorEmbeddingDescription {
-            field_name: "vector".to_string(),
-            fields: vec!["text".to_string()],
-            model: "test-model".to_string(),
-            provider: "openai".to_string(),
-            template: String::new(),
-            url: url.to_string(),
-        });
-    db.create_collection(collection).await.unwrap();
+    db.add_collection(&defra_core::RequestContext::ambient(), &sdl)
+        .await
+        .unwrap();
     db
 }
 
@@ -596,7 +590,9 @@ fn a_retry_after_a_conflict_builds_on_the_winner() {
             winner: regolith::sync::SegQueue::new(),
         });
         let db = Arc::new(DB::open_from_arc(store.clone()).await.unwrap());
-        db.create_collection(things_schema()).await.unwrap();
+        db.add_collection(&defra_core::RequestContext::ambient(), &things_sdl())
+            .await
+            .unwrap();
         let mutator = AutoCommitMutator::new(Arc::clone(&db));
         let created = mutator
             .create("Things", documents(1).remove(0))
@@ -722,9 +718,12 @@ fn set_embedding_and_a_hybrid_query_embed_from_a_thread_without_a_runtime() {
         );
 
         let db = Arc::new(DB::new(RegolithStore::in_memory().unwrap()).unwrap());
-        for schema in query::parse_sdl("type Docs { text: String vector: [Float!] }").unwrap() {
-            db.create_collection(schema).await.unwrap();
-        }
+        db.add_collection(
+            &defra_core::RequestContext::ambient(),
+            "type Docs { text: String vector: [Float!] }",
+        )
+        .await
+        .unwrap();
         let runner = query::QueryRunner::with_arc_registry_and_provider(
             LensedAutoCommitFetcher::new(db.clone()),
             DbCollectionProvider::new_arc(db.clone()),

@@ -15,13 +15,13 @@ name = "legacy"
 path = "tests/legacy/main.rs"
 
 [[test]]
-name = "verars"
-path = "tests/verars/main.rs"
+name = "vera"
+path = "tests/vera/main.rs"
 
 [dependencies]
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 commonware-codec = "=2026.10.0"
-defra-harness = { git = "https://github.com/sourcenetwork/backbone.git", rev = "571ddf742cb17b1f95c171054bf7209e5f57e017" }
+defra-harness = { git = "https://github.com/sourcenetwork/backbone.git", rev = "25da44c835b810e854caa938d5c55052da8525e7" }
 crypto = { path = "../../crates/foundation/crypto" }
 document = { path = "../../crates/building-blocks/document" }
 blockstore = { path = "../../crates/engine/blockstore" }
@@ -41,6 +41,9 @@ async-trait = { workspace = true }
 events = { path = "../../crates/foundation/events" }
 async-channel = "2"
 cli = { path = "../../crates/entry-points/cli" }
+# The client-signing WebSocket handshake the signing-session action dials.
+defra-http = { path = "../../crates/surfaces/http" }
+async-tungstenite = "0.35.0"
 clap = "4.5"
 query = { path = "../../crates/engine/query" }
 schema = { path = "../../crates/foundation/schema" }
@@ -77,7 +80,7 @@ required-features = ["generator"]
 
 [dev-dependencies]
 query = { path = "../../crates/engine/query", features = ["testing"] }
-vera-harness = { git = "https://github.com/sourcenetwork/vera.rs", rev = "f69d1b3747b65e3b3ff601958e856c574ac127e4" }
+vera-harness = { git = "https://github.com/sourcenetwork/vera.rs", rev = "fc0bd8e47019a5f3175239884ab4ae935f3b973f" }
 mantra-macros = "0.9"
 keyring = { path = "../../crates/foundation/keyring" }
 vera-client = "0.2.0"

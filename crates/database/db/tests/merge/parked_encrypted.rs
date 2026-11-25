@@ -3,6 +3,7 @@
 //! itself: a block whose history decrypts with local keys merges, one whose
 //! history needs a key held elsewhere stays parked, and no peer is asked.
 
+use crate::common::schema::parsed;
 use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -27,11 +28,14 @@ use query::mutator::DocMutator;
 use query::runner::DocFetcher;
 use rapidhash::fast::RandomState;
 use rapidhash::{HashSetExt, RapidHashSet};
-use schema::{CType, CollectionVersion, CrdtName, FieldDescription, FieldKind};
+use schema::{CType, CollectionVersion, CrdtName, FieldDescription};
 use storage::{RegolithStore, RegolithStoreOptions};
 
 const NAME: &str = "ctext";
-const COLLECTION_ID: &str = "col-notes";
+
+fn collection_id() -> String {
+    collection().collection_id
+}
 
 fn name() -> CrdtName {
     CrdtName::new(NAME).unwrap()
@@ -232,17 +236,10 @@ fn with_type() -> Crdts {
     Crdts::new([crdt::Registration::new(CustomText)]).unwrap()
 }
 
+const COLLECTION_SDL: &str = r#"type Notes { body: String @crdt(custom: "ctext") title: String }"#;
+
 fn collection() -> CollectionVersion {
-    CollectionVersion::new(
-        "Notes",
-        "v1",
-        COLLECTION_ID,
-        vec![
-            FieldDescription::new("1", "_docID", FieldKind::doc_id(), CType::LwwRegister),
-            FieldDescription::new("2", "body", FieldKind::string(), CType::Custom(name())),
-            FieldDescription::new("3", "title", FieldKind::string(), CType::LwwRegister),
-        ],
-    )
+    parsed(COLLECTION_SDL)
 }
 
 impl Node {
@@ -250,7 +247,9 @@ impl Node {
         let store = Arc::new(store);
         let db = if fresh {
             let db = Arc::new(DB::from_arc(store.clone()).unwrap());
-            db.create_collection(collection()).await.unwrap();
+            db.add_collection(&defra_core::RequestContext::ambient(), COLLECTION_SDL)
+                .await
+                .unwrap();
             db
         } else {
             Arc::new(DB::open_from_arc(store.clone()).await.unwrap())
@@ -342,7 +341,7 @@ impl Node {
                 bytes,
                 BlockMetadata::normal(
                     &doc_id.to_string(),
-                    COLLECTION_ID,
+                    &collection_id(),
                     "did:key:z6MkrParkedEncrypted",
                     Some("peer"),
                     false,

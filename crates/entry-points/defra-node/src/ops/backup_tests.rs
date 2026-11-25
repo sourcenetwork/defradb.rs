@@ -35,9 +35,12 @@ async fn users() -> Node {
         .build()
         .await
         .unwrap();
-    node.add_collection("type User { name: String }")
-        .await
-        .unwrap();
+    node.add_collection(
+        &defra_core::RequestContext::ambient(),
+        "type User { name: String }",
+    )
+    .await
+    .unwrap();
     node
 }
 

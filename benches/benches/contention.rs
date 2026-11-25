@@ -20,7 +20,6 @@ use std::time::Instant;
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use db::DB;
 use events::{Bus, ChannelBus, EventName, Message};
-use schema::{CollectionVersion, FieldDescription, FieldKind};
 use storage::RegolithStore;
 
 mod common;
@@ -33,21 +32,8 @@ const THREADS: [usize; 5] = [1, 2, 4, 8, 16];
 /// a hash map either way, so the count only decides the map's size.
 const COLLECTIONS: usize = 32;
 
-fn collection(index: usize) -> CollectionVersion {
-    CollectionVersion::new(
-        format!("Collection{index}"),
-        format!("collection-v{index}"),
-        format!("col-{index}"),
-        vec![
-            FieldDescription::new(
-                "1",
-                "_docID",
-                FieldKind::doc_id(),
-                schema::CType::LwwRegister,
-            ),
-            FieldDescription::new("2", "body", FieldKind::string(), schema::CType::LwwRegister),
-        ],
-    )
+fn collection_sdl(index: usize) -> String {
+    format!("type Collection{index} {{ body: String }}")
 }
 
 /// A database whose collection cache holds [`COLLECTIONS`] entries.
@@ -57,9 +43,12 @@ fn populated_db() -> Arc<DB<RegolithStore>> {
     let rt = common::owned_runtime();
     rt.block_on(async {
         for index in 0..COLLECTIONS {
-            db.create_collection(collection(index))
-                .await
-                .expect("the collection to register");
+            db.add_collection(
+                &defra_core::RequestContext::ambient(),
+                &collection_sdl(index),
+            )
+            .await
+            .expect("the collection to register");
         }
     });
     db

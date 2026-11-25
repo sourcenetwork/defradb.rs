@@ -19,3 +19,4 @@ pub use encrypted_index::EncryptedIndexListing;
 #[cfg(feature = "http")]
 pub(crate) use http_ops::HttpNodeOps;
 pub use index::IndexListing;
+pub(crate) use request::transaction_error;

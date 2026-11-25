@@ -47,9 +47,8 @@ libp2p = [
 system-keyring = ["keyring/system"]
 # Native host (event channel). Default-on.
 native = ["db/native", "defra-p2p-adapter?/native"]
-# Vera / vera.rs on-chain document ACP. Default-on; omit for local-only ACP.
+# Vera document ACP. Default-on; omit for local-only ACP.
 vera = ["dep:vera"]
-sourcehub = ["vera"]
 # Run a single-validator Vera node in this process for document ACP. Native
 # only. The Vera node builds a runtime of its own; see AGENTS.md.
 embedded-vera = ["vera", "native", "dep:vera-embedded"]

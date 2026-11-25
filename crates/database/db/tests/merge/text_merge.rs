@@ -17,10 +17,13 @@ use document::{DocID, Document, FieldOp, NormalValue};
 use query::mutator::DocMutator;
 use query::runner::DocFetcher;
 use rapidhash::RapidHashSet;
-use schema::{CType, CollectionVersion, FieldDescription, FieldKind};
 use storage::RegolithStore;
 
-const COLLECTION_ID: &str = "col-notes";
+fn collection_id() -> String {
+    crate::common::schema::parsed(NOTES_SDL).collection_id
+}
+
+const NOTES_SDL: &str = r#"type Notes { body: String @crdt(type: "text") title: String }"#;
 
 struct Node {
     db: Arc<DB<RegolithStore>>,
@@ -32,18 +35,9 @@ impl Node {
     async fn open() -> Self {
         let store = Arc::new(RegolithStore::in_memory().unwrap());
         let db = Arc::new(DB::from_arc(store.clone()).unwrap());
-        db.create_collection(CollectionVersion::new(
-            "Notes",
-            "v1",
-            COLLECTION_ID,
-            vec![
-                FieldDescription::new("1", "_docID", FieldKind::doc_id(), CType::LwwRegister),
-                FieldDescription::new("2", "body", FieldKind::string(), CType::Text),
-                FieldDescription::new("3", "title", FieldKind::string(), CType::LwwRegister),
-            ],
-        ))
-        .await
-        .unwrap();
+        db.add_collection(&defra_core::RequestContext::ambient(), NOTES_SDL)
+            .await
+            .unwrap();
         let blocks = Arc::new(DefraBlockstore::new(store, false));
         let handler = DbMergeHandler::new(db.clone(), blocks.clone());
         Self {
@@ -110,7 +104,7 @@ impl Node {
                 bytes,
                 BlockMetadata::normal(
                     &doc_id.to_string(),
-                    COLLECTION_ID,
+                    &collection_id(),
                     "did:key:z6MkrTextMerge",
                     Some("peer"),
                     false,
@@ -189,7 +183,7 @@ fn concurrent_edits_of_one_text_keep_both_on_every_node() {
                 &from_bob.1,
                 BlockMetadata::normal(
                     &doc_id.to_string(),
-                    COLLECTION_ID,
+                    &collection_id(),
                     "did:key:z6MkrTextMerge",
                     Some("peer"),
                     false,

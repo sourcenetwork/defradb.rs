@@ -29,8 +29,8 @@ impl Node {
             )
             .into());
         }
-        let created = self
-            .add_collection_as(
+        let created = Arc::clone(&self.schema_ops)
+            .add_collection(
                 &context
                     .clone()
                     .with_shared_transport_sentinel(selection.clone()),
@@ -54,26 +54,6 @@ impl Node {
             .into());
         }
         Ok(created)
-    }
-    /// Parse `sdl`, check it and create every collection it defines, or none,
-    /// in the transaction `context` carries if it carries one.
-    pub async fn add_collection_as(
-        &self,
-        context: &RequestContext,
-        sdl: &str,
-    ) -> Result<Vec<CollectionVersion>> {
-        let caller = self.admitted_caller(context)?;
-        if context.txn().is_some() {
-            return self
-                .runner()
-                .add_collection_as(&caller, sdl)
-                .await
-                .map_err(transaction_error);
-        }
-        let (ops, sdl) = (Arc::clone(&self.schema_ops), sdl.to_owned());
-        let context = caller;
-        self.on_pool(move || async move { ops.add_collection(&context, &sdl).await })
-            .await
     }
 
     /// Run `request` as the identity `context` names, in the transaction it
@@ -181,7 +161,7 @@ impl Node {
     /// runs under inside a transaction ([`Node::execute_request_in_txn`]): the
     /// node on a node that acts as its identity, no one on an identity-only
     /// node.
-    fn txn_owner(&self, context: &RequestContext) -> RequestContext {
+    pub(crate) fn txn_owner(&self, context: &RequestContext) -> RequestContext {
         match context.identity() {
             Some(_) => context.clone(),
             None => self.node_context().with_txn(context.txn()),
@@ -236,12 +216,12 @@ mod tests {
         let context = RequestContext::ambient()
             .with_dac_bypass(true)
             .with_batch_session(Some("session".to_owned()))
-            .with_txn(Some(TxnId(3)));
+            .with_txn(Some(TxnId { start: 0, route: 3 }));
 
         let request = request_in(&context, None, QueryRequest::new("{ User { name } }"));
 
         assert!(request.context.dac_bypass());
         assert_eq!(request.context.batch_session(), Some("session"));
-        assert_eq!(request.context.txn(), Some(TxnId(3)));
+        assert_eq!(request.context.txn(), Some(TxnId { start: 0, route: 3 }));
     }
 }

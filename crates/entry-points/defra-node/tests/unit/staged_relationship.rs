@@ -58,9 +58,8 @@ pub(super) struct Remote {
     /// Its newest verified state is past the freshness limit: every decision
     /// fails as the vera.rs light client's does.
     pub(super) stale: AtomicBool,
-    /// The provider gives the node nothing to check a delegation against,
-    /// as the Cosmos provider does: it is passed its caller's token as it
-    /// is.
+    /// The provider gives the node nothing to check a delegation against:
+    /// it is passed its caller's token as it is.
     pub(super) unverifying: AtomicBool,
     /// A relationship write does not answer until `released`, and then
     /// fails as not delivered.
@@ -573,10 +572,15 @@ pub(super) async fn start(
 }
 
 pub(super) async fn provision(node: &Node) {
-    let policy = node.add_dac_policy_as(&actor(OWNER), POLICY).await.unwrap();
-    node.add_collection(&format!(
-        "type Record @policy(id: \"{policy}\", resource: \"rows\") {{ name: String }}"
-    ))
+    let owner_context = actor(OWNER);
+    let policy = node
+        .add_dac_policy_as(&owner_context, POLICY)
+        .await
+        .unwrap();
+    node.add_collection(
+        &owner_context,
+        &format!("type Record @policy(id: \"{policy}\", resource: \"rows\") {{ name: String }}"),
+    )
     .await
     .unwrap();
 }
@@ -729,9 +733,7 @@ fn a_local_provider_applies_in_the_transaction_and_a_remote_one_stages() {
             .unwrap());
         // A caller stages in a transaction of its own through its context.
         let own = node.runner().begin_txn_as(&owner, false).await.unwrap();
-        let in_own = owner
-            .clone()
-            .with_txn(own.as_str().parse().ok().map(defra_core::TxnId));
+        let in_own = owner.clone().with_txn(own.as_str().parse().ok());
         assert!(matches!(
             node.change_dac_actor_relationship_as(&in_own, "Record", &doc, "reader", READER, false)
                 .await,

@@ -80,7 +80,7 @@ crates/
 ├── engine/
 │   ├── query/              # Query engine (GraphQL, BM25)
 │   ├── vera-embedded/      # Transports to a Vera node hosted in the same process
-│   ├── vera/               # Vera on-chain ACP client (Cosmos/EVM)
+│   ├── vera/               # Vera document ACP provider (native vera.rs)
 │   ├── vera-delegation/    # Vera delegations and the policy commands they digest, without the provider
 │   ├── acp/                # Access Control Policy
 │   ├── datastore/          # Data persistence abstractions
@@ -347,7 +347,7 @@ that is correct but slower is not done.
   inside `edge::compat`, the one place that tokio runtime is entered. The edge's owner thread builds it, so its workers
   and the blocking threads they start later run on the whole edge CPU set, in the ledger; async-compat starts none.
 - One exception to "no other runtime is built": the embedded Vera node. With the `embedded-vera` feature of `defra-node`
-  or of `cli` (`defradb start --document-acp-type verars-embedded`) a single-validator Vera node runs in the process
+  or of `cli` (`defradb start --document-acp-type vera-embedded`) a single-validator Vera node runs in the process
   on a runtime of its own, because Commonware 2026.10's runner always
   builds its own tokio runtime and takes none from outside. The exception is bounded. `vera-embedded`'s `HostedNode` is
   its only entry. It pins the node thread to the edge's CPUs (`Edge::pin_current_thread`) before that runtime is built,
@@ -412,8 +412,8 @@ that is correct but slower is not done.
 - Each TLC configuration finishes in under 60 seconds, and the whole suite in under 10 minutes. A slow model is
   shrunk, never given a longer timeout or more shards.
 - Lean proofs use no `sorry`, `admit` or new `axiom`.
-- A model names the Rust code it models (file and function), and is wired into `proofs/tla/run-all.sh` and
-  `proofs/src/registry.rs`. A model that no longer matches the code is a defect.
+- A model names the Rust code it models (file and function), and is run by `proofs/tla/run-all.sh`, which picks up
+  every `proofs/tla/*.cfg` and reads its module and verdict from the cfg's first line (`\* run-all: <Module>.tla <verdict>`), and has its family file under `proofs/src/registry/`. A model that no longer matches the code is a defect.
 - Proofs read ELI5, line by line, for someone who knows nothing about proofs or model checkers:
   - each file opens with a plain-words story: who acts, what can happen, what must never happen;
   - every line of a spec has a plain-words comment (`\*` in TLA+, `--` in Lean), and every definition, action and
@@ -476,7 +476,7 @@ cargo nextest run -p integration-test --test legacy -- acp::basic::rust_acp_basi
 ```
 
 Integration tests live in `tools/integration-test/tests/` and build into three
-test binaries: `testo`, `legacy` and `verars`. Each top-level module is an area, so a
+test binaries: `testo`, `legacy` and `vera`. Each top-level module is an area, so a
 test's name starts with its area (`query::simple::…`), and `just
 integration-suite <area>` runs one area in both binaries.
 
@@ -484,7 +484,7 @@ integration-suite <area>` runs one area in both binaries.
 |--------|--------|------|
 | `testo` | `tests/testo/` | testo scenarios (`TestCase` + actions), run under every client by `DEFRA_CLIENT` (in-process, rust-http, go-http, cli). Most are generated from the Go corpus by `scripts/generate_scenarios.sh`. Every new integration test goes here. Areas: `acp`, `backup`, `chunk`, `collection`, `collection_version`, `cursor`, `encryption`, `explain`, `index`, `issues`, `mutation`, `net`, `node`, `query`, `searchable_encryption`, `signature`, `subscription`, `txn`, `view`, plus the framework self-tests `matchers` and `export`. |
 | `legacy` | `tests/legacy/` | hand-written `TestCluster`/`DefraClient` tests, deleted as testo covers them. Areas below. |
-| `verars` | `tests/verars/` | vera.rs native ACP tests (compartments, native_worker, p2p_acp, policy_generations, policy_lifecycle, smoke, verified_records). Its own binary so the Native consumer workflow builds only these in release; run with `--test verars`. |
+| `vera` | `tests/vera/` | vera.rs native ACP tests (chunk_access, compartments, encryption_acp, iroh_dac, native_worker, p2p_acp, policy_generations, policy_lifecycle, smoke, verified_records). Its own binary so the Native consumer workflow builds only these in release; run with `--test vera`. |
 
 Legacy areas with submodules:
 
@@ -501,7 +501,6 @@ Legacy areas with submodules:
 | Encryption | `encryption::` | acp, block_verify, cross_runtime_p2p, index, key_management, se_cross_runtime |
 | Identity | `identity::` | keyring_dev_mode, keyring_lifecycle, lifecycle, negative, node_identity, types |
 | Backup | `backup::` | dev_mode, dump, purge, restore |
-| Vera | `vera::` | acp_tuning, chunk_access, compartments, encryption_acp, p2p_acp, policy_lifecycle, resilience, smoke |
 
 Single-purpose legacy areas, one file each:
 
@@ -598,7 +597,7 @@ Main moves only through the merge queue, and a person always puts a PR in it:
 nothing enqueues on its own. Agents never enqueue or merge unless asked to.
 
 ```
-open PR ──▶ lean CI ──▶ approval ──▶ "Merge when ready" ──▶ queue ──▶ main
+open PR ──▶ lean CI ──▶ review ────▶ "Merge when ready" ──▶ queue ──▶ main
                │                          ▲                   │
                └── ci:full (optional) ────┘     full CI, unless the tree
                                                 already passed ci:full
@@ -610,12 +609,19 @@ open PR ──▶ lean CI ──▶ approval ──▶ "Merge when ready" ──
   in-process testo. A PR in the middle of a stack runs only the fast checks.
 - **Labels add jobs:** `ci:full` runs everything, `ci:<job>` one queue job,
   `ci:macos` the macOS unit tests.
+- **Every run waits for a maintainer.** On a PR from this repository, CI starts
+  only once a member of `database-team` or `database-rust-team` approves its
+  `ci-approval` environment ("Review deployments" on the CI run). That one click
+  also starts CI (macOS), the quick benchmark and the native consumer, which
+  wait on it. Each push or label change starts a new CI run that waits again.
+  An agent that pushes to a PR tells its operator the run waits for that
+  approval. Main, the queue and forks (GitHub's fork approval) never wait here.
 - **One commit.** Its subject is the PR title, or the title followed by `(#N)` for
   this PR. The queue rebase-merges, so every commit lands on main as it is:
   squash before queueing. A PR with several commits is a batch (below).
-- **Review.** One approval and every thread resolved. A changes request from a
-  reviewer with write access fails `Merge gate` until it is approved or
-  dismissed. A review or a title edit reruns only `Merge gate`.
+- **Review.** No approval is required, but every thread must be resolved. A
+  changes request from a reviewer with write access fails `Merge gate` until it
+  is approved or dismissed. A review or a title edit reruns only `Merge gate`.
 - **`Queue conflicts`** (advisory) names the first queue entry this PR
   conflicts with, and says whether the queue would reuse a `ci:full` run on
   this head. It is neutral when part of the queue could not be checked. It
@@ -630,7 +636,7 @@ onto main, run `ci:full`, then queue while nothing is ahead of it. A PR keeps
 its own commit only, so it is never rebased onto a queue entry. The queue
 reads the passed tree only from a `Merge gate` job of a `ci.yml` pull request
 run, never from a check run another workflow or app created.
-A push to main runs only the jobs that save caches.
+Main runs CI once a night (07:00 UTC, or by hand with `gh workflow run ci.yml`): it saves the caches pull requests restore and runs the heavy suite.
 
 ### Batches
 
@@ -638,8 +644,8 @@ A batch is one PR carrying several PRs, so they share one full run.
 
 - One commit per carried PR, each its squash, with the subject `<title> (#N)`,
   where #N is an open PR with that title. `Merge gate` checks only the subjects.
-- The batch PR needs its own approval, like any PR. Its reviewer checks that
-  each commit carries #N's change and nothing else.
+- Whoever reviews the batch checks that each commit carries #N's change and
+  nothing else.
 - PRs that touch the same lines go in a batch as a stack: B is based on A, so
   B's diff holds the resolution.
 - Once the batch lands, close each carried PR with `Landed in #<batch>`.

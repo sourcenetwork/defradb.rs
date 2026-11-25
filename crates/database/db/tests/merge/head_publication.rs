@@ -67,11 +67,12 @@ fn a_replayed_create_after_a_local_update_stays_superseded() {
     workers::block_on(async {
         let store = Arc::new(RegolithStore::in_memory().unwrap());
         let db = Arc::new(DB::from_arc(store.clone()).unwrap());
-        for mut schema in query::parse_sdl("type Users { name: String age: Int }").unwrap() {
-            schema.version_id = "v1".to_string();
-            schema.collection_id = "col-users".to_string();
-            db.create_collection(schema).await.unwrap();
-        }
+        db.add_collection(
+            &defra_core::RequestContext::ambient(),
+            super::merge_handler_tests::USERS_SDL,
+        )
+        .await
+        .unwrap();
         let blocks = Arc::new(DefraBlockstore::new(store, false));
         let genesis = super::merge_handler_tests::build_merge_block(&blocks, "Alice", 30).await;
         merge(&db, &blocks, &genesis).await;
@@ -120,11 +121,12 @@ fn a_merged_head_replayed_after_a_restart_reads_as_applied() {
     workers::block_on(async {
         let store = Arc::new(RegolithStore::in_memory().unwrap());
         let db = Arc::new(DB::from_arc(store.clone()).unwrap());
-        for mut schema in query::parse_sdl("type Users { name: String age: Int }").unwrap() {
-            schema.version_id = "v1".to_string();
-            schema.collection_id = "col-users".to_string();
-            db.create_collection(schema).await.unwrap();
-        }
+        db.add_collection(
+            &defra_core::RequestContext::ambient(),
+            super::merge_handler_tests::USERS_SDL,
+        )
+        .await
+        .unwrap();
         let blocks = Arc::new(DefraBlockstore::new(store, true));
         let head = super::merge_handler_tests::build_merge_block(&blocks, "Alice", 30).await;
         let metadata = BlockMetadata::normal(

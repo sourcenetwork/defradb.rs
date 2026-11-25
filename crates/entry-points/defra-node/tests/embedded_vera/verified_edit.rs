@@ -11,8 +11,7 @@ use db::block::builder::{
 };
 use defra_core::RequestContext;
 use defra_node::{
-    EmbeddedVeraActor, Node, QueryRequest, QueryResponse, SignerCredential, VeraRsActor,
-    VeraRsConfig,
+    EmbeddedVeraActor, Node, QueryRequest, QueryResponse, SignerCredential, VeraActor, VeraConfig,
 };
 use serde_json::json;
 use vera::vera_rs::{caller_delegation, DelegationSigner, Ed25519Signer};
@@ -319,12 +318,12 @@ fn a_verified_update_is_refused_when_the_chain_cannot_be_reached() {
         let node = Node::builder()
             .enable_signing()
             .with_http(defra_node::HttpConfig::with_listener(listener).unwrap())
-            .with_vera_rs(VeraRsConfig {
+            .with_vera(VeraConfig {
                 rpc_address: format!("http://{rpc}"),
                 consensus_key: trust.consensus_key,
                 genesis_id: None,
                 deployment_id: trust.chain_id,
-                actor: VeraRsActor::Signer(Arc::clone(&actor)),
+                actor: VeraActor::Signer(Arc::clone(&actor)),
                 worker_dir: home.path().join("worker"),
                 keyring,
                 tuning: vera::AcpTuning::default(),
@@ -333,7 +332,7 @@ fn a_verified_update_is_refused_when_the_chain_cannot_be_reached() {
             .await
             .expect("node");
         let policy = super::seeded_policy(&node, chain_signer.did()).await;
-        node.add_collection(&users(&policy))
+        node.add_collection(&defra_core::RequestContext::ambient(), &users(&policy))
             .await
             .expect("collection");
         let audience = node

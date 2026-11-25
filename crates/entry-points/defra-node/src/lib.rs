@@ -79,7 +79,7 @@ mod signer_credential;
 mod start_peer_key;
 mod transaction;
 #[cfg(feature = "vera")]
-mod vera_rs_config;
+mod vera_config;
 pub mod version;
 
 use std::sync::Arc;
@@ -110,8 +110,6 @@ pub use config::HttpConfig;
 pub use config::Libp2pConfig;
 #[cfg(any(feature = "p2p", feature = "libp2p"))]
 pub use config::SyncTuning;
-#[cfg(feature = "vera")]
-pub use config::VeraConfig;
 pub use config::{
     CommitGateHandle, DocumentAcpConfig, IndexBuildGateHandle, NodeConfig, NodeSigning,
     Persistence, ReplicationFilterHandle, SigningKey, TransportConfig,
@@ -153,7 +151,7 @@ pub use telemetry::{ConflictMetricsSnapshot, RetryLayerSnapshot};
 pub use telemetry::{TelemetryConfig, TelemetryHandle};
 pub use transaction::NodeTransaction;
 #[cfg(feature = "vera")]
-pub use vera_rs_config::{VeraRsActor, VeraRsConfig};
+pub use vera_config::{VeraActor, VeraConfig};
 pub use zeroize::Zeroizing;
 
 use network::NodeEdge;
@@ -781,13 +779,26 @@ impl Node {
     }
 
     /// Add a schema from a GraphQL SDL type definition.
-    pub async fn add_collection(&self, sdl: &str) -> Result<()> {
+    pub async fn add_collection(
+        &self,
+        context: &RequestContext,
+        sdl: &str,
+    ) -> Result<Vec<CollectionVersion>> {
+        let context = self.admitted_caller(context)?;
+        if context.txn().is_some() {
+            return self
+                .runner()
+                .add_collection_as(&context, sdl)
+                .await
+                .map_err(ops::transaction_error);
+        }
+
         let (ops, sdl, context) = (
             Arc::clone(&self.schema_ops),
             sdl.to_owned(),
-            self.node_context(),
+            self.txn_owner(&context),
         );
-        self.on_pool(move || async move { ops.add_collection(&context, &sdl).await.map(|_| ()) })
+        self.on_pool(move || async move { ops.add_collection(&context, &sdl).await })
             .await
     }
 

@@ -6,7 +6,9 @@
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
-use crate::replica_support::{is_retry, key, Chain, Embedder, Receiver, Source, POLICY, RESOURCE};
+use crate::replica_support::{
+    is_retry, key, Chain, Embedder, Receiver, Source, PARENT_USERS_SDL, POLICY, RESOURCE,
+};
 use defra_core::merge::MergeOutcome;
 
 fn embedder(own: Vec<identity::Did>, nodes: Vec<identity::Did>) -> Arc<Embedder> {
@@ -418,9 +420,7 @@ fn signed_genesis_registers_only_under_a_parent_that_admits_its_signer() {
     workers::block_on(async {
         use zanzibar::ZanzibarStore as _;
 
-        let mut collection = crate::replica_support::users();
-        collection.policy.as_mut().unwrap().parent_field = Some("name".into());
-        let receiver = Receiver::open_collection(collection, |store| {
+        let receiver = Receiver::open_collection(PARENT_USERS_SDL, |store| {
             Arc::new(acp::ZanzibarDocumentACP::new(Arc::new(
                 acp::PersistentZanzibarStore::from_store(store),
             )))
@@ -435,7 +435,7 @@ fn signed_genesis_registers_only_under_a_parent_that_admits_its_signer() {
         provider.register_doc_object(&creator.did, POLICY, "nodes", "allowed").await.unwrap();
         provider.register_doc_object(&receiver.identity, POLICY, "nodes", "other").await.unwrap();
 
-        let source = Source::open().await;
+        let source = Source::with_sdl(PARENT_USERS_SDL).await;
         let (rejected, block) = source.create(&creator, "other").await;
         let error = receiver.try_receive(&source, &rejected, &block).await.unwrap_err();
         assert!(error.to_string().contains("parent requires 'owner'"), "{error}");
@@ -459,16 +459,14 @@ fn a_foreign_genesis_waits_for_parent_admission_before_its_creator_gets_write_ac
             .register_doc_object(&registrant, POLICY, "nodes", "allowed")
             .await
             .unwrap();
-        let mut collection = crate::replica_support::users();
-        collection.policy.as_mut().unwrap().parent_field = Some("name".into());
         let receiver = Receiver::open_collection(
-            collection,
+            PARENT_USERS_SDL,
             |_| provider,
             Some(embedder(vec![], vec![])),
             true,
         )
         .await;
-        let source = Source::open().await;
+        let source = Source::with_sdl(PARENT_USERS_SDL).await;
         let (rejected, block) = source.create(&creator, "missing").await;
         assert_eq!(
             receiver.receive(&source, &rejected, &block).await,

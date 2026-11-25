@@ -8,16 +8,47 @@ use db::CollectionSelector;
 use schema::CollectionVersion;
 use schema::QuerySource;
 
-fn view(name: &str, version_id: &str, collection_id: &str) -> CollectionVersion {
-    CollectionVersion::new(name, version_id, collection_id, vec![])
+/// The collection the views read.
+const ORDERS_SDL: &str = "type Orders { total: Int }";
+
+fn orders() -> CollectionVersion {
+    query::parse_sdl(ORDERS_SDL).unwrap().remove(0)
 }
 
-/// A collection version shaped like a real materialized view.
+/// A materialized view named `name` over `Orders`, built as `AddView` builds
+/// one: its SDL, then the query it reads.
 fn materialized(name: &str) -> CollectionVersion {
-    let mut version = view(name, "v1", "c1");
-    version.query = Some(QuerySource::new(serde_json::json!({})));
-    version.is_materialized = true;
-    version
+    let mut view = query::parse_sdl(&format!("type {name} {{ total: Int }}"))
+        .unwrap()
+        .remove(0);
+    let select = query::parse_query_with_limits(
+        "query { Orders { total } }",
+        None,
+        query::QueryLimits::default(),
+    )
+    .unwrap()
+    .remove(0);
+    view.query = Some(QuerySource::new(query::select_to_go_json(&select)));
+    view
+}
+
+/// A database holding `Orders` and the materialized view `name` over it.
+async fn with_view(name: &str) -> db::DB<storage::backends::RegolithStore> {
+    let db = db::DB::open(storage::backends::RegolithStore::in_memory().unwrap())
+        .await
+        .expect("open");
+    db.add_collection(&defra_core::RequestContext::ambient(), ORDERS_SDL)
+        .await
+        .expect("store the source");
+    db.create_view_collections_as(
+        &defra_core::RequestContext::ambient(),
+        vec![materialized(name)],
+        None,
+        None,
+    )
+    .await
+    .expect("store view");
+    db
 }
 
 /// Eligibility is separate from selection: a version has to be a materialized,
@@ -26,7 +57,7 @@ fn materialized(name: &str) -> CollectionVersion {
 fn only_materialized_views_are_refreshable() {
     assert!(is_refreshable_view(&materialized("OrdersView")));
     assert!(
-        !is_refreshable_view(&view("Orders", "v1", "c1")),
+        !is_refreshable_view(&orders()),
         "a plain collection is not a view"
     );
 
@@ -84,12 +115,7 @@ fn an_unknown_version_id_is_an_error_not_a_silent_success() {
 #[test]
 fn a_name_precedes_an_unknown_version_id() {
     workers::block_on(async {
-        let db = db::DB::open(storage::backends::RegolithStore::in_memory().unwrap())
-            .await
-            .expect("open");
-        db.create_collection(materialized("OrdersView"))
-            .await
-            .expect("store view");
+        let db = with_view("OrdersView").await;
 
         db.refresh_views(CollectionSelector {
             names: Some(vec!["OrdersView".to_string()]),
@@ -145,14 +171,15 @@ fn get_inactive_is_allowed_when_no_inactive_view_is_selected() {
 #[test]
 fn refreshing_a_selected_inactive_view_is_refused() {
     workers::block_on(async {
-        let db = db::DB::open(storage::backends::RegolithStore::in_memory().unwrap())
-            .await
-            .expect("open");
-        let mut inactive_view = materialized("InactiveView");
-        inactive_view.is_active = false;
-        db.create_collection(inactive_view)
-            .await
-            .expect("store inactive view");
+        // A patch makes a second version active and leaves the first inactive.
+        let db = with_view("InactiveView").await;
+        db.patch_collection(
+            &defra_core::RequestContext::default(),
+            r#"[{"op":"add","path":"/InactiveView/Fields/-","value":{"Name":"note","Kind":"String"}}]"#,
+            None,
+        )
+        .await
+        .expect("patch the view");
 
         let error = db
             .refresh_views(CollectionSelector {

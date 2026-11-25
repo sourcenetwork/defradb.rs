@@ -9,7 +9,6 @@
 use std::sync::Arc;
 
 use db::DB;
-use schema::{CollectionVersion, FieldDescription, FieldKind};
 use storage::{RegolithStore, Store};
 
 /// One contender per attempt the default budget allows: a change loses at
@@ -18,27 +17,11 @@ const CONTENDERS: usize = 6;
 const ROUNDS: usize = 20;
 const DEADLINE: std::time::Duration = std::time::Duration::from_secs(60);
 
-fn users(round: usize) -> CollectionVersion {
-    let mut fields = vec![FieldDescription::new(
-        "1",
-        "_docID",
-        FieldKind::doc_id(),
-        schema::CType::LwwRegister,
-    )];
-    for field in 0..CONTENDERS {
-        fields.push(FieldDescription::new(
-            (2 + field).to_string(),
-            format!("f{field}"),
-            FieldKind::string(),
-            schema::CType::LwwRegister,
-        ));
-    }
-    CollectionVersion::new(
-        format!("User{round}"),
-        format!("user{round}-v1"),
-        format!("col-user{round}"),
-        fields,
-    )
+fn users_sdl(round: usize) -> String {
+    let fields: String = (0..CONTENDERS)
+        .map(|field| format!(" f{field}: String"))
+        .collect();
+    format!("type User{round} {{{fields} }}")
 }
 
 fn put_conflicts(store: &RegolithStore) -> u64 {
@@ -71,9 +54,10 @@ fn concurrent_encrypted_index_adds_on_one_collection_all_land() {
             let expected: Vec<String> = (0..CONTENDERS).map(|field| format!("f{field}")).collect();
 
             for round in 0..ROUNDS {
-                let collection = users(round);
-                let name = collection.name.clone();
-                db.create_collection(collection).await.unwrap();
+                let name = format!("User{round}");
+                db.add_collection(&defra_core::RequestContext::ambient(), &users_sdl(round))
+                    .await
+                    .unwrap();
 
                 let start = Arc::new(regolith::sync::Barrier::new(CONTENDERS));
                 let mut tasks = Vec::new();
@@ -124,9 +108,10 @@ fn an_encrypted_index_add_out_of_retries_fails_and_changes_nothing() {
             let db = Arc::new(DB::from_arc_with_options(store, options).unwrap());
 
             for round in 0..ROUNDS {
-                let collection = users(round);
-                let name = collection.name.clone();
-                db.create_collection(collection).await.unwrap();
+                let name = format!("User{round}");
+                db.add_collection(&defra_core::RequestContext::ambient(), &users_sdl(round))
+                    .await
+                    .unwrap();
 
                 let start = Arc::new(regolith::sync::Barrier::new(CONTENDERS));
                 let mut tasks = Vec::new();

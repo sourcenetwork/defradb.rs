@@ -28,10 +28,11 @@ pub struct TxBeginQuery {
 }
 
 /// Response from beginning a transaction (Go-compatible).
-/// Uses numeric `id` field to match Go DefraDB's `CreateTxResponse`.
+/// Uses Go's numeric `id`; the start token is packed into its high bits and
+/// the owner route into its low bits.
 #[derive(Debug, Clone, Serialize)]
 pub struct TxBeginResponse {
-    /// Transaction ID as numeric value (Go uses uint64).
+    /// Transaction ID as a numeric wire ID.
     pub id: u64,
 }
 
@@ -57,13 +58,15 @@ pub async fn tx_begin(
     Ok(
         match state.executor.begin_txn_as(&context, query.read_only).await {
             Ok(handle) => {
-                // Parse handle to u64 to match Go's numeric ID format
-                let id: u64 = handle.to_string().parse().unwrap_or(0);
+                let id = handle.to_string();
                 tracing::info!(
                     txn_id = id,
                     readonly = query.read_only,
                     "Transaction started"
                 );
+                let id = id
+                    .parse()
+                    .map_err(|_| HttpError::BadRequest("invalid transaction id".to_string()))?;
                 (StatusCode::OK, Json(TxBeginResponse { id })).into_response()
             }
             Err(e) => {
@@ -86,16 +89,11 @@ pub async fn tx_commit(
     CallerContext(context): CallerContext,
     Path(params): Path<TxPathParam>,
 ) -> Result<impl IntoResponse, HttpError> {
-    // Parse transaction ID as u64 (Go format)
-    let _txn_id: u64 = params
+    let _txn_id: defra_core::TxnId = params
         .id
         .parse()
         .map_err(|_| HttpError::BadRequest("invalid transaction id".to_string()))?;
-
-    let handle = params
-        .id
-        .parse()
-        .map_err(|_| HttpError::BadRequest("invalid transaction id".to_string()))?;
+    let handle = query::TransactionHandle::new(params.id);
 
     match state.executor.commit_txn_as(&context, &handle).await {
         Ok(()) => {
@@ -148,16 +146,11 @@ pub async fn tx_discard(
     CallerContext(context): CallerContext,
     Path(params): Path<TxPathParam>,
 ) -> Result<impl IntoResponse, HttpError> {
-    // Parse transaction ID as u64 (Go format)
-    let _txn_id: u64 = params
+    let _txn_id: defra_core::TxnId = params
         .id
         .parse()
         .map_err(|_| HttpError::BadRequest("invalid transaction id".to_string()))?;
-
-    let handle = params
-        .id
-        .parse()
-        .map_err(|_| HttpError::BadRequest("invalid transaction id".to_string()))?;
+    let handle = query::TransactionHandle::new(params.id);
 
     match state.executor.discard_txn_as(&context, &handle).await {
         Ok(()) => {
@@ -170,6 +163,46 @@ pub async fn tx_discard(
             Ok(HttpError::from(e).into_response())
         }
     }
+}
+
+/// Query a transaction's outcome (Rust-native).
+///
+/// GET /api/v0/tx/{id}
+///
+/// Only the caller that owns the transaction gets a state. Every other caller
+/// gets the same unknown answer as an ID that names nothing, so the route does
+/// not disclose another client's transaction.
+pub async fn tx_outcome(
+    State(state): State<AppState>,
+    CallerContext(context): CallerContext,
+    Path(params): Path<TxPathParam>,
+) -> Result<impl IntoResponse, HttpError> {
+    let _txn_id: defra_core::TxnId = params
+        .id
+        .parse()
+        .map_err(|_| HttpError::BadRequest("invalid transaction id".to_string()))?;
+    let handle = query::TransactionHandle::new(params.id);
+
+    match state.executor.txn_outcome_as(&context, &handle).await {
+        Ok(outcome) => Ok((
+            StatusCode::OK,
+            Json(TxOutcomeResponse {
+                outcome: outcome.as_str(),
+            }),
+        )
+            .into_response()),
+        Err(TransactionError::NotFound(_)) => Ok((
+            StatusCode::OK,
+            Json(TxOutcomeResponse { outcome: "unknown" }),
+        )
+            .into_response()),
+        Err(error) => Err(HttpError::from(error)),
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct TxOutcomeResponse {
+    outcome: &'static str,
 }
 
 #[cfg(test)]
