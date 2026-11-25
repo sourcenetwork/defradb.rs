@@ -11,6 +11,12 @@ cd "$(dirname "${BASH_SOURCE[0]}")"
 # event to the settled rest (depth = events + 1), and DEADLOCK:<l> stops with
 # event l next (past the end when l = events + 1).
 RUNS=(
+  "MC_PeerIdentityCache_Green.cfg PeerIdentityCache.tla GREEN"
+  "MC_PeerIdentityCache_Green_One.cfg PeerIdentityCache.tla GREEN"
+  "MC_PeerIdentityCache_Green_Three.cfg PeerIdentityCache.tla GREEN"
+  "MC_PeerIdentityCache_Red_NoEvict.cfg PeerIdentityCache.tla RED" # a popped peer stays cached with no place (SettledMatch)
+  "MC_PeerIdentityCache_Red_RefreshEnqueues.cfg PeerIdentityCache.tla RED" # a refresh takes a second place (NoDoublePlace)
+  "MC_PeerIdentityCache_Red_EnqueueFirst.cfg PeerIdentityCache.tla RED" # a place taken before the map write strands the peer (SettledMatch)
   "MC_RemovedLensOrigin_Green.cfg RemovedLensOrigin.tla GREEN"
   "MC_RemovedLensOrigin_Red_Inverse.cfg RemovedLensOrigin.tla RED" # an inverse must not alter a native document
   "MC_OfflineReconnect_Green.cfg OfflineReconnect.tla GREEN"

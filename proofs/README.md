@@ -92,6 +92,7 @@ section is the **diff**: what is proven vs. the accepted gap.
 | Collection schema-version OCC | TLA+ | db |
 | Schema publication completion | TLA+ / Lean | storage, db |
 | Peer connection observation | TLA+ / Lean | p2p |
+| Iroh peer identity cache | TLA+ / Lean | p2p |
 | HTTP router composition | TLA+ / Lean | http, defra-node |
 | Explicit transaction statement atomicity | TLA+ | query, db, storage |
 | One-to-many child paging | TLA+ | query; a child limit/offset applies per parent so a later parent keeps its page; `crates/engine/query/src/plan/type_join/type_join_many/children.rs` |

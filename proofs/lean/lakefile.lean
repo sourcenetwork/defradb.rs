@@ -184,6 +184,9 @@ lean_lib SchemaPublication where
 lean_lib PeerConnection where
 
 @[default_target]
+lean_lib PeerIdentityCache where
+
+@[default_target]
 lean_lib ByteBudget where
 
 @[default_target]
