@@ -484,13 +484,8 @@ impl<S: Store + 'static> DocMutator for BatchMutator<S> {
         self.validate_collection_for_write(&collection).await?;
         ensure_collection_is_active(&self.db, collection_name, &collection)?;
         crate::chunk::user_writes::ensure_user_writable(collection.schema())?;
-        crate::chunk::user_writes::refuse_list_writes(collection.schema(), &doc, None)?;
-        let chunk_plans = crate::chunk::sync::set_lists(
-            collection.schema(),
-            &mut doc,
-            None,
-            context.encryption(),
-        )?;
+        let chunk_plans =
+            crate::chunk::sync::plan_chunks(collection.schema(), &doc, None, context.encryption())?;
 
         // No per-doc write guard for creates: the DocID is derived from the
         // genesis block inside the txn; the mapping duplicate check is the gate.
@@ -607,15 +602,10 @@ impl<S: Store + 'static> DocMutator for BatchMutator<S> {
         self.validate_collection_for_write(&collection).await?;
         ensure_collection_is_active(&self.db, collection_name, &collection)?;
         crate::chunk::user_writes::ensure_user_writable(collection.schema())?;
-        crate::chunk::user_writes::refuse_list_writes(
+        let chunk_plans = crate::chunk::sync::plan_chunks(
             collection.schema(),
             &doc,
             Some(&modified_fields),
-        )?;
-        let chunk_plans = crate::chunk::sync::set_lists(
-            collection.schema(),
-            &mut doc,
-            Some(&mut modified_fields),
             context.encryption(),
         )?;
         let prepared_inputs = self.prepared_inputs.clone().unwrap_or_default();

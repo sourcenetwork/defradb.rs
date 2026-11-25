@@ -6,7 +6,7 @@ use serde_json::json;
 
 use super::support::{add_article_collection, CHUNKS};
 
-const CHUNK_VERSION_ID: &str = "bafyreihg47y5zfpyz5ahd64nquof27fvgtunfqxdv7xe23yhrafgba3qzm";
+const CHUNK_VERSION_ID: &str = "bafyreibpgvywgzndkzgv6m6wmp6xejpawons2t3zhdvsbpzqvew7crllb4";
 
 #[test]
 #[mantra_macros::req_test("defra.chunk.declare.definition")]
@@ -52,11 +52,11 @@ fn the_chunk_collection_is_listed_with_its_source() {
                     },
                     {
                         "DefaultValue": null,
-                        "FieldID": "bafyreid3fvmlqzz4n2ssl5ru7n4h7f3vdnbve754w452dd7lb3ioilqzoy",
+                        "FieldID": "bafyreib6oucpf7eocewyapvlmve7djiqqxfabjwsvmux6j7oto7itl7fte",
                         "IsPrimary": true,
                         "Kind": {
                             "Array": false,
-                            "CollectionID": "bafyreicfdegvlbsluy3ikbeqvbynurynf7mbhs6llmbmofdwjjvkyfjxo4",
+                            "CollectionID": "bafyreihuaptbapnrevnhrab6xdhbgmwki4njgzcxtjmi5hvgkpgl52hfae",
                         },
                         "Name": "source",
                         "RelationName": "article_article__body_chunk",

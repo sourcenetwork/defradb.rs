@@ -8,6 +8,8 @@ use std::time::Duration;
 use crate::assemble::check_access_hooks;
 use crate::assemble::{assemble, Extras};
 use crate::config::{NodeConfig, NodeSigning, Persistence, SigningKey, TransportConfig};
+#[cfg(feature = "vera")]
+use crate::DocumentAcpConfig;
 #[cfg(feature = "http")]
 use crate::HttpConfig;
 use crate::Node;
@@ -15,8 +17,6 @@ use crate::Node;
 use crate::TelemetryHandle;
 #[cfg(feature = "p2p")]
 use crate::{AccessHooks, P2PConfig};
-#[cfg(feature = "vera")]
-use crate::{DocumentAcpConfig, VeraConfig};
 use crate::{Error, QueryLimits, Result};
 
 /// Selects which persistent storage backend to use when `data_path` is set.
@@ -242,37 +242,18 @@ impl NodeBuilder {
         self
     }
 
-    /// Configure the node to use Vera-backed document ACP.
-    ///
-    /// Requires the `vera` feature (on by default).
-    #[cfg(feature = "vera")]
-    pub fn with_vera(mut self, config: VeraConfig) -> Self {
-        self.config.document_acp = DocumentAcpConfig::Vera(config);
-        self
-    }
-
-    /// Configure Vera ACP when LCD and gRPC use distinct endpoints.
-    #[cfg(feature = "vera")]
-    pub fn with_vera_lcd(mut self, config: VeraConfig, lcd_address: impl Into<String>) -> Self {
-        self.config.document_acp = DocumentAcpConfig::VeraWithLcd {
-            config,
-            lcd_address: lcd_address.into(),
-        };
-        self
-    }
-
     /// Configure the node to use document ACP backed by a vera.rs node.
     ///
     /// Requires the `vera` feature (on by default).
     #[cfg(feature = "vera")]
-    pub fn with_vera_rs(mut self, config: crate::VeraRsConfig) -> Self {
-        self.config.document_acp = DocumentAcpConfig::VeraRs(config);
+    pub fn with_vera(mut self, config: crate::VeraConfig) -> Self {
+        self.config.document_acp = DocumentAcpConfig::Vera(config);
         self
     }
 
     /// Use a document ACP provider the host built, for example one over a
     /// Vera node it runs itself. The node wires it as it wires
-    /// [`with_vera_rs`](Self::with_vera_rs): verified access decisions without
+    /// [`with_vera`](Self::with_vera): verified access decisions without
     /// a cache, remote policies mirrored locally, owed registrations gated.
     ///
     /// Requires the `vera` feature (on by default).

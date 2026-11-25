@@ -35,14 +35,8 @@ pub enum ChunkSettingsError {
     #[error("@chunk is set twice. Field: {field}")]
     DuplicateField { field: String },
 
-    #[error("@chunk is not allowed on a field whose name starts with \"_\". Field: {field}")]
-    UnderscoreField { field: String },
-
     #[error("@chunk is only allowed on a last-writer-wins String field. Field: {field}")]
     NotLwwString { field: String },
-
-    #[error("@chunk needs the list field {list}. Field: {field}")]
-    MissingListField { field: String, list: String },
 
     #[error("@chunk is not allowed in a view. Field: {field}")]
     InView { field: String },
@@ -190,11 +184,6 @@ pub fn chunk_settings_errors(version: &CollectionVersion) -> Vec<ChunkSettingsEr
                 field: field.clone(),
             });
         }
-        if chunked.field_name.starts_with('_') {
-            errors.push(ChunkSettingsError::UnderscoreField {
-                field: field.clone(),
-            });
-        }
         let is_lww_string = version
             .field_by_name(&chunked.field_name)
             .is_some_and(|text| {
@@ -204,13 +193,6 @@ pub fn chunk_settings_errors(version: &CollectionVersion) -> Vec<ChunkSettingsEr
         if !is_lww_string {
             errors.push(ChunkSettingsError::NotLwwString {
                 field: field.clone(),
-            });
-        }
-        let list = chunked.list_field();
-        if version.field_by_name(&list).is_none() {
-            errors.push(ChunkSettingsError::MissingListField {
-                field: field.clone(),
-                list,
             });
         }
         if is_view {

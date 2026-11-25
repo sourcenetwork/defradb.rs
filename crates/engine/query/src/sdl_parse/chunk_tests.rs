@@ -46,13 +46,11 @@ fn chunk_collection_has_source_text_and_hash() {
 }
 
 #[test]
-fn parent_gets_the_list_field_and_settings() {
+fn parent_gets_the_settings_and_no_generated_field() {
     let collections = parse_sdl(SDL).unwrap();
     let article = &collections[0];
-    assert_eq!(
-        article.field_by_name("_body_chunks").unwrap().kind,
-        FieldKind::string_array()
-    );
+    let names: Vec<&str> = article.fields.iter().map(|f| f.name.as_str()).collect();
+    assert_eq!(names, vec!["_docID", "body", "title"]);
     let chunked = article.chunked_field("body").unwrap();
     assert_eq!(chunked.collection(&article.name), "Article__body_chunk");
     assert_eq!((chunked.max_chars, chunked.overlap), (1600, 0));
@@ -134,11 +132,6 @@ fn chunk_refuses_names_that_are_taken() {
         .unwrap_err()
         .to_string()
         .contains("already taken"));
-    let taken_field = "type A { body: String @chunk _body_chunks: [String] }";
-    assert!(parse_sdl(taken_field)
-        .unwrap_err()
-        .to_string()
-        .contains("already taken"));
 }
 
 #[test]
@@ -176,11 +169,9 @@ fn refusal(sdl: &str) -> String {
 }
 
 #[test]
-fn chunk_refuses_a_field_whose_list_name_would_start_with_two_underscores() {
-    assert_eq!(
-        refusal("type R { _x: String @chunk }"),
-        "parse error: @chunk is not allowed on a field whose name starts with \"_\", because its list field __x_chunks would start with \"__\". Field: R._x"
-    );
+fn a_field_whose_name_starts_with_an_underscore_can_be_chunked() {
+    let parsed = parse_sdl("type R { _x: String @chunk }").unwrap();
+    assert!(parsed.iter().any(|version| version.name == "R___x_chunk"));
 }
 
 #[test]
@@ -244,8 +235,8 @@ fn chunk_ids_match_the_ones_made_before_the_splitter_version() {
     assert_eq!(
         ids,
         vec![
-            pinned("bafyreig4d3ybunzta5bmevpw3gpzw3tlwrt7i3zaavl5cgxtbp2thn6pbi"),
-            pinned("bafyreibq7m5mock2yfemrorb7lwdxexm6v453xjy5vn6g3hdsmfxwggd3a"),
+            pinned("bafyreibhwcm7e5z3dnkm4bdln3brw2yzepkcuedo2gm5tndai37xxshypu"),
+            pinned("bafyreiexmt3lfq2dpckd4dllhurkfuvdj6t3hn4du647bb6xolokfox7ea"),
         ]
     );
 }
