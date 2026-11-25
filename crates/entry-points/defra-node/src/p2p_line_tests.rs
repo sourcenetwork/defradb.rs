@@ -60,7 +60,9 @@ async fn node(rebroadcast_on_merge: bool, subscribe: bool) -> Node {
         .build()
         .await
         .expect("build node");
-    node.add_collection(&sdl()).await.expect("add collection");
+    node.add_collection(&defra_core::RequestContext::ambient(), &sdl())
+        .await
+        .expect("add collection");
     if subscribe {
         node.p2p()
             .expect("p2p")

@@ -1,4 +1,7 @@
-use crate::common::{fixture::make_test_db_with_bus, schema::test_collection};
+use crate::common::{
+    fixture::make_test_db_with_bus,
+    schema::{test_collection, TEST_COLLECTION_SDL},
+};
 use db::AutoCommitMutator;
 use defra_core::{batch_signing, Block};
 use document::Document;
@@ -8,7 +11,9 @@ use query::mutator::DocMutator;
 fn create_many_collects_field_and_composite_cids_for_both_documents() {
     workers::block_on(async {
         let (db, _) = make_test_db_with_bus().await;
-        db.create_collection(test_collection()).await.unwrap();
+        db.add_collection(&defra_core::RequestContext::ambient(), TEST_COLLECTION_SDL)
+            .await
+            .unwrap();
         let session = "create-many-field-and-composite-cids";
         batch_signing::batch_start(session);
         batch_signing::set_batch_session_key(Some(session.to_string()));
@@ -56,7 +61,9 @@ where
 fn create_many_discard_collects_no_cids() {
     workers::block_on(async {
         let (db, _) = make_test_db_with_bus().await;
-        db.create_collection(test_collection()).await.unwrap();
+        db.add_collection(&defra_core::RequestContext::ambient(), TEST_COLLECTION_SDL)
+            .await
+            .unwrap();
         let mutator = AutoCommitMutator::new(db);
         let collected = collect_failed_write("create-many-discard", || async {
             mutator
@@ -80,7 +87,9 @@ fn create_many_discard_collects_no_cids() {
 fn create_discard_collects_no_cids() {
     workers::block_on(async {
         let (db, _) = make_test_db_with_bus().await;
-        db.create_collection(test_collection()).await.unwrap();
+        db.add_collection(&defra_core::RequestContext::ambient(), TEST_COLLECTION_SDL)
+            .await
+            .unwrap();
         let mutator = AutoCommitMutator::new(db);
         let doc = || Document::from_json_str(r#"{"x":1}"#, test_collection()).unwrap();
         mutator.create("TestDoc", doc()).await.unwrap();

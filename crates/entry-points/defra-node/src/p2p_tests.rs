@@ -1277,11 +1277,17 @@ fn live_replicator_pushes_post_config_writes() {
                 .expect("build node1");
 
             node0
-                .add_collection("type User { name: String age: Int }")
+                .add_collection(
+                    &defra_core::RequestContext::ambient(),
+                    "type User { name: String age: Int }",
+                )
                 .await
                 .expect("schema on node0");
             node1
-                .add_collection("type User { name: String age: Int }")
+                .add_collection(
+                    &defra_core::RequestContext::ambient(),
+                    "type User { name: String age: Int }",
+                )
                 .await
                 .expect("schema on node1");
 
@@ -1355,9 +1361,12 @@ fn p2p_document_subscriptions_survive_restart_and_delete() {
                 let node =
                     build_persistent_p2p_node(data_path.clone(), secret_key_path.clone()).await;
 
-                node.add_collection("type Note { text: String }")
-                    .await
-                    .expect("add schema");
+                node.add_collection(
+                    &defra_core::RequestContext::ambient(),
+                    "type Note { text: String }",
+                )
+                .await
+                .expect("add schema");
                 let response = node
                     .execute(r#"mutation { add_Note(input: {text: "persist me"}) { _docID } }"#)
                     .await;
@@ -1462,11 +1471,17 @@ fn p2p_replicator_survives_embedded_restart() {
                     build_persistent_p2p_node(data_path1.clone(), secret_key_path1.clone()).await;
 
                 node0
-                    .add_collection("type User { name: String age: Int }")
+                    .add_collection(
+                        &defra_core::RequestContext::ambient(),
+                        "type User { name: String age: Int }",
+                    )
                     .await
                     .expect("schema on node0");
                 node1
-                    .add_collection("type User { name: String age: Int }")
+                    .add_collection(
+                        &defra_core::RequestContext::ambient(),
+                        "type User { name: String age: Int }",
+                    )
                     .await
                     .expect("schema on node1");
 
@@ -1544,11 +1559,11 @@ fn filtered_p2p_replicator_metadata_survives_embedded_restart() {
         let node1 = build_persistent_p2p_node(data_path1.clone(), secret_key_path1.clone()).await;
 
         node0
-            .add_collection(AGENT_SCHEMA)
+            .add_collection(&defra_core::RequestContext::ambient(), AGENT_SCHEMA)
             .await
             .expect("schema on node0");
         node1
-            .add_collection(AGENT_SCHEMA)
+            .add_collection(&defra_core::RequestContext::ambient(), AGENT_SCHEMA)
             .await
             .expect("schema on node1");
 
@@ -1656,11 +1671,11 @@ fn live_replicator_same_session_followup_turn_converges() {
         .expect("build node1");
 
     node0
-        .add_collection(SESSION_TURN_SDL)
+        .add_collection(&defra_core::RequestContext::ambient(), SESSION_TURN_SDL)
         .await
         .expect("schema on node0");
     node1
-        .add_collection(SESSION_TURN_SDL)
+        .add_collection(&defra_core::RequestContext::ambient(), SESSION_TURN_SDL)
         .await
         .expect("schema on node1");
 
@@ -1782,11 +1797,11 @@ fn live_replicator_filtered_push_respects_predicate() {
         .expect("build receiver");
 
     sender
-        .add_collection(AGENT_SCHEMA)
+        .add_collection(&defra_core::RequestContext::ambient(), AGENT_SCHEMA)
         .await
         .expect("schema on sender");
     receiver
-        .add_collection(AGENT_SCHEMA)
+        .add_collection(&defra_core::RequestContext::ambient(), AGENT_SCHEMA)
         .await
         .expect("schema on receiver");
 
@@ -1853,11 +1868,11 @@ fn filtered_backfill_via_transport_pusher_respects_predicate() {
         .expect("build receiver");
 
     sender
-        .add_collection(AGENT_SCHEMA)
+        .add_collection(&defra_core::RequestContext::ambient(), AGENT_SCHEMA)
         .await
         .expect("schema on sender");
     receiver
-        .add_collection(AGENT_SCHEMA)
+        .add_collection(&defra_core::RequestContext::ambient(), AGENT_SCHEMA)
         .await
         .expect("schema on receiver");
 
@@ -1999,8 +2014,8 @@ fn branchable_sync_pulls_collection_from_embedded_peer() {
         .expect("build joiner");
 
     const SCHEMA: &str = "type BranchNote @branchable { name: String age: Int }";
-    source.add_collection(SCHEMA).await.expect("schema on source");
-    joiner.add_collection(SCHEMA).await.expect("schema on joiner");
+    source.add_collection(&defra_core::RequestContext::ambient(), SCHEMA).await.expect("schema on source");
+    joiner.add_collection(&defra_core::RequestContext::ambient(), SCHEMA).await.expect("schema on joiner");
 
     // Documents exist before the joiner ever connects: this is the
     // late-joiner catch-up path, not live replication.
@@ -2093,8 +2108,8 @@ fn encrypted_create_replicates_plaintext_to_replicator() {
         .expect("build replica");
 
     const SCHEMA: &str = "type SecretNote { name: String age: Int }";
-    writer.add_collection(SCHEMA).await.expect("schema on writer");
-    replica.add_collection(SCHEMA).await.expect("schema on replica");
+    writer.add_collection(&defra_core::RequestContext::ambient(), SCHEMA).await.expect("schema on writer");
+    replica.add_collection(&defra_core::RequestContext::ambient(), SCHEMA).await.expect("schema on replica");
 
     install_one_way_replicator(&writer, &replica, &["SecretNote"]).await;
 
@@ -2409,7 +2424,7 @@ fn shutdown_refuses_or_marks_every_write_admitted_around_it() {
                 .await
                 .expect("build receiver");
             for node in [&*sender, &receiver] {
-                node.add_collection("type Note { text: String }")
+                node.add_collection(&defra_core::RequestContext::ambient(), "type Note { text: String }")
                     .await
                     .expect("add schema");
             }
@@ -2579,8 +2594,8 @@ fn accepted_replicated_document_runs_transactional_projector() {
         let policy1 = node1.add_dac_policy_with_counter_as(&context1, yaml, 1).await.unwrap();
         assert_eq!(policy, policy1);
         let schema = format!("type ProjectedPeerDoc @policy(id: \"{policy}\", resource: \"records\") {{ name: String, age: Int }}");
-        node0.add_collection_as(&context0, &schema).await.unwrap();
-        node1.add_collection_as(&context1, &schema).await.unwrap();
+        node0.add_collection(&context0, &schema).await.unwrap();
+        node1.add_collection(&context1, &schema).await.unwrap();
         let addr0 = wait_for_listen_addr(&node0).await;
         let addr1 = wait_for_listen_addr(&node1).await;
         node0.connect_as(&context0, std::slice::from_ref(&addr1)).await.unwrap();
@@ -2762,8 +2777,8 @@ fn remote_key_arrival_wakes_a_parked_encrypted_merge() {
                 .await
                 .unwrap();
             const SCHEMA: &str = "type SecretNote { name: String age: Int }";
-            writer.add_collection(SCHEMA).await.unwrap();
-            replica.add_collection(SCHEMA).await.unwrap();
+            writer.add_collection(&defra_core::RequestContext::ambient(), SCHEMA).await.unwrap();
+            replica.add_collection(&defra_core::RequestContext::ambient(), SCHEMA).await.unwrap();
             install_one_way_replicator(&writer, &replica, &["SecretNote"]).await;
             let mut merges = replica.subscribe(&[crate::EventName::MergeComplete]);
             let response = writer

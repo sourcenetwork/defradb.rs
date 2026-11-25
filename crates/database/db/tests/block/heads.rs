@@ -5,6 +5,7 @@
 //! and `proofs/lean/HeadSet/Core.lean`: a head is live exactly when nothing
 //! supersedes it, and two writers never conflict.
 
+use crate::common::schema::parsed;
 use cid::Cid;
 use datastore::{NamespaceView, SharedTxn};
 use db::block::heads::{collection_set, live_collection_heads, publish_collection_block};
@@ -216,27 +217,11 @@ fn appends_through_the_db_store_only_the_live_head() {
         const APPENDS: usize = 64;
         let store = Arc::new(RegolithStore::in_memory().unwrap());
         let db = Arc::new(db::DB::from_arc(store.clone()).unwrap());
-        let segment = schema::CollectionVersion::new(
-            "Segment",
-            "v1",
-            "col-segment",
-            vec![
-                schema::FieldDescription::new(
-                    "1",
-                    "_docID",
-                    schema::FieldKind::doc_id(),
-                    schema::CType::LwwRegister,
-                ),
-                schema::FieldDescription::new(
-                    "2",
-                    "body",
-                    schema::FieldKind::string(),
-                    schema::CType::LwwRegister,
-                ),
-            ],
-        )
-        .as_branchable();
-        db.create_collection(segment.clone()).await.unwrap();
+        let segment_sdl = "type Segment @branchable { body: String }";
+        let segment = parsed(segment_sdl);
+        db.add_collection(&defra_core::RequestContext::ambient(), segment_sdl)
+            .await
+            .unwrap();
         let mutator = db::AutoCommitMutator::new(db.clone());
         for index in 0..APPENDS {
             let mut doc = document::Document::new(segment.clone());

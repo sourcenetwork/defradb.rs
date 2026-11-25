@@ -572,10 +572,15 @@ pub(super) async fn start(
 }
 
 pub(super) async fn provision(node: &Node) {
-    let policy = node.add_dac_policy_as(&actor(OWNER), POLICY).await.unwrap();
-    node.add_collection(&format!(
-        "type Record @policy(id: \"{policy}\", resource: \"rows\") {{ name: String }}"
-    ))
+    let owner_context = actor(OWNER);
+    let policy = node
+        .add_dac_policy_as(&owner_context, POLICY)
+        .await
+        .unwrap();
+    node.add_collection(
+        &owner_context,
+        &format!("type Record @policy(id: \"{policy}\", resource: \"rows\") {{ name: String }}"),
+    )
     .await
     .unwrap();
 }

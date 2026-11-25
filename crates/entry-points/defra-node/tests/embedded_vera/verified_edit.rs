@@ -332,7 +332,7 @@ fn a_verified_update_is_refused_when_the_chain_cannot_be_reached() {
             .await
             .expect("node");
         let policy = super::seeded_policy(&node, chain_signer.did()).await;
-        node.add_collection(&users(&policy))
+        node.add_collection(&defra_core::RequestContext::ambient(), &users(&policy))
             .await
             .expect("collection");
         let audience = node
