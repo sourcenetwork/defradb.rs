@@ -390,41 +390,13 @@ jobs:
           # toolchain cannot build it. Held at 1.26.10: Go 1.26.11 refuses the
           # LTO section in wasmtime-go's prebuilt libwasmtime.a
           go-version: '1.26.10'
+      - uses: extractions/setup-just@v4
       - name: Prepare Go DefraDB binary
         id: prepare
         run: |
-          GO_REF=$(grep 'pub const GO_COMPAT_COMMIT' crates/foundation/defra-version/src/lib.rs | sed 's/.*"\(.*\)".*/\1/')
-          GO_BRANCH=$(grep 'pub const GO_COMPAT_BRANCH' crates/foundation/defra-version/src/lib.rs | sed 's/.*"\(.*\)".*/\1/')
-          GO_TAG=$(grep 'pub const GO_COMPAT_TAG' crates/foundation/defra-version/src/lib.rs | sed 's/.*"\(.*\)".*/\1/')
-
-          if [ -n "$GO_TAG" ]; then
-            VER_NUM="${GO_TAG#v}"
-            ASSET="defradb_${VER_NUM}_linux_x86_64"
-            CACHE_DIR="$HOME/.cache/defra-harness/${GO_TAG}"
-            mkdir -p "$CACHE_DIR"
-            if [ ! -x "$CACHE_DIR/defradb" ]; then
-              curl -fSL -o "$CACHE_DIR/defradb" \
-                "https://github.com/sourcenetwork/defradb/releases/download/${GO_TAG}/${ASSET}"
-              chmod +x "$CACHE_DIR/defradb"
-            fi
-          else
-            test -n "$GO_REF"
-            test -n "$GO_BRANCH"
-            CACHE_DIR="$HOME/.cache/defra-harness/${GO_REF}"
-            mkdir -p "$CACHE_DIR"
-            if [ ! -x "$CACHE_DIR/defradb" ]; then
-              WORK_DIR="$RUNNER_TEMP/defradb-${GO_REF}"
-              git clone --filter=blob:none --branch "$GO_BRANCH" https://github.com/sourcenetwork/defradb "$WORK_DIR"
-              git -C "$WORK_DIR" checkout "$GO_REF"
-              make -C "$WORK_DIR" build path="$CACHE_DIR/defradb"
-              chmod +x "$CACHE_DIR/defradb"
-            fi
-          fi
-
-          "$CACHE_DIR/defradb" version --format json
-          echo "dir=$CACHE_DIR" >> "$GITHUB_OUTPUT"
-          echo "pin=${GO_TAG:-$GO_REF}" >> "$GITHUB_OUTPUT"
-          echo "branch=$GO_BRANCH" >> "$GITHUB_OUTPUT"
+          just setup-go-defradb
+          echo "dir=$(just --evaluate go_defradb_dir)" >> "$GITHUB_OUTPUT"
+          echo "pin=$(just --evaluate go_defradb_pin)" >> "$GITHUB_OUTPUT"
       - name: Save Go DefraDB
         if: env.SAVE_CACHE == 'true' && steps.go-defradb.outputs.cache-hit != 'true'
         uses: actions/cache/save@v6
