@@ -381,9 +381,23 @@ jobs:
           git fetch --depth=1 origin "$BASE"
           bash .github/scripts/check-c-api.sh "$BASE"
 
+  # Mirrors `just check-openapi-snapshot`: the Go document the HTTP crate merges
+  # into its own is Go's at GO_COMPAT_COMMIT.
+  openapi-snapshot:
+    name: OpenAPI snapshot
+    needs: ci-scope
+    if: ${{ !cancelled() && !failure() && needs.ci-scope.outputs.reused != 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Check the Go snapshot is Go's document at the pin
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: bash .github/scripts/check-openapi-snapshot.sh
+
   lint:
     name: Lint
-    needs: [ci-scope, lint-default, feature-checks, dependency-checks, docs, c-api]
+    needs: [ci-scope, lint-default, feature-checks, dependency-checks, docs, c-api, openapi-snapshot]
     # A queue entry that reuses its pull request run already passed lint there.
     if: always() && needs.ci-scope.outputs.reused != 'true'
     runs-on: ubuntu-latest
@@ -396,6 +410,7 @@ jobs:
           DEPENDENCIES: ${{ needs.dependency-checks.result }}
           DOCS: ${{ needs.docs.result }}
           C_API: ${{ needs.c-api.result }}
+          OPENAPI_SNAPSHOT: ${{ needs.openapi-snapshot.result }}
         run: |
           test "$DEFAULT" = success
           # Skipped on a pull request without its ci: label; the merge queue runs them. Only then: a
@@ -404,6 +419,7 @@ jobs:
           test "$DEPENDENCIES" = success
           test "$DOCS" = success
           test "$C_API" = success
+          test "$OPENAPI_SNAPSHOT" = success
 
   unit-tests:
     name: Unit tests
@@ -1208,6 +1224,7 @@ jobs:
       - dependency-checks
       - docs
       - c-api
+      - openapi-snapshot
       - lint
       - unit-tests
       - go-defradb
@@ -1312,6 +1329,7 @@ jobs:
           DEPENDENCY_CHECKS: ${{ needs.dependency-checks.result }}
           DOCS: ${{ needs.docs.result }}
           C_API: ${{ needs.c-api.result }}
+          OPENAPI_SNAPSHOT: ${{ needs.openapi-snapshot.result }}
           LINT: ${{ needs.lint.result }}
           UNIT_TESTS: ${{ needs.unit-tests.result }}
           GO_DEFRADB: ${{ needs.go-defradb.result }}
@@ -1345,6 +1363,7 @@ jobs:
           check "Dependency checks" "$DEPENDENCY_CHECKS" "$FAST"
           check "Docs" "$DOCS" "$FAST"
           check "C API compatibility" "$C_API" "$FAST"
+          check "OpenAPI snapshot" "$OPENAPI_SNAPSHOT" "$FAST"
           check "Lint" "$LINT" "$FAST"
           check "Unit tests" "$UNIT_TESTS" "$FULL"
           check "Go DefraDB binary" "$GO_DEFRADB" "$FULL"
