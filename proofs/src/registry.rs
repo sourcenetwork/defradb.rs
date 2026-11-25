@@ -3354,7 +3354,7 @@ pub const PROPERTIES: &[Property] = &[
     },
     Property {
         family: "Index-maintenance consistency",
-        name: "DuplicateIndex.refused_iff_listed / created_keeps_all / create_keeps_listed_nodup",
+        name: "DuplicateIndex.refused_iff_listed / create_listed / created_keeps_all / hidden_does_not_refuse / second_create_refused / create_keeps_listed_nodup",
         axis: Lean,
         anchor: "crates/database/db/src/index/duplicate.rs refuse_duplicate_index",
         model_ref: "DuplicateIndex (lake build)",
