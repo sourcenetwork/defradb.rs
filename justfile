@@ -746,7 +746,9 @@ lint-wasm:
 
 # Docs must build without warnings; a broken intra-doc link fails CI.
 # rustdoc's own landing page (--enable-index-page) is nightly-only, so the
-# recipe writes target/doc/index.html itself, one link per workspace crate.
+# recipe writes target/doc/index.html itself, one link per workspace crate,
+# from cargo metadata so dependency pages an earlier plain `cargo doc` left in
+# target/doc stay out of it.
 [doc("Build docs with warnings denied (broken links fail CI), plus an index.")]
 [group('check')]
 doc:
@@ -757,10 +759,14 @@ doc:
     {
         echo '<!doctype html><meta charset="utf-8"><title>defradb.rs crates</title>'
         echo '<h1>defradb.rs crates</h1><ul>'
-        for page in "$dir"/*/index.html; do
-            name="$(basename "$(dirname "$page")")"
-            echo "<li><a href=\"$name/index.html\">$name</a></li>"
-        done
+        cargo metadata --no-deps --format-version 1 \
+            | jq -r '.packages[].targets[] | select(.kind | any(. != "test" and . != "bench" and . != "example" and . != "custom-build")) | .name | gsub("-"; "_")' \
+            | sort -u \
+            | while read -r name; do
+                if [ -f "$dir/$name/index.html" ]; then
+                    echo "<li><a href=\"$name/index.html\">$name</a></li>"
+                fi
+            done
         echo '</ul>'
     } > "$dir/index.html"
     echo "docs: $dir/index.html"
