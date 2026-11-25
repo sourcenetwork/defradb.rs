@@ -49,7 +49,7 @@
 \* touch it), and a revocation can still be owed (it denies the User whatever
 \* the provider says). With an update the credential only says who is asking:
 \*   - none: the signature on the blocks is enough, when the provider proves its
-\*     decisions (vera.rs); a provider that does not (Cosmos) still needs the key;
+\*     decisions (vera.rs); a provider that does not (a host's own) still needs the key;
 \*   - a delegation: it must be good, as for any command;
 \*   - a request-bound delegation: it names a command, an update sends none, so
 \*     it is refused.
@@ -93,14 +93,14 @@
 \* crates/engine/query/src/txn/context.rs check_doc_access_with_prepared_inputs;
 \* crates/engine/acp/src/external.rs ExternalDocumentAcp::check_doc_access (owed
 \* registration and owed revocation);
-\* crates/engine/vera/src/cosmos/dac.rs VeraDocumentACP::check_doc_access,
+\* crates/engine/vera/src/dac.rs VeraDocumentACP::check_doc_access,
 \* proves_decisions;
 \* crates/engine/vera/src/vera_rs/provider.rs verify_access, decision_state;
-\* crates/engine/vera/src/cosmos/dac.rs authority;
-\* crates/engine/vera/src/cosmos/dac/request_bound.rs request_bound, admit_for;
+\* crates/engine/vera/src/dac.rs authority;
+\* crates/engine/vera/src/dac/request_bound.rs request_bound, admit_for;
 \* crates/engine/vera/src/vera_rs/bearer/request.rs caller_of_request_delegation;
 \* crates/engine/vera/src/vera_rs/bearer.rs caller_of_delegation (the HTTP door);
-\* crates/engine/vera/src/cosmos/dac/owed.rs token, lapsed;
+\* crates/engine/vera/src/dac/owed.rs token, lapsed;
 \* crates/engine/acp/src/outbox/staging.rs TransactionOutbox::stage;
 \* crates/engine/acp/src/external/settle.rs register_first;
 \* crates/engine/acp/src/pending.rs PendingRegistration (authority, state, last_error);
@@ -146,7 +146,7 @@ VARIABLES
   failed,      \* the owed or parked commands whose last submission failed
   noted,       \* the commands whose record says why their last submission failed
   unbacked,    \* TRUE once a command was sent though nothing recorded for it allowed it
-  proven,      \* TRUE when the provider proves its decisions (vera.rs), FALSE for Cosmos
+  proven,      \* TRUE when the provider proves its decisions (vera.rs), FALSE for one that does not
   permitted,   \* TRUE while the provider's newest finalized state gives the User the permission
   seen,        \* the permission at the revision the Node last verified: what its proof shows
   evidence,    \* the age of that proof: "fresh", "stale", or "unreachable" (no answer)
