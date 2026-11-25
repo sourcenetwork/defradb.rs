@@ -242,13 +242,11 @@ fn append_sources(dir: &Path, text: &mut String) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::registry::PROPERTIES;
 
     #[test]
     fn every_registry_anchor_resolves() {
         let root = repository_root();
-        let unresolved: Vec<String> = PROPERTIES
-            .iter()
+        let unresolved: Vec<String> = crate::registry::properties()
             .flat_map(|property| {
                 problems(&root, property.anchor)
                     .into_iter()
