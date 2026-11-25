@@ -103,6 +103,9 @@ lean_lib ClientCreateGraph where
 lean_lib ClientSignedCreate where
 
 @[default_target]
+lean_lib ClientSigningWaves where
+
+@[default_target]
 lean_lib HttpRouterComposition where
 
 @[default_target]

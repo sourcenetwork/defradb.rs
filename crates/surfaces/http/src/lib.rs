@@ -101,6 +101,8 @@ mod client_signer;
 mod client_signer_tests;
 #[cfg(feature = "server")]
 mod client_signing;
+#[cfg(feature = "server")]
+pub mod client_signing_waves;
 mod client_signing_wire;
 #[cfg(all(feature = "server", not(target_arch = "wasm32")))]
 pub mod collection_mgmt_adapter;

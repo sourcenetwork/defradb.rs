@@ -4,9 +4,10 @@ use crypto::PrivateKey;
 use defra_core::signing::RemoteSigner;
 
 use crate::client_signer::SessionSigner;
+use crate::client_signing_waves::SigningWaveError;
 
 #[test]
-fn the_connection_signer_checks_each_signature_before_answering() {
+fn the_connection_signer_answers_with_the_session_verdict() {
     edge::testing::edge()
         .block_on(async {
             let private = crypto::generate_ed25519().unwrap();
@@ -16,16 +17,26 @@ fn the_connection_signer_checks_each_signature_before_answering() {
                 vec![Arc::from(b"one".as_slice()), Arc::from(b"two".as_slice())];
             let (answers, ()) = futures::join!(signer.sign_batch(payloads.clone(), None), async {
                 let wave = requests.recv().await.unwrap();
-                let mut signatures = wave
+                let signatures = wave
                     .payloads
                     .iter()
                     .map(|bytes| private.sign(bytes).unwrap())
                     .collect::<Vec<_>>();
-                signatures[1][0] ^= 1;
-                wave.answer.send(signatures).unwrap();
+                wave.answer.send(Ok(signatures)).unwrap();
             });
-            assert!(answers[0].is_ok());
-            assert!(answers[1].is_err());
+            assert!(answers.iter().all(Result::is_ok));
+            let (answers, ()) = futures::join!(signer.sign_batch(payloads, None), async {
+                let wave = requests.recv().await.unwrap();
+                wave.answer
+                    .send(Err(SigningWaveError::Resigned { wave: 1 }))
+                    .unwrap();
+            });
+            for answer in answers {
+                assert_eq!(
+                    answer.unwrap_err().message,
+                    "signing wave 1 was already signed"
+                );
+            }
         })
         .unwrap();
 }

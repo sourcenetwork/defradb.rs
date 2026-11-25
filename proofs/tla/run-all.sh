@@ -239,6 +239,11 @@ RUNS=(
   "MC_ClientSignedCreate_Red_Acp.cfg ClientSignedCreate.tla RED" # a revoked actor commits (INV_Acp)
   "MC_ClientSignedCreate_Red_Inside.cfg ClientSignedCreate.tla RED" # the client is awaited inside an attempt (INV_Outside)
   "MC_ClientSignedCreate_Red_Reclaim.cfg ClientSignedCreate.tla RED" # expiry leaves its capsule allocated forever (LIVE_Reaped)
+  "MC_ClientSigningWaves_Green.cfg ClientSigningWaves.tla GREEN" # each block signed once, for the open wave, inside the graph, nothing after a refusal
+  "MC_ClientSigningWaves_Red_Once.cfg ClientSigningWaves.tla RED" # a retry asks again for a signed block (INV_SignedOnce)
+  "MC_ClientSigningWaves_Red_Wave.cfg ClientSigningWaves.tla RED" # an answer naming an earlier wave is taken (INV_OpenWave)
+  "MC_ClientSigningWaves_Red_Graph.cfg ClientSigningWaves.tla RED" # a signature over another block is taken (INV_InGraph)
+  "MC_ClientSigningWaves_Red_Final.cfg ClientSigningWaves.tla RED" # a wave is signed after a refusal (INV_RefusalFinal)
   "MC_ClientSignedUpdate_Green.cfg ClientSignedUpdate.tla GREEN" # fixed intent, relevant field and transactional authorization
   "MC_ClientSignedUpdate_Disjoint.cfg ClientSignedUpdate.tla RED" # a disjoint write commits beside the signed update
   "MC_ClientSignedUpdate_Red_CheckIntent.cfg ClientSignedUpdate.tla RED" # a wrong graph receives a signature
