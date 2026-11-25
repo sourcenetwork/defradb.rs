@@ -14,7 +14,7 @@ use rapidhash::RapidHashMap;
 use rapidhash::RapidHashSet;
 use zeroize::Zeroizing;
 
-#[cfg(any(feature = "iroh", feature = "libp2p"))]
+#[cfg(any(feature = "iroh", feature = "libp2p", feature = "pinc"))]
 mod doc_sync;
 #[cfg(feature = "iroh")]
 mod iroh;
@@ -27,26 +27,32 @@ mod libp2p;
 pub mod manage;
 mod operations;
 pub mod peer;
-#[cfg(any(feature = "iroh", feature = "libp2p"))]
+#[cfg(any(feature = "iroh", feature = "libp2p", feature = "pinc"))]
 mod peer_details;
-#[cfg(any(feature = "iroh", feature = "libp2p"))]
+#[cfg(all(feature = "pinc", not(target_arch = "wasm32")))]
+mod pinc;
+#[cfg(all(feature = "pinc", not(target_arch = "wasm32")))]
+mod pinc_peer;
+#[cfg(all(feature = "pinc", not(target_arch = "wasm32")))]
+mod pinc_restore;
+#[cfg(any(feature = "iroh", feature = "libp2p", feature = "pinc"))]
 mod pooled_doc_pusher;
 mod read_gate;
 mod replication_events;
-#[cfg(any(feature = "iroh", feature = "libp2p"))]
+#[cfg(any(feature = "iroh", feature = "libp2p", feature = "pinc"))]
 mod replicator_install_store;
-#[cfg(any(feature = "iroh", feature = "libp2p"))]
+#[cfg(any(feature = "iroh", feature = "libp2p", feature = "pinc"))]
 mod replicator_installs;
-#[cfg(any(feature = "iroh", feature = "libp2p"))]
+#[cfg(any(feature = "iroh", feature = "libp2p", feature = "pinc"))]
 mod replicator_replay;
 mod replicator_status;
-#[cfg(any(feature = "iroh", feature = "libp2p"))]
+#[cfg(any(feature = "iroh", feature = "libp2p", feature = "pinc"))]
 mod retry;
-#[cfg(any(feature = "iroh", feature = "libp2p"))]
+#[cfg(any(feature = "iroh", feature = "libp2p", feature = "pinc"))]
 mod schema_history;
-#[cfg(any(feature = "iroh", feature = "libp2p"))]
+#[cfg(any(feature = "iroh", feature = "libp2p", feature = "pinc"))]
 mod transport_doc_pusher;
-#[cfg(feature = "iroh")]
+#[cfg(any(feature = "iroh", feature = "pinc"))]
 mod transport_version_syncer;
 #[cfg(feature = "libp2p")]
 mod version_syncer;
@@ -62,13 +68,22 @@ pub use iroh_peer::{
 pub use iroh_restore::restore_iroh_p2p_state;
 #[cfg(feature = "libp2p")]
 pub use libp2p::{CollectionLookup, P2PAdapter, VersionSyncer};
-#[cfg(any(feature = "iroh", feature = "libp2p"))]
+#[cfg(any(feature = "iroh", feature = "libp2p", feature = "pinc"))]
 pub use peer_details::PeerPushRetries;
-#[cfg(any(feature = "iroh", feature = "libp2p"))]
+#[cfg(all(feature = "pinc", not(target_arch = "wasm32")))]
+pub use pinc::PincP2PAdapter;
+#[cfg(all(feature = "pinc", not(target_arch = "wasm32")))]
+pub use pinc_peer::{
+    PincBlockstore, PincCoordinator, PincManageChannel, PincPeer, PincPeerConfig, PincPeerShutdown,
+    PincReplicationStack,
+};
+#[cfg(all(feature = "pinc", not(target_arch = "wasm32")))]
+pub use pinc_restore::restore_pinc_p2p_state;
+#[cfg(any(feature = "iroh", feature = "libp2p", feature = "pinc"))]
 pub use pooled_doc_pusher::pooled;
 pub use read_gate::{DbBlockClassifier, DbBlockReadGate};
 pub use replication_events::publish_replication_result;
-#[cfg(any(feature = "iroh", feature = "libp2p"))]
+#[cfg(any(feature = "iroh", feature = "libp2p", feature = "pinc"))]
 pub use replicator_install_store::{ReplicatorInstall, ReplicatorInstallRequest};
 pub use replicator_status::{
     load_persisted_replicators, set_persisted_replicator_status,
@@ -76,13 +91,13 @@ pub use replicator_status::{
     set_persisted_replicator_status_for_incarnation_with_marker_state,
     set_persisted_replicator_status_for_scope_generation,
 };
-#[cfg(any(feature = "iroh", feature = "libp2p"))]
+#[cfg(any(feature = "iroh", feature = "libp2p", feature = "pinc"))]
 pub use retry::{
     activate_retry_peer, run_retry_pass, spawn_failure_recorder, spawn_retry_loop, FailureRecorder,
 };
-#[cfg(any(feature = "iroh", feature = "libp2p"))]
+#[cfg(any(feature = "iroh", feature = "libp2p", feature = "pinc"))]
 pub use transport_doc_pusher::{DbTransportDocPusher, TransportDocPusher};
-#[cfg(feature = "iroh")]
+#[cfg(any(feature = "iroh", feature = "pinc"))]
 pub use transport_version_syncer::{DbTransportVersionSyncer, TransportVersionSyncer};
 #[cfg(feature = "libp2p")]
 pub use version_syncer::DbVersionSyncer;
@@ -182,7 +197,10 @@ fn collections_with_changed_capabilities(
         .collect()
 }
 
-#[cfg_attr(not(any(feature = "iroh", feature = "libp2p")), allow(dead_code))]
+#[cfg_attr(
+    not(any(feature = "iroh", feature = "libp2p", feature = "pinc")),
+    allow(dead_code)
+)]
 fn validate_explicit_replay_capabilities(
     capabilities: Vec<ExplicitReplayCapabilityInput>,
     expected_authorizer_did: Option<&str>,
@@ -526,7 +544,10 @@ impl ReplicatorPushOptionsState {
     }
 }
 
-#[cfg_attr(not(any(feature = "iroh", feature = "libp2p")), allow(dead_code))]
+#[cfg_attr(
+    not(any(feature = "iroh", feature = "libp2p", feature = "pinc")),
+    allow(dead_code)
+)]
 pub(crate) trait P2PErrorExt {
     fn invalid_input(message: impl Into<String>) -> Self;
     fn not_found(message: impl Into<String>) -> Self;
@@ -562,7 +583,10 @@ impl P2PErrorExt for P2PError {
     }
 }
 
-#[cfg_attr(not(any(feature = "iroh", feature = "libp2p")), allow(dead_code))]
+#[cfg_attr(
+    not(any(feature = "iroh", feature = "libp2p", feature = "pinc")),
+    allow(dead_code)
+)]
 fn map_nac_error(error: db::Error) -> P2PError {
     match error {
         db::Error::NotAuthorized { .. } => P2PError::unauthorized(error.to_string()),

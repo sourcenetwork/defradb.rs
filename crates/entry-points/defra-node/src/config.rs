@@ -216,6 +216,49 @@ pub enum TransportConfig {
     Libp2p(Libp2pConfig),
     #[cfg(feature = "p2p")]
     Iroh(P2PConfig),
+    #[cfg(feature = "pinc")]
+    Pinc(PincConfig),
+}
+
+/// The pinc transport's configuration: direct connections, and topics through
+/// the hubs it names.
+#[cfg(feature = "pinc")]
+#[derive(Debug, Clone, PartialEq)]
+pub struct PincConfig {
+    /// The UDP address the endpoint binds; port 0 picks one.
+    pub bind: std::net::SocketAddr,
+    /// Who may connect in. Defaults to every peer.
+    pub allowlist: p2p::pinc::PincAllowlistConfig,
+    /// Path of a key file, read as [`P2PConfig::secret_key_path`] is, so a
+    /// node keeps the peer id it has on iroh.
+    pub secret_key_path: Option<std::path::PathBuf>,
+    /// Where the secret key lives.
+    pub peer_key: PeerKeySource,
+    /// The most sessions at once.
+    pub max_connections: usize,
+    /// The pinc hubs topics run through, as `<peer id>@<udp address>`. With
+    /// none, gossip and the KMS key exchange reach no one.
+    pub hubs: Vec<String>,
+    /// Reload collection subscriptions persisted in the local store.
+    pub load_persisted_collections: bool,
+    /// Sync limits and the replicator retry ladder.
+    pub sync: SyncTuning,
+}
+
+#[cfg(feature = "pinc")]
+impl Default for PincConfig {
+    fn default() -> Self {
+        Self {
+            bind: std::net::SocketAddr::from(([0, 0, 0, 0], 0)),
+            allowlist: p2p::pinc::PincAllowlistConfig::default(),
+            secret_key_path: None,
+            peer_key: PeerKeySource::default(),
+            max_connections: p2p::pinc::PincEndpointConfig::DEFAULT_MAX_CONNECTIONS,
+            hubs: Vec::new(),
+            load_persisted_collections: true,
+            sync: SyncTuning::default(),
+        }
+    }
 }
 
 /// libp2p transport configuration.

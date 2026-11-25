@@ -18,6 +18,7 @@ mod reserved_port;
 pub mod scenario;
 mod stub_embedder;
 pub mod test_case;
+pub mod transport_choice;
 pub mod wasm_lens;
 
 pub use cli_command::cli_command;

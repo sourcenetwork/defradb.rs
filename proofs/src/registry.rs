@@ -3855,6 +3855,24 @@ pub const PROPERTIES: &[Property] = &[
     },
     Property {
         family: "Have-set DAG fetch",
+        name: "INV_HeldNotResent / INV_OneRequest / INV_BranchCut / INV_Converges for the rooted request",
+        axis: Tla,
+        anchor: "crates/database/p2p/src/sync/coordinator/rooted_request.rs rooted_request; crates/database/p2p/src/sync/coordinator/dag_fetcher.rs poll_fetch_blocks, poll_fetch_rooted_provider; crates/database/p2p/src/sync/coordinator/closure_depth.rs ClosureDepth::whole; crates/database/p2p/src/sync/car/region.rs collect_missing_region; crates/database/p2p/src/sync/coordinator/event_handler/car.rs drop_held_blocks",
+        model_ref: "MC_RootNamedFetch_{Green,Red_*}.cfg",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
+        family: "pinc topics",
+        name: "INV_Converges / INV_OnlyOwnTopics for a hub's missed report",
+        axis: Tla,
+        anchor: "crates/database/p2p/src/pinc/topics.rs topic_events; crates/database/p2p/src/sync/coordinator/event_handler/topic_missed.rs handle_topic_missed; crates/database/p2p/src/sync/coordinator/event_handler/doc_sync.rs handle_doc_sync_reply; crates/database/p2p/src/sync/coordinator/event_handler/branchable_sync.rs handle_branchable_sync_reply",
+        model_ref: "MC_MissedTopicResync_{Green,Red_*}.cfg",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
+        family: "Have-set DAG fetch",
         name: "INV_OneMarkWriter / INV_HeldNeverContends / INV_Lands",
         axis: Tla,
         anchor: "crates/database/p2p/src/sync/coordinator/event_handler/car.rs drop_held_blocks; crates/database/p2p/src/sync/manager/process/mod.rs try_acquire_car_storage_owners; crates/engine/storage/src/stores/blockstore.rs BlockWritesAttempt",
@@ -4536,6 +4554,80 @@ pub const PROPERTIES: &[Property] = &[
         model_ref: "MC_AnnounceAudience_{Green,Red_HoldWhenAlone,Red_AloneMeansDisconnected,Red_RetryWhileConnected}.cfg",
         tiers: &[Boundary],
         bound_by: "crates/database/p2p/src/sync/coordinator/broadcast_pool_tests.rs a_write_with_no_peer_connected_is_not_held_for_a_peer_that_joins, a_write_with_no_peer_subscribed_is_not_held_for_a_peer_that_subscribes; crates/database/db/tests/merge/broadcast_mutator_broadcast.rs a_write_that_finds_no_subscriber_is_not_published_again",
+    },
+    Property {
+        // pinc hands a dial over before the peer answers when its access was
+        // allowed lately; the endpoint counts the peer only once it answered.
+        family: "pinc dial answered",
+        name: "INV_NoPushUnanswered / INV_ConnectedHeard: a dial counts the peer as connected only once it answered, so the retry pass never pushes into a peer that stopped",
+        axis: Tla,
+        anchor: "crates/database/p2p/src/pinc/endpoint.rs Node::connection, Node::connected, Node::disconnected; crates/database/p2p/src/pinc/command.rs Command::ConnectedPeers; crates/surfaces/p2p-adapter/src/retry.rs run_retry_pass",
+        model_ref: "MC_PincDialAnswered_{Green,Red_CountAtHandOver}.cfg",
+        tiers: &[Boundary],
+        bound_by: "crates/database/p2p/src/pinc/tests/redial.rs a_dial_to_a_peer_that_stopped_fails_and_it_stays_disconnected",
+    },
+    Property {
+        // A node that names hubs signs its record only once pinc settles it on
+        // a relay; the exchange hands over addresses so peers meet before that.
+        family: "pinc peer exchange",
+        name: "LIVE_PeersMeet / LIVE_RecordsKept: two peers of one node meet whatever the order of their connects and records, and the node gets both records",
+        axis: Tla,
+        anchor: "crates/database/p2p/src/pinc/exchange.rs Node::share_peers, Node::learn_peers; crates/database/p2p/src/pinc/serve.rs Node::send_record, once_settled; crates/database/p2p/src/pinc/endpoint.rs Node::connected",
+        model_ref: "MC_PincPeerExchange_{Green,Red_RecordOnly,Red_NoRetry}.cfg",
+        tiers: &[Boundary],
+        bound_by: "crates/database/p2p/src/pinc/tests/exchange.rs two_peers_of_one_node_connect_before_their_records_are_signed",
+    },
+    Property {
+        // The pinc endpoint holds each request's `!Send` stream under the
+        // `Send` id its token carries. A reply or a dropped token takes the
+        // entry; a drop lost to a full queue is caught by the deadline sweep.
+        family: "pinc reply bridge",
+        name: "INV_OneOutcome / INV_Bounded / INV_NoWriteAfterEnd / LIVE_NoLeak / LIVE_DropResets: a stream gets one answer, the table stays bounded and empties for good, a dropped token's stream is reset",
+        axis: Tla,
+        anchor: "crates/database/p2p/src/pinc/token.rs PincResponseToken; crates/database/p2p/src/pinc/reply_table.rs ReplyTable::issue, ReplyTable::take, ReplyTable::purge, ReplyTable::sweep; crates/database/p2p/src/pinc/endpoint.rs Node::handle, Node::sweep_loop, Node::disconnected, REPLY_DEADLINE",
+        model_ref: "MC_PincReplyBridge_{Green,Green_NoLoss,Red_NoTakeOnce,Red_NoDropReset,Red_NoSweep,Red_NoCap}.cfg",
+        tiers: &[Boundary],
+        bound_by: "crates/database/p2p/src/pinc/tests/bridge.rs a_reply_after_the_connection_ended_is_an_error_not_a_write, many_dropped_tokens_leave_no_stream_behind; crates/database/p2p/src/pinc/tests/mux.rs a_reset_stream_does_not_tear_down_the_connection",
+    },
+    Property {
+        family: "pinc reply bridge",
+        name: "full_refuses / issue_bounded / issue_fresh / take_once / take_only / purge_only / sweep_only: the reply table refuses past its bound, never reuses an id, and takes each entry once",
+        axis: Lean,
+        anchor: "crates/database/p2p/src/pinc/reply_table.rs ReplyTable::issue, ReplyTable::take, ReplyTable::purge, ReplyTable::sweep",
+        model_ref: "PincReplyTable.Table (lake build)",
+        tiers: &[Boundary],
+        bound_by: "crates/database/p2p/src/pinc/reply_table.rs a_stream_is_taken_at_most_once, ids_are_never_reused, a_full_table_hands_the_stream_back, purge_takes_only_the_ended_connection, sweep_takes_only_what_is_due",
+    },
+    Property {
+        // A pinc hub pushes a topic's messages to every member; the endpoint
+        // hands one to the engine only while it holds a peer session, marks a
+        // raw topic before joining it, and reports JOINED from pinc's
+        // neighbours, the members it holds a session with. Every publish
+        // holds its topic joined for gossipsub's fanout time, so the engine
+        // hears who joins a topic it only publishes to; an unsubscribe leaves
+        // at once and ends the hold.
+        family: "pinc topic delivery",
+        name: "INV_NoDeliveryOffMesh / INV_RawNeverDecoded / INV_JoinedOnlyLinkedMembers / INV_EngineKeepsItsTopic / INV_OnlyEngineTopics / INV_HeldIsJoined: only a node on the mesh gets a message, a raw topic is never decoded, JOINED names a linked member, an ended hold never takes the engine off its topic, the engine gets messages only of topics it is subscribed to and JOINED only of those or held ones, and a held topic stays joined",
+        axis: Tla,
+        anchor: "crates/database/p2p/src/pinc/topics.rs Node::subscribe, Node::unsubscribe, Node::leave, Node::publish, Node::hold_fanout, Node::expire_fanout, Node::topic_events, Node::delivery; crates/database/p2p/src/pinc/endpoint.rs Node::connected, Node::disconnected, Node::sweep_loop",
+        model_ref: "MC_PincTopicDelivery_{Green,Green_Raw,Red_NoGate,Red_RawLate,Red_NoSessionFilter,Red_NoOwnerCheck,Red_NoHoldEnd,Red_NoEngineFilter}.cfg",
+        tiers: &[Boundary],
+        bound_by: "crates/database/p2p/src/pinc/tests/topics.rs connected_subscribers_see_each_other_join_and_leave, a_publisher_that_never_subscribed_sees_subscribers_join_and_leave, a_node_with_no_peer_takes_no_head_hint, raw_topics_carry_a_request_and_its_answer_as_bytes",
+    },
+    Property {
+        // A pinc join returns before a hub knows of it, so a subscribe
+        // answers only once a hub confirmed the topic's join, and fails
+        // after JOIN_WAIT with none, taking the topic back so the retry
+        // joins afresh. GREEN assumes pinc confirms only the subscription
+        // that asked (pinc #483); Red_UntaggedList and Red_Undrained are
+        // pinc as it is today.
+        family: "pinc join confirmation",
+        name: "INV_OkOnlyWhenHeld / INV_FailOnlyUnconfirmed / INV_NoMissedWake / INV_NoStuckSubscription / INV_JoinedMatches: a subscribe answers only while a hub holds its join, never fails once confirmed, never waits for an event already read, a lost event never strands a subscription, and pinc is joined exactly while the engine or a hold has the topic",
+        axis: Tla,
+        anchor: "crates/database/p2p/src/pinc/topics.rs Node::subscribe, Node::answer_when_confirmed, Node::joined, Node::abandon_join, Node::leave, Node::unsubscribe, Node::hold_fanout, Node::expire_fanout, JOIN_WAIT",
+        model_ref: "MC_PincJoinConfirm_{Green,Green_Wide,Red_NoConfirmCheck,Red_NoConfirmCheck_Wake,Red_NoStillJoined,Red_NoRecheck,Red_NoRollback,Red_NoClearOnLeave,Red_UntaggedList,Red_Undrained}.cfg",
+        tiers: &[Boundary],
+        bound_by: "crates/database/p2p/src/pinc/tests/topics.rs a_subscribe_no_hub_confirms_fails_and_its_retry_waits_again, connected_subscribers_see_each_other_join_and_leave",
     },
     Property {
         // The first shutdown caller to swap the flag builds the one drain,

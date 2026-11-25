@@ -241,6 +241,9 @@ jobs:
               cargo clippy -p cli --features embedded-vera --all-targets -- -D warnings
               cargo clippy -p db --features p2p --all-targets -- -D warnings
               cargo clippy -p cli --features iroh,model-trace --all-targets -- -D warnings
+              cargo clippy -p p2p --features pinc-transport,iroh-transport --all-targets -- -D warnings
+              cargo clippy -p cli --features pinc --all-targets -- -D warnings
+              cargo clippy -p integration-test --features pinc --all-targets -- -D warnings
           - group: minimal
             commands: |
               cargo clippy -p defra-node --no-default-features --features native --all-targets -- -D warnings
@@ -512,6 +515,7 @@ jobs:
       - run: cargo nextest run --cargo-profile super-dev -p defra-node --features embedded-vera,http --test embedded_vera
       - run: cargo nextest run --cargo-profile super-dev -p defra-node --features embedded-vera,p2p --test embedded_vera_replication
       - run: cargo nextest run --cargo-profile super-dev -p cli --features embedded-vera --test embedded_vera --test embedded_vera_config
+      - run: cargo nextest run --cargo-profile super-dev -p p2p --features pinc-transport,iroh-transport -E 'test(/pinc/)'
 
   wasm-check:
     name: WASM Build Check

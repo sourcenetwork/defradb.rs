@@ -163,6 +163,8 @@ pub enum TransportType {
     #[default]
     Libp2p,
     Iroh,
+    /// Needs a binary built with the `pinc` feature.
+    Pinc,
 }
 
 impl std::fmt::Display for TransportType {
@@ -170,6 +172,7 @@ impl std::fmt::Display for TransportType {
         match self {
             TransportType::Libp2p => write!(f, "libp2p"),
             TransportType::Iroh => write!(f, "iroh"),
+            TransportType::Pinc => write!(f, "pinc"),
         }
     }
 }
@@ -181,6 +184,7 @@ impl std::str::FromStr for TransportType {
         match s.to_lowercase().as_str() {
             "libp2p" => Ok(TransportType::Libp2p),
             "iroh" => Ok(TransportType::Iroh),
+            "pinc" => Ok(TransportType::Pinc),
             _ => Err(Error::InvalidTransport(s.to_string())),
         }
     }

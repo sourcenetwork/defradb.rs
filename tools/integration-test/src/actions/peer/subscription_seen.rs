@@ -44,6 +44,11 @@ pub fn subscribed_everywhere<F>(state: &State, name: &str, subscribe: F) -> Resu
 where
     F: FnOnce() -> Result<Value, Failure>,
 {
+    // A pinc subscribe answers once a hub holds the join, and a hub hands a
+    // message to every member it holds: no peer has to see it.
+    if crate::transport_choice::TransportChoice::from_env().is_pinc() {
+        return subscribe();
+    }
     let Some(subscriber) = state.node(name)?.core() else {
         return subscribe();
     };
