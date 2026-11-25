@@ -799,6 +799,10 @@ RUNS=(
   "MC_VerifiedRead_Red_BusyUncapped.cfg VerifiedRead.tla RED" # busy retry without a patience asks past BUSY_PATIENCE (INV_AttemptsBounded)
   "MC_VerifiedRead_Red_PausesOnly.cfg VerifiedRead.tla RED" # patience counts only the pauses: a slow busy node carries asks past BUSY_PATIENCE (INV_AttemptsBounded)
   "MC_VerifiedRead_Red_UndrawnPause.cfg VerifiedRead.tla RED" # patience checked against the shortest pause, the drawn one slept: an ask past BUSY_PATIENCE (INV_AttemptsBounded)
+  "MC_DeletedHistory_Green.cfg DeletedHistory.tla GREEN" # a deleted document's history reads only to whom its owner allows
+  "MC_DeletedHistory_Red_UnregisterOnDelete.cfg DeletedHistory.tla RED" # a delete removes the object: the foreign actor reads the history (INV_NoUnintendedRead)
+  "MC_DeletedHistory_Red_KeepOnPurge.cfg DeletedHistory.tla RED" # a purge keeps the object: the document added again keeps an old grant (INV_NoUnintendedRead)
+  "MC_DeletedHistory_Red_NoFence.cfg DeletedHistory.tla RED" # a deleted DocID is added again over its object: an old grant carries over (INV_NoUnintendedRead)
   "MC_ArchiveOnDelete_Green.cfg ArchiveOnDelete.tla GREEN" # a deleted document grants nothing, no grant outlives the archive, and the archive settles
   "MC_ArchiveOnDelete_Green_NoDrop.cfg ArchiveOnDelete.tla GREEN" # earlier changes kept: Vera's refusal alone keeps a renewed grant off the archived object
   "MC_ArchiveOnDelete_Red_GrantAfterArchive.cfg ArchiveOnDelete.tla RED" # changes kept and an archived object takes a grant: a renewed grant lands after the archive (INV_NoGrantAfterArchive)

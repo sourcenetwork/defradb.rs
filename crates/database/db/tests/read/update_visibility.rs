@@ -46,7 +46,7 @@ struct Node {
 
 impl Node {
     /// A store whose document ACP is the node's own local one, kept in the
-    /// store, so a delete unregisters its document in the delete transaction.
+    /// store, so a purge unregisters its document in the purge transaction.
     async fn new(policy: bool) -> Self {
         let store = Arc::new(RegolithStore::in_memory().unwrap());
         let db = Arc::new(DB::from_arc(store.clone()).unwrap());
@@ -200,12 +200,11 @@ fn a_deleted_private_documents_updates_are_shown_to_nobody() {
 
             node.delete(&id).await;
             assert!(
-                !node
-                    .acp
+                node.acp
                     .is_doc_registered(POLICY, RESOURCE, &id)
                     .await
                     .unwrap(),
-                "the delete unregisters the document, which then reads as public"
+                "the delete keeps the document's object, which still decides its history"
             );
             for reader in [None, Some(stranger())] {
                 let (next, entries) = node.page(path, reader.clone()).await;
@@ -324,35 +323,61 @@ fn a_page_in_a_transaction_decides_at_that_transactions_snapshot() {
     .unwrap();
 }
 
-#[test]
-fn a_page_in_a_writing_transaction_does_not_fail_it_when_its_document_is_purged() {
-    workers::block_on(async {
-        let node = Node::new(true).await;
-        let id = node.updated_document("removed").await;
-        let runner = node.runner(Path::Registry, node.acp.clone());
-        let writing = runner.begin_txn(false).await.unwrap();
-        let mut page = QueryRequest::new(UPDATES);
-        page.identity = Some(owner());
-        let response = runner.execute_in_txn(page, &writing).await;
-        assert!(response.errors.is_empty(), "{:?}", response.errors);
-        assert_eq!(shown(&response.data.unwrap()).1, std::slice::from_ref(&id));
+/// A page in a writing transaction that showed a document, then an unrelated
+/// write in it; the document is deleted (`purge` false) or purged outside the
+/// transaction before it commits. The commit's result.
+async fn commit_after_removing_a_paged_document(
+    purge: bool,
+) -> Result<(), query::TransactionError> {
+    let node = Node::new(true).await;
+    let id = node.updated_document("removed").await;
+    let runner = node.runner(Path::Registry, node.acp.clone());
+    let writing = runner.begin_txn(false).await.unwrap();
+    let mut page = QueryRequest::new(UPDATES);
+    page.identity = Some(owner());
+    let response = runner.execute_in_txn(page, &writing).await;
+    assert!(response.errors.is_empty(), "{:?}", response.errors);
+    assert_eq!(shown(&response.data.unwrap()).1, std::slice::from_ref(&id));
 
+    if purge {
         let purged = node
             .db
             .purge_by_doc_ids("Users", &[id.parse::<document::DocID>().unwrap()], None)
             .await
             .unwrap();
         assert_eq!(purged, 1);
+    } else {
+        node.delete(&id).await;
+    }
 
-        let mut write =
-            QueryRequest::new(r#"mutation { add_Users(input: {name: "unrelated"}) { _docID } }"#);
-        write.identity = Some(owner());
-        let response = runner.execute_in_txn(write, &writing).await;
-        assert!(response.errors.is_empty(), "{:?}", response.errors);
-        runner
-            .commit_txn(&writing)
-            .await
-            .expect("the page decided nothing the transaction wrote");
+    let mut write =
+        QueryRequest::new(r#"mutation { add_Users(input: {name: "unrelated"}) { _docID } }"#);
+    write.identity = Some(owner());
+    let response = runner.execute_in_txn(write, &writing).await;
+    assert!(response.errors.is_empty(), "{:?}", response.errors);
+    runner.commit_txn(&writing).await
+}
+
+#[test]
+fn a_page_in_a_writing_transaction_does_not_fail_it_when_its_document_is_deleted() {
+    workers::block_on(async {
+        commit_after_removing_a_paged_document(false).await.expect(
+            "the page decided nothing the transaction wrote, and the delete kept its object",
+        );
+    })
+    .unwrap();
+}
+
+#[test]
+fn a_page_in_a_writing_transaction_conflicts_when_its_documents_object_is_purged() {
+    workers::block_on(async {
+        let committed = commit_after_removing_a_paged_document(true).await;
+        // The purge removed the ACP object the page's access decision read,
+        // as a revocation that commits first does.
+        assert!(
+            matches!(committed, Err(query::TransactionError::Conflict(_))),
+            "{committed:?}"
+        );
     })
     .unwrap();
 }

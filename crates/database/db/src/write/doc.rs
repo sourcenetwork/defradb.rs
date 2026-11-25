@@ -660,7 +660,7 @@ impl<S: Store + 'static> DocMutator for DbDocMutator<S> {
                 (None, Some(id)) => context.clone().with_txn(Some(defra_core::TxnId(id))),
                 _ => context.clone(),
             };
-            crate::write::autocommit::helpers::unregister_deleted_doc(
+            crate::write::autocommit::helpers::archive_deleted_doc(
                 self.db.document_acp(),
                 &systemstore,
                 &collection,

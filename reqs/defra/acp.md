@@ -63,6 +63,33 @@ Local document ACP refuses to delete a registered document's last parent relatio
 
 Vera makes the registration parent immutable. A relationship edit cannot remove or replace that parent.
 
+# `defra.acp.deleted_history`: A deleted document's history keeps its access control
+
+- **Parents:** ["defra.acp"]
+
+Deleting a document in a collection with a policy keeps its access-control object: its owner and its relationships stay, so its retained history (its `_commits`, its blocks by CID, what P2P serves of it) is read under the same decision as before the delete, as Go keeps them. Only removing the document's history from the node (a purge or a truncate) removes the object as well.
+
+# `defra.acp.deleted_history.hidden`: A deleted document's history stays hidden from an actor without access
+
+- **Parents:** ["defra.acp.deleted_history"]
+- **Scenarios:** ["acp::dac::deleted_history::a_deleted_documents_history_stays_hidden_from_an_actor_without_access", "acp::dac::deleted_history::a_delete_committed_in_a_transaction_keeps_the_history_hidden"]
+
+After the owner deletes a document, alone or in a transaction that commits, an actor with no relationship to it still gets an empty `_commits` for it, and verifying one of its blocks' signatures still fails with `missing permission`, also after the node restarts. The owner still reads its commits, the delete's included, and its blocks.
+
+# `defra.acp.deleted_history.grants`: Grants on a deleted document stay, and revoking one takes effect
+
+- **Parents:** ["defra.acp.deleted_history"]
+- **Scenarios:** ["acp::dac::deleted_history::a_reader_keeps_a_deleted_documents_history_until_revoked"]
+
+An actor granted `reader` before the delete still reads the deleted document's commits and blocks. The owner can still revoke the grant (`recordFound: true`); from then on that actor gets an empty `_commits` and `missing permission` on its blocks.
+
+# `defra.acp.deleted_history.purge`: A purged document added again takes no earlier grant
+
+- **Parents:** ["defra.acp.deleted_history"]
+- **Scenarios:** ["acp::dac::deleted_history::a_purged_document_added_again_takes_no_earlier_grant"]
+
+Purging a deleted document removes its access-control object with its history. When the same content is added again, under the same DocID, it is owned by its new creator only: an actor granted `reader` on the purged document sees neither the new document nor its commits.
+
 # `defra.acp.shared_transport_restoration`: Restore a branchable shared transport collection
 
 - **Parents:** ["defra.acp"]

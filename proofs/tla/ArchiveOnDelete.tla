@@ -59,7 +59,7 @@
 \*       object's owed registration)
 \*   crates/engine/acp/src/outbox/ops.rs          account (the object's archive count)
 \*   crates/engine/acp/src/outbox/submission.rs   relationship_call (OwedOp::Archive)
-\*   crates/database/db/src/write/autocommit/helpers.rs  unregister_deleted_doc (stages
+\*   crates/database/db/src/write/autocommit/helpers.rs  archive_deleted_doc (stages
 \*       the archive in the delete's transaction)
 \*   vera.rs crates/vera-modules/src/acp/object_archive.rs  cmd_archive_object (owner
 \*       only, relationships removed), management.rs (no change to an archived object)
@@ -67,7 +67,7 @@
 \* Correspondence table (model -> Rust):
 \*   queue, inflight      the outbox queue in sequence order; a change whose request the
 \*                        worker journaled (its in-flight mark with a hash)
-\*   Delete, CheckOwner   unregister_deleted_doc -> stage_archive; NotOwner refuses the delete
+\*   Delete, CheckOwner   archive_deleted_doc -> stage_archive; NotOwner refuses the delete
 \*   Drop                 stage_archive discards earlier unsent changes on the object,
 \*                        parked ones included
 \*   Park, Renew          a change parked awaiting authority; reauthorize_owed

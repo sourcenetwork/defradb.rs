@@ -33,8 +33,9 @@ where
     }
 
     /// Permanently remove the documents `doc_ids` name from this node: their
-    /// values, index entries, primary keys, heads and every DocID alias, and
-    /// every block of their histories that no other document owns. In a
+    /// values, index entries, primary keys, heads, every DocID alias and the
+    /// access-control objects this node holds for them, and every block of
+    /// their histories that no other document owns. In a
     /// branchable collection the blocks stay, since the collection DAG links
     /// them, but no longer name the purged documents as owners. Nothing is
     /// replicated. A DocID that names no document is skipped. Returns how
@@ -259,6 +260,13 @@ where
                 .await?;
             }
             crate::docid::map::delete_doc_id_mappings(&systemstore, doc_short_id).await?;
+            crate::collection::acp::release_purged_doc_objects(
+                self.document_acp(),
+                txn.acpstore()?,
+                collection.schema(),
+                aliases.iter().map(String::as_str),
+            )
+            .await?;
         }
         Ok(targets.len())
     }

@@ -2,6 +2,9 @@ import Lake
 open Lake DSL
 
 @[default_target]
+lean_lib DeletedHistory where
+
+@[default_target]
 lean_lib ChildPage where
 
 package defraConvergence where

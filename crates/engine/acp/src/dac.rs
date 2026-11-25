@@ -805,7 +805,13 @@ pub trait DocumentACP: MaybeSendSync {
         .await
     }
 
-    /// Remove provider-local registration state when a document is deleted.
+    /// Remove provider-local registration state for a document: its owner
+    /// and every relationship on it.
+    ///
+    /// A delete calls this only on a provider that reads a missing object as
+    /// denied ([`Self::unregistered_documents_are_public`] false): elsewhere
+    /// the object keeps deciding who reads the history the node retains, and
+    /// is removed only with that history (a purge or a truncate).
     ///
     /// Providers backed by shared authorization state may keep the object
     /// registered after a local document tombstone: a replica's delete can be

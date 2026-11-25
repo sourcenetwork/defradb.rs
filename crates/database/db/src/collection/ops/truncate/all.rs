@@ -5,8 +5,9 @@ use super::*;
 const CHUNK_SIZE: usize = 1000;
 
 impl<S: Store> crate::database::DB<S> {
-    /// Delete every document of `collection`, with its heads, blocks and
-    /// index entries, keeping the collection; the number of documents.
+    /// Delete every document of `collection`, with its heads, blocks, index
+    /// entries and the access-control objects this node holds for it, keeping
+    /// the collection; the number of documents.
     ///
     /// Deletes run in chunks, so no one transaction holds the whole write set.
     pub(super) async fn truncate_all(self: &Arc<Self>, collection: &Collection) -> Result<usize>
@@ -75,16 +76,21 @@ impl<S: Store> crate::database::DB<S> {
     {
         let collection = collection.clone();
         let doc_short_ids = doc_short_ids.to_vec();
+        let acp = self.document_acp().cloned();
         self.transact_db(move |txn| {
             let collection = collection.clone();
             let doc_short_ids = doc_short_ids.clone();
-            Box::pin(async move { Self::truncate_chunk_in(txn, &collection, &doc_short_ids).await })
+            let acp = acp.clone();
+            Box::pin(async move {
+                Self::truncate_chunk_in(txn, acp.as_ref(), &collection, &doc_short_ids).await
+            })
         })
         .await
     }
 
     async fn truncate_chunk_in(
         txn: &DbTxn<S>,
+        acp: Option<&Arc<dyn acp::DocumentACP>>,
         collection: &Collection,
         doc_short_ids: &[u64],
     ) -> Result<()> {
@@ -139,6 +145,13 @@ impl<S: Store> crate::database::DB<S> {
             // Clear the identity mappings so recreating identical content
             // does not trip the create duplicate check.
             crate::docid::map::delete_doc_id_mappings(&systemstore, doc_short_id).await?;
+            crate::collection::acp::release_purged_doc_objects(
+                acp,
+                txn.acpstore()?,
+                collection.schema(),
+                [doc_id.as_str()],
+            )
+            .await?;
         }
         Ok(())
     }
