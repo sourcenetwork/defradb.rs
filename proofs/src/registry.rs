@@ -3212,6 +3212,19 @@ pub const PROPERTIES: &[Property] = &[
         bound_by: "",
     },
     Property {
+        // #3245: a JSON index writes a marker under each empty array so `_all`
+        // finds it; the marker must start like no value, keep the values'
+        // order, stay inside its path and read back as itself. The unit tests
+        // pin the marker bytes the model uses.
+        family: "Order-preserving key encoding",
+        name: "JsonEmptyArray.marker_distinct_* / value_lt_marker_asc / marker_lt_value_desc / marker_inside_path_* / decode_marker_* / decode_value_* / index_run_desc — the JSON empty-array marker and the array indexes before it",
+        axis: Lean,
+        anchor: "crates/engine/storage/src/encoding/json.rs JSON_EMPTY_ARRAY, JSON_EMPTY_ARRAY_DESC, encode_scalar_ascending, encode_scalar_descending, decode_scalar_ascending, decode_scalar_descending, decode_json_ascending, decode_json_descending; crates/building-blocks/document/src/json_leaf.rs json_empty_array_markers; crates/engine/query/src/planner/index_selection/json_empty_array.rs with_json_empty_arrays",
+        model_ref: "OrderEncoding.JsonEmptyArray (lake build)",
+        tiers: &[Boundary, Contract],
+        bound_by: "crates/engine/storage/src/encoding/json_empty_array_tests.rs the_markers_match_the_lean_model, the_marker_round_trips_both_ways, the_marker_sorts_after_every_value_ascending_and_before_descending, the_marker_stays_inside_its_path, every_value_still_decodes_as_itself, nested_array_paths_round_trip_descending, names_that_look_like_an_index_round_trip; tools/integration-test/tests/testo/index/json_all_empty_array.rs",
+    },
+    Property {
         // `order_in_values` is private to the planner, so no contract test
         // reaches it; crates/entry-points/defra-node/tests/in_filter_order.rs runs the
         // queries it orders over an ASC, a DESC and no index, and the testo
@@ -3425,12 +3438,12 @@ pub const PROPERTIES: &[Property] = &[
     },
     Property {
         family: "Index-maintenance consistency",
-        name: "INV_FreshAttempt / INV_OpenCompatible / INV_FailureKeepsStamp / INV_FutureRefusedUntouched / INV_LegacyIntact — rebuild older indexes before stamping; refuse future formats",
+        name: "INV_FreshAttempt / INV_OpenCompatible / INV_FailureKeepsStamp / INV_FutureRefusedUntouched / INV_LegacyIntact — rebuild older indexes before stamping, only the JSON ones from format 4; refuse future formats",
         axis: Tla,
-        anchor: "crates/database/db/src/definition/migration/format.rs CURRENT_INDEX_FORMAT, DB::stored_index_format, DB::migrate_index_format; crates/database/db/src/database/mod.rs DB::finish_open; crates/database/db/src/index/deferred/drain.rs; crates/database/db/src/index/manager/deferred.rs",
-        model_ref: "MC_IndexFormatGuard_{Green,Red_SkipRebuild,Red_EarlyStamp,Red_DeleteLegacy,Red_UnguardedRecord,Red_StaleProgress,Red_Future}.cfg",
+        anchor: "crates/database/db/src/definition/migration/format.rs CURRENT_INDEX_FORMAT, DB::stored_index_format, DB::migrate_index_format, DB::rebuild_indexes_owed; crates/database/db/src/database/mod.rs DB::finish_open; crates/database/db/src/index/deferred/drain.rs; crates/database/db/src/index/manager/deferred.rs",
+        model_ref: "MC_IndexFormatGuard_{Green,Red_SkipRebuild,Red_EarlyStamp,Red_DeleteLegacy,Red_UnguardedRecord,Red_StaleProgress,Red_Future,Red_SkipJson}.cfg",
         tiers: &[Boundary],
-        bound_by: "crates/database/db/tests/definition/format.rs",
+        bound_by: "crates/database/db/tests/definition/format.rs; crates/database/db/tests/definition/format_json.rs a_format_4_store_rebuilds_only_its_json_indexes",
     },
     Property {
         family: "Index-maintenance consistency",

@@ -12,16 +12,29 @@ use document::{JsonLeafValue, JsonPath, JsonPathPart, JsonScalarValue};
 use super::{
     decode_bool_ascending, decode_bool_descending, decode_bytes_ascending, decode_bytes_descending,
     decode_float64_ascending, decode_float64_descending, decode_if_null, decode_uvarint_ascending,
-    decode_uvarint_descending, encode_bool_ascending, encode_bool_descending,
-    encode_bytes_ascending, encode_bytes_descending, encode_float64_ascending,
-    encode_float64_descending, encode_null_ascending, encode_null_descending,
-    encode_uvarint_ascending, encode_uvarint_descending, peek_type, EncodedType, ESCAPED_TERM,
-    INT_MAX, INT_MIN, JSON_MARKER,
+    encode_bool_ascending, encode_bool_descending, encode_bytes_ascending, encode_bytes_descending,
+    encode_float64_ascending, encode_float64_descending, encode_null_ascending,
+    encode_null_descending, encode_uvarint_ascending, encode_uvarint_descending, peek_type,
+    EncodedType, ESCAPED_TERM, INT_ZERO, JSON_MARKER,
 };
 use crate::corekv::{Error, Result};
 
 /// Path terminator after all path parts, before value
 pub const JSON_PATH_END: u8 = b'/'; // 0x2F - matches Go's jsonPathEnd
+
+/// The empty-array marker in ascending order. No JSON value's encoding starts
+/// with it, and it sorts after every one, so a scan below the top of a path
+/// never meets it.
+pub const JSON_EMPTY_ARRAY: u8 = 0xfe;
+
+/// The empty-array marker in descending order: the complement of the
+/// ascending one, so it sorts before every descending value. No descending
+/// JSON value starts with it, since a JSON number is never NaN and a
+/// descending NaN is `FLOAT64_NAN_DESC` anyway.
+pub const JSON_EMPTY_ARRAY_DESC: u8 = !JSON_EMPTY_ARRAY;
+
+/// An array index in a path: uvarint 0, the same byte in both directions.
+const JSON_INDEX: u8 = INT_ZERO;
 
 /// Encode a JSON leaf value with path in ascending order.
 ///
@@ -173,6 +186,11 @@ fn encode_scalar_ascending(buf: Vec<u8>, value: &JsonScalarValue) -> Vec<u8> {
         JsonScalarValue::Bool(b) => encode_bool_ascending(buf, *b),
         JsonScalarValue::Number(n) => encode_float64_ascending(buf, *n),
         JsonScalarValue::String(s) => encode_bytes_ascending(buf, s.as_bytes()),
+        JsonScalarValue::EmptyArray => {
+            let mut buf = buf;
+            buf.push(JSON_EMPTY_ARRAY);
+            buf
+        }
         // PathMin/PathMax are handled specially in encode_json_ascending
         JsonScalarValue::PathMin | JsonScalarValue::PathMax | _ => buf,
     }
@@ -185,6 +203,11 @@ fn encode_scalar_descending(buf: Vec<u8>, value: &JsonScalarValue) -> Vec<u8> {
         JsonScalarValue::Bool(b) => encode_bool_descending(buf, *b),
         JsonScalarValue::Number(n) => encode_float64_descending(buf, *n),
         JsonScalarValue::String(s) => encode_bytes_descending(buf, s.as_bytes()),
+        JsonScalarValue::EmptyArray => {
+            let mut buf = buf;
+            buf.push(JSON_EMPTY_ARRAY_DESC);
+            buf
+        }
         // PathMin/PathMax are handled specially in encode_json_descending
         JsonScalarValue::PathMin | JsonScalarValue::PathMax | _ => buf,
     }
@@ -217,13 +240,11 @@ pub fn decode_json_ascending(buf: &[u8]) -> Result<(&[u8], JsonLeafValue)> {
             break;
         }
 
-        // Check if this is an array index (uvarint) or property (string)
-        // Array indices are encoded as uvarints which start with 0x80+ marker
-        if rest[0] >= INT_MIN && rest[0] <= INT_MAX {
-            // Array index - decode uvarint
-            let (remaining, _idx) = decode_uvarint_ascending(rest)?;
+        // An index is always written as uvarint 0, one byte no UTF-8 name
+        // can start with.
+        if rest[0] == JSON_INDEX {
             path = path.append_index();
-            rest = remaining;
+            rest = &rest[1..];
         } else {
             // Property name - decode as escaped string
             let (remaining, name) = decode_path_string_ascending(rest)?;
@@ -266,14 +287,15 @@ pub fn decode_json_descending(buf: &[u8]) -> Result<(&[u8], JsonLeafValue)> {
             break;
         }
 
-        // For descending, check if this looks like an inverted uvarint or string
-        // Inverted bytes for INT_MIN..INT_MAX would be !INT_MAX..!INT_MIN
-        let inverted_byte = !rest[0];
-        if (INT_MIN..=INT_MAX).contains(&inverted_byte) {
-            // Array index - decode descending uvarint
-            let (remaining, _idx) = decode_uvarint_descending(rest)?;
-            path = path.append_index();
-            rest = remaining;
+        // A descending index is the same byte as an ascending one, which is
+        // also a complemented `w`, so only a run of them right before the
+        // path end reads as indexes: an element's path, or an empty array's.
+        let indexes = rest.iter().take_while(|&&byte| byte == JSON_INDEX).count();
+        if indexes > 0 && rest[indexes..].starts_with(&[term_inverted, path_end_inverted]) {
+            for _ in 0..indexes {
+                path = path.append_index();
+            }
+            rest = &rest[indexes..];
         } else {
             // Property name - decode as descending escaped string
             let (remaining, name) = decode_path_string_descending(rest)?;
@@ -371,6 +393,9 @@ fn decode_path_string_descending(buf: &[u8]) -> Result<(&[u8], String)> {
 
 /// Decode a JSON scalar value (ascending).
 fn decode_scalar_ascending(buf: &[u8]) -> Result<(&[u8], JsonScalarValue)> {
+    if let Some((&JSON_EMPTY_ARRAY, rest)) = buf.split_first() {
+        return Ok((rest, JsonScalarValue::EmptyArray));
+    }
     let typ = peek_type(buf);
     match typ {
         EncodedType::Null => {
@@ -406,6 +431,9 @@ fn decode_scalar_ascending(buf: &[u8]) -> Result<(&[u8], JsonScalarValue)> {
 
 /// Decode a JSON scalar value (descending).
 fn decode_scalar_descending(buf: &[u8]) -> Result<(&[u8], JsonScalarValue)> {
+    if let Some((&JSON_EMPTY_ARRAY_DESC, rest)) = buf.split_first() {
+        return Ok((rest, JsonScalarValue::EmptyArray));
+    }
     match peek_type(buf) {
         EncodedType::Null => {
             let (rest, _) = decode_if_null(buf);

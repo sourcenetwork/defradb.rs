@@ -52,7 +52,7 @@ pub use document::Document;
 pub use error::{Error, Result};
 pub use field::{special, Field};
 pub use field_op::FieldOp;
-pub use json_leaf::{JsonLeafValue, JsonScalarValue};
+pub use json_leaf::{json_empty_array_markers, JsonLeafValue, JsonScalarValue};
 pub use json_path::{JsonPath, JsonPathPart};
 pub use json_traverse::{index_traverse_options, traverse_json, TraverseOptions};
 pub use normal::NormalValue;

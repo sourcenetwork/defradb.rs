@@ -236,6 +236,13 @@ Filters on a path inside an indexed JSON field (`custom: {height: {_eq: 168}}`) 
 
 Elements of JSON arrays are indexed: `_any: {_eq|_gt: ...}` matches top-level elements only (not elements of nested arrays or a scalar in place of the array); `_all` with `_eq`/`_gt` uses the index; `_none` returns correct results without the index; elements of mixed types are matched correctly.
 
+# `defra.index.json.all-empty`: `_all` on an indexed JSON path finds empty arrays
+
+- **Parents:** ["go.index.json.array"]
+- **Scenarios:** ["index::json_all_empty_array::all_on_an_indexed_json_path_finds_an_empty_array", "index::json_all_empty_array::the_empty_array_entry_matches_no_other_filter", "index::json_all_empty_array::all_on_a_descending_json_index_finds_an_empty_array", "index::json_all_empty_array::all_on_a_composite_json_index_finds_an_empty_array", "index::json_all_empty_array::empty_arrays_never_collide_in_a_unique_json_index", "index::json_all_empty_array::an_update_moves_the_empty_array_entry"]
+
+`_all` over an empty array is true, so `_all` (with `_eq`, `_in` or a range) on a path inside an indexed JSON field (`custom: {a: {_all: {_eq: 1}}}`) returns the documents whose array at that path is empty, exactly as the same query on an unindexed field does, while still using the index; a null, missing or scalar value at the path is not returned. A JSON index keeps one entry under each empty array for this, which `_eq`, `_any` and `_none` on the path never return, which a unique JSON index never counts (any number of documents may hold an empty array at the same path), and which an update adds or removes as the array becomes empty or not. A store whose JSON indexes were written before these entries existed rebuilds those indexes, and only those, when it opens. This holds for descending and composite JSON indexes. Go misses these documents (its index writes no entry for an empty array), so these scenarios do not run against Go.
+
 # `go.index.maintenance.delete-with-filter`: Filter deletes clean up index entries
 
 - **Parents:** ["go.index.maintenance"]

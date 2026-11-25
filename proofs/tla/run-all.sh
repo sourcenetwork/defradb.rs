@@ -1105,6 +1105,7 @@ RUNS=(
   "MC_IndexFormatGuard_Red_UnguardedRecord.cfg IndexFormatGuard.tla RED" # draining a legacy position record deletes an ambiguous key
   "MC_IndexFormatGuard_Red_StaleProgress.cfg IndexFormatGuard.tla RED" # a pre-upgrade cursor can skip rebuilding entries
   "MC_IndexFormatGuard_Red_Future.cfg IndexFormatGuard.tla RED" # a future format is accepted
+  "MC_IndexFormatGuard_Red_SkipJson.cfg IndexFormatGuard.tla RED" # a format 4 store opens without rebuilding its JSON indexes
   "MC_DeferredDrainTask_Green.cfg DeferredDrainTask.tla GREEN" # owed work is always asked for, and a quiet index settles under steady traffic
   "MC_DeferredDrainTask_Red_StopAtFailure.cfg DeferredDrainTask.tla RED" # a failing index ends the pass and the rest is forgotten (INV_OwedKept)
   "MC_DeferredDrainTask_Red_DropFailed.cfg DeferredDrainTask.tla RED" # a failed drain drops its request (INV_OwedKept)

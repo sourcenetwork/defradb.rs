@@ -11,6 +11,7 @@ use super::conditions::{
     can_be_ordered_by_filtered_index, can_use_index, extract_field_conditions,
     filtered_index_order_prefix, should_fallback_to_full_scan,
 };
+use super::json_empty_array::with_json_empty_arrays;
 use super::types::{ConditionValue, IndexScanParams, IndexScanType, ScanValueFilter};
 use super::values::{
     normalize_for_index_field, wrap_value_for_json_path, wrap_values_for_json_path,
@@ -488,6 +489,16 @@ pub fn filter_to_index_scan(
     let index_provides_ordering = order_by
         .map(|o| can_be_ordered_by_filtered_index(o, index, filter).0)
         .unwrap_or(false);
+    let scan_type = if first_field_is_json {
+        with_json_empty_arrays(
+            scan_type,
+            &first_field_conditions,
+            first_field,
+            is_composite,
+        )
+    } else {
+        scan_type
+    };
 
     Some(IndexScanParams {
         index_name: index.name.clone(),

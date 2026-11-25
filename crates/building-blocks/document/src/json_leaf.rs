@@ -27,6 +27,11 @@ pub enum JsonScalarValue {
     /// Sentinel value for path upper bound (comes after all values for a path)
     /// Used for constraining range scans to a specific JSON path.
     PathMax,
+    /// Index-only marker under an empty array: its path is the array's path
+    /// plus an index, the path the array's elements would have. It is never a
+    /// JSON value, and only an `_all` scan looks it up, since `_all` over an
+    /// empty array is true.
+    EmptyArray,
 }
 
 impl JsonScalarValue {
@@ -65,5 +70,46 @@ impl JsonLeafValue {
     /// Create from a path and serde_json::Value, returning None for non-scalars.
     pub fn from_json(path: JsonPath, value: &serde_json::Value) -> Option<Self> {
         JsonScalarValue::from_json_value(value).map(|scalar| Self::new(path, scalar))
+    }
+
+    /// Whether this is the empty-array marker, which no filter but `_all`
+    /// matches and no unique check counts.
+    pub fn is_empty_array_marker(&self) -> bool {
+        self.value == JsonScalarValue::EmptyArray
+    }
+}
+
+/// The empty-array marker of every empty array in `json`, at the path its
+/// elements would have.
+pub fn json_empty_array_markers(json: &serde_json::Value) -> Vec<JsonLeafValue> {
+    let mut markers = Vec::new();
+    collect_empty_arrays(json, &JsonPath::new(), &mut markers);
+    markers
+}
+
+fn collect_empty_arrays(
+    value: &serde_json::Value,
+    path: &JsonPath,
+    markers: &mut Vec<JsonLeafValue>,
+) {
+    match value {
+        serde_json::Value::Object(map) => {
+            for (key, child) in map {
+                collect_empty_arrays(child, &path.append_property(key), markers);
+            }
+        }
+        serde_json::Value::Array(elements) if elements.is_empty() => {
+            markers.push(JsonLeafValue::new(
+                path.append_index(),
+                JsonScalarValue::EmptyArray,
+            ));
+        }
+        serde_json::Value::Array(elements) => {
+            let element_path = path.append_index();
+            for element in elements {
+                collect_empty_arrays(element, &element_path, markers);
+            }
+        }
+        _ => {}
     }
 }
