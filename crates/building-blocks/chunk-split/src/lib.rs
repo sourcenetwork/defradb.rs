@@ -1,4 +1,4 @@
-//! Splits a `@chunk` text into chunks and builds the parent's list of them.
+//! Splits a `@chunk` text into chunks and names each by its hash.
 
-pub mod list;
+pub mod hash;
 pub mod split;

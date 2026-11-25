@@ -1,13 +1,13 @@
-//! `@chunk`: adds the generated chunk collection and the parent's list field.
+//! `@chunk`: adds the generated chunk collection.
 //!
 //! For `body: String @chunk` on `Article`, it adds a type `Article__body_chunk`
-//! with `source`, `text` and `hash`, and a field `_body_chunks` on `Article`.
-//! This runs before relations are resolved, so both are built like any other type.
+//! with `source`, `text` and `hash`. This runs before relations are resolved,
+//! so it is built like any other type.
 
 use graphql_parser::schema::Directive;
 use schema::{
-    chunk_collection_name, chunk_list_field, CType, ChunkSource, ChunkedField, CHUNK_HASH_FIELD,
-    CHUNK_SOURCE_FIELD, CHUNK_TEXT_FIELD,
+    chunk_collection_name, CType, ChunkSource, ChunkedField, CHUNK_HASH_FIELD, CHUNK_SOURCE_FIELD,
+    CHUNK_TEXT_FIELD,
 };
 
 use crate::error::{QueryError, Result};
@@ -83,7 +83,7 @@ fn field(name: &str, field_type: ParsedType) -> ParsedField {
 }
 
 impl SdlParser<'_> {
-    /// Adds the generated chunk types and list fields for every `@chunk` field,
+    /// Adds the generated chunk type for every `@chunk` field,
     /// with the settings both sides record. They are set before IDs are
     /// computed, because the IDs commit to them.
     pub(super) fn synthesize_chunk_types(&mut self) -> Result<()> {
@@ -103,14 +103,6 @@ impl SdlParser<'_> {
                         parent, f.name
                     )));
                 }
-                if f.name.starts_with('_') {
-                    return Err(QueryError::parse(format!(
-                        "@chunk is not allowed on a field whose name starts with \"_\", because its list field {} would start with \"__\". Field: {}.{}",
-                        chunk_list_field(&f.name),
-                        parent,
-                        f.name
-                    )));
-                }
                 if type_def.is_interface {
                     return Err(QueryError::parse(format!(
                         "@chunk is not allowed on an interface. Field: {}.{}",
@@ -127,7 +119,6 @@ impl SdlParser<'_> {
 
         for spec in &specs {
             let chunk_type = chunk_collection_name(&spec.parent, &spec.field);
-            let list = chunk_list_field(&spec.field);
             // Re-adding an existing parent fails later as "collection already exists",
             // the same as for a plain type.
             let readded = self.known_external_types.contains(&spec.parent);
@@ -141,15 +132,6 @@ impl SdlParser<'_> {
             let Some(parent) = self.type_defs.get_mut(&spec.parent) else {
                 continue;
             };
-            if parent.fields.iter().any(|f| f.name == list) {
-                return Err(QueryError::parse(format!(
-                    "@chunk needs the field name {}.{list}, which is already taken",
-                    spec.parent
-                )));
-            }
-            let mut hashes = scalar("String", true);
-            hashes.element_non_null = true;
-            parent.fields.push(field(&list, hashes));
             parent.directives.chunked_fields.push(ChunkedField {
                 field_name: spec.field.clone(),
                 max_chars: spec.config.max_chars,

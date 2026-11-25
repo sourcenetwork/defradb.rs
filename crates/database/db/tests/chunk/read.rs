@@ -3,10 +3,12 @@
 
 use std::sync::Arc;
 
+use db::chunk::split::split;
 use db::{AutoCommitMutator, DbCollectionProvider, DbTransactionRegistry, LensedAutoCommitFetcher};
 use query::{QueryExecutor, QueryRequest, QueryRunner};
 use serde_json::Value;
 
+use super::sync::CONFIG;
 use crate::common::fixture::make_test_db_with_bus;
 
 type Runner = QueryRunner<
@@ -77,15 +79,13 @@ async fn chunk_hashes(runner: &Runner) -> Vec<String> {
 async fn listed(runner: &Runner, doc_id: &str) -> Vec<String> {
     let data = run(
         runner,
-        &format!(r#"query {{ Article(docID: "{doc_id}") {{ _body_chunks }} }}"#),
+        &format!(r#"query {{ Article(docID: "{doc_id}") {{ body }} }}"#),
     )
     .await;
-    let mut list: Vec<String> = data["Article"][0]["_body_chunks"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .skip(1)
-        .map(|h| h.as_str().unwrap().to_string())
+    let text = data["Article"][0]["body"].as_str().unwrap();
+    let mut list: Vec<String> = split(text, &CONFIG)
+        .into_iter()
+        .map(|chunk| chunk.hash)
         .collect();
     list.sort();
     list.dedup();

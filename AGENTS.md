@@ -96,7 +96,7 @@ crates/
 │   ├── identity/           # Identity and JWT management
 │   ├── bitswap/            # Bitswap block exchange, wire-compatible with Go
 │   ├── net/                # HTTP, TLS and gRPC on nuclei sockets: server loop, HTTP client, gRPC channel
-│   └── chunk-split/        # @chunk splitter and the parent's chunk list
+│   └── chunk-split/        # @chunk splitter
 └── foundation/
     ├── edge/               # The network runtime behind a narrow handle
     ├── events/             # Pub/sub event bus (subscriptions)
