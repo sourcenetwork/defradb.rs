@@ -37,6 +37,8 @@ pub fn chunk_max_chars() -> Option<u32> {
 
 /// `DEFRA_BASELINE_EMBEDDING_URL` embeds the chunked `left` through that provider.
 pub fn embedding_url() -> Option<String> {
+    // Only a chunked field is embedded, so the URL alone changes nothing.
+    chunk_max_chars()?;
     std::env::var("DEFRA_BASELINE_EMBEDDING_URL").ok()
 }
 
