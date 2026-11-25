@@ -34,7 +34,7 @@ use crate::error::pool_failure;
 
 /// The route prefixes, under each API prefix (`go_paths::API_PREFIXES`),
 /// whose requests run on the pool.
-pub const ON_POOL: [&str; 10] = [
+pub const ON_POOL: [&str; 9] = [
     "/collections",
     "/backup",
     "/views",
@@ -44,7 +44,6 @@ pub const ON_POOL: [&str; 10] = [
     "/acp/node",
     "/actions",
     "/debug",
-    "/purge",
 ];
 
 /// The routes under an [`ON_POOL`] prefix that stay on the edge. The backup
@@ -192,7 +191,6 @@ mod tests {
             "/api/v0/view/refresh",
             "/api/v0/acp/node/status",
             "/api/v0/schema",
-            "/api/v0/purge",
             "/api/v1/collections",
             "/api/collections",
         ] {
@@ -206,6 +204,7 @@ mod tests {
             "/api/v0/p2p/replicators",
             "/api/v0/acp/policy",
             "/api/v0/events",
+            "/api/v0/purge",
             "/api/v0/collectionsx",
             "/health-check",
         ] {

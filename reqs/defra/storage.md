@@ -172,6 +172,72 @@ A purge commits successfully even when another transaction stores one of the blo
 
 A DocID that names no document is not an error and is not counted: purging `[alice, bob, alice]` succeeds and counts 2. A purge run in a caller's transaction removes nothing until that transaction commits, and nothing at all if it is discarded; it validates the collection's definition as every write there does, so a definition change committed first makes the transaction's commit conflict.
 
+# `defra.store_purge`: Purge wipes the whole store and restarts the node
+
+- **Parents:** ["defra"]
+
+`POST /api/v0/purge` (and `client purge --force`) deletes everything the node keeps in its store and starts the node again with the same options, as Go's `PurgeAndRestart` does. The request is answered `200` at once; the node then stops, its store is wiped, and it starts again. In Rust the process that embeds the node does the restart, so the node only asks for it through a purge handler (`NodeBuilder::with_purge_handler`, or `Node::purge_as` in process); `defradb start` is one such process. The route and `Node::purge_as` check in one order: the `DocumentUpdate` node permission when node access control is on, then development mode (`defra.store_purge.dev_mode`), then, for the route only, collection management (without it the route answers `503` with `Collection management operations are not enabled.`, as before), then a purge handler (`defra.store_purge.no_handler`). One purge runs per start of the node: a second request while the first is under way is answered `200` and starts nothing more. Purge by DocID (`defra.purge`) is a different operation with its own requirements.
+
+# `defra.store_purge.wipes`: After a purge nothing of the old store is left
+
+- **Parents:** ["defra.store_purge"]
+- **Scenarios:** ["node::purge::purge_removes_every_collection_and_document"]
+
+Take a node with a `Users` collection under a document ACP policy, a document identity 1 created and a `reader` relationship that lets identity 2 read it. After a purge the node lists no collection (`GetCollections` answers `[]`). Adding the policy, the collection and the same document again gives a fresh store's state: identity 2 reads no `Users` document, because its relationship went with the old store. Documents, heads, blocks, indexes, DocID mappings and ACP policies and relationships are all removed, because the purge drops every key of the store rather than deleting collections one by one.
+
+# `defra.store_purge.persists`: A purged persistent store stays empty after a restart
+
+- **Parents:** ["defra.store_purge"]
+- **Scenarios:** ["node::purge::a_purged_persistent_node_stays_empty_after_a_restart"]
+
+A node with its data on disk that is purged, then stopped and started again over the same directory, still lists no collection. The wipe is on disk, not only in the restarted node's memory.
+
+# `defra.store_purge.restart`: `defradb start` serves again on the same address after a purge
+
+- **Parents:** ["defra.store_purge"]
+- **Scenarios:** ["node::purge::purge_restarts_defradb_start_on_the_same_address"]
+
+`defradb start --url 127.0.0.1:0`, once purged, stops answering and then answers again at the URL it served before the purge: the port the first start was given is kept, never a new one picked from `:0`. The restarted node lists no collection. If the node's teardown fails during a purge (the embedded Vera node does not stop, or the database does not close), `defradb start` exits with that error and wipes nothing, instead of restarting over a store it could not close.
+
+# `defra.store_purge.keyring_kept`: A purge keeps what the keyring holds
+
+- **Parents:** ["defra.store_purge"]
+- **Scenarios:** ["node::purge::purge_keeps_a_keyring_held_identity_and_peer_key", "node::purge::defradb_start_refuses_a_keyring_climbing_into_the_vera_state"]
+
+A `defradb start` node with its keyring on, a node identity in it and P2P on has the same node identity DID and the same peer ID after a purge: the keyring lives outside the store, and the purge never removes it.
+
+The purge compares paths as the filesystem resolves them: `.` and `..` resolved and symbolic links followed. A keyring or data directory configured to climb back into a directory the purge removes, such as `--keyring-path x/../vera/keys` with the embedded Vera node's `<rootdir>/vera`, is refused: `defradb start` does not start, and fails with `refusing to wipe '<rootdir>/vera': it holds '<rootdir>/x/../vera/keys', which a purge keeps`. Disjoint paths written with `.` or `..` start as before. A keyring path that passes through a symbolic link sitting in a directory the purge removes, such as `<rootdir>/vera/keys` linking to a keyring elsewhere, is refused the same way, because the removal would take the link and the configured path with it.
+
+An Orbis remote signer (`--signer-type orbis`) is held for the whole of `defradb start`, so after a purge the restarted node signs with the same Orbis signer as before it.
+
+# `defra.store_purge.store_peer_key_regenerated`: A peer key held in the store is regenerated
+
+- **Parents:** ["defra.store_purge"]
+- **Scenarios:** ["node::purge::purge_regenerates_a_store_held_peer_key"]
+
+A node with P2P on whose peer key lives in its store (`--no-keyring`, or an embedded node built without `NodeBuilder::with_peer_keyring`) loses that key with the rest of the store: after the purge it has a new peer ID, as Go does without a keyring.
+
+# `defra.store_purge.no_handler`: A node with no purge handler refuses the purge
+
+- **Parents:** ["defra.store_purge"]
+- **Scenarios:** ["node::purge::purge_without_a_handler_is_refused"]
+
+An embedded node serving HTTP with collection management and development mode on, but built without `NodeBuilder::with_purge_handler`, answers `POST /api/v0/purge` with `501` and `purge needs the embedding application to wipe the store and restart the node: register a purge handler (NodeBuilder::with_purge_handler)`, and changes nothing: its collections and documents are all still there. `Node::purge_as` fails with the same text. This diverges from Go, whose node always runs under its CLI and answers `200`; before this change such a Rust node answered `200` and deleted its collections one by one.
+
+# `defra.store_purge.dev_mode`: A purge needs development mode
+
+- **Parents:** ["defra.store_purge"]
+- **Scenarios:** ["node::purge::purge_is_refused_without_development_mode", "node::purge::defradb_start_refuses_the_purge_without_development_mode"]
+
+Without development mode `POST /api/v0/purge` answers `403` with `operation not permitted whilst development mode is disabled. Operation: Purge`, Go's text, and the node keeps all its data. This holds however the purge is asked for, as Go checks it in `PurgeAndRestart` itself: `defradb start` without `--development`, and an embedded node built without `NodeBuilder::with_development` (or an HTTP config's `with_dev_mode`), whether through the route, the CLI client or `Node::purge_as` in process. The route asks the node whether it is in development mode rather than reading its own HTTP config: an embedded node built with `NodeBuilder::with_development(true)` and an HTTP config without `with_dev_mode` accepts the purge through the route as `Node::purge_as` does, while its dump, backup and lens routes still follow the HTTP config.
+
+# `defra.store_purge.embedded_vera`: A purge resets the embedded Vera node's state
+
+- **Parents:** ["defra.store_purge"]
+- **Scenarios:** ["node::purge::purge_removes_the_embedded_vera_state"]
+
+`defradb start --document-acp-type verars-embedded` keeps the embedded Vera node's chain under `<rootdir>/vera` and its submission journal under `<rootdir>/vera-worker`, under `--store memory` as under `--store regolith`. A purge removes both once the Vera node has stopped, so the restarted node starts a fresh chain and lists no collection. The keyring under the root directory is never removed.
+
 # `defra.orphan_gc`: Reclaiming fetched blocks that never merged
 
 - **Parents:** ["defra"]

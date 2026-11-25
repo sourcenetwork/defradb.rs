@@ -549,6 +549,13 @@ jobs:
       - run: cargo nextest run --cargo-profile super-dev -p defra-node --features embedded-vera,http --test embedded_vera
       - run: cargo nextest run --cargo-profile super-dev -p defra-node --features embedded-vera,p2p --test embedded_vera_replication
       - run: cargo nextest run --cargo-profile super-dev -p cli --features embedded-vera --test embedded_vera --test embedded_vera_config
+      # A purge of `defradb start` resets the embedded Vera node too; the
+      # testo test skips under a defradb built without the feature.
+      - run: cargo build --profile super-dev -p cli --features embedded-vera --bin defradb --target-dir target/embedded-vera
+      - run: cargo nextest run --cargo-profile super-dev -p integration-test --test testo -E 'test(=node::purge::purge_removes_the_embedded_vera_state)'
+        env:
+          DEFRA_RUST_BINARY: ${{ github.workspace }}/target/embedded-vera/super-dev/defradb
+          DEFRA_CLIENT: rust-http
 
   wasm-check:
     name: WASM Build Check

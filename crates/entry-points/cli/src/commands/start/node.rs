@@ -92,7 +92,12 @@ pub struct Node {
     /// Stored for future use in request context injection.
     #[allow(dead_code)]
     user_identity: Option<std::sync::Arc<identity::RawIdentity>>,
+    /// Takes `POST /purge` to the run loop.
+    pub(super) purge: Arc<super::purge::CliPurge>,
+    /// What a purge wipes once the node has closed.
+    pub(super) wipe_target: storage::WipeTarget,
     /// The network runtime the node's servers and listeners run on.
+    #[cfg_attr(not(feature = "postgres"), allow(dead_code))]
     pub(super) edge: edge::Edge,
 }
 
@@ -399,8 +404,16 @@ impl Node {
         }
 
         let (shutdown_tx, shutdown_rx) = mpsc::channel(1);
+        let wipe_target = super::purge::wipe_target(&config)?;
+        let purge = Arc::new(super::purge::CliPurge::new(
+            shutdown_tx.clone(),
+            config.development,
+        ));
+        servers.http_server = servers.http_server.with_purge_arc(purge.clone());
 
         Ok(Self {
+            purge,
+            wipe_target,
             config,
             database: servers.database,
             p2p_handle: servers.p2p_handle,
@@ -432,7 +445,7 @@ impl Node {
 /// Go wires `--valuelogfilesize` to Badger's `ValueLogFileSize`. regolith's
 /// nearest equivalent is the compaction output target, so that is where it
 /// lands.
-fn regolith_options(config: &Config) -> storage::RegolithStoreOptions {
+pub(super) fn regolith_options(config: &Config) -> storage::RegolithStoreOptions {
     let mut opts =
         storage::RegolithStoreOptions::default().with_durability(config.datastore.durability);
     if let Some(bytes) = config.datastore.valuelogfilesize {

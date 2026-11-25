@@ -6,6 +6,7 @@ use nuclei::time::timeout;
 use tracing::{error, info, warn};
 
 use super::node::Node;
+pub use super::purge::RunOutcome;
 use crate::error::{Error, Result};
 
 /// How long shutdown waits for the HTTP requests in flight, as long as the
@@ -15,10 +16,66 @@ const HTTP_DRAIN: Duration = Duration::from_secs(30);
 #[cfg(feature = "postgres")]
 const PG_DRAIN: Duration = Duration::from_secs(30);
 
+/// The process's shutdown signals, listened for once across every run of
+/// the node, so a purge's restart keeps them.
+pub struct Signals {
+    #[cfg(unix)]
+    sigint: nuclei::signal::unix::Signal,
+    #[cfg(unix)]
+    sigterm: nuclei::signal::unix::Signal,
+}
+
+impl Signals {
+    /// Starts listening for SIGINT and SIGTERM (Ctrl+C off unix).
+    pub fn new() -> Result<Self> {
+        #[cfg(unix)]
+        {
+            use nuclei::signal::unix::{signal, SignalKind};
+            Ok(Self {
+                sigint: signal(SignalKind::interrupt())
+                    .map_err(|e| Error::Signal(e.to_string()))?,
+                sigterm: signal(SignalKind::terminate())
+                    .map_err(|e| Error::Signal(e.to_string()))?,
+            })
+        }
+        #[cfg(not(unix))]
+        Ok(Self {})
+    }
+
+    /// Waits for the next shutdown signal.
+    async fn recv(&mut self) {
+        #[cfg(unix)]
+        nuclei::select! {
+            _ = self.sigint.recv() => info!("Received SIGINT"),
+            _ = self.sigterm.recv() => info!("Received SIGTERM"),
+        }
+        #[cfg(not(unix))]
+        match nuclei::signal::ctrl_c().await {
+            Ok(()) => info!("Received Ctrl+C"),
+            Err(e) => {
+                error!(
+                    "Failed to listen for Ctrl+C signal: {}. Node may not respond to interrupt signals.",
+                    e
+                );
+                std::future::pending::<()>().await;
+            }
+        }
+    }
+}
+
 impl Node {
     /// Run the node until shutdown
     #[doc(hidden)]
-    pub async fn run(mut self) -> Result<()> {
+    pub async fn run(self) -> Result<()> {
+        let mut signals = Signals::new()?;
+        self.run_until(&mut signals).await.map(drop)
+    }
+
+    /// Run the node until a signal, a crashed server or a purge stops it.
+    /// A purge is [`RunOutcome::Purged`] only when the Vera node stopped and
+    /// the database closed; otherwise it is the error that stopped it.
+    #[doc(hidden)]
+    pub async fn run_until(mut self, signals: &mut Signals) -> Result<RunOutcome> {
         info!("DefraDB node started");
         let scheme = if self.config.api.tls_enabled() {
             "https"
@@ -26,17 +83,6 @@ impl Node {
             "http"
         };
         info!("API endpoint: {scheme}://{}", self.config.api.address);
-
-        // Fallible setup comes before the servers start, so an error leaves
-        // nothing running.
-        #[cfg(unix)]
-        let (mut sigint, mut sigterm) = {
-            use nuclei::signal::unix::{signal, SignalKind};
-            (
-                signal(SignalKind::interrupt()).map_err(|e| Error::Signal(e.to_string()))?,
-                signal(SignalKind::terminate()).map_err(|e| Error::Signal(e.to_string()))?,
-            )
-        };
 
         // Start HTTP server, in its own scope. Its task is awaited below to
         // notice a crash, so it carries no deadline.
@@ -81,54 +127,12 @@ impl Node {
             None
         };
 
-        // Set up signal handling
-        let shutdown_tx = self.shutdown_tx.clone();
-
-        #[cfg(unix)]
-        {
-            self.edge
-                .spawn_service(async move {
-                    nuclei::select! {
-                        _ = sigint.recv() => {
-                            info!("Received SIGINT");
-                        }
-                        _ = sigterm.recv() => {
-                            info!("Received SIGTERM");
-                        }
-                    }
-                    if let Err(e) = shutdown_tx.send(()).await {
-                        error!("Failed to send shutdown signal: {}", e);
-                    }
-                })
-                .detach();
-        }
-
-        #[cfg(not(unix))]
-        {
-            self.edge.spawn_service(async move {
-                match nuclei::signal::ctrl_c().await {
-                    Ok(()) => {
-                        info!("Received Ctrl+C");
-                        if let Err(e) = shutdown_tx.send(()).await {
-                            error!("Failed to send shutdown signal: {}", e);
-                        }
-                    }
-                    Err(e) => {
-                        error!(
-                            "Failed to listen for Ctrl+C signal: {}. Node may not respond to interrupt signals.",
-                            e
-                        );
-                    }
-                }
-            })
-            .detach();
-        }
-
-        // Wait for shutdown signal OR HTTP server crash
+        // Wait for a shutdown (a signal, a request, a purge) OR an HTTP server crash
         let http_crashed = match &mut http_task {
             Some(task) => {
                 nuclei::select! {
                     _ = self.shutdown_rx.recv() => false,
+                    _ = signals.recv() => false,
                     result = task => {
                         match result {
                             Ok(()) => {
@@ -146,7 +150,10 @@ impl Node {
                 }
             }
             None => {
-                self.shutdown_rx.recv().await;
+                nuclei::select! {
+                    _ = self.shutdown_rx.recv() => {},
+                    _ = signals.recv() => {},
+                }
                 false
             }
         };
@@ -308,12 +315,17 @@ impl Node {
 
         // The servers and P2P have stopped, so nothing asks for an access
         // decision any more: the Vera node stops, up to its deadline.
+        // A purge wipes only after a clean stop: the first failure is kept.
+        let mut teardown_failure: Option<String> = None;
         #[cfg(feature = "embedded-vera")]
         if let Some(vera) = self.embedded_vera.take() {
             info!("Stopping embedded Vera node...");
             match vera.stop().await {
                 Ok(()) => info!("Embedded Vera node stopped"),
-                Err(e) => warn!("Embedded Vera node did not stop cleanly: {}", e),
+                Err(e) => {
+                    warn!("Embedded Vera node did not stop cleanly: {}", e);
+                    teardown_failure = Some(format!("the embedded Vera node did not stop: {e}"));
+                }
             }
         }
 
@@ -323,10 +335,11 @@ impl Node {
         info!("Stopping the worker pool and closing the database...");
         if let Err(e) = self.database.close().await {
             warn!("Database close encountered an issue: {}", e);
+            teardown_failure.get_or_insert_with(|| format!("the database did not close: {e}"));
         }
 
         defra_core::signing::clear_identity_store();
         info!("DefraDB node shutdown complete");
-        Ok(())
+        super::purge::outcome(self.purge.requested(), teardown_failure, &self.wipe_target)
     }
 }

@@ -26,7 +26,8 @@ use crate::router::{
     create_router_with_state_and_body_limits, AppState, AppStateBuilder, BackupOperations,
     BlockOperations, BodyLimits, CollectionLookup, CollectionManagementOperations,
     CollectionOperations, DocumentAcpOperations, DumpOperations, EncryptedIndexOperations,
-    IndexOperations, ManageRequester, NodeAcpOperations, P2POperations, ViewOperations,
+    IndexOperations, ManageRequester, NodeAcpOperations, P2POperations, PurgeOperations,
+    ViewOperations,
 };
 
 /// Default cap on an inline backup import body (100 MiB).
@@ -137,6 +138,7 @@ pub struct Server {
     doc_acp: Option<Arc<dyn DocumentAcpOperations>>,
     view: Option<Arc<dyn ViewOperations>>,
     dump: Option<Arc<dyn DumpOperations>>,
+    purge: Option<Arc<dyn PurgeOperations>>,
     event_bus: Option<Arc<dyn events::Bus>>,
     node_options: Option<Arc<Map<String, serde_json::Value>>>,
     node_identity_did: Option<String>,
@@ -205,6 +207,7 @@ impl Server {
             doc_acp: None,
             view: None,
             dump: None,
+            purge: None,
             event_bus: None,
             node_options: None,
             node_identity_did: None,
@@ -374,6 +377,13 @@ impl Server {
         self
     }
 
+    /// Set what `/purge` asks to wipe and restart the node. Without it the
+    /// route answers 501.
+    pub fn with_purge_arc(mut self, purge: Arc<dyn PurgeOperations>) -> Self {
+        self.purge = Some(purge);
+        self
+    }
+
     /// Set event bus for GraphQL subscriptions.
     ///
     /// When an event bus is configured, the server enables WebSocket
@@ -473,6 +483,9 @@ impl Server {
         }
         if let Some(ref dump) = self.dump {
             builder = builder.with_dump(Arc::clone(dump));
+        }
+        if let Some(ref purge) = self.purge {
+            builder = builder.with_purge(Arc::clone(purge));
         }
         if let Some(ref event_bus) = self.event_bus {
             builder = builder.with_event_bus(Arc::clone(event_bus));

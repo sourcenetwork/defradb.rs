@@ -11,7 +11,8 @@ use serde_json::Map;
 use super::{
     BackupOperations, BlockOperations, CollectionLookup, CollectionManagementOperations,
     CollectionOperations, DocumentAcpOperations, DumpOperations, EncryptedIndexOperations,
-    IndexOperations, ManageRequester, NodeAcpOperations, P2POperations, ViewOperations,
+    IndexOperations, ManageRequester, NodeAcpOperations, P2POperations, PurgeOperations,
+    ViewOperations,
 };
 
 /// Application state shared across handlers.
@@ -42,6 +43,7 @@ pub struct AppStateFields {
     pub doc_acp: Option<Arc<dyn DocumentAcpOperations>>,
     pub view: Option<Arc<dyn ViewOperations>>,
     pub dump: Option<Arc<dyn DumpOperations>>,
+    pub purge: Option<Arc<dyn PurgeOperations>>,
     pub event_bus: Option<Arc<dyn events::Bus>>,
     pub node_options: Option<Arc<Map<String, serde_json::Value>>>,
     pub node_identity_did: Option<String>,
@@ -102,6 +104,7 @@ impl std::fmt::Debug for AppStateFields {
             )
             .field("view", &self.view.as_ref().map(|_| "<ViewOperations>"))
             .field("dump", &self.dump.as_ref().map(|_| "<DumpOperations>"))
+            .field("purge", &self.purge.as_ref().map(|_| "<PurgeOperations>"))
             .field("event_bus", &self.event_bus.as_ref().map(|_| "<EventBus>"))
             .field(
                 "node_options",
@@ -243,6 +246,7 @@ pub struct AppStateBuilder {
     doc_acp: Option<Arc<dyn DocumentAcpOperations>>,
     view: Option<Arc<dyn ViewOperations>>,
     dump: Option<Arc<dyn DumpOperations>>,
+    purge: Option<Arc<dyn PurgeOperations>>,
     event_bus: Option<Arc<dyn events::Bus>>,
     node_options: Option<Arc<Map<String, serde_json::Value>>>,
     node_identity_did: Option<String>,
@@ -273,6 +277,7 @@ impl AppStateBuilder {
             doc_acp: None,
             view: None,
             dump: None,
+            purge: None,
             event_bus: None,
             node_options: None,
             node_identity_did: None,
@@ -378,6 +383,12 @@ impl AppStateBuilder {
         self
     }
 
+    /// Set what `/purge` asks to wipe and restart the node.
+    pub fn with_purge(mut self, purge: Arc<dyn PurgeOperations>) -> Self {
+        self.purge = Some(purge);
+        self
+    }
+
     /// Set event bus for subscriptions.
     pub fn with_event_bus(mut self, bus: Arc<dyn events::Bus>) -> Self {
         self.event_bus = Some(bus);
@@ -439,6 +450,7 @@ impl AppStateBuilder {
             doc_acp: self.doc_acp,
             view: self.view,
             dump: self.dump,
+            purge: self.purge,
             event_bus: self.event_bus,
             node_options: self.node_options,
             node_identity_did: self.node_identity_did,

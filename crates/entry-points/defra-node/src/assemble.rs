@@ -36,6 +36,12 @@ pub(crate) struct Extras {
     #[cfg(all(test, feature = "p2p"))]
     pub kms_transport_wrapper: Option<TestKmsTransportWrapper>,
     #[cfg(not(target_arch = "wasm32"))]
+    pub purge_handler: Option<Arc<dyn crate::PurgeHandler>>,
+    #[cfg(not(target_arch = "wasm32"))]
+    pub development: bool,
+    #[cfg(not(target_arch = "wasm32"))]
+    pub wipe_target: storage::WipeTarget,
+    #[cfg(not(target_arch = "wasm32"))]
     pub transaction_cleanup: Option<TransactionCleanupConfig>,
     #[cfg(feature = "http")]
     pub serves_http: bool,
@@ -669,6 +675,10 @@ where
         background_tasks,
         #[cfg(feature = "managed-p2p")]
         p2p,
+        #[cfg(not(target_arch = "wasm32"))]
+        purge: crate::purge::PurgeGate::new(extras.purge_handler, extras.development),
+        #[cfg(not(target_arch = "wasm32"))]
+        wipe_target: extras.wipe_target,
         shutdown_started: AtomicBool::new(false),
         shutdown_finished: AtomicBool::new(false),
         shutdown_notify: Notify::new(),

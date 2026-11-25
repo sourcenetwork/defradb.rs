@@ -304,6 +304,22 @@ impl Store for RegolithStore {
     }
 }
 
+impl RegolithStore {
+    /// Drops every key and closes the database, without waiting: only for a
+    /// store just opened by [`crate::wipe`], so no transaction holds a slot.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn drop_all_and_close(&self) -> Result<()> {
+        if !self.inner.slots.begin_close() {
+            return Ok(());
+        }
+        let db = self.inner.db.db();
+        db.drop_all()
+            .map_err(|error| Error::Backend(format!("drop_all failed: {error}")))?;
+        db.close()
+            .map_err(|error| Error::Backend(format!("failed to close regolith: {error}")))
+    }
+}
+
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl Dropable for RegolithStore {

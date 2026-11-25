@@ -142,6 +142,7 @@ registry! {
     SaveDocs => [v("document.saveMany")],
     RefreshViews => [v("view.refresh")],
     Request => [v("query.execute")],
+    Purge => [v("node.purge")],
     Restart => [v("node.stop").all(&["stop"]).implied(&[("stop", "true")]), v("node.restart")],
     SetActiveCollectionVersion => [v("collection.setActiveVersion")],
     Start => [v("node.startNAC")],

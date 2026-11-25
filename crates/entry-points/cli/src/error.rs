@@ -92,6 +92,9 @@ pub enum Error {
     #[error("signal handling error: {0}")]
     Signal(String),
 
+    #[error("purge stopped the node without wiping it: {0}")]
+    PurgeTeardown(String),
+
     #[error("invalid multiaddr: {0}")]
     InvalidMultiaddr(String),
 

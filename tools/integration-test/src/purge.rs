@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use defra_harness::{NodeKind, TestCluster};
+use defra_harness::TestCluster;
 
 const RESTART_TIMEOUT: Duration = Duration::from_secs(30);
 const SHUTDOWN_GRACE: Duration = Duration::from_millis(500);
@@ -9,7 +9,7 @@ const SHUTDOWN_POLL: Duration = Duration::from_millis(5);
 
 /// Purge the node at `index` and wait until it serves requests again.
 ///
-/// Go answers the purge request and then restarts its HTTP server, so a
+/// The node answers the purge request and then restarts its HTTP server, so a
 /// request sent straight after the purge can find nothing listening.
 pub async fn purge_node(cluster: &TestCluster, index: usize) {
     let client = cluster.client(index);
@@ -19,9 +19,8 @@ pub async fn purge_node(cluster: &TestCluster, index: usize) {
 
     let http = net::http::Client::new(edge::testing::edge());
     let url = cluster.api_url(index);
-    if client.kind() == NodeKind::Go {
-        wait_until_down(&http, url).await;
-    }
+    // Both runtimes answer, then wipe and restart behind the answer.
+    wait_until_down(&http, url).await;
     wait_until_up(&http, url)
         .await
         .unwrap_or_else(|error| panic!("node {index} did not come back after purge: {error}"));

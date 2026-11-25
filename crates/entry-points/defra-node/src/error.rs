@@ -281,6 +281,21 @@ pub enum Error {
     /// The in-memory regolith store did not open.
     #[error("failed to open in-memory regolith: {0}")]
     MemoryStoreOpen(#[source] storage::Error),
+    /// A purge was asked of a node not in development mode, Go's text.
+    #[error("operation not permitted whilst development mode is disabled. Operation: Purge")]
+    PurgeNeedsDevelopment,
+    /// A purge was asked of a node built without a purge handler.
+    #[error("purge needs the embedding application to wipe the store and restart the node: register a purge handler (NodeBuilder::with_purge_handler)")]
+    PurgeNeedsHandler,
+    /// `shutdown_and_wipe` was called on a node another caller shut down.
+    #[error("the node was already shut down by another caller; nothing was wiped")]
+    WipeAfterShutdown,
+    /// `shutdown_and_wipe` was called while another handle held the node.
+    #[error("the node shut down but another handle to it still holds its store open; drop every other handle before shutdown_and_wipe; nothing was wiped")]
+    WipeWhileHeld,
+    /// The store or a directory the node owns could not be wiped.
+    #[error("failed to wipe the store: {0}")]
+    Wipe(#[source] storage::Error),
     /// The database did not open.
     #[error("failed to open database: {0}")]
     DatabaseOpen(#[source] db::Error),
