@@ -293,8 +293,10 @@ async fn chunk_vectors(
         .iter()
         .map(|embedding| embedding.field_name.as_str())
         .collect();
+    // A restore answers each text once, so peers that embedded the same text
+    // differently keep the vector of the lowest `_docID`, the same every export.
     let query = format!(
-        "{{ {} {{ {} {} }} }}",
+        "{{ {}(order: {{_docID: ASC}}) {{ {} {} }} }}",
         name,
         schema::CHUNK_TEXT_FIELD,
         vectors.join(" ")
