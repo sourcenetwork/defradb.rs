@@ -44,17 +44,62 @@ pub struct VectorEmbeddingDescription {
 /// Whether a Go `template` reads `field`, as `.field` inside `{{ }}`.
 pub fn template_reads(template: &str, field: &str) -> bool {
     let is_name = |c: char| c.is_alphanumeric() || c == '_';
-    template.split("{{").skip(1).any(|action| {
-        let action = action.split("}}").next().unwrap_or_default();
-        action.match_indices('.').any(|(at, _)| {
-            let before = action[..at].chars().next_back();
-            let rest = &action[at + 1..];
+    let mut rest = template;
+    while let Some(start) = rest.find("{{") {
+        let (code, after) = action_code(&rest[start + 2..]);
+        let read = code.match_indices('.').any(|(at, _)| {
+            let before = code[..at].chars().next_back();
             !before.is_some_and(is_name)
-                && rest
+                && code[at + 1..]
                     .strip_prefix(field)
                     .is_some_and(|after| !after.starts_with(is_name))
-        })
-    })
+        });
+        if read {
+            return true;
+        }
+        rest = after;
+    }
+    false
+}
+
+/// An action's code with its comments and quoted text blanked, and the
+/// template after its `}}`. A `}}` inside a string doesn't end the action.
+fn action_code(action: &str) -> (String, &str) {
+    if action
+        .trim_start_matches('-')
+        .trim_start()
+        .starts_with("/*")
+    {
+        let end = action.find("*/").map_or(action.len(), |at| at + 2);
+        let close = action[end..]
+            .find("}}")
+            .map_or(action.len(), |at| end + at + 2);
+        return (String::new(), &action[close..]);
+    }
+    let mut code = String::new();
+    let (mut quote, mut escaped) = (None, false);
+    for (at, c) in action.char_indices() {
+        match quote {
+            Some(open) => {
+                if escaped {
+                    escaped = false;
+                } else if c == '\\' && open != '`' {
+                    escaped = true;
+                } else if c == open {
+                    quote = None;
+                }
+                code.push(' ');
+            }
+            None if action[at..].starts_with("}}") => return (code, &action[at + 2..]),
+            None => {
+                if matches!(c, '"' | '`' | '\'') {
+                    quote = Some(c);
+                }
+                code.push(c);
+            }
+        }
+    }
+    (code, "")
 }
 
 impl VectorEmbeddingDescription {
@@ -141,5 +186,15 @@ mod tests {
         assert!(!template_reads("{{ .meta.body }}", "body"));
         assert!(!template_reads("body .body", "body"));
         assert!(!template_reads("", "body"));
+    }
+
+    #[test]
+    fn a_template_reads_no_field_in_its_comments_or_strings() {
+        assert!(!template_reads("{{ .title }} {{/* .body */}}", "body"));
+        assert!(!template_reads("{{- /* .body */ -}}", "body"));
+        assert!(!template_reads(r#"{{ printf ".body" .title }}"#, "body"));
+        assert!(template_reads(r#"{{ printf "%s}}" .body }}"#, "body"));
+        assert!(template_reads(r#"{{ printf "a\"}}" .body }}"#, "body"));
+        assert!(template_reads("{{/* note */}}{{ .body }}", "body"));
     }
 }

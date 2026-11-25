@@ -316,6 +316,39 @@ fn a_template_embedding_that_reads_a_chunked_field_is_refused() {
 }
 
 #[test]
+fn a_template_read_after_a_quoted_closing_brace_is_refused() {
+    let sdl = r#"type Article {
+        title: String
+        body: String @chunk
+        title_v: [Float32!] @embedding(fields: ["title"], template: "{{ printf \"%s}}\" .body }}")
+    }"#;
+    let err = parse_sdl(sdl).unwrap_err().to_string();
+    assert!(
+        err.contains(
+            "@embedding over a @chunk field must embed only that field. Field: Article.title_v"
+        ),
+        "{err}"
+    );
+}
+
+#[test]
+fn a_chunked_field_named_only_in_a_template_comment_stays_on_the_parent() {
+    let sdl = r#"type Article {
+        title: String
+        body: String @chunk
+        title_v: [Float32!] @embedding(fields: ["title"], template: "{{ .title }} {{/* .body */}}")
+    }"#;
+    let collections = parse_sdl(sdl).unwrap();
+    let names: Vec<&str> = collections[0]
+        .vector_embeddings
+        .iter()
+        .map(|e| e.field_name.as_str())
+        .collect();
+    assert_eq!(names, vec!["title_v"]);
+    assert!(collections[1].vector_embeddings.is_empty());
+}
+
+#[test]
 fn chunk_declares_the_current_splitter_version() {
     let article = &parse_sdl(SDL).unwrap()[0];
     assert_eq!(
