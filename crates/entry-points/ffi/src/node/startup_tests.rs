@@ -94,26 +94,24 @@ fn an_identity_option_that_is_not_an_identity_handle_fails() {
     assert!(error.contains("identity_ptr"), "{error}");
 }
 
-#[cfg(not(feature = "vera"))]
 #[test]
-fn remote_document_acp_needs_the_vera_feature() {
+fn remote_document_acp_is_refused() {
     let remote = cstr("remote");
     let error = refused(NodeInitOptions {
         document_acp_type: remote.as_ptr(),
         ..local_options()
     });
-    assert!(error.contains("vera feature"), "{error}");
+    assert!(error.contains("remote document ACP"), "{error}");
 }
 
-#[cfg(feature = "vera")]
 #[test]
-fn remote_document_acp_needs_a_signer_key() {
-    let remote = cstr("remote");
+fn a_remote_document_acp_option_is_refused() {
+    let address = cstr("http://127.0.0.1:9090");
     let error = refused(NodeInitOptions {
-        document_acp_type: remote.as_ptr(),
+        remote_dac_grpc_address: address.as_ptr(),
         ..local_options()
     });
-    assert!(error.contains("vera_signer_key"), "{error}");
+    assert!(error.contains("remote document ACP"), "{error}");
 }
 
 #[cfg(not(feature = "libp2p"))]
