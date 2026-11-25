@@ -212,25 +212,20 @@ pub enum SigningKey {
 pub enum TransportConfig {
     #[default]
     None,
-    #[cfg(feature = "libp2p")]
-    Libp2p(Libp2pConfig),
     #[cfg(feature = "p2p")]
-    Iroh(P2PConfig),
-    #[cfg(feature = "pinc")]
     Pinc(PincConfig),
 }
 
 /// The pinc transport's configuration: direct connections, and topics through
 /// the hubs it names.
-#[cfg(feature = "pinc")]
+#[cfg(feature = "p2p")]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PincConfig {
     /// The UDP address the endpoint binds; port 0 picks one.
     pub bind: std::net::SocketAddr,
     /// Who may connect in. Defaults to every peer.
-    pub allowlist: p2p::pinc::PincAllowlistConfig,
-    /// Path of a key file, read as [`P2PConfig::secret_key_path`] is, so a
-    /// node keeps the peer id it has on iroh.
+    pub allowlist: defra_pinc::PincAllowlistConfig,
+    /// Path of the secret key file; what it means depends on `peer_key`.
     pub secret_key_path: Option<std::path::PathBuf>,
     /// Where the secret key lives.
     pub peer_key: PeerKeySource,
@@ -239,75 +234,44 @@ pub struct PincConfig {
     /// The pinc hubs topics run through, as `<peer id>@<udp address>`. With
     /// none, gossip and the KMS key exchange reach no one.
     pub hubs: Vec<String>,
+    /// Peers dialed at start, as `<peer id>@<udp address>`. One that does
+    /// not answer is logged and does not fail the start.
+    pub bootstrap_peers: Vec<String>,
+    /// Re-announce blocks merged from peers on their topics, so subscribers
+    /// with no route to the author still receive them through whichever peer
+    /// merged them. Signatures are verified on merge, so a rebroadcasting
+    /// node never vouches for content it did not verify.
+    pub rebroadcast_on_merge: bool,
+    /// When the sweep of blocks fetched from peers and never merged runs. A
+    /// store that does not persist never sweeps.
+    pub orphan_sweep: db::block::orphan_gc::OrphanSweepConfig,
     /// Reload collection subscriptions persisted in the local store.
     pub load_persisted_collections: bool,
     /// Sync limits and the replicator retry ladder.
     pub sync: SyncTuning,
 }
 
-#[cfg(feature = "pinc")]
+#[cfg(feature = "p2p")]
 impl Default for PincConfig {
     fn default() -> Self {
         Self {
             bind: std::net::SocketAddr::from(([0, 0, 0, 0], 0)),
-            allowlist: p2p::pinc::PincAllowlistConfig::default(),
+            allowlist: defra_pinc::PincAllowlistConfig::default(),
             secret_key_path: None,
             peer_key: PeerKeySource::default(),
-            max_connections: p2p::pinc::PincEndpointConfig::DEFAULT_MAX_CONNECTIONS,
+            max_connections: defra_pinc::PincEndpointConfig::DEFAULT_MAX_CONNECTIONS,
             hubs: Vec::new(),
+            bootstrap_peers: Vec::new(),
+            rebroadcast_on_merge: false,
+            orphan_sweep: db::block::orphan_gc::OrphanSweepConfig::default(),
             load_persisted_collections: true,
             sync: SyncTuning::default(),
         }
     }
 }
 
-/// libp2p transport configuration.
-#[cfg(feature = "libp2p")]
-#[derive(Debug, Clone, PartialEq)]
-pub struct Libp2pConfig {
-    /// The addresses the host listens on; none leaves it dialing out only.
-    pub listen_addrs: Vec<String>,
-    /// Peers the host connects to once it listens.
-    pub bootstrap_peers: Vec<String>,
-    /// Run GossipSub, which document topics replicate over.
-    pub enable_pubsub: bool,
-    /// Run the relay client transport.
-    pub enable_relay: bool,
-    /// Seconds a block-sync stream may take; `None` keeps the host default.
-    pub stream_timeout_secs: Option<u64>,
-    /// Sync limits and the replicator retry ladder.
-    pub sync: SyncTuning,
-    /// Whether and when the orphan block sweep (`db::block::orphan_gc`)
-    /// runs; off by default. It runs only on a persistent store, which
-    /// outlives an abandoned fetch.
-    pub orphan_sweep: db::block::orphan_gc::OrphanSweepConfig,
-    /// libp2p resource budget overrides: the memory and file descriptor
-    /// budgets and the per-peer inbound stream cap.
-    pub resource_limits: p2p::ResourceLimits,
-    /// Where the DNS layers read the resolver configuration; the system's by
-    /// default.
-    pub resolver: p2p::ResolverSource,
-}
-
-#[cfg(feature = "libp2p")]
-impl Default for Libp2pConfig {
-    fn default() -> Self {
-        Self {
-            listen_addrs: Vec::new(),
-            bootstrap_peers: Vec::new(),
-            enable_pubsub: true,
-            enable_relay: true,
-            stream_timeout_secs: None,
-            sync: SyncTuning::default(),
-            orphan_sweep: db::block::orphan_gc::OrphanSweepConfig::default(),
-            resource_limits: p2p::ResourceLimits::default(),
-            resolver: p2p::ResolverSource::System,
-        }
-    }
-}
-
-/// Sync limits and the replicator retry ladder, for either transport.
-#[cfg(any(feature = "p2p", feature = "libp2p"))]
+/// Sync limits and the replicator retry ladder.
+#[cfg(feature = "p2p")]
 #[derive(Debug, Clone, PartialEq)]
 pub struct SyncTuning {
     /// Maximum concurrent DAG fetch tasks. Lower values reduce resource pressure
@@ -338,7 +302,7 @@ pub struct SyncTuning {
     pub replicator_retry_intervals: Option<Vec<u64>>,
 }
 
-#[cfg(any(feature = "p2p", feature = "libp2p"))]
+#[cfg(feature = "p2p")]
 impl Default for SyncTuning {
     fn default() -> Self {
         let defaults = p2p::sync::SyncConfig::default();
@@ -356,7 +320,7 @@ impl Default for SyncTuning {
     }
 }
 
-#[cfg(any(feature = "p2p", feature = "libp2p"))]
+#[cfg(feature = "p2p")]
 impl SyncTuning {
     pub(crate) fn sync_config(&self) -> p2p::sync::SyncConfig {
         p2p::sync::SyncConfig {
@@ -381,80 +345,20 @@ impl SyncTuning {
     }
 }
 
-/// Where an iroh node keeps its secret key.
+/// Where a node keeps its peer key.
 #[cfg(feature = "p2p")]
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum PeerKeySource {
-    /// In the file at [`P2PConfig::secret_key_path`], created there when
+    /// In the file at [`PincConfig::secret_key_path`], created there when
     /// absent. With no path the key is new on every start.
     #[default]
     File,
-    /// In the node's store, one key shared with the libp2p transport, or in
-    /// the application keyring ([`NodeConfig::peer_keyring`]). Here
-    /// `secret_key_path` only names an iroh key file from before the node
-    /// shared one peer key: it is imported when the store has none and never
-    /// written.
+    /// In the node's store, or in the application keyring
+    /// ([`NodeConfig::peer_keyring`]). Here `secret_key_path` only names a
+    /// key file from before the node kept its key in the store: it is
+    /// imported when the store has none and never written.
     Store,
-}
-
-/// Configuration for the optional P2P networking layer.
-///
-/// Iroh/QUIC. Requires the `p2p` feature, which implies `native`.
-#[cfg(feature = "p2p")]
-#[derive(Debug, Clone, PartialEq)]
-pub struct P2PConfig {
-    /// UDP port for QUIC listener. `None` leaves the port to iroh.
-    pub port: Option<u16>,
-    /// Bind to a specific IP address. When set, IROH only listens on this
-    /// interface -- use the Tailscale IP to keep P2P within the mesh and
-    /// prevent IROH from advertising unreachable LAN addresses across sites.
-    /// None = 0.0.0.0 (all interfaces).
-    pub bind_addr: Option<std::net::IpAddr>,
-    /// Relay behavior for NAT traversal.
-    pub relay_mode: p2p::iroh::IrohRelayModeConfig,
-    /// Address publishing / lookup behavior.
-    pub discovery: p2p::iroh::IrohDiscoveryConfig,
-    /// Inbound-connection authorization. Defaults to accepting every peer;
-    /// restrict to an explicit set of iroh endpoint ids once this node is
-    /// reachable from the internet (relay-enabled).
-    pub allowlist: p2p::iroh::IrohAllowlistConfig,
-    /// Maximum concurrent QUIC paths per connection. None keeps iroh's default.
-    pub max_concurrent_multipath_paths: Option<u32>,
-    /// Path of the secret key file; what it means depends on `peer_key`.
-    pub secret_key_path: Option<std::path::PathBuf>,
-    /// Where the secret key lives.
-    pub peer_key: PeerKeySource,
-    /// Reload collection subscriptions persisted in the local store on startup.
-    /// When false, only explicit subscribe calls in the current process take effect.
-    pub load_persisted_collections: bool,
-    /// Sync limits and the replicator retry ladder.
-    pub sync: SyncTuning,
-    /// Re-announce blocks merged from peers on their gossip topics, so
-    /// subscribers with no transport route to the author still receive them
-    /// through whichever peer merged them. Signatures are verified on merge,
-    /// so a rebroadcasting node never vouches for content it did not verify.
-    /// Default: false.
-    pub rebroadcast_on_merge: bool,
-}
-
-#[cfg(feature = "p2p")]
-impl Default for P2PConfig {
-    fn default() -> Self {
-        Self {
-            port: None,
-            bind_addr: None,
-            relay_mode: p2p::iroh::IrohRelayModeConfig::default(),
-            discovery: p2p::iroh::IrohDiscoveryConfig::default(),
-            allowlist: p2p::iroh::IrohAllowlistConfig::default(),
-            max_concurrent_multipath_paths: None,
-            secret_key_path: None,
-            peer_key: PeerKeySource::default(),
-            load_persisted_collections: true,
-            sync: SyncTuning::default(),
-            rebroadcast_on_merge: false,
-        }
-    }
 }
 
 /// Node assembly configuration: what [`crate::NodeBuilder`]'s setters fill in.

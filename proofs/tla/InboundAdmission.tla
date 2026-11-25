@@ -18,13 +18,14 @@
 \* What must always happen: the healthy message is handled, and no stream
 \* waits for budget forever.
 \*
-\* Code it models (crates/database/p2p/src):
-\*   iroh/endpoint_streams.rs  admit_stream               (tag, length, admit, body read until idle and a total deadline)
-\*   iroh/inbound_budget.rs    InboundDeadlines::body     (idle deadline plus length over the minimum rate, capped)
-\*   iroh/inbound_budget.rs    InboundBudget::admit       (class budget + peer share)
-\*   iroh/inbound_budget.rs    InboundBudget::peer_share  (one share for every connection of a peer)
-\*   sync/dispatch_queue.rs    dispatch_queue             (one queue per dispatch lane)
-\*   sync/event_dispatcher.rs  run_event_dispatcher       (holds the lease until handled)
+\* Code it models:
+\*   pinc/src/serve.rs             Node::serve_stream, Node::admit (tag, length, admit, body read until idle and a total deadline)
+\*   pinc/src/inbound_budget.rs    InboundDeadlines::body     (idle deadline plus length over the minimum rate, capped)
+\*   pinc/src/inbound_budget.rs    InboundBudget::admit       (class budget + peer share)
+\*   pinc/src/inbound_budget.rs    InboundBudget::peer_share  (one share for every connection of a peer)
+\*   p2p/src/sync/dispatch_queue.rs    dispatch_queue         (one queue per dispatch lane)
+\*   p2p/src/sync/event_dispatcher.rs  run_event_dispatcher   (holds the lease until handled)
+\* (paths under crates/database).
 \*
 \* Every byte size is 1 here: what matters is how many bodies are held, not how
 \* big each one is. The Lean proof ByteBudget covers the arithmetic on sizes.

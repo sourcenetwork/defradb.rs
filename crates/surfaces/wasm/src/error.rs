@@ -30,9 +30,6 @@ pub enum WasmError {
     #[error("Serialization error: {0}")]
     Serialization(String),
 
-    #[error("P2P error: {0}")]
-    P2P(String),
-
     #[error("Identity error: {0}")]
     Identity(String),
 

@@ -28,7 +28,6 @@ use crate::bindings::{
 use crate::document_changes::DocumentChanges;
 use crate::error::{Result, WasmError};
 use crate::identity::ClientIdentity;
-use crate::p2p::P2PRuntime;
 
 /// DefraDB client for browser applications.
 ///
@@ -63,8 +62,6 @@ pub struct DefraClient {
     db: Option<Arc<DB<RegolithStore>>>,
     runner: Option<WasmRunner>,
     pub(crate) event_bus: Arc<events::ChannelBus>,
-    pub(crate) document_acp: Arc<dyn acp::DocumentACP>,
-    pub(crate) p2p: Option<P2PRuntime>,
     pub(crate) identity: Option<ClientIdentity>,
     deferred_drain: futures::future::AbortHandle,
     closed: bool,
@@ -185,11 +182,6 @@ impl DefraClient {
         key_type: &str,
     ) -> std::result::Result<String, JsValue> {
         self.ensure_open()?;
-        // A running peer keeps proving the identity it started with, so a new
-        // one would sign writes as a DID its peers cannot tie to this endpoint.
-        if self.p2p.is_some() {
-            return Err(WasmError::P2P("stop P2P before changing identity".into()).into());
-        }
         let identity = ClientIdentity::from_private_key(private_key_hex, key_type)?;
         let did = identity.did().to_string();
         self.identity = Some(identity);
@@ -319,7 +311,7 @@ impl DefraClient {
             Arc::new(acp::ZanzibarDocumentACP::new(Arc::new(
                 acp::PersistentZanzibarStore::from_store(Arc::clone(db.store())),
             )));
-        let runner = build_runner(&db, &document_acp, None);
+        let runner = build_runner(&db, &document_acp);
 
         let identity = match (config.private_key.as_deref(), config.key_type.as_deref()) {
             (Some(private_key), key_type) => Some(ClientIdentity::from_private_key(
@@ -333,20 +325,10 @@ impl DefraClient {
             db: Some(db),
             runner: Some(runner),
             event_bus,
-            document_acp,
-            p2p: None,
             identity,
             deferred_drain,
             closed: false,
         })
-    }
-
-    /// Swap in a runner whose writes go through the P2P mutator while a peer
-    /// is running, and through plain auto-commit otherwise.
-    pub(crate) fn rebuild_runner(&mut self) {
-        if let Some(db) = self.db.as_ref() {
-            self.runner = Some(build_runner(db, &self.document_acp, self.p2p.as_ref()));
-        }
     }
 
     /// Who document ACP sees as the caller: the identity this client authors as.
@@ -543,7 +525,6 @@ impl DefraClient {
             return Ok(());
         }
 
-        self.stop_p2p_impl().await;
         self.event_bus.close();
 
         // Drop runner first — it holds Arc<DB> refs via fetcher, mutator, and provider
@@ -585,27 +566,13 @@ impl DefraClient {
 fn build_runner(
     db: &Arc<DB<RegolithStore>>,
     document_acp: &Arc<dyn acp::DocumentACP>,
-    p2p: Option<&P2PRuntime>,
 ) -> WasmRunner {
-    let (mutator, registry): (Arc<dyn query::DocMutator>, _) = match p2p {
-        Some(runtime) => (
-            Arc::clone(&runtime.mutator),
-            DbTransactionRegistry::with_broadcaster(
-                Arc::clone(db),
-                Arc::clone(&runtime.txn_broadcaster),
-            ),
-        ),
-        None => (
-            Arc::new(AutoCommitMutator::new(Arc::clone(db))),
-            DbTransactionRegistry::new(Arc::clone(db)),
-        ),
-    };
     QueryRunner::with_arc_registry_and_provider(
         LensedAutoCommitFetcher::new(Arc::clone(db)),
         DbCollectionProvider::new_arc(Arc::clone(db)),
-        Arc::new(registry),
+        Arc::new(DbTransactionRegistry::new(Arc::clone(db))),
     )
-    .with_mutator(mutator)
+    .with_mutator(Arc::new(AutoCommitMutator::new(Arc::clone(db))))
     .with_collection_truncator(db::DbCollectionTruncator::new_arc(Arc::clone(db)))
     .with_acp(Arc::clone(document_acp))
 }

@@ -47,7 +47,6 @@ section is the **diff**: what is proven vs. the accepted gap.
 | Secondary index equal-key order | Lean | db, storage |
 | Replicator lifecycle (no-loss / resume) | TLA+ | p2p, db-merge, embedded |
 | Sync ownership transfer (head hint / receiver pull) | TLA+ / Lean | p2p, db-merge, storage, embedded, defra-node |
-| Pull sync (doc-sync / sync-branchable) | TLA+ | p2p |
 | Multi-instance claim | TLA+ | gents |
 | Block integrity / signatures | TLA+ | db-merge, defra-core, blockstore |
 | KMS key distribution | TLA+ / Lean | kms, db, db-merge |
@@ -102,12 +101,8 @@ section is the **diff**: what is proven vs. the accepted gap.
 | Node shutdown order | TLA+ / Lean | defra-node, embedded, edge, vera-embedded, acp, http, query, db, storage |
 | Inbound stream admission | TLA+, Lean | p2p |
 | Vector index link maintenance | TLA+ | storage, db-index |
-| Peer fetch stats | Lean | p2p |
 | DAG fetch provider ranking | TLA+, Lean | p2p |
 | DAG fetch arbitration (EWMA) | Lean | p2p |
-| Gossip connection ownership | TLA+, Lean | p2p |
-| Iroh service records | TLA+, Lean | p2p |
-| Iroh solicited replies | TLA+ | p2p |
 | Pubsub RPC reply addressing | TLA+, Lean | p2p |
 | Reply-driven DAG fetch | TLA+ | p2p |
 | Depth-cut DAG fetch | TLA+, Lean | p2p |
@@ -127,7 +122,6 @@ section is the **diff**: what is proven vs. the accepted gap.
 | Postgres wire connection loop | TLA+ | pg-compat |
 | HTTP client redirects and body deadline | Lean | net |
 | Connect fallback race | TLA+ | net |
-| ActivePeers listen addresses | TLA+ | p2p |
 | pinc reply bridge | TLA+ & Lean | p2p (pinc transport) |
 | pinc topic delivery | TLA+ | p2p (pinc transport) |
 | pinc join confirmation | TLA+ | p2p (pinc transport) |
@@ -137,7 +131,6 @@ section is the **diff**: what is proven vs. the accepted gap.
 | Coordinator shutdown drain | TLA+ | p2p, edge |
 | Edge completion | TLA+ | edge |
 | Edge gate continuation | TLA+ | edge, net (#2546) |
-| Iroh dial outcome | TLA+ | p2p, p2p-adapter |
 | Server drain | TLA+ | net, pg-compat, edge, http (#2779) |
 | Document topic ingress | TLA+ | p2p, p2p-adapter (#2545) |
 | Add collection | TLA+ | db |
@@ -155,7 +148,6 @@ section is the **diff**: what is proven vs. the accepted gap.
 | Joins on a parent read by key | Lean | query (#3042) |
 | Commits depth traversal | Lean | query, db (#2098) |
 | Orphan block sweep | TLA+ & Lean | db, storage |
-| Per-peer stream cap | TLA+ | p2p |
 | Receive gate | TLA+ | p2p, db |
 | P2P delivery liveness | TLA+ | p2p, p2p-adapter, db-merge, storage |
 | Document save | TLA+ & Lean | query, defra-node |
@@ -169,7 +161,6 @@ section is the **diff**: what is proven vs. the accepted gap.
 | Go config layout | Lean | cli |
 | Selected collection version | TLA+ / Lean | db, query, ffi |
 | Per-operation signing choice | Lean | defra-core, http, ffi, cli |
-| DNS resolver fallback | Lean | p2p |
 | Backup import write path | TLA+ / Lean | db, defra-node, http, ffi, cli |
 
 ### Backlog — current retry-era gaps
@@ -292,7 +283,6 @@ headstore); go↔go vs rust↔rust parity (`parity.rs`) localized it to Rust.
 proofs/verify-all.sh                 # TLA + Lean + conformance (behavioral if binary present)
 cargo build -p cli                   # produce fresh target/debug/defradb
 cargo test -p conformance            # Lean axis + behavioral; DEFRA_CONFORMANCE_BINARY overrides target
-                                     # iroh families: DEFRA_CONFORMANCE_IROH_BINARY, else built with --features iroh
 ```
 
 ### Trace validation (P2P delivery)
@@ -309,10 +299,10 @@ be a model step from the state the earlier events left, under the fixed
 design's knobs, with the model's invariants holding and the run settled at the
 end. A deadlock names the first event the model forbids.
 
-```bash
-cargo build -p cli --features iroh,model-trace && cp target/debug/defradb target/defra-trace
-DEFRA_TRACE_BINARY=$PWD/target/defra-trace cargo test -p conformance --test tla_conformance -- --ignored model_trace::
-```
+The test that ran a cluster of these binaries and replayed its trace ran its
+nodes through `defra-harness`, which does not start pinc nodes yet; it returns
+with #3411. The recorded replays in `tla/` (`MC_P2PDelivery_Trace_*`) still run
+under `run-all.sh`.
 
 Each run leaves `events.jsonl`, the module, the configuration and `tlc.out` in
 `target/model-trace/<Scenario>/`. A replay is accepted only when TLC starts

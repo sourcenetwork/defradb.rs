@@ -2,9 +2,9 @@
 \* The story, in plain words.
 \*
 \* A node follows one document: it subscribed to the document's gossip topic
-\* (P2PAdapter::add_documents in crates/surfaces/p2p-adapter/src/libp2p.rs and
-\* iroh.rs, or the restore at startup, restore_libp2p_documents and
-\* restore_iroh_p2p_state), putting the document in the shared set first. The document's publisher sends an update now and then. The
+\* (PincP2PAdapter::add_documents in crates/surfaces/p2p-adapter/src/pinc.rs,
+\* or the restore at startup, restore_pinc_p2p_state in pinc_restore.rs),
+\* putting the document in the shared set first. The document's publisher sends an update now and then. The
 \* node's transport hands each update on the topic to the sync coordinator
 \* through a queue, and the coordinator takes them one at a time
 \* (SyncCoordinator::handle_gossip_message in

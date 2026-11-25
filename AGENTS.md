@@ -9,14 +9,14 @@ instead of downloading a release binary. `.github/workflows/ci.yml` greps those
 constants directly, so they are the single source of truth — read them rather
 than quoting a release number, which goes stale on every baseline bump.
 
-Go parity is achieved across CLI, HTTP API, GraphQL query engine, and P2P replication. We now validate with Rust-native integration tests that exercise the full stack, and are building Rust-specific features (Iroh transport, BM25 full-text search, Postgres wire protocol, WASM client).
+Go parity is achieved across CLI, HTTP API and GraphQL query engine. P2P replication runs on pinc, Rust's own transport, which Go nodes do not speak. We now validate with Rust-native integration tests that exercise the full stack, and are building Rust-specific features (pinc transport, BM25 full-text search, Postgres wire protocol, WASM client).
 
 ### What "Parity" Means
 
 - Same GraphQL query → Same results (field values, ordering, errors)
 - Same document content → Same document ID (content-addressed CIDs)
 - Same CRDT operations → Same merged state (convergence)
-- Same P2P protocol → Nodes can discover, connect, and replicate
+- Same P2P messages → Same replication outcome (the transport is pinc, not libp2p)
 - Same CLI commands → Same behavior and output
 - Same HTTP API → Same wire format and response structure
 
@@ -59,7 +59,7 @@ crates/
 ├── entry-points/
 │   ├── ffi/                # C-compatible FFI bindings
 │   ├── cli/                # Command-line interface
-│   └── defra-node/         # The node assembly: NodeBuilder, libp2p/iroh, FFI base
+│   └── defra-node/         # The node assembly: NodeBuilder, pinc, FFI base
 ├── surfaces/
 │   ├── http/               # HTTP API server
 │   ├── wasm/               # Browser client (WebAssembly)
@@ -74,7 +74,8 @@ crates/
 │   │                       #   search/. src/ holds only lib.rs; every test
 │   │                       #   lives in db/tests/.
 │   ├── replication-filter/ # Query-filter-backed replication matcher
-│   ├── p2p/                # P2P networking (libp2p + optional Iroh)
+│   ├── pinc/               # The pinc transport: endpoint, hubs, topics, stream protocols
+│   ├── p2p/                # P2P sync engine: coordinator, replication, KMS topics
 │   ├── kms/                # DEK generation, wrapping, and distribution under NAC/DAC
 │   └── pg-compat/          # Postgres wire protocol compatibility
 ├── engine/
@@ -94,7 +95,6 @@ crates/
 │   ├── zanzibar/           # Google Zanzibar permission engine
 │   ├── document/           # Document handling
 │   ├── identity/           # Identity and JWT management
-│   ├── bitswap/            # Bitswap block exchange, wire-compatible with Go
 │   ├── net/                # HTTP, TLS and gRPC on nuclei sockets: server loop, HTTP client, gRPC channel
 │   └── chunk-split/        # @chunk splitter and the parent's chunk list
 └── foundation/
@@ -280,7 +280,7 @@ Disjoint parts of one document never conflict. A read that validates more than i
   - work handed between tasks or cores: `regolith::sync::bounded` and `unbounded` channels;
   - a counter or a flag: a plain atomic;
   - one-time initialization: `regolith::sync::OnceCell` and `Lazy`.
-- Network-edge code (p2p, bitswap, net, http and what runs on the edge runtime) takes channels and semaphores from
+- Network-edge code (p2p, pinc, net, http and what runs on the edge runtime) takes channels and semaphores from
   `nuclei::sync` natively (p2p's `rt` gives the same API on wasm32), because they cost a seventh to a sixteenth of
   regolith's per message; the data path keeps `regolith::sync`.
 - Only where waiting is part of the meaning (one task must wait for another) use a `regolith::sync` future: `Mutex`,
@@ -342,8 +342,8 @@ that is correct but slower is not done.
 - No crate of ours depends on tokio, `tokio-stream` or `tokio-util`, tests and tools included, except `edge`, which owns
   the one tokio runtime `edge::compat` enters.
   Every socket of ours is a nuclei socket: `net` serves HTTP and gRPC, is the HTTP client in place of reqwest, and is
-  the gRPC channel tonic's clients run on; libp2p's TCP and WebSocket transports run on nuclei sockets too. A library
-  that binds its own tokio sockets and takes none of ours (iroh, libp2p's QUIC and DNS, the vera.rs clients) runs
+  the gRPC channel tonic's clients run on; pinc runs on a nuclei UDP socket too. A library
+  that binds its own tokio sockets and takes none of ours (the vera.rs clients) runs
   inside `edge::compat`, the one place that tokio runtime is entered. The edge's owner thread builds it, so its workers
   and the blocking threads they start later run on the whole edge CPU set, in the ledger; async-compat starts none.
 - One exception to "no other runtime is built": the embedded Vera node. With the `embedded-vera` feature of `defra-node`
@@ -484,37 +484,27 @@ integration-suite <area>` runs one area in both binaries.
 |--------|--------|------|
 | `testo` | `tests/testo/` | testo scenarios (`TestCase` + actions), run under every client by `DEFRA_CLIENT` (in-process, rust-http, go-http, cli). Most are generated from the Go corpus by `scripts/generate_scenarios.sh`. Every new integration test goes here. Areas: `acp`, `backup`, `chunk`, `collection`, `collection_version`, `cursor`, `encryption`, `explain`, `index`, `issues`, `mutation`, `net`, `node`, `query`, `searchable_encryption`, `signature`, `subscription`, `txn`, `view`, plus the framework self-tests `matchers` and `export`. |
 | `legacy` | `tests/legacy/` | hand-written `TestCluster`/`DefraClient` tests, deleted as testo covers them. Areas below. |
-| `verars` | `tests/verars/` | vera.rs native ACP tests (compartments, native_worker, p2p_acp, policy_generations, policy_lifecycle, smoke, verified_records). Its own binary so the Native consumer workflow builds only these in release; run with `--test verars`. |
+| `verars` | `tests/verars/` | vera.rs native ACP tests (compartments, native_worker, policy_generations, policy_lifecycle, smoke, verified_records). Its own binary so the Native consumer workflow builds only these in release; run with `--test verars`. |
 
 Legacy areas with submodules:
 
 | Area | Filter | Modules |
 |------|--------|---------|
-| Basic | `basic::` | batch_mutations, collection_delete_4657, crdt_input_ops, collection_management, document_lifecycle, regolith_crash_reopen, multi_collection, patch_secondary_relation_4709, self_ref_relations_4712, smoke, transactions, truncate_parallel |
+| Basic | `basic::` | collection_delete_4657, crdt_input_ops, collection_management, document_lifecycle, regolith_crash_reopen, multi_collection, patch_secondary_relation_4709, self_ref_relations_4712, smoke, transactions, truncate_parallel |
 | Query | `query::` | commits_aggregate, commits_collection_id, continuous_rollup, datetime_index_range, default_values_v1, downsample, downsample_gc, exhaustive_orphans_4454, explain_nested, gql_list_args, index_fallback_4633, index_management, lens_persistence, lens_reindex_secondary_index_979, limits, multi_cid_vectors, planner_4656, planner_4684, sdl_generate, subscription_docid, subscription_root_shape, view |
-| ACP | `acp::` | audit, basic, cross_object, custom_policy, events_sse, index, link_collection, multi_identity, multi_role, negative, negative_p2p, node_access, p2p, p2p_lifecycle, policy_validation, register_ops, relation_queries, relationship, revoke_lifecycle, secp256k1_round_trip, transaction_rollback, xarchive_access_matrix |
-| P2P Iroh | `p2p_iroh::` | acp, connection, peer, replication, schema, sync |
-| NAC | `nac::` | core_operations, cross_compartment_isolation, dac_access_matrix, document_acp, multi_doc_create, operations, p2p_management, policy_evolution, relation_admin |
-| P2P | `p2p::` | connection_manager, document, feature_binaries, filtered_replication, idempotent_replay, long_history, manage_relay, management, quarantine, receiver_pull, replication, replication_advanced, resilience, sync, transports, trust_boundary, write_contention |
+| ACP | `acp::` | audit, basic, cross_object, custom_policy, events_sse, index, link_collection, multi_identity, multi_role, negative, node_access, policy_validation, register_ops, relation_queries, relationship, revoke_lifecycle, transaction_rollback, xarchive_access_matrix |
+| NAC | `nac::` | core_operations, cross_compartment_isolation, dac_access_matrix, document_acp, multi_doc_create, operations, policy_evolution, relation_admin |
 | FTS | `fts::` | edge_cases, lifecycle, scoring |
 | Vector | `vector::` | CLI/HTTP Flat, HNSW, IVF-PQ and SSG routing, updates, deletes, and restart persistence |
-| Encryption | `encryption::` | acp, block_verify, cross_runtime_p2p, index, key_management, se_cross_runtime |
+| Encryption | `encryption::` | block_verify, index, key_management |
 | Identity | `identity::` | keyring_dev_mode, keyring_lifecycle, lifecycle, negative, node_identity, types |
 | Backup | `backup::` | dev_mode, dump, purge, restore |
-| Vera | `vera::` | acp_tuning, chunk_access, compartments, encryption_acp, p2p_acp, policy_lifecycle, resilience, smoke |
+| Vera | `vera::` | acp_tuning, compartments, policy_lifecycle, resilience, smoke |
 
 Single-purpose legacy areas, one file each:
 
 | Module | Covers |
 |--------|--------|
-| `p2p_admission::` | replicator fan-in against a tiny pending-DAG cap (injects `DEFRA_P2P_MAX_PENDING_DAGS`) |
-| `p2p_admission_restart::` | hub restart must not lose success-acked pending-DAG registrations |
-| `p2p_admission_fairness::` | per-source-peer pending-DAG quotas under a noisy pusher |
-| `p2p_backlog::` | outbound push-backlog bounds and overload observability |
-| `p2p_push_storm::` | outbound push-storm reproduction and profiling harness |
-| `p2p_deep_catchup::` | deep full-DAG push under intake rate limiting |
-| `p2p_interop_bench::` | cross-runtime P2P replication cost |
-| `issue1154_repro::` | at-scale merge of every success-acked document after hub restart |
 | `issue1194_repro::` | concurrent updates to distinct documents must not conflict |
 | `issue1211_repro::` | same, through a branchable collection's head set |
 | `issue1294_bytes_json::` | Blob-as-Bytes create+query must return lowercase hex |
@@ -529,7 +519,6 @@ just check-node-graph              # Feature-graph contracts for defra-node
 cargo fmt --all                    # Format
 cargo build --release              # Build release
 just test-wasm                     # Browser wasm tests in headless Firefox
-just test-browser-p2p              # Browser peer ↔ native node through a hosted iroh relay
 ```
 
 ### Build Profile in Worktrees
@@ -610,6 +599,8 @@ open PR ──▶ lean CI ──▶ approval ──▶ "Merge when ready" ──
   in-process testo. A PR in the middle of a stack runs only the fast checks.
 - **Labels add jobs:** `ci:full` runs everything, `ci:<job>` one queue job,
   `ci:macos` the macOS unit tests.
+- **`c-api:break`** marks a PR that breaks the C API (`defra.h`) on purpose: C API
+  compatibility still lists every break, as warnings, and passes, in the queue too.
 - **One commit.** Its subject is the PR title, or the title followed by `(#N)` for
   this PR. The queue rebase-merges, so every commit lands on main as it is:
   squash before queueing. A PR with several commits is a batch (below).

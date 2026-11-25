@@ -1,14 +1,14 @@
 ---- MODULE MC_Auth_Red_PeerOnly ----
 EXTENDS Auth
-\* RED: a hypothetical Iroh management stream is marked as mutating but only
+\* RED: a hypothetical pinc management stream is marked as mutating but only
 \* admits a transport peer. PeerID alone must not authorize node configuration.
 
 mcRequests == {"r_peer"}
 mcActors == {"adv"}
 mcPermissions == {"P2pCollectionAdd"}
-mcEntries == {"IrohMgmtStream"}
+mcEntries == {"PincMgmtStream"}
 
-mcEntryOf == [r \in mcRequests |-> "IrohMgmtStream"]
+mcEntryOf == [r \in mcRequests |-> "PincMgmtStream"]
 mcPresentedActor == [r \in mcRequests |-> "adv"]
 mcRequiredPermission == [r \in mcRequests |-> "P2pCollectionAdd"]
 mcInitialCredential == [r \in mcRequests |-> "absent"]

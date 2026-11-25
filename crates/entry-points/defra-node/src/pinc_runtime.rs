@@ -1,5 +1,4 @@
-//! Private P2P setup over the pinc peer, as `p2p_runtime::setup_iroh` is over
-//! the iroh peer.
+//! Private P2P setup over the pinc peer.
 
 use std::sync::Arc;
 
@@ -21,6 +20,8 @@ pub(crate) async fn setup_pinc<S>(
     peer_keyring: Option<&crate::PeerKeyring>,
     start_peer_key: Option<&crate::StartPeerKey>,
     scope: edge::Scope,
+    stream_protocols: Vec<defra_pinc::StreamRegistration>,
+    persistent: bool,
 ) -> Result<P2PSetup>
 where
     S: storage::corekv::Store + 'static,
@@ -32,14 +33,11 @@ where
     let max_txn_retries = database.options().max_txn_retries();
     let retry_schedule = config.sync.retry_schedule()?;
 
-    // The seed the node's other transports use, so it keeps its peer id.
     let seed = match (start_peer_key, &config.peer_key) {
         (Some(start_key), _) => start_key.seed().clone(),
-        (None, PeerKeySource::File) => zeroize::Zeroizing::new(
-            p2p::iroh::load_or_generate_secret_key(config.secret_key_path.as_deref())
-                .await?
-                .to_bytes(),
-        ),
+        (None, PeerKeySource::File) => {
+            defra_pinc::load_or_generate_seed(config.secret_key_path.as_deref()).await?
+        }
         (None, PeerKeySource::Store) => {
             crate::peer_key::load_with_keyring(
                 &Peerstore::new(store.clone()).with_max_txn_retries(max_txn_retries),
@@ -50,22 +48,54 @@ where
             .await?
         }
     };
-    let mut endpoint = p2p::pinc::PincEndpointConfig::new(seed, config.bind);
+    let mut endpoint = defra_pinc::PincEndpointConfig::new(seed, config.bind);
     endpoint.allowlist = config.allowlist.clone();
     endpoint.node_identity = node_identity;
     endpoint.max_connections = config.max_connections;
     endpoint.hubs = config.hubs.clone();
+    endpoint.stream_protocols = stream_protocols;
     let mut peer_config = PincPeerConfig::new(endpoint, document_acp, scope.edge().clone());
     peer_config.strict_replicated_doc_access = strict_replicated_doc_access;
     peer_config.sync = config.sync.sync_config();
     peer_config.retry_schedule = retry_schedule.clone();
     peer_config.load_persisted_collections = config.load_persisted_collections;
+    peer_config.rebroadcast_on_merge = config.rebroadcast_on_merge;
     let replicator_push_options = ReplicatorPushOptionsState::default();
     peer_config.replicator_push_options = Some(replicator_push_options.clone());
     let peer = PincPeer::start(store.clone(), database.clone(), event_bus, peer_config)
         .await
         .map_err(Error::PincStart)?;
     tracing::info!(target: "defra_node", peer_id = %peer.local_peer_id, "P2P started (pinc)");
+
+    // The orphan block sweep runs on the database's worker pool until the
+    // coordinator shuts down. Nothing outlives a store that does not
+    // persist, so its abandoned fetches need no sweep.
+    drop(db::block::orphan_gc::start_orphan_sweep(
+        database.clone(),
+        db::block::orphan_gc::OrphanSweepConfig {
+            enabled: config.orphan_sweep.enabled && persistent,
+            ..config.orphan_sweep
+        },
+        peer.coordinator.shutdown_handle(),
+    ));
+
+    // A bootstrap peer is dialed in the background, so one that does not
+    // answer does not hold up the start.
+    let bootstrap_peers = config.bootstrap_peers.clone();
+    let bootstrap_ops = Arc::clone(&peer.ops);
+    let bootstrap_edge = scope.edge().clone();
+    let connect_bootstrap: Box<dyn FnOnce() + Send> = Box::new(move || {
+        for addr in bootstrap_peers {
+            let ops = Arc::clone(&bootstrap_ops);
+            bootstrap_edge
+                .spawn_service(async move {
+                    if let Err(error) = ops.connect_peer(&addr).await {
+                        tracing::warn!(target: "defra_node", peer = %addr, %error, "bootstrap peer did not connect");
+                    }
+                })
+                .detach();
+        }
+    });
 
     let se_key_handle = db::merge::empty_se_key_handle();
     let se_transport = Some(peer.se_query_transport(se_key_handle.clone()));
@@ -110,21 +140,19 @@ where
         })
     }));
     system.set_manage_requester(Arc::clone(&peer.manage.requester));
-
-    let merge_handler_for_kms = Arc::clone(&peer.replication.merge_handler_inner);
+    system.set_pinc_transport(peer.transport.clone());
     Ok(P2PSetup {
         system,
         mutator: peer.replication.broadcast_mutator.clone(),
         txn_broadcaster: Arc::clone(&peer.replication.txn_broadcaster),
         kms_transport: peer.kms_transport.clone() as Arc<dyn kms::KeyTransport>,
         local_peer_id: peer.local_peer_id.clone(),
-        wire_kms: Some(Box::new(move |kms| merge_handler_for_kms.set_kms(kms))),
-        #[cfg(feature = "libp2p")]
-        wire_document_acp: None,
+        wire_kms: Some(Box::new(peer.kms_binder())),
         se_transport,
         manage_hooks: peer.manage.hooks.clone(),
         manage_controller: Arc::clone(&peer.ops),
         manage_correlator: peer.manage.correlator.clone(),
         manage_query_correlator: peer.manage.query_correlator.clone(),
+        connect_bootstrap: Some(connect_bootstrap),
     })
 }

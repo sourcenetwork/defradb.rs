@@ -41,9 +41,25 @@ pub struct StartArgs {
     #[arg(long)]
     pub profile: bool,
 
-    /// List of peers to connect to
+    /// Peers to dial at start, each `<peer id>@<udp address>`
     #[arg(long, value_delimiter = ',')]
     pub peers: Option<Vec<String>>,
+
+    /// The IP address the pinc endpoint binds (default: every interface)
+    #[arg(long)]
+    pub pinc_bind_addr: Option<std::net::IpAddr>,
+
+    /// The UDP port the pinc endpoint binds (default: one the OS picks)
+    #[arg(long)]
+    pub pinc_bind_port: Option<u16>,
+
+    /// The pinc hubs topics run through, each `<peer id>@<udp address>`
+    #[arg(long, value_delimiter = ',')]
+    pub pinc_hubs: Option<Vec<String>>,
+
+    /// Peer ids allowed to open an inbound connection (default: any peer)
+    #[arg(long, value_delimiter = ',')]
+    pub pinc_allowed_peers: Option<Vec<String>>,
 
     /// Specify the maximum number of retries per transaction
     #[arg(long)]
@@ -56,10 +72,6 @@ pub struct StartArgs {
     /// Specify the datastore value log file size (in bytes)
     #[arg(long)]
     pub valuelogfilesize: Option<u64>,
-
-    /// Listen addresses for the p2p network (formatted as a libp2p MultiAddr)
-    #[arg(long, value_delimiter = ',')]
-    pub p2paddr: Option<Vec<String>>,
 
     /// Disable the peer-to-peer network synchronization system
     #[arg(long, num_args = 0..=1, require_equals = true, default_missing_value = "true", value_parser = crate::cli::bool_value_parser())]
@@ -176,38 +188,6 @@ pub struct StartArgs {
     #[arg(long)]
     pub max_concurrent_requests: Option<usize>,
 
-    /// Max P2P protocol message size in bytes (default: 16777216 = 16MiB)
-    #[arg(long)]
-    pub max_msg_size: Option<u64>,
-
-    /// Max P2P CAR file size in bytes (default: 67108864 = 64MiB)
-    #[arg(long)]
-    pub max_car_size: Option<u64>,
-
-    /// P2P stream read timeout in seconds (default: 30)
-    #[arg(long)]
-    pub stream_timeout: Option<u64>,
-
-    /// Max concurrent P2P stream handler tasks (default: 64)
-    #[arg(long)]
-    pub max_p2p_tasks: Option<usize>,
-
-    /// P2P established connection low watermark (default: 100)
-    #[arg(long)]
-    pub connection_manager_low_water: Option<u32>,
-
-    /// P2P established connection high watermark (default: 400)
-    #[arg(long)]
-    pub connection_manager_high_water: Option<u32>,
-
-    /// P2P connection manager grace period in milliseconds (default: 20000)
-    #[arg(long)]
-    pub connection_manager_grace_period_ms: Option<u64>,
-
-    /// Max established P2P connections per peer (default: 4)
-    #[arg(long)]
-    pub max_connections_per_peer: Option<u32>,
-
     /// DAG traversal depth limit; longer document histories resume in bounded turns
     #[arg(long)]
     pub max_merge_depth: Option<usize>,
@@ -294,10 +274,6 @@ pub struct StartArgs {
     /// Max outbound push jobs concurrently in flight to one peer. Default: 4.
     #[arg(long, env = "DEFRA_P2P_MAX_ACTIVE_PUSHES_PER_PEER")]
     pub p2p_max_active_pushes_per_peer: Option<usize>,
-
-    /// P2P transport backend: "libp2p" (default) or "iroh"
-    #[arg(long)]
-    pub p2p_transport: Option<String>,
 
     /// Address for Postgres wire protocol compatibility (e.g., "127.0.0.1:5433")
     #[cfg(feature = "postgres")]
@@ -539,6 +515,18 @@ impl StartArgs {
         if let Some(ref peers) = self.peers {
             config.net.peers = peers.clone();
         }
+        if let Some(addr) = self.pinc_bind_addr {
+            config.net.pinc_bind_addr = Some(addr);
+        }
+        if let Some(port) = self.pinc_bind_port {
+            config.net.pinc_bind_port = Some(port);
+        }
+        if let Some(ref hubs) = self.pinc_hubs {
+            config.net.pinc_hubs = hubs.clone();
+        }
+        if let Some(ref peers) = self.pinc_allowed_peers {
+            config.net.pinc_allowed_peers = peers.clone();
+        }
         if let Some(retries) = self.max_txn_retries {
             config.datastore.max_txn_retries = retries;
         }
@@ -547,9 +535,6 @@ impl StartArgs {
         }
         if let Some(size) = self.valuelogfilesize {
             config.datastore.valuelogfilesize = Some(size);
-        }
-        if let Some(ref addrs) = self.p2paddr {
-            config.net.p2p_addresses = addrs.clone();
         }
         if let Some(no_p2p) = self.no_p2p {
             config.net.p2p_disabled = no_p2p;
@@ -611,9 +596,6 @@ impl StartArgs {
         if let Some(cap) = self.p2p_max_active_pushes_per_peer {
             config.net.p2p_max_active_pushes_per_peer = cap;
         }
-        if let Some(ref transport) = self.p2p_transport {
-            config.net.transport = transport.parse()?;
-        }
         if let Some(ref durability) = self.durability {
             config.datastore.durability = match durability.as_str() {
                 "immediate" => DurabilityMode::Immediate,
@@ -643,30 +625,6 @@ impl StartArgs {
         }
         if let Some(max) = self.max_concurrent_requests {
             config.api.max_concurrent_requests = max;
-        }
-        if let Some(size) = self.max_msg_size {
-            config.net.max_msg_size = size;
-        }
-        if let Some(size) = self.max_car_size {
-            config.net.max_car_size = size;
-        }
-        if let Some(timeout) = self.stream_timeout {
-            config.net.stream_timeout = timeout;
-        }
-        if let Some(max) = self.max_p2p_tasks {
-            config.net.max_p2p_tasks = max;
-        }
-        if let Some(low_water) = self.connection_manager_low_water {
-            config.net.connection_manager_low_water = low_water;
-        }
-        if let Some(high_water) = self.connection_manager_high_water {
-            config.net.connection_manager_high_water = high_water;
-        }
-        if let Some(grace_period_ms) = self.connection_manager_grace_period_ms {
-            config.net.connection_manager_grace_period_ms = grace_period_ms;
-        }
-        if let Some(max) = self.max_connections_per_peer {
-            config.net.max_connections_per_peer = max;
         }
         if let Some(depth) = self.max_merge_depth {
             config.datastore.max_merge_depth = depth;

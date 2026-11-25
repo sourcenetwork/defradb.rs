@@ -7,8 +7,6 @@ use std::time::Duration;
 use crate::rt::mpsc;
 use blockstore::Blockstore;
 
-#[cfg(feature = "libp2p-transport")]
-use super::authorizer::AccessAuthorizer;
 use super::authorizer::RuntimeAuthorizer;
 use super::{
     DagFetchLimiter, SyncAccessState, SyncCoordinator, SyncRuntime, SyncSubscriptionState,
@@ -229,13 +227,6 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
             Arc::clone(&replicators),
             access_mode,
         ));
-        #[cfg(feature = "libp2p-transport")]
-        let pubsub_services = super::pubsub_services::PubsubServices::try_new(
-            &local_peer_id,
-            Arc::clone(&head_provider),
-            Arc::clone(&authorizer) as Arc<dyn AccessAuthorizer>,
-            max_doc_sync_request_doc_ids,
-        );
 
         let failure_tx: Arc<kovan::AtomOption<mpsc::Sender<super::PushFailure>>> =
             Arc::new(kovan::AtomOption::none());
@@ -311,8 +302,6 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
                 document_acp: regolith::sync::OnceCell::new(),
                 #[cfg(feature = "kms")]
                 kms_transport: regolith::sync::OnceCell::new(),
-                #[cfg(feature = "libp2p-transport")]
-                pubsub_services,
             },
             events,
         ))

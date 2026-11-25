@@ -11,7 +11,7 @@ use self::node_options::sanitized_node_options;
 use super::node::Node;
 use super::server_acp::DocumentAcpSetup;
 use super::server_query::QueryRunnerSetup;
-use crate::config::{AcpDocumentType, Config, TransportType};
+use crate::config::{AcpDocumentType, Config};
 use crate::error::{Error, Result};
 use identity::Did;
 
@@ -108,11 +108,7 @@ impl Node {
 
         if let Some(adapter) = &p2p_adapter {
             server = server.with_p2p_arc(adapter.clone());
-            if config.net.transport == TransportType::Iroh {
-                info!("P2P HTTP endpoints enabled (iroh)");
-            } else {
-                info!("P2P HTTP endpoints enabled");
-            }
+            info!("P2P HTTP endpoints enabled");
         }
 
         if let Some(requester) = &manage_requester {

@@ -23,7 +23,7 @@ impl Node {
     pub(super) async fn init_store_and_server(
         store: Arc<storage::DynStore>,
         config: &Config,
-        peer_keypair: Option<p2p::Keypair>,
+        peer_seed: Option<zeroize::Zeroizing<[u8; 32]>>,
         user_identity: Option<std::sync::Arc<identity::RawIdentity>>,
         acp_store: Arc<dyn acp::AcpStore>,
         zanzibar_store: Arc<dyn acp::ZanzibarStore>,
@@ -166,7 +166,7 @@ impl Node {
             database.clone(),
             event_bus.clone(),
             config,
-            peer_keypair,
+            peer_seed,
             node_identity,
             se_key,
             acp_setup.document_acp.clone(),
@@ -213,6 +213,10 @@ impl Node {
                 correlator: correlator.clone(),
                 query_correlator: query_correlator.clone(),
             });
+        }
+        // Only now, with NAC wired, does the node dial its bootstrap peers.
+        if let Some(connect) = p2p_setup.connect_bootstrap.take() {
+            connect();
         }
 
         // Build + wire the KMS (mirrors crates/entry-points/defra-node/src/assemble.rs). The P2P
@@ -357,7 +361,6 @@ impl Node {
 
         Ok(ServerSetup {
             database,
-            p2p_handle: p2p_setup.host_handle,
             p2p_tasks: p2p_setup.p2p_tasks,
             downsample_task,
             vector_rebuild_task,

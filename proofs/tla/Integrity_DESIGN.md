@@ -35,9 +35,8 @@ Only the conjunction of the last two is sufficient for merge.
   verification on the batch path.
 - `crates/database/p2p/src/sync/merge.rs:247` makes `effective_creator()` prefer
   `verified_creator` over self-reported `creator`.
-- `crates/database/db/src/merge/peer_identity.rs:69` maps libp2p peer keys to DIDs for
-  peer identity, but peer identity is not a substitute for block author
-  signature verification.
+- The pinc handshake binds a peer id to the node's DID for peer identity, but
+  peer identity is not a substitute for block author signature verification.
 
 ## Crypto Boundary
 

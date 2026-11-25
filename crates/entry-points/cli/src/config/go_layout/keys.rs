@@ -9,9 +9,6 @@ use super::set_default;
 /// Rust key it fills. `proofs/lean/GoConfigLayout.lean` holds the same table.
 const KEYS: &[(&str, &str)] = &[
     ("net.p2pdisabled", "net.p2p_disabled"),
-    ("net.p2paddresses", "net.p2p_addresses"),
-    ("net.pubsubenabled", "net.pubsub_enabled"),
-    ("net.relay", "net.relay_enabled"),
     ("api.pubkeypath", "api.pubkey_path"),
     ("api.privkeypath", "api.privkey_path"),
     ("api.allowed-origins", "api.allowed_origins"),
@@ -34,6 +31,7 @@ enum GoDefault {
     Str(&'static str),
     Bool(bool),
     Int(i64),
+    List(&'static [&'static str]),
 }
 
 impl GoDefault {
@@ -42,6 +40,13 @@ impl GoDefault {
             Self::Str(s) => value.as_str() == Some(*s),
             Self::Bool(b) => value.as_bool() == Some(*b),
             Self::Int(i) => value.as_i64() == Some(*i),
+            Self::List(items) => value.as_sequence().is_some_and(|values| {
+                values.len() == items.len()
+                    && values
+                        .iter()
+                        .zip(items.iter())
+                        .all(|(value, item)| value.as_str() == Some(*item))
+            }),
         }
     }
 }
@@ -54,6 +59,14 @@ const GO_ONLY: &[(&str, GoDefault)] = &[
     ("api.audience", GoDefault::Str("")),
     ("log.caller", GoDefault::Bool(false)),
     ("net.p2pblocksynctimeout", GoDefault::Int(30)),
+    // libp2p's settings: a pinc node binds `net.pinc_bind_*` and has no relay
+    // client or pubsub switch.
+    (
+        "net.p2paddresses",
+        GoDefault::List(&["/ip4/127.0.0.1/tcp/9171"]),
+    ),
+    ("net.pubsubenabled", GoDefault::Bool(true)),
+    ("net.relay", GoDefault::Bool(false)),
 ];
 
 /// Moves every Go key in `root`, whose sections' keys are lowercased, onto its

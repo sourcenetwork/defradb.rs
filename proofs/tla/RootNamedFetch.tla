@@ -8,7 +8,7 @@
 \* the receiver the new head C6.
 \*
 \* The receiver asks the provider for what it misses, over a rooted
-\* transport (pinc, iroh). The provider answers one of two ways:
+\* transport (pinc). The provider answers one of two ways:
 \*   - when the receiver names merged composites it holds (its haves) and
 \*     every block asked for is a composite, it walks the spine and sends
 \*     exactly the blocks below the asked ones outside the haves' closures;

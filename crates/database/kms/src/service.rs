@@ -20,7 +20,7 @@ pub trait KeyArrivalListener: Send + Sync {
 /// Identity of an incoming peer established at the transport boundary.
 #[derive(Debug, Clone)]
 pub struct PeerIdentity {
-    /// Transport-level peer id (libp2p `PeerId` stringified, or iroh node id).
+    /// Transport-level peer id (the pinc peer id).
     pub peer_id: String,
     /// DID authenticated by the transport's peer-identity protocol. `None`
     /// means the transport could not establish an authorization principal.

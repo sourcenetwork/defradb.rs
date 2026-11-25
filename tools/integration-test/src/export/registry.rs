@@ -87,7 +87,7 @@ registry! {
     ActivePeers => [v("peer.active")],
     AllowStreamPeer => [v("stream.allowPeer")],
     DenyStreamPeer => [v("stream.denyPeer")],
-    NewIrohNode => [v("stream.openNode")],
+    NewStreamNode => [v("stream.openNode")],
     OpenStream => [v("stream.open")],
     ReadKeptStream => [v("stream.readKept")],
     AddCollection => [v("schema.addWithMetadata").all(&["expectedResults"]).renames(&[("expectedResults", "expectedData")]), v("schema.add")],

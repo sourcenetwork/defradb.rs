@@ -2,7 +2,7 @@
 \* The story, in plain words.
 \*
 \* A node asks its peers a question over gossip: it publishes a request on a
-\* shared topic (doc-sync, sync-branchable, encryption) and waits on its own
+\* shared topic (encryption) and waits on its own
 \* reply topic, `<topic>/<itself>/_response`, for one answer from each peer
 \* that holds the topic. Gossip delivers the request to every peer once: the
 \* first copy that arrives counts, and later copies are dropped as already
@@ -32,50 +32,40 @@
 \*      on its way - INV_AllAnswered;
 \*   3. the asker waits forever - LIVE_Done.
 \*
-\* Correspondence with the Rust code:
+\* Correspondence with the Rust code. The question is a KMS key request on
+\* the `encryption` topic, carried by pinc topics through the hubs:
 \*
 \*   | Model             | Rust                                                        |
 \*   |-------------------|-------------------------------------------------------------|
-\*   | Publish           | SyncCoordinator::pubsub_sync_branchable_collection and the  |
-\*   |                   | doc-sync caller (crates/database/p2p/src/sync/coordinator/           |
-\*   |                   | pubsub_client.rs): publish_raw on the base topic            |
-\*   | Deliver(p, how)   | gossipsub::Event::Message, emitted for the first copy only  |
-\*   |                   | (crates/database/p2p/src/host/p2p_host/protocols.rs                  |
-\*   |                   | handle_gossipsub_event)                                     |
-\*   | via[p]            | that event's propagation_source: the asker when "direct",   |
-\*   |                   | the relay when "relayed"; on iroh, iroh-gossip's            |
-\*   |                   | delivered_from (Delivery::received in crates/database/p2p/src/       |
-\*   |                   | iroh/gossip/delivery.rs), which also names only the hop     |
-\*   | Answer(p)         | TopicHandler::deliver_gossip_message (crates/database/p2p/src/       |
-\*   |                   | pubsub_rpc/topic_handler.rs): the reply goes to             |
-\*   |                   | response_topic(base, from)                                  |
-\*   | AnswerPublisher   | `from` is HostEvent::GossipRawMessage's `source`, the       |
-\*   |                   | message's signed author (protocols.rs, then                 |
-\*   |                   | handle_gossip_raw_message in crates/database/p2p/src/sync/           |
-\*   |                   | coordinator/event_handler/pubsub_raw.rs); on iroh, the      |
-\*   |                   | key that sealed the payload (raw_publisher in               |
-\*   |                   | crates/database/p2p/src/iroh/gossip/delivery.rs, raw_origin.rs).     |
-\*   |                   | RED: the propagation_source, as before #2773                |
-\*   | inflight          | a reply published but not yet read by the reply loop's      |
-\*   |                   | `prep.responses.recv()`                                     |
+\*   | Publish           | PubsubKeyTransport::send_request                            |
+\*   |                   | (crates/database/p2p/src/kms/pubsub_transport.rs):          |
+\*   |                   | publish_raw on the base topic                               |
+\*   | Deliver(p, how)   | a topic message the endpoint hands on as                    |
+\*   |                   | TransportEvent::GossipRawMessage, once per message          |
+\*   |                   | (crates/database/pinc/src/topics.rs Node::delivery)         |
+\*   | via[p]            | that event's propagation_source: the node or hub that       |
+\*   |                   | carried it, the asker when "direct", a relay when "relayed" |
+\*   | Answer(p)         | PubsubKeyTransport::handle_request: the reply goes to       |
+\*   |                   | `encryption/<from>/_response`                               |
+\*   | AnswerPublisher   | `from` is the event's `source`, the message's author, whose |
+\*   |                   | signature pinc checks before it hands the message on        |
+\*   |                   | (handle_gossip_raw_message in crates/database/p2p/src/sync/ |
+\*   |                   | coordinator/event_handler/pubsub_raw.rs, then               |
+\*   |                   | dispatch_incoming). RED: the propagation_source, as before  |
+\*   |                   | #2773                                                       |
+\*   | inflight          | a reply published but not yet read by the requester         |
 \*   | Arrive(p)         | that read, on the asker's own `_response` topic (got), or   |
 \*   |                   | another peer's dropping the envelope (lost)                 |
-\*   | Finish, Deadline  | the reply loop's `expected_responses` count and its         |
-\*   |                   | deadline (pubsub_sync_branchable_collection); at the        |
-\*   |                   | deadline the loop ends and dropping `prep` cancels the      |
-\*   |                   | correlation, so a reply still in flight is never read       |
+\*   | Finish, Deadline  | send_request's reply stream: it ends with every expected    |
+\*   |                   | answer or at its deadline; a reply still in flight then is  |
+\*   |                   | never read                                                  |
 \*
 \* Gaps, explained:
 \*   * One request. Each request is answered on its own, so one shows them all.
 \*   * Every peer holds the topic and answers; a peer that fails to answer is
 \*     the deadline's case, which the model keeps.
 \*   * A reply on the asker's topic reaches the asker unless the deadline
-\*     comes first: the asker is connected to every peer it counts
-\*     (expected_responses is its topic peers).
-\*   * On iroh, an unsealed payload from a node that predates sealing is
-\*     accepted only straight from its sender, so it is a "direct" delivery;
-\*     a relayed unsealed one is dropped, the deadline's case again. The
-\*     sealing itself is proved in proofs/lean/GossipFrame/RawOrigin.lean.
+\*     comes first: the hubs hand a topic message to every member they hold.
 
 CONSTANTS Asker, Peers, AnswerPublisher
 \* Asker is the node that asks; Peers are the nodes that answer. When

@@ -1,6 +1,6 @@
 mod disjoint_groups;
 mod gossip_admission;
-mod iroh_large_update;
+mod large_update;
 mod sticky_disconnect;
 mod stream_protocols;
 mod info {

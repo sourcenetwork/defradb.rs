@@ -1,4 +1,4 @@
-//! Embedder stream protocols (`defra.stream_protocols`): iroh nodes that serve
+//! Embedder stream protocols (`defra.stream_protocols`): pinc nodes that serve
 //! test protocols, and the actions that open them.
 //!
 //! Stream protocols are a Rust embedder API with no HTTP, CLI or Go surface,
@@ -7,12 +7,12 @@
 //! as unsupported rather than failed.
 
 mod admit;
-mod new_iroh_node;
+mod new_stream_node;
 mod open;
 mod read_kept;
 
 pub use admit::{AllowStreamPeer, DenyStreamPeer};
-pub use new_iroh_node::NewIrohNode;
+pub use new_stream_node::NewStreamNode;
 pub use open::{OpenStream, ReadMode};
 pub use read_kept::ReadKeptStream;
 
@@ -21,8 +21,8 @@ use std::sync::{Arc, Weak};
 use std::time::Duration;
 
 use async_trait::async_trait;
-use defra_node::{Node, NodeBuilder, P2PConfig};
-use p2p::iroh::{
+use defra_node::{Node, NodeBuilder, PincConfig};
+use defra_pinc::{
     InboundStream, Priority, ProtocolRecvStream, ProtocolSendStream, StreamHandler, StreamProtocol,
 };
 use rapidhash::fast::RandomState;
@@ -100,7 +100,7 @@ impl ProtocolSpec {
     /// The protocol this spec names.
     pub fn protocol(&self) -> Result<StreamProtocol, Failure> {
         let priority = self.priority()?;
-        let share = p2p::iroh::peer_share_bytes(priority);
+        let share = defra_pinc::peer_share_bytes(priority);
         Ok(StreamProtocol {
             // ponytail: a test protocol's tag lives for the test process.
             tag: Box::leak(self.tag.clone().into_bytes().into_boxed_slice()),
@@ -115,10 +115,10 @@ impl ProtocolSpec {
     }
 }
 
-/// How an iroh node of a test starts.
+/// How a stream node of a test starts.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct IrohSpec {
+pub struct StreamNodeSpec {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub protocols: Vec<ProtocolSpec>,
     /// Admit only peers allowed with `AllowStreamPeer`.
@@ -130,18 +130,15 @@ pub struct IrohSpec {
 }
 
 /// Build an in-process node as `spec` says, its handlers bound to it.
-pub fn build(spec: &IrohSpec) -> Result<Arc<Node>, String> {
+pub fn build(spec: &StreamNodeSpec) -> Result<Arc<Node>, String> {
     let slot: Arc<OnceCell<Weak<Node>>> = Arc::new(OnceCell::new());
     let mut builder = NodeBuilder::default();
     if !spec.without_network {
-        builder = builder.with_p2p(P2PConfig {
-            bind_addr: Some(IpAddr::V4(Ipv4Addr::LOCALHOST)),
-            port: Some(0),
-            relay_mode: p2p::iroh::IrohRelayModeConfig::Disabled,
-            discovery: p2p::iroh::IrohDiscoveryConfig::Disabled,
+        builder = builder.with_pinc(PincConfig {
+            bind: std::net::SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0),
             allowlist: match spec.explicit_allowlist {
-                true => p2p::iroh::IrohAllowlistConfig::Explicit(Default::default()),
-                false => p2p::iroh::IrohAllowlistConfig::AcceptAll,
+                true => defra_pinc::PincAllowlistConfig::Explicit(Default::default()),
+                false => defra_pinc::PincAllowlistConfig::AcceptAll,
             },
             ..Default::default()
         });
@@ -180,7 +177,7 @@ impl StreamHandler for TestHandler {
                 })
                 .to_string();
                 if stream.send.write_all(reply.as_bytes()).await.is_ok() {
-                    let _ = stream.send.finish();
+                    let _ = stream.send.finish().await;
                 }
             }
             Handler::Query => {
@@ -192,7 +189,7 @@ impl StreamHandler for TestHandler {
                 let response = node.execute(&query).await;
                 let reply = serde_json::to_vec(&response.data).unwrap_or_default();
                 if stream.send.write_all(&reply).await.is_ok() {
-                    let _ = stream.send.finish();
+                    let _ = stream.send.finish().await;
                 }
             }
             Handler::Stuck => {
@@ -251,7 +248,7 @@ pub fn in_process(state: &State, name: &str, op: &str) -> Result<Arc<Node>, Fail
     })
 }
 
-/// Node `node`'s iroh peer ID.
+/// Node `node`'s pinc peer ID.
 pub fn peer_id(state: &State, node: &Node) -> Result<String, Failure> {
     let system = node
         .p2p_system()
@@ -261,7 +258,7 @@ pub fn peer_id(state: &State, node: &Node) -> Result<String, Failure> {
         .map_err(|e| Failure::operation(e.to_string()))
 }
 
-/// An address node `node` can be dialled at, once iroh has one.
+/// An address node `node` can be dialled at, once pinc has one.
 pub fn address(state: &State, node: &Node) -> Result<String, Failure> {
     let system = node
         .p2p_system()
@@ -271,14 +268,11 @@ pub fn address(state: &State, node: &Node) -> Result<String, Failure> {
         let addresses = state
             .block_on(system.ops().listen_addresses())
             .map_err(|e| Failure::operation(e.to_string()))?;
-        if let Some(address) = addresses
-            .into_iter()
-            .find(|a| a.contains("/p2p/") || a.starts_with("endpoint"))
-        {
+        if let Some(address) = addresses.into_iter().find(|a| a.contains("@127.0.0.1:")) {
             return Ok(address);
         }
         if std::time::Instant::now() >= deadline {
-            return Err(Failure::operation("no dialable iroh address".into()));
+            return Err(Failure::operation("no dialable pinc address".into()));
         }
         std::thread::sleep(Duration::from_millis(50));
     }

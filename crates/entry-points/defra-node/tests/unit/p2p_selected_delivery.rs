@@ -8,7 +8,7 @@ fn selected_delivery_crosses_receiver_capacity_without_losing_the_remainder() {
             init_tracing();
             // The per-peer request limit has its own tests. Here it would only
             // pace the fetches of the receiver capacity under test.
-            let config = || P2PConfig {
+            let config = || PincConfig {
                 sync: SyncTuning {
                     rate_limit_burst: u32::MAX,
                     rate_limit_rate: f64::from(u32::MAX),
@@ -16,8 +16,8 @@ fn selected_delivery_crosses_receiver_capacity_without_losing_the_remainder() {
                 },
                 ..test_p2p_config()
             };
-            let sender = Node::builder().with_p2p(config()).build().await.unwrap();
-            let receiver = Node::builder().with_p2p(config()).build().await.unwrap();
+            let sender = Node::builder().with_pinc(config()).build().await.unwrap();
+            let receiver = Node::builder().with_pinc(config()).build().await.unwrap();
             for node in [&sender, &receiver] {
                 node.add_collection("type SelectedPushNote { value: Int }")
                     .await

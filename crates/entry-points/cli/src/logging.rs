@@ -36,20 +36,6 @@ where
     tracer.map(|t| telemetry::otel_layer(t).with_filter(telemetry::OtelDedupFilter::new()))
 }
 
-fn with_default_transport_noise_filters(filter: EnvFilter) -> EnvFilter {
-    filter
-        .add_directive(
-            "iroh_quinn_proto::connection=error"
-                .parse()
-                .expect("valid tracing directive"),
-        )
-        .add_directive(
-            "noq_proto::connection=error"
-                .parse()
-                .expect("valid tracing directive"),
-        )
-}
-
 pub struct LoggingHandle {
     #[cfg(feature = "profiling")]
     profiling: Option<ProfilingTrace>,
@@ -110,9 +96,8 @@ pub fn init(
         LogLevel::Fatal => Level::ERROR,
     };
 
-    let filter = with_default_transport_noise_filters(
-        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(level.to_string())),
-    );
+    let filter =
+        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(level.to_string()));
 
     let builder = fmt::layer()
         .with_target(true)

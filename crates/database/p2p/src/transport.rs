@@ -1,8 +1,7 @@
 //! Transport-agnostic types and trait for P2P networking.
 //!
 //! This module defines the `P2PTransport` trait that abstracts the sync engine
-//! from the concrete libp2p transport, enabling alternative implementations
-//! (e.g., iroh) without modifying the coordinator.
+//! from the concrete transport (pinc), so tests can drive it with a mock.
 
 use std::fmt;
 use std::time::Duration;
@@ -24,7 +23,7 @@ use crate::QueryId;
 /// Transport-agnostic peer identifier.
 ///
 /// Wraps a string representation of a peer ID, allowing conversion from
-/// both `libp2p::PeerId` and iroh node IDs.
+/// any transport's peer ID text.
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
 pub struct PeerId(String);
 
@@ -41,27 +40,6 @@ impl PeerId {
 impl fmt::Display for PeerId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(&self.0)
-    }
-}
-
-#[cfg(feature = "libp2p-transport")]
-impl From<libp2p::PeerId> for PeerId {
-    fn from(peer_id: libp2p::PeerId) -> Self {
-        Self(peer_id.to_string())
-    }
-}
-
-#[cfg(feature = "libp2p-transport")]
-impl From<&libp2p::PeerId> for PeerId {
-    fn from(peer_id: &libp2p::PeerId) -> Self {
-        Self(peer_id.to_string())
-    }
-}
-
-#[cfg(feature = "iroh-transport")]
-impl From<iroh::EndpointId> for PeerId {
-    fn from(id: iroh::EndpointId) -> Self {
-        Self(id.to_string())
     }
 }
 
@@ -85,13 +63,6 @@ impl fmt::Display for PeerAddr {
     }
 }
 
-#[cfg(feature = "libp2p-transport")]
-impl From<libp2p::Multiaddr> for PeerAddr {
-    fn from(addr: libp2p::Multiaddr) -> Self {
-        Self(addr.to_string())
-    }
-}
-
 /// Transport-agnostic message identifier.
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
 pub struct MessageId(String);
@@ -109,13 +80,6 @@ impl MessageId {
 impl fmt::Display for MessageId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(&self.0)
-    }
-}
-
-#[cfg(feature = "libp2p-transport")]
-impl From<libp2p::gossipsub::MessageId> for MessageId {
-    fn from(id: libp2p::gossipsub::MessageId) -> Self {
-        Self(id.to_string())
     }
 }
 
@@ -381,7 +345,7 @@ pub struct PeerConnectionInfo {
 /// Trait abstracting the P2P transport layer.
 ///
 /// The sync coordinator is generic over this trait, allowing different transport
-/// implementations (libp2p, iroh) without modifying coordinator logic.
+/// implementations (pinc, test mocks) without modifying coordinator logic.
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 pub trait P2PTransport: Clone + Send + Sync + 'static {

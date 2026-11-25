@@ -8,9 +8,6 @@ block below them that no have reaches. The provider walks blocks highest
 priority first, and every link goes to a lower priority, so all the blocks
 that can tell it "this one is held" are walked before the block itself.
 
-The libp2p request carries the root CID and then the have CIDs, each CID
-self-delimiting, so an older provider that reads one CID reads the root.
-
 What is promised:
 - a block asked for by name is always served (`wanted_served`);
 - a served block a have reaches was asked for by name: no other held block
@@ -23,13 +20,9 @@ What is promised:
 - when the walk does not run (no have is held here, or a wanted block is not
   a composite), the provider serves the whole closure below the wanted
   blocks, and the receiver again ends up holding all of it
-  (`fallback_complete`);
-- the libp2p request round-trips (`decode_encode`), and its first CID is the
-  root (`first_is_root`).
+  (`fallback_complete`).
 
-A DAG is a function naming each block's links; blocks are numbers. A CID is a
-list of bytes encoded behind its length, which is what makes it
-self-delimiting.
+A DAG is a function naming each block's links; blocks are numbers.
 
 Assumed, not modelled: the Rust walk colours "held" along composite heads and
 serves a composite's field blocks with it, without following field blocks'
@@ -51,7 +44,7 @@ the heads DAG, not every link.
 
 The walk runs only when the provider holds a have and every wanted block is
 a composite. Otherwise (`collect_dag_blocks_within`) it serves the closure of
-the wanted blocks, cut at the caller's depth on iroh and whole on libp2p, and
+the wanted blocks, cut at the caller's depth, and
 `FallbackServed` is that closure. A branchable collection's blocks take this
 path: their heads are collection blocks, and their document composite is a
 plain link the composite walk would not follow
@@ -162,61 +155,5 @@ theorem reach_lowers_priority (heads : Dag) (prio : Nat → Nat)
   have h1 := lower a c hc
   have h2 := reach_priority_le heads prio lower c b h
   omega
-
--- A CID's bytes behind their length.
-def encodeCid (c : List Nat) : List Nat := c.length :: c
-
--- Read one length-prefixed CID; `none` when the bytes run out.
-def decodeCid : List Nat → Option (List Nat × List Nat)
-  -- No bytes: no CID.
-  | [] => none
-  -- A length, then that many bytes, if they are there.
-  | n :: rest => if n ≤ rest.length then some (rest.take n, rest.drop n) else none
-
--- The request: the root, then each have.
-def encodeRequest (root : List Nat) (haves : List (List Nat)) : List Nat :=
-  encodeCid root ++ (haves.map encodeCid).flatten
-
--- Read CIDs until the bytes end, or a CID is torn.
-def decodeAll : Nat → List Nat → List (List Nat)
-  -- Out of fuel: stop.
-  | 0, _ => []
-  -- Read one CID and go on with the rest.
-  | fuel + 1, bytes =>
-    match decodeCid bytes with
-    | some (c, rest) => c :: decodeAll fuel rest
-    | none => []
-
--- Reading the encoding of a CID gives the CID and what follows it.
-theorem decodeCid_encode (c rest : List Nat) :
-    decodeCid (encodeCid c ++ rest) = some (c, rest) := by
-  -- The length fits, and taking it splits off exactly the CID.
-  simp [encodeCid, decodeCid]
-
--- An older provider reads one CID and gets the root.
-theorem first_is_root (root : List Nat) (haves : List (List Nat)) :
-    (decodeCid (encodeRequest root haves)).map Prod.fst = some root := by
-  -- The request starts with the root's encoding.
-  simp [encodeRequest, decodeCid_encode]
-
--- Reading the encodings of a list of CIDs gives the list back.
-theorem decodeAll_encode (cs : List (List Nat)) (fuel : Nat)
-    (h : cs.length ≤ fuel) : decodeAll fuel (cs.map encodeCid).flatten = cs := by
-  -- One CID at a time, with fuel to spare.
-  induction cs generalizing fuel with
-  | nil => cases fuel <;> simp [decodeAll, decodeCid]
-  | cons c cs ih =>
-    cases fuel with
-    | zero => simp at h
-    | succ fuel =>
-      simp only [List.map_cons, List.flatten_cons, decodeAll, decodeCid_encode]
-      rw [ih fuel (by simp at h; omega)]
-
--- The request round-trips: the root first, then the haves.
-theorem decode_encode (root : List Nat) (haves : List (List Nat)) :
-    decodeAll (haves.length + 1) (encodeRequest root haves) = root :: haves := by
-  -- The root comes off first, then the haves.
-  simp only [encodeRequest, decodeAll, decodeCid_encode]
-  rw [decodeAll_encode haves haves.length (Nat.le_refl _)]
 
 end CarMissingRegion

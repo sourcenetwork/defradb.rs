@@ -19,21 +19,6 @@ mod acp;
 #[path = "behavioral/deferred_acp.rs"]
 mod deferred_acp;
 
-#[path = "behavioral/replication.rs"]
-mod replication;
-
-#[path = "behavioral/partition.rs"]
-mod partition;
-
-#[path = "behavioral/acp_node_local.rs"]
-mod acp_node_local;
-
-#[path = "behavioral/parity.rs"]
-mod parity;
-
-#[path = "behavioral/bughunt.rs"]
-mod bughunt;
-
 #[path = "behavioral/index.rs"]
 mod index;
 
@@ -43,17 +28,5 @@ mod nac;
 #[path = "behavioral/nac_lifecycle.rs"]
 mod nac_lifecycle;
 
-#[path = "behavioral/replicator_lifecycle.rs"]
-mod replicator_lifecycle;
-
 #[path = "behavioral/ssi.rs"]
 mod ssi;
-
-#[path = "behavioral/kms.rs"]
-mod kms;
-
-#[path = "behavioral/model_trace.rs"]
-mod model_trace;
-
-#[path = "behavioral/delivery.rs"]
-mod delivery;

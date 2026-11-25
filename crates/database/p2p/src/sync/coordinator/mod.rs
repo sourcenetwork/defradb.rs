@@ -55,19 +55,11 @@ mod fetch_failures;
 mod fetch_logs;
 mod fetch_slots;
 pub(crate) mod haves;
-#[cfg(feature = "libp2p-transport")]
-mod held_request;
-#[cfg(all(test, feature = "libp2p-transport"))]
-mod held_request_tests;
 mod merge_state;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod network_tests;
 mod peer_details;
 pub(crate) mod provider_health;
-#[cfg(feature = "libp2p-transport")]
-mod pubsub_client;
-#[cfg(feature = "libp2p-transport")]
-mod pubsub_services;
 mod push_worker;
 mod receive_gate;
 mod replicators;
@@ -1109,11 +1101,6 @@ pub struct SyncCoordinator<B: Blockstore, T: P2PTransport> {
     /// that supports raw gossip is in use. Left empty otherwise.
     #[cfg(feature = "kms")]
     pub(super) kms_transport: regolith::sync::OnceCell<Arc<crate::kms::PubsubKeyTransport<T>>>,
-
-    /// Pubsub_rpc DocSync/BranchableSync services (#828). `None` on
-    /// transports whose local peer id isn't a libp2p PeerId (e.g. iroh).
-    #[cfg(feature = "libp2p-transport")]
-    pub(super) pubsub_services: Option<pubsub_services::PubsubServices>,
 }
 
 impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
@@ -1449,17 +1436,6 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
     }
 
     pub async fn shutdown(&self) {
-        #[cfg(feature = "libp2p-transport")]
-        if let Some(services) = self.pubsub_services.as_ref() {
-            services.set_ready(false);
-            let cancelled = services.cancel_in_flight();
-            if cancelled > 0 {
-                tracing::debug!(
-                    cancelled,
-                    "Cancelled in-flight pubsub_rpc requests during coordinator shutdown"
-                );
-            }
-        }
         self.runtime.dag_fetch_limiter.close();
         self.runtime.push_backlog.close();
         self.runtime.shutdown.shutdown().await;
@@ -1699,19 +1675,6 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
         self.manager.pending_dag_count()
     }
 }
-
-/// Type alias for SyncCoordinator using the libp2p transport.
-#[cfg(feature = "libp2p-transport")]
-pub type Libp2pSyncCoordinator<B> =
-    SyncCoordinator<B, crate::host::libp2p_transport::Libp2pTransport>;
-
-/// Type alias for SyncCoordinator using the iroh transport.
-#[cfg(feature = "iroh-transport")]
-pub type IrohSyncCoordinator<B> = SyncCoordinator<B, crate::iroh::IrohTransport>;
-
-/// Type alias for SyncCoordinator using the pinc transport.
-#[cfg(all(feature = "pinc-transport", not(target_arch = "wasm32")))]
-pub type PincSyncCoordinator<B> = SyncCoordinator<B, crate::pinc::PincTransport>;
 
 #[cfg(test)]
 mod access_tests;

@@ -1,4 +1,4 @@
-//! DB-backed serve-gate adapters shared by libp2p Bitswap and CAR.
+//! DB-backed serve-gate adapters for CAR serving.
 
 use std::sync::Arc;
 
@@ -148,8 +148,7 @@ impl<S: Store + 'static> DbBlockClassifier<S> {
     }
 }
 
-#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
-#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[async_trait]
 impl<S: Store + 'static> BlockClassifier for DbBlockClassifier<S> {
     async fn classify(&self, cid: &Cid, data: &[u8]) -> BlockClass {
         match defra_core::block::generate_cid_from_bytes(data) {
@@ -203,13 +202,11 @@ impl DbBlockReadGate {
     }
 
     pub fn new_arc(acp: Arc<dyn acp::DocumentACP>) -> Arc<dyn BlockReadGate> {
-        #[cfg_attr(target_arch = "wasm32", allow(clippy::arc_with_non_send_sync))]
         Arc::new(Self::new(acp))
     }
 }
 
-#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
-#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[async_trait]
 impl BlockReadGate for DbBlockReadGate {
     async fn may_read(&self, identity: &acp::Identity, meta: &BlockAcpMeta) -> bool {
         let Some((policy_id, resource_name)) = meta.policy.as_ref() else {

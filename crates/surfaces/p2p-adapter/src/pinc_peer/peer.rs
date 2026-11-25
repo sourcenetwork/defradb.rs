@@ -2,8 +2,8 @@
 
 use std::sync::Arc;
 
+use defra_pinc::PincTransport;
 use p2p::bitswap::{LateBoundServeAcp, ServeAcp};
-use p2p::pinc::PincTransport;
 use p2p::P2PTransport;
 use storage::corekv::Store;
 
@@ -17,7 +17,7 @@ use crate::{
 };
 
 pub type PincBlockstore<S> = blockstore::DefraBlockstore<S>;
-pub type PincCoordinator<S> = p2p::sync::PincSyncCoordinator<PincBlockstore<S>>;
+pub type PincCoordinator<S> = defra_pinc::PincSyncCoordinator<PincBlockstore<S>>;
 pub type PincReplicationStack<S> = db::merge::ReplicationStack<S, PincBlockstore<S>, PincTransport>;
 
 /// The management channel: inbound requests are served once `hooks` is
@@ -42,7 +42,6 @@ pub struct PincPeer<S: Store + 'static> {
     pub kms_transport: Arc<p2p::kms::PubsubKeyTransport<PincTransport>>,
     pub local_peer_id: String,
     pub shutdown: PincPeerShutdown,
-    #[cfg(not(target_arch = "wasm32"))]
     se_correlator: p2p::SeQueryCorrelator,
 }
 
@@ -65,9 +64,6 @@ impl<S: Store + 'static> PincPeer<S> {
             })?
     }
 
-    // Nothing here is Send on wasm32, and nothing needs to be: the browser has
-    // one thread.
-    #[cfg_attr(target_arch = "wasm32", allow(clippy::arc_with_non_send_sync))]
     async fn assemble(
         store: Arc<S>,
         database: Arc<db::DB<S>>,
@@ -89,7 +85,7 @@ impl<S: Store + 'static> PincPeer<S> {
         } = config;
 
         let (transport, events, replicators, endpoint_task) =
-            p2p::pinc::spawn_endpoint(endpoint, edge.clone()).await?;
+            defra_pinc::spawn_endpoint(endpoint, edge.clone()).await?;
         let local_peer_id = transport.local_peer_id().to_string();
         p2p::model_trace!(Crash {
             node: &local_peer_id,
@@ -149,7 +145,7 @@ impl<S: Store + 'static> PincPeer<S> {
         #[cfg(feature = "kms")]
         let kms_transport = match p2p::kms::PubsubKeyTransport::new(
             transport.clone(),
-            Arc::new(p2p::pinc::PincPeerIdentityResolver::new(transport.clone())),
+            Arc::new(defra_pinc::PincPeerIdentityResolver::new(transport.clone())),
             edge.clone(),
         )
         .await
@@ -166,7 +162,7 @@ impl<S: Store + 'static> PincPeer<S> {
         #[cfg(feature = "kms")]
         coordinator.install_kms_transport(Arc::clone(&kms_transport));
 
-        // The topics every libp2p node joins at start, so peers see each other
+        // The topics every node joins at start, as Go's nodes do, so peers see each other
         // JOINED on them. Raw: pinc has no pubsub doc-sync service, so what
         // arrives is never decoded as a head hint.
         for topic in [p2p::DOC_SYNC_TOPIC, p2p::SYNC_BRANCHABLE_TOPIC] {
@@ -193,7 +189,7 @@ impl<S: Store + 'static> PincPeer<S> {
         // Inbound events queue in the endpoint's channel until the handler
         // below drains them, so binding ACP here precedes every merge and serve.
         serve_acp.set(ServeAcp {
-            resolver: Arc::new(p2p::pinc::PincPeerIdentityResolver::new(transport.clone())),
+            resolver: Arc::new(defra_pinc::PincPeerIdentityResolver::new(transport.clone())),
             gate: DbBlockReadGate::new_arc(Arc::clone(&document_acp)),
         });
         coordinator.set_document_acp(Arc::clone(&document_acp));
@@ -219,19 +215,15 @@ impl<S: Store + 'static> PincPeer<S> {
             }
         }
 
-        #[cfg(not(target_arch = "wasm32"))]
         let se_correlator = p2p::SeQueryCorrelator::new();
         let manage_correlator = p2p::ManageCorrelator::new();
         let manage_query_correlator = p2p::ManageQueryCorrelator::new();
         let manage_hooks = crate::manage::hooks::new_manage_hooks_cell();
 
         let replication_coordinator = Arc::clone(&coordinator);
-        // Natively each merge runs on the database's worker pool, on its
-        // document's worker; a browser's one worker is this thread.
-        #[cfg(not(target_arch = "wasm32"))]
+        // Each merge runs on the database's worker pool, on its document's
+        // worker.
         let merge_handler = replication.merge_handler_on_pool();
-        #[cfg(target_arch = "wasm32")]
-        let merge_handler = Arc::clone(&replication.merge_handler);
         let replication_bus = Arc::clone(&event_bus);
         let replication_peer = local_peer_id.clone();
         tracing::info!("Starting replication loop for P2P sync (pinc)");
@@ -280,28 +272,13 @@ impl<S: Store + 'static> PincPeer<S> {
         // The fallback for a deferred verdict no arrival can release: one
         // named nothing, one past the index's capacity, and everything the
         // index held before this process started.
-        // Natively it runs on the database's worker pool; in a browser the
-        // page's one worker is this thread, so the sweep is a task here.
-        // Either way it ends with the coordinator's shutdown.
-        #[cfg(not(target_arch = "wasm32"))]
+        // It runs on the database's worker pool and ends with the
+        // coordinator's shutdown.
         drop(db::merge::governance::start_governance_sweep(
             Arc::clone(&replication.merge_handler_inner),
             db::merge::governance::SWEEP_INTERVAL,
             coordinator.shutdown_handle(),
         ));
-        #[cfg(target_arch = "wasm32")]
-        {
-            let sweep_handler = Arc::clone(&replication.merge_handler_inner);
-            let sweep_shutdown = coordinator.shutdown_handle();
-            coordinator.spawn_background_task("governance_sweep", async move {
-                db::merge::governance::run_governance_sweep(
-                    sweep_handler,
-                    db::merge::governance::SWEEP_INTERVAL,
-                    sweep_shutdown,
-                )
-                .await;
-            });
-        }
 
         let event_handler_task = spawn_event_handler(
             events,
@@ -311,7 +288,6 @@ impl<S: Store + 'static> PincPeer<S> {
             Arc::clone(&event_bus),
             transport.clone(),
             manage_hooks.clone(),
-            #[cfg(not(target_arch = "wasm32"))]
             se_correlator.clone(),
             &edge,
         );
@@ -324,7 +300,6 @@ impl<S: Store + 'static> PincPeer<S> {
         );
         let se_repusher =
             db::merge::pooled_se_repusher(replication.broadcast_mutator.clone(), database.pool());
-        #[cfg(not(target_arch = "wasm32"))]
         replication
             .merge_handler_inner
             .set_se_repusher(se_repusher.clone());
@@ -389,20 +364,24 @@ impl<S: Store + 'static> PincPeer<S> {
             #[cfg(feature = "kms")]
             kms_transport,
             local_peer_id,
-            #[cfg(not(target_arch = "wasm32"))]
             se_correlator,
         })
     }
 
-    /// Bind the KMS built after the peer.
+    /// What binds the KMS built after the peer: merges decrypt with it, and
+    /// a key's arrival wakes the merges parked waiting for it.
     #[cfg(feature = "kms")]
-    pub fn wire_kms(&self, kms: Arc<dyn kms::KmsService>) {
-        self.replication.merge_handler_inner.set_kms(kms);
+    pub fn kms_binder(&self) -> impl FnOnce(Arc<dyn kms::KmsService>) + Send + 'static {
+        let coordinator = Arc::downgrade(&self.coordinator);
+        let merge_handler = Arc::clone(&self.replication.merge_handler_inner);
+        move |kms| {
+            kms.set_key_arrival_listener(crate::key_arrival_promoter(coordinator));
+            merge_handler.set_kms(kms);
+        }
     }
 
     /// The searchable-encryption query transport, fanning encrypted queries
     /// to this peer's replicators under `key`.
-    #[cfg(not(target_arch = "wasm32"))]
     pub fn se_query_transport(
         &self,
         key: db::merge::SeKeyHandle,

@@ -109,17 +109,6 @@ impl<ResponseToken> DispatchEvent for TransportEvent<ResponseToken> {
     }
 }
 
-#[cfg(feature = "libp2p-transport")]
-impl DispatchEvent for crate::host::HostEvent {
-    fn dispatch_class(&self) -> DispatchClass {
-        self.dispatch_class()
-    }
-
-    fn kept_when_refused(&self) -> bool {
-        matches!(self, crate::host::HostEvent::GossipMessage { .. })
-    }
-}
-
 const MAX_ACTIVE_REQUESTS: usize = 32;
 // CAR serving has a distinct reserve because receiver-owned recovery must not
 // wait behind serialized PushLog admission on the provider.

@@ -11,11 +11,6 @@
 //! call [`revoke_capability`], or use [`ExplicitReplayRevocationRegistry`] with
 //! [`verify_capability_with_revocations`] for a custom synced deny-list.
 
-#[cfg(any(
-    feature = "libp2p-transport",
-    feature = "iroh-transport",
-    feature = "pinc-transport"
-))]
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -41,32 +36,17 @@ pub const MAX_CAPABILITY_TTL: Duration = DEFAULT_CAPABILITY_TTL;
 static PROCESS_REVOCATIONS: Lazy<ExplicitReplayRevocationRegistry> =
     Lazy::new(ExplicitReplayRevocationRegistry::default);
 
-#[cfg(any(
-    feature = "libp2p-transport",
-    feature = "iroh-transport",
-    feature = "pinc-transport"
-))]
 #[derive(Debug, Clone)]
 struct CachedExplicitReplayCapability {
     capability: String,
     authorizer_did: String,
 }
 
-#[cfg(any(
-    feature = "libp2p-transport",
-    feature = "iroh-transport",
-    feature = "pinc-transport"
-))]
 #[derive(Clone)]
-pub(crate) struct ExplicitReplayCapabilityCache {
+pub struct ExplicitReplayCapabilityCache {
     capabilities: Arc<HopscotchMap<(String, String), CachedExplicitReplayCapability, RandomState>>,
 }
 
-#[cfg(any(
-    feature = "libp2p-transport",
-    feature = "iroh-transport",
-    feature = "pinc-transport"
-))]
 impl Default for ExplicitReplayCapabilityCache {
     fn default() -> Self {
         Self {
@@ -75,13 +55,8 @@ impl Default for ExplicitReplayCapabilityCache {
     }
 }
 
-#[cfg(any(
-    feature = "libp2p-transport",
-    feature = "iroh-transport",
-    feature = "pinc-transport"
-))]
 impl ExplicitReplayCapabilityCache {
-    pub(crate) fn set(
+    pub fn set(
         &self,
         source_peer_id: &str,
         target_peer_id: &str,
@@ -100,14 +75,14 @@ impl ExplicitReplayCapabilityCache {
         Ok(())
     }
 
-    pub(crate) fn clear(&self, target_peer_id: &str, collections: &[String]) {
+    pub fn clear(&self, target_peer_id: &str, collections: &[String]) {
         for collection_id in collections {
             self.capabilities
                 .remove(&(target_peer_id.to_string(), collection_id.clone()));
         }
     }
 
-    pub(crate) fn clear_all(&self, target_peer_id: &str) {
+    pub fn clear_all(&self, target_peer_id: &str) {
         let stale: Vec<(String, String)> = self
             .capabilities
             .keys()
@@ -118,7 +93,7 @@ impl ExplicitReplayCapabilityCache {
         }
     }
 
-    pub(crate) fn matches(
+    pub fn matches(
         &self,
         target_peer_id: &str,
         collection_id: &str,
@@ -133,7 +108,7 @@ impl ExplicitReplayCapabilityCache {
             == capability
     }
 
-    pub(crate) fn attach(&self, target_peer_id: &str, request: &mut crate::PushLogRequest) {
+    pub fn attach(&self, target_peer_id: &str, request: &mut crate::PushLogRequest) {
         if request.explicit_replay_capability.is_some() {
             return;
         }

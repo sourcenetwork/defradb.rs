@@ -93,7 +93,9 @@ impl Op for OpenStream {
             .map_err(|e| failed(e.to_string()))?;
         let reply = match self.read {
             ReadMode::All => {
-                send.finish().map_err(|e| failed(e.to_string()))?;
+                state
+                    .block_on(send.finish())
+                    .map_err(|e| failed(e.to_string()))?;
                 state
                     .block_on(workers::timeout(STREAM_TIMEOUT, recv.read_to_end(1 << 20)))
                     .map_err(|_| failed("timed out reading".into()))?

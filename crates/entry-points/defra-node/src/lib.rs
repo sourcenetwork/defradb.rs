@@ -4,7 +4,7 @@
 //! downstream binaries can embed a DefraDB instance without duplicating
 //! wiring code.
 //!
-//! P2P runs over Iroh/QUIC, or over libp2p when the `libp2p` feature is on.
+//! P2P runs over pinc (`defra-pinc`).
 //!
 //! ## Cargo features
 //!
@@ -12,10 +12,7 @@
 //! - `vera` — on-chain document ACP. Default-on. Omit for local-only ACP.
 //! - `wasmtime-runtime` — Lens WASM execution. Default-on. Without it,
 //!   [`Node::set_migration_as`] returns an explicit error.
-//! - `p2p` — Iroh/QUIC replication. Implies `native`. Does **not** compile libp2p.
-//!   `iroh` is the same feature under its former name.
-//! - `libp2p` — libp2p replication. Implies `native`. Off by default, so the
-//!   default node's dependency graph has no libp2p.
+//! - `p2p` — pinc replication. Implies `native`.
 //! - `system-keyring` — the OS keyring backend for the peer keyring.
 //! - `http` — GraphQL HTTP server.
 //! - `otel` — OpenTelemetry exporter.
@@ -45,12 +42,6 @@ mod embedded_vera;
 #[cfg(feature = "embedded-vera")]
 mod embedded_vera_config;
 mod error;
-#[cfg(feature = "libp2p")]
-mod libp2p_recovery;
-#[cfg(feature = "libp2p")]
-mod libp2p_runtime;
-#[cfg(feature = "libp2p")]
-mod libp2p_tasks;
 #[cfg(feature = "managed-p2p")]
 mod managed_p2p;
 mod network;
@@ -68,12 +59,12 @@ mod owed_drainer;
 #[cfg(test)]
 mod storage_open_tests;
 pub use ops::{EncryptedIndexListing, IndexListing};
-#[cfg(any(feature = "p2p", feature = "libp2p"))]
+#[cfg(feature = "p2p")]
 mod p2p_runtime;
-#[cfg(any(feature = "p2p", feature = "libp2p"))]
+#[cfg(feature = "p2p")]
 mod peer_key;
 mod peer_keyring;
-#[cfg(feature = "pinc")]
+#[cfg(feature = "p2p")]
 mod pinc_runtime;
 mod request_path;
 mod signed_query;
@@ -108,11 +99,11 @@ pub use coding_search::{
 };
 #[cfg(feature = "http")]
 pub use config::HttpConfig;
-#[cfg(feature = "libp2p")]
-pub use config::Libp2pConfig;
-#[cfg(feature = "pinc")]
+#[cfg(feature = "p2p")]
+pub use config::PeerKeySource;
+#[cfg(feature = "p2p")]
 pub use config::PincConfig;
-#[cfg(any(feature = "p2p", feature = "libp2p"))]
+#[cfg(feature = "p2p")]
 pub use config::SyncTuning;
 #[cfg(feature = "vera")]
 pub use config::VeraConfig;
@@ -120,8 +111,6 @@ pub use config::{
     CommitGateHandle, DocumentAcpConfig, IndexBuildGateHandle, NodeConfig, NodeSigning,
     Persistence, ReplicationFilterHandle, SigningKey, TransportConfig,
 };
-#[cfg(feature = "p2p")]
-pub use config::{P2PConfig, PeerKeySource};
 /// The hook [`NodeBuilder::with_index_build_gate`] takes.
 pub use db::index::build_gate::{GateWait, IndexBuildGate};
 pub use db::merge::{ReplicaOwnership, ReplicaRegistration};
@@ -130,6 +119,9 @@ pub use db::{CommitGate, CommitWait};
 pub use defra_p2p_adapter::{
     ReplicationFilter, ReplicationFilters, ReplicatorPushOptions, ReplicatorPushOptionsState,
 };
+/// Runs a pinc hub, which pinc topics travel through.
+#[cfg(feature = "p2p")]
+pub use defra_pinc::spawn_hub as spawn_pinc_hub;
 pub use dense_search::{DenseHybridSearchHit, DenseHybridSearchRequest, DenseHybridSearchResponse};
 pub use embedded_signer::{EmbeddedSigner, EmbeddedSignerError};
 #[cfg(feature = "embedded-vera")]
@@ -145,9 +137,6 @@ pub use lens::{LensConfig, LensModule, TransformId};
 #[cfg(feature = "managed-p2p")]
 pub use managed_p2p::{ManagedP2PSystem, ShutdownHandle, TransportKind};
 pub use node_builder::{NodeBuilder, StorageBackend, StoreProfile};
-/// Runs a pinc hub, which pinc topics travel through.
-#[cfg(feature = "pinc")]
-pub use p2p::pinc::spawn_hub as spawn_pinc_hub;
 pub use peer_keyring::PeerKeyring;
 pub use query::owners::{DocumentAccessDecision, DocumentAccessMode};
 pub use query::QueryLimits;
@@ -1298,11 +1287,11 @@ impl Node {
         ops.deny_peer(&peer_id).await.map_err(Error::PeerRevoke)
     }
 
-    /// Open a stream for `protocol` to the iroh peer `peer` and write
-    /// `request` as its first message. The peer serves it if it registered
-    /// `protocol` with [`NodeBuilder::with_stream_protocol`]. Finish the send
-    /// half once the protocol has nothing more to send; dropping it
-    /// unfinished resets the stream.
+    /// Open a stream for `protocol` to the peer `peer` and write `request` as
+    /// its first message. The peer serves it if it registered `protocol` with
+    /// [`NodeBuilder::with_stream_protocol`]. Finish the send half once the
+    /// protocol has nothing more to send; dropping it unfinished resets the
+    /// stream.
     ///
     /// `peer` is a peer ID or any address `connect_peer` takes. The stream
     /// rides the connection the two nodes share; with none open, this dials
@@ -1311,16 +1300,19 @@ impl Node {
     pub async fn open_p2p_stream(
         &self,
         peer: &str,
-        protocol: &p2p::iroh::StreamProtocol,
+        protocol: &defra_pinc::StreamProtocol,
         request: Vec<u8>,
-    ) -> Result<(p2p::iroh::ProtocolSendStream, p2p::iroh::ProtocolRecvStream)> {
+    ) -> Result<(
+        defra_pinc::ProtocolSendStream,
+        defra_pinc::ProtocolRecvStream,
+    )> {
         let transport = self
             .p2p
             .as_ref()
             .ok_or(Error::P2pDisabled)?
-            .iroh_transport()
-            .ok_or(Error::StreamProtocolsNeedIroh)?;
-        let (peer_id, addrs) = p2p::iroh::parse_public_peer_addr(peer)?;
+            .pinc_transport()
+            .ok_or(Error::StreamProtocolsNeedP2P)?;
+        let (peer_id, addrs) = defra_pinc::parse_public_peer_addr(peer)?;
         Ok(transport
             .open_stream(&peer_id, addrs, protocol, request)
             .await?)

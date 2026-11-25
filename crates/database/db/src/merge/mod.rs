@@ -7,8 +7,6 @@ mod gate_conformance_tests;
 pub mod governance;
 pub mod head_provider;
 pub mod merge_handler;
-#[cfg(all(not(target_arch = "wasm32"), feature = "p2p"))]
-pub mod peer_identity;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod pooled;
 pub mod push_docs;
@@ -33,10 +31,6 @@ pub use broadcast_mutator::{
 };
 pub use head_provider::DbHeadProvider;
 pub use merge_handler::{DbMergeHandler, MergeError, DEFAULT_MAX_MERGE_DEPTH};
-#[cfg(all(not(target_arch = "wasm32"), feature = "p2p"))]
-pub use peer_identity::{
-    create_peer_to_did_mapper, peer_id_to_did, public_key_to_did, PeerIdentityError,
-};
 #[cfg(not(target_arch = "wasm32"))]
 pub use pooled::PooledMergeHandler;
 pub use push_docs::{

@@ -10,9 +10,6 @@
 //! - Request protocol: `/defradb/<name>_req/<version>`
 //! - Response protocol: `/defradb/<name>_resp/<version>`
 
-#[cfg(feature = "libp2p-transport")]
-use libp2p::StreamProtocol;
-
 /// The protocol name/slug representing DefraDB.
 pub const NAME: &str = "defra";
 
@@ -85,81 +82,10 @@ pub const IDENTITY_REQUEST_PROTOCOL: &str = "/defradb/ident_req/0.0.1";
 /// Identity response protocol ID.
 pub const IDENTITY_RESPONSE_PROTOCOL: &str = "/defradb/ident_resp/0.0.1";
 
-/// StreamProtocol for the SE request protocol.
-#[cfg(feature = "libp2p-transport")]
-pub fn se_request_protocol() -> StreamProtocol {
-    StreamProtocol::new(SE_REQUEST_PROTOCOL)
-}
-
-/// StreamProtocol for the SE response protocol.
-#[cfg(feature = "libp2p-transport")]
-pub fn se_response_protocol() -> StreamProtocol {
-    StreamProtocol::new(SE_RESPONSE_PROTOCOL)
-}
-
-/// StreamProtocol for the SE query request protocol.
-#[cfg(feature = "libp2p-transport")]
-pub fn se_query_request_protocol() -> StreamProtocol {
-    StreamProtocol::new(SE_QUERY_REQUEST_PROTOCOL)
-}
-
-/// StreamProtocol for the SE query response protocol.
-#[cfg(feature = "libp2p-transport")]
-pub fn se_query_response_protocol() -> StreamProtocol {
-    StreamProtocol::new(SE_QUERY_RESPONSE_PROTOCOL)
-}
-
-/// StreamProtocol for the CAR request protocol.
-#[cfg(feature = "libp2p-transport")]
-pub fn car_request_protocol() -> StreamProtocol {
-    StreamProtocol::new(CAR_REQUEST_PROTOCOL)
-}
-
-/// StreamProtocol for the CAR response protocol.
-#[cfg(feature = "libp2p-transport")]
-pub fn car_response_protocol() -> StreamProtocol {
-    StreamProtocol::new(CAR_RESPONSE_PROTOCOL)
-}
-
-/// StreamProtocol for the identity request protocol.
-#[cfg(feature = "libp2p-transport")]
-pub fn identity_request_protocol() -> StreamProtocol {
-    StreamProtocol::new(IDENTITY_REQUEST_PROTOCOL)
-}
-
-/// StreamProtocol for the identity response protocol.
-#[cfg(feature = "libp2p-transport")]
-pub fn identity_response_protocol() -> StreamProtocol {
-    StreamProtocol::new(IDENTITY_RESPONSE_PROTOCOL)
-}
-
 // Legacy aliases for backwards compatibility with existing code
 #[deprecated(note = "Use REP_REQUEST_PROTOCOL instead")]
 pub const PUSHLOG_REQUEST_PROTOCOL: &str = REP_REQUEST_PROTOCOL;
 #[deprecated(note = "Use REP_RESPONSE_PROTOCOL instead")]
 pub const PUSHLOG_RESPONSE_PROTOCOL: &str = REP_RESPONSE_PROTOCOL;
 
-/// StreamProtocol for the replicator request protocol.
-#[cfg(feature = "libp2p-transport")]
-pub fn rep_request_protocol() -> StreamProtocol {
-    StreamProtocol::new(REP_REQUEST_PROTOCOL)
-}
-
-/// StreamProtocol for the replicator response protocol.
-#[cfg(feature = "libp2p-transport")]
-pub fn rep_response_protocol() -> StreamProtocol {
-    StreamProtocol::new(REP_RESPONSE_PROTOCOL)
-}
-
 // Legacy aliases
-#[deprecated(note = "Use rep_request_protocol instead")]
-#[cfg(feature = "libp2p-transport")]
-pub fn pushlog_request_protocol() -> StreamProtocol {
-    rep_request_protocol()
-}
-
-#[deprecated(note = "Use rep_response_protocol instead")]
-#[cfg(feature = "libp2p-transport")]
-pub fn pushlog_response_protocol() -> StreamProtocol {
-    rep_response_protocol()
-}

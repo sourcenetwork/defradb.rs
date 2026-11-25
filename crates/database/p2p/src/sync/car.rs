@@ -142,7 +142,7 @@ pub(crate) fn encode_car_response(
 /// Any malformed input — unreadable varint, or declared header length
 /// exceeding the remaining bytes — reports `true` so the caller forwards
 /// the bytes and lets the coordinator surface the decode error.
-pub(crate) fn car_has_any_block(data: &[u8]) -> bool {
+pub fn car_has_any_block(data: &[u8]) -> bool {
     let mut cursor = data;
     let Ok(header_len) = read_varint(&mut cursor) else {
         return true;
@@ -342,7 +342,7 @@ pub(crate) fn encode_car_busy(root: &Cid) -> Result<Vec<u8>> {
 }
 
 /// A CAR that carries any block is a served response, whatever its header.
-pub(crate) fn is_car_busy(data: &[u8]) -> bool {
+pub fn is_car_busy(data: &[u8]) -> bool {
     use ciborium::Value;
     match read_car_header_fields(data) {
         Ok((fields, rest)) => {
@@ -421,7 +421,7 @@ fn read_car_header_fields(data: &[u8]) -> Result<(CarHeaderFields, &[u8])> {
 }
 
 /// Optional notices from a Rust peer, not proof of a block's size or absence.
-pub(crate) fn decode_car_oversized(data: &[u8]) -> Result<Vec<(Cid, usize)>> {
+pub fn decode_car_oversized(data: &[u8]) -> Result<Vec<(Cid, usize)>> {
     use ciborium::Value;
     let (fields, _) = read_car_header_fields(data)?;
     let mut notices = fields
@@ -581,27 +581,6 @@ mod tests {
             !links.contains(&enc_cid),
             "encryption link must be excluded from CAR DAG walk"
         );
-    }
-
-    #[cfg(feature = "iroh-transport")]
-    #[test]
-    fn car_has_any_block_detects_header_only_and_populated_cars() {
-        let cid = make_cid(b"root");
-        let header_only = encode_car(&[cid], &[]).unwrap();
-        assert!(!car_has_any_block(&header_only));
-
-        let data = b"payload";
-        let populated = encode_car(&[cid], &[(&cid, data.as_slice())]).unwrap();
-        assert!(car_has_any_block(&populated));
-
-        // Malformed input: no varint → report `true` so the caller forwards
-        // to the coordinator instead of silently dropping.
-        assert!(car_has_any_block(&[]));
-
-        // Malformed subtype: varint declares a header longer than the
-        // remaining bytes. Also report `true` (fail-safe).
-        // Varint 0x7f = 127, but only 1 byte follows.
-        assert!(car_has_any_block(&[0x7f, 0xaa]));
     }
 
     #[test]

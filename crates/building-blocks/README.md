@@ -13,6 +13,5 @@ or its engine.
 | [zanzibar](zanzibar) | Google Zanzibar permission engine |
 | [document](document) | Document handling |
 | [identity](identity) | Identity and JWT management |
-| [bitswap](bitswap) | Bitswap block exchange, wire-compatible with Go |
 | [net](net) | HTTP, TLS and gRPC on nuclei sockets |
 | [chunk-split](chunk-split) | `@chunk` splitter and the parent's chunk list |

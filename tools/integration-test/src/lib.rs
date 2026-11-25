@@ -18,7 +18,6 @@ mod reserved_port;
 pub mod scenario;
 mod stub_embedder;
 pub mod test_case;
-pub mod transport_choice;
 pub mod wasm_lens;
 
 pub use cli_command::cli_command;
@@ -90,18 +89,10 @@ pub use defra_harness::TestCluster;
 pub use defra_harness::TestClusterBuilder;
 
 // Re-export modules moved to backbone
-pub use defra_harness::p2p_helpers;
 pub use defra_harness::sse;
 
-pub use defra_harness::p2p_helpers::{
-    extract_doc_id, extract_p2p_addr, extract_p2p_addr_with_identity, extract_peer_id,
-    setup_three_node_chain, setup_two_node_iroh, setup_two_node_replicated, wait_for_doc_count,
-    wait_for_field_values, P2P_POLL_INTERVAL, P2P_TIMEOUT,
-};
-pub use defra_harness::sse::{
-    open_events_sse, open_merge_events_sse, open_peer_events_sse, wait_for_merge_events,
-    wait_for_peer_events,
-};
+pub use defra_harness::p2p_helpers::extract_doc_id;
+pub use defra_harness::sse::open_events_sse;
 
 #[ctor::ctor(unsafe)]
 fn init_workspace_root() {

@@ -29,10 +29,9 @@ pub use config::{
     DEFAULT_PUSH_QUEUE_BYTE_CAPACITY, DEFAULT_PUSH_QUEUE_CAPACITY, DEFAULT_PUSH_SEND_TIMEOUT,
     DEFAULT_RATE_LIMIT_BACKOFF_SECS, DEFAULT_RATE_LIMIT_BURST, DEFAULT_RATE_LIMIT_RATE,
 };
-#[cfg(any(feature = "libp2p-transport", feature = "iroh-transport"))]
-pub(crate) use diagnostics::record_gossip_decode_failure_sample;
 pub use diagnostics::{
-    GossipDecodeFailureSample, GossipTransport, SyncDiagnostics, SyncDiagnosticsSnapshot,
+    record_gossip_decode_failure_sample, GossipDecodeFailureSample, GossipTransport,
+    SyncDiagnostics, SyncDiagnosticsSnapshot,
 };
 pub use event_lanes::SyncEventReceiver;
 pub use events::{DagFetchPeerPermit, SyncEvent};

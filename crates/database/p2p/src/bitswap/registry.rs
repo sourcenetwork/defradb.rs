@@ -1,6 +1,6 @@
 //! Replicator registry for tracking authorized peers per collection.
 //!
-//! Uses string-based peer IDs so the registry works with both libp2p and iroh transports.
+//! Uses string-based peer IDs, so the registry does not depend on the transport's peer ID type.
 
 use std::collections::BTreeMap;
 
@@ -15,8 +15,7 @@ type Replicators = BTreeMap<String, ReplicatorInfo>;
 /// This is the fast-path access check used by Go DefraDB. Replicators
 /// automatically have access to all blocks in their subscribed collections.
 ///
-/// Peer IDs are stored as strings to support both libp2p PeerIds and
-/// iroh EndpointIds without coupling to either transport.
+/// Peer IDs are stored as strings, without coupling to the transport.
 ///
 /// Reads take a snapshot; writes rebuild the map under RCU, which keeps every
 /// per-peer read-modify-write atomic. Writes are admin operations, so the copy
@@ -184,7 +183,7 @@ impl ReplicatorRegistry {
     /// Load replicators from ReplicatorInfo records.
     ///
     /// Existing state is cleared before loading. Accepts any peer ID format
-    /// (libp2p or iroh) since we store as strings. A record with no
+    /// since we store as strings. A record with no
     /// collections is loaded and listed, as Go restores it.
     pub fn load_from_infos(&self, infos: &[ReplicatorInfo]) -> (usize, usize) {
         let mut replicators = Replicators::new();
@@ -504,7 +503,7 @@ mod tests {
     }
 
     #[test]
-    fn test_replicator_registry_load_accepts_iroh_peer_ids() {
+    fn test_replicator_registry_load_accepts_hex_peer_ids() {
         let registry = ReplicatorRegistry::new();
 
         let infos = vec![

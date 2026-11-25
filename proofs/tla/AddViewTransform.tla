@@ -37,7 +37,6 @@
 (*     DB::require_view_transforms (the lens config, in the transaction)   *)
 (*   crates/database/db/src/definition/migration/committed_lenses.rs DB::add_lens,  *)
 (*     DB::commit_synced_lens, write_lens_config                           *)
-(*   crates/surfaces/p2p-adapter/src/version_syncer.rs sync_lens,                   *)
 (*   crates/surfaces/p2p-adapter/src/transport_version_syncer.rs sync_lens          *)
 (* Go reference: internal/db/view.go, internal/db/lens.go.                 *)
 (***************************************************************************)

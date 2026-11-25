@@ -58,10 +58,6 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
         if let Some(transport) = self.kms_transport.get() {
             transport.peer_subscribed(&topic);
         }
-        #[cfg(feature = "libp2p-transport")]
-        if let Some(services) = self.pubsub_services.as_ref() {
-            services.peer_subscribed(&topic);
-        }
         self.access
             .peer_state
             .peer_subscribed(peer_id.as_str(), topic);
@@ -1654,50 +1650,6 @@ mod tests {
             Ok(SyncEvent::DagNeedsFetch { .. })
         ));
         assert!(events.try_recv().is_err());
-    }
-
-    /// A sync-branchable request a neighbour relayed is answered on its
-    /// publisher's `_response` topic (`source`), never the relay's
-    /// (`propagation_source`): the relay asked nothing and drops it (#2773).
-    #[cfg(feature = "libp2p-transport")]
-    #[test]
-    fn relayed_pubsub_rpc_request_is_answered_on_its_publishers_topic() {
-        workers::block_on(async {
-            let local = PeerId::new(libp2p::PeerId::random().to_string());
-            let asker = PeerId::new(libp2p::PeerId::random().to_string());
-            let relay = PeerId::new(libp2p::PeerId::random().to_string());
-            let transport = TestTransport::with_peer_id(local);
-            let published = Arc::clone(&transport.published_raw);
-            let store = Arc::new(RegolithStore::in_memory().unwrap());
-            let blockstore = Arc::new(DefraBlockstore::new(store, true));
-            let (coordinator, _events) = SyncCoordinator::new(
-                transport,
-                blockstore,
-                crate::network::test_network(),
-                SyncConfig::default(),
-            )
-            .await
-            .expect("coordinator");
-
-            let request = crate::message::pubsub::BranchableSyncRequest::new("c1".to_string());
-            coordinator
-                .handle_transport_event(TransportEvent::GossipRawMessage {
-                    propagation_source: relay,
-                    source: asker.clone(),
-                    message_id: MessageId::new("m".to_string()),
-                    topic: "sync-branchable".to_string(),
-                    data: defra_core::cbor::to_vec(&request).unwrap(),
-                })
-                .await
-                .expect("handled");
-
-            assert_eq!(
-                published.pop(),
-                Some(format!("sync-branchable/{asker}/_response"))
-            );
-            assert_eq!(published.pop(), None);
-        })
-        .unwrap();
     }
 
     /// A KMS request a neighbour relayed is authorized and answered as its

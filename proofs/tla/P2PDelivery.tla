@@ -39,8 +39,8 @@
 \*
 \* Each mode constant is one design decision. Its GREEN value is the target
 \* contract, not main: every RED value is what main (d23a8cf47) does, and every
-\* GREEN value is a proposed fix, except ConnMode's, which the gents rc1 pin
-\* (b50c667e9) already has. Each RED configuration flips exactly one of them
+\* GREEN value is a proposed fix, except ConnMode's, which pinc already has:
+\* Node::connected serves every connection it adopts. Each RED configuration flips exactly one of them
 \* and fails the property named in its comment. So main breaks
 \* INV_ObligationOwned (F1, F2, F3, F4, F5), LIVE_HeadDelivered (F8, F9) and
 \* INV_ReverseBorrowServed (F27).
@@ -56,8 +56,8 @@
 \*   queue, back  in-memory pending entries whose next_retry_at has passed, or not yet
 \*   slot     fetch slots (reserve_pending_dag_fetch) and limiter permits (DagFetchLimiter)
 \*   cursor   the resync cursor (records_after_resync_cursor)
-\*   known    whether startup restored the replicator list (restore_iroh_p2p_state)
-\*   conn     the transport's connection per pair (connect_with_cache, handle_incoming)
+\*   known    whether startup restored the replicator list (restore_pinc_p2p_state)
+\*   conn     the transport's connection per pair (pinc endpoint.rs Node::connected)
 \*   pull     limiter permits held by an advisory pull fetch (doc_sync.rs)
 \*   flood    the merge loop's channel is full (try_reserve fails)
 \*   contLive merge continuation entries in the map (continue_merge)
@@ -85,9 +85,10 @@
 \*       resync_persisted_pending_dags, records_after_resync_cursor (Resync),
 \*       continue_merge, consume_pending_merge_continuation (StartCont, EndCont)
 \*   crates/database/p2p/src/sync/replication/handlers.rs    handle_block_received (Progress: merge, discharge, forward)
-\*   crates/database/p2p/src/iroh/endpoint_rpc.rs            connect_with_cache, retire_timed_out_connection (Reconnect, RetireTimedOut)
-\*   crates/database/p2p/src/iroh/endpoint_streams.rs        handle_incoming (Reconnect: the accepting side)
-\*   crates/surfaces/p2p-adapter/src/iroh_peer/peer.rs       IrohPeer::assemble (Crash, RestoreReplicators)
+\*   crates/database/pinc/src/endpoint.rs                    Node::connected (Reconnect: every connection, dialed or
+\*                                                           accepted, is served before it is tracked)
+\*   crates/database/pinc/src/serve.rs                       Node::serve_connection (Reconnect: both sides serve it)
+\*   crates/surfaces/p2p-adapter/src/pinc_peer/peer.rs       PincPeer::assemble (Crash, RestoreReplicators)
 EXTENDS Naturals, Sequences, FiniteSets
 
 CONSTANTS
@@ -297,7 +298,7 @@ Superseded(r, s, hd) ==
 \* registration per outgoing edge running in memory (the broadcast task the
 \* commit waits on); nothing durable backs it until the recorder writes the
 \* marker. The node serves no write until startup has restored its
-\* replicators: assemble awaits setup_iroh, which restores them, before it
+\* replicators: assemble awaits setup_pinc, which restores them, before it
 \* returns the node.
 Commit(n, hd) ==
   /\ hd \in Fresh                                                  \* written during the run

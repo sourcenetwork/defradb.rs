@@ -77,23 +77,3 @@ fn the_reply_size_bound_is_measured() {
         );
     }
 }
-
-/// Over iroh gossip, a request for `keys_per_request` keys and its reply
-/// both fit one broadcast, and the reply for one key more would not.
-#[test]
-#[cfg(feature = "iroh-transport")]
-fn a_request_and_its_reply_fit_one_gossip_broadcast() {
-    let limit = crate::iroh::MAX_RAW_PAYLOAD;
-    let keys = keys_per_request(limit);
-    eprintln!(
-        "limit {limit}: {keys} keys, reply {} bytes, request {} bytes",
-        reply(keys).len(),
-        request(keys).len()
-    );
-    assert!(reply(keys).len() <= limit);
-    assert!(request(keys).len() <= limit);
-    assert!(
-        reply(keys + 1).len() > limit,
-        "the limit leaves keys unused"
-    );
-}

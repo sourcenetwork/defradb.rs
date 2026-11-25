@@ -9,23 +9,13 @@ use std::time::{Duration, Instant};
 use query::QueryResponse;
 use serde_json::Value as JsonValue;
 
-use super::{Node, P2PConfig, PeerKeySource, SyncTuning};
+use super::{Node, PeerKeySource, PincConfig, SyncTuning};
 
 fn init_tracing() {
     static INIT: Once = Once::new();
     INIT.call_once(|| {
         let filter = tracing_subscriber::EnvFilter::from_default_env()
-            .add_directive(tracing::Level::INFO.into())
-            .add_directive(
-                "iroh_quinn_proto::connection=error"
-                    .parse()
-                    .expect("valid tracing directive"),
-            )
-            .add_directive(
-                "noq_proto::connection=error"
-                    .parse()
-                    .expect("valid tracing directive"),
-            );
+            .add_directive(tracing::Level::INFO.into());
         let _ = tracing_subscriber::fmt()
             .with_env_filter(filter)
             .with_test_writer()
@@ -33,23 +23,37 @@ fn init_tracing() {
     });
 }
 
-fn test_p2p_config() -> P2PConfig {
-    P2PConfig {
-        port: Some(0),
-        bind_addr: Some(IpAddr::V4(Ipv4Addr::LOCALHOST)),
-        relay_mode: p2p::iroh::IrohRelayModeConfig::Disabled,
-        discovery: p2p::iroh::IrohDiscoveryConfig::Disabled,
-        allowlist: p2p::iroh::IrohAllowlistConfig::AcceptAll,
-        max_concurrent_multipath_paths: None,
-        secret_key_path: None,
+fn test_p2p_config() -> PincConfig {
+    PincConfig {
+        bind: std::net::SocketAddr::from((IpAddr::V4(Ipv4Addr::LOCALHOST), 0)),
         load_persisted_collections: false,
         peer_key: PeerKeySource::File,
         sync: SyncTuning::default(),
-        rebroadcast_on_merge: false,
+        ..Default::default()
     }
 }
 
-fn desktop_like_streaming_p2p_config() -> P2PConfig {
+/// A hub on loopback, running until the task is dropped. Topics and the KMS
+/// key exchange reach peers only through one.
+async fn hub() -> (String, edge::Task<()>) {
+    let seed = defra_pinc::generate_seed().expect("hub seed");
+    crate::spawn_pinc_hub(
+        *seed,
+        std::net::SocketAddr::from((IpAddr::V4(Ipv4Addr::LOCALHOST), 0)),
+        edge::testing::edge(),
+    )
+    .await
+    .expect("hub")
+}
+
+/// `test_p2p_config` on `hub`.
+fn hub_p2p_config(hub: &str) -> PincConfig {
+    let mut config = test_p2p_config();
+    config.hubs = vec![hub.to_owned()];
+    config
+}
+
+fn desktop_like_streaming_p2p_config() -> PincConfig {
     let mut config = test_p2p_config();
     config.sync.max_concurrent_push_tasks = 32;
     config.sync.rate_limit_burst = 5_000;
@@ -57,7 +61,7 @@ fn desktop_like_streaming_p2p_config() -> P2PConfig {
     config
 }
 
-fn persistent_p2p_config(secret_key_path: PathBuf) -> P2PConfig {
+fn persistent_p2p_config(secret_key_path: PathBuf) -> PincConfig {
     let mut config = test_p2p_config();
     config.secret_key_path = Some(secret_key_path);
     config.load_persisted_collections = true;
@@ -78,7 +82,7 @@ fn unique_data_path(test_name: &str) -> PathBuf {
 async fn build_persistent_p2p_node(data_path: PathBuf, secret_key_path: PathBuf) -> Node {
     Node::builder()
         .data_path(data_path)
-        .with_p2p(persistent_p2p_config(secret_key_path))
+        .with_pinc(persistent_p2p_config(secret_key_path))
         .build()
         .await
         .expect("build persistent P2P node")
@@ -1266,12 +1270,12 @@ fn live_replicator_pushes_post_config_writes() {
             init_tracing();
 
             let node0 = Node::builder()
-                .with_p2p(test_p2p_config())
+                .with_pinc(test_p2p_config())
                 .build()
                 .await
                 .expect("build node0");
             let node1 = Node::builder()
-                .with_p2p(test_p2p_config())
+                .with_pinc(test_p2p_config())
                 .build()
                 .await
                 .expect("build node1");
@@ -1645,12 +1649,12 @@ fn live_replicator_same_session_followup_turn_converges() {
     init_tracing();
 
     let node0 = Node::builder()
-        .with_p2p(desktop_like_streaming_p2p_config())
+        .with_pinc(desktop_like_streaming_p2p_config())
         .build()
         .await
         .expect("build node0");
     let node1 = Node::builder()
-        .with_p2p(desktop_like_streaming_p2p_config())
+        .with_pinc(desktop_like_streaming_p2p_config())
         .build()
         .await
         .expect("build node1");
@@ -1771,12 +1775,12 @@ fn live_replicator_filtered_push_respects_predicate() {
     let mut sender_config = test_p2p_config();
     sender_config.sync.replicator_retry_intervals = Some(vec![1, 2]);
     let sender = Node::builder()
-        .with_p2p(sender_config)
+        .with_pinc(sender_config)
         .build()
         .await
         .expect("build sender");
     let receiver = Node::builder()
-        .with_p2p(test_p2p_config())
+        .with_pinc(test_p2p_config())
         .build()
         .await
         .expect("build receiver");
@@ -1842,12 +1846,12 @@ fn filtered_backfill_via_transport_pusher_respects_predicate() {
     init_tracing();
 
     let sender = Node::builder()
-        .with_p2p(test_p2p_config())
+        .with_pinc(test_p2p_config())
         .build()
         .await
         .expect("build sender");
     let receiver = Node::builder()
-        .with_p2p(test_p2p_config())
+        .with_pinc(test_p2p_config())
         .build()
         .await
         .expect("build receiver");
@@ -1953,7 +1957,7 @@ fn p2p_shutdown_releases_store_for_immediate_reopen() {
 
             let reopened = Node::builder()
                 .data_path(data_path.clone())
-                .with_p2p(persistent_p2p_config(secret_key_path))
+                .with_pinc(persistent_p2p_config(secret_key_path))
                 .build()
                 .await;
 
@@ -1988,12 +1992,12 @@ fn branchable_sync_pulls_collection_from_embedded_peer() {
     init_tracing();
 
     let source = Node::builder()
-        .with_p2p(test_p2p_config())
+        .with_pinc(test_p2p_config())
         .build()
         .await
         .expect("build source");
     let joiner = Node::builder()
-        .with_p2p(test_p2p_config())
+        .with_pinc(test_p2p_config())
         .build()
         .await
         .expect("build joiner");
@@ -2017,7 +2021,7 @@ fn branchable_sync_pulls_collection_from_embedded_peer() {
         );
     }
 
-    // Prefer the loopback listen address: iroh lists interface addresses in
+    // Prefer the loopback listen address: pinc lists interface addresses in
     // arbitrary order and the first can be a NAT-side address a localhost
     // test cannot dial.
     let addr_source = {
@@ -2029,7 +2033,7 @@ fn branchable_sync_pulls_collection_from_embedded_peer() {
                 .listen_addresses()
                 .await
                 .expect("listen_addresses");
-            if let Some(addr) = addrs.iter().find(|a| a.starts_with("127.0.0.1:")) {
+            if let Some(addr) = addrs.iter().find(|a| a.contains("@127.0.0.1:")) {
                 break addr.clone();
             }
             assert!(
@@ -2081,13 +2085,14 @@ fn encrypted_create_replicates_plaintext_to_replicator() {
     edge::testing::edge().block_on(async {
     init_tracing();
 
+    let (hub, _hub_task) = hub().await;
     let writer = Node::builder()
-        .with_p2p(test_p2p_config())
+        .with_pinc(hub_p2p_config(&hub))
         .build()
         .await
         .expect("build writer");
     let replica = Node::builder()
-        .with_p2p(test_p2p_config())
+        .with_pinc(hub_p2p_config(&hub))
         .build()
         .await
         .expect("build replica");
@@ -2176,7 +2181,9 @@ fn assert_refused_dial(result: defra_p2p_adapter::P2PResult<()>) {
             matches!(&error, defra_p2p_adapter::P2PError::Transport(reason)
                 if reason.contains("timeout")
                     || reason.contains("timed out")
-                    || reason.contains("not authorized"))
+                    || reason.contains("not authorized")
+                    // pinc's admission refuses inside the handshake.
+                    || reason.contains("the peer closed during the handshake"))
                 || matches!(&error, defra_p2p_adapter::P2PError::Unauthorized(reason)
                     if reason == "peer refused the connection: not authorized"),
             "refused dial failed before reaching the allowlist: {error}"
@@ -2201,7 +2208,7 @@ fn refused_dial_rejects_unrelated_authorization_error() {
 
 /// `Node::allow_p2p_peer` is the only reachable way to widen an
 /// already-running node's inbound allowlist: it must actually flow through
-/// `p2p-adapter` down to `IrohTransport::allow_peer`, not stop at the
+/// `p2p-adapter` down to `PincTransport::allow_peer`, not stop at the
 /// transport layer, or an operator admitting a new peer at runtime would
 /// have no way to do so short of a restart.
 #[test]
@@ -2211,16 +2218,16 @@ fn allow_p2p_peer_authorizes_a_peer_refused_by_the_allowlist() {
             init_tracing();
 
             let node_a = Node::builder()
-                .with_p2p(test_p2p_config())
+                .with_pinc(test_p2p_config())
                 .build()
                 .await
                 .expect("build node_a");
 
             // node_b starts with an explicit allowlist that excludes node_a.
             let mut config_b = test_p2p_config();
-            config_b.allowlist = p2p::iroh::IrohAllowlistConfig::Explicit(Default::default());
+            config_b.allowlist = defra_pinc::PincAllowlistConfig::Explicit(Default::default());
             let node_b = Node::builder()
-                .with_p2p(config_b)
+                .with_pinc(config_b)
                 .build()
                 .await
                 .expect("build node_b");
@@ -2275,7 +2282,7 @@ fn allow_p2p_peer_authorizes_a_peer_refused_by_the_allowlist() {
 /// already-admitted device without a restart: this is the shape a customer
 /// logout takes. Mirrors `allow_p2p_peer_authorizes_a_peer_refused_by_the_allowlist`
 /// and must actually flow through `p2p-adapter` down to
-/// `IrohTransport::deny_peer`, and it must close the connection node_a
+/// `PincTransport::deny_peer`, and it must close the connection node_a
 /// already holds, not just stop the next one.
 #[test]
 fn deny_p2p_peer_revokes_an_already_connected_peer() {
@@ -2284,7 +2291,7 @@ fn deny_p2p_peer_revokes_an_already_connected_peer() {
             init_tracing();
 
             let node_a = Node::builder()
-                .with_p2p(test_p2p_config())
+                .with_pinc(test_p2p_config())
                 .build()
                 .await
                 .expect("build node_a");
@@ -2296,9 +2303,9 @@ fn deny_p2p_peer_revokes_an_already_connected_peer() {
             let peer_a = p2p_a.local_peer_id().await.expect("node_a peer id");
             let mut config_b = test_p2p_config();
             config_b.allowlist =
-                p2p::iroh::IrohAllowlistConfig::Explicit([peer_a.clone()].into_iter().collect());
+                defra_pinc::PincAllowlistConfig::Explicit([peer_a.clone()].into_iter().collect());
             let node_b = Node::builder()
-                .with_p2p(config_b)
+                .with_pinc(config_b)
                 .build()
                 .await
                 .expect("build node_b");
@@ -2397,14 +2404,14 @@ fn shutdown_refuses_or_marks_every_write_admitted_around_it() {
             let sender = std::sync::Arc::new(
                 Node::builder()
                     .with_edge(network.clone())
-                    .with_p2p(test_p2p_config())
+                    .with_pinc(test_p2p_config())
                     .with_http(crate::HttpConfig::with_listener(listener).expect("HTTP config"))
                     .build()
                     .await
                     .expect("build sender"),
             );
             let receiver = Node::builder()
-                .with_p2p(test_p2p_config())
+                .with_pinc(test_p2p_config())
                 .build()
                 .await
                 .expect("build receiver");
@@ -2568,8 +2575,8 @@ impl db::DocumentMutationProjector for ReplicatedDocumentProjector {
 #[test]
 fn accepted_replicated_document_runs_transactional_projector() {
     edge::testing::edge().block_on(async {
-        let node0 = Node::builder().enable_signing().with_node_acp_enabled().with_p2p(test_p2p_config()).build().await.unwrap();
-        let node1 = Node::builder().enable_signing().with_node_acp_enabled().with_p2p(test_p2p_config())
+        let node0 = Node::builder().enable_signing().with_node_acp_enabled().with_pinc(test_p2p_config()).build().await.unwrap();
+        let node1 = Node::builder().enable_signing().with_node_acp_enabled().with_pinc(test_p2p_config())
             .with_document_projector(std::sync::Arc::new(ReplicatedDocumentProjector))
             .build().await.unwrap();
         let context0 = defra_core::RequestContext::default().with_identity(Some(node0.node_identity_did().unwrap().to_owned()));
@@ -2622,7 +2629,7 @@ fn unbound_peer_info_reads_are_refused_only_with_node_acp() {
             let gated = Node::builder()
                 .enable_signing()
                 .with_node_acp_enabled()
-                .with_p2p(test_p2p_config())
+                .with_pinc(test_p2p_config())
                 .build()
                 .await
                 .unwrap();
@@ -2655,7 +2662,7 @@ fn unbound_peer_info_reads_are_refused_only_with_node_acp() {
             gated.shutdown().await.unwrap();
 
             let open = Node::builder()
-                .with_p2p(test_p2p_config())
+                .with_pinc(test_p2p_config())
                 .build()
                 .await
                 .unwrap();
@@ -2750,13 +2757,14 @@ fn remote_key_arrival_wakes_a_parked_encrypted_merge() {
                     requested: Arc::clone(&wrap_requested),
                 }) as Arc<dyn kms::KeyTransport>
             });
+            let (hub, _hub_task) = hub().await;
             let writer = Node::builder()
-                .with_p2p(test_p2p_config())
+                .with_pinc(hub_p2p_config(&hub))
                 .build()
                 .await
                 .unwrap();
             let replica = Node::builder()
-                .with_p2p(test_p2p_config())
+                .with_pinc(hub_p2p_config(&hub))
                 .with_test_kms_transport_wrapper(wrapper)
                 .build()
                 .await

@@ -24,12 +24,12 @@ async fn wait_for_acknowledged(sender: &Node, peer_id: &str, collection: &str, d
 
 async fn assert_replicator_acknowledges_current_heads(schema: &str, collection: &str) {
     let node0 = Node::builder()
-        .with_p2p(test_p2p_config())
+        .with_pinc(test_p2p_config())
         .build()
         .await
         .expect("build node0");
     let node1 = Node::builder()
-        .with_p2p(test_p2p_config())
+        .with_pinc(test_p2p_config())
         .build()
         .await
         .expect("build node1");
@@ -118,12 +118,12 @@ fn filtered_replicator_acknowledges_branchable_document_heads() {
             init_tracing();
             let schema = "type AgentDoc @branchable { agent_did: String @immutable  body: String }";
             let node0 = Node::builder()
-                .with_p2p(test_p2p_config())
+                .with_pinc(test_p2p_config())
                 .build()
                 .await
                 .expect("build node0");
             let node1 = Node::builder()
-                .with_p2p(test_p2p_config())
+                .with_pinc(test_p2p_config())
                 .build()
                 .await
                 .expect("build node1");
@@ -197,12 +197,12 @@ fn explicit_replay_acknowledges_only_selected_document_heads() {
         .block_on(async {
             init_tracing();
             let node0 = Node::builder()
-                .with_p2p(test_p2p_config())
+                .with_pinc(test_p2p_config())
                 .build()
                 .await
                 .unwrap();
             let node1 = Node::builder()
-                .with_p2p(test_p2p_config())
+                .with_pinc(test_p2p_config())
                 .build()
                 .await
                 .unwrap();

@@ -244,15 +244,6 @@ pub const PROPERTIES: &[Property] = &[
         bound_by: "crates/database/p2p/tests/unit/dag_readiness.rs an_absent_child_is_missing_and_each_child_is_read_once",
     },
     Property {
-        family: "Pull sync (doc-sync / sync-branchable)",
-        name: "Delivered / OneReplyEach / RefusedOnlyUnsent / NoResendAfterDeadline — a pubsub_rpc request is held until a peer subscribes, resent to each later subscriber, and never resent after its deadline",
-        axis: Tla,
-        anchor: "crates/database/p2p/src/sync/coordinator/held_request.rs HeldRequest::next, HeldRequest::publish, HeldRequest::publish_by_deadline, HeldRequest::finish; crates/database/p2p/src/sync/coordinator/pubsub_services.rs PubsubServices::peer_subscribed",
-        model_ref: "MC_HeldPubsubRequest_{Green,Red_NoHold,Red_NoResend,Red_LateWatch,Red_NoDedupe,Red_ResendLate}.cfg",
-        tiers: &[Boundary],
-        bound_by: "crates/database/p2p/src/sync/coordinator/held_request_tests.rs doc_sync_sent_before_the_topic_has_a_peer_waits_for_one",
-    },
-    Property {
         family: "Transactional node source grants",
         name: "INV_Authority / INV_Private / INV_NoRevival / INV_Independent / INV_Reconciled / INV_RequestUnchanged",
         axis: Tla,
@@ -981,50 +972,17 @@ pub const PROPERTIES: &[Property] = &[
         bound_by: "",
     },
     Property {
-        // Disconnect answers only once the peer's last connection closed, so
-        // ActivePeers right after it no longer lists the peer, as in Go.
+        // A hang-up quiets the peer for this node's peer exchange, and pinc's
+        // close carries CLOSE_DISCONNECTED, so the peer hung up on stays
+        // quiet too: neither half redials. An explicit dial lifts the quiet,
+        // and other dials still reach a quiet peer.
         family: "Peer connection observation",
-        name: "INV_AnsweredMeansClosed / PROP_CallerAnswered",
+        name: "NoLocalRedial / NoRedialAfterDeliberateClose: neither side of a DisconnectPeers discovery-dials the other until an explicit dial or allow names it, with a live link or not and with a dial already on its way, when the close arrived; a real drop and a lost close are still mended (NoRedialAfterDrop, NoRedialAfterLostClose witnesses); an explicit connect lifts the quiet (UnquietOnConnect) and other dials still reach a quiet peer (RequestsStillDial)",
         axis: Tla,
-        anchor: "crates/database/p2p/src/host/command_handler/network.rs handle_disconnect; crates/database/p2p/src/host/p2p_host/swarm.rs handle_connection_closed; tools/integration-test/tests/testo/net/info/disconnect_peers.rs",
-        model_ref: "MC_PeerDisconnect_{Green,Red_EarlyAck}.cfg",
+        anchor: "crates/database/p2p/src/quiet_peers.rs QuietPeers; crates/database/pinc/src/endpoint.rs CLOSE_DISCONNECTED, hung_up_on, Node::hang_up, Node::is_quiet, Node::allow, Node::handle; crates/database/pinc/src/command.rs Command::Dial; crates/database/pinc/src/serve.rs Node::serve_connection; crates/database/pinc/src/exchange.rs Node::learn_peers, Node::known_or_barred",
+        model_ref: "MC_StickyDisconnect_{Green,Red_LocalLoud,Red_RemoteLoud,Red_DropRedials,Red_KeepsQuiet,Red_EveryDialChecked,Red_DialNotRechecked,Red_UnlinkedLoud,Red_LostCloseRedials}.cfg",
         tiers: &[Boundary],
-        bound_by: "",
-    },
-    Property {
-        // iroh answers Disconnect once the close has started, the Red_EarlyAck
-        // shape: connected_peers lists the peer until its stream task observes
-        // the close, so a connect_peer in that window does nothing. Callers
-        // that need the peer gone poll connected_peers.
-        family: "Peer connection observation",
-        name: "INV_AnsweredMeansClosed binds libp2p only: iroh answers Disconnect before the peer leaves connected_peers",
-        axis: Tla,
-        anchor: "crates/database/p2p/src/iroh/endpoint_commands.rs handle_disconnect; crates/surfaces/p2p-adapter/src/iroh.rs connected_peers, connect_peer",
-        model_ref: "MC_PeerDisconnect_Red_EarlyAck.cfg",
-        tiers: &[Boundary],
-        bound_by: "",
-    },
-    Property {
-        // libp2p's close carries no reason, so only the node that hung up
-        // stays quiet there (Red_Libp2pRemote shows the other half).
-        family: "Peer connection observation",
-        name: "NoLocalRedial: a node never discovery-dials a peer it ran DisconnectPeers on, with a live link or not and with a dial already on its way, until ConnectPeers or a replicator names it again; a real drop is still mended (NoRedialAfterDrop witness); an explicit connect lifts the quiet (UnquietOnConnect) and other protocols still dial a quiet peer (RequestsStillDial)",
-        axis: Tla,
-        anchor: "crates/database/p2p/src/quiet_peers.rs QuietPeers; crates/database/p2p/src/behaviour/dual_kademlia.rs DefraKademlia::handle_pending_outbound_connection, DefraKademlia::handle_established_outbound_connection, DefraKademlia::poll, DualKademlia::quiet, DualKademlia::unquiet; crates/database/p2p/src/host/command_handler/network.rs handle_disconnect; crates/database/p2p/src/host/p2p_host/mod.rs dial_peer; crates/building-blocks/bitswap/src/behaviour/dial.rs Bitswap::on_dial_failure",
-        model_ref: "MC_StickyDisconnect_{Green_Libp2p,Red_LocalLoud,Red_Libp2pRemote,Red_DropRedials,Red_KeepsQuiet,Red_EveryDialChecked,Red_DialNotRechecked,Red_UnlinkedLoud}.cfg",
-        tiers: &[Boundary],
-        bound_by: "crates/database/p2p/src/behaviour/dual_kademlia.rs kademlia_never_dials_a_quiet_peer_but_an_explicit_dial_does, a_kademlia_dial_that_lands_after_a_disconnect_is_refused; crates/building-blocks/bitswap/tests/dial_pause.rs another_behaviours_refused_dial_leaves_dialing_on; crates/database/p2p/src/host/command_handler/network.rs an_explicit_dial_lets_kademlia_dial_a_disconnected_peer_again; crates/database/p2p/src/quiet_peers.rs a_full_table_forgets_its_oldest_peer_and_counts_it; tools/integration-test/tests/testo/net/sticky_disconnect.rs an_explicit_connect_undoes_a_disconnect; tools/integration-test/tests/testo/net/info/disconnect_peers.rs net_info_disconnect_multiple_peers",
-    },
-    Property {
-        // pinc's close carries CLOSE_DISCONNECTED, so the peer hung up on
-        // stays quiet too: both halves, where libp2p has only the first.
-        family: "Peer connection observation",
-        name: "NoRedialAfterDeliberateClose: on pinc neither side of a DisconnectPeers discovery-dials the other until an explicit dial or allow names it, when the close arrived (NoRedialAfterLostClose witness: a lost close is a drop to the peer)",
-        axis: Tla,
-        anchor: "crates/database/p2p/src/pinc/endpoint.rs CLOSE_DISCONNECTED, hung_up_on, Node::hang_up, Node::is_quiet, Node::allow, Node::handle; crates/database/p2p/src/pinc/command.rs Command::Dial; crates/database/p2p/src/pinc/serve.rs Node::serve_connection; crates/database/p2p/src/pinc/exchange.rs Node::learn_peers, Node::known_or_barred",
-        model_ref: "MC_StickyDisconnect_{Green_Pinc,Red_PincLocalLoud,Red_Libp2pRemote,Red_DialNotRechecked,Red_UnlinkedLoud,Red_LostCloseRedials}.cfg",
-        tiers: &[Boundary],
-        bound_by: "crates/database/p2p/src/pinc/tests/sticky_disconnect.rs the_node_that_hung_up_does_not_dial_the_peer_back, the_peer_hung_up_on_does_not_dial_the_node_back; tools/integration-test/tests/testo/net/sticky_disconnect.rs a_disconnected_peer_is_not_dialed_back_by_discovery, a_fresh_list_does_not_redial_a_disconnected_peer; tools/integration-test/tests/testo/net/info/disconnect_peers.rs net_info_disconnect_multiple_peers",
+        bound_by: "crates/database/p2p/src/quiet_peers.rs a_full_table_forgets_its_oldest_peer_and_counts_it; crates/database/pinc/src/tests/sticky_disconnect.rs the_node_that_hung_up_does_not_dial_the_peer_back, the_peer_hung_up_on_does_not_dial_the_node_back, a_hang_up_with_no_link_keeps_peer_exchange_away; tools/integration-test/tests/testo/net/sticky_disconnect.rs a_disconnected_peer_is_not_dialed_back_by_discovery, a_fresh_list_does_not_redial_a_disconnected_peer, an_explicit_connect_undoes_a_disconnect; tools/integration-test/tests/testo/net/info/disconnect_peers.rs net_info_disconnect_multiple_peers",
     },
     Property {
         family: "ACP soundness + revocation + dual-path commits",
@@ -1043,24 +1001,6 @@ pub const PROPERTIES: &[Property] = &[
         model_ref: "Acp.OwnerObservation",
         tiers: &[Contract],
         bound_by: "crates/engine/query/src/runner/owners_tests.rs unified_access_rejects_or_reports_unavailable_without_bound_acp; crates/database/db/tests/read/owner_observation.rs owner_observation_rejects_a_claim_without_a_bound_transaction_view",
-    },
-    Property {
-        family: "Peer connection observation",
-        name: "ExplicitOnly / ExactAddress / RequestedPort / DefaultPreserved / UnavailableRefused / MappingScope / MappingDefaultsPreserved",
-        axis: Tla,
-        anchor: "crates/database/p2p/src/iroh/endpoint_config.rs apply_bind_config; endpoint_config/bind_tests.rs native_bindings_match_executed_model, native_port_mapping_configuration_matches_executed_model, loopback_endpoint_does_not_open_wildcard_gateway_discovery_listeners",
-        model_ref: "MC_EndpointBind_{Green,Red_*}.cfg",
-        tiers: &[Boundary],
-        bound_by: "",
-    },
-    Property {
-        family: "Peer connection observation",
-        name: "EndpointBind.explicit_replaces / explicit_preserves / absent_preserves_defaults / port_only_preserves_dual_stack / specific_address_disables_mapping / absent_address_preserves_mapping / wildcard_preserves_mapping",
-        axis: Lean,
-        anchor: "crates/database/p2p/src/iroh/endpoint_config.rs apply_bind_config; endpoint_config/bind_tests.rs model_cases, native_port_mapping_configuration_matches_executed_model",
-        model_ref: "EndpointBind (lake build)",
-        tiers: &[Boundary],
-        bound_by: "",
     },
     Property {
         family: "Sync ownership transfer (head hint / receiver pull)",
@@ -1376,64 +1316,6 @@ pub const PROPERTIES: &[Property] = &[
         bound_by: "crates/database/p2p/src/sync/coordinator/access_tests.rs live_connection_allows_pull_before_lifecycle_notification_without_granting_push",
     },
     Property {
-        family: "Peer connection observation",
-        name: "Reverse RPC reuses inbound and legacy paths; stale eviction cannot hide replacements from disconnect",
-        axis: Tla,
-        anchor: "crates/database/p2p/src/iroh/endpoint_streams.rs adopt_new_connection; endpoint_rpc.rs remember_connection, connect_with_cache and evict_connection; crates/database/p2p/tests/iroh/shared_connection.rs",
-        model_ref: "MC_SharedRpcConnection_{Green,Red_*}.cfg; MC_LegacyRpcCache_{Green,Red_*}.cfg; MC_RpcCacheEviction_{Green,Red_*}.cfg",
-        tiers: &[Contract],
-        bound_by: "crates/database/p2p/tests/iroh/shared_connection.rs disconnect_closes_replacement_despite_stale_cleanup, legacy_only_peer_reuses_and_refreshes_its_shared_rpc_path, accepted_inbound_connection_serves_reverse_rpc_without_another_dial, authenticated_reconnection_replaces_an_open_old_rpc_path",
-    },
-    Property {
-        // When the cached RPC handle closes, its slot is left empty and the
-        // next RPC dials rather than promoting an open sibling. That is cheap
-        // only because every dialled connection is adopted and served; a
-        // sibling of unknown liveness may be a connection whose peer is gone.
-        family: "Peer connection observation",
-        name: "A closed cached RPC connection is replaced by a fresh dial, never by promoting a sibling",
-        axis: Tla,
-        anchor: "crates/database/p2p/src/iroh/endpoint_rpc.rs connect_with_cache, evict_connection; crates/database/p2p/src/iroh/endpoint_streams.rs handle_connection_streams",
-        model_ref: "MC_SharedRpcConnection_{Green,Red_NoAdoption}.cfg",
-        tiers: &[Boundary],
-        bound_by: "",
-    },
-    Property {
-        family: "Peer connection observation",
-        name: "Every new connection is served, announced by its pump and released once; an allowlist miss keeps the sibling",
-        axis: Tla,
-        anchor: "crates/database/p2p/src/iroh/endpoint_streams.rs adopt_new_connection and finish_connection; endpoint_rpc.rs connect_with_cache and restore_displaced_connection; endpoint_commands.rs handle_dial; crates/database/p2p/tests/iroh/shared_connection.rs",
-        model_ref: "MC_ConnectionAdoption_{Green,Red_*}.cfg",
-        tiers: &[Contract],
-        bound_by: "crates/database/p2p/tests/iroh/shared_connection.rs repeated_cache_hits_reuse_one_adopted_connection, closed_registry_refuses_adoption_and_balances_the_peer_map, cancelled_adopt_still_announces_and_releases_its_connection, allowlist_miss_refuses_only_the_new_connection_and_spares_the_sibling",
-    },
-    Property {
-        family: "Peer connection observation",
-        name: "Open RPC connections stay counted after cache displacement and close on revoke",
-        axis: Tla,
-        anchor: "crates/database/p2p/src/iroh/endpoint_rpc.rs close_peer_connections; crates/database/p2p/tests/iroh/shared_connection.rs displaced_rpc_dialed_connection_is_closed_by_revoke",
-        model_ref: "MC_ConnectionAdoption_{Green,Red_*}.cfg",
-        tiers: &[Contract],
-        bound_by: "crates/database/p2p/tests/iroh/shared_connection.rs displaced_rpc_dialed_connection_is_closed_by_revoke",
-    },
-    Property {
-        family: "Peer connection observation",
-        name: "Refused connection is evicted, a closed displaced connection is not restored, and a newer connection keeps the slot",
-        axis: Tla,
-        anchor: "crates/database/p2p/src/iroh/endpoint_rpc.rs restore_displaced_connection, evict_connection",
-        model_ref: "MC_DisplacedConnectionRestore_{Green,Red_NoEvict,Red_Closed,Red_EvictAny,Red_Overwrite}.cfg",
-        tiers: &[Boundary],
-        bound_by: "crates/database/p2p/src/iroh/endpoint_rpc.rs a_closed_displaced_handle_evicts_the_refused_connection, a_closed_displaced_restore_spares_a_concurrent_replacement",
-    },
-    Property {
-        family: "Peer connection observation",
-        name: "SharedRpc replacement identity, legacy reuse, modern preference, revoked refusal, stable-id eviction and refused-publish restore",
-        axis: Lean,
-        anchor: "crates/database/p2p/src/iroh/endpoint_rpc.rs remember_connection, restore_displaced_connection, connect_with_cache and evict_connection; endpoint_streams.rs adopt_new_connection",
-        model_ref: "PeerConnection.SharedRpc",
-        tiers: &[Contract],
-        bound_by: "crates/database/p2p/tests/iroh/shared_connection.rs authenticated_reconnection_replaces_an_open_old_rpc_path, legacy_only_peer_reuses_and_refreshes_its_shared_rpc_path, legacy_mux_does_not_replace_the_modern_shared_rpc_handle, disconnect_closes_replacement_despite_stale_cleanup",
-    },
-    Property {
         family: "Schema publication completion",
         name: "VisibleBeforeReply — committed schemas are published before their callers resume",
         axis: Tla,
@@ -1717,8 +1599,8 @@ pub const PROPERTIES: &[Property] = &[
         axis: Tla,
         anchor: "crates/database/p2p filtered replication; crates/database/db (merge)",
         model_ref: "MC_S4_ModelB.cfg / M1Convergence.cfg",
-        tiers: &[Behavioral],
-        bound_by: "proofs/tests/behavioral/replication.rs two_node_replication_converges",
+        tiers: &[Boundary],
+        bound_by: "",
     },
     Property {
         // Head rediscovery is embedder-owned. Only sender retry markers and
@@ -1734,7 +1616,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/database/db (merge) merge handler; crates/engine/blockstore; crates/database/p2p/src/sync/coordinator/event_handler/mod.rs handle_peer_connected; crates/surfaces/p2p-adapter/src/retry.rs run_retry_pass",
         model_ref: "MC_Conv_{Eventual,RestartEviction,NoHeadRediscovery}.cfg",
         tiers: &[Boundary],
-        bound_by: "proofs/tests/behavioral/replication.rs two_node_replication_converges; partition.rs convergence_partition_both_directions_merge, convergence_concurrent_same_doc_writes_merge",
+        bound_by: "",
     },
     Property {
         // Only sender retry markers and receiver durable pending records
@@ -1768,8 +1650,8 @@ pub const PROPERTIES: &[Property] = &[
         axis: Lean,
         anchor: "crates/building-blocks/crdt/src/field/lww.rs LwwField::merge; crates/building-blocks/crdt/src/field/counter.rs CounterField::merge; crates/building-blocks/crdt/src/stored.rs StoredDocument::apply componentwise field merge",
         model_ref: "DefraConvergence.MixedField (lake build); MC_MixedFieldMaterialization_Green.cfg",
-        tiers: &[Contract, Behavioral],
-        bound_by: "proofs/tests/lean_conformance.rs lean_merge_result_vocab_matches_rust; proofs/tests/behavioral/partition.rs convergence_concurrent_mixed_lww_and_counter_fields_merge, convergence_concurrent_pncounter_signed_deltas_sum",
+        tiers: &[Contract, Boundary],
+        bound_by: "proofs/tests/lean_conformance.rs lean_merge_result_vocab_matches_rust",
     },
     Property {
         family: "CRDT merge laws",
@@ -1793,8 +1675,8 @@ pub const PROPERTIES: &[Property] = &[
         axis: Tla,
         anchor: "crates/database/p2p/src/replicator.rs; crates/database/db/src/merge/push_docs.rs push_existing_docs, retry_doc",
         model_ref: "MC_Replicator_Resumable_Green.cfg",
-        tiers: &[Behavioral],
-        bound_by: "proofs/tests/behavioral/replicator_lifecycle.rs replicator_backfill_no_loss, replicator_resume_across_restart",
+        tiers: &[Boundary],
+        bound_by: "",
     },
     Property {
         family: "Sync ownership transfer (head hint / receiver pull)",
@@ -1843,7 +1725,7 @@ pub const PROPERTIES: &[Property] = &[
         name: "INV_FetchHasQualifiedProvider / LIVE_EventualCurrency — immutable origin plus durable same-root alternate",
         axis: Tla,
         anchor: "crates/database/p2p/src/sync/manager/process/pushlog.rs; crates/database/p2p/src/sync/pending_store/mod.rs; crates/database/p2p/src/sync/coordinator/mod.rs",
-        model_ref: "MC_SyncOwnership_Green_Liveness_IrohRelay.cfg",
+        model_ref: "MC_SyncOwnership_Green_Liveness_Relay.cfg",
         tiers: &[Boundary],
         bound_by: "",
     },
@@ -2167,8 +2049,8 @@ pub const PROPERTIES: &[Property] = &[
         axis: Tla,
         anchor: "crates/database/kms/src/defra_kms.rs serve_request; crates/database/kms/src/nac_dac_policy.rs",
         model_ref: "MC_Kms_Green.cfg",
-        tiers: &[Behavioral, Boundary],
-        bound_by: "proofs/tests/behavioral/kms.rs kms_unauthorized_dek_release_denied",
+        tiers: &[Boundary],
+        bound_by: "",
     },
     Property {
         family: "KMS key distribution",
@@ -2226,8 +2108,8 @@ pub const PROPERTIES: &[Property] = &[
         axis: Tla,
         anchor: "crates/database/db/src/merge/push_docs.rs; crates/database/p2p/src/sync/coordinator/selective_car_access.rs; crates/building-blocks/crdt/src/field/lww.rs",
         model_ref: "MC_EncryptedLwwReplay_Green.cfg",
-        tiers: &[Behavioral],
-        bound_by: "proofs/tests/behavioral/partition.rs convergence_encrypted_lww_restart_merge",
+        tiers: &[Boundary],
+        bound_by: "",
     },
     Property {
         // The model and focused KMS/merge unit tests cover the retry mechanics,
@@ -2522,7 +2404,7 @@ pub const PROPERTIES: &[Property] = &[
         family: "JSON CRDT per-path merge",
         name: "INV_Converge / INV_MatchesReplay / INV_DisjointKept / INV_SamePathLww / INV_UpdateWins / INV_TypeClash / INV_ConflictsAreLosers / INV_DeleteCreatesNothing / INV_WriteLandsAsRead: per-path JSON merge converges, keeps every edit nothing saw, never lets a delete create a path, keeps two signers' equal edits apart by their nonces, and lands every write, several paths at once included, as its writer reads it",
         axis: Tla,
-        anchor: "crates/foundation/defra-core/src/json_crdt.rs Frontier::delta, Frontier::compose, Frontier::materialize, Frontier::conflicts, replay; crates/building-blocks/crdt/src/field/json.rs JsonField (TaggedCrdt: write_data, effect, replay), block_ops, settle_earlier, apply_ops, landed, mismatch; crates/foundation/defra-core/src/json_crdt.rs encode_write, decode_ops; crates/building-blocks/crdt/src/field/tagged.rs local_write, land; crates/database/db/src/merge/merge_handler/field_tagged.rs merge_field_tagged, tagged_past; crates/database/db/src/write/autocommit/helpers.rs prepare_tagged_writes; crates/database/db/src/definition/migration/helpers.rs changes_block_state; crates/foundation/defra-core/src/json_crdt_tests.rs, crates/building-blocks/crdt/tests/json_field.rs, crates/database/db/tests/merge/json_merge.rs, tools/integration-test/tests/legacy/p2p/json_crdt.rs",
+        anchor: "crates/foundation/defra-core/src/json_crdt.rs Frontier::delta, Frontier::compose, Frontier::materialize, Frontier::conflicts, replay; crates/building-blocks/crdt/src/field/json.rs JsonField (TaggedCrdt: write_data, effect, replay), block_ops, settle_earlier, apply_ops, landed, mismatch; crates/foundation/defra-core/src/json_crdt.rs encode_write, decode_ops; crates/building-blocks/crdt/src/field/tagged.rs local_write, land; crates/database/db/src/merge/merge_handler/field_tagged.rs merge_field_tagged, tagged_past; crates/database/db/src/write/autocommit/helpers.rs prepare_tagged_writes; crates/database/db/src/definition/migration/helpers.rs changes_block_state; crates/foundation/defra-core/src/json_crdt_tests.rs, crates/building-blocks/crdt/tests/json_field.rs, crates/database/db/tests/merge/json_merge.rs",
         model_ref: "MC_JsonCrdt_{Green_FirstValueOrMap,Green_FirstListOrDelete,Green_MultiPath,Red_DeleteWins,Red_NoCid,Red_DeleteImpliesMap,Red_SharedId,Red_NoAnchor,Red_NoSettle,Red_DeleteMakesParent,Red_MapKeepsBelow}.cfg",
         tiers: &[Contract],
         bound_by: "crates/database/db/tests/merge/json_merge.rs equal_concurrent_json_edits_from_two_signers_converge_in_any_order; crates/building-blocks/crdt/tests/json_field.rs json_meets_the_contract; crates/foundation/defra-core/src/json_crdt_tests.rs disjoint_keys_both_survive_in_any_order, an_update_beats_a_concurrent_delete_above_it",
@@ -2854,8 +2736,8 @@ pub const PROPERTIES: &[Property] = &[
         axis: Tla,
         anchor: "crates/database/db/src/merge/merge_handler/field_ops.rs apply_field_op_once; crates/database/db/src/write/doc.rs; crates/database/db/tests/merge/merge_handler_tests.rs; crates/database/db txn registry",
         model_ref: "MC_TxnRegistry_Green.cfg / MC_TwoStoreCounter_Green.cfg / MC_MixedFieldMaterialization_Green.cfg",
-        tiers: &[Behavioral, Boundary],
-        bound_by: "proofs/tests/behavioral/partition.rs convergence_concurrent_same_doc_merge_storm, convergence_concurrent_pncounter_same_doc_merge_storm, convergence_concurrent_mixed_lww_and_counter_fields_merge",
+        tiers: &[Boundary],
+        bound_by: "",
     },
     Property {
         // A counter block that arrives on its own before its document has a
@@ -3066,7 +2948,7 @@ pub const PROPERTIES: &[Property] = &[
         family: "Peer key loading",
         name: "INV_StartKeyStarts / INV_StartKeyLeavesNoMark / INV_PlainKeyStable: a start with a start key always starts, leaves no mark that refuses a later plain start, and never changes the key plain starts use",
         axis: Tla,
-        anchor: "crates/entry-points/defra-node/src/peer_key.rs load_with_keyring, load_or_create; crates/entry-points/defra-node/src/start_peer_key.rs StartPeerKey; crates/entry-points/defra-node/src/libp2p_runtime.rs assemble_libp2p; crates/entry-points/defra-node/src/p2p_runtime.rs setup_iroh; crates/entry-points/ffi/src/node/mod.rs build_node_state",
+        anchor: "crates/entry-points/defra-node/src/peer_key.rs load_with_keyring, load_or_create; crates/entry-points/defra-node/src/start_peer_key.rs StartPeerKey; crates/entry-points/defra-node/src/pinc_runtime.rs setup_pinc; crates/entry-points/ffi/src/node/mod.rs build_node_state",
         model_ref: "MC_PeerKeyLoad_{Green,Red_StartKeyChecked,Red_StartKeyRecorded}.cfg",
         tiers: &[Contract],
         bound_by: "crates/entry-points/defra-node/tests/unit/peer_keyring.rs a_start_key_is_used_as_given_and_leaves_a_plain_store_as_it_was, a_start_key_starts_a_keyring_store_without_changing_it",
@@ -3184,8 +3066,8 @@ pub const PROPERTIES: &[Property] = &[
         axis: Tla,
         anchor: "crates/database/db/src/merge/merge_handler/composite_persist.rs handle_deletion / persist_merged_document; crates/foundation/defra-core/src/block_delta.rs CompositeDeltaPayload status",
         model_ref: "MC_DocumentMaterialization_Green.cfg; DefraConvergence.DocumentMaterialization.delete_active_age_converge",
-        tiers: &[Behavioral],
-        bound_by: "proofs/tests/behavioral/partition.rs convergence_delete_update_race_preserves_tombstone",
+        tiers: &[Boundary],
+        bound_by: "",
     },
     Property {
         // The DID-binding half (a distinct identity cannot impersonate another)
@@ -3362,8 +3244,8 @@ pub const PROPERTIES: &[Property] = &[
         axis: Tla,
         anchor: "crates/database/db (merge) LWW materialization; crates/database/db (index) on_document_update",
         model_ref: "MC_IndexReconciliation_Green.cfg",
-        tiers: &[Behavioral],
-        bound_by: "proofs/tests/behavioral/index.rs index_reconciles_lww_merge_after_restart",
+        tiers: &[Boundary],
+        bound_by: "",
     },
     Property {
         // A text, JSON or custom field's merge writes its merged value into
@@ -3508,7 +3390,7 @@ pub const PROPERTIES: &[Property] = &[
         family: "Node shutdown order",
         name: "INV_NoStorageAfterClose / INV_NothingDetached / INV_CallerNeverJoinsExporter / INV_AdmittedWritesMarked / INV_CloseWaitsForNoTransaction / LIVE_ShutdownTerminates: no task reaches storage after regolith closes, none outlives shutdown, every admitted write is marked, the close waits for no transaction left open, shutdown returns",
         axis: Tla,
-        anchor: "crates/entry-points/defra-node/src/lib.rs Node::shutdown, Node::as_request; crates/entry-points/defra-node/src/ops/request.rs Node::txn_begin, Node::txn_commit; crates/entry-points/defra-node/src/network.rs NodeEdge::drain_requests; crates/surfaces/http/src/server.rs Server::router; crates/entry-points/defra-node/src/node_acp.rs gate_external_acp; crates/entry-points/defra-node/src/managed_p2p.rs ShutdownHandle::stop, stop_services; crates/foundation/edge/src/task.rs Service::stopped; crates/foundation/edge/src/handle.rs Scope::drain; crates/building-blocks/net/src/server.rs serve, until_closing",
+        anchor: "crates/entry-points/defra-node/src/lib.rs Node::shutdown, Node::as_request; crates/entry-points/defra-node/src/ops/request.rs Node::txn_begin, Node::txn_commit; crates/entry-points/defra-node/src/network.rs NodeEdge::drain_requests; crates/surfaces/http/src/server.rs Server::router; crates/entry-points/defra-node/src/node_acp.rs gate_external_acp; crates/entry-points/defra-node/src/managed_p2p.rs ShutdownHandle::stop; crates/foundation/edge/src/task.rs Service::stopped; crates/foundation/edge/src/handle.rs Scope::drain; crates/building-blocks/net/src/server.rs serve, until_closing",
         model_ref: "MC_NodeShutdown_{Green,Red_RedriveDetached,Red_ServicesNotAwaited,Red_NoDrainDeadline,Red_FlushOnCaller,Red_RequestsDuringP2P,Red_CommitNotAdmitted,Red_OpenTransaction}.cfg",
         tiers: &[Boundary],
         bound_by: "",
@@ -3611,19 +3493,6 @@ pub const PROPERTIES: &[Property] = &[
         bound_by: "crates/foundation/edge/tests/continuation.rs a_continuation_is_admitted_after_close_while_admitted_work_runs, a_continuation_is_refused_after_close_when_nothing_is_in_flight, the_drain_waits_for_a_running_continuation, a_continuation_is_refused_after_the_drain_completed_even_with_plain_spawns_racing; crates/building-blocks/net/tests/server.rs a_closing_client_finishes_the_request_in_flight_and_frees_its_idle_connections, a_request_in_flight_at_close_opens_a_fresh_connection_and_finishes",
     },
     Property {
-        // An iroh dial answers from its connection's outcome: a refusal that
-        // already closed the connection is answered Unauthorized, and
-        // connect_peer ends with the dial's answer instead of polling the
-        // connected set until a timeout.
-        family: "Iroh dial outcome",
-        name: "INV_RefusalKnownIsSaid / LIVE_DialAnswered: a dial never answers ok on a connection the peer's refusal already closed, and every dial is answered",
-        axis: Tla,
-        anchor: "crates/database/p2p/src/iroh/endpoint_commands.rs handle_dial; crates/surfaces/p2p-adapter/src/iroh.rs IrohP2PAdapter::connect_peer; crates/database/p2p/src/iroh/transport.rs poll_until_connected",
-        model_ref: "MC_IrohDialOutcome_{Green,Green_Admitted,Red_Poll,Red_NoCheck}.cfg",
-        tiers: &[Boundary],
-        bound_by: "crates/database/p2p/src/iroh/allowlist_tests.rs closed_by_refusal_reads_the_remote_close_code, poll_until_connected_wakes_on_the_connection_and_times_out_without_one",
-    },
-    Property {
         // A server's connections are tasks the drain waits for: a request in
         // flight when shutdown begins finishes and is answered, a connection
         // looks at closing only between requests, and the drain's deadline
@@ -3647,22 +3516,21 @@ pub const PROPERTIES: &[Property] = &[
         family: "Document topic ingress",
         name: "INV_NoApplyAfterUnsubscribe / INV_FollowedApplies: no update is applied after the document's unsubscribe returned unless its collection is followed, and none taken while followed is dropped",
         axis: Tla,
-        anchor: "crates/database/p2p/src/sync/coordinator/event_handler/gossip.rs handle_gossip_message; crates/database/p2p/src/sync/coordinator/access.rs is_followed_document; crates/surfaces/p2p-adapter/src/libp2p.rs P2PAdapter::add_documents, remove_documents; crates/surfaces/p2p-adapter/src/iroh.rs IrohP2PAdapter::add_documents, remove_documents; crates/entry-points/defra-node/src/libp2p_recovery.rs restore_libp2p_documents; crates/surfaces/p2p-adapter/src/iroh_restore.rs restore_iroh_p2p_state",
+        anchor: "crates/database/p2p/src/sync/coordinator/event_handler/gossip.rs handle_gossip_message; crates/database/p2p/src/sync/coordinator/access.rs is_followed_document; crates/surfaces/p2p-adapter/src/pinc.rs PincP2PAdapter::add_documents, remove_documents; crates/surfaces/p2p-adapter/src/pinc_restore.rs restore_pinc_p2p_state",
         model_ref: "MC_DocTopicIngress_{Green,Red_NoCheck,Red_OwnSet,Red_NoCollection}.cfg",
         tiers: &[Boundary],
-        bound_by: "crates/database/p2p/src/sync/coordinator/access_tests.rs gossip_document_topic_dropped_after_document_unfollowed; crates/surfaces/p2p-adapter/tests/libp2p/followed_documents.rs remove_documents_clears_the_shared_followed_set",
+        bound_by: "crates/database/p2p/src/sync/coordinator/access_tests.rs gossip_document_topic_dropped_after_document_unfollowed",
     },
     Property {
-        // A node checks its config before it opens anything, hands
-        // its retry ladder to every retry site of either transport, stops a
-        // host whose listen failed, enables NAC owned by the node identity,
-        // and dials bootstrap peers only once NAC is in place, logging a peer
-        // that does not answer.
+        // A node checks its config before it opens anything, hands its retry
+        // ladder to the pinc peer and its retry peerstore, enables NAC owned
+        // by the node identity, and dials bootstrap peers only once NAC is in
+        // place, logging a peer that does not answer.
         family: "Node startup",
         name: "INV_FailedHoldsNothing / INV_OneSchedule / INV_NacAsAsked / INV_NoPeerBeforeNac / INV_BootstrapNonFatal / LIVE_StartupEnds: a failed start holds nothing, a started node is configured as asked",
         axis: Tla,
-        anchor: "crates/entry-points/defra-node/src/assemble.rs assemble; crates/entry-points/defra-node/src/libp2p_runtime.rs setup_libp2p, assemble_libp2p; crates/entry-points/defra-node/src/p2p_runtime.rs setup_iroh; crates/entry-points/defra-node/src/node_acp.rs create_nac_manager",
-        model_ref: "MC_NodeStartup_{Green,Red_IrohDefaultLadder,Red_ListenLeak,Red_LateNacCheck,Red_NacUnowned,Red_DialBeforeNac,Red_BootstrapFatal}.cfg",
+        anchor: "crates/entry-points/defra-node/src/assemble.rs assemble; crates/entry-points/defra-node/src/pinc_runtime.rs setup_pinc; crates/entry-points/defra-node/src/node_acp.rs create_nac_manager",
+        model_ref: "MC_NodeStartup_{Green,Red_DefaultLadder,Red_LateNacCheck,Red_NacUnowned,Red_DialBeforeNac,Red_BootstrapFatal}.cfg",
         tiers: &[Boundary],
         bound_by: "",
     },
@@ -3679,7 +3547,7 @@ pub const PROPERTIES: &[Property] = &[
         family: "Inbound stream admission",
         name: "INV_ResidentWithinBudget / INV_ShareBound / LIVE_HealthyHandled / LIVE_WaitEnds",
         axis: Tla,
-        anchor: "crates/database/p2p/src/iroh/endpoint_streams.rs admit_stream; crates/database/p2p/src/iroh/inbound_budget.rs InboundBudget::admit, InboundBudget::peer_share, InboundDeadlines::body; crates/database/p2p/src/sync/dispatch_queue.rs dispatch_queue; crates/database/p2p/src/sync/event_dispatcher.rs run_event_dispatcher",
+        anchor: "crates/database/pinc/src/serve.rs Node::serve_stream, Node::admit; crates/database/pinc/src/inbound_budget.rs InboundBudget::admit, InboundBudget::peer_share, InboundDeadlines::body; crates/database/p2p/src/sync/dispatch_queue.rs dispatch_queue; crates/database/p2p/src/sync/event_dispatcher.rs run_event_dispatcher",
         model_ref: "MC_InboundAdmission_Green.cfg",
         tiers: &[Boundary],
         bound_by: "",
@@ -3693,7 +3561,7 @@ pub const PROPERTIES: &[Property] = &[
         family: "Inbound stream admission",
         name: "A request shed past the rejection workers is answered by a closed stream, not Busy",
         axis: Tla,
-        anchor: "crates/database/p2p/src/sync/event_dispatcher.rs run_event_dispatcher, MAX_ACTIVE_REJECTIONS; crates/database/p2p/src/iroh/endpoint_rpc.rs CarFetchOutcome",
+        anchor: "crates/database/p2p/src/sync/event_dispatcher.rs run_event_dispatcher, MAX_ACTIVE_REJECTIONS",
         model_ref: "MC_InboundAdmission_Green.cfg",
         tiers: &[Boundary],
         bound_by: "",
@@ -3702,7 +3570,7 @@ pub const PROPERTIES: &[Property] = &[
         family: "Inbound stream admission",
         name: "INV_OnlyRegisteredServed / INV_ShareBound / INV_RoomIsTheRequest / INV_RevokedIsCut / INV_ShutdownLeavesNone / LIVE_HandlerEnds",
         axis: Tla,
-        anchor: "crates/database/p2p/src/iroh/endpoint_streams.rs admit_stream, handle_connection_streams, serve_protocol_stream; crates/database/p2p/src/iroh/stream_protocols.rs StreamProtocols::get, ProtocolRequest::release, StreamHandler::handle; crates/database/p2p/src/iroh/endpoint_commands.rs handle_deny_peer; crates/database/p2p/src/iroh/task_registry.rs TaskRegistry::close",
+        anchor: "crates/database/pinc/src/serve.rs Node::serve_stream, Node::admit, serve_protocol; crates/database/pinc/src/stream_protocols.rs StreamProtocols::get, ProtocolRequest::release, StreamHandler::handle; crates/database/pinc/src/endpoint.rs Node::deny; crates/database/pinc/src/command.rs Command::Shutdown",
         model_ref: "MC_EmbedderStream_{Green,Red_AnyTag,Red_UntilReturn,Red_NoDeadline,Red_BarOnly,Red_NoAbort}.cfg",
         tiers: &[Boundary],
         bound_by: "",
@@ -3711,7 +3579,7 @@ pub const PROPERTIES: &[Property] = &[
         family: "Inbound stream admission",
         name: "register_all_valid / register_serves_each_as_given / reserved_tags_find_nothing / unregistered_tags_find_nothing / a_repeated_tag_is_refused",
         axis: Lean,
-        anchor: "crates/database/p2p/src/iroh/stream_protocols.rs StreamProtocol::validate, StreamProtocols::new, StreamProtocols::get",
+        anchor: "crates/database/pinc/src/stream_protocols.rs StreamProtocol::validate, StreamProtocols::new, StreamProtocols::get",
         model_ref: "StreamProtocols (lake build)",
         tiers: &[Boundary],
         bound_by: "",
@@ -3720,17 +3588,8 @@ pub const PROPERTIES: &[Property] = &[
         family: "Inbound stream admission",
         name: "acquire_conserves / release_all_restores / admit_failure_keeps_nothing",
         axis: Lean,
-        anchor: "crates/database/p2p/src/iroh/inbound_budget.rs InboundBudget::admit, InboundLease",
+        anchor: "crates/database/pinc/src/inbound_budget.rs InboundBudget::admit, InboundLease",
         model_ref: "ByteBudget (lake build)",
-        tiers: &[Boundary],
-        bound_by: "",
-    },
-    Property {
-        family: "Peer fetch stats",
-        name: "roll_ratio_stays_a_ratio / rolling_over_samples / bump_never_overflows",
-        axis: Lean,
-        anchor: "crates/database/p2p/src/iroh/fetch_stats.rs PeerCounters::record, roll",
-        model_ref: "FetchStats (lake build)",
         tiers: &[Boundary],
         bound_by: "",
     },
@@ -3771,72 +3630,6 @@ pub const PROPERTIES: &[Property] = &[
         bound_by: "",
     },
     Property {
-        family: "Gossip connection ownership",
-        name: "INV_RevokedHasNoGossip / INV_PathOnLiveConnection / INV_GossipNeverClosesShared / LIVE_HealthyReached / LIVE_AskAnswered",
-        axis: Tla,
-        anchor: "crates/database/p2p/src/iroh/gossip/driver.rs Driver::send, Driver::connected, Driver::forget; crates/database/p2p/src/iroh/gossip/mod.rs GossipHandle::connected; crates/database/p2p/src/iroh/endpoint_rpc.rs connect_with_cache; crates/database/p2p/src/iroh/endpoint_commands.rs handle_deny_peer",
-        model_ref: "MC_GossipOwnership_Green.cfg",
-        tiers: &[Boundary],
-        bound_by: "",
-    },
-    Property {
-        family: "Gossip connection ownership",
-        name: "LIVE_RequestAnswered",
-        axis: Tla,
-        anchor: "crates/database/p2p/src/iroh/gossip/inbox.rs Inbox::push, Inbox::offer, Inbox::next; crates/database/p2p/src/iroh/gossip/driver.rs read_stream, Driver::emit; crates/database/p2p/src/iroh/records/task.rs RecordsHandle::push_change, RecordsHandle::push, RecordsHandle::next",
-        model_ref: "MC_GossipInbox_Green.cfg",
-        tiers: &[Boundary],
-        bound_by: "",
-    },
-    Property {
-        family: "Gossip connection ownership",
-        name: "decode_encode / decode_all_encode_all / decode_rejects_oversized / read_tag_write_tag",
-        axis: Lean,
-        anchor: "crates/database/p2p/src/iroh/gossip/frame.rs write_gossip_frame, read_gossip_frame; crates/database/p2p/src/iroh/protocols.rs write_stream_tag, read_stream_tag",
-        model_ref: "GossipFrame (lake build)",
-        tiers: &[Boundary],
-        bound_by: "",
-    },
-    Property {
-        family: "Gossip connection ownership",
-        name: "broadcast_fits_frame / emitted_fits_frame / max_broadcast_fits / over_max_broadcast_dropped / sealed_raw_fits",
-        axis: Lean,
-        anchor: "crates/database/p2p/src/iroh/gossip/frame.rs MAX_MESSAGE_SIZE, TOPIC_ID_LEN, FRAME_LIMIT, BROADCAST_OVERHEAD, MAX_BROADCAST, max_broadcast; crates/database/p2p/src/iroh/gossip/driver.rs config; crates/database/p2p/src/iroh/gossip/raw_origin.rs HEADER_LEN, MAX_RAW_PAYLOAD; crates/database/p2p/src/iroh/transport.rs publish_raw",
-        model_ref: "GossipFrame.Budget (lake build)",
-        tiers: &[Boundary],
-        bound_by: "crates/database/p2p/tests/iroh/direct_push.rs a_raw_publish_too_large_for_gossip_is_refused",
-    },
-    Property {
-        family: "Gossip connection ownership",
-        name: "INV_NoSilentLoss / INV_BroadcastFits",
-        axis: Tla,
-        anchor: "crates/database/p2p/src/iroh/gossip/mod.rs GossipHandle::publish; crates/database/p2p/src/iroh/gossip/driver.rs write_stream, write_queue; crates/database/p2p/src/iroh/endpoint_commands.rs handle_command; crates/database/p2p/src/iroh/direct_push.rs peers, push, push_one, FANOUT",
-        model_ref: "MC_GossipDelivery_Green.cfg",
-        tiers: &[Boundary],
-        bound_by: "",
-    },
-    Property {
-        family: "Iroh service records",
-        name: "INV_SeqNeverGoesBack / INV_NoExpiredChosen / LIVE_NewestReached",
-        axis: Tla,
-        anchor: "crates/database/p2p/src/iroh/records/book.rs Book::offer, Book::live; crates/database/p2p/src/iroh/records/refresh.rs Refresh::check; crates/database/p2p/src/iroh/records/task.rs Records::renew, Records::on_input, Records::rotate",
-        model_ref: "MC_ServiceRecords_Green.cfg",
-        tiers: &[Boundary],
-        bound_by: "",
-    },
-    Property {
-        // A node publishes a service record only after its embedder sets a
-        // ServiceProfile, and only the CLI does. For NodeBuilder and FFI
-        // nodes LIVE_NewestReached is vacuous.
-        family: "Iroh service records",
-        name: "LIVE_NewestReached and LIVE_Found assume the embedder sets a ServiceProfile",
-        axis: Tla,
-        anchor: "crates/database/p2p/src/iroh/records/task.rs Records::renew; crates/entry-points/cli/src/commands/start/server_p2p/iroh.rs",
-        model_ref: "MC_ServiceRecords_Green.cfg / MC_ProviderLookup_Green.cfg",
-        tiers: &[Boundary],
-        bound_by: "",
-    },
-    Property {
         family: "Depth-cut DAG fetch",
         name: "INV_HistoryNotResent / INV_RoundsLogarithmic / LIVE_Completes",
         axis: Tla,
@@ -3851,18 +3644,6 @@ pub const PROPERTIES: &[Property] = &[
         axis: Lean,
         anchor: "crates/database/p2p/src/sync/car.rs collect_dag_blocks_within; crates/database/p2p/src/sync/coordinator/closure_depth.rs ClosureDepth::initial, ClosureDepth::widen",
         model_ref: "CarClosureDepth (lake build)",
-        tiers: &[Boundary],
-        bound_by: "",
-    },
-    Property {
-        // libp2p CAR bodies have one fixed total read deadline. A response
-        // slower than CAR_MAX_BYTES over that deadline fails, and the fetch
-        // falls back to Bitswap.
-        family: "Depth-cut DAG fetch",
-        name: "LIVE_Completes on libp2p assumes a CAR body arrives within the stream read deadline",
-        axis: Tla,
-        anchor: "crates/database/p2p/src/two_stream/handler/car.rs read_stream; crates/database/p2p/src/two_stream/runner.rs TwoStreamRunner::new",
-        model_ref: "MC_DepthCutFetch_Green.cfg",
         tiers: &[Boundary],
         bound_by: "",
     },
@@ -3888,7 +3669,7 @@ pub const PROPERTIES: &[Property] = &[
         family: "pinc topics",
         name: "INV_Converges / INV_OnlyOwnTopics for a hub's missed report",
         axis: Tla,
-        anchor: "crates/database/p2p/src/pinc/topics.rs topic_events; crates/database/p2p/src/sync/coordinator/event_handler/topic_missed.rs handle_topic_missed; crates/database/p2p/src/sync/coordinator/event_handler/doc_sync.rs handle_doc_sync_reply; crates/database/p2p/src/sync/coordinator/event_handler/branchable_sync.rs handle_branchable_sync_reply",
+        anchor: "crates/database/pinc/src/topics.rs topic_events; crates/database/p2p/src/sync/coordinator/event_handler/topic_missed.rs handle_topic_missed; crates/database/p2p/src/sync/coordinator/event_handler/doc_sync.rs handle_doc_sync_reply; crates/database/p2p/src/sync/coordinator/event_handler/branchable_sync.rs handle_branchable_sync_reply",
         model_ref: "MC_MissedTopicResync_{Green,Red_*}.cfg",
         tiers: &[Boundary],
         bound_by: "",
@@ -3904,9 +3685,9 @@ pub const PROPERTIES: &[Property] = &[
     },
     Property {
         family: "Have-set DAG fetch",
-        name: "wanted_served / served_held_is_asked / missing_is_served / receiver_complete / reach_lowers_priority / first_is_root / decode_encode",
+        name: "wanted_served / served_held_is_asked / missing_is_served / receiver_complete / reach_lowers_priority",
         axis: Lean,
-        anchor: "crates/database/p2p/src/sync/car/region.rs collect_missing_region; crates/database/p2p/src/two_stream/handler/car.rs encode_car_request, decode_car_request",
+        anchor: "crates/database/p2p/src/sync/car/region.rs collect_missing_region",
         model_ref: "CarMissingRegion (lake build)",
         tiers: &[Boundary],
         bound_by: "",
@@ -3935,27 +3716,6 @@ pub const PROPERTIES: &[Property] = &[
         axis: Tla,
         anchor: "crates/database/p2p/src/sync/coordinator/dag_context.rs DagFetchContext::with_alternate_providers; crates/database/p2p/src/sync/pending_store/mod.rs MAX_PENDING_DAG_ALTERNATE_PROVIDERS; crates/database/p2p/src/sync/coordinator/dag_fetcher.rs poll_fetch_dag",
         model_ref: "MC_RootSingleFlight_Green.cfg",
-        tiers: &[Boundary],
-        bound_by: "",
-    },
-    Property {
-        family: "Iroh service records",
-        name: "INV_AskOnlyWhenEmpty / LIVE_Found",
-        axis: Tla,
-        anchor: "crates/database/p2p/src/iroh/records/task.rs Records::providers, Records::on_message",
-        model_ref: "MC_ProviderLookup_Green.cfg",
-        tiers: &[Boundary],
-        bound_by: "",
-    },
-    Property {
-        // A lookup asks only when the book has no live record for the
-        // collection key. Records name holders of a collection, not of a root,
-        // so a non-holder's live record suppresses Who.
-        family: "Iroh service records",
-        name: "LIVE_Found assumes a live record's peer holds the root, not only the collection",
-        axis: Tla,
-        anchor: "crates/database/p2p/src/iroh/records/task.rs Records::providers, Records::on_message",
-        model_ref: "MC_ProviderLookup_Green.cfg",
         tiers: &[Boundary],
         bound_by: "",
     },
@@ -4269,7 +4029,7 @@ pub const PROPERTIES: &[Property] = &[
         family: "Node access control operations",
         name: "goOrder_collection_write / goOrder_alone / firstMissing_none_iff / firstMissing_some / allowed_needs_both / refused_get_collection_first / no_bypass_when_off / no_bypass_anonymous / no_bypass_when_denied / bypass_iff_held",
         axis: Lean,
-        anchor: "crates/engine/acp/src/nac/permission.rs NodePermission::go_order; crates/database/db/src/access/nac.rs check_node_access_as, check_node_access_in_txn; crates/engine/query/src/runner/turn.rs lent, lent_node_permission; crates/database/db/src/read/lensed/fetcher/mod.rs dac_bypass; crates/foundation/defra-core/src/request_context.rs RequestContext::with_dac_bypass_denied; crates/surfaces/p2p-adapter/src/libp2p.rs P2PAdapter::check_nac; crates/surfaces/p2p-adapter/src/iroh.rs IrohP2PAdapter::check_nac",
+        anchor: "crates/engine/acp/src/nac/permission.rs NodePermission::go_order; crates/database/db/src/access/nac.rs check_node_access_as, check_node_access_in_txn; crates/engine/query/src/runner/turn.rs lent, lent_node_permission; crates/database/db/src/read/lensed/fetcher/mod.rs dac_bypass; crates/foundation/defra-core/src/request_context.rs RequestContext::with_dac_bypass_denied; crates/surfaces/p2p-adapter/src/pinc.rs PincP2PAdapter::check_nac",
         model_ref: "NacOrder (lake build)",
         tiers: &[Boundary],
         bound_by: "",
@@ -4286,38 +4046,6 @@ pub const PROPERTIES: &[Property] = &[
         axis: Tla,
         anchor: "crates/engine/query/src/runner/turn.rs lent; crates/database/db/src/read/lensed/fetcher/mod.rs dac_bypass; crates/database/db/src/collection/acp.rs check_doc_permission_as; crates/foundation/defra-core/src/request_context.rs RequestContext::with_dac_bypass_denied, RequestContext::with_dac_bypass",
         model_ref: "MC_NacDacBypass_{Green,Red_NacOff,Red_Never,Red_Live,Red_IgnoreDenial}.cfg",
-        tiers: &[Boundary],
-        bound_by: "",
-    },
-    Property {
-        family: "Iroh solicited replies",
-        name: "INV_NoUnsolicitedAdmitted / INV_SolicitedAdmitted / INV_NoReplyStreamOnV2",
-        axis: Tla,
-        anchor: "crates/database/p2p/src/iroh/solicited.rs Solicited::expect, Solicited::take, Solicited::prune; crates/database/p2p/src/iroh/endpoint_streams.rs admit_stream, dispatch_stream; crates/database/p2p/src/iroh/endpoint_commands.rs handle_command; crates/database/p2p/src/iroh/endpoint_rpc.rs handle_reply_on_stream",
-        model_ref: "MC_SolicitedReplies_Green.cfg",
-        tiers: &[Boundary],
-        bound_by: "",
-    },
-    Property {
-        // Reply expectations are keyed by (peer, tag) across all of the peer's
-        // connections, and are taken before the size, budget and body checks.
-        // A concurrent mux 0.1 connection can therefore open up to that many
-        // unowed reply streams (still budgeted and matched by message id), and
-        // a reply reset for room or size loses its expectation.
-        family: "Iroh solicited replies",
-        name: "INV_NoUnsolicitedAdmitted counts expectations per (peer, tag), not per connection or reply",
-        axis: Tla,
-        anchor: "crates/database/p2p/src/iroh/solicited.rs Solicited::expect, Solicited::take; crates/database/p2p/src/iroh/endpoint_streams.rs admit_stream",
-        model_ref: "MC_SolicitedReplies_Green.cfg",
-        tiers: &[Boundary],
-        bound_by: "",
-    },
-    Property {
-        family: "Iroh service records",
-        name: "validate_sound / validate_complete / offer_never_lowers / offer_replaces_expired / offer_keeps_only_valid / live_not_expired / encodeKey_injective / no_secret_not_advertised / distinct_ids_distinct_keys / parse_print / providers_exclude_self / providers_nodup / providers_from_book / providers_within_cap / providers_sorted",
-        axis: Lean,
-        anchor: "crates/database/p2p/src/iroh/records/verify.rs verify; crates/database/p2p/src/iroh/records/book.rs Book::offer, Book::live; crates/database/p2p/src/iroh/records/key.rs blind, advertised_key, CollectionKey::encode; crates/database/p2p/src/iroh/records/pointer.rs Pointer::print, Pointer::parse; crates/database/p2p/src/iroh/records/task.rs Records::providers, rank",
-        model_ref: "ServiceRecord (lake build)",
         tiers: &[Boundary],
         bound_by: "",
     },
@@ -4410,7 +4138,7 @@ pub const PROPERTIES: &[Property] = &[
         family: "Text chunking",
         name: "INV_ChunksFollowParent / INV_NoForeignChunks / INV_DeletesFollowParent / INV_SyncSendsCurrentChunks",
         axis: Tla,
-        anchor: "crates/database/p2p/src/sync/coordinator/broadcast.rs SyncCoordinator::push_jobs, SyncCoordinator::push_followed_document_to_replicators_with_creator; crates/database/db/src/merge/push_docs/follow.rs replica_takes; crates/database/db/src/chunk/sync/write.rs ChunkWrites::publish; crates/database/db/src/merge/broadcast_mutator/mod.rs BroadcastMutator::derived_heads; crates/database/p2p/src/sync/doc_sync_ids.rs with_followers, check_doc_id_limit; crates/database/p2p/src/sync/coordinator/event_handler/doc_sync.rs SyncCoordinator::handle_doc_sync_request; crates/database/p2p/src/sync/coordinator/pubsub_services.rs DocSyncHandler::handle; crates/database/db/src/merge/head_provider.rs DbHeadProvider::following_doc_ids; crates/database/db/src/chunk/follow.rs current_chunk_ids; crates/database/db/src/chunk/sync/lookup.rs ChunkCollection::chunks_with",
+        anchor: "crates/database/p2p/src/sync/coordinator/broadcast.rs SyncCoordinator::push_jobs, SyncCoordinator::push_followed_document_to_replicators_with_creator; crates/database/db/src/merge/push_docs/follow.rs replica_takes; crates/database/db/src/chunk/sync/write.rs ChunkWrites::publish; crates/database/db/src/merge/broadcast_mutator/mod.rs BroadcastMutator::derived_heads; crates/database/p2p/src/sync/doc_sync_ids.rs with_followers, check_doc_id_limit; crates/database/p2p/src/sync/coordinator/event_handler/doc_sync.rs SyncCoordinator::handle_doc_sync_request; crates/database/db/src/merge/head_provider.rs DbHeadProvider::following_doc_ids; crates/database/db/src/chunk/follow.rs current_chunk_ids; crates/database/db/src/chunk/sync/lookup.rs ChunkCollection::chunks_with",
         model_ref: "MC_ChunkFollow_Green.cfg / MC_ChunkFollow_Red_OwnFilter.cfg / MC_ChunkFollow_Red_AllChunks.cfg / MC_ChunkFollow_Red_SyncParentOnly.cfg / MC_ChunkFollow_Red_SyncHistory.cfg",
         tiers: &[Boundary],
         bound_by: "tools/integration-test/tests/testo/chunk/replicate_filtered.rs a_filtered_replicator_ships_the_matching_parents_chunks; tools/integration-test/tests/testo/chunk/replicate_doc_sync.rs a_document_sync_brings_the_parents_chunks",
@@ -4545,28 +4273,10 @@ pub const PROPERTIES: &[Property] = &[
         family: "Pubsub RPC reply addressing",
         name: "INV_NoAnswerLost / INV_AllAnswered / LIVE_Done / LIVE_AllArrive: a peer answers a request on its publisher's reply topic, even when a relay handed it the request, so no answer is lost and the asker's wait ends with every answer, or at its deadline while some answer is still missing or on its way",
         axis: Tla,
-        anchor: "crates/database/p2p/src/host/p2p_host/protocols.rs handle_gossipsub_event; crates/database/p2p/src/sync/coordinator/event_handler/pubsub_raw.rs handle_gossip_raw_message; crates/database/p2p/src/pubsub_rpc/topic_handler.rs TopicHandler::deliver_gossip_message; crates/database/p2p/src/sync/coordinator/pubsub_client.rs pubsub_sync_branchable_collection; crates/database/p2p/src/iroh/gossip/delivery.rs raw_publisher",
+        anchor: "crates/database/pinc/src/topics.rs Node::delivery; crates/database/p2p/src/sync/coordinator/event_handler/pubsub_raw.rs handle_gossip_raw_message; crates/database/p2p/src/kms/pubsub_transport.rs PubsubKeyTransport::send_request, PubsubKeyTransport::dispatch_incoming, PubsubKeyTransport::handle_request",
         model_ref: "MC_PubsubRpcReply_{Green,Red_AnswerRelay,Red_DeadlineCutsOff}.cfg",
         tiers: &[Boundary],
-        bound_by: "crates/database/p2p/src/sync/coordinator/event_handler/mod.rs relayed_pubsub_rpc_request_is_answered_on_its_publishers_topic, relayed_kms_request_reaches_the_handler_as_its_publisher; crates/database/p2p/tests/pubsub_rpc_relayed_request.rs a_relayed_request_names_its_publisher; crates/database/p2p/tests/iroh/relayed_raw_request.rs a_relayed_raw_request_names_its_publisher; crates/database/p2p/src/iroh/gossip/delivery.rs a_sealed_raw_message_names_its_publisher_not_the_relay",
-    },
-    Property {
-        family: "Pubsub RPC reply addressing",
-        name: "open_seal / open_seal_never_unsigned / open_unsigned / open_refuses_short: an iroh raw payload sealed by its publisher opens to that publisher, is never taken for an unsealed one, and an unsealed one passes through untouched",
-        axis: Lean,
-        anchor: "crates/database/p2p/src/iroh/gossip/raw_origin.rs seal, open; crates/database/p2p/src/iroh/gossip/delivery.rs raw_publisher",
-        model_ref: "GossipFrame (lake build)",
-        tiers: &[Boundary],
-        bound_by: "crates/database/p2p/tests/iroh/gossip_raw_origin.rs sealed_payload_opens_to_its_origin, a_truncated_seal_is_refused_not_passed_through, an_unsealed_cbor_payload_passes_through",
-    },
-    Property {
-        family: "ActivePeers listen addresses",
-        name: "INV_ListenAddress / INV_NotHeldByLater / LIVE_Answered: ActivePeers never lists a peer that was waiting at the call at its source port while its Identify may still come, a peer that dials in after the call never holds it, and every call is answered",
-        axis: Tla,
-        anchor: "crates/database/p2p/src/host/command_handler/network.rs handle_peer_addresses, on_identify_settled, answer_peer_addresses; crates/database/p2p/src/host/p2p_host/swarm.rs handle_swarm_event, handle_connection_closed; crates/database/p2p/src/host/p2p_host/protocols.rs handle_identify_event",
-        model_ref: "MC_ActivePeersIdentify_{Green,Red_AnswerAtOnce,Red_WaitOnLater}.cfg",
-        tiers: &[Boundary],
-        bound_by: "crates/database/p2p/src/host/active_peers_tests.rs active_peers_lists_a_dialer_at_its_listen_address_before_its_identify, active_peers_is_not_held_by_a_peer_that_dials_in_after_the_call",
+        bound_by: "crates/database/p2p/src/sync/coordinator/event_handler/mod.rs relayed_kms_request_reaches_the_handler_as_its_publisher; crates/database/p2p/src/kms/pubsub_transport.rs inbound_request_publishes_reply_on_caller_response_topic; crates/database/pinc/src/tests/topics.rs raw_topics_carry_a_request_and_its_answer_as_bytes",
     },
     Property {
         family: "Gossip announcement audience",
@@ -4583,10 +4293,10 @@ pub const PROPERTIES: &[Property] = &[
         family: "pinc dial answered",
         name: "INV_NoPushUnanswered / INV_ConnectedHeard: a dial counts the peer as connected only once it answered, so the retry pass never pushes into a peer that stopped",
         axis: Tla,
-        anchor: "crates/database/p2p/src/pinc/endpoint.rs Node::connection, Node::connected, Node::disconnected; crates/database/p2p/src/pinc/command.rs Command::ConnectedPeers; crates/surfaces/p2p-adapter/src/retry.rs run_retry_pass",
+        anchor: "crates/database/pinc/src/endpoint.rs Node::connection, Node::connected, Node::disconnected; crates/database/pinc/src/command.rs Command::ConnectedPeers; crates/surfaces/p2p-adapter/src/retry.rs run_retry_pass",
         model_ref: "MC_PincDialAnswered_{Green,Red_CountAtHandOver}.cfg",
         tiers: &[Boundary],
-        bound_by: "crates/database/p2p/src/pinc/tests/redial.rs a_dial_to_a_peer_that_stopped_fails_and_it_stays_disconnected",
+        bound_by: "crates/database/pinc/src/tests/redial.rs a_dial_to_a_peer_that_stopped_fails_and_it_stays_disconnected",
     },
     Property {
         // A node that names hubs signs its record only once pinc settles it on
@@ -4594,10 +4304,10 @@ pub const PROPERTIES: &[Property] = &[
         family: "pinc peer exchange",
         name: "LIVE_PeersMeet / LIVE_RecordsKept: two peers of one node meet whatever the order of their connects and records, and the node gets both records",
         axis: Tla,
-        anchor: "crates/database/p2p/src/pinc/exchange.rs Node::share_peers, Node::learn_peers; crates/database/p2p/src/pinc/serve.rs Node::send_record, once_settled; crates/database/p2p/src/pinc/endpoint.rs Node::connected",
+        anchor: "crates/database/pinc/src/exchange.rs Node::share_peers, Node::learn_peers; crates/database/pinc/src/serve.rs Node::send_record, once_settled; crates/database/pinc/src/endpoint.rs Node::connected",
         model_ref: "MC_PincPeerExchange_{Green,Red_RecordOnly,Red_NoRetry}.cfg",
         tiers: &[Boundary],
-        bound_by: "crates/database/p2p/src/pinc/tests/exchange.rs two_peers_of_one_node_connect_before_their_records_are_signed",
+        bound_by: "crates/database/pinc/src/tests/exchange.rs two_peers_of_one_node_connect_before_their_records_are_signed",
     },
     Property {
         // The pinc endpoint holds each request's `!Send` stream under the
@@ -4606,19 +4316,19 @@ pub const PROPERTIES: &[Property] = &[
         family: "pinc reply bridge",
         name: "INV_OneOutcome / INV_Bounded / INV_NoWriteAfterEnd / LIVE_NoLeak / LIVE_DropResets: a stream gets one answer, the table stays bounded and empties for good, a dropped token's stream is reset",
         axis: Tla,
-        anchor: "crates/database/p2p/src/pinc/token.rs PincResponseToken; crates/database/p2p/src/pinc/reply_table.rs ReplyTable::issue, ReplyTable::take, ReplyTable::purge, ReplyTable::sweep; crates/database/p2p/src/pinc/endpoint.rs Node::handle, Node::sweep_loop, Node::disconnected, REPLY_DEADLINE",
+        anchor: "crates/database/pinc/src/token.rs PincResponseToken; crates/database/pinc/src/reply_table.rs ReplyTable::issue, ReplyTable::take, ReplyTable::purge, ReplyTable::sweep; crates/database/pinc/src/endpoint.rs Node::handle, Node::sweep_loop, Node::disconnected, REPLY_DEADLINE",
         model_ref: "MC_PincReplyBridge_{Green,Green_NoLoss,Red_NoTakeOnce,Red_NoDropReset,Red_NoSweep,Red_NoCap}.cfg",
         tiers: &[Boundary],
-        bound_by: "crates/database/p2p/src/pinc/tests/bridge.rs a_reply_after_the_connection_ended_is_an_error_not_a_write, many_dropped_tokens_leave_no_stream_behind; crates/database/p2p/src/pinc/tests/mux.rs a_reset_stream_does_not_tear_down_the_connection",
+        bound_by: "crates/database/pinc/src/tests/bridge.rs a_reply_after_the_connection_ended_is_an_error_not_a_write, many_dropped_tokens_leave_no_stream_behind; crates/database/pinc/src/tests/mux.rs a_reset_stream_does_not_tear_down_the_connection",
     },
     Property {
         family: "pinc reply bridge",
         name: "full_refuses / issue_bounded / issue_fresh / take_once / take_only / purge_only / sweep_only: the reply table refuses past its bound, never reuses an id, and takes each entry once",
         axis: Lean,
-        anchor: "crates/database/p2p/src/pinc/reply_table.rs ReplyTable::issue, ReplyTable::take, ReplyTable::purge, ReplyTable::sweep",
+        anchor: "crates/database/pinc/src/reply_table.rs ReplyTable::issue, ReplyTable::take, ReplyTable::purge, ReplyTable::sweep",
         model_ref: "PincReplyTable.Table (lake build)",
         tiers: &[Boundary],
-        bound_by: "crates/database/p2p/src/pinc/reply_table.rs a_stream_is_taken_at_most_once, ids_are_never_reused, a_full_table_hands_the_stream_back, purge_takes_only_the_ended_connection, sweep_takes_only_what_is_due",
+        bound_by: "crates/database/pinc/src/reply_table.rs a_stream_is_taken_at_most_once, ids_are_never_reused, a_full_table_hands_the_stream_back, purge_takes_only_the_ended_connection, sweep_takes_only_what_is_due",
     },
     Property {
         // A pinc hub pushes a topic's messages to every member; the endpoint
@@ -4631,10 +4341,10 @@ pub const PROPERTIES: &[Property] = &[
         family: "pinc topic delivery",
         name: "INV_NoDeliveryOffMesh / INV_RawNeverDecoded / INV_JoinedOnlyLinkedMembers / INV_EngineKeepsItsTopic / INV_OnlyEngineTopics / INV_HeldIsJoined: only a node on the mesh gets a message, a raw topic is never decoded, JOINED names a linked member, an ended hold never takes the engine off its topic, the engine gets messages only of topics it is subscribed to and JOINED only of those or held ones, and a held topic stays joined",
         axis: Tla,
-        anchor: "crates/database/p2p/src/pinc/topics.rs Node::subscribe, Node::unsubscribe, Node::leave, Node::publish, Node::hold_fanout, Node::expire_fanout, Node::topic_events, Node::delivery; crates/database/p2p/src/pinc/endpoint.rs Node::connected, Node::disconnected, Node::sweep_loop",
+        anchor: "crates/database/pinc/src/topics.rs Node::subscribe, Node::unsubscribe, Node::leave, Node::publish, Node::hold_fanout, Node::expire_fanout, Node::topic_events, Node::delivery; crates/database/pinc/src/endpoint.rs Node::connected, Node::disconnected, Node::sweep_loop",
         model_ref: "MC_PincTopicDelivery_{Green,Green_Raw,Red_NoGate,Red_RawLate,Red_NoSessionFilter,Red_NoOwnerCheck,Red_NoHoldEnd,Red_NoEngineFilter}.cfg",
         tiers: &[Boundary],
-        bound_by: "crates/database/p2p/src/pinc/tests/topics.rs connected_subscribers_see_each_other_join_and_leave, a_publisher_that_never_subscribed_sees_subscribers_join_and_leave, a_node_with_no_peer_takes_no_head_hint, raw_topics_carry_a_request_and_its_answer_as_bytes",
+        bound_by: "crates/database/pinc/src/tests/topics.rs connected_subscribers_see_each_other_join_and_leave, a_publisher_that_never_subscribed_sees_subscribers_join_and_leave, a_node_with_no_peer_takes_no_head_hint, raw_topics_carry_a_request_and_its_answer_as_bytes",
     },
     Property {
         // A pinc join returns before a hub knows of it, so a subscribe
@@ -4646,10 +4356,10 @@ pub const PROPERTIES: &[Property] = &[
         family: "pinc join confirmation",
         name: "INV_OkOnlyWhenHeld / INV_FailOnlyUnconfirmed / INV_NoMissedWake / INV_NoStuckSubscription / INV_JoinedMatches: a subscribe answers only while a hub holds its join, never fails once confirmed, never waits for an event already read, a lost event never strands a subscription, and pinc is joined exactly while the engine or a hold has the topic",
         axis: Tla,
-        anchor: "crates/database/p2p/src/pinc/topics.rs Node::subscribe, Node::answer_when_confirmed, Node::joined, Node::abandon_join, Node::leave, Node::unsubscribe, Node::hold_fanout, Node::expire_fanout, JOIN_WAIT",
+        anchor: "crates/database/pinc/src/topics.rs Node::subscribe, Node::answer_when_confirmed, Node::joined, Node::abandon_join, Node::leave, Node::unsubscribe, Node::hold_fanout, Node::expire_fanout, JOIN_WAIT",
         model_ref: "MC_PincJoinConfirm_{Green,Green_Wide,Red_NoConfirmCheck,Red_NoConfirmCheck_Wake,Red_NoStillJoined,Red_NoRecheck,Red_NoRollback,Red_NoClearOnLeave,Red_UntaggedList,Red_Undrained}.cfg",
         tiers: &[Boundary],
-        bound_by: "crates/database/p2p/src/pinc/tests/topics.rs a_subscribe_no_hub_confirms_fails_and_its_retry_waits_again, connected_subscribers_see_each_other_join_and_leave",
+        bound_by: "crates/database/pinc/src/tests/topics.rs a_subscribe_no_hub_confirms_fails_and_its_retry_waits_again, connected_subscribers_see_each_other_join_and_leave",
     },
     Property {
         // The first shutdown caller to swap the flag builds the one drain,
@@ -4667,28 +4377,6 @@ pub const PROPERTIES: &[Property] = &[
         model_ref: "MC_CoordinatorShutdown_{Green,Green_TwoSpawns,Red_DropRefused,Red_CheckThenSpawn,Red_NoAbort,Red_SenderOutsideDrain,Red_TwoWinners,Red_NoPrunerWait,Red_PrunerIgnoresFlag,Red_NoRecheck}.cfg",
         tiers: &[Boundary],
         bound_by: "crates/database/p2p/tests/coordinator/shutdown.rs concurrent_shutdown_callers_wait_for_task_completion, shutdown_rejects_new_tasks_without_spawning_them, task_registration_racing_shutdown_does_not_leave_resources_alive, shutdown_on_a_closed_edge_runs_the_drain_and_releases_tracked_tasks",
-    },
-    Property {
-        family: "Per-peer stream cap",
-        name: "INV_WithinCap / INV_SlotsFollowStreams / INV_ForgottenAreIdle",
-        axis: Tla,
-        anchor: "crates/database/p2p/src/two_stream/peer_streams.rs PeerStreams::admit, StreamAdmission; crates/database/p2p/src/two_stream/runner.rs TwoStreamRunner::run",
-        model_ref: "MC_PeerStreamCap_{Green,Red_*}.cfg",
-        tiers: &[Boundary],
-        bound_by: "",
-    },
-    Property {
-        // Replies to this node's own requests arrive as inbound streams and
-        // share the per-peer cap and the max_p2p_tasks pool with requests, as
-        // in Go's rcmgr. A reply past the cap is reset and shows up as a reply
-        // timeout. libp2p only.
-        family: "Per-peer stream cap",
-        name: "INV_WithinCap counts replies with requests: a reply past the cap is reset",
-        axis: Tla,
-        anchor: "crates/database/p2p/src/two_stream/runner.rs TwoStreamRunner::run; crates/database/p2p/src/two_stream/peer_streams.rs PeerStreams::admit",
-        model_ref: "MC_PeerStreamCap_Green.cfg",
-        tiers: &[Boundary],
-        bound_by: "",
     },
     Property {
         // The receive gate: a replication filter asked when a push arrives,
@@ -4713,7 +4401,7 @@ pub const PROPERTIES: &[Property] = &[
         family: "P2P delivery liveness",
         name: "INV_ObligationOwned — every head merged on a sender stays owed over each edge until the receiver merged it or holds a durable record whose DAG brings it, judged by ancestry",
         axis: Tla,
-        anchor: "crates/database/p2p/src/sync/head_scope.rs ScopeDecision::of; crates/database/p2p/src/sync/manager/process/pushlog.rs process_block_inner; crates/database/p2p/src/sync/coordinator/broadcast.rs admit_replicator_push; crates/database/p2p/src/sync/replication/handlers.rs handle_block_received; crates/database/db/src/merge/txn_broadcaster.rs SyncTxnBroadcaster::submit_update; crates/entry-points/defra-node/src/lib.rs Node::shutdown; crates/surfaces/p2p-adapter/src/iroh_peer/peer.rs IrohPeer::assemble",
+        anchor: "crates/database/p2p/src/sync/head_scope.rs ScopeDecision::of; crates/database/p2p/src/sync/manager/process/pushlog.rs process_block_inner; crates/database/p2p/src/sync/coordinator/broadcast.rs admit_replicator_push; crates/database/p2p/src/sync/replication/handlers.rs handle_block_received; crates/database/db/src/merge/txn_broadcaster.rs SyncTxnBroadcaster::submit_update; crates/entry-points/defra-node/src/lib.rs Node::shutdown; crates/surfaces/p2p-adapter/src/pinc_peer/peer.rs PincPeer::assemble",
         model_ref: "MC_P2PDelivery_{Green_Receiver,Green_E2E,Red_F1_PriorityCover,Red_F2_MarkerAfterCommit,Red_F3_DischargeBeforeForward,Red_F4_LoopFirst,Red_F5_FanoutAbort,Red_F5_FailedDropped}.cfg",
         tiers: &[Boundary],
         bound_by: "",
@@ -4739,14 +4427,13 @@ pub const PROPERTIES: &[Property] = &[
         bound_by: "",
     },
     Property {
-        // Main violates this (F27): connect_with_cache does not adopt the
-        // connection it dials, while the accepting side caches it for its own
-        // requests, which then wait 30 s and retire it. The gents rc1 pin
-        // (b50c667e9) already adopts every new connection.
+        // pinc serves every connection it adopts, dialed or accepted, before
+        // it tracks it, so the accepting side's requests on a connection the
+        // other side dialed are answered.
         family: "P2P delivery liveness",
         name: "INV_ReverseBorrowServed — no node sends a request on a connection its peer does not serve",
         axis: Tla,
-        anchor: "crates/database/p2p/src/iroh/endpoint_rpc.rs connect_with_cache, retire_timed_out_connection, REQUEST_RESPONSE_TIMEOUT; crates/database/p2p/src/iroh/endpoint_streams.rs handle_incoming",
+        anchor: "crates/database/pinc/src/endpoint.rs Node::connected; crates/database/pinc/src/serve.rs Node::serve_connection",
         model_ref: "MC_P2PDelivery_{Green_E2E,Red_F27_HalfRegistered}.cfg",
         tiers: &[Boundary],
         bound_by: "",
@@ -4761,31 +4448,27 @@ pub const PROPERTIES: &[Property] = &[
         family: "P2P delivery liveness",
         name: "TRACE_P2PDelivery — a recorded run of the binary is a behaviour of P2PDelivery: every logged event is a model step from the state the earlier ones left, the replayed states keep INV_ObligationOwned and INV_Bounded, and the run settles",
         axis: Tla,
-        anchor: "crates/database/p2p/src/model_trace.rs Event; proofs/src/model_trace.rs Trace::abstracted, replay; proofs/tests/behavioral/model_trace.rs two_node_push_replays_through_p2p_delivery, hub_relay_replays_through_p2p_delivery",
+        anchor: "",
         model_ref: "Trace_P2PDelivery.tla; MC_P2PDelivery_Trace_{TwoNode,HubRelay,Red_*}.cfg",
-        tiers: &[Behavioral],
-        bound_by: "proofs/tests/behavioral/model_trace.rs two_node_push_replays_through_p2p_delivery, hub_relay_replays_through_p2p_delivery",
+        tiers: &[Boundary],
+        bound_by: "",
     },
     Property {
-        // The witnesses are integration tests outside this conformance
-        // binary: p2p_admission_restart and issue1154_repro. Assumes a pending
-        // store is installed: without one the registration, and so the ack, is
+        // Assumes a pending store is installed: without one the registration, and so the ack, is
         // backed in memory only. Every production embedding installs one.
         family: "P2P delivery liveness",
         name: "INV_AckBacked — a success ack stays backed across a hub restart by a merge, a resident registration or a durable record",
         axis: Tla,
-        anchor: "crates/database/p2p/src/sync/manager/process/pushlog.rs process_block_inner; crates/database/p2p/src/sync/manager/process/pending_dag.rs resync_persisted_pending_dags; tools/integration-test/tests/legacy/p2p_admission_restart.rs",
+        anchor: "crates/database/p2p/src/sync/manager/process/pushlog.rs process_block_inner; crates/database/p2p/src/sync/manager/process/pending_dag.rs resync_persisted_pending_dags",
         model_ref: "MC_PendingDagRestart_{Green,Red_ProcessLocal}.cfg",
         tiers: &[Boundary],
         bound_by: "",
     },
     Property {
-        // The witness is the p2p_admission integration test, outside this
-        // conformance binary.
         family: "P2P delivery liveness",
         name: "INV_SuccessImpliesRegisteredOrMerged — a PushLog at pending capacity is nacked, never acked with its registration dropped",
         axis: Tla,
-        anchor: "crates/database/p2p/src/sync/manager/process/pushlog.rs process_block_inner; tools/integration-test/tests/legacy/p2p_admission.rs fan_in_pushlog_admission_no_silent_divergence",
+        anchor: "crates/database/p2p/src/sync/manager/process/pushlog.rs process_block_inner",
         model_ref: "MC_PushLogAdmission_{Green,Red_SuccessOnFull}.cfg",
         tiers: &[Boundary],
         bound_by: "",
@@ -4984,7 +4667,7 @@ pub const PROPERTIES: &[Property] = &[
         family: "Add view with a lens transform",
         name: "INV_NoEmptyTransform / INV_StoredTransformExists / INV_StoredIsAccepted / INV_NoViewWithoutPermission / INV_NoValidRejected",
         axis: Tla,
-        anchor: "crates/entry-points/defra-node/src/db_impls.rs DbSchemaOps::add_view; crates/database/db/src/collection/ops/create.rs DB::create_view_collections_as, DB::stage_new_collections, DB::require_view_transforms; crates/database/db/src/definition/migration/committed_lenses.rs DB::add_lens, DB::commit_synced_lens, write_lens_config; crates/surfaces/p2p-adapter/src/version_syncer.rs sync_lens; crates/surfaces/p2p-adapter/src/transport_version_syncer.rs sync_lens",
+        anchor: "crates/entry-points/defra-node/src/db_impls.rs DbSchemaOps::add_view; crates/database/db/src/collection/ops/create.rs DB::create_view_collections_as, DB::stage_new_collections, DB::require_view_transforms; crates/database/db/src/definition/migration/committed_lenses.rs DB::add_lens, DB::commit_synced_lens, write_lens_config; crates/surfaces/p2p-adapter/src/transport_version_syncer.rs sync_lens",
         model_ref: "MC_AddViewTransform_{Green,Green_NacBefore,Red_*}.cfg",
         tiers: &[Boundary],
         bound_by: "",
@@ -5032,18 +4715,5 @@ pub const PROPERTIES: &[Property] = &[
         model_ref: "MC_ChildPagePerParent_{Green,Green_ShortParent,Red_GlobalBound,Red_NoEarlyStop}.cfg",
         tiers: &[Boundary],
         bound_by: "tools/integration-test/tests/testo/query/one_to_many/with_limit.rs query_one_to_many_with_child_limit_keeps_a_two_parent_page",
-    },
-    Property {
-        // #2924: a host resolver configuration is read the way Go reads it
-        // (rejected lines and words skipped, the rest kept); one left with no
-        // nameservers, or that cannot be read, gets Go's local nameservers
-        // instead of failing the node's start.
-        family: "DNS resolver fallback",
-        name: "DnsResolverFallback.chosen_has_nameservers / usable_read_passes_through / accepted_lines_survive / kept_lines_accepted / rejected_nameserver_dropped / failed_read_falls_back",
-        axis: Lean,
-        anchor: "crates/database/p2p/src/host/transport/resolver.rs read_file, parse_lenient, usable_line, accepted, resolver_config, fallback_config, FALLBACK_NAMESERVERS",
-        model_ref: "DnsResolverFallback (lake build)",
-        tiers: &[Contract],
-        bound_by: "crates/database/p2p/src/host/transport/resolver_tests.rs a_failed_read_falls_back_to_the_localhost_nameservers, a_read_with_nameservers_passes_through_unchanged, a_systemd_resolved_stub_passes_through, an_unknown_option_keeps_the_hosts_nameserver, a_bad_nameserver_line_keeps_the_good_ones, a_bad_nameserver_line_never_uses_its_comment, an_unknown_directive_keeps_the_hosts_nameserver, a_bad_search_domain_keeps_the_others, a_file_without_nameservers_keeps_its_search_and_options, a_comment_that_is_not_utf8_keeps_the_hosts_nameserver, a_missing_file_falls_back_to_the_localhost_nameservers, the_fallback_matches_the_lean_model",
     },
 ];

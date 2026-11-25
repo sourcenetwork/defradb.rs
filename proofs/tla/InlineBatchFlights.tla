@@ -1,6 +1,6 @@
 ---- MODULE InlineBatchFlights ----
 \* The story, in plain words. One inline call to the inputs service holds a
-\* group of keys bigger than one request carries (a KMS key batch over iroh
+\* group of keys bigger than one request carries (a KMS key batch over pinc
 \* gossip, #2842), so the group is cut into chunks, one round trip each.
 \* Who acts: the calling task, which starts chunks and writes their answers,
 \* and each chunk's round trip, which waits for a network permit, sends,

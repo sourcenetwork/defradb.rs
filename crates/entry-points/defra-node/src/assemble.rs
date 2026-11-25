@@ -42,7 +42,7 @@ pub(crate) struct Extras {
     #[cfg(feature = "p2p")]
     pub access_hooks: Option<AccessHooks>,
     #[cfg(feature = "p2p")]
-    pub stream_protocols: Vec<p2p::iroh::StreamRegistration>,
+    pub stream_protocols: Vec<defra_pinc::StreamRegistration>,
     #[cfg(feature = "otel")]
     pub telemetry: Option<TelemetryHandle>,
 }
@@ -61,11 +61,11 @@ fn start_node_pool(
     .map_err(Error::WorkerPoolStart)
 }
 
-/// Access hooks need the iroh transport.
+/// Access hooks need a P2P transport.
 #[cfg(feature = "p2p")]
 pub(crate) fn check_access_hooks(config: &NodeConfig, hooks: Option<&AccessHooks>) -> Result<()> {
-    if hooks.is_some() && !matches!(config.transport, TransportConfig::Iroh(_)) {
-        return Err(Error::AccessHooksNeedIroh);
+    if hooks.is_some() && matches!(config.transport, TransportConfig::None) {
+        return Err(Error::AccessHooksNeedP2P);
     }
     Ok(())
 }
@@ -100,7 +100,7 @@ where
         commit_gate,
     } = config;
     let introspection_cache = introspection_cache.unwrap_or(true);
-    #[cfg(not(any(feature = "p2p", feature = "libp2p")))]
+    #[cfg(not(feature = "p2p"))]
     let _ = (&peer_keyring, &start_peer_key, &transport);
 
     let event_bus: Arc<dyn events::Bus> = Arc::new(events::ChannelBus::default());
@@ -130,13 +130,8 @@ where
         &node_identity_did,
         node_p2p_identity.is_some(),
     )?;
-    #[cfg(any(feature = "p2p", feature = "libp2p"))]
+    #[cfg(feature = "p2p")]
     match &transport {
-        #[cfg(feature = "libp2p")]
-        TransportConfig::Libp2p(libp2p) => drop(libp2p.sync.retry_schedule()?),
-        #[cfg(feature = "p2p")]
-        TransportConfig::Iroh(iroh) => drop(iroh.sync.retry_schedule()?),
-        #[cfg(feature = "pinc")]
         TransportConfig::Pinc(pinc) => drop(pinc.sync.retry_schedule()?),
         TransportConfig::None => {}
     }
@@ -287,57 +282,13 @@ where
     let remote_acp = acp_setup.vera_acp.is_some();
     #[cfg(not(feature = "vera"))]
     let remote_acp = false;
-    #[cfg(any(feature = "p2p", feature = "libp2p"))]
+    #[cfg(feature = "p2p")]
     let strict_replicated_doc_access = remote_acp;
 
     // P2P setup (affects mutator choice)
-    #[cfg(any(feature = "p2p", feature = "libp2p"))]
+    #[cfg(feature = "p2p")]
     let mut p2p_setup = {
         let setup = match (&transport, network.as_ref()) {
-            #[cfg(feature = "libp2p")]
-            (TransportConfig::Libp2p(libp2p), Some(network)) => {
-                // Nothing outlives a store that does not persist, so its
-                // abandoned fetches need no sweep.
-                let libp2p = &crate::config::Libp2pConfig {
-                    orphan_sweep: db::block::orphan_gc::OrphanSweepConfig {
-                        enabled: libp2p.orphan_sweep.enabled
-                            && persistence == crate::Persistence::Persistent,
-                        ..libp2p.orphan_sweep
-                    },
-                    ..libp2p.clone()
-                };
-                let schedule = libp2p.sync.retry_schedule()?;
-                crate::libp2p_runtime::setup_libp2p(
-                    store.clone(),
-                    database.clone(),
-                    event_bus.clone(),
-                    libp2p,
-                    libp2p.sync.sync_config(),
-                    schedule,
-                    peer_keyring.as_ref(),
-                    start_peer_key.as_ref(),
-                    network.edge(),
-                )
-                .await
-                .map(Some)
-            }
-            #[cfg(feature = "p2p")]
-            (TransportConfig::Iroh(iroh), Some(network)) => crate::p2p_runtime::setup_iroh(
-                store.clone(),
-                database.clone(),
-                event_bus.clone(),
-                iroh,
-                node_p2p_identity.clone(),
-                document_acp.clone(),
-                strict_replicated_doc_access,
-                peer_keyring.as_ref(),
-                start_peer_key.as_ref(),
-                network.sibling(),
-                extras.stream_protocols,
-            )
-            .await
-            .map(Some),
-            #[cfg(feature = "pinc")]
             (TransportConfig::Pinc(pinc), Some(network)) => crate::pinc_runtime::setup_pinc(
                 store.clone(),
                 database.clone(),
@@ -349,6 +300,8 @@ where
                 peer_keyring.as_ref(),
                 start_peer_key.as_ref(),
                 network.sibling(),
+                extras.stream_protocols,
+                persistence == crate::Persistence::Persistent,
             )
             .await
             .map(Some),
@@ -366,12 +319,8 @@ where
         }
     };
 
-    #[cfg(any(feature = "p2p", feature = "libp2p"))]
+    #[cfg(feature = "p2p")]
     if let Some(setup) = p2p_setup.as_mut() {
-        #[cfg(feature = "libp2p")]
-        if let Some(wire_document_acp) = setup.wire_document_acp.take() {
-            wire_document_acp(document_acp.clone(), strict_replicated_doc_access);
-        }
         // Populate the manage-channel serve deps now that the controller and
         // NAC manager exist; until this fires the event loop drops inbound
         // manage requests rather than serving them unauthenticated.
@@ -383,25 +332,21 @@ where
                 correlator: setup.manage_correlator.clone(),
                 query_correlator: setup.manage_query_correlator.clone(),
             });
-        // A bootstrap peer that cannot be reached does not stop the node,
-        // as in Go: the node starts and the peer can be connected later.
-        #[cfg(feature = "libp2p")]
-        if let TransportConfig::Libp2p(libp2p) = &transport {
-            for addr in &libp2p.bootstrap_peers {
-                if let Err(error) = setup.system.ops().connect_peer(addr).await {
-                    tracing::warn!(%addr, %error, "failed to connect to bootstrap peer");
-                }
-            }
+        // Only now, with NAC wired, does the node dial its bootstrap peers. A
+        // bootstrap peer that cannot be reached does not stop the node, as in
+        // Go: the node starts and the peer can be connected later.
+        if let Some(connect) = setup.connect_bootstrap.take() {
+            connect();
         }
     }
 
     // Choose mutator: BroadcastMutator if P2P, AutoCommitMutator otherwise
-    #[cfg(any(feature = "p2p", feature = "libp2p"))]
+    #[cfg(feature = "p2p")]
     let mutator: Arc<dyn query::DocMutator> = match p2p_setup.as_ref() {
         Some(setup) => setup.mutator.clone(),
         None => Arc::new(db::AutoCommitMutator::new(database.clone())),
     };
-    #[cfg(not(any(feature = "p2p", feature = "libp2p")))]
+    #[cfg(not(feature = "p2p"))]
     let mutator: Arc<dyn query::DocMutator> =
         Arc::new(db::AutoCommitMutator::new(database.clone()));
 
@@ -409,11 +354,11 @@ where
     let provider: Arc<dyn query::CollectionProvider> =
         db::DbCollectionProvider::new_arc(database.clone());
 
-    #[cfg(any(feature = "p2p", feature = "libp2p"))]
+    #[cfg(feature = "p2p")]
     let txn_broadcaster: Option<Arc<dyn db::event::emission::TxnBroadcaster>> = p2p_setup
         .as_ref()
         .map(|setup| setup.txn_broadcaster.clone());
-    #[cfg(not(any(feature = "p2p", feature = "libp2p")))]
+    #[cfg(not(feature = "p2p"))]
     let txn_broadcaster: Option<Arc<dyn db::event::emission::TxnBroadcaster>> = None;
 
     let registry = Arc::new(
@@ -457,7 +402,7 @@ where
                     .expect("static anonymous DID parses")
             });
 
-            #[cfg(any(feature = "p2p", feature = "libp2p"))]
+            #[cfg(feature = "p2p")]
             let transports: Vec<Arc<dyn kms::KeyTransport>> = match p2p_setup.as_ref() {
                 Some(setup) => {
                     let transport = setup.kms_transport.clone();
@@ -470,7 +415,7 @@ where
                 }
                 None => vec![],
             };
-            #[cfg(not(any(feature = "p2p", feature = "libp2p")))]
+            #[cfg(not(feature = "p2p"))]
             let transports: Vec<Arc<dyn kms::KeyTransport>> = vec![];
 
             Arc::new(kms::DefraKms::with_inputs(
@@ -489,7 +434,7 @@ where
         // Bind this node's transport peer id into the KMS so served ECIES
         // replies carry the correct AAD peer id, and wire the KMS into the
         // transport's serve handler and merge handler.
-        #[cfg(any(feature = "p2p", feature = "libp2p"))]
+        #[cfg(feature = "p2p")]
         if let Some(setup) = p2p_setup.as_mut() {
             kms.set_local_peer_id(setup.local_peer_id.clone());
 
@@ -544,7 +489,7 @@ where
     };
     // Wire the SE remote query transport so this node can act as an SE query
     // OWNER, fanning encrypted_<Collection> queries to replicators (#976).
-    #[cfg(any(feature = "p2p", feature = "libp2p"))]
+    #[cfg(feature = "p2p")]
     let query_runner = match p2p_setup
         .as_ref()
         .and_then(|setup| setup.se_transport.clone())
@@ -645,9 +590,9 @@ where
     // resumed build holds the database until it stops.
     database.start_resumed_index_backfills();
 
-    #[cfg(any(feature = "p2p", feature = "libp2p"))]
+    #[cfg(feature = "p2p")]
     let p2p = p2p_setup.map(|setup| setup.system);
-    #[cfg(all(feature = "managed-p2p", not(any(feature = "p2p", feature = "libp2p"))))]
+    #[cfg(all(feature = "managed-p2p", not(feature = "p2p")))]
     let p2p: Option<Arc<crate::ManagedP2PSystem>> = None;
 
     Ok(Node {

@@ -1019,13 +1019,13 @@ INV_PendingServiceable ==
 
 \* A durable receiver obligation must retain a provider the transport can
 \* actually reach.  Native signed pubsub can bind that provider to the origin.
-\* Iroh binds recovery to the independently verified origin only when that
+\* pinc binds recovery to the independently verified origin only when that
 \* endpoint is transport-routable.  The authenticated immediate hop is not
 \* sufficient: a gossip relay may hold only the announced root block.
 INV_PendingHasRoutableProvider ==
   ProviderMode = "OriginBound" \/ pending = {}
 
-\* An initially unreachable Iroh publisher may remain the immutable ownership
+\* An initially unreachable publisher may remain the immutable ownership
 \* origin while a later direct same-root announcer becomes the recovery
 \* provider. No fetch may start before that independently qualified candidate
 \* is durable, and the candidate survives receiver restart with the obligation.
@@ -1046,7 +1046,7 @@ INV_PendingHasCompleteProvider ==
 INV_PendingHasServingAuthorization ==
   ProviderMode # "OriginUnauthorized" \/ pending = {}
 
-\* A routable-looking peer identifier is not sufficient: Iroh relay metadata
+\* A routable-looking peer identifier is not sufficient: relay metadata
 \* authenticates only the last hop, so an origin carried in the payload must
 \* be signed by the endpoint key that the identifier names.  Otherwise a
 \* forged hint can transfer ownership to a receiver that can never reach the

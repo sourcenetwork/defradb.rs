@@ -73,14 +73,6 @@ fn go_config(p2paddress: &str, p2pdisabled: bool) -> String {
         .replace("{p2pdisabled}", &p2pdisabled.to_string())
 }
 
-/// A port nothing listens on right now, for the node to bind.
-fn free_port() -> u16 {
-    std::net::TcpListener::bind("127.0.0.1:0")
-        .and_then(|listener| listener.local_addr())
-        .expect("pick a free port")
-        .port()
-}
-
 /// A request that needs no collection, so the node's GraphQL endpoint is
 /// shown to serve whatever the config's `development` says.
 fn introspection() -> Request {
@@ -91,22 +83,22 @@ fn introspection() -> Request {
     }
 }
 
+/// Go's `p2paddresses` are libp2p addresses, which a pinc node has no use
+/// for: the node still runs P2P, on its own pinc address.
 #[test]
 #[mantra_macros::req_test("defra.cli.config.go_layout")]
-fn a_go_config_sets_the_p2p_addresses() {
-    let port = free_port();
-    let address = format!("/ip4/127.0.0.1/tcp/{port}");
+fn a_go_config_runs_p2p_on_pinc() {
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
             NewNode {
-                go_config: Some(go_config(&address, false)),
+                go_config: Some(go_config("/ip4/127.0.0.1/tcp/9171", false)),
                 ..Default::default()
             }
             .into(),
             PeerInfo {
                 expected_data: json!({
-                    "addresses": [m::substring(&format!("{address}/p2p/"))],
+                    "addresses": [m::substring("@127.0.0.1:")],
                 }),
                 ..Default::default()
             }

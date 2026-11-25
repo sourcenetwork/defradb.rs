@@ -8,8 +8,7 @@ use p2p::transport::PeerId;
 use p2p::P2PTransport;
 
 /// Type-erased interface for transport-generic push operations.
-#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
-#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[async_trait]
 pub trait TransportDocPusher: defra_core::thread_bounds::MaybeSendSync {
     async fn prepare_replicator_install(
         &self,
@@ -216,8 +215,7 @@ impl<S: storage::corekv::Store + 'static, T: P2PTransport> DbTransportDocPusher<
     }
 }
 
-#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
-#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[async_trait]
 impl<S: storage::corekv::Store + 'static, T: P2PTransport> TransportDocPusher
     for DbTransportDocPusher<S, T>
 {

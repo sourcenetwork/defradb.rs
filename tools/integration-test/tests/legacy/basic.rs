@@ -1,4 +1,3 @@
-mod batch_mutations;
 mod collection_delete_4657;
 mod collection_management;
 mod crdt_field_blocks;

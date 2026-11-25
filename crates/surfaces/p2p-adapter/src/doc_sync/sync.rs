@@ -9,12 +9,11 @@ use crate::{P2PError, P2PErrorExt as _};
 /// Explicit document sync: ask every connected peer for `doc_ids`, then wait
 /// for the merges those requests trigger.
 ///
-/// `overall_timeout` and `parallelism` are the only points where the two
-/// transports differ: iroh waits 10s and dispatches up to 16 sends at once,
-/// libp2p waits 30s and sends one peer at a time. Returning `Ok` without any
-/// merge is deliberate on a fire-and-forget transport, which cannot tell a
-/// quiet peer from a lost request; where a send confirms a reply, silence with
-/// nothing merged is reported as a timeout instead.
+/// `overall_timeout` and `parallelism` are the caller's: pinc waits 10s and
+/// dispatches up to 16 sends at once. Returning `Ok` without any merge is
+/// deliberate on a fire-and-forget send, which cannot tell a quiet peer from a
+/// lost request; where a send confirms a reply, silence with nothing merged is
+/// reported as a timeout instead.
 pub(crate) async fn sync_documents<D>(
     dispatch: Arc<D>,
     event_bus: &dyn events::Bus,
@@ -120,8 +119,9 @@ where
 
     // Go errors when a peer it was waiting on never answered and nothing came
     // back (`sync_doc.go:155-158`). Only a transport whose send confirms a
-    // reply can tell that from a send that merely left the machine, so libp2p
-    // keeps returning `Ok` here rather than inventing a timeout it cannot see.
+    // reply can tell that from a send that merely left the machine, so a
+    // fire-and-forget send keeps returning `Ok` here rather than inventing a
+    // timeout it cannot see.
     if D::SEND_CONFIRMS_REPLY && last_unanswered > 0 && total_received == 0 {
         return Err(P2PError::transport("timeout while syncing doc"));
     }
@@ -252,7 +252,7 @@ mod tests {
         );
     }
 
-    /// #1314 review: iroh's send is bounded by its own 30s request/response
+    /// #1314 review: a send is bounded by its own 30s request/response
     /// timeout, so an unbounded dispatch outruns any shorter caller deadline.
     /// The wall clock is the assertion — before the bound this took ~30s
     /// against a 200ms budget.
@@ -282,7 +282,7 @@ mod tests {
 
     /// #1314 review: the budget is one deadline for the whole round, not a
     /// fresh one per peer. Refills spawn after a `join_next`, so a relative
-    /// timeout would restart the budget on every wave — with iroh's
+    /// timeout would restart the budget on every wave — with pinc's
     /// parallelism of 16, any node with more peers than that overruns the
     /// caller's deadline by roughly one budget per wave. Three peers at
     /// parallelism 1 is the smallest shape that has waves at all.
@@ -351,7 +351,7 @@ mod tests {
             2,
         )
         .await
-        .expect("libp2p cannot tell silence from a failed send");
+        .expect("a fire-and-forget send cannot tell silence from a failed send");
     }
 
     /// #1314 review: `timeout: "0"` is valid Go input. With peers and

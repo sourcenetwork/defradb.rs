@@ -4,7 +4,7 @@
 \* Two peers, B and C, each connect to a middle node M over pinc. Neither
 \* knows the other. When a peer connects, M hands it the peers M already
 \* has (a peer exchange), and the peer dials each one it learns, so B and C
-\* end up connected to each other, as libp2p's Kademlia would connect them.
+\* end up connected to each other.
 \*
 \* Each peer also sends M its signed record, which later lets anyone dial it
 \* by id. A node that names hubs can sign its record only once pinc has
@@ -29,13 +29,13 @@
 \*
 \*   | Model        | Rust                                                        |
 \*   |--------------|-------------------------------------------------------------|
-\*   | Connect      | crates/database/p2p/src/pinc/endpoint.rs Node::connected:   |
+\*   | Connect      | crates/database/pinc/src/endpoint.rs Node::connected:   |
 \*   |              | spawns send_record, and share_peers for a new peer          |
-\*   | shared       | crates/database/p2p/src/pinc/exchange.rs Node::share_peers: |
+\*   | shared       | crates/database/pinc/src/exchange.rs Node::share_peers: |
 \*   |              | each other peer with its route address and its record       |
 \*   | Learn        | exchange.rs Node::learn_peers: dial by the address          |
 \*   | Settle       | pinc's relay client classifies the node and homes it        |
-\*   | SendRecord   | crates/database/p2p/src/pinc/serve.rs Node::send_record,    |
+\*   | SendRecord   | crates/database/pinc/src/serve.rs Node::send_record,    |
 \*   |              | once_settled: signed_record again while pinc says busy      |
 \*
 \* RED configurations:

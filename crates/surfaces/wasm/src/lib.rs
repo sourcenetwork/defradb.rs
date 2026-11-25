@@ -58,14 +58,10 @@ pub mod bindings;
 #[cfg(target_arch = "wasm32")]
 pub mod client;
 #[cfg(target_arch = "wasm32")]
-mod client_p2p;
-#[cfg(target_arch = "wasm32")]
 mod document_changes;
 pub mod error;
 #[cfg(target_arch = "wasm32")]
 mod identity;
-#[cfg(target_arch = "wasm32")]
-mod p2p;
 #[cfg(target_arch = "wasm32")]
 mod storage_tests;
 #[cfg(target_arch = "wasm32")]

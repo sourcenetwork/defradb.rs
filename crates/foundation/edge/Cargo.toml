@@ -35,7 +35,7 @@ nuclei.workspace = true
 async-compat.workspace = true
 # The runtime `compat` enters, owned by the edge on its cores.
 tokio = { version = "1", default-features = false, features = ["rt-multi-thread", "net", "time"] }
-# libp2p's timer thread, started on the edge's cores.
+# futures-timer's thread (governor's and jsonrpsee's timers), started on the edge's cores.
 futures-timer = "3"
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]

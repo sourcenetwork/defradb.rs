@@ -69,9 +69,6 @@ fn three_connected_nodes() -> Vec<Actions> {
 }
 
 /// An explicit `ConnectPeers` after the disconnect reaches the peer again.
-/// That the connect also lifts the quiet for Kademlia is checked by the p2p
-/// unit test `an_explicit_dial_lets_kademlia_dial_a_disconnected_peer_again`:
-/// on libp2p db0 rediscovers db1 itself, so no scenario here can see it.
 #[test]
 #[mantra_macros::req_test("defra.net.peers.disconnect_sticks.explicit_connect")]
 fn an_explicit_connect_undoes_a_disconnect() {
@@ -109,21 +106,11 @@ fn an_explicit_connect_undoes_a_disconnect() {
 /// list lands within milliseconds of the connect that sends it.
 const DISCOVERY_WINDOW_MILLIS: u64 = 1500;
 
-/// Printed where a pinc-only scenario does not run: libp2p's close carries no
-/// reason, so the peer hung up on still dials back there.
-const LIBP2P_SKIP: &str =
-    "skipped: pinc only; set DEFRA_TRANSPORT=pinc and build with --features pinc";
-
 /// db1 disconnects both its peers, and neither comes back through discovery,
-/// whichever side's discovery would dial. pinc only: libp2p's close carries
-/// no reason, so there the peers' own Kademlia dials db1 back.
+/// whichever side's discovery would dial.
 #[test]
 #[mantra_macros::req_test("defra.net.peers.disconnect_sticks.discovery")]
 fn a_disconnected_peer_is_not_dialed_back_by_discovery() {
-    if !integration_test::transport_choice::TransportChoice::from_env().is_pinc() {
-        eprintln!("{LIBP2P_SKIP}");
-        return;
-    }
     let mut actions = three_connected_nodes();
     actions.extend([
         DisconnectPeers {
@@ -154,14 +141,10 @@ fn a_disconnected_peer_is_not_dialed_back_by_discovery() {
 }
 
 /// db1 disconnects db0, then reconnects to db2, which hands it a fresh list
-/// naming db0: db1's own discovery leaves db0 alone. pinc only, as above.
+/// naming db0: db1's own discovery leaves db0 alone.
 #[test]
 #[mantra_macros::req_test("defra.net.peers.disconnect_sticks.discovery")]
 fn a_fresh_list_does_not_redial_a_disconnected_peer() {
-    if !integration_test::transport_choice::TransportChoice::from_env().is_pinc() {
-        eprintln!("{LIBP2P_SKIP}");
-        return;
-    }
     let mut actions = three_connected_nodes();
     actions.extend([
         // db2 must hold db0 for its fresh list to name it: db1's peer

@@ -20,16 +20,18 @@
 \* handler outlives shutdown; or a handler runs forever, holding its room.
 \*
 \* Code this models:
-\*   crates/database/p2p/src/iroh/endpoint_streams.rs admit_stream (Arrive, Busy,
-\*     the tag check), handle_connection_streams (Handoff: the lease moves
-\*     into the ProtocolRequest), serve_protocol_stream (Return, Deadline,
-\*     Cut);
-\*   crates/database/p2p/src/iroh/stream_protocols.rs StreamProtocols::get (the tag
+\*   crates/database/pinc/src/serve.rs Node::serve_stream (Arrive, the tag
+\*     check), Node::admit (Busy), serve_protocol (Handoff: the lease moves
+\*     into the ProtocolRequest; Return, Deadline, and Cut when the
+\*     connection closes);
+\*   crates/database/pinc/src/stream_protocols.rs StreamProtocols::get (the tag
 \*     check), ProtocolRequest::release (DropRequest: releasing it frees the room),
 \*     StreamHandler::handle (it borrows the stream, so Return, Deadline
 \*     and Cut each end the stream with its task);
-\*   crates/database/p2p/src/iroh/endpoint_commands.rs handle_deny_peer (Revoke);
-\*   crates/database/p2p/src/iroh/task_registry.rs TaskRegistry::close (Shutdown).
+\*   crates/database/pinc/src/endpoint.rs Node::deny (Revoke: every session of
+\*     the peer ends within the call);
+\*   crates/database/pinc/src/command.rs Command::Shutdown (Shutdown: the
+\*     endpoint closes, and every connection with it).
 EXTENDS Naturals, FiniteSets
 
 CONSTANTS

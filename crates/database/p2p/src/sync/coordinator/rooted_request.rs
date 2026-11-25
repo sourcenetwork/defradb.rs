@@ -1,4 +1,4 @@
-//! What a rooted transport's (pinc, iroh) fetch request names.
+//! What a rooted transport's (pinc) fetch request names.
 //!
 //! The provider walks a document's composite spine only when every block
 //! asked for is a composite; then the receiver's haves leave out the history

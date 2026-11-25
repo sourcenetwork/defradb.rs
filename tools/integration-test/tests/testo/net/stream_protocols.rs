@@ -1,11 +1,11 @@
-//! An embedder's own stream protocols over iroh (`defra.stream_protocols`).
+//! An embedder's own stream protocols over pinc (`defra.stream_protocols`).
 //! They are a Rust embedder API with no HTTP, CLI or Go surface, so these run
-//! under the in-process client; every other client stops at `NewIrohNode`
+//! under the in-process client; every other client stops at `NewStreamNode`
 //! with `unsupported op`.
 
-use integration_test::actions::stream::{Handler, IrohSpec, ProtocolSpec, ReadMode, Size};
+use integration_test::actions::stream::{Handler, ProtocolSpec, ReadMode, Size, StreamNodeSpec};
 use integration_test::actions::{
-    Actions, AddCollection, AddDoc, AllowStreamPeer, Close, DenyStreamPeer, NewIrohNode,
+    Actions, AddCollection, AddDoc, AllowStreamPeer, Close, DenyStreamPeer, NewStreamNode,
     OpenStream, ReadKeptStream,
 };
 use integration_test::scenario::{Common, Eventually};
@@ -32,8 +32,8 @@ fn echo() -> ProtocolSpec {
 }
 
 fn serving(node: &str, protocols: Vec<ProtocolSpec>) -> Actions {
-    NewIrohNode {
-        iroh: IrohSpec {
+    NewStreamNode {
+        stream: StreamNodeSpec {
             protocols,
             ..Default::default()
         },
@@ -43,9 +43,9 @@ fn serving(node: &str, protocols: Vec<ProtocolSpec>) -> Actions {
     .into()
 }
 
-fn refused(iroh: IrohSpec, error: &str) -> Actions {
-    NewIrohNode {
-        iroh,
+fn refused(stream: StreamNodeSpec, error: &str) -> Actions {
+    NewStreamNode {
+        stream,
         expected_error: Some(error.into()),
         common: on("db0"),
         ..Default::default()
@@ -107,13 +107,13 @@ fn cut(from: &str, name: &str) -> Actions {
 #[test]
 #[mantra_macros::req_test("defra.stream_protocols.registration")]
 fn a_node_refuses_a_protocol_it_cannot_serve() {
-    let with = |protocols: Vec<ProtocolSpec>| IrohSpec {
+    let with = |protocols: Vec<ProtocolSpec>| StreamNodeSpec {
         protocols,
         ..Default::default()
     };
     TestCase::from_actions(vec![
         refused(
-            with(vec![protocol("/defra-iroh/echo/1", Handler::Echo)]),
+            with(vec![protocol("/defra-pinc/echo/1", Handler::Echo)]),
             "reserved",
         ),
         refused(
@@ -147,11 +147,11 @@ fn a_node_refuses_a_protocol_it_cannot_serve() {
             "a deadline is more than zero",
         ),
         refused(
-            IrohSpec {
+            StreamNodeSpec {
                 without_network: true,
                 ..with(vec![echo()])
             },
-            "stream protocols require the iroh transport",
+            "stream protocols require a P2P transport",
         ),
         serving(
             "db0",
@@ -175,7 +175,7 @@ fn opening_a_protocol_the_opener_cannot_send_fails_before_the_network() {
             open(
                 "db1",
                 "db0",
-                protocol("/defra-iroh/identity/0.1", Handler::Echo),
+                protocol("/defra-pinc/identity/0.1", Handler::Echo),
             ),
             "reserved",
         ),
@@ -280,8 +280,8 @@ fn a_tag_nobody_registered_is_stopped_and_the_connection_keeps_serving() {
 #[mantra_macros::req_test("defra.stream_protocols.admission")]
 fn a_peer_the_allowlist_refuses_is_served_once_allowed() {
     TestCase::from_actions(vec![
-        NewIrohNode {
-            iroh: IrohSpec {
+        NewStreamNode {
+            stream: StreamNodeSpec {
                 protocols: vec![echo()],
                 explicit_allowlist: true,
                 ..Default::default()

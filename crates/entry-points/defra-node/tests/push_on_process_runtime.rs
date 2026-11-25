@@ -8,9 +8,9 @@
 
 #[path = "support/clock.rs"]
 mod clock;
-mod iroh_peers;
 #[path = "support/outcome.rs"]
 mod outcome;
+mod pinc_peers;
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -18,14 +18,14 @@ use std::time::Duration;
 use clock::sleep;
 use defra_node::NodeBuilder;
 use defra_p2p_adapter::P2pDocumentRequest;
-use iroh_peers::{connect, create, iroh_config, listen_addr, Node};
 use outcome::Result;
+use pinc_peers::{connect, create, listen_addr, pinc_config, Node};
 
 const SDL: &str = "type Note { body: String }";
 
 async fn node() -> Result<Node> {
     let node = NodeBuilder::default()
-        .with_p2p(iroh_config())
+        .with_pinc(pinc_config())
         .build()
         .await?;
     node.add_collection(SDL).await?;

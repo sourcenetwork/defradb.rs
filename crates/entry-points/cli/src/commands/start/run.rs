@@ -247,67 +247,11 @@ impl Node {
             let _ = timeout(std::time::Duration::from_secs(1), task).await;
         }
 
-        // Shutdown P2P tasks first, then the handle
+        // Shutdown P2P first
         if let Some(tasks) = self.p2p_tasks.take() {
             info!("Stopping P2P background tasks...");
-            let grace = std::time::Duration::from_secs(2);
-
-            match tasks {
-                super::node::P2PTasks::Libp2p(tasks) => {
-                    let super::node::Libp2pTasks {
-                        coordinator,
-                        host_task,
-                        replication_task,
-                        event_handler_task,
-                        failure_recorder_task,
-                        retry_loop_task,
-                    } = *tasks;
-                    coordinator.shutdown().await;
-
-                    // Abort all tasks - they will stop when the channel closes
-                    replication_task.stop();
-                    host_task.stop();
-                    failure_recorder_task.abort();
-                    retry_loop_task.abort();
-                    if let Some(event_task) = event_handler_task {
-                        event_task.stop();
-                    }
-
-                    let _ = timeout(grace, replication_task.stopped()).await;
-                    let _ = timeout(grace, host_task.stopped()).await;
-                }
-                #[cfg(feature = "iroh")]
-                super::node::P2PTasks::Iroh {
-                    peer,
-                    #[cfg(feature = "iroh-relay-server")]
-                    relay_server,
-                } => {
-                    peer.shutdown().await;
-
-                    #[cfg(feature = "iroh-relay-server")]
-                    if let Some(relay_server) = relay_server {
-                        match timeout(grace, relay_server.shutdown()).await {
-                            Ok(Ok(())) => {}
-                            Ok(Err(e)) => {
-                                warn!("iroh relay server shutdown encountered an issue: {}", e)
-                            }
-                            Err(_) => warn!("iroh relay server did not stop within {:?}", grace),
-                        }
-                    }
-                }
-                #[cfg(feature = "pinc")]
-                super::node::P2PTasks::Pinc { peer } => {
-                    peer.shutdown().await;
-                }
-            }
-
+            tasks.peer.shutdown().await;
             info!("P2P background tasks stopped");
-        }
-
-        if let Some(handle) = &self.p2p_handle {
-            if let Err(e) = handle.shutdown().await {
-                warn!("P2P shutdown encountered an issue: {}", e);
-            }
         }
 
         // The servers and P2P have stopped, so nothing asks for an access

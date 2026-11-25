@@ -1,0 +1,549 @@
+//! The streams a peer opens: read under admission, then answered here or
+//! handed to the engine with a token for the reply.
+
+use std::rc::Rc;
+use std::sync::Arc;
+use std::time::Instant;
+
+use futures::FutureExt;
+use pinc::{Connection, Hosted, NodeId, RecvStream, SendStream};
+use tracing::{debug, warn};
+
+use p2p::error::{Error, Result};
+use p2p::message::Message;
+use p2p::transport::{PeerId, TransportEvent};
+
+use super::addr::node_to_peer_id;
+use super::command::ReplyBody;
+use super::endpoint::{Node, REPLY_DEADLINE};
+use super::inbound_budget::{InboundLease, PeerShare};
+use super::protocol_stream::bridge;
+use super::services::{self, Service};
+use super::stream_protocols::{InboundStream, ProtocolRequest, Registered};
+use super::token::PincResponseToken;
+use super::wire;
+
+/// Stream reset codes.
+pub const RESET_UNKNOWN_SERVICE: u64 = 2;
+pub const RESET_MESSAGE_TOO_LARGE: u64 = 3;
+pub const RESET_BUSY: u64 = 4;
+pub const RESET_STALLED: u64 = 5;
+/// The engine dropped its token without replying.
+pub const RESET_DROPPED: u64 = 7;
+
+/// How long a reply may take to write before its stream is reset.
+const REPLY_WRITE_DEADLINE: std::time::Duration = std::time::Duration::from_secs(30);
+
+impl<H: Hosted + 'static> Node<H> {
+    /// Serve every stream `peer` opens on `connection` until it ends, then
+    /// forget the connection.
+    pub(super) async fn serve_connection(self: Rc<Self>, connection: Connection<H>, serial: u64) {
+        let peer = connection.remote();
+        let share = self.budget.peer_share(peer);
+        // The tag is read in the stream's own task, not here, so a peer that
+        // stalls before writing one cannot hold up its other streams.
+        while let Ok((send, recv)) = connection.accept_bi().await {
+            let server = Rc::clone(&self);
+            let share = Arc::clone(&share);
+            let conn = connection.clone();
+            let spawned = self.spawn(async move {
+                server.serve_stream(conn, serial, &share, send, recv).await;
+            });
+            if spawned.is_none() {
+                debug!(peer_id = %node_to_peer_id(&peer), "pinc stream refused: no room for its task");
+            }
+        }
+        debug!(peer_id = %node_to_peer_id(&peer), serial, "pinc connection ended");
+        if super::endpoint::hung_up_on(&connection) {
+            self.quiet.borrow_mut().insert(peer);
+        }
+        self.disconnected(&peer, serial).await;
+    }
+
+    async fn serve_stream(
+        self: Rc<Self>,
+        connection: Connection<H>,
+        serial: u64,
+        share: &Arc<PeerShare>,
+        mut send: SendStream<H>,
+        mut recv: RecvStream<H>,
+    ) {
+        let peer = connection.remote();
+        let peer_id = node_to_peer_id(&peer);
+        let idle = self.budget.deadlines().idle;
+        let tag = match p2p::rt::time::timeout(idle, pinc::read_tag(&mut recv)).await {
+            Ok(Ok(tag)) => tag,
+            Ok(Err(error)) => {
+                debug!(%peer_id, %error, "unreadable pinc stream tag");
+                recv.stop(RESET_UNKNOWN_SERVICE).await;
+                return;
+            }
+            Err(_) => {
+                recv.stop(RESET_STALLED).await;
+                return;
+            }
+        };
+        let protocols = self.stream_protocols.clone();
+        let defra = services::lookup(&tag);
+        let embedder = protocols.get(&tag);
+        let service = match (defra, embedder) {
+            (Some(service), _) => service,
+            (None, Some(registered)) => &registered.service,
+            (None, None) => {
+                debug!(%peer_id, tag = %String::from_utf8_lossy(&tag), "unknown pinc stream tag");
+                recv.stop(RESET_UNKNOWN_SERVICE).await;
+                return;
+            }
+        };
+        let Some((payload, lease)) = self.admit(&peer_id, share, service, &mut recv).await else {
+            return;
+        };
+        // The reply leaves at the class of its request.
+        let _ = send.set_urgency(service.priority.urgency()).await;
+        match (defra, embedder) {
+            (Some(service), _) => {
+                if let Err(error) = self
+                    .dispatch(service, &peer, &peer_id, serial, send, payload, lease)
+                    .await
+                {
+                    debug!(%peer_id, tag = %String::from_utf8_lossy(service.tag), %error, "pinc stream error");
+                }
+            }
+            (None, Some(registered)) => {
+                serve_protocol(registered, &connection, peer_id, send, recv, payload, lease).await;
+            }
+            (None, None) => {}
+        }
+    }
+
+    /// Read a stream's length, then wait for room for its body. Stops the
+    /// stream instead when the message is too large for its service, or no
+    /// room frees up in time.
+    async fn admit(
+        &self,
+        peer_id: &PeerId,
+        share: &Arc<PeerShare>,
+        service: &Service,
+        recv: &mut RecvStream<H>,
+    ) -> Option<(Vec<u8>, InboundLease)> {
+        let deadlines = self.budget.deadlines();
+        // A peer that sends a tag and stops before the whole length holds a
+        // task slot; the length read gets the same idle deadline as the tag.
+        let len = match p2p::rt::time::timeout(deadlines.idle, wire::read_length(recv)).await {
+            Ok(Ok(len)) => len,
+            Ok(Err(error)) => {
+                debug!(%peer_id, %error, "unreadable message length");
+                return None;
+            }
+            Err(_) => {
+                recv.stop(RESET_STALLED).await;
+                return None;
+            }
+        };
+        if len > service.max_message {
+            self.budget.record_oversized(service.priority);
+            recv.stop(RESET_MESSAGE_TOO_LARGE).await;
+            return None;
+        }
+        let Ok(lease) = self
+            .budget
+            .admit(share, service.priority, len, deadlines.admit)
+            .await
+        else {
+            recv.stop(RESET_BUSY).await;
+            return None;
+        };
+        let payload = p2p::rt::time::timeout(
+            deadlines.body(len),
+            wire::read_body_until_idle(recv, len, deadlines.idle),
+        )
+        .await
+        .unwrap_or(Ok(None))
+        .inspect_err(|e| debug!(%peer_id, error = %e, "unreadable message body"))
+        .ok()?;
+        let Some(payload) = payload else {
+            drop(lease);
+            recv.stop(RESET_STALLED).await;
+            return None;
+        };
+        Some((payload, lease))
+    }
+
+    /// Hold `send` for the engine's reply under a fresh token, or refuse the
+    /// stream busy when too many replies are owed.
+    async fn token(&self, send: SendStream<H>, serial: u64) -> Option<PincResponseToken> {
+        match self
+            .replies
+            .issue(send, serial, Instant::now() + REPLY_DEADLINE)
+        {
+            Ok(id) => Some(PincResponseToken::new(id, self.commands.clone())),
+            Err(mut send) => {
+                warn!("pinc reply table is full; refusing the request busy");
+                send.reset(RESET_BUSY).await;
+                None
+            }
+        }
+    }
+
+    async fn emit(&self, event: TransportEvent<PincResponseToken>, lease: InboundLease) {
+        let kind = event.kind();
+        if self
+            .events
+            .send_leased(event, Box::new(lease))
+            .await
+            .is_err()
+        {
+            warn!(kind, "Event channel closed, cannot emit a pinc request");
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn dispatch(
+        self: &Rc<Self>,
+        service: &'static Service,
+        peer: &NodeId,
+        peer_id: &PeerId,
+        serial: u64,
+        mut send: SendStream<H>,
+        payload: Vec<u8>,
+        lease: InboundLease,
+    ) -> Result<()> {
+        match service.tag {
+            services::STREAM_IDENTITY => {
+                let request: p2p::message::IdentityRequest = wire::decode(payload)?;
+                let response = self.identity_response(&request, peer_id);
+                write_reply(send, ReplyBody::Framed(wire::encode(&response)?)).await?;
+            }
+            services::STREAM_RECORD => {
+                self.directory.insert(*peer, payload);
+                drop(lease);
+                let _ = send.finish().await;
+            }
+            services::STREAM_PEERS => {
+                let learned = self.learn_peers(&payload);
+                drop(lease);
+                let _ = send.finish().await;
+                learned?;
+            }
+            services::STREAM_PUSHLOG => {
+                let request = wire::decode(payload)?;
+                if let Some(token) = self.token(send, serial).await {
+                    self.emit(
+                        TransportEvent::PushLogRequest {
+                            peer_id: peer_id.clone(),
+                            request,
+                            token,
+                        },
+                        lease,
+                    )
+                    .await;
+                }
+            }
+            services::STREAM_TWOSTREAM => {
+                let request = wire::decode(payload)?;
+                if let Some(token) = self.token(send, serial).await {
+                    self.emit(
+                        TransportEvent::TwoStreamRequest {
+                            peer_id: peer_id.clone(),
+                            request,
+                            token: Some(token),
+                            is_explicit_replicator: false,
+                            explicit_replay_authorization: None,
+                        },
+                        lease,
+                    )
+                    .await;
+                }
+            }
+            services::STREAM_DOCSYNC => {
+                let request = wire::decode(payload)?;
+                if let Some(token) = self.token(send, serial).await {
+                    self.emit(
+                        TransportEvent::DocSyncRequest {
+                            peer_id: peer_id.clone(),
+                            request,
+                            token: Some(token),
+                        },
+                        lease,
+                    )
+                    .await;
+                }
+            }
+            services::STREAM_BRANCHABLE => {
+                let request = wire::decode(payload)?;
+                if let Some(token) = self.token(send, serial).await {
+                    self.emit(
+                        TransportEvent::BranchableSyncRequest {
+                            peer_id: peer_id.clone(),
+                            request,
+                            token: Some(token),
+                        },
+                        lease,
+                    )
+                    .await;
+                }
+            }
+            services::STREAM_CAR => {
+                let request = wire::decode(payload)?;
+                if let Some(token) = self.token(send, serial).await {
+                    self.emit(
+                        TransportEvent::CarFetchRequest {
+                            peer_id: peer_id.clone(),
+                            request,
+                            token: Some(token),
+                        },
+                        lease,
+                    )
+                    .await;
+                }
+            }
+            services::STREAM_SE => {
+                let request: p2p::message::PushSEArtifactsRequest = wire::decode(&payload)?;
+                verify_signed_sender(peer_id, &request)?;
+                drop(request);
+                // The sender waits for this end before it lets go.
+                let _ = send.finish().await;
+                self.emit(
+                    TransportEvent::SEArtifactsReceived {
+                        peer_id: peer_id.clone(),
+                        data: payload,
+                    },
+                    lease,
+                )
+                .await;
+            }
+            services::STREAM_SE_QUERY => {
+                let request: p2p::message::QuerySEArtifactsRequest = wire::decode(payload)?;
+                verify_signed_sender(peer_id, &request)?;
+                if let Some(token) = self.token(send, serial).await {
+                    self.emit(
+                        TransportEvent::SEQueryRequest {
+                            peer_id: peer_id.clone(),
+                            request,
+                            token: Some(token),
+                        },
+                        lease,
+                    )
+                    .await;
+                }
+            }
+            services::STREAM_MANAGE => {
+                let request: p2p::message::ManageRequest = wire::decode(payload)?;
+                verify_signed_sender(peer_id, &request)?;
+                if let Some(token) = self.token(send, serial).await {
+                    self.emit(
+                        TransportEvent::ManageRequest {
+                            peer_id: peer_id.clone(),
+                            request,
+                            token: Some(token),
+                        },
+                        lease,
+                    )
+                    .await;
+                }
+            }
+            services::STREAM_MANAGE_QUERY => {
+                let request: p2p::message::ManageQueryRequest = wire::decode(payload)?;
+                verify_signed_sender(peer_id, &request)?;
+                if let Some(token) = self.token(send, serial).await {
+                    self.emit(
+                        TransportEvent::ManageQueryRequest {
+                            peer_id: peer_id.clone(),
+                            request,
+                            token: Some(token),
+                        },
+                        lease,
+                    )
+                    .await;
+                }
+            }
+            _ => {
+                send.reset(RESET_UNKNOWN_SERVICE).await;
+            }
+        }
+        Ok(())
+    }
+
+    fn identity_response(
+        &self,
+        request: &p2p::message::IdentityRequest,
+        peer_id: &PeerId,
+    ) -> p2p::message::IdentityResponse {
+        if request.peer_id != peer_id.as_str() {
+            return p2p::message::IdentityResponse::error(
+                &request.message_id,
+                "identity request peer did not match authenticated endpoint",
+            );
+        }
+        let Some(node_identity) = self.identity.as_deref() else {
+            return p2p::message::IdentityResponse::identity_unconfigured(&request.message_id);
+        };
+        match identity::new_token(
+            node_identity,
+            std::time::Duration::from_secs(60 * 60 * 24),
+            Some(peer_id.to_string()),
+            None,
+        ) {
+            Ok(token) => p2p::message::IdentityResponse::success(&request.message_id, token),
+            Err(error) => p2p::message::IdentityResponse::error(
+                &request.message_id,
+                &format!("failed to generate identity token: {error}"),
+            ),
+        }
+    }
+
+    /// Give the peer on `connection` this node's signed record, so it can
+    /// dial this node by id later and read its service-record pointer.
+    pub(super) async fn send_record(&self, connection: &Connection<H>) {
+        let record = match once_settled(|| self.ep.signed_record()).await {
+            Ok(record) => record,
+            Err(error) => {
+                debug!(%error, "pinc record could not be signed");
+                return;
+            }
+        };
+        let sent = async {
+            let (mut send, mut recv) = connection
+                .open_bi_tagged(services::STREAM_RECORD)
+                .await
+                .map_err(|e| wire::pinc_error("open record stream", e))?;
+            send.set_urgency(services::urgency_of(services::STREAM_RECORD))
+                .await
+                .map_err(|e| wire::pinc_error("record urgency", e))?;
+            wire::write_payload(&mut send, &record).await?;
+            send.finish()
+                .await
+                .map_err(|e| wire::pinc_error("finish record", e))?;
+            let _ = p2p::rt::time::timeout(std::time::Duration::from_secs(5), recv.read_to_end(16))
+                .await;
+            Ok::<_, Error>(())
+        };
+        if let Err(error) = sent.await {
+            debug!(%error, "pinc record not delivered");
+        }
+    }
+}
+
+/// How long a record call waits for pinc's relay client to settle on a relay.
+const RECORD_SETTLE_DEADLINE: std::time::Duration = std::time::Duration::from_secs(30);
+/// The longest pause between two record calls pinc refused as busy.
+const RECORD_RETRY_MAX: std::time::Duration = std::time::Duration::from_millis(100);
+
+/// Run `call` until pinc stops refusing it as busy, or until
+/// `RECORD_SETTLE_DEADLINE`. A node with hubs cannot sign or publish its
+/// record until its relay client has classified its reach and settled on a
+/// home relay; pinc asks the caller to try again shortly.
+pub(super) async fn once_settled<T, F, Fut>(mut call: F) -> pinc::Result<T>
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = pinc::Result<T>>,
+{
+    let end = Instant::now() + RECORD_SETTLE_DEADLINE;
+    let mut wait = std::time::Duration::from_millis(1);
+    loop {
+        match call().await {
+            Err(error) if error.kind() == pinc::ErrorKind::Busy && Instant::now() < end => {
+                p2p::rt::time::sleep(wait).await;
+                wait = (wait * 2).min(RECORD_RETRY_MAX);
+            }
+            done => return done,
+        }
+    }
+}
+
+/// Serve one embedder protocol stream: its handler runs until it returns, the
+/// protocol's deadline passes, or the connection closes, whichever comes
+/// first. A handler dropped at its deadline drops the stream's halves, and
+/// their pumps reset the stream, so the opener never mistakes a cut short
+/// reply for a whole one.
+async fn serve_protocol<H>(
+    registered: &Registered,
+    connection: &Connection<H>,
+    peer: PeerId,
+    send: SendStream<H>,
+    recv: RecvStream<H>,
+    request: Vec<u8>,
+    lease: InboundLease,
+) where
+    H: Hosted,
+{
+    let deadline = registered.protocol.deadline;
+    let (send, recv, pump_send, pump_recv) = bridge(send, recv);
+    let mut stream = InboundStream {
+        peer,
+        request: ProtocolRequest::new(request, lease),
+        deadline: Instant::now() + deadline,
+        send,
+        recv,
+    };
+    let handler = Arc::clone(&registered.handler);
+    let handled = async move {
+        handler.handle(&mut stream).await;
+        drop(stream);
+    };
+    let served = async {
+        let _ = p2p::rt::time::timeout(deadline, handled).await;
+    };
+    futures::select_biased! {
+        _ = connection.closed().fuse() => {}
+        _ = futures::future::join3(served, pump_send, pump_recv).fuse() => {}
+    }
+}
+
+/// Write `body` on `send` and end the stream. A requester that stops reading
+/// gets the stream reset once the write deadline passes.
+pub(super) async fn write_reply<H>(mut send: SendStream<H>, body: ReplyBody) -> Result<()>
+where
+    H: Hosted,
+{
+    let written = p2p::rt::time::timeout(REPLY_WRITE_DEADLINE, async {
+        match &body {
+            ReplyBody::Framed(payload) => wire::write_payload(&mut send, payload).await,
+            ReplyBody::Raw(bytes) => send
+                .write_all(bytes)
+                .await
+                .map_err(|e| wire::pinc_error("write CAR", e)),
+        }
+    })
+    .await;
+    let Ok(written) = written else {
+        send.reset(RESET_STALLED).await;
+        return Err(Error::ResponseTimeout);
+    };
+    written.map_err(|error| Error::ResponseSend(error.to_string()))?;
+    send.finish()
+        .await
+        .map_err(|e| Error::ResponseSend(format!("finish reply: {e}")))
+}
+
+/// A signed message whose signature verifies under its own public key, and
+/// whose signer is the peer pinc authenticated.
+pub(super) fn verify_signed_sender<M>(peer_id: &PeerId, msg: &M) -> Result<()>
+where
+    M: Message + serde::Serialize + Clone,
+{
+    if msg.sender_id() != peer_id.as_str() {
+        return Err(Error::Transport(format!(
+            "transport peer {peer_id} did not match signed sender {}",
+            msg.sender_id()
+        )));
+    }
+    let signature = msg.signature().ok_or(Error::MissingSignature)?;
+    let pubkey: [u8; 32] = msg
+        .pubkey()
+        .try_into()
+        .map_err(|_| Error::PublicKeyDecode("expected a 32-byte Ed25519 public key".into()))?;
+    if hex::encode(pubkey) != peer_id.as_str() {
+        return Err(Error::PubkeyPeerIdMismatch);
+    }
+    let key = ed25519_dalek::VerifyingKey::from_bytes(&pubkey)
+        .map_err(|error| Error::PublicKeyDecode(error.to_string()))?;
+    let signature =
+        ed25519_dalek::Signature::from_slice(signature).map_err(|_| Error::InvalidSignature)?;
+    let mut unsigned = msg.clone();
+    unsigned.set_signature(None);
+    let bytes =
+        defra_core::cbor::to_vec(&unsigned).map_err(|e| Error::CborSerialization(e.to_string()))?;
+    key.verify_strict(&bytes, &signature)
+        .map_err(|_| Error::InvalidSignature)
+}

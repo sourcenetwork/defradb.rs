@@ -24,22 +24,12 @@
 //! missing DAG links and fetches them via Bitswap.
 
 mod access;
-#[cfg(feature = "libp2p-transport")]
-mod filter;
 mod read_gate;
 mod registry;
-#[cfg(feature = "libp2p-transport")]
-mod store;
-#[cfg(feature = "libp2p-transport")]
-pub(crate) mod store_trait;
 
 pub use access::AccessMode;
-#[cfg(feature = "libp2p-transport")]
-pub use filter::make_peer_block_access_filter;
 pub use read_gate::{
     AllowAllBlockReadGate, BlockAcpMeta, BlockClass, BlockClassifier, BlockReadGate,
     DefaultBlockClassifier, LateBoundServeAcp, ServeAcp,
 };
 pub use registry::ReplicatorRegistry;
-#[cfg(feature = "libp2p-transport")]
-pub use store::BitswapStoreAdapter;

@@ -8,13 +8,13 @@ use std::time::Duration;
 use crate::assemble::check_access_hooks;
 use crate::assemble::{assemble, Extras};
 use crate::config::{NodeConfig, NodeSigning, Persistence, SigningKey, TransportConfig};
+#[cfg(feature = "p2p")]
+use crate::AccessHooks;
 #[cfg(feature = "http")]
 use crate::HttpConfig;
 use crate::Node;
 #[cfg(feature = "otel")]
 use crate::TelemetryHandle;
-#[cfg(feature = "p2p")]
-use crate::{AccessHooks, P2PConfig};
 #[cfg(feature = "vera")]
 use crate::{DocumentAcpConfig, VeraConfig};
 use crate::{Error, QueryLimits, Result};
@@ -63,7 +63,7 @@ pub struct NodeBuilder {
     #[cfg(feature = "p2p")]
     access_hooks: Option<AccessHooks>,
     #[cfg(feature = "p2p")]
-    stream_protocols: Vec<p2p::iroh::StreamRegistration>,
+    stream_protocols: Vec<defra_pinc::StreamRegistration>,
     #[cfg(feature = "otel")]
     telemetry_handle: Option<TelemetryHandle>,
     crdts: Vec<crdt::Registration>,
@@ -76,10 +76,6 @@ pub struct NodeBuilder {
     /// looks; when set, it takes precedence over an HTTP config's setting.
     #[cfg(not(target_arch = "wasm32"))]
     transaction_idle: Option<(Duration, Duration)>,
-    /// Where a libp2p transport's DNS layers read the resolver
-    /// configuration, when not the system's.
-    #[cfg(feature = "libp2p")]
-    resolver_source: Option<p2p::ResolverSource>,
 }
 
 /// Durability is a separate builder setting, so it is applied over the
@@ -392,17 +388,11 @@ impl NodeBuilder {
         self
     }
 
-    /// Enable Iroh/QUIC P2P replication.
+    /// Enable P2P replication over pinc: direct connections, and topics
+    /// through the hubs the config names.
     ///
     /// Requires the `p2p` feature, which implies `native`.
     #[cfg(feature = "p2p")]
-    pub fn with_p2p(mut self, config: P2PConfig) -> Self {
-        self.config.transport = TransportConfig::Iroh(config);
-        self
-    }
-
-    /// Enable P2P replication over pinc: direct connections, no gossip.
-    #[cfg(feature = "pinc")]
     pub fn with_pinc(mut self, config: crate::PincConfig) -> Self {
         self.config.transport = TransportConfig::Pinc(config);
         self
@@ -467,24 +457,6 @@ impl NodeBuilder {
         self
     }
 
-    /// Run libp2p replication, listening on `listen_addr`.
-    #[cfg(feature = "libp2p")]
-    pub fn with_libp2p(mut self, listen_addr: impl Into<String>) -> Self {
-        self.config.transport = TransportConfig::Libp2p(crate::Libp2pConfig {
-            listen_addrs: vec![listen_addr.into()],
-            ..Default::default()
-        });
-        self
-    }
-
-    /// Read the libp2p transport's DNS resolver configuration from `source`
-    /// rather than the system's, whichever libp2p transport the builder runs.
-    #[cfg(feature = "libp2p")]
-    pub fn with_resolver_source(mut self, source: p2p::ResolverSource) -> Self {
-        self.resolver_source = Some(source);
-        self
-    }
-
     /// Keep the transport identity in an application-owned keyring.
     ///
     /// The backend must provide durable storage and its own namespace per node.
@@ -542,28 +514,28 @@ impl NodeBuilder {
         self
     }
 
-    /// Install the app's own access control. Only an iroh node accepts it:
-    /// `build` fails for any other transport.
+    /// Install the app's own access control. Only a node with a P2P
+    /// transport accepts it: `build` fails without one.
     #[cfg(feature = "p2p")]
     pub fn with_access_hooks(mut self, hooks: AccessHooks) -> Self {
         self.access_hooks = Some(hooks);
         self
     }
 
-    /// Serve `protocol` on the node's iroh connections: a stream a peer opens
+    /// Serve `protocol` on the node's pinc connections: a stream a peer opens
     /// with its tag is admitted as Defra's own are, then handed to `handler`
-    /// on the network runtime. The handler reaches the database through the
-    /// node's request path ([`Node::execute_request`]); see
-    /// [`p2p::iroh::StreamHandler`]. A handler made before the node holds a
-    /// `Weak<Node>` set once `build` returns, and resets streams that arrive
-    /// before then by dropping them. `build` fails unless the transport is
-    /// iroh, for a protocol [`p2p::iroh::StreamProtocol::validate`] refuses,
-    /// and for a tag given twice.
+    /// on the endpoint's thread at the network edge. The handler reaches the
+    /// database through the node's request path ([`Node::execute_request`]);
+    /// see [`defra_pinc::StreamHandler`]. A handler made before the node holds
+    /// a `Weak<Node>` set once `build` returns, and resets streams that arrive
+    /// before then by dropping them. `build` fails without a P2P transport,
+    /// for a protocol [`defra_pinc::StreamProtocol::validate`] refuses, and
+    /// for a tag given twice.
     #[cfg(feature = "p2p")]
     pub fn with_stream_protocol(
         mut self,
-        protocol: p2p::iroh::StreamProtocol,
-        handler: Arc<dyn p2p::iroh::StreamHandler>,
+        protocol: defra_pinc::StreamProtocol,
+        handler: Arc<dyn defra_pinc::StreamHandler>,
     ) -> Self {
         self.stream_protocols.push((protocol, handler));
         self
@@ -597,9 +569,9 @@ impl NodeBuilder {
         check_access_hooks(&self.config, self.access_hooks.as_ref())?;
         #[cfg(feature = "p2p")]
         if !self.stream_protocols.is_empty()
-            && !matches!(self.config.transport, TransportConfig::Iroh(_))
+            && matches!(self.config.transport, TransportConfig::None)
         {
-            return Err(Error::StreamProtocolsNeedIroh);
+            return Err(Error::StreamProtocolsNeedP2P);
         }
 
         #[cfg(feature = "http")]
@@ -652,12 +624,6 @@ impl NodeBuilder {
             telemetry: self.telemetry_handle.take(),
         };
 
-        #[cfg(feature = "libp2p")]
-        if let (Some(source), TransportConfig::Libp2p(libp2p)) =
-            (self.resolver_source.take(), &mut self.config.transport)
-        {
-            libp2p.resolver = source;
-        }
         self.config.persistence = if self.data_path.is_some() {
             Persistence::Persistent
         } else {
@@ -758,7 +724,7 @@ impl NodeBuilder {
                 server
             };
 
-            #[cfg(any(feature = "p2p", feature = "libp2p"))]
+            #[cfg(feature = "p2p")]
             let server = if let Some(p2p) = node.p2p_arc() {
                 server.with_p2p_arc(p2p)
             } else {

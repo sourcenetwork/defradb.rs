@@ -13,7 +13,7 @@ use vera_modules::acp::{
     types::{Object, PolicyCmd},
 };
 
-use super::{assert_visibility, replication, submit};
+use super::{assert_visibility, chain, submit};
 
 fn owner_token(owner: &TestIdentity, worker: &NativeWorker) -> String {
     let key =
@@ -82,7 +82,7 @@ pub(super) async fn exercise(
             },
         )
         .await;
-        replication::wait_for_height(cluster, height).await;
+        chain::wait_for_height(cluster, height).await;
         let state = client
             .read_current_record(
                 ModuleId::Acp,
@@ -122,7 +122,7 @@ pub(super) async fn exercise(
             &owner.private_key_hex,
         )
         .expect("explicit grant after unarchive");
-    replication::wait_for_submission(cluster, 0).await;
+    chain::wait_for_submission(cluster, 0).await;
     let minimum = client
         .block_number()
         .await

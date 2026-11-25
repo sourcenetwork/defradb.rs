@@ -2,7 +2,7 @@
 
 use cli::config::{
     ApiConfig, DatastoreConfig, DatastoreType, KeyringBackend, KeyringConfig, LogConfig, LogFormat,
-    LogLevel, LogOutput, NetConfig, NetworkSecretHex,
+    LogLevel, LogOutput, NetConfig,
 };
 use cli::error::Error;
 use storage::backends::DurabilityMode;
@@ -55,10 +55,11 @@ fn test_datastore_config_defaults() {
 fn test_net_config_defaults() {
     let config = NetConfig::default();
     assert!(!config.p2p_disabled);
-    assert_eq!(config.p2p_addresses, vec!["/ip4/127.0.0.1/tcp/9171"]);
     assert!(config.peers.is_empty());
-    assert!(config.pubsub_enabled);
-    assert!(config.relay_enabled);
+    assert_eq!(config.pinc_bind_addr, None);
+    assert_eq!(config.pinc_bind_port, None);
+    assert!(config.pinc_allowed_peers.is_empty());
+    assert!(config.pinc_hubs.is_empty());
 }
 
 #[test]
@@ -142,67 +143,42 @@ fn test_api_config_tls_enabled_false_partial_config() {
 }
 
 #[test]
-fn test_net_config_validate_valid_multiaddr() {
-    let config = NetConfig::default();
+fn test_net_config_validate_valid_pinc_addresses() {
+    let config = NetConfig {
+        peers: vec![format!("{PEER_ID}@127.0.0.1:9171")],
+        pinc_hubs: vec![format!("{PEER_ID}@127.0.0.1:9172")],
+        ..Default::default()
+    };
     assert!(config.validate().is_ok());
 }
 
 #[test]
-fn test_net_config_validate_invalid_multiaddr() {
-    let config = NetConfig {
-        p2p_addresses: vec!["not-a-multiaddr".to_string()],
-        ..Default::default()
-    };
-    let result = config.validate();
-    assert!(matches!(result, Err(Error::InvalidMultiaddr(_))));
+fn test_net_config_validate_invalid_pinc_address() {
+    for config in [
+        NetConfig {
+            peers: vec!["/ip4/127.0.0.1/tcp/9171".to_string()],
+            ..Default::default()
+        },
+        NetConfig {
+            pinc_hubs: vec!["not-an-address".to_string()],
+            ..Default::default()
+        },
+    ] {
+        assert!(matches!(config.validate(), Err(Error::InvalidConfig(_))));
+    }
 }
 
 #[test]
 fn test_net_config_validate_skipped_when_p2p_disabled() {
     let config = NetConfig {
         p2p_disabled: true,
-        p2p_addresses: vec!["not-a-multiaddr".to_string()],
+        peers: vec!["not-an-address".to_string()],
         ..Default::default()
     };
     assert!(config.validate().is_ok());
 }
 
-#[test]
-fn service_record_settings_are_checked() {
-    let secret = "ab".repeat(32);
-    let valid = NetConfig {
-        iroh_network_secret: Some(NetworkSecretHex(secret.clone())),
-        iroh_service_role: Some("archive".into()),
-        iroh_custom_services: vec!["search".into()],
-        ..Default::default()
-    };
-    assert!(valid.validate().is_ok());
-    assert!(
-        !format!("{valid:?}").contains(&secret),
-        "the secret is redacted"
-    );
-
-    for invalid in [
-        NetConfig {
-            iroh_network_secret: Some(NetworkSecretHex("abcd".into())),
-            ..Default::default()
-        },
-        NetConfig {
-            iroh_network_secret: Some(NetworkSecretHex("zz".repeat(32))),
-            ..Default::default()
-        },
-        NetConfig {
-            iroh_service_role: Some("leader".into()),
-            ..Default::default()
-        },
-        NetConfig {
-            iroh_custom_services: vec!["x".repeat(129)],
-            ..Default::default()
-        },
-    ] {
-        assert!(matches!(invalid.validate(), Err(Error::InvalidConfig(_))));
-    }
-}
+const PEER_ID: &str = "ae58ff8833241ac82d6ff7611046ed67b5072d142c588d0063e942d9a75502b6";
 
 /// Every node started on a pre-`Option<u64>` binary had the old 1 GiB default
 /// serialized into its own `config.yaml` by `create_if_missing`. Reading it

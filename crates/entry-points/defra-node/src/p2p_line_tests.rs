@@ -1,22 +1,22 @@
 //! An update too large for gossip reaches the same peers a small one would,
 //! two hops away and document followers included (#2820).
 //!
-//! Three iroh nodes in a line, A - B - C, with A and C barred from each other.
-//! A node takes a gossip head only from an origin it is connected to, so C
-//! hears of A's writes only through B re-announcing them on merge
-//! (`rebroadcast_on_merge`). A write to every field of a 160-field document
-//! has a head block over gossip's budget, so each hop sends it as a direct
-//! PushLog push.
+//! Three pinc nodes in a line, A - B - C, on one hub, with A and C barred
+//! from each other. A node takes a gossip head only from an origin it is
+//! connected to, so C hears of A's writes only through B re-announcing them
+//! on merge (`rebroadcast_on_merge`). A write to every field of a 160-field
+//! document has a head block over gossip's budget, so each hop sends it as a
+//! direct PushLog push.
 //!
 //! These run on the edge runtime, as `p2p_tests.rs` does, because each node
-//! binds real iroh sockets.
+//! binds real UDP sockets.
 
 use std::net::{IpAddr, Ipv4Addr};
 use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
 
-use super::{Node, P2PConfig, PeerKeySource, SyncTuning};
+use super::{Node, PeerKeySource, PincConfig};
 
 const FIELDS: usize = 160;
 
@@ -37,26 +37,33 @@ fn input(base: usize) -> String {
     format!("{{{}}}", values.join(", "))
 }
 
-fn config(rebroadcast_on_merge: bool) -> P2PConfig {
-    P2PConfig {
-        port: Some(0),
-        bind_addr: Some(IpAddr::V4(Ipv4Addr::LOCALHOST)),
-        relay_mode: p2p::iroh::IrohRelayModeConfig::Disabled,
-        discovery: p2p::iroh::IrohDiscoveryConfig::Disabled,
-        allowlist: p2p::iroh::IrohAllowlistConfig::AcceptAll,
-        max_concurrent_multipath_paths: None,
-        secret_key_path: None,
+fn config(hub: &str, rebroadcast_on_merge: bool) -> PincConfig {
+    PincConfig {
+        bind: std::net::SocketAddr::from((IpAddr::V4(Ipv4Addr::LOCALHOST), 0)),
         load_persisted_collections: false,
         peer_key: PeerKeySource::File,
-        sync: SyncTuning::default(),
+        hubs: vec![hub.to_owned()],
         rebroadcast_on_merge,
+        ..Default::default()
     }
 }
 
+/// A hub on loopback, running until the task is dropped.
+async fn hub() -> (String, edge::Task<()>) {
+    let seed = defra_pinc::generate_seed().expect("hub seed");
+    crate::spawn_pinc_hub(
+        *seed,
+        std::net::SocketAddr::from((IpAddr::V4(Ipv4Addr::LOCALHOST), 0)),
+        edge::testing::edge(),
+    )
+    .await
+    .expect("hub")
+}
+
 /// A node with the Wide collection, subscribed to it when `subscribe`.
-async fn node(rebroadcast_on_merge: bool, subscribe: bool) -> Node {
+async fn node(hub: &str, rebroadcast_on_merge: bool, subscribe: bool) -> Node {
     let node = Node::builder()
-        .with_p2p(config(rebroadcast_on_merge))
+        .with_pinc(config(hub, rebroadcast_on_merge))
         .build()
         .await
         .expect("build node");
@@ -180,10 +187,10 @@ fn update(base: usize) -> String {
 
 /// A - B - C, with A and C barred from each other and B re-announcing what
 /// it merges when `relay`.
-async fn line(relay: bool) -> [Node; 3] {
-    let a = node(false, true).await;
-    let b = node(relay, true).await;
-    let c = node(false, true).await;
+async fn line(hub: &str, relay: bool) -> [Node; 3] {
+    let a = node(hub, false, true).await;
+    let b = node(hub, relay, true).await;
+    let c = node(hub, false, true).await;
     let (id_a, id_c) = (peer_id(&a).await, peer_id(&c).await);
     a.deny_p2p_peer(&id_c).await.expect("bar C from A");
     c.deny_p2p_peer(&id_a).await.expect("bar A from C");
@@ -204,7 +211,8 @@ async fn stop<const N: usize>(nodes: [Node; N]) {
 fn an_update_too_large_for_gossip_reaches_a_peer_two_hops_away() {
     edge::testing::edge()
         .block_on(async {
-            let [a, b, c] = line(true).await;
+            let (hub, _hub_task) = hub().await;
+            let [a, b, c] = line(&hub, true).await;
             on(&a, create(0)).await;
             wait_for_fields("B", &b, 0).await;
             wait_for_fields("C", &c, 0).await;
@@ -226,7 +234,8 @@ fn an_update_too_large_for_gossip_reaches_a_peer_two_hops_away() {
 fn without_the_middle_node_re_announcing_the_far_peer_never_gets_it() {
     edge::testing::edge()
         .block_on(async {
-            let [a, b, c] = line(false).await;
+            let (hub, _hub_task) = hub().await;
+            let [a, b, c] = line(&hub, false).await;
             on(&a, create(0)).await;
             wait_for_fields("B", &b, 0).await;
             sleep(5000).await;
@@ -243,8 +252,9 @@ fn without_the_middle_node_re_announcing_the_far_peer_never_gets_it() {
 fn a_document_follower_gets_an_update_too_large_for_gossip() {
     edge::testing::edge()
         .block_on(async {
-            let writer = node(false, true).await;
-            let follower = node(false, false).await;
+            let (hub, _hub_task) = hub().await;
+            let writer = node(&hub, false, true).await;
+            let follower = node(&hub, false, false).await;
             connect(&follower, &writer, 1).await;
             let created = on(&writer, create(0)).await;
             let doc_id = created["add_Wide"][0]["_docID"]

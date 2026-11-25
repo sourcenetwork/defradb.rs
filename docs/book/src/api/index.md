@@ -24,16 +24,17 @@ Defaults: `127.0.0.1:9181`, 300 s timeout, bounded concurrency.
 
 ## CLI (`crates/entry-points/cli`)
 
-`defra` starts a node (HTTP, optional pg-compat, iroh or libp2p, keyring-backed keys,
+`defra` starts a node (HTTP, optional pg-compat, P2P over pinc, keyring-backed keys,
 optional at-rest encryption, Vera or local ACP) and carries a full HTTP client surface
 (`defra client ...`: acp, backup, blocks, collections, documents, graphql, indexes,
-lens, p2p, txns, views), plus keyring, identity and SDL utilities.
+lens, p2p, txns, views), plus a pinc hub (`defra hub`), keyring, identity and SDL
+utilities.
 
 ## Embedded (`crates/entry-points/defra-node`)
 
 One node assembly, reached through `NodeBuilder`, which opens a regolith store (server or
 embedded sizing profile, in memory or at a path). The builder fills in one `NodeConfig`
-(transport: libp2p or iroh, signing, document ACP, node access control, query limits, sync
+(transport: pinc or none, signing, document ACP, node access control, query limits, sync
 knobs) and places the store on a pool (`storage::start_pool`); a node with no network starts
 no network runtime. FFI is built on it.
 

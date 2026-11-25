@@ -41,13 +41,3 @@ fn display_uses_the_wire_topic_name() {
     assert_eq!(DefraTopic::DocSync.to_string(), "doc-sync");
     assert_eq!(DefraTopic::SyncBranchable.to_string(), "sync-branchable");
 }
-
-#[cfg(feature = "libp2p-transport")]
-#[test]
-fn libp2p_topic_has_a_hash() {
-    assert!(!DefraTopic::DocSync
-        .to_ident_topic()
-        .hash()
-        .to_string()
-        .is_empty());
-}

@@ -331,7 +331,7 @@ pub enum Error {
     #[error("block not found: {0}")]
     BlockNotFound(String),
 
-    /// The iroh secret key could not be read, written or parsed.
+    /// The peer secret key could not be read, written or parsed.
     #[error("{0}")]
     SecretKey(String),
 
@@ -420,8 +420,8 @@ impl Error {
 
     /// Returns true if the error looks like a transport/connection teardown signal.
     ///
-    /// This is intentionally broader than a single enum variant because iroh and
-    /// libp2p surface many disconnect cases through stringified transport errors.
+    /// This is intentionally broader than a single enum variant because the
+    /// transport surfaces many disconnect cases through stringified errors.
     pub fn is_connection_like(&self) -> bool {
         match self {
             Error::ConnectionClosed
@@ -542,20 +542,6 @@ impl From<defra_core::cbor::Error> for Error {
             defra_core::cbor::Error::Deserialize(msg) => Error::CborDeserialization(msg),
             defra_core::cbor::Error::Serialize(msg) => Error::CborSerialization(msg),
         }
-    }
-}
-
-#[cfg(feature = "libp2p-transport")]
-impl From<libp2p::TransportError<io::Error>> for Error {
-    fn from(e: libp2p::TransportError<io::Error>) -> Self {
-        Error::Transport(e.to_string())
-    }
-}
-
-#[cfg(feature = "libp2p-transport")]
-impl From<libp2p::multiaddr::Error> for Error {
-    fn from(e: libp2p::multiaddr::Error) -> Self {
-        Error::InvalidMultiaddr(e.to_string())
     }
 }
 

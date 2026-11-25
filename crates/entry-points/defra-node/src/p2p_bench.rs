@@ -1,8 +1,7 @@
 //! Two-node peer-to-peer replication benchmarks.
 //!
 //! These measure how long it takes a write on one [`Node`] to become readable on
-//! a second [`Node`] in the same process, connected over Iroh with relays and
-//! discovery disabled.
+//! a second [`Node`] in the same process, connected over pinc on loopback.
 //!
 //! They are written as `#[ignore]`d tests rather than as criterion benchmarks. Criterion
 //! is built around many short, repeatable iterations of a pure function, whereas a single
@@ -21,7 +20,7 @@
 use std::net::{IpAddr, Ipv4Addr};
 use std::time::{Duration, Instant};
 
-use super::{Node, P2PConfig, PeerKeySource, QueryResponse, SyncTuning};
+use super::{Node, PeerKeySource, PincConfig, QueryResponse, SyncTuning};
 
 /// Document-set sizes each benchmark is run against.
 const DOC_COUNTS: &[usize] = &[1, 50, 500];
@@ -58,19 +57,13 @@ const POLL_INTERVAL: Duration = Duration::from_millis(1);
 
 const BENCH_SDL: &str = "type User { name: String age: Int }";
 
-fn bench_p2p_config() -> P2PConfig {
-    P2PConfig {
-        port: Some(0),
-        bind_addr: Some(IpAddr::V4(Ipv4Addr::LOCALHOST)),
-        relay_mode: p2p::iroh::IrohRelayModeConfig::Disabled,
-        discovery: p2p::iroh::IrohDiscoveryConfig::Disabled,
-        allowlist: p2p::iroh::IrohAllowlistConfig::AcceptAll,
-        max_concurrent_multipath_paths: None,
-        secret_key_path: None,
+fn bench_p2p_config() -> PincConfig {
+    PincConfig {
+        bind: std::net::SocketAddr::from((IpAddr::V4(Ipv4Addr::LOCALHOST), 0)),
         load_persisted_collections: false,
         peer_key: PeerKeySource::File,
         sync: SyncTuning::default(),
-        rebroadcast_on_merge: false,
+        ..Default::default()
     }
 }
 
@@ -104,7 +97,7 @@ struct ReplicationSpans {
 /// Builds a node with peer-to-peer enabled and the benchmark schema installed.
 async fn build_bench_node() -> Node {
     let node = Node::builder()
-        .with_p2p(bench_p2p_config())
+        .with_pinc(bench_p2p_config())
         .build()
         .await
         .expect("build P2P node");
@@ -272,7 +265,7 @@ async fn await_user_count(node: &Node, expected: usize) {
 
 /// Stops both nodes before the next measurement builds more.
 ///
-/// Neither `Node` nor the `P2PLifecycle` it owns has a `Drop` impl, so the Iroh
+/// Neither `Node` nor the `P2PLifecycle` it owns has a `Drop` impl, so the pinc
 /// endpoint and its background tasks survive the nodes going out of scope. Without this,
 /// every size in a benchmark would run alongside the leftovers of all the earlier ones.
 async fn shutdown_nodes(sender: &Node, receiver: &Node) {
@@ -481,7 +474,7 @@ struct PullOutcome {
 
     /// Whether `sync_documents` returned `Ok`.
     ///
-    /// The Iroh implementation ends in an unconditional `Ok(())` after its timeouts
+    /// The pinc implementation ends in an unconditional `Ok(())` after its timeouts
     /// expire, so this is recorded separately from what actually arrived.
     returned_ok: bool,
 
@@ -562,7 +555,7 @@ async fn measure_pull(doc_count: usize) -> PullOutcome {
 /// never seen, across [`PULL_DOC_COUNTS`].
 ///
 /// The duration is only half the result. `sync_documents` returns `P2PResult<()>` but its
-/// Iroh implementation ends in an unconditional `Ok(())` once its timeouts expire, so the
+/// pinc implementation ends in an unconditional `Ok(())` once its timeouts expire, so the
 /// document count on the receiving node - not the return value - is what says whether the
 /// pull worked.
 #[test]

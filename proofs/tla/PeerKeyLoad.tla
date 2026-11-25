@@ -30,8 +30,8 @@
 \*     (Red_StartKeyRecorded).
 \*
 \* Rust: crates/entry-points/defra-node/src/peer_key.rs load_with_keyring, load_or_create,
-\* StartPeerKey; crates/entry-points/defra-node/src/libp2p_runtime.rs assemble_libp2p and
-\* crates/entry-points/defra-node/src/p2p_runtime.rs setup_iroh, which pass the start key
+\* StartPeerKey; crates/entry-points/defra-node/src/pinc_runtime.rs setup_pinc, which
+\* passes the start key
 \* in; crates/entry-points/ffi/src/node/mod.rs, which maps p2p_private_key onto it.
 EXTENDS Naturals
 

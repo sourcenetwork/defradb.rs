@@ -14,18 +14,18 @@ use crate::{
     ReplicatorPushOptionsState, TransportPeerId,
 };
 
-use p2p::pinc::{
+use defra_pinc::PincSyncCoordinator;
+use defra_pinc::{
     best_shareable_public_addr, canonical_peer_id, format_public_listen_addrs,
     parse_canonical_peer_id, parse_public_peer_addr, PincTransport,
 };
-use p2p::sync::PincSyncCoordinator;
 use p2p::topics::DefraTopic;
 use p2p::P2PTransport;
 
 const DOC_SYNC_DISPATCH_PARALLELISM: usize = 16;
 
 /// Wait for `collection_id`'s merges until none came for `idle_timeout`, or
-/// `overall_timeout` from `start` passed. A copy of libp2p's wait.
+/// `overall_timeout` from `start` passed.
 async fn wait_for_branchable_merges(
     sub: &mut events::Subscription,
     collection_id: &str,
@@ -278,8 +278,7 @@ impl<B: Blockstore + 'static> PincP2PAdapter<B> {
     }
 }
 
-#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
-#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[async_trait]
 impl<B: Blockstore + 'static> P2POperations for PincP2PAdapter<B> {
     fn bind_request(&self, context: &defra_core::RequestContext) -> Option<Arc<dyn P2POperations>> {
         Some(Arc::new(Self {
@@ -527,7 +526,7 @@ impl<B: Blockstore + 'static> P2POperations for PincP2PAdapter<B> {
         self.transport
             .allow_peer(
                 &peer_id,
-                p2p::pinc::AdmissionAuthority::new(true, may_revoke),
+                defra_pinc::AdmissionAuthority::new(true, may_revoke),
             )
             .await
             .map_err(|error| P2PError::transport(error.to_string()))
@@ -1109,7 +1108,7 @@ impl<B: Blockstore + 'static> P2POperations for PincP2PAdapter<B> {
             P2PError::internal(format!("failed to sign BranchableSync request: {error}"))
         })?;
 
-        // As on libp2p, the call returns once the merges the replies started
+        // The call returns once the merges the replies started
         // have gone quiet, so a read right after it sees the synced documents.
         let mut merges = self.event_bus.as_ref().map(|bus| {
             (
@@ -1118,7 +1117,7 @@ impl<B: Blockstore + 'static> P2POperations for PincP2PAdapter<B> {
             )
         });
         let start = web_time::Instant::now();
-        // Each request runs on its own, as on libp2p, so a silent peer cannot
+        // Each request runs on its own, so a silent peer cannot
         // hold the others back or use up the merge window before they are asked.
         for peer in connected_peers {
             let transport = self.transport.clone();
@@ -1165,7 +1164,7 @@ impl<B: Blockstore + 'static> P2POperations for PincP2PAdapter<B> {
             .version_syncer
             .as_ref()
             .ok_or_else(|| P2PError::unsupported("version syncer required"))?;
-        // The call returns once the versions are synced, as libp2p's and Go's do.
+        // The call returns once the versions are synced, as Go's does.
         syncer.sync_versions(version_ids, connected_peers).await
     }
 

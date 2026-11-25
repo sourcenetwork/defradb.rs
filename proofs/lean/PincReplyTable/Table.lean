@@ -28,7 +28,7 @@ the TLA+ model `proofs/tla/PincReplyBridge.tla`; this file carries the table
 laws that model takes on trust.
 
 Rust anchors: `ReplyTable::issue`, `ReplyTable::take`, `ReplyTable::purge` and
-`ReplyTable::sweep` (`crates/database/p2p/src/pinc/reply_table.rs`).
+`ReplyTable::sweep` (`crates/database/pinc/src/reply_table.rs`).
 -/
 
 namespace PincReplyTable

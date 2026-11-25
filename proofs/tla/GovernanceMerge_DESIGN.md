@@ -52,9 +52,8 @@ corrupts state.
   `enqueue_ready` and `redrive_deferred`: `Sweep` with `SweepScope = "Unmerged"`.
   `:124` `SWEEP_INTERVAL` (60 s) and `:129` `run_governance_sweep`, which runs
   one pass at startup (`Crash` followed by `Sweep`) and then on the interval.
-  Spawned from `crates/entry-points/defra-node/src/libp2p_runtime.rs`,
-  `crates/surfaces/p2p-adapter/src/iroh_peer/peer.rs:278` and
-  `crates/entry-points/cli/src/commands/start/server_p2p/libp2p.rs:225`.
+  Spawned from `crates/surfaces/p2p-adapter/src/pinc_peer/peer.rs`
+  `PincPeer::assemble`, which the CLI and defra-node both start.
 - `crates/database/p2p/src/sync/replication/handlers.rs:429` — a non-terminal
   `Skipped` is not marked merged, so the composite stays in the unmerged set
   the sweep walks. `Unmerged(r)`.

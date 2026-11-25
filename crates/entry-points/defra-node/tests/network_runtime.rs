@@ -5,7 +5,7 @@
 //! build runs on a plain thread with no runtime entered, so a transport that
 //! looked for one ambiently would panic here.
 
-#![cfg(any(feature = "libp2p", feature = "p2p"))]
+#![cfg(feature = "p2p")]
 
 #[path = "support/outcome.rs"]
 mod outcome;
@@ -32,22 +32,10 @@ async fn database_edge(config: NodeConfig) -> Result<Option<edge::Edge>> {
     Ok(edge)
 }
 
-#[cfg(feature = "libp2p")]
-fn libp2p() -> TransportConfig {
-    TransportConfig::Libp2p(defra_node::Libp2pConfig {
-        listen_addrs: vec!["/ip4/127.0.0.1/tcp/0".to_string()],
-        ..Default::default()
-    })
-}
-
 #[cfg(feature = "p2p")]
-fn iroh() -> TransportConfig {
-    TransportConfig::Iroh(defra_node::P2PConfig {
-        bind_addr: Some(std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST)),
-        port: Some(0),
-        relay_mode: p2p::iroh::IrohRelayModeConfig::Disabled,
-        discovery: p2p::iroh::IrohDiscoveryConfig::Disabled,
-        max_concurrent_multipath_paths: None,
+fn pinc() -> TransportConfig {
+    TransportConfig::Pinc(defra_node::PincConfig {
+        bind: std::net::SocketAddr::new(std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST), 0),
         secret_key_path: None,
         allowlist: Default::default(),
         peer_key: defra_node::PeerKeySource::Store,
@@ -55,83 +43,26 @@ fn iroh() -> TransportConfig {
     })
 }
 
-#[cfg(feature = "libp2p")]
-#[test]
-fn a_transport_without_a_network_runtime_runs_on_the_process_runtime() -> Result<()> {
-    workers::block_on(build_and_stop(NodeConfig {
-        transport: libp2p(),
-        ..Default::default()
-    }))
-    .unwrap()
-}
-
-#[cfg(feature = "libp2p")]
-#[test]
-fn a_transport_runs_on_the_network_runtime_it_is_given() -> Result<()> {
-    workers::block_on(build_and_stop(NodeConfig {
-        transport: libp2p(),
-        edge: Some(edge::testing::edge()),
-        ..Default::default()
-    }))
-    .unwrap()
-}
-
 #[cfg(feature = "p2p")]
 #[test]
-fn an_iroh_transport_runs_on_the_network_runtime_it_is_given() -> Result<()> {
+fn a_pinc_transport_runs_on_the_network_runtime_it_is_given() -> Result<()> {
     workers::block_on(build_and_stop(NodeConfig {
-        transport: iroh(),
+        transport: pinc(),
         edge: Some(edge::testing::edge()),
         ..Default::default()
     }))
     .unwrap()
 }
 
-#[cfg(feature = "libp2p")]
-#[test]
-fn a_node_without_a_network_runtime_starts_one_for_its_database_and_stops_it() -> Result<()> {
-    workers::block_on(async {
-        let edge = database_edge(NodeConfig {
-            transport: libp2p(),
-            ..Default::default()
-        })
-        .await?
-        .expect("a transport needs a network runtime");
-        assert!(edge.is_closed(), "the node stops a runtime it started");
-        Ok(())
-    })
-    .unwrap()
-}
-
-#[cfg(feature = "libp2p")]
-#[test]
-fn a_node_gives_its_database_a_scope_of_the_network_runtime_it_is_given() -> Result<()> {
-    workers::block_on(async {
-        let given = edge::testing::edge();
-        let edge = database_edge(NodeConfig {
-            transport: libp2p(),
-            edge: Some(given.clone()),
-            ..Default::default()
-        })
-        .await?
-        .expect("a given runtime is used");
-        assert_ne!(edge, given, "the node works through a scope of its own");
-        assert!(edge.is_closed(), "shutdown drains the node's scope");
-        assert!(!given.is_closed(), "and leaves the runtime it was given");
-        Ok(())
-    })
-    .unwrap()
-}
-
-/// On the shared test runtime, not a plain thread: an iroh node's shutdown
+/// On the shared test runtime, not a plain thread: a pinc node's shutdown
 /// waits on the runtime it is called from.
 #[cfg(feature = "p2p")]
 #[test]
-fn an_iroh_node_without_a_network_runtime_starts_one_for_its_database_and_stops_it() -> Result<()> {
+fn a_pinc_node_without_a_network_runtime_starts_one_for_its_database_and_stops_it() -> Result<()> {
     edge::testing::edge()
         .block_on(async {
             let edge = database_edge(NodeConfig {
-                transport: iroh(),
+                transport: pinc(),
                 ..Default::default()
             })
             .await?

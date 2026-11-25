@@ -39,8 +39,6 @@ use std::time::Duration;
 use tracing::{debug, warn};
 
 use crate::peer_identity::PeerIdentityResolver;
-#[cfg(feature = "libp2p-transport")]
-use crate::pubsub_rpc::response_topic;
 use crate::pubsub_rpc::{derive_request_id, Correlator, InternalResponse, PublishOptions};
 use crate::topics::{DefraTopic, ENCRYPTION_TOPIC};
 use crate::transport::{P2PTransport, PeerId};
@@ -124,12 +122,6 @@ impl<T: P2PTransport> PubsubKeyTransport<T> {
         // (Go wire-compat guarantee); otherwise -- and for peer ids that do
         // not parse as libp2p ids, e.g. iroh hex -- join the transport-native
         // string. For a base58 libp2p id both spellings are identical.
-        #[cfg(feature = "libp2p-transport")]
-        let self_response_topic = match local_peer_id.parse::<libp2p::PeerId>() {
-            Ok(pid) => response_topic(ENCRYPTION_TOPIC, &pid),
-            Err(_) => format!("{ENCRYPTION_TOPIC}/{local_peer_id}/_response"),
-        };
-        #[cfg(not(feature = "libp2p-transport"))]
         let self_response_topic = format!("{ENCRYPTION_TOPIC}/{local_peer_id}/_response");
 
         transport
@@ -319,10 +311,7 @@ impl<T: P2PTransport> PubsubKeyTransport<T> {
                 return;
             }
         };
-        // Build the caller's `_response` sub-topic from the transport-native
-        // peer-id string. Identical to `response_topic(ENCRYPTION_TOPIC, &pid)`
-        // for a libp2p base58 `from` (Go wire-compat), and correct for iroh hex
-        // peer ids that do not parse as a `libp2p::PeerId`.
+        // The caller's `_response` sub-topic, from its peer id.
         let reply_topic = format!("{ENCRYPTION_TOPIC}/{from}/_response");
         if let Err(e) = self
             .publish_with_graft_retry(reply_topic.clone(), bytes)
@@ -597,7 +586,7 @@ impl<T: P2PTransport> KeyTransport for PubsubKeyTransport<T> {
     }
 }
 
-#[cfg(all(test, feature = "libp2p-transport"))]
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::error::{Error, Result};
@@ -614,8 +603,9 @@ mod tests {
 
     type PublishedRawMessages = Arc<Atom<Vec<(String, Vec<u8>)>>>;
 
-    fn a_libp2p_peer() -> libp2p::PeerId {
-        libp2p::PeerId::from_public_key(&libp2p::identity::Keypair::generate_ed25519().public())
+    /// A fresh peer id, 64 hex digits as a pinc id is spelled.
+    fn a_peer() -> String {
+        hex::encode(uuid::Uuid::new_v4().as_bytes().repeat(2))
     }
 
     /// Mock transport that records raw publishes and mimics the gossipsub
@@ -634,10 +624,10 @@ mod tests {
 
     impl RacyTransport {
         fn new(subscriber_visible_after: usize) -> Self {
-            let lp = a_libp2p_peer().to_string();
+            let lp = a_peer().to_string();
             Self {
                 local_peer_id: PeerId::new(lp),
-                peer: PeerId::new(a_libp2p_peer().to_string()),
+                peer: PeerId::new(a_peer().to_string()),
                 topic_peers_calls: Arc::new(AtomicUsize::new(0)),
                 subscriber_visible_after,
                 publish_attempts: Arc::new(AtomicUsize::new(0)),
@@ -952,7 +942,7 @@ mod tests {
             data,
             from: Vec::new(),
         };
-        let responder = a_libp2p_peer();
+        let responder = a_peer();
         kt.dispatch_incoming(
             responder.to_string(),
             kt.self_response_topic().to_string(),
@@ -1004,7 +994,7 @@ mod tests {
             from: Vec::new(),
         };
         kt.dispatch_incoming(
-            a_libp2p_peer().to_string(),
+            a_peer().to_string(),
             kt.self_response_topic().to_string(),
             empty_envelope.to_cbor().unwrap(),
         )
@@ -1015,7 +1005,7 @@ mod tests {
             blocks: vec![vec![4, 5, 6]],
             ephemeral_public_key: vec![7; 32],
         };
-        let key_responder = a_libp2p_peer();
+        let key_responder = a_peer();
         let key_envelope = InternalResponse {
             id: request_id.to_string(),
             err: String::new(),
@@ -1081,7 +1071,7 @@ mod tests {
                 from: Vec::new(),
             };
             kt.dispatch_incoming(
-                a_libp2p_peer().to_string(),
+                a_peer().to_string(),
                 kt.self_response_topic().to_string(),
                 envelope.to_cbor().unwrap(),
             )
@@ -1151,7 +1141,7 @@ mod tests {
                 from: Vec::new(),
             };
             kt.dispatch_incoming(
-                a_libp2p_peer().to_string(),
+                a_peer().to_string(),
                 kt.self_response_topic().to_string(),
                 envelope.to_cbor().unwrap(),
             )
@@ -1226,7 +1216,7 @@ mod tests {
                 from: Vec::new(),
             };
             kt.dispatch_incoming(
-                a_libp2p_peer().to_string(),
+                a_peer().to_string(),
                 kt.self_response_topic().to_string(),
                 envelope.to_cbor().unwrap(),
             )
@@ -1312,7 +1302,7 @@ mod tests {
         let transport = RacyTransport::new(0);
         let published = transport.published.clone();
         let source_peer_id = transport.local_peer_id().to_string();
-        let caller = a_libp2p_peer();
+        let caller = a_peer();
         let authorizer =
             identity::RawIdentity::from_private_key(crypto::generate_ed25519().unwrap()).unwrap();
         let capability = crate::generate_explicit_replay_capability(
@@ -1346,7 +1336,7 @@ mod tests {
             .await;
 
         let pubs = published.load();
-        let expected_topic = response_topic(ENCRYPTION_TOPIC, &caller);
+        let expected_topic = format!("{ENCRYPTION_TOPIC}/{caller}/_response");
         let reply_pub = pubs
             .iter()
             .find(|(t, _)| *t == expected_topic)
@@ -1425,7 +1415,7 @@ mod tests {
 
         let transport = RacyTransport::new(0);
         let published = transport.published.clone();
-        let caller = a_libp2p_peer();
+        let caller = a_peer();
         let resolved_did: identity::Did = "did:key:zalice".parse().unwrap();
         let seen = Arc::new(AtomOption::none());
         let kt = PubsubKeyTransport::new(
@@ -1451,7 +1441,7 @@ mod tests {
             Arc::new(EchoHandler { seen: seen.clone() }),
         );
 
-        let expected_topic = response_topic(ENCRYPTION_TOPIC, &caller);
+        let expected_topic = format!("{ENCRYPTION_TOPIC}/{caller}/_response");
         let mut served = false;
         for _ in 0..100 {
             if published.load().iter().any(|(t, _)| *t == expected_topic) {

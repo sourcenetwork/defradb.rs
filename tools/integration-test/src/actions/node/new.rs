@@ -76,18 +76,11 @@ pub struct NewNode {
     /// A Rust node with the given admission limits.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub admission: Option<AdmissionSpec>,
-    /// A Rust node whose network is iroh rather than libp2p.
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub iroh: bool,
     /// A Rust node that takes its node identity from the process's signing
     /// registry, where the test registers it first as an FFI host does,
     /// rather than loading it from a key it is given.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub registered_identity: bool,
-    /// A Rust node whose libp2p DNS layers read this `resolv.conf` text in
-    /// place of the host's file.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub resolv_conf: Option<String>,
     /// A Rust node with no node identity at all, neither one of Go's
     /// `NodeIdentity(i)` nor a key of its own, so it neither signs nor
     /// authenticates as a node.
@@ -128,8 +121,6 @@ impl Op for NewNode {
         probe.network = false;
         probe.database_dir = None;
         probe.admission = None;
-        probe.resolv_conf = None;
-        probe.iroh = false;
         probe.registered_identity = false;
         probe.without_node_identity = false;
         probe.go_config = None;
@@ -192,8 +183,6 @@ impl Op for NewNode {
             listen,
             go_config: self.go_config.is_some(),
             admission: self.admission.clone(),
-            resolv_conf: self.resolv_conf(state.client_type())?,
-            iroh_network: self.iroh,
             node_identity,
             registered_identity,
             go_index: Some(go_index),
@@ -215,8 +204,9 @@ impl Op for NewNode {
 }
 
 /// Loads a Go-written `config.yaml` through the CLI's loader, as `defradb
-/// --rootdir <dir>` does, and answers whether the node runs P2P and the
-/// addresses it listens on.
+/// --rootdir <dir>` does, and answers whether the node runs P2P. Go's listen
+/// addresses are libp2p's, which a pinc node has no use for, so the node
+/// listens where any other test node does.
 fn go_config_network(body: &str) -> Result<(bool, Vec<String>), Failure> {
     use clap::Parser;
     let root = tempfile::tempdir()
@@ -229,7 +219,7 @@ fn go_config_network(body: &str) -> Result<(bool, Vec<String>), Failure> {
         .map_err(|e| Failure::operation(format!("could not parse the CLI arguments: {e}")))?;
     let config = cli::config::Config::load(&args)
         .map_err(|e| Failure::operation(format!("could not load config.yaml: {e}")))?;
-    Ok((!config.net.p2p_disabled, config.net.p2p_addresses))
+    Ok((!config.net.p2p_disabled, Vec::new()))
 }
 
 impl NewNode {
@@ -244,18 +234,6 @@ impl NewNode {
         key.try_into()
             .map(Some)
             .map_err(|_| Failure::operation("an AES-256 key is 32 bytes".into()))
-    }
-
-    /// The `resolv.conf` text the node's DNS layers read. Only a unix host
-    /// reads one, so elsewhere the option is unsupported.
-    fn resolv_conf(&self, client: ClientType) -> Result<Option<String>, Failure> {
-        match (&self.resolv_conf, cfg!(unix)) {
-            (Some(_), false) => Err(Failure::unsupported(format!(
-                "{} argument resolvConf under {client:?}: only a unix host reads resolv.conf",
-                Self::name()
-            ))),
-            (text, _) => Ok(text.clone()),
-        }
     }
 
     /// The gate the node's index backfills pass, Go's `db.IndexBuildGate`. It

@@ -5,7 +5,7 @@ use std::collections::BTreeSet;
 use clap::{Args, Parser};
 use cli::cli::{Cli, Command};
 use cli::commands::StartArgs;
-use cli::config::{Config, DatastoreType, TransportType};
+use cli::config::{Config, DatastoreType};
 use cli::error::Error;
 #[cfg(feature = "orbis")]
 use identity::Identity as _;
@@ -15,10 +15,13 @@ fn default_start_args() -> StartArgs {
     StartArgs {
         profile: false,
         peers: None,
+        pinc_bind_addr: None,
+        pinc_bind_port: None,
+        pinc_hubs: None,
+        pinc_allowed_peers: None,
         max_txn_retries: None,
         store: None,
         valuelogfilesize: None,
-        p2paddr: None,
         no_p2p: None,
         allowed_origins: None,
         pubkeypath: None,
@@ -47,14 +50,6 @@ fn default_start_args() -> StartArgs {
         request_timeout: None,
         commit_timeout_ms: None,
         max_concurrent_requests: None,
-        max_msg_size: None,
-        max_car_size: None,
-        stream_timeout: None,
-        max_p2p_tasks: None,
-        connection_manager_low_water: None,
-        connection_manager_high_water: None,
-        connection_manager_grace_period_ms: None,
-        max_connections_per_peer: None,
         p2p_rate_limit_burst: None,
         p2p_rate_limit_rate: None,
         p2p_max_doc_sync_request_doc_ids: None,
@@ -73,7 +68,6 @@ fn default_start_args() -> StartArgs {
         query_max_width: None,
         query_max_filter_depth: None,
         query_max_fragment_nesting: None,
-        p2p_transport: None,
         #[cfg(feature = "postgres")]
         pg_address: None,
         acp_cache_ttl: None,
@@ -151,10 +145,13 @@ fn test_apply_to_config_all_flags() {
     let args = StartArgs {
         profile: false,
         peers: Some(vec!["peer1".to_string(), "peer2".to_string()]),
+        pinc_bind_addr: Some(std::net::IpAddr::from([127, 0, 0, 1])),
+        pinc_bind_port: Some(4001),
+        pinc_hubs: Some(vec!["hub1".to_string()]),
+        pinc_allowed_peers: Some(vec!["peer1".to_string()]),
         max_txn_retries: Some(10),
         store: Some("memory".to_string()),
         valuelogfilesize: Some(2 << 30),
-        p2paddr: Some(vec!["/ip4/0.0.0.0/tcp/4001".to_string()]),
         no_p2p: Some(true),
         allowed_origins: Some(vec!["http://localhost:3000".to_string()]),
         pubkeypath: Some("/path/to/pub.key".to_string()),
@@ -183,14 +180,6 @@ fn test_apply_to_config_all_flags() {
         request_timeout: Some(120),
         commit_timeout_ms: Some(45),
         max_concurrent_requests: Some(500),
-        max_msg_size: Some(32 * 1024 * 1024),
-        max_car_size: Some(128 * 1024 * 1024),
-        stream_timeout: Some(60),
-        max_p2p_tasks: Some(128),
-        connection_manager_low_water: Some(200),
-        connection_manager_high_water: Some(800),
-        connection_manager_grace_period_ms: Some(10_000),
-        max_connections_per_peer: Some(8),
         p2p_rate_limit_burst: Some(32),
         p2p_rate_limit_rate: Some(4.5),
         p2p_max_doc_sync_request_doc_ids: Some(64),
@@ -209,7 +198,6 @@ fn test_apply_to_config_all_flags() {
         query_max_width: Some(64),
         query_max_filter_depth: Some(24),
         query_max_fragment_nesting: Some(48),
-        p2p_transport: Some("libp2p".to_string()),
         #[cfg(feature = "postgres")]
         pg_address: Some("127.0.0.1:5433".to_string()),
         acp_cache_ttl: Some(600),
@@ -225,14 +213,6 @@ fn test_apply_to_config_all_flags() {
     let result = args.apply_to_config(&mut config);
     assert!(result.is_ok());
 
-    assert_eq!(config.net.max_msg_size, 32 * 1024 * 1024);
-    assert_eq!(config.net.max_car_size, 128 * 1024 * 1024);
-    assert_eq!(config.net.stream_timeout, 60);
-    assert_eq!(config.net.max_p2p_tasks, 128);
-    assert_eq!(config.net.connection_manager_low_water, 200);
-    assert_eq!(config.net.connection_manager_high_water, 800);
-    assert_eq!(config.net.connection_manager_grace_period_ms, 10_000);
-    assert_eq!(config.net.max_connections_per_peer, 8);
     assert_eq!(config.net.p2p_rate_limit_burst, 32);
     assert_eq!(config.net.p2p_rate_limit_rate, 4.5);
     assert_eq!(config.net.p2p_max_doc_sync_request_doc_ids, 64);
@@ -255,7 +235,13 @@ fn test_apply_to_config_all_flags() {
     assert_eq!(config.datastore.store, DatastoreType::Memory);
     assert_eq!(config.datastore.valuelogfilesize, Some(2 << 30));
     assert_eq!(config.datastore.durability, DurabilityMode::Eventual);
-    assert_eq!(config.net.p2p_addresses, vec!["/ip4/0.0.0.0/tcp/4001"]);
+    assert_eq!(
+        config.net.pinc_bind_addr,
+        Some(std::net::IpAddr::from([127, 0, 0, 1]))
+    );
+    assert_eq!(config.net.pinc_bind_port, Some(4001));
+    assert_eq!(config.net.pinc_hubs, vec!["hub1"]);
+    assert_eq!(config.net.pinc_allowed_peers, vec!["peer1"]);
     assert!(config.net.p2p_disabled);
     assert_eq!(config.api.allowed_origins, vec!["http://localhost:3000"]);
     assert_eq!(config.api.pubkey_path, "/path/to/pub.key");
@@ -273,7 +259,6 @@ fn test_apply_to_config_all_flags() {
     assert_eq!(config.api.query_max_width, 64);
     assert_eq!(config.api.query_max_filter_depth, 24);
     assert_eq!(config.api.query_max_fragment_nesting, 48);
-    assert_eq!(config.net.transport, TransportType::Libp2p);
     #[cfg(feature = "postgres")]
     assert_eq!(config.api.pg_address, "127.0.0.1:5433");
     assert_eq!(config.acp.cache_ttl, 600);
@@ -374,20 +359,15 @@ const STORAGE_START_FLAGS: &[&str] = &[
     "max-merge-depth",
 ];
 
-// Consumed by start/p2p.rs and start/server_p2p/ host construction.
+// Consumed by start/p2p.rs and start/server_p2p/ pinc peer construction.
 const P2P_START_FLAGS: &[&str] = &[
     "peers",
-    "p2paddr",
+    "pinc-bind-addr",
+    "pinc-bind-port",
+    "pinc-hubs",
+    "pinc-allowed-peers",
     "no-p2p",
     "replicator-retry-intervals",
-    "max-msg-size",
-    "max-car-size",
-    "stream-timeout",
-    "max-p2p-tasks",
-    "connection-manager-low-water",
-    "connection-manager-high-water",
-    "connection-manager-grace-period-ms",
-    "max-connections-per-peer",
     "p2p-rate-limit-burst",
     "p2p-rate-limit-rate",
     "p2p-max-doc-sync-request-doc-ids",
@@ -398,7 +378,6 @@ const P2P_START_FLAGS: &[&str] = &[
     "p2p-push-queue-capacity",
     "p2p-push-queue-byte-capacity",
     "p2p-max-active-pushes-per-peer",
-    "p2p-transport",
 ];
 
 // Consumed by start/server_http.rs; limit and signing behavior is asserted in

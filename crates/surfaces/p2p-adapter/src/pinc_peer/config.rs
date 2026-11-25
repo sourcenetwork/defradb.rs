@@ -2,9 +2,9 @@
 
 use std::sync::Arc;
 
+use defra_pinc::PincEndpointConfig;
 use edge::Edge;
 use p2p::bitswap::AccessMode;
-use p2p::pinc::PincEndpointConfig;
 use p2p::sync::SyncConfig;
 use storage::stores::RetrySchedule;
 

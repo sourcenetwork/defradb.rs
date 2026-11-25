@@ -34,9 +34,9 @@ futures.workspace = true
 paste = "1.0"
 ctor = "1.0"
 chrono = { version = "0.4" }
-defra-node = { path = "../../crates/entry-points/defra-node", features = ["http", "libp2p", "p2p"] }
-# Embedder stream protocols: the testo actions register and open them on iroh nodes.
-p2p = { path = "../../crates/database/p2p", features = ["iroh-transport"] }
+defra-node = { path = "../../crates/entry-points/defra-node", features = ["http", "p2p"] }
+# Embedder stream protocols: the testo actions register and open them on pinc nodes.
+defra-pinc = { path = "../../crates/database/pinc" }
 async-trait = { workspace = true }
 events = { path = "../../crates/foundation/events" }
 async-channel = "2"
@@ -63,8 +63,6 @@ identity = { path = "../../crates/building-blocks/identity" }
 
 [features]
 generator = ["serde_json/preserve_order"]
-# Run the network scenarios over pinc with DEFRA_TRANSPORT=pinc.
-pinc = ["defra-node/pinc"]
 
 [[bin]]
 name = "gen_scenarios"

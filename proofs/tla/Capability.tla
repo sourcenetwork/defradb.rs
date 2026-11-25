@@ -65,7 +65,7 @@ ASSUME BindMode \in BindModes
 
 \* A presented attempt: a token offered to a verifier that enforces (tgt, coll)
 \* for the connected transport sender peer `via`. `via` is the transport-
-\* authenticated sender peer id (libp2p/iroh peer id of the open stream), which
+\* authenticated sender peer id (pinc peer id of the open stream), which
 \* validate_claims pins to claims.source_peer_id.
 Attempt(tok, via, vtgt, vcoll) ==
   [tok |-> tok, via |-> via, vtgt |-> vtgt, vcoll |-> vcoll]

@@ -31,7 +31,7 @@
 \*
 \*   | Model        | Rust                                                        |
 \*   |--------------|-------------------------------------------------------------|
-\*   | Dial, Hear   | crates/database/p2p/src/pinc/endpoint.rs Node::connection:           |
+\*   | Dial, Hear   | crates/database/pinc/src/endpoint.rs Node::connection:           |
 \*   |              | Endpoint::connect, then Connection::answered, under         |
 \*   |              | CONNECT_TIMEOUT; pinc's Connection::answered and            |
 \*   |              | Event::Answered (crates/pinc/src/conn.rs)                   |

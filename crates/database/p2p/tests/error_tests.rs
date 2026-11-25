@@ -106,22 +106,6 @@ fn test_error_from_io() {
 }
 
 #[test]
-#[cfg(feature = "libp2p-transport")]
-fn test_error_from_multiaddr() {
-    // Create an invalid multiaddr to test the conversion
-    let result: std::result::Result<libp2p::Multiaddr, _> = "/invalid/addr".parse();
-    if let Err(e) = result {
-        let err: Error = e.into();
-        match err {
-            Error::InvalidMultiaddr(msg) => {
-                assert!(!msg.is_empty());
-            }
-            _ => panic!("Expected InvalidMultiaddr error"),
-        }
-    }
-}
-
-#[test]
 fn test_error_debug() {
     // Test Debug implementation
     let err = Error::Transport("test".to_string());

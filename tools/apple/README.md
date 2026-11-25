@@ -21,18 +21,18 @@
 tools/apple/build-ffi.sh
 ```
 
-The script defaults to an iroh-capable build by setting
-`FEATURES=iroh,native` and `NO_DEFAULT_FEATURES=1`.
+The script defaults to a P2P build (pinc) by setting
+`FEATURES=p2p,native` and `NO_DEFAULT_FEATURES=1`.
 It also defaults to `APPLE_DEPLOYMENT_TARGET=15.0` so Rust and native dependencies
 are linked against a modern iOS target instead of Rust's legacy iOS 10 default.
-The default iOS feature set avoids desktop-only FFI defaults such as libp2p,
-Vera, and the Wasmtime lens runtime. The store is regolith on every target.
+The default iOS feature set avoids desktop-only FFI defaults such as Vera and
+the Wasmtime lens runtime. The store is regolith on every target.
 
 Override the defaults with environment variables when needed:
 
 ```bash
 APPLE_DEPLOYMENT_TARGET=16.0 \
-FEATURES="iroh,native" \
+FEATURES="p2p,native" \
 OUT_DIR="$PWD/dist/apple" \
 FRAMEWORK_NAME="DefraMobile" \
 tools/apple/build-ffi.sh
@@ -135,10 +135,11 @@ Rebuild the XCFramework after updating the FFI crate so the generated header
 includes newly added symbols.
 
 A node is configured with `DefraNodeInitOptions` fields rather than JSON. For
-an iroh node with a persistent store, set for example `db_path`,
-`p2p_transport = "iroh"`, `iroh_relay_url`, and `identity_ptr` (an identity
-handle the node signs as). Leave `disable_p2p` at `0` to run P2P; a libp2p
-node listens on the comma-separated `listening_addresses`.
+a P2P node with a persistent store, set for example `db_path`, `pinc_hubs`
+(the hubs topics and the KMS key exchange run through, `<peer id>@<udp
+address>`), and `identity_ptr` (an identity handle the node signs as). Leave
+`disable_p2p` at `0` to run P2P; the node binds `listening_addresses`, one
+`ip:port`, or every interface on a port the OS picks when it is empty.
 
 For device-bound or delegated identities:
 

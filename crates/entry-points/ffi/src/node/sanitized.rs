@@ -38,20 +38,14 @@ pub(crate) unsafe fn options_json(
     let config = &setup.config;
     let persistent = matches!(setup.store, super::options::StoreLocation::Path(_));
 
-    let (listen_addrs, peers, pubsub, relay, stream_timeout) = match transport {
-        #[cfg(feature = "libp2p")]
-        defra_node::TransportConfig::Libp2p(libp2p) => (
-            libp2p.listen_addrs.clone(),
-            libp2p.bootstrap_peers.clone(),
-            libp2p.enable_pubsub,
-            libp2p.enable_relay,
-            Some(
-                libp2p
-                    .stream_timeout_secs
-                    .unwrap_or(p2p::P2PHostConfig::default().stream_timeout),
-            ),
+    let (listen_addrs, peers, topics) = match transport {
+        #[cfg(feature = "p2p")]
+        defra_node::TransportConfig::Pinc(pinc) => (
+            vec![pinc.bind.to_string()],
+            pinc.bootstrap_peers.clone(),
+            true,
         ),
-        _ => (Vec::new(), Vec::new(), false, false, None),
+        _ => (Vec::new(), Vec::new(), false),
     };
     let document_acp_type = match config.document_acp {
         defra_node::DocumentAcpConfig::Local => "local",
@@ -92,7 +86,7 @@ pub(crate) unsafe fn options_json(
                 .copied()
                 .map(seconds_as_nanos)
                 .collect::<Vec<_>>(),
-            "P2PBlockSyncTimeout": stream_timeout.map(seconds_as_nanos),
+            "P2PBlockSyncTimeout": Value::Null,
             "LensRuntime": "wasmtime",
             "LensPoolSize": 0,
             "ChunkSize": config.chunk_size,
@@ -100,8 +94,8 @@ pub(crate) unsafe fn options_json(
         "P2P": {
             "ListenAddresses": redacted_list(&listen_addrs),
             "BootstrapPeers": redacted_list(&peers),
-            "EnablePubSub": pubsub,
-            "EnableRelay": relay,
+            "EnablePubSub": topics,
+            "EnableRelay": topics,
             "EnableClearBackoffOnRetry": false,
             "PrivateKey": redacted(setup.peer_key.is_some()),
         },

@@ -45,7 +45,7 @@ current composite or collection head CIDs with monotone versions.
   root to a `Relay` binding without changing its CID or scope.
 - `qualifiedProvider` records that the root has at least one routable peer that
   owns the linked DAG. Usually the bound origin establishes both facts. In an
-  Iroh relay chain, the signed envelope can authenticate an origin that the
+  pinc relay chain, the signed envelope can authenticate an origin that the
   receiver cannot route to; a later direct same-root hint from a peer that has
   completed the DAG adds a durable alternate without replacing `originBound`
   or resetting the root's retry clock. The alternate set is bounded in Rust
@@ -79,9 +79,9 @@ current composite or collection head CIDs with monotone versions.
 - `terminalFlights[root]` counts durable pending-record cleanup writers.
   Production admits one; the duplicate-terminal red policy permits two
   merge/quarantine observations to contend on the same storage key.
-- `ProviderMode` distinguishes origin-bound recovery, Iroh recovery through a
+- `ProviderMode` distinguishes origin-bound recovery, pinc recovery through a
   later qualified alternate, and authenticated-hop recovery. It abstracts the
-  least-qualified peer admitted to the provider rotation. Iroh may use the
+  least-qualified peer admitted to the provider rotation. pinc may use the
   independently verified publisher only when that
   endpoint has a reconnectable transport route. A temporary disconnect is a
   stuttering interval, not a terminal disposition: the durable root stays
@@ -142,7 +142,7 @@ an actionable capacity nack, advances the one durable per-peer retry clock on
 the Go-compatible 30s, 1m, 2m, 4m, 8m, 16m, 32m ladder. The 2-second sweep is
 only a due-record poll; it is not an alternate retry cadence. Rust implements
 that state machine once in `defra-p2p-adapter::retry`: CLI, embedded, and
-defra-node, over both libp2p and Iroh, construct the same failure recorder and
+defra-node construct the same failure recorder and
 marker-rederive loop. A disconnected peer is redialed only after its durable
 schedule is due, and that failed delivery attempt advances the existing rung;
 a later reconnect makes the same rung immediately due without resetting it.
@@ -192,7 +192,7 @@ ownership policy.
 from a process-global provider assumption. The green transition preserves
 `originBound`; the red rebind configuration loses it while the receiver still
 owns `pending`. `OfferQualifiedAlternate` and `AddQualifiedAlternate` model the
-Iroh chain case separately: the immutable origin remains bound, the
+pinc chain case separately: the immutable origin remains bound, the
 independently authenticated direct announcer becomes serviceable only after it
 owns the complete DAG, and `ClaimFetch` cannot run until that qualified
 provider is durable.
@@ -208,7 +208,7 @@ stale-ack protection are reachable rather than vacuously excluded by the model
 constants.
 
 The two full green configurations check the cross-scope safety product. The
-fairness checks are split into document, collection, and Iroh relay-chain
+fairness checks are split into document, collection, and pinc relay-chain
 configurations. The document and collection configurations each remain at
 `MaxV = 2`; this keeps the temporal graph tractable while exercising
 supersession and eventual quiescence for both replayable scope kinds.
@@ -262,7 +262,7 @@ Reconnect is evidence that an existing sender scope marker is deliverable
 again, so the runtime moves that peer's existing marker schedule to "due now"
 without resetting its retry rung. This is an enabling event for
 `ReHintMarker`, not a second sender retry loop or a second receiver fetch
-trigger. On libp2p, the claimed receiver owner waits for the rooted CAR response
+trigger. The claimed receiver owner waits for the rooted CAR response
 event (while retaining its bounded timeout and lease checks); transport
 completion therefore releases the one-root admission slot without a polling
 delay.
@@ -594,7 +594,7 @@ place gives it up when its attempt ends.
 - `INV_ReceiverQueueBounded`: durable want registrations never exceed `Cap`.
 - `INV_PendingRetainsBoundProvider`: a live durable root retains the qualified
   recovery origin selected when ownership transferred.
-- `INV_FetchHasQualifiedProvider`: an Iroh fetch cannot claim its single-flight
+- `INV_FetchHasQualifiedProvider`: an pinc fetch cannot claim its single-flight
   owner until either the origin is routable or an authenticated direct
   complete-DAG offer has been durably admitted. `qualifiedProvider` abstracts
   a non-empty bounded candidate set; the exact three-alternate cap and
@@ -688,8 +688,8 @@ fetch owner is deliberately not expressible.
 | Configuration | Verdict | Boundary isolated |
 | --- | --- | --- |
 | `MC_SyncOwnership_Green.cfg` | GREEN | marker+rederive, durable registration, one fetch owner, current-head ack guard |
-| `MC_SyncOwnership_Green_IrohOrigin.cfg` | GREEN | signed, transport-routable Iroh origin owns the complete linked DAG |
-| `MC_SyncOwnership_Green_Liveness_IrohRelay.cfg` | GREEN | immutable signed origin plus durable qualified same-root alternate reaches currency |
+| `MC_SyncOwnership_Green_RelayOrigin.cfg` | GREEN | signed, transport-routable pinc origin owns the complete linked DAG |
+| `MC_SyncOwnership_Green_Liveness_Relay.cfg` | GREEN | immutable signed origin plus durable qualified same-root alternate reaches currency |
 | `MC_SyncOwnership_Green_Liveness_Doc.cfg` | GREEN | two-version document supersession eventually reaches currency and quiescence |
 | `MC_SyncOwnership_Green_Liveness_Collection.cfg` | GREEN | two-version collection supersession eventually reaches currency and quiescence |
 | `MC_SyncOwnership_Green_MarkerHandoff.cfg` | GREEN | a transactional commit returns only after its marker registration, P2P stops only after admitted writes drained, and a crash between commit and registration acknowledges nothing |
@@ -702,7 +702,7 @@ fetch owner is deliberately not expressible.
 | `MC_SyncOwnership_Red_RelayOnlyProvider.cfg` | RED | an unverified payload relay is recorded instead of a transport-authenticated recovery hop |
 | `MC_SyncOwnership_Red_ProviderRebind.cfg` | RED | a same-root replay replaces the immutable recovery origin |
 | `MC_SyncOwnership_Red_UnroutableOrigin.cfg` | RED | the recorded publisher has no direct-or-relayed CAR route, so durable receiver ownership cannot complete |
-| `MC_SyncOwnership_Red_UnsignedIrohOrigin.cfg` | RED | an Iroh relay accepts an unsigned payload origin as if transport-authenticated |
+| `MC_SyncOwnership_Red_UnsignedRelayOrigin.cfg` | RED | an pinc relay accepts an unsigned payload origin as if transport-authenticated |
 | `MC_SyncOwnership_Red_RootOnlyHop.cfg` | RED | an authenticated gossip relay owns the root but cannot serve its linked descendants |
 | `MC_SyncOwnership_Red_UnauthorizedOrigin.cfg` | RED | the authenticated origin owns the DAG but cannot authorize the receiver, so it serves metadata only |
 | `MC_SyncOwnership_Red_CancelOnProgress.cfg` | RED | the receiver cancels a productive CAR stream after its first block, stranding descendants |
@@ -783,7 +783,7 @@ receiver representation live. These are runtime refinements of
 `ClaimTerminal`/`CompleteTerminal`; they do not add a second cleanup clock or
 change the model's legal ownership transitions.
 
-The Iroh conformance suite also fans one multi-block head from a serviceable
+The pinc conformance suite also fans one multi-block head from a serviceable
 origin to more receivers than the provider's fixed CAR worker reserve. Every
 receiver must merge and retire both live and durable state with no terminal
 fetch exhaustion. This isolates bounded DefraDB fan-out from downstream client
@@ -810,11 +810,11 @@ provider capacity needed to discharge an acknowledged receiver obligation.
 Received blocks, replies, and terminal results use the fixed completion set,
 while lightweight peer state drains inline. Each bounded request class returns
 the same actionable overload result rather than creating a queue or waiting for
-a slot. An Iroh `BitswapComplete` cannot overtake storage of the response that
+a slot. An pinc `BitswapComplete` cannot overtake storage of the response that
 made the query successful or remain queued behind request-worker saturation.
 Exact-CID owners may reap once every requested CID is durable; partial responses
 retain the transport-completion drain fence.
-Completion registration is also race-free in the other direction: Iroh may
+Completion registration is also race-free in the other direction: pinc may
 finish a failed query before `sync_blocks` returns its query ID to the fetch
 task. The bounded completion tracker latches that result, and registration
 consumes it exactly once instead of burning the 30-second watchdog. This is the
@@ -831,11 +831,7 @@ is also bounded, with no second resident queue: its upstream producers are the
 already-bounded receiver fetch/reply paths, and the transport channel retains
 backpressure if all completion owners are occupied. Searchable-
 encryption artifacts and management operations retain their existing event
-paths and are not modeled as DAG-recovery owners in stage 3. On libp2p, a
-full event channel no longer blocks the host from servicing response commands:
-the event forwarder services commands while waiting for channel capacity. This
-breaks the bounded-channel cycle in which a handler waited for the host while
-the host waited for that handler to drain another event.
+paths and are not modeled as DAG-recovery owners in stage 3.
 
 The receiver's process queue remains the DAG ownership boundary: a CAR response
 atomically claims its root and contained CIDs without waiting, and an
@@ -862,10 +858,7 @@ still reaches its recovery-serving reserve; that reserve has its own bounded,
 actionable overflow fence. The converse regression stalls durable completion
 work and proves inbound CAR serving still proceeds. It also holds the event
 channel open after completion and requires live
-scheduler counts to return to zero. The libp2p host regression fills the real
-256-event channel and proves a response command is serviced before event
-capacity is released; completed command tasks are reaped by that same host loop
-instead of retained until shutdown. The CAR regression proves a
+scheduler counts to return to zero. The CAR regression proves a
 duplicate neither writes nor reports success before the root owner's durable
 storage.
 
@@ -875,7 +868,7 @@ included public key, clear `Signature`, re-encode canonical CBOR, and verify.
 Go pubsub relies on native signed gossipsub instead of signing the PushLog
 payload, but `go-libp2p-pubsub-rpc` currently forwards `ReceivedFrom` (the last
 relay), not the signed original `GetFrom()` author. Stage 3 does not treat that
-hop as the content author. The Iroh endpoint ID is the public key and
+hop as the content author. The pinc peer ID is the public key and
 `OriginSignature` is cleared for canonical encoding, so the original hint is
 verified independently. Durable recovery prefers that verified origin when it
 is transport-routable. A relayed hint whose verified origin is not routable is
@@ -887,15 +880,11 @@ confusing `SourcePeerID` with authenticated Go message metadata.
 
 Go's block-serving filter also resolves an unknown requester's Defra identity
 through a challenge/response protocol, verifies that the returned token is
-bound to the local peer ID, and then evaluates document ACP. Rust libp2p has
-the same resolver, while Iroh previously installed `AnonymousResolver`; that
-made a complete signed origin return only universally readable metadata to a
-relayed subscriber. The Iroh resolver uses its authenticated QUIC endpoint as
-the peer binding and the same audience-bound Defra identity token before ACP
+bound to the local peer ID, and then evaluates document ACP. The pinc
+resolver uses its authenticated QUIC connection as the peer binding and the same audience-bound Defra identity token before ACP
 evaluation. Commit signatures remain content-authorship evidence; they do not
 replace this requester identity binding. Verified endpoint-to-DID bindings use
-a bounded, expiring positive cache, matching the established libp2p behavior
-without serializing every CAR request behind a fresh network challenge.
+a bounded, expiring positive cache, without serializing every CAR request behind a fresh network challenge.
 Concurrent misses for one endpoint share one bounded in-flight challenge;
 failed resolutions are shared only by those waiters and are never cached.
 As in Go, durable replicator authorization short-circuits before this fallback:

@@ -116,26 +116,12 @@ fn remote_document_acp_needs_a_signer_key() {
     assert!(error.contains("vera_signer_key"), "{error}");
 }
 
-#[cfg(not(feature = "libp2p"))]
+#[cfg(not(feature = "p2p"))]
 #[test]
-fn p2p_without_a_transport_feature_fails() {
-    let listen = cstr("/ip4/127.0.0.1/tcp/0");
+fn p2p_without_the_p2p_feature_fails() {
     let error = refused(NodeInitOptions {
         disable_p2p: 0,
-        listening_addresses: listen.as_ptr(),
         ..local_options()
     });
-    assert!(error.contains("libp2p feature"), "{error}");
-}
-
-#[cfg(not(feature = "iroh"))]
-#[test]
-fn the_iroh_transport_needs_the_iroh_feature() {
-    let iroh = cstr("iroh");
-    let error = refused(NodeInitOptions {
-        disable_p2p: 0,
-        p2p_transport: iroh.as_ptr(),
-        ..local_options()
-    });
-    assert!(error.contains("iroh"), "{error}");
+    assert!(error.contains("p2p feature"), "{error}");
 }

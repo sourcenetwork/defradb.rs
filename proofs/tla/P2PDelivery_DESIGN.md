@@ -206,7 +206,7 @@ provider's permit.
 
 | Action | Code |
 |---|---|
-| `Commit` | `crates/database/db/src/merge/txn_broadcaster.rs:68` `SyncTxnBroadcaster::submit_update` → `crates/database/p2p/src/sync/coordinator/broadcast.rs:108` `broadcast_local_update`; the node is returned only after `crates/entry-points/defra-node/src/assemble.rs:234` awaits `setup_iroh` |
+| `Commit` | `crates/database/db/src/merge/txn_broadcaster.rs:68` `SyncTxnBroadcaster::submit_update` → `crates/database/p2p/src/sync/coordinator/broadcast.rs:108` `broadcast_local_update`; the node is returned only after `crates/entry-points/defra-node/src/assemble.rs:234` awaits `setup_pinc` |
 | `Register`, `RegFail` | `broadcast.rs:213` `admit_replicator_push` (returns on the first `None`, `:219-235`); `crates/surfaces/p2p-adapter/src/retry.rs:89` `record_failure`; `crates/engine/storage/src/stores/peerstore.rs:856` `register_scope_marker`; the failure is logged at `txn_broadcaster.rs:103-127` |
 | `Push` (sender) | `crates/surfaces/p2p-adapter/src/retry.rs:374` `run_retry_pass`; `crates/database/db/src/merge/push_docs.rs:833` `retry_doc`; ack clear `peerstore.rs:1323` `complete_retry_scope` |
 | `Push` (admission) | `crates/database/p2p/src/sync/manager/process/pushlog.rs:241` `process_block_inner`: merged check, capacity shed, durable covered check (`:445`), the missing-link walk, whose failure is the frontier `[root]` (`frontier_or_unknown`, `DagReadiness.tla`), `try_insert_pending_dag` (`:470`), durable register (`:568`) |
@@ -220,8 +220,8 @@ provider's permit.
 | `Resync` | `pending_dag.rs:955` `resync_persisted_pending_dags`, `:1188` `records_after_resync_cursor` (resumes after the root admitted last, cap and quota skip) |
 | `StartCont`, `EndCont` | `pending_dag.rs:609` `continue_merge`, `:679` `consume_pending_merge_continuation` (`MergeTurn`) |
 | `PullStart`, `PullEnd` | `crates/database/p2p/src/sync/coordinator/event_handler/doc_sync.rs:214` `handle_doc_sync_reply` (shares `DagFetchLimiter`, no slot) |
-| `Crash`, `RestoreReplicators` | `crates/entry-points/defra-node/src/lib.rs:824` `Node::shutdown`: `stop_transport` (`:849`) before `network.drain` (`:855`); `crates/surfaces/p2p-adapter/src/iroh_peer/peer.rs:70` `IrohPeer::assemble`: replication loop (`:233`), resync (`:258`) and retry loop (`:326`) start before `restore_iroh_p2p_state` (`:341`) |
-| `Reconnect` | `crates/database/p2p/src/iroh/endpoint_rpc.rs:392` `connect_with_cache` (caches, does not adopt); `crates/database/p2p/src/iroh/endpoint_streams.rs:35` `handle_incoming` (the acceptor caches it for its own requests, `:91`) |
+| `Crash`, `RestoreReplicators` | `crates/entry-points/defra-node/src/lib.rs:824` `Node::shutdown`: `stop_transport` (`:849`) before `network.drain` (`:855`); `crates/surfaces/p2p-adapter/src/pinc_peer/peer.rs` `PincPeer::assemble`: the replication loop, resync and retry loop start before `restore_pinc_p2p_state` |
+| `Reconnect` | `crates/database/pinc/src/endpoint.rs` `Node::connected`: every connection, dialed or accepted, is served before it is tracked |
 | `RetireTimedOut` | `endpoint_rpc.rs:52` `REQUEST_RESPONSE_TIMEOUT`, `:327` `retire_timed_out_connection` (evicts and closes, peer-map clones included) |
 
 ## Conformance binding
@@ -279,10 +279,10 @@ is the number of its events).
 | `Resync` | head | `pending_dag.rs` `resync_persisted_pending_dags_inner`, after admission | `Resync` of this head |
 | `Expire` | head, record removed | `pending_dag.rs`, one per root the TTL evicts, at every eviction: `evict_expired`, `try_insert_pending_dag` and `retry_pending_dag` | no step for an entry with no durable record; an acknowledged root never expires |
 | `PullStart`, `PullEnd` | provider | `poll_fetch_dag` around an attempt without a pending lease (doc sync, branchable sync) | `PullStart` from `PullPeer`, `PullEnd` |
-| `Crash` | node | `p2p-adapter/src/iroh_peer/peer.rs` `assemble`, at every start | `Crash`; also names the node's peer ID |
-| `RestoreReplicators` | | `assemble`, after `restore_iroh_p2p_state` | `RestoreReplicators`, or no step when replicators were restored first |
-| `Reconnect` | peer, `full`/`dialer` | `iroh/endpoint_commands.rs` `handle_dial` (`full`), `iroh/endpoint_rpc.rs` `connect_with_cache` for a new connection (`dialer`) | `Reconnect` of a down pair; no step for a pair already up |
-| `Disconnect` | peer | `iroh/endpoint_streams.rs`, the last connection to the peer closed | `Disconnect`; no step for a pair already down |
+| `Crash` | node | `p2p-adapter/src/pinc_peer/peer.rs` `assemble`, at every start | `Crash`; also names the node's peer ID |
+| `RestoreReplicators` | | `assemble`, after `restore_pinc_p2p_state` | `RestoreReplicators`, or no step when replicators were restored first |
+| `Reconnect` | peer, `full` | `pinc/src/endpoint.rs` `Node::connected`, the first connection to the peer | `Reconnect` of a down pair; no step for a pair already up |
+| `Disconnect` | peer | `pinc/src/endpoint.rs` `Node::disconnected`, the last connection to the peer closed | `Disconnect`; no step for a pair already down |
 
 The vocabulary also has `FloodOn`, `FloodOff`, `StartCont` and `EndCont`, which
 the code logs nowhere: the clock dispatches on a lane of its own, and local

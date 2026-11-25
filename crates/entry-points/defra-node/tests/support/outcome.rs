@@ -33,15 +33,6 @@ pub enum TestError {
     Peer(#[from] defra_p2p_adapter::P2PError),
     #[error("{0}")]
     Remote(String),
-    #[cfg(feature = "libp2p")]
-    #[error(transparent)]
-    PeerIdParse(#[from] libp2p::identity::ParseError),
-    #[cfg(feature = "libp2p")]
-    #[error(transparent)]
-    PeerKeyDecode(#[from] libp2p::identity::DecodingError),
-    #[cfg(feature = "libp2p")]
-    #[error(transparent)]
-    PeerKeyType(#[from] libp2p::identity::OtherVariantError),
 }
 
 impl From<String> for TestError {

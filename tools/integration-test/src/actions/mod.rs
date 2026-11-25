@@ -35,7 +35,7 @@ pub use parallel::Parallel;
 pub use peer::*;
 pub use query::*;
 pub use replicator::*;
-pub use stream::{AllowStreamPeer, DenyStreamPeer, NewIrohNode, OpenStream, ReadKeptStream};
+pub use stream::{AllowStreamPeer, DenyStreamPeer, NewStreamNode, OpenStream, ReadKeptStream};
 pub use txn::*;
 pub use view::*;
 pub use wait::Wait;
@@ -168,7 +168,7 @@ client_actions! {
         Parallel,
         AllowStreamPeer,
         DenyStreamPeer,
-        NewIrohNode,
+        NewStreamNode,
         OpenStream,
         ReadKeptStream,
         Await,

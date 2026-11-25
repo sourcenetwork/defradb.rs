@@ -42,11 +42,6 @@ pub struct NodeSpec {
     pub nac_owner: Option<u64>,
     /// The node's admission limits, if not the defaults.
     pub admission: Option<crate::actions::AdmissionSpec>,
-    /// The `resolv.conf` text the node's libp2p DNS layers read in place of
-    /// the host's file.
-    pub resolv_conf: Option<String>,
-    /// The node's network is iroh rather than libp2p.
-    pub iroh_network: bool,
     /// The node was configured from a Go-written `config.yaml` through the
     /// Rust CLI's loader, so it is a Rust node under every client.
     pub go_config: bool,
@@ -76,9 +71,9 @@ pub struct NodeSpec {
     pub commit_gate: Option<Arc<crate::commit_gate::TestCommitGate>>,
     /// The HTTP server's bound on answering a commit; `None` leaves it off.
     pub commit_timeout: Option<Duration>,
-    /// An in-process iroh node serving these stream protocols, in place of
-    /// the libp2p one `network` starts.
-    pub iroh: Option<crate::actions::stream::IrohSpec>,
+    /// An in-process node serving these stream protocols, in place of the
+    /// one `network` starts.
+    pub stream: Option<crate::actions::stream::StreamNodeSpec>,
 }
 
 /// A running node: the node itself for the in-process client, or the URL the
@@ -97,10 +92,10 @@ pub struct TestNode {
 }
 
 impl TestNode {
-    /// Start the in-process iroh node `spec.iroh` describes.
-    pub fn start_iroh(spec: NodeSpec) -> Result<Self, String> {
-        let iroh = spec.iroh.clone().unwrap_or_default();
-        let node = crate::actions::stream::build(&iroh)?;
+    /// Start the in-process stream node `spec.stream` describes.
+    pub fn start_stream(spec: NodeSpec) -> Result<Self, String> {
+        let stream = spec.stream.clone().unwrap_or_default();
+        let node = crate::actions::stream::build(&stream)?;
         Ok(Self::new(
             Some(node.clone()),
             None,
@@ -116,23 +111,18 @@ impl TestNode {
 
     /// [`TestNode::start`], failing with the node builder's error.
     pub fn try_start(client_type: ClientType, spec: NodeSpec) -> Result<Self, String> {
-        if spec.iroh.is_some() {
-            return Self::start_iroh(spec);
+        if spec.stream.is_some() {
+            return Self::start_stream(spec);
         }
         let listen = match spec.listen.first() {
             Some(address) => address.clone(),
             None => "/ip4/127.0.0.1/tcp/0".to_owned(),
         };
-        // Admission limits, iroh, a resolv.conf and a loaded Go config are a
-        // Rust node's options: under go-http the node is a Rust node reached
-        // over HTTP, as rust-http does.
+        // Admission limits and a loaded Go config are a Rust node's options:
+        // under go-http the node is a Rust node reached over HTTP, as
+        // rust-http does.
         let client_type = match client_type {
-            ClientType::GoHttp
-                if spec.admission.is_some()
-                    || spec.iroh_network
-                    || spec.resolv_conf.is_some()
-                    || spec.go_config =>
-            {
+            ClientType::GoHttp if spec.admission.is_some() || spec.go_config => {
                 ClientType::RustHttp
             }
             other => other,
@@ -350,44 +340,7 @@ fn build(spec: &NodeSpec, listen: &str, http: Option<HttpConfig>) -> Result<Node
     if let Some(dir) = &spec.dir {
         builder = builder.data_path(dir.path());
     }
-    if spec.network && spec.iroh_network {
-        builder = builder.with_p2p(defra_node::P2PConfig {
-            bind_addr: Some(std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST)),
-            relay_mode: p2p::iroh::IrohRelayModeConfig::Disabled,
-            discovery: p2p::iroh::IrohDiscoveryConfig::Disabled,
-            ..Default::default()
-        });
-    } else if spec.network {
-        builder = builder.with_libp2p(listen);
-    }
-    if let (true, false, Some(limits)) = (spec.network, spec.iroh_network, &spec.admission) {
-        let mut sync = defra_node::SyncTuning {
-            max_pending_dags: limits.max_pending_dags,
-            rate_limit_burst: limits.rate_limit_burst,
-            rate_limit_rate: limits.rate_limit_rate,
-            ..Default::default()
-        };
-        if let Some(bytes) = limits.deferral_peer_bytes {
-            sync.gossip_deferral_peer_bytes = bytes;
-        }
-        builder = builder.with_transport(defra_node::TransportConfig::Libp2p(
-            defra_node::Libp2pConfig {
-                listen_addrs: vec![listen.to_owned()],
-                sync,
-                ..Default::default()
-            },
-        ));
-    }
-    #[cfg(unix)]
-    if let Some(text) = &spec.resolv_conf {
-        builder = builder.with_resolver_source(p2p::ResolverSource::ResolvConf(text.clone()));
-    }
-    // A scenario that picks iroh tests iroh itself (its gossip size limit),
-    // so DEFRA_TRANSPORT=pinc replaces only the default transport.
-    if spec.network
-        && !spec.iroh_network
-        && crate::transport_choice::TransportChoice::from_env().is_pinc()
-    {
+    if spec.network {
         builder = pinc_transport(builder, spec, listen);
     }
     if let Some(config) = http {
@@ -435,10 +388,9 @@ fn build(spec: &NodeSpec, listen: &str, http: Option<HttpConfig>) -> Result<Node
     Ok(node)
 }
 
-/// Run `builder`'s node over pinc on loopback, `DEFRA_TRANSPORT=pinc`. A node
-/// restarted on its old address binds the port that address names; its key
-/// lives in its store, so a restart keeps its peer id.
-#[cfg(feature = "pinc")]
+/// Run `builder`'s node over pinc on loopback. A node restarted on its old
+/// address binds the port that address names; its key lives in its store, so
+/// a restart keeps its peer id.
 fn pinc_transport(
     builder: defra_node::NodeBuilder,
     spec: &NodeSpec,
@@ -467,9 +419,8 @@ fn pinc_transport(
     builder.with_pinc(config)
 }
 
-/// The pinc hub every node of this test process names, as a gossip mesh's
-/// stand-in: pinc topics run through a hub.
-#[cfg(feature = "pinc")]
+/// The pinc hub every node of this test process names: pinc topics run
+/// through a hub.
 static PINC_HUB: regolith::sync::Lazy<String> = regolith::sync::Lazy::new(|| {
     let edge = edge::testing::edge();
     let bind = std::net::SocketAddr::from(([127, 0, 0, 1], 0));
@@ -484,15 +435,6 @@ static PINC_HUB: regolith::sync::Lazy<String> = regolith::sync::Lazy::new(|| {
     std::mem::forget(task);
     ticket
 });
-
-#[cfg(not(feature = "pinc"))]
-fn pinc_transport(
-    _builder: defra_node::NodeBuilder,
-    _spec: &NodeSpec,
-    _listen: &str,
-) -> defra_node::NodeBuilder {
-    panic!("DEFRA_TRANSPORT=pinc needs integration-test built with --features pinc")
-}
 
 /// The key a node signs with: its node identity's, or, for a node that only
 /// signs, a key of its own that no test identity shares.

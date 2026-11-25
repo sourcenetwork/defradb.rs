@@ -3,6 +3,7 @@
 use std::path::PathBuf;
 
 pub mod client;
+mod hub;
 mod identity;
 mod keyring_cmd;
 mod sdl;
@@ -12,6 +13,7 @@ mod storage;
 mod version;
 
 pub use client::ClientArgs;
+pub use hub::HubArgs;
 pub use identity::IdentityArgs;
 pub use keyring_cmd::KeyringArgs;
 pub use sdl::SdlArgs;

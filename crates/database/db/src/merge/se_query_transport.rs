@@ -25,8 +25,7 @@ const SE_QUERY_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Transport-agnostic SE query transport. Constructed once per node when the
 /// P2P stack comes up and injected into the `QueryRunner` via
-/// `with_se_transport`. Generic over the concrete [`P2PTransport`] (libp2p or
-/// iroh); the genericity is erased when boxed into `Arc<dyn SeQueryTransport>`.
+/// `with_se_transport`. Generic over the concrete [`P2PTransport`]; the genericity is erased when boxed into `Arc<dyn SeQueryTransport>`.
 pub struct DbMergeSeQueryTransport<T: P2PTransport> {
     transport: T,
     correlator: SeQueryCorrelator,

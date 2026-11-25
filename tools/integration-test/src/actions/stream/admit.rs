@@ -6,7 +6,7 @@ use super::{in_process, peer_id};
 use crate::scenario::{Common, Failure, Op};
 use crate::test_case::State;
 
-/// This iroh node admits `target`, through `Node::allow_p2p_peer`.
+/// This node admits `target`, through `Node::allow_p2p_peer`.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AllowStreamPeer {
@@ -19,7 +19,7 @@ pub struct AllowStreamPeer {
     pub common: Common,
 }
 
-/// This iroh node revokes `target`, through `Node::deny_p2p_peer`.
+/// This node revokes `target`, through `Node::deny_p2p_peer`.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DenyStreamPeer {

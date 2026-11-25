@@ -1,7 +1,7 @@
 ---- MODULE MC_Auth_Green ----
 EXTENDS Auth
 \* GREEN: current remote management surface. HTTP mutations use ActorGate.
-\* Iroh sync and embedded-direct adapter calls are documented as non-mutating
+\* pinc sync and embedded-direct adapter calls are documented as non-mutating
 \* remote-management entry points in this slice.
 
 mcRequests ==
@@ -22,7 +22,7 @@ mcEntries ==
    "HttpP2PReplicators",
    "HttpDacPolicy",
    "HttpNacGrant",
-   "IrohSyncStream",
+   "PincSyncStream",
    "EmbeddedDirect"}
 
 mcEntryOf ==
@@ -57,7 +57,7 @@ mcMutableGrantPairs == {}
 
 mcGateByEntry ==
   [e \in mcEntries |->
-    CASE e = "IrohSyncStream" -> "PeerGate"
+    CASE e = "PincSyncStream" -> "PeerGate"
       [] e = "EmbeddedDirect" -> "DidOnlyGate"
       [] OTHER -> "ActorGate"]
 

@@ -8,4 +8,4 @@ into something a user starts; nothing in the workspace builds on top of it.
 |-------|------|
 | [ffi](ffi) | C-compatible FFI bindings |
 | [cli](cli) | The `defradb` command-line interface |
-| [defra-node](defra-node) | The node assembly: `NodeBuilder`, libp2p/iroh, the FFI base |
+| [defra-node](defra-node) | The node assembly: `NodeBuilder`, pinc, the FFI base |

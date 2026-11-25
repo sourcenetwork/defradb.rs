@@ -8,7 +8,7 @@ use std::net::{IpAddr, Ipv4Addr};
 use std::path::Path;
 use std::time::{Duration, Instant};
 
-use defra_node::{Node, P2PConfig, PeerKeySource, SyncTuning};
+use defra_node::{Node, PeerKeySource, PincConfig, SyncTuning};
 use serde_json::Value;
 
 use super::max_register::MaxRegister;
@@ -17,24 +17,43 @@ use super::SDL;
 const NOTE_SDL: &str = "type Note { text: String }";
 const COLLECTIONS: [&str; 2] = ["Score", "Note"];
 
-fn p2p_config() -> P2PConfig {
-    P2PConfig {
-        port: Some(0),
-        bind_addr: Some(IpAddr::V4(Ipv4Addr::LOCALHOST)),
-        relay_mode: p2p::iroh::IrohRelayModeConfig::Disabled,
-        discovery: p2p::iroh::IrohDiscoveryConfig::Disabled,
-        allowlist: p2p::iroh::IrohAllowlistConfig::AcceptAll,
-        max_concurrent_multipath_paths: None,
+fn p2p_config() -> PincConfig {
+    PincConfig {
+        bind: std::net::SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0),
+        allowlist: defra_pinc::PincAllowlistConfig::AcceptAll,
         secret_key_path: None,
         load_persisted_collections: false,
         peer_key: PeerKeySource::File,
         sync: SyncTuning::default(),
         rebroadcast_on_merge: false,
+        ..Default::default()
     }
 }
 
 async fn node(with_type: bool, path: Option<&Path>) -> Node {
-    let builder = Node::builder().with_p2p(p2p_config());
+    node_on(&[], with_type, path).await
+}
+
+/// A loopback hub, running until its task is dropped: what reaches a node
+/// over its collection's topic goes through it.
+async fn hub() -> (String, edge::Task<()>) {
+    let seed = defra_pinc::generate_seed().unwrap();
+    defra_node::spawn_pinc_hub(
+        *seed,
+        std::net::SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0),
+        edge::testing::edge(),
+    )
+    .await
+    .unwrap()
+}
+
+/// A node on `hubs`.
+async fn node_on(hubs: &[String], with_type: bool, path: Option<&Path>) -> Node {
+    let config = PincConfig {
+        hubs: hubs.to_vec(),
+        ..p2p_config()
+    };
+    let builder = Node::builder().with_pinc(config);
     let builder = match path {
         Some(path) => builder.data_path(path),
         None => builder,
@@ -160,9 +179,12 @@ fn a_node_without_the_type_parks_its_blocks_until_it_has_the_type() {
     edge::testing::edge()
         .block_on(async {
             let dir = tempfile::tempdir().unwrap();
-            let a = node(true, None).await;
-            let b = node(true, None).await;
-            let c = node(false, Some(dir.path())).await;
+            // b's write reaches c over the collection's topic, through the hub.
+            let (hub, _hub_task) = hub().await;
+            let hubs = [hub];
+            let a = node_on(&hubs, true, None).await;
+            let b = node_on(&hubs, true, None).await;
+            let c = node_on(&hubs, false, Some(dir.path())).await;
 
             let b_address = address(&b).await;
             replicate(&a, &b_address, |sender| authorize(&b, sender)).await;

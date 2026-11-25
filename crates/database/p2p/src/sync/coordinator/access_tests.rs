@@ -420,8 +420,6 @@ fn create_test_coordinator_with_blockstore_and_head_provider<B: Blockstore + 'st
         document_acp: regolith::sync::OnceCell::new(),
         #[cfg(feature = "kms")]
         kms_transport: regolith::sync::OnceCell::new(),
-        #[cfg(feature = "libp2p-transport")]
-        pubsub_services: None,
     };
 
     (coordinator, events)
@@ -733,13 +731,6 @@ impl NoopTransport {
             publish_open: Arc::new(AtomicBool::new(true)),
             published: Arc::new(Atom::new(Vec::new())),
         }
-    }
-
-    /// A libp2p peer id, so the coordinator starts its pubsub_rpc services.
-    #[cfg(feature = "libp2p-transport")]
-    pub(super) fn with_libp2p_identity(mut self) -> Self {
-        self.peer_id = PeerId::new(libp2p::PeerId::random().to_string());
-        self
     }
 
     /// Open or close the topics to subscribers: a closed publish fails with

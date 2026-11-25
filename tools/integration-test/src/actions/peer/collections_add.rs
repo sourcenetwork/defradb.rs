@@ -1,4 +1,3 @@
-use crate::actions::peer::subscription_seen::subscribed_everywhere;
 use crate::actions::peer::support::failed;
 use crate::clients::{CliRun, HttpRun};
 use crate::scenario::{Common, Failure, Op};
@@ -37,12 +36,10 @@ impl Op for AddCollectionSubscription {
         let identity = self.common.client_identity(Self::name())?;
         let names = self.collections.clone();
         let node = state.node_on(self.common.node())?;
-        subscribed_everywhere(state, self.common.node(), || {
-            state
-                .block_on(node.add_p2p_collections_as(&state.context_as(None, identity), &names))
-                .map_err(failed)?;
-            Ok(json!({}))
-        })
+        state
+            .block_on(node.add_p2p_collections_as(&state.context_as(None, identity), &names))
+            .map_err(failed)?;
+        Ok(json!({}))
     }
 }
 
@@ -59,14 +56,12 @@ impl HttpRun for AddCollectionSubscription {
         crate::scenario::execute_with(self, state, |action, state| {
             let identity = action.common.client_identity(Self::name())?;
             let names = action.collections.clone();
-            subscribed_everywhere(state, action.common.node(), || {
-                state
-                    .http_as(action.common.node(), identity, |client| async move {
-                        client.add_p2p_collections(&names).await
-                    })?
-                    .map_err(failed)?;
-                Ok(json!({}))
-            })
+            state
+                .http_as(action.common.node(), identity, |client| async move {
+                    client.add_p2p_collections(&names).await
+                })?
+                .map_err(failed)?;
+            Ok(json!({}))
         });
     }
 }
@@ -76,17 +71,15 @@ impl CliRun for AddCollectionSubscription {
         crate::scenario::execute_with(self, state, |action, state| {
             let identity = action.common.client_identity(Self::name())?;
             let names = action.collections.join(",");
-            subscribed_everywhere(state, action.common.node(), || {
-                state
-                    .defra_client_as(
-                        action.common.node(),
-                        None,
-                        identity,
-                        &["p2p", "collection", "add", &names],
-                    )
-                    .map_err(Failure::operation)?;
-                Ok(json!({}))
-            })
+            state
+                .defra_client_as(
+                    action.common.node(),
+                    None,
+                    identity,
+                    &["p2p", "collection", "add", &names],
+                )
+                .map_err(Failure::operation)?;
+            Ok(json!({}))
         });
     }
 }

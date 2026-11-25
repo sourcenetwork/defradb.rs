@@ -190,11 +190,11 @@ impl State {
         Ok(())
     }
 
-    /// Start the in-process iroh node `name` as `spec` says, failing with the
-    /// builder's error, closing any node of that name first.
-    pub fn start_iroh_node(&mut self, name: &str, spec: NodeSpec) -> Result<(), String> {
+    /// Start the in-process stream node `name` as `spec` says, failing with
+    /// the builder's error, closing any node of that name first.
+    pub fn start_stream_node(&mut self, name: &str, spec: NodeSpec) -> Result<(), String> {
         self.stop_node(name, false);
-        let node = Arc::new(TestNode::start_iroh(spec.clone())?);
+        let node = Arc::new(TestNode::start_stream(spec.clone())?);
         let slot = Slot {
             spec,
             node: Some(node),

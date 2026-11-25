@@ -1,5 +1,5 @@
 //! Replicated documents between DefraDB nodes that run embedded Vera
-//! deployments, over iroh on localhost: the receiving node registers a
+//! deployments, over pinc on localhost: the receiving node registers a
 //! foreign creator's document, parks the changes its provider refuses, and
 //! applies each of them once when a grant lets it; a revocation on one node
 //! of a shared deployment stops the revoked writer on another.

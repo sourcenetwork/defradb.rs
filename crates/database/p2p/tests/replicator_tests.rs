@@ -1,13 +1,9 @@
 //! Tests for replicator types, including Go wire-format parity.
 
 use chrono::{TimeZone, Utc};
-#[cfg(feature = "libp2p-transport")]
-use p2p::replicator::ReplicatorError;
 use p2p::replicator::{
     EqOnlyFilterMatcher, ReplicationFilterMatcher as _, ReplicatorInfo, ReplicatorStatus,
 };
-#[cfg(feature = "libp2p-transport")]
-use p2p::{Multiaddr, PeerId};
 use p2p::{ReplicationFilter, ReplicationFilters};
 
 // ---------------------------------------------------------------------------
@@ -192,70 +188,6 @@ fn filter_matches_numbers_numerically() {
 // ---------------------------------------------------------------------------
 
 #[test]
-#[cfg(feature = "libp2p-transport")]
-fn json_round_trip_preserves_all_fields() {
-    let peer_id = PeerId::random();
-    let mut info =
-        ReplicatorInfo::new(peer_id, vec!["users".to_string(), "posts".to_string()]).unwrap();
-    info.status = ReplicatorStatus::Inactive;
-    info.last_status_change = Utc.with_ymd_and_hms(2026, 4, 23, 14, 0, 0).unwrap();
-
-    let bytes = info.to_bytes().unwrap();
-    let restored = ReplicatorInfo::from_bytes(&bytes).unwrap();
-    assert_eq!(info, restored);
-}
-
-#[test]
-#[cfg(feature = "libp2p-transport")]
-fn status_update_records_first_transition_only() {
-    let peer_id = PeerId::random();
-    let mut info = ReplicatorInfo::new(peer_id, vec!["users".to_string()]).unwrap();
-    let inactive_at = Utc.with_ymd_and_hms(2026, 4, 26, 10, 0, 0).unwrap();
-    let repeated_at = Utc.with_ymd_and_hms(2026, 4, 26, 10, 5, 0).unwrap();
-    let active_at = Utc.with_ymd_and_hms(2026, 4, 26, 10, 10, 0).unwrap();
-
-    assert!(info.set_status_if_changed(ReplicatorStatus::Inactive, inactive_at));
-    assert_eq!(info.status, ReplicatorStatus::Inactive);
-    assert_eq!(info.last_status_change, inactive_at);
-
-    assert!(!info.set_status_if_changed(ReplicatorStatus::Inactive, repeated_at));
-    assert_eq!(info.last_status_change, inactive_at);
-
-    assert!(info.set_status_if_changed(ReplicatorStatus::Active, active_at));
-    assert_eq!(info.status, ReplicatorStatus::Active);
-    assert_eq!(info.last_status_change, active_at);
-}
-
-#[test]
-#[cfg(feature = "libp2p-transport")]
-fn set_status_if_changed_now_matches_go_recovery_rule() {
-    // Go's `updateReplicatorStatus` (`defradb/internal/db/p2p/replicator.go:495`)
-    // resets `LastStatusChange` to `time.Time{}` on `Inactive → Active`,
-    // and stamps `time.Now()` on `Active → Inactive`. Mirroring that here
-    // keeps the JSON wire format identical to a Go-produced peerstore record.
-    let peer_id = PeerId::random();
-    let mut info = ReplicatorInfo::new(peer_id, vec!["users".to_string()]).unwrap();
-    let go_zero = Utc.with_ymd_and_hms(1, 1, 1, 0, 0, 0).unwrap();
-
-    let before = Utc::now();
-    assert!(info.set_status_if_changed_now(ReplicatorStatus::Inactive));
-    let after = Utc::now();
-    assert_eq!(info.status, ReplicatorStatus::Inactive);
-    assert!(
-        info.last_status_change >= before && info.last_status_change <= after,
-        "Active → Inactive must stamp now(), got {}",
-        info.last_status_change
-    );
-
-    assert!(info.set_status_if_changed_now(ReplicatorStatus::Active));
-    assert_eq!(info.status, ReplicatorStatus::Active);
-    assert_eq!(
-        info.last_status_change, go_zero,
-        "Inactive → Active must reset to Go's time.Time{{}} zero value"
-    );
-}
-
-#[test]
 fn timestamp_encodes_like_go_rfc3339nano_with_trailing_zeros() {
     // Go's `time.Time.MarshalJSON` uses RFC3339Nano, which strips trailing
     // zeros from the fractional seconds (`.100` → `.1`, `.001` stays `.001`).
@@ -305,52 +237,12 @@ fn decode_ignores_unknown_fields() {
 // ---------------------------------------------------------------------------
 
 #[test]
-#[cfg(feature = "libp2p-transport")]
-fn new_rejects_empty_collections() {
-    let peer_id = PeerId::random();
-    let result = ReplicatorInfo::new(peer_id, vec![]);
-    assert!(matches!(result, Err(ReplicatorError::EmptyCollections)));
-}
-
-#[test]
-#[cfg(feature = "libp2p-transport")]
-fn new_accepts_non_empty_collections() {
-    let peer_id = PeerId::random();
-    let info = ReplicatorInfo::new(peer_id, vec!["users".to_string()]).unwrap();
-    assert_eq!(info.peer_id(), Some(peer_id));
-    assert_eq!(info.status, ReplicatorStatus::Active);
-    assert!(info.addresses().is_empty());
-}
-
-#[test]
 fn from_raw_skips_validation() {
     // from_raw is the escape hatch for reconstructing from storage or
     // building test fixtures — no checks on collections or peer ID.
     let info = ReplicatorInfo::from_raw("invalid".to_string(), vec![], vec![]);
     assert_eq!(info.peer_id_str(), "invalid");
-    #[cfg(feature = "libp2p-transport")]
-    assert!(info.peer_id().is_none());
-    #[cfg(feature = "libp2p-transport")]
-    assert!(info.try_peer_id().is_err());
     assert!(info.collections.is_empty());
-}
-
-#[test]
-#[cfg(feature = "libp2p-transport")]
-fn invalid_addresses_filtered_on_read() {
-    let peer_id = PeerId::random();
-    let info = ReplicatorInfo::from_raw(
-        peer_id.to_string(),
-        vec!["users".to_string()],
-        vec![
-            "/ip4/127.0.0.1/tcp/4001".to_string(),
-            "not-a-multiaddr".to_string(),
-        ],
-    );
-    let parsed = info.addresses();
-    assert_eq!(parsed.len(), 1);
-    let expected: Multiaddr = "/ip4/127.0.0.1/tcp/4001".parse().unwrap();
-    assert_eq!(parsed[0], expected);
 }
 
 // ---------------------------------------------------------------------------

@@ -1,8 +1,7 @@
 //! Transport abstraction for cross-peer DEK fetches.
 //!
 //! M1 ships `PubsubKeyTransport<T>` (in `crates/database/p2p/src/kms/`), one impl
-//! generic over the `P2PTransport` abstraction so it rides both libp2p and
-//! iroh gossip. The KMS layer composes one or more transports and fans out
+//! generic over the `P2PTransport` abstraction so it rides pinc topics. The KMS layer composes one or more transports and fans out
 //! fetch requests across them.
 
 use async_trait::async_trait;
@@ -64,7 +63,7 @@ pub trait IncomingHandler: MaybeSendSync {
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 pub trait KeyTransport: MaybeSendSync {
-    /// Carrier name, used in tracing and metrics (e.g. `"libp2p-pubsub"`).
+    /// Carrier name, used in tracing and metrics (e.g. `"pinc-topics"`).
     fn name(&self) -> &'static str;
 
     /// Publish a fetch request and return a stream of replies. Caller is

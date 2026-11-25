@@ -19,14 +19,14 @@ use std::ptr;
 pub struct NodeInitOptions {
     /// Path to the store directory. Null or empty keeps the store in memory.
     pub db_path: *const c_char,
-    /// Comma-separated P2P listen multiaddrs. Empty listens on
-    /// `/ip4/0.0.0.0/tcp/9171`, as Go does; `disable_p2p_listen` listens on
-    /// nothing.
+    /// The UDP address the pinc endpoint binds, one `ip:port`. Empty binds
+    /// every interface on a port the OS picks.
     pub listening_addresses: *const c_char,
     /// Comma-separated seconds between replicator retries, the last one
     /// repeating. Empty keeps the default ladder.
     pub replicator_retry_intervals: *const c_char,
-    /// Comma-separated multiaddrs of peers to connect to once started.
+    /// Comma-separated pinc addresses (`<peer id>@<udp address>`) of peers
+    /// to connect to once started.
     pub peers: *const c_char,
     /// The node's identity, from `defra_identity_new` (0 for none).
     pub identity_ptr: usize,
@@ -62,16 +62,18 @@ pub struct NodeInitOptions {
     /// Reserved, so the struct has no padding: leave it zero. It never
     /// becomes a field; new fields go after the struct's last one.
     pub _reserved0: u32,
-    /// Milliseconds a P2P block sync may take. 0 keeps the default.
+    /// Milliseconds a P2P block sync may take. Not supported: must be 0.
     pub p2p_block_sync_timeout_ms: i64,
     /// Lens runtime pool size. Not supported yet: must be 0.
     pub lens_pool_size: c_int,
     /// Bytes per block chunk. 0 keeps the default.
     pub chunk_size: c_int,
 
-    /// Run GossipSub (1=true, 0=false).
+    /// Go's GossipSub switch. A pinc node always runs topics, through
+    /// `pinc_hubs`, so either value runs them.
     pub enable_pub_sub: c_int,
-    /// Run the relay client transport (1=true, 0=false).
+    /// Go's relay client switch. A pinc node always reaches peers behind a
+    /// NAT through its hubs, so either value does.
     pub enable_relay: c_int,
     /// Clear dial backoff before retrying a replicator. Not supported yet:
     /// must be 0.
@@ -132,30 +134,13 @@ pub struct NodeInitOptions {
     /// Reserved, so the struct has no padding: leave it zero. It never
     /// becomes a field; new fields go after the struct's last one.
     pub _reserved3: u32,
-    /// P2P transport: "libp2p" (default) or "iroh".
-    pub p2p_transport: *const c_char,
-    /// Optional iroh relay URL.
-    pub iroh_relay_url: *const c_char,
-    /// Optional iroh relay mode string: "default", "disabled", or "custom".
-    pub iroh_relay_mode: *const c_char,
-    /// Optional JSON array of relay URLs for custom relay mode.
-    pub iroh_relay_urls_json: *const c_char,
-    /// Optional iroh bind address (e.g. "127.0.0.1").
-    pub iroh_bind_addr: *const c_char,
-    /// Optional iroh bind UDP port. 0 means OS-assigned/unspecified.
-    pub iroh_bind_port: u16,
-    /// Reserved, so the struct has no padding: leave it zero. It never
-    /// becomes a field; new fields go after the struct's last one.
-    pub _reserved4: u16,
-    /// Run iroh without discovery (1=true, 0=false).
-    pub iroh_disable_discovery: c_int,
-    /// Optional custom DNS origin domain for iroh discovery.
-    pub iroh_discovery_origin_domain: *const c_char,
-    /// Optional custom pkarr relay URL for iroh discovery publishing.
-    pub iroh_pkarr_relay_url: *const c_char,
-    /// Iroh key file from before the node shared one peer key across transports.
-    /// Imported as the node's peer key when the store has none; never written.
-    pub iroh_key_path: *const c_char,
+    /// Comma-separated pinc hubs topics run through, each
+    /// `<peer id>@<udp address>`, at most four. Topic broadcasts and the KMS
+    /// key exchange reach peers only through a hub.
+    pub pinc_hubs: *const c_char,
+    /// Comma-separated peer ids allowed to open an inbound connection. Empty
+    /// admits every peer.
+    pub pinc_allowed_peers: *const c_char,
     /// Maximum concurrent DAG fetch tasks. 0 means use default.
     pub max_concurrent_dag_fetches: usize,
     /// Maximum concurrent push tasks. 0 means use default.
@@ -166,7 +151,7 @@ pub struct NodeInitOptions {
     pub rate_limit_burst: u32,
     /// Reserved, so the struct has no padding: leave it zero. It never
     /// becomes a field; new fields go after the struct's last one.
-    pub _reserved5: u32,
+    pub _reserved4: u32,
     /// Per-peer rate limit refill rate (tokens/sec). 0 means use default (50).
     pub rate_limit_rate: f64,
     /// Optional replication filter, asked whether to keep each replicated
@@ -184,21 +169,6 @@ pub struct NodeInitOptions {
     >,
     /// Passed back to `replication_filter` on every call.
     pub replication_filter_context: usize,
-    /// libp2p resource manager memory budget in MiB; zero keeps the default.
-    pub p2p_resource_memory_mib: u64,
-    /// libp2p resource manager file-descriptor budget, used only together
-    /// with `p2p_resource_memory_mib`; zero keeps the default.
-    pub p2p_resource_file_descriptors: u64,
-    /// Streams one peer may hold open; zero keeps the default.
-    pub p2p_max_streams_per_peer: usize,
-    /// Run libp2p without listening (1=true, 0=false): a dial-only host that
-    /// connects out to peers and replicators but accepts no connections, as a
-    /// mobile embedder runs it. Several such nodes run in one process without
-    /// competing for a port. Refused together with `listening_addresses`.
-    pub disable_p2p_listen: c_int,
-    /// Reserved, so the struct has no padding: leave it zero. It never
-    /// becomes a field; new fields go after the struct's last one.
-    pub _reserved6: u32,
 }
 
 impl Default for NodeInitOptions {
@@ -249,30 +219,16 @@ impl Default for NodeInitOptions {
             vera_signer_key: ptr::null(),
             vera_signer_key_len: 0,
             _reserved3: 0,
-            p2p_transport: ptr::null(),
-            iroh_relay_url: ptr::null(),
-            iroh_relay_mode: ptr::null(),
-            iroh_relay_urls_json: ptr::null(),
-            iroh_bind_addr: ptr::null(),
-            iroh_bind_port: 0,
-            _reserved4: 0,
-            iroh_disable_discovery: 0,
-            iroh_discovery_origin_domain: ptr::null(),
-            iroh_pkarr_relay_url: ptr::null(),
-            iroh_key_path: ptr::null(),
+            pinc_hubs: ptr::null(),
+            pinc_allowed_peers: ptr::null(),
             max_concurrent_dag_fetches: 0,
             max_concurrent_push_tasks: 0,
             max_doc_sync_request_doc_ids: 0,
             rate_limit_burst: 0,
-            _reserved5: 0,
+            _reserved4: 0,
             rate_limit_rate: 0.0,
             replication_filter: None,
             replication_filter_context: 0,
-            p2p_resource_memory_mib: 0,
-            p2p_resource_file_descriptors: 0,
-            p2p_max_streams_per_peer: 0,
-            disable_p2p_listen: 0,
-            _reserved6: 0,
         }
     }
 }

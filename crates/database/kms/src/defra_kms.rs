@@ -128,7 +128,7 @@ impl DefraKms {
         let arrivals = Arc::new(AtomOption::none());
         let mut remote_config = inputs.remote;
         // A transport that carries fewer keys per request than a batch holds
-        // (iroh gossip, #2842) gets the batch as chunks, each its own round
+        // (pinc topics, #2842) gets the batch as chunks, each its own round
         // trip with its own retries, a few at once.
         if let Some(per_request) = transports
             .iter()

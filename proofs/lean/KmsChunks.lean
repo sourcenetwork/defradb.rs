@@ -2,7 +2,7 @@
 # KmsChunks: a split KMS batch asks for every key once, and answers in order
 
 The story, in plain words. A node asks its peers for a batch of keys. Over
-iroh gossip one request can carry only so many keys, so the node cuts the
+pinc topics one request can carry only so many keys, so the node cuts the
 batch into chunks of at most `n` keys, the way Rust's `slice::chunks(n)`
 does: the first `n`, then the next `n`, and a shorter last one. Each chunk
 is its own round trip, with its own retries, a few on the wire at once, and

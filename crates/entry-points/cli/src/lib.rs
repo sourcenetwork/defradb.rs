@@ -19,12 +19,5 @@ pub mod logging;
 #[cfg(test)]
 #[path = "nac_adapter_tests.rs"]
 mod nac_adapter_tests;
-#[allow(dead_code)]
-pub(crate) mod p2p_adapter;
-#[allow(dead_code)]
-pub(crate) mod p2p_collection_lookup;
 pub(crate) mod schema_adapter;
-#[allow(dead_code)]
-pub(crate) mod transport_doc_pusher;
-pub(crate) mod version_syncer;
 pub(crate) mod view_adapter;

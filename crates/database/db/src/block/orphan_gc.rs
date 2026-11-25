@@ -181,7 +181,7 @@ where
 pub const MARKS_PER_SWEEP: usize = 100_000;
 
 /// When the orphan sweep runs: the node configuration's
-/// `Libp2pConfig::orphan_sweep`.
+/// `PincConfig::orphan_sweep`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct OrphanSweepConfig {
     /// Whether the sweep runs at all. Off by default, so a node that does not
