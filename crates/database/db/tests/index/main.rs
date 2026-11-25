@@ -8,6 +8,7 @@ mod create;
 mod deferred;
 mod deferred_task;
 mod drop;
+mod duplicate;
 mod fence;
 mod manager;
 mod manager_value_extraction;

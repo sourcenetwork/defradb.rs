@@ -3344,6 +3344,24 @@ pub const PROPERTIES: &[Property] = &[
         bound_by: "proofs/tests/behavioral/index.rs index_reconciles_lww_merge_after_restart",
     },
     Property {
+        family: "Index-maintenance consistency",
+        name: "INV_NoDuplicate / INV_NoLostIndex / INV_RefusedOnlyCopies: a create refuses a listed copy and validates its definition read",
+        axis: Tla,
+        anchor: "crates/database/db/src/index/duplicate.rs refuse_duplicate_index",
+        model_ref: "MC_DuplicateIndex_{Green,Red_NoCheck,Red_NoValidate}.cfg",
+        tiers: &[Boundary],
+        bound_by: "tools/integration-test/tests/testo/index/new_duplicate.rs",
+    },
+    Property {
+        family: "Index-maintenance consistency",
+        name: "DuplicateIndex.refused_iff_listed / created_keeps_all / create_keeps_listed_nodup",
+        axis: Lean,
+        anchor: "crates/database/db/src/index/duplicate.rs refuse_duplicate_index",
+        model_ref: "DuplicateIndex (lake build)",
+        tiers: &[Boundary],
+        bound_by: "tools/integration-test/tests/testo/index/new_duplicate.rs",
+    },
+    Property {
         // A text, JSON or custom field's merge writes its merged value into
         // the document before the composite updates the index, so the
         // update starts from a read taken before the field merges.

@@ -1068,6 +1068,9 @@ RUNS=(
   "MC_MixedFieldMaterialization_Green.cfg MixedFieldMaterialization.tla GREEN" # componentwise field materialization preserves mixed product state
   "MC_IndexReconciliation_Red_SaveOnly.cfg IndexReconciliation.tla RED" # stale index key survives CRDT winner rematerialization
   "MC_IndexReconciliation_Green.cfg IndexReconciliation.tla GREEN" # index keys equal the winning CRDT materialized value
+  "MC_DuplicateIndex_Green.cfg DuplicateIndex.tla GREEN" # a create refuses a listed copy and validates its definition read
+  "MC_DuplicateIndex_Red_NoCheck.cfg DuplicateIndex.tla RED" # no copy check lists the same index twice (INV_NoDuplicate)
+  "MC_DuplicateIndex_Red_NoValidate.cfg DuplicateIndex.tla RED" # an unvalidated definition read loses a created index (INV_NoLostIndex)
   "MC_MergedFieldIndex_Green.cfg MergedFieldIndex.tla GREEN" # #2235: a merge moves the index of a merged field from its pre-merge value
   "MC_MergedFieldIndex_Red_ReadAfterPart.cfg MergedFieldIndex.tla RED" # the index update starts from the value the field merge already wrote (INV_IndexMatchesValue)
   "MC_MergedFieldIndex_Green_Clear.cfg MergedFieldIndex.tla GREEN" # a field write drops the kept read instead of updating it

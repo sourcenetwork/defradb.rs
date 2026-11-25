@@ -35,6 +35,7 @@ mod merged_field {
 }
 mod new;
 mod new_composite;
+mod new_duplicate;
 mod new_get;
 mod new_unique;
 mod new_unique_composite;
