@@ -1,3 +1,4 @@
+mod aggregate_own_join;
 mod array;
 mod array_composite;
 mod array_int_filter;
@@ -13,6 +14,7 @@ mod backfill_unique_txn;
 mod composite_in_order;
 mod crdt;
 mod delete;
+mod explain_scan_node;
 mod get;
 mod group_order;
 mod index_offset_limit;
