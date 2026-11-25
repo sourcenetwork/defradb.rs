@@ -136,6 +136,10 @@ pub enum QueryError {
     #[error("parse error: {0}")]
     UnknownMutationCollection(String),
 
+    /// A field type declaration the SDL may not make, in Go's words.
+    #[error(transparent)]
+    UnsupportedFieldType(#[from] crate::sdl_parse::FieldTypeRefusals),
+
     /// Invalid filter condition
     #[error("invalid filter: {0}")]
     InvalidFilter(String),
@@ -300,6 +304,7 @@ impl QueryError {
         match self {
             Self::Parse(_)
             | Self::UnknownMutationCollection(_)
+            | Self::UnsupportedFieldType(_)
             | Self::InvalidFilter(_)
             | Self::FilterFieldNotSelected { .. }
             | Self::UnknownField(_)

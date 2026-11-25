@@ -221,14 +221,20 @@ impl defra_http::router::CollectionOperations for HttpSchemaOps {
         }))
     }
 
-    async fn add_collection(&self, sdl: &str) -> Result<Vec<CollectionVersion>, String> {
+    async fn add_collection(
+        &self,
+        sdl: &str,
+    ) -> Result<Vec<CollectionVersion>, defra_http::router::CollectionRefusal> {
         self.schema_ops
             .add_collection(
                 &RequestContext::bound_or_ambient(self.context.as_ref()),
                 sdl,
             )
             .await
-            .map_err(|error| error.to_string())
+            .map_err(|error| match error {
+                Error::AddCollection(refused) => refused.into(),
+                other => other.to_string().into(),
+            })
     }
 }
 

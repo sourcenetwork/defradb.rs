@@ -23,6 +23,33 @@ fn graphql_errors(value: &Value) -> Vec<&str> {
         .collect()
 }
 
+/// Whether the error containing `wanted` carries `code`: the failure's own
+/// code, or a GraphQL error's `extensions.code`.
+fn carries_code<A>(outcome: &Result<Value, Failure>, wanted: &str, code: &str) -> bool
+where
+    A: Op,
+{
+    let value = match outcome {
+        Err(failure) => {
+            return failure.message.contains(wanted) && failure.code.as_deref() == Some(code)
+        }
+        Ok(value) => value,
+    };
+    A::GRAPHQL
+        && value
+            .get("errors")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter(|error| {
+                error
+                    .get("message")
+                    .and_then(Value::as_str)
+                    .is_some_and(|message| message.contains(wanted))
+            })
+            .any(|error| error.pointer("/extensions/code").and_then(Value::as_str) == Some(code))
+}
+
 fn with_retry<F>(call: F) -> Result<Value, Failure>
 where
     F: Fn() -> Result<Value, Failure>,
@@ -155,12 +182,29 @@ where
             return Err(format!("unsupported op: {}", failure.message));
         }
     }
+    if common.envelope && action.expected_error_code().is_some() {
+        return Err("an expected error code cannot be checked through an envelope".to_owned());
+    }
     if common.envelope {
         let envelope = match outcome {
             Ok(value) => json!({"result": value, "error": ""}),
             Err(failure) => json!({"result": null, "error": failure.message}),
         };
         return match_envelope(state, common, &envelope, expected.as_ref());
+    }
+    if let Some(code) = action.expected_error_code() {
+        let Some(wanted) = action.expected_error() else {
+            return Err(format!(
+                "expected error code {code:?} names no expected error"
+            ));
+        };
+        return match carries_code::<A>(&outcome, wanted, code) {
+            true => Ok(()),
+            false => Err(format!(
+                "expected error containing {wanted:?} with code {code:?}; got {}",
+                describe(&outcome)
+            )),
+        };
     }
     if let Some(wanted) = action.expected_error() {
         let matched = match &outcome {
@@ -199,7 +243,10 @@ where
 fn describe(outcome: &Result<Value, Failure>) -> String {
     match outcome {
         Ok(value) => format!("response {value}"),
-        Err(failure) => format!("error {:?}", failure.message),
+        Err(failure) => match &failure.code {
+            Some(code) => format!("error {:?} with code {code:?}", failure.message),
+            None => format!("error {:?}", failure.message),
+        },
     }
 }
 
