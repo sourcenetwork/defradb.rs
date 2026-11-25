@@ -5,6 +5,7 @@ mod alldocs;
 mod bm25;
 mod cached_view_fetcher;
 pub(crate) mod chunk_gate;
+mod chunk_once;
 mod chunk_parent;
 mod cursor;
 pub mod groupby;

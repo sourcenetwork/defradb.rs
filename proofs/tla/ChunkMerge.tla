@@ -29,6 +29,12 @@
 \* and a document sync of the article sends the chunks of its current text.
 \* Until they arrive, the chunks of that text are owed to the peer.
 \*
+\* Two peers that write the same text apart and encrypt it therefore each hold
+\* a document of their own for one chunk, and once the chunks travel both hold
+\* both. A reader shows one of them: of the documents with one chunk's hash,
+\* the one with the smallest DocID. Every peer picks the same one from the same
+\* documents.
+\*
 \* A peer can also send a chunk document that lies. One lie is a chunk whose
 \* hash is not the hash of its text. Another is a new version of a chunk the
 \* receiver already stores, which would change it after it was created. The
@@ -56,7 +62,9 @@
 \*     the chunks of an encrypted text still on their way (INV_TextChunksStored);
 \*   - a peer waits for chunks of a text that is not encrypted (INV_OwedIsEncrypted);
 \*   - settled peers hold different lists (INV_SettledListsAgree);
-\*   - a reader sees one chunk as two documents (INV_EachChunkOnce).
+\*   - a reader sees one chunk as two documents (INV_EachChunkOnce);
+\*   - without encryption, a peer stores one chunk as two documents
+\*     (INV_PlainChunkStoredOnce).
 \*
 \* Code it models:
 \*   crates/engine/query/src/plan/chunk_parent.rs  parent_hashes (the read rule: cut the text)
@@ -76,12 +84,13 @@
 \*                                                     push follows its article's; ChunkFollow.tla)
 \*   crates/database/db/src/chunk/sync/write.rs       ChunkWrites::create (unsigned chunk blocks)
 \*   crates/database/db/src/block/builder/write.rs    compute_document_blocks (the DocID is the first block's CID)
+\*   crates/engine/query/src/plan/chunk_once.rs       shown_copy (a reader shows the smallest DocID of a hash)
+\*   crates/engine/query/src/plan/chunk_gate.rs       ChunkGate::allows (the query's read gate asks shown_copy)
 \* The deleted-parent guard, the read-time hash check and races with a reader are
 \* ChunkRead.tla's. An encrypted chunk's hash can't be checked at merge, so a
-\* forged encrypted chunk is not modelled here. An encrypted chunk's ID is its
-\* writer's own, so when two peers write the same chunk apart and one of them
-\* encrypts it, both end up with two copies: INV_EachChunkOnce is checked only
-\* with encryption off.
+\* forged encrypted chunk is not modelled here. A copy a reader can't decrypt
+\* fails the read-time hash check, so the reader picks among the others; that
+\* check is ChunkRead.tla's, and every copy here can be read.
 \* Numbers and finite sets are all this model needs.
 EXTENDS Naturals, FiniteSets
 
@@ -97,7 +106,8 @@ CONSTANTS
   Rebuild,     \* TRUE: a merge builds the merged text's chunks this peer lacks (the fix)
   SameIds,     \* TRUE: chunk blocks are unsigned, so a chunk's ID is the same on every peer (the fix)
   Encrypt,     \* TRUE: an edit may encrypt its text
-  Ship         \* TRUE: an encrypted text's chunks travel with its article's push and sync (the fix)
+  Ship,        \* TRUE: an encrypted text's chunks travel with its article's push and sync (the fix)
+  OneCopy      \* TRUE: a reader shows one document per chunk, the smallest DocID (the fix)
 
 \* Each peer edits at least once.
 ASSUME MaxEdits \in Nat \ {0}
@@ -118,6 +128,8 @@ ASSUME SameIds \in BOOLEAN
 \* Encryption and the shipping of encrypted chunks are each on or off.
 ASSUME Encrypt \in BOOLEAN
 ASSUME Ship \in BOOLEAN
+\* Showing one copy of a chunk is on or off.
+ASSUME OneCopy \in BOOLEAN
 
 \* The texts an edit may write.
 Texts == {"t1", "t2", "t3"}
@@ -197,6 +209,17 @@ Allowed(p) ==
 \* The chunks a reader on peer p sees: allowed, stored there and not deleted.
 \* A peer that has merged nothing, or the article's delete, has nothing to show.
 Shown(p) == IF known[p] = {} \/ dead[p] THEN {} ELSE (Allowed(p) \cap chunks[p]) \ gone[p]
+
+\* The chunk documents peer p stores for chunk c.
+Docs(p, c) == {d \in ids[p] : d[1] = c}
+
+\* The documents a reader on p shows for chunk c. With the fix, one of them:
+\* CHOOSE picks the same one from the same set on every peer, as the smallest
+\* DocID does. The bug shows every one.
+ShownDocs(p, c) ==
+  IF OneCopy /\ Docs(p, c) # {}
+  THEN {CHOOSE d \in Docs(p, c) : TRUE}  \* one pick, the same everywhere
+  ELSE Docs(p, c)                         \* every copy, or none stored
 
 \* Whether a chunk delete of c must not merge on p yet: the article is not gone
 \* here. The "listed" rule blocks only a chunk the article uses now.
@@ -410,7 +433,14 @@ INV_SettledListsAgree ==
 \* A reader sees each chunk it shows as exactly one document.
 INV_EachChunkOnce ==
   \A p \in Peers : \A c \in Shown(p) :                       \* for every chunk shown on p,
-    Cardinality({d \in ids[p] : d[1] = c}) = 1                \* one stored document holds it
+    Cardinality(ShownDocs(p, c)) = 1                         \* one document shows it
+
+\* With no encrypted edit, a peer stores each chunk as at most one document:
+\* unsigned blocks give every peer's copy the same ID.
+INV_PlainChunkStoredOnce ==
+  ~Encrypt =>                                                \* when nothing is encrypted,
+    \A p \in Peers : \A c \in AllChunks :                     \* for every chunk on every peer,
+      Cardinality(Docs(p, c)) <= 1                           \* at most one document holds it
 
 \* Every edit and chunk has reached every peer.
 Settled ==

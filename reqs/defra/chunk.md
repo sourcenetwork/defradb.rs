@@ -265,6 +265,13 @@ Two unconnected nodes add the same article. One updates its body to three paragr
 
 Two nodes that sign their blocks share an article. While disconnected, both update its body to the same three paragraphs. After they reconnect and the second syncs the article and the first node's chunk documents, the second shows the body and exactly its three chunks, each once.
 
+# `defra.chunk.replicate.encrypted`: Encrypting peers that write the same text show each chunk once
+
+- **Parents:** ["defra.chunk.replicate"]
+- **Scenarios:** ["chunk::replicate_encrypted::encrypting_peers_that_write_the_same_text_show_each_chunk_once"]
+
+Two nodes with KMS share an article whose `body` is encrypted. While disconnected, both update its body to the same three paragraphs, so each encrypts that text's chunks with a key of its own and holds them as documents of its own. After they reconnect and the second syncs the article and the first node's chunk documents, the second holds two documents for each chunk and shows the body and exactly its three chunks, each once: of the documents with one chunk's hash, a reader is shown only the one with the smallest docID.
+
 # `defra.chunk.replicate.doc_sync`: A document sync brings the parent's chunks
 
 - **Parents:** ["defra.chunk.replicate"]

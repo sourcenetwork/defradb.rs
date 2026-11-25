@@ -8,6 +8,7 @@ use rapidhash::fast::RandomState;
 use rapidhash::RapidHashSet;
 use schema::{ChunkedField, CollectionVersion};
 
+use super::chunk_once::{shown_copy, source_index};
 use super::chunk_parent::{chunk_fields, parent_fields, parent_hashes, ChunkFields};
 use super::permission_filter::AcpReadCheck;
 use crate::access_hooks::AppReadCheck;
@@ -36,16 +37,22 @@ pub(crate) async fn get_projected(
 /// may not see the parent or it isn't live.
 type ParentDecision = Option<Arc<RapidHashSet<String>>>;
 
+/// A parent's DocID and a chunk hash.
+type ChunkKey = (String, String);
+
 /// The read check for one chunk collection.
 #[derive(Clone)]
 pub(crate) struct ChunkGate {
     fetcher: Option<Arc<dyn DocFetcher>>,
     chunk_collection: Arc<str>,
+    source_index: Option<String>,
     parent: Option<(String, ChunkedField)>,
     parent_acp: Option<AcpReadCheck>,
     parent_app: Option<AppReadCheck>,
     // Chunks of one parent share its decision, so it is made once per query.
     decided: Arc<HopscotchMap<String, ParentDecision, RandomState>>,
+    // The copy of each chunk this query shows, picked once.
+    shown: Arc<HopscotchMap<ChunkKey, Arc<str>, RandomState>>,
 }
 
 impl ChunkGate {
@@ -60,6 +67,7 @@ impl ChunkGate {
         let gate = Self {
             fetcher,
             chunk_collection: Arc::from(chunks_col.name.as_str()),
+            source_index: source_index(chunks_col),
             parent: chunks_col
                 .chunk_of
                 .as_ref()
@@ -72,6 +80,7 @@ impl ChunkGate {
             parent_acp,
             parent_app,
             decided: Arc::new(HopscotchMap::with_hasher(RandomState::default())),
+            shown: Arc::new(HopscotchMap::with_hasher(RandomState::default())),
         };
         if gate.fetcher.is_none() || gate.parent.is_none() {
             tracing::warn!(
@@ -118,7 +127,26 @@ impl ChunkGate {
                     .get_or_insert(chunk.parent_id.clone(), decision)
             }
         };
-        Ok(decision.is_some_and(|hashes| hashes.contains(hash)))
+        if !decision.is_some_and(|hashes| hashes.contains(hash)) {
+            return Ok(false);
+        }
+        let key = (chunk.parent_id.clone(), hash.to_owned());
+        let shown = match self.shown.get(&key) {
+            Some(shown) => shown,
+            None => {
+                let shown = shown_copy(
+                    fetcher.as_ref(),
+                    &self.chunk_collection,
+                    self.source_index.as_deref(),
+                    &chunk,
+                    hash,
+                    doc_id,
+                )
+                .await?;
+                self.shown.get_or_insert(key, Arc::from(shown))
+            }
+        };
+        Ok(&*shown == doc_id)
     }
 
     async fn decide(

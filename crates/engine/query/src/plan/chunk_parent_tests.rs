@@ -93,7 +93,13 @@ impl Store {
 
     /// Stores a chunk of the parent and returns its DocID.
     fn chunk(&self, text: &str, claimed: &str) -> String {
-        let id = DocID::new_v0_from_seed(&format!("{text} {claimed}"));
+        self.copy(text, claimed, "")
+    }
+
+    /// Stores a copy of a chunk under an ID of its own, as a peer that
+    /// encrypts it with its own key does, and returns its DocID.
+    fn copy(&self, text: &str, claimed: &str, writer: &str) -> String {
+        let id = DocID::new_v0_from_seed(&format!("{text} {claimed}{writer}"));
         let mut doc = Document::new(chunks());
         doc.set_id(id.clone());
         doc.set("_sourceID", NormalValue::String(self.parent_id.clone()))
@@ -226,6 +232,41 @@ fn a_later_chunk_of_a_long_text_split_with_overlap_shows() {
         };
 
         assert!(store.gate_for(settings).allows(&later, None).await.unwrap());
+    })
+    .unwrap()
+}
+
+#[test]
+fn two_copies_of_one_chunk_show_once_as_the_smallest_doc_id() {
+    workers::block_on(async {
+        let text = piece("Shared text.");
+        let store = Store::new(Some("Shared text."), Vec::new());
+        let first = store.copy(&text, &hash(&text), " by one peer");
+        let second = store.copy(&text, &hash(&text), " by another");
+        let forged = store.copy("forged", &hash(&text), "");
+        let smallest = first.clone().min(second.clone());
+
+        let gate = store.gate(defra_core::DEFAULT_SPLITTER_VERSION);
+        assert!(gate.allows(&first, None).await.unwrap() == (first == smallest));
+        assert!(gate.allows(&second, None).await.unwrap() == (second == smallest));
+        assert!(!gate.allows(&forged, None).await.unwrap());
+        assert!(store.shows(&smallest).await);
+    })
+    .unwrap()
+}
+
+#[test]
+fn a_copy_whose_text_does_not_match_never_hides_the_real_chunk() {
+    workers::block_on(async {
+        let text = piece("Shared text.");
+        let store = Store::new(Some("Shared text."), Vec::new());
+        let real = store.chunk(&text, &hash(&text));
+        let unreadable = (0..)
+            .map(|i| store.copy("ciphertext", &hash(&text), &format!(" {i}")))
+            .find(|id| id < &real)
+            .unwrap();
+        assert!(!store.shows(&unreadable).await);
+        assert!(store.shows(&real).await);
     })
     .unwrap()
 }
