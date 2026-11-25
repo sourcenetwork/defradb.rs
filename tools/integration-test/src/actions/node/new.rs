@@ -66,6 +66,11 @@ pub struct NewNode {
     /// many milliseconds.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub commit_timeout_ms: Option<u64>,
+    /// A node in a process of its own, which `Kill` and `CrashCommit` end:
+    /// a plain Rust node under rust-http and cli, Go's node under go-http.
+    /// It keeps its data in `databaseDir`, which it needs.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub own_process: bool,
     /// Kept so corpus scenarios that set it still parse. It changes nothing:
     /// every node gets Go's `NodeIdentity(i)` and runs identity-only unless
     /// it signs.
@@ -147,6 +152,7 @@ impl Op for NewNode {
         probe.commit_gate = false;
         probe.commit_timeout_ms = None;
         probe.max_txn_retries = None;
+        probe.own_process = false;
         if probe != Self::default() {
             let options = serde_json::to_string(&probe).unwrap_or_default();
             return Err(Failure::unsupported(format!("{} {options}", Self::name())));
@@ -174,6 +180,7 @@ impl Op for NewNode {
                 state.client_type()
             )));
         }
+        self.check_own_process(state.client_type())?;
         let max_txn_retries = self.max_txn_retries(state.client_type())?;
         let registered_identity = self.registered_identity(state.client_type())?;
         let dir = match self.database_dir {
@@ -207,6 +214,7 @@ impl Op for NewNode {
                 .map(Arc::new),
             commit_timeout: self.commit_timeout_ms.map(Duration::from_millis),
             max_txn_retries,
+            own_process: self.own_process,
             ..Default::default()
         };
         state.start_node(self.common.node(), spec);
@@ -315,6 +323,44 @@ impl NewNode {
             )));
         }
         Ok(true)
+    }
+
+    /// A node in its own process is a Go node or a plain Rust node reached
+    /// by URL, and keeps its data in a directory.
+    fn check_own_process(&self, client: ClientType) -> Result<(), Failure> {
+        if !self.own_process {
+            return Ok(());
+        }
+        if client == ClientType::InProcess {
+            return Err(Failure::unsupported(format!(
+                "{} argument ownProcess under {client:?}: the in-process client calls a node in \
+                 this process",
+                Self::name()
+            )));
+        }
+        let plain = NewNode {
+            own_process: true,
+            database_dir: self.database_dir.clone(),
+            common: self.common.clone(),
+            expected_data: self.expected_data.clone(),
+            expected_error: self.expected_error.clone(),
+            ..Default::default()
+        };
+        if client != ClientType::GoHttp && *self != plain {
+            return Err(Failure::unsupported(format!(
+                "{} argument ownProcess with other options under {client:?}: a Rust node in its \
+                 own process starts with none",
+                Self::name()
+            )));
+        }
+        if self.database_dir.is_none() {
+            return Err(Failure::operation(format!(
+                "{} argument ownProcess without databaseDir: the node keeps its data across a \
+                 kill in a directory",
+                Self::name()
+            )));
+        }
+        Ok(())
     }
 
     /// How many times the node re-runs a transaction that lost a race. Go's

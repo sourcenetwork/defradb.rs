@@ -17,6 +17,7 @@ use tempfile::TempDir;
 
 use crate::actions::shared::KeyType;
 use crate::client_type::{go_binary, network_edge, ClientType};
+use crate::crash::NodeProcess;
 use crate::go_node::{GoNode, GoOptions};
 
 mod action_events;
@@ -79,6 +80,9 @@ pub struct NodeSpec {
     /// An in-process iroh node serving these stream protocols, in place of
     /// the libp2p one `network` starts.
     pub iroh: Option<crate::actions::stream::IrohSpec>,
+    /// A Rust node in a process of its own, which a test can kill
+    /// (`crate::crash`), under the HTTP and CLI clients.
+    pub own_process: bool,
 }
 
 /// A running node: the node itself for the in-process client, or the URL the
@@ -89,6 +93,8 @@ pub struct TestNode {
     pub spec: NodeSpec,
     /// The Rust node behind any client, for its events and its shutdown.
     embedded: Option<Arc<Node>>,
+    /// The process of a Rust node that runs in one of its own.
+    process: Option<Arc<NodeProcess>>,
     _held: Vec<Arc<dyn Any + Send + Sync>>,
     events: Atom<Option<Arc<Events>>>,
     /// The node's collection action events, once a `ListActions { listen }`
@@ -118,6 +124,9 @@ impl TestNode {
     pub fn try_start(client_type: ClientType, spec: NodeSpec) -> Result<Self, String> {
         if spec.iroh.is_some() {
             return Self::start_iroh(spec);
+        }
+        if spec.own_process && matches!(client_type, ClientType::RustHttp | ClientType::Cli) {
+            return Self::start_process(spec);
         }
         let listen = match spec.listen.first() {
             Some(address) => address.clone(),
@@ -195,6 +204,18 @@ impl TestNode {
         }
     }
 
+    /// Start a Rust node in a process of its own, on `spec.dir`.
+    fn start_process(spec: NodeSpec) -> Result<Self, String> {
+        let dir = spec
+            .dir
+            .clone()
+            .ok_or("a node in its own process keeps its data in a directory")?;
+        let process = Arc::new(NodeProcess::start(dir.path())?);
+        let mut node = Self::new(None, Some(process.url().to_owned()), spec, None, Vec::new());
+        node.process = Some(process);
+        Ok(node)
+    }
+
     fn new(
         node: Option<Arc<Node>>,
         url: Option<String>,
@@ -207,6 +228,7 @@ impl TestNode {
             url,
             spec,
             embedded,
+            process: None,
             _held: held,
             events: Atom::new(None),
             actions: Atom::new(None),
@@ -215,7 +237,12 @@ impl TestNode {
 
     /// The node runs Go's defradb in another process.
     pub fn is_go(&self) -> bool {
-        self.embedded.is_none()
+        self.embedded.is_none() && self.process.is_none()
+    }
+
+    /// The process of a Rust node that runs in one of its own.
+    pub fn process(&self) -> Option<&Arc<NodeProcess>> {
+        self.process.as_ref()
     }
 
     /// The Rust node behind any client; `None` for a Go node.
@@ -228,6 +255,11 @@ impl TestNode {
     pub async fn stop(&self) {
         if let Some(node) = &self.embedded {
             node.shutdown().await.unwrap();
+        }
+        if let Some(process) = &self.process {
+            process
+                .stop()
+                .unwrap_or_else(|error| panic!("stop the node: {error}"));
         }
     }
 

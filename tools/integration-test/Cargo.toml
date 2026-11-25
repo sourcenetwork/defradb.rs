@@ -60,6 +60,12 @@ hex = "0.4"
 # Holds a stopped Go node's P2P port with SO_REUSEPORT until it restarts.
 socket2 = { version = "0.6", features = ["all"] }
 identity = { path = "../../crates/building-blocks/identity" }
+# A node in its own process writes its store through a crash-injecting env.
+storage = { path = "../../crates/engine/storage" }
+
+[target.'cfg(unix)'.dependencies]
+# A node in its own process kills itself with SIGKILL at a crash point.
+libc = "0.2"
 
 [features]
 generator = ["serde_json/preserve_order"]
