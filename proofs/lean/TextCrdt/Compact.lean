@@ -30,7 +30,7 @@ span the code keeps.
 
 Rust anchors, in `crates/building-blocks/crdt/src/fugue_checkpoint.rs`:
 `replay` folds the tree at critical blocks (`critical_steps`) through
-`Tree::checkpoint`, which builds the run (`compact`); `Tree::text` reads the
+`Tree::fold`, which builds the run (`compact`); `Tree::text` reads the
 text as `visible` does, a span piece taking its characters from the run.
 -/
 
