@@ -651,6 +651,9 @@ jobs:
           lake-package-directory: proofs/lean
           auto-config: false
           build: true
+          # The lakefile lists its proof roots from the directory at
+          # elaboration time, so new `.lean` files need a reconfigure.
+          build-args: "-R"
           test: false
           use-mathlib-cache: false
       - name: Check client-signed create model cases
