@@ -8,7 +8,7 @@ use std::time::Duration;
 use defra_node::{
     EmbeddedVeraActor, EmbeddedVeraConfig, EmbeddedVeraDeployment, EmbeddedVeraPolicy,
     EmbeddedVeraTrust, Node, P2PConfig, PeerKeySource, ReplicaGrant, ReplicaOwnership,
-    ReplicaRegistration, SigningKey, VeraRsActor, VeraRsConfig,
+    ReplicaRegistration, SigningKey, VeraActor, VeraConfig,
 };
 use identity::Did;
 use vera::vera_rs::{DelegationSigner, Ed25519Signer};
@@ -177,12 +177,12 @@ pub(crate) fn seed() -> EmbeddedVeraPolicy {
 /// A peer that verifies against another peer's deployment.
 pub(crate) async fn shared(spec: &PeerSpec, rpc: SocketAddr, trust: &EmbeddedVeraTrust) -> Node {
     builder(spec)
-        .with_vera_rs(VeraRsConfig {
+        .with_vera(VeraConfig {
             rpc_address: format!("http://{rpc}"),
             consensus_key: trust.consensus_key.clone(),
             genesis_id: None,
             deployment_id: trust.chain_id,
-            actor: VeraRsActor::Signer(signer(spec)),
+            actor: VeraActor::Signer(signer(spec)),
             worker_dir: spec.home.join("worker"),
             keyring: keyring(spec),
             tuning: vera::AcpTuning::default(),

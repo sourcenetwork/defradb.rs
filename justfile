@@ -59,7 +59,7 @@ export PATH := tooling_bin + ":" + go_root + "/bin" + ":" + cargo_bin + ":" + el
 
 # Integration areas: the top-level modules of the testo and legacy test binaries
 # in tools/integration-test. An area in both runs in both.
-integration_suites := "acp backup collection collection_version encryption explain export index issues matchers mutation net node query searchable_encryption signature subscription txn view basic cursor fts identity nac p2p p2p_iroh vector vera verars"
+integration_suites := "acp backup collection collection_version encryption explain export index issues matchers mutation net node query searchable_encryption signature subscription txn view basic cursor fts identity nac p2p p2p_iroh vector vera"
 
 # Cargo profile for the build and test recipes. `dev` is the stock debug
 # profile and the default; `just profile=super-dev test` opts into the lean
@@ -667,9 +667,11 @@ tla-model cfg module:
     cd proofs/tla && ./tools/tlc -config {{ cfg }} {{ module }}
 
 # Lean proofs. Must build clean with zero `sorry`.
+# A new top-level `.lean` file is built with no lakefile edit; `-R` makes Lake
+# list the directory again.
 [group('proofs')]
 lean:
-    cd proofs/lean && lake build
+    cd proofs/lean && lake build -R
 
 # Model-to-code binding. The Lean axis needs no binary; the TLA axis drives the
 # real release binary and is serial because each test spins up real nodes.
