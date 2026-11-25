@@ -17,8 +17,8 @@ pub(crate) struct MissingLinkWalkStats {
     micros_max: AtomicU64,
 }
 
-/// A point-in-time view of [`MissingLinkWalkStats`], carried by `SyncStatus`
-/// as `missing_link_walks`.
+/// A point-in-time view of the node's missing-link walk counters, carried by
+/// `SyncStatus` as `missing_link_walks`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize)]
 pub struct MissingLinkWalkSnapshot {
     /// Walks that read every reachable unmerged block.
