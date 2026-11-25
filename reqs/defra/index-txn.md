@@ -305,3 +305,12 @@ A node that has an identity but does not sign (Go's `NodeIdentity` with `EnableS
 - **Scenarios:** ["node::identity_only::an_identity_only_node_checks_an_anonymous_write_in_its_transaction_under_nac"]
 
 With node access control enabled and owned by identity 1, an identity-only node gives no anonymous call the node's access, inside a transaction it began as outside one: adding a `Users` document without an identity in that transaction fails with `not authorized to perform operation. Permission: get-collection`, as the same write outside a transaction does, and nothing is written. A refused write in a transaction never answers with empty data. Identity 1 adds and reads documents as usual.
+
+# `defra.txn.outcome-query`: HTTP transaction outcome after a lost commit answer
+
+- **Parents:** ["go.txn"]
+- **Scenarios:** ["txn::outcome::an_outcome_is_visible_to_its_owner_and_malformed_ids_are_refused"]
+
+`GET /api/v0/tx/{id}` returns `{"outcome":"open"}` while its owner's transaction has no commit queued, `{"outcome":"committing"}` from the moment a commit is queued until its final result is known, `{"outcome":"committed"}` after a successful commit, and `{"outcome":"aborted"}` after a discard, an idle expiry, an abandon, or a failed commit. The request belongs to the identity that began the transaction; every other caller, including no identity, gets `{"outcome":"unknown"}` with HTTP 200, exactly as an ID that names nothing does. A malformed ID is refused with HTTP 400 and the error `invalid transaction id`. A final result is retained for at least the transaction idle age; after that it is `unknown`. Each worker retains at most 4096 outcomes: past that the oldest final results are dropped early and read `unknown`, while the outcome of a transaction that is still open or committing is never dropped. An ID carries a token for the server start that issued it, so an ID from an earlier start is `unknown` and never names a new transaction.
+
+The wire ID is Go-compatible numeric `u64`. For compatibility, a bare numeric route whose high bits are zero is still accepted; it names the reserved legacy start `0`, which no new transaction uses. Every new ID is below 2^53, so a client that reads it as a JSON number, as JavaScript does, gets the same ID back.

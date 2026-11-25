@@ -117,7 +117,7 @@ impl Home {
             .unwrap();
         assert!(response.status().is_success(), "{}", response.status());
         let body: Value = response.json().await.unwrap();
-        body["id"].as_u64().unwrap().to_string()
+        body["id"].to_string()
     }
 
     async fn is_owner(&self, caller: &RawIdentity, tx: &str, doc: &str) -> Value {

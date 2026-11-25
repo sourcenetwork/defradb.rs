@@ -69,6 +69,24 @@ const ENTRIES: &[(&str, &str, &[&str], &str)] = &[
         SECONDARY_INDEX,
         CHILD_PAGE,
     ),
+    (
+        "tests/integration/collection_version/updates/remove/fields/simple_test.go",
+        "TestCollectionVersionUpdatesRemoveField",
+        SECONDARY_INDEX,
+        INDEXED_FIELD_PATCH,
+    ),
+    (
+        "tests/integration/collection_version/updates/remove/fields/simple_test.go",
+        "TestCollectionVersionUpdatesRemoveAllFields",
+        SECONDARY_INDEX,
+        INDEXED_FIELD_PATCH,
+    ),
+    (
+        "tests/integration/collection_version/updates/replace/field/simple_test.go",
+        "TestCollectionVersionUpdatesReplaceField",
+        SECONDARY_INDEX,
+        INDEXED_FIELD_PATCH,
+    ),
 ];
 
 const CHILD_PAGE: &str =
@@ -76,6 +94,11 @@ const CHILD_PAGE: &str =
 
 const LENS_3044: &str = "TODO(https://github.com/sourcenetwork/defradb.rs/issues/3044): \
                          with indexes, a query after a migration returns unmigrated fields.";
+
+const INDEXED_FIELD_PATCH: &str =
+    "The secondary-index multiplier indexes every field, and a patch may not remove \
+                                   or replace an indexed field, as Go's: \
+                                   https://github.com/sourcenetwork/defradb/issues/4722";
 
 /// The Go exclusions defradb.rs does not share, and why the test runs here.
 const RUNS_HERE: &[(GoReason, &str)] = &[
@@ -89,7 +112,8 @@ const RUNS_HERE: &[(GoReason, &str)] = &[
     ),
     (
         GoReason::Cites("https://github.com/sourcenetwork/defradb/issues/4722"),
-        "defradb.rs patches a collection whose fields have dependent indexes.",
+        "defradb.rs patches a collection whose fields have dependent indexes; removing \
+         or replacing an indexed field is refused, as Go's, and excluded in `ENTRIES`.",
     ),
 ];
 

@@ -78,9 +78,10 @@
       "tools/integration-test/tests/testo/explain/default/with_filter.rs::default_explain_request_with_logical_compound_and_filter",
       "tools/integration-test/tests/testo/explain/default/with_filter.rs::default_explain_request_with_logical_compound_or_filter",
       "tools/integration-test/tests/testo/explain/default/with_filter.rs::default_explain_request_with_match_inside_list",
-      "tools/integration-test/tests/testo/explain/default/with_filter.rs::default_explain_request_with_string_equal_filter"
+      "tools/integration-test/tests/testo/explain/default/with_filter.rs::default_explain_request_with_string_equal_filter",
+      "tools/integration-test/tests/testo/explain/default/filter_applied_once.rs::explain_filter_with_order_and_limit_is_applied_only_at_the_scan"
     ],
-    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2383).",
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2383). filter_applied_once.rs also passes on go-http (Testo go-http, actions run 45550400604).",
     "note": "Only a unit test of ScanNode::explain on a hand-built node with an _eq filter. Unverified: the filter reaching scanNode via a real @explain query, _gt/_and/_or/_in/JSON _eq filters, and the collection prefix in 'prefixes'."
   },
   {
@@ -718,12 +719,13 @@
     "id": "go.encryption.peer.acp",
     "verdict": "partial",
     "rust_tests": [
-      "tools/integration-test/tests/legacy/vera/encryption_acp.rs::encryption_acp_user_and_node_access",
-      "tools/integration-test/tests/legacy/vera/encryption_acp.rs::encryption_acp_user_access_not_node",
+      "tools/integration-test/tests/vera/encryption_acp.rs::encryption_acp_user_and_node_access",
+      "tools/integration-test/tests/vera/encryption_acp.rs::encryption_acp_user_access_not_node",
+      "tools/integration-test/tests/vera/encryption_acp.rs::encryption_acp_node_partial_access",
       "tools/integration-test/tests/legacy/encryption/acp.rs::rust_encrypted_branchable_collection_grant_merges_on_peer"
     ],
-    "evidence": "vera/encryption_acp.rs:248 asserts the user on node1 sees Fred when user and node1 hold reader (remote DAC); :308 asserts the user sees 0 docs when only the user holds reader; encryption/acp.rs:263 polls until the granted peer reads Fred on a private @branchable collection (local DAC)",
-    "note": "Unverified: node1 holding no commits when it lacks access (not asserted); node with reader on some docs sees exactly shared private + public docs (encryption_acp_node_partial_access is #[ignore]); key holder closed means a newly authorised peer gets nothing (encryption_acp_server_not_available is #[ignore]); branchable collection with remote DAC."
+    "evidence": "vera/encryption_acp.rs:241 asserts the user on node1 sees Fred when user and node1 hold reader (remote DAC); :303 asserts the user sees 0 docs when only the user holds reader; :413 and :418 assert node1, granted reader on two of six docs, sees exactly those two (Fred, John), also after 8 more seconds; encryption/acp.rs:263 polls until the granted peer reads Fred on a private @branchable collection (local DAC)",
+    "note": "Unverified: node1 holding no commits when it lacks access (not asserted); public docs among what a partially granted node sees (vera.rs denies an unregistered document, so the Rust test expects the two shared private docs only; see the requirement's Scope); key holder closed means a newly authorised peer gets nothing (no Rust test: the Go-chain port encryption_acp_server_not_available was removed with the Cosmos provider); branchable collection with remote DAC."
   },
   {
     "id": "go.encryption.peer.nac",
@@ -828,8 +830,8 @@
     "id": "go.signature.commits.update_delete",
     "verdict": "partial",
     "rust_tests": [
-      "tools/integration-test/tests/verars/policy_generations/strict_replication.rs::native_replicated_update_accepts_granted_writer",
-      "tools/integration-test/tests/verars/policy_generations/strict_replication.rs::native_replicated_delete_accepts_granted_writer"
+      "tools/integration-test/tests/vera/policy_generations/strict_replication.rs::native_replicated_update_accepts_granted_writer",
+      "tools/integration-test/tests/vera/policy_generations/strict_replication.rs::native_replicated_delete_accepts_granted_writer"
     ],
     "evidence": "strict_replication.rs:129-136 (via exercise) asserts the height-2 _C commit after an update or delete carries a signature object",
     "note": "Not asserted: field blocks at heights 2 and 3 have signature nil (Rust implements this in crates/database/db/src/block/builder/mod.rs compute_signature, priority > 1, but no test checks it); same identity with distinct values across _C blocks; delete _C signed with the node identity on a plain (non-Vera) node."

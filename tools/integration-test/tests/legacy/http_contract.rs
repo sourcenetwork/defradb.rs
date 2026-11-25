@@ -177,20 +177,39 @@ async fn go_rust_http_contract() {
         add_collection(&client, rust_url).await;
         add_collection(&client, go_url).await;
 
-        let (rust_openapi, go_openapi) = compare_json(
-            &client,
-            Method::GET,
-            rust_url,
-            go_url,
-            "/openapi.json",
-            None,
-        )
-        .await;
+        // `/openapi.json` is this server's own document: Go's operations carried
+        // verbatim, plus the routes this node adds (fts, vector, events, ...).
+        // So the two are compared by containment rather than equality, and Go's
+        // operations must come out of Rust's document unchanged (#3263).
+        let rust_openapi = send_json(&client, Method::GET, rust_url, "/openapi.json", None).await;
+        let go_openapi = send_json(&client, Method::GET, go_url, "/openapi.json", None).await;
         assert_eq!(
-            operations(&rust_openapi.body),
-            operations(&go_openapi.body),
-            "registered HTTP operations"
+            rust_openapi.status, go_openapi.status,
+            "/openapi.json: HTTP status"
         );
+        assert_eq!(
+            rust_openapi.content_type, go_openapi.content_type,
+            "/openapi.json: content type"
+        );
+        let undocumented: Vec<String> = operations(&go_openapi.body)
+            .difference(&operations(&rust_openapi.body))
+            .cloned()
+            .collect();
+        assert!(
+            undocumented.is_empty(),
+            "Rust does not document Go's operations: {undocumented:?}"
+        );
+        for (path, item) in go_openapi.body["paths"].as_object().expect("Go paths") {
+            for method in ["get", "post", "put", "patch", "delete"] {
+                if let Some(operation) = item.get(method) {
+                    assert_eq!(
+                        &rust_openapi.body["paths"][path.as_str()][method],
+                        operation,
+                        "Rust rewrote Go's {method} {path}"
+                    );
+                }
+            }
+        }
         assert_go_routes_resolve_in_rust(&client, rust_url, &go_openapi.body).await;
 
         let (rust_health, go_health) = compare_json(

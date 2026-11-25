@@ -331,10 +331,7 @@ async fn exercise_transactional_http_relationships() -> Vec<Value> {
         .send()
         .await
         .unwrap();
-    let other_tx = response.json::<Value>().await.unwrap()["id"]
-        .as_u64()
-        .unwrap()
-        .to_string();
+    let other_tx = response.json::<Value>().await.unwrap()["id"].to_string();
     let hidden = client
         .post(&ownership_url)
         .header("Authorization", other_auth.as_str())
@@ -391,7 +388,7 @@ async fn exercise_transactional_http_relationships() -> Vec<Value> {
             .unwrap();
         assert!(response.status().is_success());
         let body: Value = response.json().await.unwrap();
-        let tx = body["id"].as_u64().unwrap().to_string();
+        let tx = body["id"].to_string();
         let owner_result = client
             .post(&ownership_url)
             .header("Authorization", auth.as_str())
@@ -491,10 +488,7 @@ async fn exercise_transactional_http_relationships() -> Vec<Value> {
         .send()
         .await
         .unwrap();
-    let other_tx = response.json::<Value>().await.unwrap()["id"]
-        .as_u64()
-        .unwrap()
-        .to_string();
+    let other_tx = response.json::<Value>().await.unwrap()["id"].to_string();
     let nonowner = client
         .post(&ownership_url)
         .header("Authorization", other_auth.as_str())
@@ -557,10 +551,7 @@ async fn exercise_transactional_http_relationships() -> Vec<Value> {
         .send()
         .await
         .unwrap();
-    let revoked_tx = response.json::<Value>().await.unwrap()["id"]
-        .as_u64()
-        .unwrap()
-        .to_string();
+    let revoked_tx = response.json::<Value>().await.unwrap()["id"].to_string();
     let after = client
         .post(&ownership_url)
         .header("Authorization", other_auth.as_str())
@@ -602,10 +593,7 @@ async fn exercise_transactional_http_relationships() -> Vec<Value> {
         .send()
         .await
         .unwrap();
-    let unregistered_tx = response.json::<Value>().await.unwrap()["id"]
-        .as_u64()
-        .unwrap()
-        .to_string();
+    let unregistered_tx = response.json::<Value>().await.unwrap()["id"].to_string();
     let unregistered = client
         .post(&ownership_url)
         .header("Authorization", auth.as_str())
@@ -767,7 +755,7 @@ fn source_permission_http_uses_caller_transaction() {
         assert!(!missing.status().is_success());
         let begin: Value = client.post(format!("http://{address}/api/v0/tx"))
             .header("Authorization", &auth).send().await.unwrap().json().await.unwrap();
-        let tx = begin["id"].as_u64().unwrap().to_string();
+        let tx = begin["id"].to_string();
         let wrong = client.post(&url).header("Authorization", bearer(&outsider, &address.to_string()))
             .header("x-defradb-tx", &tx).json(&body).send().await.unwrap();
         assert!(!wrong.status().is_success());
