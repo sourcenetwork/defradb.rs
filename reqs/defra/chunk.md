@@ -276,7 +276,7 @@ A replicator for `Article` with the filter `{kind: {_eq: "public"}}` gives the s
 
 - **Parents:** ["defra.chunk"]
 
-A backup holds the parent's text and not its chunks.
+A backup holds the parent's text. It holds the chunks only when they carry vectors (`defra.chunk.embed.backup`), so a restore doesn't embed them again.
 
 # `defra.chunk.backup.round_trip`: A backup round trip rebuilds the chunks
 
