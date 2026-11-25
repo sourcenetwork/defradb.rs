@@ -81,6 +81,15 @@ pub const PROPERTIES: &[Property] = &[
         bound_by: "tools/integration-test/tests/testo/index/index_offset_limit.rs",
     },
     Property {
+        family: "Unique index filter read",
+        name: "INV_FilterReadDecidesNothing / INV_Unique: a unique-index filter read is never validated, while a writer's own uniqueness check is",
+        axis: Tla,
+        anchor: "crates/engine/storage/src/index/eq_iterator.rs ExactMatchIterator::new_unique; crates/engine/storage/src/index/unique.rs UniqueIndex::save",
+        model_ref: "MC_UniqueFilterRead_{Green,Red_FilterReadValidated,Red_FilterReadValidatedNil,Red_OwnEntryUnvalidated}.cfg",
+        tiers: &[Boundary],
+        bound_by: "tools/integration-test/tests/testo/txn/unique_filter_read.rs a_unique_eq_filter_read_does_not_fail_the_commit, a_nil_writers_unique_filter_read_does_not_fail_the_commit, a_writer_of_the_filtered_value_still_loses_the_commit; tools/integration-test/tests/testo/mutation/add/field_kinds/one_to_one_to_one/with_txn.rs transactional_creation_and_linking_of_relational_documents_forward",
+    },
+    Property {
         family: "Schema-evolution operations in the core",
         name: "INV_Keep / INV_Match / INV_Real: synced definitions preserve only the matching placeholder's transform and leave held definitions unchanged",
         axis: Tla,

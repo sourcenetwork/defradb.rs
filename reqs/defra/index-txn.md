@@ -264,6 +264,13 @@ Inside a transaction, `UpdateDoc`, update-with-filter and `DeleteDoc` operate on
 
 A collection patch that adds, removes or modifies a secondary index, or changes a vector index's metric, fails with `collection indexes cannot be mutated`.
 
+# `defra.txn.docs.unique-filter-read`: A query through a unique index does not fail its transaction's commit
+
+- **Parents:** ["go.txn.docs"]
+- **Scenarios:** ["txn::unique_filter_read::a_unique_eq_filter_read_does_not_fail_the_commit", "txn::unique_filter_read::a_unique_in_filter_read_does_not_fail_the_commit", "txn::unique_filter_read::a_nil_writers_unique_filter_read_does_not_fail_the_commit", "txn::unique_filter_read::a_writer_of_the_filtered_value_still_loses_the_commit", "mutation::add::field_kinds::one_to_one_to_one::with_txn::transactional_creation_and_linking_of_relational_documents_forward"]
+
+With `type User { name: String @index(unique: true) age: Int }`, an explicit transaction runs `User(filter: {name: {_eq: "alice"}}) { name }` (or `{_in: ["alice"]}`) and gets `[]`, then adds `{name: "bob", age: 3}` or a document with no name, `{age: 3}`. An autocommit `add_User(input: {name: "alice", age: 1})` then succeeds, and committing the transaction succeeds too: a query read decides nothing, so it is not checked at commit, exactly as a filter on a field without an index. `User { name age }` then returns alice and the transaction's document. A transaction that adds `{name: "alice", age: 2}` instead still fails its commit with `transaction conflict. Please retry`, and only the autocommit alice is stored. The same holds for the unique index behind a one-to-one relation: with `Book { publisher: Publisher @primary }` and `Publisher { published: Book }`, two explicit transactions each add a book for a different publisher and run `Publisher { name published { name } }`, and both commit, leaving both books stored. Go checks these reads and fails the second commit in both cases; that is a deliberate divergence.
+
 # `go.txn.definitions.same-txn-visibility`: Definition reads see only their own transaction
 
 - **Parents:** ["go.txn.definitions"]

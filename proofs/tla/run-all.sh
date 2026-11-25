@@ -22,6 +22,10 @@ RUNS=(
   "MC_HeaderRetry_Red_Drop.cfg HeaderRetry.tla RED"
   "MC_OrderedIndexPage_Green.cfg OrderedIndexPage.tla GREEN"
   "MC_OrderedIndexPage_Red_DoubleOffset.cfg OrderedIndexPage.tla RED"
+  "MC_UniqueFilterRead_Green.cfg UniqueFilterRead.tla GREEN"
+  "MC_UniqueFilterRead_Red_FilterReadValidated.cfg UniqueFilterRead.tla RED" # a query read aborts a bob writer (INV_FilterReadDecidesNothing)
+  "MC_UniqueFilterRead_Red_FilterReadValidatedNil.cfg UniqueFilterRead.tla RED" # a query read aborts a nil writer (INV_FilterReadDecidesNothing)
+  "MC_UniqueFilterRead_Red_OwnEntryUnvalidated.cfg UniqueFilterRead.tla RED" # two writers of alice both commit (INV_Unique)
   "MC_SyncedMigrationTransform_Green.cfg SyncedMigrationTransform.tla GREEN"
   "MC_SyncedMigrationTransform_Red_Drop.cfg SyncedMigrationTransform.tla RED"
   "MC_SyncedMigrationTransform_Red_Head.cfg SyncedMigrationTransform.tla RED"
