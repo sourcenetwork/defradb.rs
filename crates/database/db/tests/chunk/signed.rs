@@ -1,4 +1,4 @@
-//! A signed create's blocks hold the chunk lists its write stores.
+//! A signed create can be updated with a new chunked text.
 
 use crypto::{Key, PrivateKey};
 use defra_core::signing::{SigningConfig, SigningKeyType};
@@ -6,7 +6,7 @@ use defra_core::RequestContext;
 use document::NormalValue;
 use query::mutator::DocMutator;
 
-use super::sync::{article, blank, book, list_of, modified, setup, text_of, CONFIG};
+use super::sync::{article, blank, body_of, book, modified, setup, text_of};
 
 fn signing() -> RequestContext {
     let key = crypto::generate_ed25519().unwrap();
@@ -21,10 +21,8 @@ fn signing() -> RequestContext {
     }))
 }
 
-// The shorter list loses a tie with the longer one, so it shows the first
-// update landing at the create's priority.
 #[test]
-fn a_shorter_update_of_a_signed_create_stores_its_list() {
+fn a_shorter_update_of_a_signed_create_stores_its_text() {
     workers::block_on(async {
         let (mutator, _db, _bus) = setup().await;
         let context = signing();
@@ -46,10 +44,9 @@ fn a_shorter_update_of_a_signed_create_stores_its_list() {
             .await
             .unwrap();
 
-        let chunks = db::chunk::split::split(&text, &CONFIG);
         assert_eq!(
-            list_of(&mutator, &created.doc_id).await.unwrap(),
-            db::chunk::list::chunk_list(&text, &chunks)
+            body_of(&mutator, &created.doc_id).await.unwrap(),
+            text.as_str()
         );
     })
     .unwrap()

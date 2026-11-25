@@ -19,11 +19,6 @@ pub fn chunk_collection_name(collection: &str, field: &str) -> String {
     format!("{collection}__{field}_chunk")
 }
 
-/// Name of the parent's generated list field for `field`.
-pub fn chunk_list_field(field: &str) -> String {
-    format!("_{field}_chunks")
-}
-
 /// A `@chunk` field, as the parent collection records it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ChunkedField {
@@ -50,11 +45,6 @@ fn default_splitter_version() -> u32 {
 }
 
 impl ChunkedField {
-    /// The parent's generated list field for this text field.
-    pub fn list_field(&self) -> String {
-        chunk_list_field(&self.field_name)
-    }
-
     /// The generated collection that holds this field's chunks.
     pub fn collection(&self, parent: &str) -> String {
         chunk_collection_name(parent, &self.field_name)

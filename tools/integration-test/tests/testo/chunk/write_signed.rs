@@ -7,13 +7,10 @@ use integration_test::test_case::TestCase;
 use serde_json::json;
 
 use super::support::{
-    add_article, add_article_collection, body, chunks_are_listed, gql, read_list, update_article,
-    CHUNKS,
+    add_article, add_article_collection, body, chunk_texts_are, gql, update_article, CHUNKS,
 };
 
 const CREATED: usize = 6;
-// Fewer chunks than the create: a shorter list sorts first, so it loses a tie
-// with the create's list and shows a first update stored at the create's priority.
 const UPDATED: usize = 4;
 
 fn signing_node() -> Actions {
@@ -24,15 +21,13 @@ fn signing_node() -> Actions {
     .into()
 }
 
-/// The list block of the article named `capture` carries a signature.
-fn list_is_signed(capture: &str) -> Actions {
+/// The text block of the article named `capture` carries a signature.
+fn text_is_signed(capture: &str) -> Actions {
     Request {
         request: Text::concat([
             Text::from(r#"query { _commits(docID: ""#),
             Text::reference(capture),
-            Text::from(
-                r#"", filter: {fieldName: {_eq: "_body_chunks"}}) { signature { type } } }"#,
-            ),
+            Text::from(r#"", filter: {fieldName: {_eq: "body"}}) { signature { type } } }"#),
         ]),
         expected_data: json!({ "_commits": [{ "signature": { "type": m::nonempty_string() } }] }),
         ..Default::default()
@@ -65,32 +60,17 @@ fn a_chunk_is_unsigned() -> Vec<Actions> {
     ]
 }
 
-/// The list of the article named `capture` has the text's hash and `n` chunk hashes.
-fn list_has(capture: &str, n: usize) -> Actions {
-    Request {
-        request: Text::concat([
-            Text::from(r#"query { Article(docID: ""#),
-            Text::reference(capture),
-            Text::from(r#"") { _body_chunks } }"#),
-        ]),
-        expected_data: json!({ "Article": [{ "_body_chunks": m::length(n as u64 + 1) }] }),
-        ..Default::default()
-    }
-    .into()
-}
-
 #[test]
 #[mantra_macros::req_test("defra.chunk.write.signed")]
-fn a_signing_node_stores_the_list_of_the_first_update() {
+fn a_signing_node_keeps_the_chunks_of_the_first_update() {
     TestCase::from_actions(
         vec![
             signing_node(),
             add_article_collection(),
             add_article(&body(CREATED, "rivers"), "article"),
-            list_is_signed("article"),
+            text_is_signed("article"),
             update_article("article", &body(UPDATED, "mountains")),
-            read_list("updated", UPDATED, None),
-            chunks_are_listed("updated", UPDATED, None),
+            chunk_texts_are(&[&body(UPDATED, "mountains")], None),
         ]
         .into_iter()
         .chain(a_chunk_is_unsigned())
@@ -101,7 +81,7 @@ fn a_signing_node_stores_the_list_of_the_first_update() {
 
 #[test]
 #[mantra_macros::req_test("defra.chunk.write.signed")]
-fn a_signing_node_stores_the_lists_of_an_array_create() {
+fn a_signing_node_keeps_the_chunks_of_an_array_create() {
     TestCase::from_actions(vec![
         signing_node(),
         add_article_collection(),
@@ -124,15 +104,17 @@ fn a_signing_node_stores_the_lists_of_an_array_create() {
         .into(),
         update_article("first", &body(UPDATED, "mountains")),
         update_article("second", &body(UPDATED, "valleys")),
-        list_has("first", UPDATED),
-        list_has("second", UPDATED),
+        chunk_texts_are(
+            &[&body(UPDATED, "mountains"), &body(UPDATED, "valleys")],
+            None,
+        ),
     ])
     .execute();
 }
 
 #[test]
 #[mantra_macros::req_test("defra.chunk.write.signed")]
-fn a_signing_node_stores_the_list_of_an_upsert_create() {
+fn a_signing_node_keeps_the_chunks_of_an_upsert_create() {
     TestCase::from_actions(vec![
         signing_node(),
         add_article_collection(),
@@ -150,7 +132,7 @@ fn a_signing_node_stores_the_list_of_an_upsert_create() {
         }
         .into(),
         update_article("article", &body(UPDATED, "mountains")),
-        list_has("article", UPDATED),
+        chunk_texts_are(&[&body(UPDATED, "mountains")], None),
     ])
     .execute();
 }

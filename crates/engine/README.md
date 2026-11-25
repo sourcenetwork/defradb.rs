@@ -8,7 +8,7 @@ the database composes.
 |-------|------|
 | [query](query) | Query engine (GraphQL, BM25) |
 | [vera-embedded](vera-embedded) | Transports to a Vera node hosted in the same process |
-| [vera](vera) | Vera on-chain ACP client (Cosmos/EVM) |
+| [vera](vera) | Vera document ACP provider (native vera.rs) |
 | [vera-delegation](vera-delegation) | Vera delegations and the policy commands they digest, without the provider |
 | [acp](acp) | Access Control Policy |
 | [datastore](datastore) | Data persistence abstractions |

@@ -7,7 +7,7 @@ use integration_test::test_case::TestCase;
 use integration_test::ClientType;
 use serde_json::json;
 
-use super::support::{add_article_collection, body, chunk_texts_are, no_chunks, read_list};
+use super::support::{add_article_collection, body, chunk_texts_are, no_chunks, read_chunks};
 
 fn title_is(title: &str) -> Filter {
     Filter {
@@ -84,7 +84,7 @@ fn a_document_api_save_keeps_chunks_exact() {
         .into(),
         chunk_texts_are(&[&rivers], None),
         save(Some("article"), &lakes).into(),
-        read_list("saved", 2, None),
+        read_chunks("saved", 2, None),
         chunk_texts_are(&[&lakes], None),
     ]);
     // The CLI has no save command.
