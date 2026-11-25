@@ -218,7 +218,7 @@ where
                         let first = outbox.staged() == 0;
                         let staged = outbox
                             .stage(acp::StageRelationship {
-                                txn: Some(txn.0),
+                                txn: Some(txn.route),
                                 actor: &actor,
                                 subject: target,
                                 policy_id: &binding.id,
@@ -238,7 +238,7 @@ where
                         // transaction staged. A statement that is undone
                         // takes its hook and its count with it.
                         if first {
-                            let staged_by = txn.0;
+                            let staged_by = txn.route;
                             ctx.on_commit(OnCommit::Async(Box::new(move || {
                                 Box::pin(settle_owed_changes(unbound, staged_by))
                             })))?;

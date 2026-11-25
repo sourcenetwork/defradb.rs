@@ -17,6 +17,7 @@
 //!
 //! ## Transactions
 //! - `POST /api/v1/tx` - Begin a transaction
+//! - `GET /api/v1/tx/{id}` - Query a transaction's outcome
 //! - `POST /api/v1/tx/{id}` - Commit a transaction
 //! - `DELETE /api/v1/tx/{id}` - Discard a transaction
 //!
@@ -101,6 +102,8 @@ mod client_signer;
 mod client_signer_tests;
 #[cfg(feature = "server")]
 mod client_signing;
+#[cfg(feature = "server")]
+pub mod client_signing_waves;
 mod client_signing_wire;
 #[cfg(all(feature = "server", not(target_arch = "wasm32")))]
 pub mod collection_mgmt_adapter;

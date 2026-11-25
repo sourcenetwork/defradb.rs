@@ -119,11 +119,17 @@ impl Planner {
         // For example, _avg(books: {field: pages, filter: {pages: {_neq: null}}})
         // should apply the filter {pages: {_neq: null}} to the books scan node.
         // Go places these filters on the scanNode (not a wrapping SelectNode).
+        // Only a target with the selection's own filter is applied: any other
+        // filter would drop children the selection renders, and that target
+        // reads the rows of a join of its own.
+        let selection_filter = nested_select.filter.as_ref().map(Filter::conditions);
         let mut agg_scan_filter: Option<Filter> = None;
         for requestable in &select.fields {
             if let Requestable::Aggregate(agg) = requestable {
                 for target in &agg.targets {
-                    if target.host_name == *relation_field_name {
+                    if target.host_name == *relation_field_name
+                        && target.filter.as_ref().map(Filter::conditions) == selection_filter
+                    {
                         if let Some(ref filter) = target.filter {
                             // Only apply non-relation filters to scan node.
                             // Relation filters need sub-joins (handled separately).

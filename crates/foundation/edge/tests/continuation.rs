@@ -137,3 +137,41 @@ fn a_continuation_is_refused_after_the_drain_completed_even_with_plain_spawns_ra
     racer.join().unwrap();
     runtime.shutdown().unwrap();
 }
+
+fn request_opening_a_connection_once_closing(
+    edge: &Edge,
+) -> edge::Task<(bool, Result<u32, EdgeError>)> {
+    let inside = edge.clone();
+    edge.spawn(async move {
+        inside.closing().await;
+        let fresh_request_refused = inside.spawn(async {}).await == Err(EdgeError::Closed);
+        let connection = inside.spawn_continuation(async { 7 }).await;
+        (fresh_request_refused, connection)
+    })
+}
+
+#[test]
+fn a_request_in_flight_opens_its_connection_while_its_scope_drains() {
+    let runtime = start();
+    let edge = runtime.edge().clone();
+    let scope = edge.scope();
+    let request = request_opening_a_connection_once_closing(scope.edge());
+    edge.block_on(async {
+        let drained = scope.drain(LIMIT).await;
+        assert!(drained.is_complete(), "{drained:?}");
+        assert_eq!(request.await, Ok((true, Ok(7))));
+    })
+    .unwrap();
+    runtime.shutdown().unwrap();
+}
+
+#[test]
+fn a_request_in_flight_opens_its_connection_while_the_runtime_shuts_down() {
+    let runtime = start();
+    let request = request_opening_a_connection_once_closing(runtime.edge());
+    let started = std::time::Instant::now();
+    let drained = runtime.shutdown().unwrap();
+    assert!(drained.is_complete(), "{drained:?}");
+    assert!(started.elapsed() < LIMIT);
+    assert_eq!(futures_lite::future::block_on(request), Ok((true, Ok(7))));
+}

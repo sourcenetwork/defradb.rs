@@ -36,9 +36,9 @@ Selecting `__typename` (also under an alias such as `t1: __typename`) returns `"
 # `go.query.simple.filter.equality.eq`: `_eq` on a non-null value
 
 - **Parents:** ["go.query.simple.filter.equality"]
-- **Scenarios:** ["query.simple.with_filter.filter-float-eq-value", "query.simple.with_filter.filter-int-eq", "query.simple.with_filter.filter-select-different-field", "query.simple.with_filter.filter-select-same-field", "query.simple.with_filter.filter-string-eq", "query.simple.with_filter.filter-string-no-match", "query.simple.with_filter.with-date-time-equals-filter-block", "query.simple.with_filter.with-eq-op-on-blob-field-should-filter", "query.simple.with_filter.with-nil-date-time-equals-and-non-nil-filter-block-should-succeed"]
+- **Scenarios:** ["query.simple.with_filter.filter-float-eq-value", "query.simple.with_filter.filter-int-eq", "query.simple.with_filter.filter-select-different-field", "query.simple.with_filter.filter-select-same-field", "query.simple.with_filter.filter-string-eq", "query.simple.with_filter.filter-string-no-match", "query.simple.with_filter.with-date-time-equals-filter-block", "query.simple.with_filter.with-eq-op-on-blob-field-should-filter", "query.simple.with_filter.with-nil-date-time-equals-and-non-nil-filter-block-should-succeed", "explain::default::filter_applied_once::filter_with_order_and_limit_returns_only_matching_documents"]
 
-`filter: {Age: {_eq: 21}}` (and the same on Float, String, DateTime and Blob hex such as `"00FF99AA"`) returns only documents whose field equals the value; documents with the field unset never match, the filtered field need not be selected, and no match returns an empty list.
+`filter: {Age: {_eq: 21}}` (and the same on Float, String, DateTime and Blob hex such as `"00FF99AA"`) returns only documents whose field equals the value; documents with the field unset never match, the filtered field need not be selected, and no match returns an empty list. Adding an `order` and a `limit` keeps the result to the matching documents only.
 
 # `go.query.simple.filter.equality.eq-null`: `_eq: null` matches unset fields
 

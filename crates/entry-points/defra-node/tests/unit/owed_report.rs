@@ -110,7 +110,13 @@ fn a_registration_that_fails_after_its_commit_is_reported_and_takes_a_fresh_cred
                 .is_some_and(|reason| reason.contains("expired")),
             "{owed:?}"
         );
-        assert_eq!(owed[0].txn, txn.as_str().parse().ok());
+        assert_eq!(
+            owed[0].txn,
+            txn.as_str()
+                .parse::<defra_core::TxnId>()
+                .ok()
+                .map(|id| id.route)
+        );
         assert!(!owed[0].sendable);
         // The grant waits behind it, neither sent nor parked.
         assert!(matches!(owed[1].what, OwedWhat::Change { .. }));
