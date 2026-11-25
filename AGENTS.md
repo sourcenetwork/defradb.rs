@@ -609,6 +609,13 @@ open PR ──▶ lean CI ──▶ approval ──▶ "Merge when ready" ──
   in-process testo. A PR in the middle of a stack runs only the fast checks.
 - **Labels add jobs:** `ci:full` runs everything, `ci:<job>` one queue job,
   `ci:macos` the macOS unit tests.
+- **Every run waits for a maintainer.** On a PR from this repository, CI starts
+  only once a member of `database-team` or `database-rust-team` approves its
+  `ci-approval` environment ("Review deployments" on the CI run). That one click
+  also starts CI (macOS), the quick benchmark and the native consumer, which
+  wait on it. Each push or label change starts a new CI run that waits again.
+  An agent that pushes to a PR tells its operator the run waits for that
+  approval. Main, the queue and forks (GitHub's fork approval) never wait here.
 - **One commit.** Its subject is the PR title, or the title followed by `(#N)` for
   this PR. The queue rebase-merges, so every commit lands on main as it is:
   squash before queueing. A PR with several commits is a batch (below).
