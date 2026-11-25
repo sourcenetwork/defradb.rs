@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "ayu";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-b5a69179.js";
+            window.path_to_searchindex_js = "../searchindex-a2351743.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-8198d451.js"></script>
@@ -187,14 +187,10 @@ commonware-based chain) holds the policies and tuples, evaluates checks, and pro
 flow back to the database.</p>
 <h2 id="what-it-is"><a class="header" href="#what-it-is">What it is</a></h2>
 <p><code>crates/engine/vera</code> defines the <code>VeraProvider</code> interface: create policies, register and
-archive objects, set and delete relationships, check access. Two implementations:</p>
-<ul>
-<li><strong>CosmosProvider</strong>: a Cosmos-SDK chain over LCD/gRPC, transactions broadcast to it,
-and a WebSocket subscriber for cache invalidation.</li>
-<li><strong>VeraRsProvider</strong>: the native vera.rs chain (commonware consensus), commands signed
+archive objects, set and delete relationships, check access. Its implementation is
+<strong>VeraRsProvider</strong>: the native vera.rs chain (commonware consensus), commands signed
 and submitted through a worker, and the chain state verified by a light client
-(trusted consensus key, height tracking).</li>
-</ul>
+(trusted consensus key, height tracking). A host can supply a provider of its own.</p>
 <p><strong>Policy IDs.</strong> vera.rs names a policy by its definition, its creator and a 32-byte
 nonce the creator picks: <code>SHA-256("acp/policy-id/v2" || policy hash || nonce || u64be(len(creator)) || creator)</code>. One definition by two creators gets two IDs, and one
 creator gets a new ID for each nonce. The node’s actor is the creator, so a nonce from a
@@ -262,12 +258,9 @@ repeated <code>SetRelationship</code> or <code>DeleteRelationship</code> succeed
 submitted again after a crash settles, unless the acting DID lost its authority in
 between (then it is parked as refused) or another manager changed the relationship in
 between (then it is applied again).</li>
-<li><strong>The Cosmos provider.</strong> A broadcast that timed out or failed in transport leaves the
-change staged. A transaction the node could not key or sign is the node’s own error
-and counts for nothing. Any other failed transaction is an answer the provider does
-not classify: the change stays staged, the pass goes on, and five such answers park it
-as refused. It takes no userset or cross-object subject, so such a change is refused
-at staging.</li>
+<li><strong>A host’s own provider</strong> that classifies no refusal. A call that failed leaves the
+change staged: the pass goes on, and five such answers park it as refused. One that
+takes no userset or cross-object subject has such a change refused at staging.</li>
 </ul>
 <h2 id="acting-for-a-signer-delegations-and-the-one-request-form"><a class="header" href="#acting-for-a-signer-delegations-and-the-one-request-form">Acting for a signer: delegations and the one-request form</a></h2>
 <p>vera.rs takes a policy command from a node’s worker only under the authority of the
@@ -348,6 +341,23 @@ sent: one that expired since the write sends nothing.</li>
 </ul>
 <p>A command made as the write’s signer is signed by the node’s worker; the token is the
 signer’s authority for it, and the chain records the signer, not the node, as owner.</p>
+<h3 id="a-callers-delegation-over-http"><a class="header" href="#a-callers-delegation-over-http">A caller’s delegation over HTTP</a></h3>
+<p>An in-process node and a <code>defradb start</code> server with <code>--document-acp-type vera</code> or
+<code>vera-embedded</code> take the same form: <code>Authorization: Bearer &lt;delegation&gt;</code>, the compact JWS
+<code>caller_delegation</code> returns (header <code>typ</code> <code>vera-delegation-v1+jwt</code>), with the worker and
+deployment from <code>delegation</code> in <code>GET /api/v0/acp/status</code>. A bearer whose header names
+that type is verified by the node’s provider as a delegation and never read as an
+identity token: its signature against its issuer, its size (at most 16 KiB), the plain
+<code>acp:policy</code> scope with no request or relay claim, the worker and deployment, and its
+validity interval at the provider’s time. One that fails any check is refused with 403
+<code>Token verification failed: …</code> before the request runs. One that passes authenticates
+the request as its issuer, and the node submits that caller’s registrations and
+relationship changes under it. A request carries one bearer, so the delegation cannot
+stand beside an identity token for another DID; the node also submits a delegation only
+for the actor that signed it.</p>
+<p>A caller that presents only a DefraDB identity token, on a node that holds no key for
+it, gets its document created but not registered: the registration is owed, and the
+node logs <code>no authority to submit ACP changes as &lt;DID&gt;: the node holds no key for it and the request carries no delegation</code>.</p>
 <h2 id="replicated-documents"><a class="header" href="#replicated-documents">Replicated documents</a></h2>
 <p>A replicated change merges on a node only if its verified signer holds the permission
 on that node’s provider when it merges: <code>delete</code> for a deletion, <code>update</code> otherwise.
@@ -407,6 +417,14 @@ delete never unregisters, and a local delete leaves a registration that is still
 in place, so it lands. Otherwise the delete and the changes before it would wait for
 ever on every node that waits for the provider to hold the document. A document whose
 creator lost its last grant stays registered and refuses that creator.</p>
+<p>On vera.rs a local delete archives the object instead, in the delete’s transaction
+(<code>defra.acp.vera_delete_archive</code>, <code>proofs/tla/ArchiveOnDelete.tla</code>). Anyone the
+policy lets delete may delete; the archive is always made as the document’s owner,
+signed with the owner’s authority when the node holds it (a key for the owner’s DID,
+or the owner’s own delegation when the owner deletes) and otherwise parked until the
+owner hands in a credential. From the commit until the archive settles the document
+is denied to everyone; only an owner that deleted it itself still reads its commit
+history.</p>
 <p><strong>Parked refusals.</strong> Under a remote provider, a signed change whose signer the
 provider refuses is parked by its document, because a later grant can change the
 answer. A change whose history holds a parked one is parked with it: it cannot merge
@@ -441,8 +459,8 @@ provides. Vera is opt-in: without it, local Zanzibar ACP is the whole story.</p>
 <h2 id="the-performance-shape"><a class="header" href="#the-performance-shape">The performance shape</a></h2>
 <p>External decisions are remote inputs, so they follow the doctrine’s remote-input rules:
 resolved at the edge, never inside a retried closure, memoized by request bytes across
-attempts, single-flight, batched, cached (access-decision and policy caches with the
-circuit breaker and tuning knobs in <code>crates/engine/vera/src/</code>), with staleness documented and
+attempts, single-flight, batched, cached (decisions keyed by the verified state they were read at, with the
+tuning knobs in <code>crates/engine/vera/src/</code>), with staleness documented and
 a persisted-decision path for signers to verify via the light client.</p>
 <blockquote>
 <p><strong>Why fail closed.</strong> An external decider that times out is not “probably fine”: it is
