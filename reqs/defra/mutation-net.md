@@ -328,6 +328,19 @@ A defradb.rs node's `p2p status` carries `pending_dag_fetch_slots`: the slot `li
 
 A node holding none of a document with 11 updates, told of its next head, fetches the whole DAG from its peer (the peer's `car_served_cids` is at least one) and converges on it. Its `pending_dag_fetch_slots.limit` is then 4, and `pending_dag_fetch_slots.held` comes back to zero.
 
+# `defra.net.sync.missing_link_walks`: A node's P2P status reports its local DAG walks
+
+- **Parents:** ["defra"]
+
+To learn which blocks of a DAG it still misses, a defradb.rs node walks the blocks it already holds. Its `p2p status` carries `missing_link_walks`: `completed` walks, walks `preempted` because a retry-clock fetch passed its time slice, walks that failed on a local read (`errors`), the blocks looked at summed over walks (`blocks`) and in the longest one (`blocks_max`), the `pages` after which a walk let other work on its core run, and the time spent walking in microseconds, summed (`micros`) and for the longest walk (`micros_max`). A Go node has no such status.
+
+# `defra.net.sync.missing_link_walks.counted`: A fetched DAG's walks are counted
+
+- **Parents:** ["defra.net.sync.missing_link_walks"]
+- **Scenarios:** ["net::sync::missing_link_walks::a_fetched_dag_reports_its_missing_link_walks"]
+
+A node holding none of a document with 11 updates, told of its next head, fetches the whole DAG from its peer and converges on it. Its `missing_link_walks.completed`, `missing_link_walks.blocks` and `missing_link_walks.blocks_max` are then at least one, and `missing_link_walks.preempted` and `missing_link_walks.errors` are zero.
+
 # `defra.net.replicator.list`: A replicator with no collections is listed
 
 - **Parents:** ["go.net.replicator"]

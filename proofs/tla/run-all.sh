@@ -105,6 +105,10 @@ RUNS=(
   "MC_DagReadiness_Red_ConflictStringified.cfg DagReadiness.tla RED" # a storage conflict loses its type (INV_ConflictTyped)
   "MC_DagReadiness_Red_RootFaultErrs.cfg DagReadiness.tla RED" # a gone or unreadable root fails the retry (INV_SweepTotal, INV_RegisteredNeverErrors)
   "MC_DagReadiness_Red_CarFaultBlamesPeer.cfg DagReadiness.tla RED" # a local fault in the CAR size-limit check fails the response (INV_LocalFaultNotBlamed)
+  "MC_MissingLinkWalk_Green.cfg MissingLinkWalk.tla GREEN"
+  "MC_MissingLinkWalk_Red_StopFirstWalk.cfg MissingLinkWalk.tla RED" # a walk stopped before its attempt fetched anything starves the DAG (LIVE_Converges)
+  "MC_MissingLinkWalk_Red_StoppedAsEmpty.cfg MissingLinkWalk.tla RED" # a stopped walk is read as complete (INV_StoppedNeverReady)
+  "MC_MissingLinkWalk_Red_NoYield.cfg MissingLinkWalk.tla RED" # the walker never yields between pages (INV_YieldsEachPage)
   "MC_HeldPubsubRequest_Green.cfg HeldPubsubRequest.tla GREEN"
   "MC_HeldPubsubRequest_Red_NoHold.cfg HeldPubsubRequest.tla RED" # a refused publish fails the sync at once (Delivered)
   "MC_HeldPubsubRequest_Red_NoResend.cfg HeldPubsubRequest.tla RED" # a later subscriber is never sent the request (Delivered)

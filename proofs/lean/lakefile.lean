@@ -25,6 +25,9 @@ lean_lib LocalFetchPermit where
 lean_lib DagReadiness where
 
 @[default_target]
+lean_lib MissingLinkWalk where
+
+@[default_target]
 lean_lib HostMutationProjection where
 
 @[default_target]

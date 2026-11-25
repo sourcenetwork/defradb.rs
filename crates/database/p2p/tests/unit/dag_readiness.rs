@@ -194,7 +194,9 @@ fn a_linked_child_that_reads_as_gone_is_missing() {
         let (_, root_data, child, _) = stored_dag(&blockstore, false).await;
         blockstore.fail(child, Fault::Gone);
 
-        let missing = find_all_missing_links(blockstore.as_ref(), &root_data).await;
+        let missing =
+            find_all_missing_links(blockstore.as_ref(), &root_data, &SyncDiagnostics::default())
+                .await;
 
         assert_eq!(
             missing.unwrap(),
@@ -212,7 +214,9 @@ fn a_child_read_error_fails_the_walk() {
         let (_, root_data, child, _) = stored_dag(&blockstore, false).await;
         blockstore.fail(child, Fault::Storage);
 
-        let walk = find_all_missing_links(blockstore.as_ref(), &root_data).await;
+        let walk =
+            find_all_missing_links(blockstore.as_ref(), &root_data, &SyncDiagnostics::default())
+                .await;
 
         assert!(
             matches!(walk, Err(Error::BlockstoreError(ref msg)) if msg.contains("injected")),
@@ -229,9 +233,10 @@ fn a_child_read_conflict_stays_a_typed_retriable_conflict() {
         let (_, root_data, child, _) = stored_dag(&blockstore, false).await;
         blockstore.fail(child, Fault::Conflict);
 
-        let error = find_all_missing_links(blockstore.as_ref(), &root_data)
-            .await
-            .unwrap_err();
+        let error =
+            find_all_missing_links(blockstore.as_ref(), &root_data, &SyncDiagnostics::default())
+                .await
+                .unwrap_err();
 
         assert!(matches!(error, Error::BlockstoreTxnConflict), "{error:?}");
         assert!(error.is_retriable());
@@ -246,9 +251,10 @@ fn an_absent_child_is_missing_and_each_child_is_read_once() {
         let (_, root_data, _, gone) = stored_dag(&blockstore, true).await;
         blockstore.reset_counts();
 
-        let missing = find_all_missing_links(blockstore.as_ref(), &root_data)
-            .await
-            .unwrap();
+        let missing =
+            find_all_missing_links(blockstore.as_ref(), &root_data, &SyncDiagnostics::default())
+                .await
+                .unwrap();
 
         assert_eq!(missing, vec![gone]);
         assert_eq!(
@@ -272,7 +278,9 @@ fn a_child_whose_bytes_mismatch_its_hash_fails_the_walk() {
             .unwrap();
         blockstore.hash_on_read(true);
 
-        let walk = find_all_missing_links(blockstore.as_ref(), &root_data).await;
+        let walk =
+            find_all_missing_links(blockstore.as_ref(), &root_data, &SyncDiagnostics::default())
+                .await;
 
         assert!(
             matches!(walk, Err(Error::BlockstoreError(ref msg)) if msg.contains("hash mismatch")),
