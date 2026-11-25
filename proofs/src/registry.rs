@@ -4932,4 +4932,15 @@ pub const PROPERTIES: &[Property] = &[
         tiers: &[Contract],
         bound_by: "crates/database/p2p/src/host/transport/resolver_tests.rs a_failed_read_falls_back_to_the_localhost_nameservers, a_read_with_nameservers_passes_through_unchanged, a_systemd_resolved_stub_passes_through, an_unknown_option_keeps_the_hosts_nameserver, a_bad_nameserver_line_keeps_the_good_ones, a_bad_nameserver_line_never_uses_its_comment, an_unknown_directive_keeps_the_hosts_nameserver, a_bad_search_domain_keeps_the_others, a_file_without_nameservers_keeps_its_search_and_options, a_comment_that_is_not_utf8_keeps_the_hosts_nameserver, a_missing_file_falls_back_to_the_localhost_nameservers, the_fallback_matches_the_lean_model",
     },
+    Property {
+        // #3277: aggregates over one relation share a join only when their
+        // scan filters are the same, so none sees another's filter.
+        family: "Aggregate relation joins",
+        name: "AggregateJoinShare.filter_twice / shared_same_filter_exact / planned_exact / shared_other_filter_drops",
+        axis: Lean,
+        anchor: "crates/engine/query/src/planner/joins/aggregate_joins.rs Planner::apply_aggregate_joins, aggregate_scan_filter",
+        model_ref: "AggregateJoinShare (lake build)",
+        tiers: &[Contract],
+        bound_by: "tools/integration-test/tests/testo/query/many_to_many/with_aggregates.rs filtered_aggregates_over_join_collection_relation",
+    },
 ];

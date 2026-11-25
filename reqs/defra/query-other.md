@@ -496,6 +496,13 @@ Both sides of a one-to-one expose the counterpart's docID: `Author { _publishedI
 
 With `Enrollment { student: Student, course: Course }` (named relations), `Enrollment(filter: {course: {name: {_eq: "Math"}}}, order: {student: {name: ASC}})` returns enrolments in that order, and `Student { enrollments(order: {course: {name: ASC}}) { course { name } } }` traverses from the other side.
 
+# `go.query.many_to_many.aggregate`: Aggregates over the join collection
+
+- **Parents:** ["go.query.many_to_many"]
+- **Scenarios:** ["query::many_to_many::with_aggregates::aggregates_over_join_collection_relation", "query::many_to_many::with_aggregates::filtered_aggregates_over_join_collection_relation", "query::many_to_many::with_aggregates::aggregate_over_undeclared_relation_name_is_unknown_argument"]
+
+With `Student { enrollments: [Enrollment] @relation(name: "student_enrollments") }` and `Enrollment { student: Student, course: Course, grade: Int }`, `SUM`, `AVG`, `MIN` and `MAX` over `enrollments: {field: grade}` and `COUNT(enrollments: {})` aggregate each student's enrollments, with or without a `filter` on the enrollment's own fields or on its `course`. Several aggregates over the relation in one selection each apply only their own filter. An aggregate argument that names no field of the type, such as the relation name `student_enrollments` when `Student` declares no field for it, fails with `Unknown argument "student_enrollments" on field "SUM" of type "Student".`
+
 # `go.query.one_to_many_multiple.count`: COUNT across multiple relations
 
 - **Parents:** ["go.query.one_to_many_multiple"]

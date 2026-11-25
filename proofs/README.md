@@ -165,6 +165,7 @@ section is the **diff**: what is proven vs. the accepted gap.
 | Per-operation signing choice | Lean | defra-core, http, ffi, cli |
 | DNS resolver fallback | Lean | p2p |
 | Backup import write path | TLA+ / Lean | db, defra-node, http, ffi, cli |
+| Aggregate relation joins | Lean | query (#3277) |
 
 ### Backlog — current retry-era gaps
 This inventory includes legacy models and does not mean every current mechanism is

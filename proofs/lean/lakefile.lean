@@ -452,3 +452,6 @@ lean_lib DnsResolverFallback where
 
 @[default_target]
 lean_lib FilterInputShape where
+
+@[default_target]
+lean_lib AggregateJoinShare where

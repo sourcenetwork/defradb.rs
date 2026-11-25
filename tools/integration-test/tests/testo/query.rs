@@ -105,6 +105,7 @@ mod json {
 }
 mod many_to_many {
     mod simple;
+    mod with_aggregates;
     mod with_nested_query;
 }
 mod non_finite_float;
