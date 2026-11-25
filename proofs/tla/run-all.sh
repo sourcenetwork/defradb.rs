@@ -13,14 +13,11 @@ cd "$(dirname "${BASH_SOURCE[0]}")"
 # event to the settled rest (depth = events + 1), and DEADLOCK:<l> stops with
 # event l next (past the end when l = events + 1).
 #
-# Where the module and verdict come from, in order:
-#   1. a cfg header line, when the name alone cannot say it:
-#        \* run-all: <Module>.tla <GREEN|RED|TRACE:<n>|DEADLOCK:<n>>
-#   2. otherwise the name: MC_<Module>_<rest>.cfg runs <Module>.tla, GREEN when
-#      rest has a Green word (underscore-separated) and no Red word, RED when
-#      it has Red and no Green.
-# A cfg that names no module or no valid verdict this way is reported and fails
-# the whole run; so is a module the header names that does not exist.
+# The module and verdict come from one place, the cfg's first line:
+#     \* run-all: <Module>.tla <GREEN|RED|TRACE:<n>|DEADLOCK:<n>>
+# The cfg's name says nothing to this script. A cfg whose first line is not
+# such a header is reported and fails the whole run; so is a header naming a
+# module that does not exist or a verdict that is not one of these.
 # --list prints the discovered `cfg module verdict` rows and nothing else, and
 # exits 2 when any cfg did not resolve to a module and verdict.
 
@@ -32,24 +29,11 @@ RUNS=()
 for cfg in *.cfg; do
   [ -f "$cfg" ] || continue
   mod='' ; want=''
-  # A leading '\* run-all: <Module>.tla <verdict>' line names both outright.
-  header=$(sed -n 's/^\\\* run-all: \([^ ][^ ]*\) \([^ ][^ ]*\)[[:space:]]*$/\1 \2/p' "$cfg" | sed -n '1p')
+  # The first line, '\* run-all: <Module>.tla <verdict>', names both.
+  header=$(sed -n '1s/^\\\* run-all: \([^ ][^ ]*\) \([^ ][^ ]*\)[[:space:]]*$/\1 \2/p' "$cfg")
   if [ -n "$header" ]; then
     want=${header##* }
     mod=${header% *}
-  else
-    # MC_<Module>_<rest> without a header: the first underscore ends Module.
-    stem=${cfg%.cfg}
-    case "$stem" in
-      MC_*_*)
-        mod="${stem#MC_}"; mod="${mod%%_*}.tla"
-        rest="_${stem#MC_*_}_"
-        case "$rest" in
-          *_Green_*) case "$rest" in *_Red_*) ;; *) want=GREEN ;; esac ;;
-          *_Red_*)   case "$rest" in *_Green_*) ;; *) want=RED ;; esac ;;
-        esac
-        ;;
-    esac
   fi
   case "$want" in
     GREEN|RED) ;;
@@ -57,7 +41,7 @@ for cfg in *.cfg; do
     *) want='' ;;
   esac
   if [ -z "$mod" ] || [ -z "$want" ] || [ ! -f "$mod" ]; then
-    echo "run-all: $cfg names no module and verdict; add '\* run-all: <Module>.tla <verdict>' to it" >&2
+    echo "run-all: $cfg: its first line must be '\* run-all: <Module>.tla <GREEN|RED|TRACE:<n>|DEADLOCK:<n>>', naming a module that exists" >&2
     unresolved=$((unresolved+1))
     continue
   fi

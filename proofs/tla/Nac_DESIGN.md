@@ -125,7 +125,7 @@ invariant "is violated" with a concrete counterexample trace.
   persistence, the write-block, or the `is_admin` vs `is_admin_persisted` split.
 - **Integrator TODO (run-all):** the four `MC_Nac_*` configs above must run in
   `proofs/tla/run-all.sh` (it now picks up every top-level `*.cfg`, taking the
-  module and verdict from each cfg's `\* run-all:` header or its name, so no
+  module and verdict from each cfg's `\* run-all:` header, so no
   row is added to the script itself).
 ```
   "MC_Nac_Green.cfg                  MC_Nac_Green.tla                  GREEN"  # nac lifecycle correct
