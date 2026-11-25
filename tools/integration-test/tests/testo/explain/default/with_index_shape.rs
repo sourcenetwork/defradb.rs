@@ -46,7 +46,6 @@ fn indexed_scan_explains_the_selected_index() {
                                         "collectionID": "bafyreiek4irx5zh2it7sokxwbqud2uanuhkqppnmt2dgan7r4gyafly6wi",
                                         "collectionName": "User",
                                         "filter": {"age": {"_eq": 30}},
-                                        "indexFetches": 0,
                                         "indexLimit": null,
                                         "indexName": "User_age_ASC",
                                         "indexOffset": 0,
@@ -120,6 +119,84 @@ fn go_indexed_scan_explains_the_selected_index() {
     .execute();
 }
 
+fn simple_indexed_scan(
+    id: &'static str,
+    client_types: &'static [ClientType],
+    scan_node: serde_json::Value,
+) {
+    TestCase {
+        id,
+        client_types: Some(client_types),
+        actions: vec![
+            AddCollection {
+                sdl: "type Book { title: String @index }".into(),
+                ..Default::default()
+            }
+            .into(),
+            Request {
+                request: r#"
+                    query @explain(type: simple) {
+                        Book(filter: {title: {_eq: "1984"}}) {
+                            title
+                        }
+                    }
+                "#
+                .into(),
+                expected_data: json!({
+                    "explain": {
+                        "operationNode": [{
+                            "selectTopNode": {
+                                "selectNode": {
+                                    "docID": null,
+                                    "filter": null,
+                                    "scanNode": scan_node,
+                                },
+                            },
+                        }],
+                    },
+                }),
+                ..Default::default()
+            }
+            .into(),
+        ],
+        ..Default::default()
+    }
+    .execute();
+}
+
+#[test]
+#[mantra_macros::req_test("go.explain.default.index")]
+fn simple_indexed_scan_reports_no_index_fetches() {
+    simple_indexed_scan(
+        integration_test::scenario_id!(),
+        &[ClientType::InProcess, ClientType::RustHttp, ClientType::Cli],
+        json!({
+            "collectionID": "bafyreignnfga3vinwqt2awokqzfmovoggde2bug3q4xcq4ys6yxhwbzn3m",
+            "collectionName": "Book",
+            "filter": {"title": {"_eq": "1984"}},
+            "indexLimit": null,
+            "indexName": "Book_title_ASC",
+            "indexOffset": 0,
+            "prefixes": ["/1"],
+        }),
+    );
+}
+
+#[test]
+#[mantra_macros::req_test("go.explain.default.index")]
+fn go_simple_indexed_scan_reports_no_index_fetches() {
+    simple_indexed_scan(
+        integration_test::scenario_id!(),
+        &[ClientType::GoHttp],
+        json!({
+            "collectionID": "bafyreignnfga3vinwqt2awokqzfmovoggde2bug3q4xcq4ys6yxhwbzn3m",
+            "collectionName": "Book",
+            "filter": {"title": {"_eq": "1984"}},
+            "prefixes": ["/1"],
+        }),
+    );
+}
+
 #[test]
 #[mantra_macros::req_test("go.explain.default.index")]
 fn explain_relation_filter_uses_the_indexed_child_scan() {
@@ -148,7 +225,6 @@ fn explain_relation_filter_uses_the_indexed_child_scan() {
                 "indexName": "Author_name_ASC",
                 "indexLimit": null,
                 "indexOffset": 0,
-                "indexFetches": 0,
                 "filter": {"name": {"_like": "%vid%"}},
                 "prefixes": ["/2"]
             })),
