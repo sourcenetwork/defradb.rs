@@ -627,6 +627,11 @@ open PR ──▶ lean CI ──▶ review ────▶ "Merge when ready" �
   this head. It is neutral when part of the queue could not be checked. It
   covers only PRs based on main, and a fork PR gets no result from its own
   pushes: it is checked again only when the queue changes.
+- **`human review`** asks a person, not an agent, to look at the PR. Whoever
+  adds it (a person or an agent) leaves a comment saying what needs a human eye.
+  An agent that opens, reviews, edits, batches or lists a PR carrying the label
+  tells its operator in its reply: the PR number, its title, and the reason from
+  that comment. `gh pr list --label "human review"` finds them all.
 
 ### In the queue
 
