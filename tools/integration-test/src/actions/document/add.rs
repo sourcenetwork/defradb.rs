@@ -36,6 +36,9 @@ pub struct AddDoc {
     pub expected_data: Value,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expected_error: Option<String>,
+    /// The stable code the error must carry; see [`Op::expected_error_code`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected_error_code: Option<String>,
     #[serde(flatten)]
     pub common: Common,
 }
@@ -53,6 +56,10 @@ impl Op for AddDoc {
         self.expected_error.as_deref()
     }
 
+    fn expected_error_code(&self) -> Option<&str> {
+        self.expected_error_code.as_deref()
+    }
+
     fn run(&self, state: &State) -> Result<Value, Failure> {
         let identity = self.check_arguments(state)?;
         let (node, context, options) = (
@@ -60,7 +67,7 @@ impl Op for AddDoc {
             state.context_on(self.common.node(), self.txn, identity, self.enable_signing),
             self.options(),
         );
-        let failed = |e: defra_node::Error| Failure::operation(e.to_string());
+        let failed = |e: defra_node::Error| Failure::coded(e.to_string(), e.code());
         if let Some(docs) = &self.docs {
             let ids = state
                 .block_on(node.add_docs(&context, &self.collection, docs, &options))
@@ -128,7 +135,7 @@ impl HttpRun for AddDoc {
             let identity = action.check_arguments(state)?;
             let (txn, options) = (state.txn_id(action.txn), action.options());
             let collection = action.collection.clone();
-            let failed = |e: cli::error::Error| Failure::operation(e.to_string());
+            let failed = |e: cli::error::Error| Failure::coded(e.to_string(), e.code());
             if let Some(docs) = action.docs.clone() {
                 let ids = state
                     .http_as(action.common.node(), identity, |client| async move {

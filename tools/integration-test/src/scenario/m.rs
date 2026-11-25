@@ -27,6 +27,12 @@ pub fn any_of(of: Value) -> Value {
     json!({"$match": "anyOf", "of": of})
 }
 
+/// Matches any value `value` does not match; bindings made inside it are
+/// dropped.
+pub fn not(value: Value) -> Value {
+    json!({"$match": "not", "value": value})
+}
+
 pub fn same(name: &str) -> Value {
     json!({"$match": "same", "name": name})
 }

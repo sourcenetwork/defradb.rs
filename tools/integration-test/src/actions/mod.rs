@@ -117,6 +117,7 @@ client_actions! {
         AddDACActorRelationship,
         AddDACPolicy,
         AddDoc,
+        AddDocClientSigned,
         AddDocumentSubscription,
         AddLens,
         AddNACActorRelationship,
