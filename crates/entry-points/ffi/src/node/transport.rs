@@ -121,11 +121,18 @@ unsafe fn pinc(
     } else {
         defra_pinc::PincAllowlistConfig::Explicit(allowed.into_iter().collect())
     };
+    let block_sync_timeout = match options.p2p_block_sync_timeout_ms {
+        0 => defra_pinc::PincEndpointConfig::DEFAULT_BLOCK_SYNC_TIMEOUT,
+        ms if ms > 0 => std::time::Duration::from_millis(ms as u64),
+        _ => return Err("p2p_block_sync_timeout_ms must not be negative".to_string()),
+    };
     Ok(defra_node::TransportConfig::Pinc(defra_node::PincConfig {
         bind,
         allowlist,
         hubs,
         bootstrap_peers,
+        block_sync_timeout,
+        peer_key: defra_node::PeerKeySource::Store,
         sync: sync_tuning(options, retry_intervals),
         ..Default::default()
     }))

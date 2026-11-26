@@ -62,7 +62,8 @@ pub struct NodeInitOptions {
     /// Reserved, so the struct has no padding: leave it zero. It never
     /// becomes a field; new fields go after the struct's last one.
     pub _reserved0: u32,
-    /// Milliseconds a P2P block sync may take. Not supported: must be 0.
+    /// Milliseconds a P2P block sync (a CAR fetch) may take before it is
+    /// abandoned. 0 keeps the default, 30 s; negative fails the node.
     pub p2p_block_sync_timeout_ms: i64,
     /// Lens runtime pool size. Not supported yet: must be 0.
     pub lens_pool_size: c_int,
@@ -72,8 +73,9 @@ pub struct NodeInitOptions {
     /// Go's GossipSub switch. A pinc node always runs topics, through
     /// `pinc_hubs`, so either value runs them.
     pub enable_pub_sub: c_int,
-    /// Go's relay client switch. A pinc node always reaches peers behind a
-    /// NAT through its hubs, so either value does.
+    /// Go's relay client switch, reported back as set. It changes nothing:
+    /// a pinc node reaches a peer behind a NAT by peer id only through a hub
+    /// started with `defradb hub --relay`, which relays over UDP only.
     pub enable_relay: c_int,
     /// Clear dial backoff before retrying a replicator. Not supported yet:
     /// must be 0.

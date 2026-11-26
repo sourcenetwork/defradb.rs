@@ -304,4 +304,28 @@ mod pinc {
         ok(defra_mobile_notify_network_change(node, 0));
         close(node);
     }
+
+    /// Go's FFI node keeps its peer key in its store: a node reopened on the
+    /// same store answers to the same peer id.
+    #[test]
+    fn a_persistent_node_keeps_its_peer_id_across_a_restart() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = cstr(&directory.path().to_string_lossy());
+        let listen = cstr("127.0.0.1:0");
+        let options = || NodeInitOptions {
+            disable_p2p: 0,
+            listening_addresses: listen.as_ptr(),
+            db_path: path.as_ptr(),
+            ..local_options()
+        };
+        let peer_id = |node: usize| address(node).split('@').next().unwrap().to_string();
+
+        let node = node_with(options());
+        let first = peer_id(node);
+        close(node);
+
+        let node = node_with(options());
+        assert_eq!(peer_id(node), first);
+        close(node);
+    }
 }

@@ -38,14 +38,15 @@ pub(crate) unsafe fn options_json(
     let config = &setup.config;
     let persistent = matches!(setup.store, super::options::StoreLocation::Path(_));
 
-    let (listen_addrs, peers, topics) = match transport {
+    let (listen_addrs, peers, topics, block_sync_timeout) = match transport {
         #[cfg(feature = "p2p")]
         defra_node::TransportConfig::Pinc(pinc) => (
             vec![pinc.bind.to_string()],
             pinc.bootstrap_peers.clone(),
             true,
+            json!(u64::try_from(pinc.block_sync_timeout.as_nanos()).unwrap_or(u64::MAX)),
         ),
-        _ => (Vec::new(), Vec::new(), false),
+        _ => (Vec::new(), Vec::new(), false, Value::Null),
     };
     let document_acp_type = match config.document_acp {
         defra_node::DocumentAcpConfig::Local => "local",
@@ -86,7 +87,7 @@ pub(crate) unsafe fn options_json(
                 .copied()
                 .map(seconds_as_nanos)
                 .collect::<Vec<_>>(),
-            "P2PBlockSyncTimeout": Value::Null,
+            "P2PBlockSyncTimeout": block_sync_timeout,
             "LensRuntime": "wasmtime",
             "LensPoolSize": 0,
             "ChunkSize": config.chunk_size,
@@ -95,7 +96,7 @@ pub(crate) unsafe fn options_json(
             "ListenAddresses": redacted_list(&listen_addrs),
             "BootstrapPeers": redacted_list(&peers),
             "EnablePubSub": topics,
-            "EnableRelay": topics,
+            "EnableRelay": options.enable_relay != 0,
             "EnableClearBackoffOnRetry": false,
             "PrivateKey": redacted(setup.peer_key.is_some()),
         },

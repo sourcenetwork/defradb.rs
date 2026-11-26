@@ -139,10 +139,6 @@ unsafe fn reject_unsupported(options: &NodeInitOptions) -> Result<(), String> {
         ),
         (options.lens_pool_size != 0, "lens_pool_size"),
         (
-            options.p2p_block_sync_timeout_ms != 0,
-            "p2p_block_sync_timeout_ms: a pinc node has no block sync timeout setting",
-        ),
-        (
             options.enable_clear_backoff_on_retry != 0,
             "enable_clear_backoff_on_retry",
         ),
