@@ -23,8 +23,10 @@
 \* at a time, and widens until one is honest, of a live article, and used by
 \* its current text. That picks the article; its score is then its best
 \* current chunk's, read again. The route checks no grant, so an article with
-\* read rules is never routed: like an index that runs out, it is scored from
-\* its current chunks, after its access check.
+\* read rules, or a chunk collection with an app check of its own, is never
+\* routed: like an index that runs out, it is scored from its current chunks,
+\* after its access check. A chunk its own app check refuses never adds to a
+\* score.
 \*
 \* A peer may also ask this node for a chunk's block. A chunk can arrive before
 \* its article, and an article this node has never seen counts as public under
@@ -56,7 +58,8 @@
 \*   - a peer replaying under a delegation on the chunk collection gets the key
 \*     of one of the article's own blocks (INV_DelegatedKeyInScope);
 \*   - a similarity query ranks an article it may not show, or ranks it by a
-\*     score other than its best current chunk's (INV_RankedIsBestListed).
+\*     score other than its best current chunk's, or by a chunk the chunk
+\*     collection's own app check refuses (INV_RankedIsBestListed).
 \*
 \* Code it models:
 \*   crates/engine/query/src/plan/chunk_parent.rs  parent_hashes (deleted parent, the text cut again), ChunkFields::verified_hash
@@ -79,6 +82,8 @@
 \*   crates/engine/query/src/planner/builder/mod.rs Planner::plan_with_index_info (rows_rejected_above_the_scan: no route under read rules)
 \*   crates/engine/query/src/plan/chunk_similarity/search.rs ChunkSearch::run (nearest first, widening, the checks per chunk)
 \*   crates/engine/query/src/plan/chunk_similarity/listed.rs best_listed_score (the exhaustive fallback)
+\*   crates/engine/query/src/plan/chunk_similarity/target.rs ChunkTarget::readable (the chunk's own app check in a ranking)
+\*   crates/engine/query/src/planner/chunk_similarity.rs Planner::chunks_gate_reads (no route under the chunks' own app check)
 \* Merging the text across peers is ChunkMerge.tla's job, not this one's.
 EXTENDS Naturals, FiniteSets
 
@@ -169,7 +174,7 @@ VARIABLES
   kind,     \* what the current query asks: "chunks", or "similar" for a ranking
   width,    \* how many of the nearest chunks the route has read
   ranked,   \* the article's score in the last ranking, 0 when it was not ranked
-  ruled     \* whether the article has read rules; it never changes
+  ruled     \* whether the article or its chunk collection has read rules; it never changes
 
 \* All the variables, for stuttering steps.
 vars == <<text, merged, deleted, granted, stored, edits, phase, snap, memo, result, leaked, resolved, ownApp, scopeLeaked,
@@ -216,18 +221,23 @@ Prefix(w) == {c \in snap.stored :
 \* Whether the ranking may use the route: with the guard, only without read rules.
 Routes == RouteOnlyUnruled => ~ruled
 
+\* Whether the chunk collection's own app check, with the guard, lets the
+\* reader see the snapshot's chunks.
+OwnAppOK == CheckOwnApp => snap.ownApp
+
 \* The chunks in S the route may rank the article by: honest, of an article that
-\* has arrived and is live, and with the guard used by its current text. Like
-\* the code, the route checks no grant.
+\* has arrived and is live, passing their own app check, and with the guard
+\* used by its current text. Like the code, the route checks no grant.
 Accepted(S) ==
   LET live == snap.merged /\ (CheckDeleted => ~snap.deleted)  \* the route's parent check
-  IN {c \in S : HashOK(c) /\ live /\ (RouteChecksList => c.hash \in ChunksOf(snap.text))}
+  IN {c \in S : HashOK(c) /\ live /\ OwnAppOK                \* honest, live, own app check
+                /\ (RouteChecksList => c.hash \in ChunksOf(snap.text))}  \* with the guard, listed
 
 \* The exhaustive answer: the best of the article's current, honest chunks, or 0
-\* when the article may not show.
+\* when the article may not show or its chunks' own app check refuses them.
 Exhaustive ==
   LET d == Decide(snap)                                   \* the same decision
-  IN IF d.ok
+  IN IF d.ok /\ OwnAppOK                                  \* the article and its chunks may show
      THEN Max({Score(c) : c \in {e \in snap.stored : HashOK(e) /\ e.hash \in d.hashes}})
      ELSE 0
 
@@ -299,9 +309,10 @@ Plant(h) ==
   /\ stored' = stored \cup {[hash |-> h, honest |-> FALSE]}  \* the forged chunk
   /\ UNCHANGED <<scopeLeaked, merged, text, deleted, granted, edits, phase, snap, memo, result, leaked, resolved, ownApp, kind, width, ranked, ruled>>
 
-\* The chunk collection's own app check starts refusing the reader.
+\* The chunk collection's own app check starts refusing the reader. Such a
+\* check is a read rule, so it exists only where `ruled` holds.
 AppRefuse ==
-  /\ ownApp                                        \* still passing
+  /\ ruled /\ ownApp                               \* a rule that still passes
   /\ ownApp' = FALSE                               \* refusing now
   /\ UNCHANGED <<scopeLeaked, text, merged, deleted, granted, stored, edits, phase, snap, memo, result, leaked, resolved, kind, width, ranked, ruled>>
 
@@ -346,7 +357,7 @@ RankRouted ==
   /\ Accepted(Prefix(width)) # {}                   \* something to rank by
   /\ LET found == Max({Score(c) : c \in Accepted(Prefix(width))})  \* the best chunk read
          exact == Max({Score(c) : c \in {e \in snap.stored :           \* the best current chunk,
-                        HashOK(e) /\ e.hash \in ChunksOf(snap.text)}})  \* read again
+                        HashOK(e) /\ OwnAppOK /\ e.hash \in ChunksOf(snap.text)}})  \* read again
      IN ranked' = IF exact > 0 THEN exact ELSE found      \* the code keeps what it read if none
   /\ phase' = "done"                                \* the ranking has answered
   /\ UNCHANGED <<rankVars, width>>
@@ -429,10 +440,11 @@ INV_ServedIsReadable == ~leaked
 INV_DelegatedKeyInScope == ~scopeLeaked
 
 \* A ranking scores a live, readable article by its best current chunk, and
-\* leaves out an article it may not show. It reads the snapshot itself, so a
-\* RED that turns a guard off can't weaken it.
+\* leaves out an article it may not show or whose chunks their own app check
+\* refuses. It reads the snapshot itself, so a RED that turns a guard off
+\* can't weaken it.
 INV_RankedIsBestListed ==
   (phase = "done" /\ kind = "similar") =>
-    ranked = IF snap.merged /\ snap.granted /\ ~snap.deleted
+    ranked = IF snap.merged /\ snap.granted /\ ~snap.deleted /\ snap.ownApp
              THEN Best(ChunksOf(snap.text)) ELSE 0
 ====

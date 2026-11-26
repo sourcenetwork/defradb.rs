@@ -449,6 +449,13 @@ An article about rivers, edited to be about music, keeps its old rivers chunk st
 
 Under a local policy, with Alice's article about rivers and a public article about engines created with no identity, `limit: 2` returns both to Alice, hers first with similarity 1. `limit: 1` returns the public article, with similarity 0, to Bob and to a request with no identity, though Alice's article is nearer. Once Alice makes Bob a reader, `limit: 1` returns her article to Bob, and still the public one to a request with no identity. Once she deletes it, `limit: 1` returns the public article to Bob and to Alice.
 
+# `defra.chunk.rank.own_app`: A chunk its own app check refuses never scores its article
+
+- **Parents:** ["defra.chunk.rank"]
+- **Scenarios:** ["db::chunk::rank::a_chunk_its_own_app_check_refuses_never_scores_its_article"]
+
+With an app read validator that governs only `Article__body_chunk` and refuses the reader, `Article__body_chunk { _docID }` returns `[]` and `Article(order: {_alias: {sim: DESC}}, limit: 1) { sim: SIMILARITY(body_v: ...) }` returns the article with similarity `null`. The query warns `VECTOR_INDEX_UNUSED` with reason `filter`: the chunk index can't run the chunks' own app check, so the article is scored from its listed chunks, each checked first.
+
 # `defra.chunk.rank.offset`: An offset skips the best articles
 
 - **Parents:** ["defra.chunk.rank"]

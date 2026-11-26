@@ -67,6 +67,7 @@ impl ChunkSearch<'_> {
         let mut reads = Reads::default();
         let mut unlisted = 0usize;
         let mut unvectored = 0usize;
+        let mut refused = 0usize;
         let mut seen: RapidHashSet<u64> = RapidHashSet::new();
         let mut decided: RapidHashMap<String, Listed> = RapidHashMap::new();
         let mut parents: RapidHashMap<String, Document> = RapidHashMap::new();
@@ -108,6 +109,10 @@ impl ChunkSearch<'_> {
                     unlisted += 1;
                     continue;
                 };
+                if !self.target.readable(chunk).await? {
+                    refused += 1;
+                    continue;
+                }
                 let Some(score) = self.target.score(chunk)? else {
                     unvectored += 1;
                     continue;
@@ -124,6 +129,7 @@ impl ChunkSearch<'_> {
                 fresh = fresh.len(),
                 unlisted,
                 unvectored,
+                refused,
                 parents = best.len(),
                 "chunk vector index candidates"
             );
@@ -161,6 +167,7 @@ impl ChunkSearch<'_> {
             searches,
             unlisted,
             unvectored,
+            refused,
             "chunk vector index could not fill the page, scoring every parent"
         );
         Ok(Search {

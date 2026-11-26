@@ -1,6 +1,7 @@
 //! The routed search against a fake index whose chunks come nearest first.
 
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 
 use async_trait::async_trait;
 use chunk_split::hash::text_hash;
@@ -10,6 +11,7 @@ use document::{DocID, Document, NormalValue};
 use schema::{CType, ChunkedField, CollectionBuilder, FieldDescription, FieldKind, ScalarKind};
 
 use super::{ChunkSearch, ParentCheck, Searched};
+use crate::access_hooks::{AppReadCheck, ReadRequest, ReadValidator};
 use crate::doc_stream::{DocStream, VecStream};
 use crate::error::Result;
 use crate::fetcher::{DocFetcher, FetchByIdsResult, IndexEntryValues, IndexScanResult};
@@ -332,6 +334,7 @@ fn target(lookup: Lookup) -> ChunkTarget {
         field: "v".into(),
         vector: vec![1.0, 0.0],
         metric: Metric::NegativeDot,
+        app: None,
     }
 }
 
@@ -352,15 +355,50 @@ impl ParentCheck for AllBut {
     }
 }
 
+/// An app read validator on the chunk collection that refuses some chunks.
+struct Refuses(Vec<String>);
+
+#[async_trait]
+impl ReadValidator for Refuses {
+    fn governs(&self, _: &schema::CollectionVersion) -> bool {
+        true
+    }
+
+    async fn may_read(&self, request: &ReadRequest<'_>) -> std::result::Result<bool, String> {
+        Ok(!self.0.iter().any(|id| id == request.doc_id))
+    }
+}
+
+/// The chunk collection's own app check, refusing the chunks at `short_ids`.
+fn refusing(short_ids: &[u64]) -> Option<AppReadCheck> {
+    let refused = short_ids
+        .iter()
+        .map(|id| DocID::new_v0_from_seed(&format!("chunk {id}")).to_string())
+        .collect();
+    let validator: Arc<dyn ReadValidator> = Arc::new(Refuses(refused));
+    AppReadCheck::bind(Some(&validator), None, &loose(&[]))
+}
+
 /// Runs a search for `k` parents: the ranked parents by name, sorted, and what it read.
 fn run<C>(index: &Index, k: usize, check: &C) -> (Option<Vec<(&'static str, f64)>>, Reads)
 where
     C: ParentCheck,
 {
-    let target = target(index.lookup);
+    run_on(index, &target(index.lookup), k, check)
+}
+
+fn run_on<C>(
+    index: &Index,
+    target: &ChunkTarget,
+    k: usize,
+    check: &C,
+) -> (Option<Vec<(&'static str, f64)>>, Reads)
+where
+    C: ParentCheck,
+{
     let search = ChunkSearch {
         fetcher: index,
-        target: &target,
+        target,
         index_id: 0,
         k,
     };
@@ -483,4 +521,28 @@ fn rescoring_without_index_entries_matches_each_unseen_hash_exactly() {
     let (ranked, reads) = run(&index_missing_a_best(Lookup::ExactMatch), 2, &AnyParent);
     assert_eq!(ranked.unwrap(), vec![("A", 0.95), ("B", 0.6)]);
     assert_eq!((reads.docs, reads.index_lookups), (5, 1));
+}
+
+#[test]
+fn a_chunk_its_own_app_check_refuses_never_scores_its_parent() {
+    let index = Index::new(vec![chunk("A", 0.9), chunk("B", 0.6), chunk("A", 0.1)]);
+    let target = target(index.lookup).with_app(refusing(&[0]));
+    let ranked = run_on(&index, &target, 2, &AnyParent).0.unwrap();
+    assert_eq!(ranked, vec![("A", 0.1), ("B", 0.6)]);
+}
+
+#[test]
+fn the_exact_score_skips_a_chunk_its_own_app_check_refuses() {
+    let index = Index::new(vec![chunk("A", 0.9), chunk("A", 0.1)]);
+    let target = target(index.lookup).with_app(refusing(&[0]));
+    let parent = index.parent_doc(&parent_id("A")).unwrap();
+    let score = workers::block_on(super::super::listed::best_listed_score(
+        &index,
+        &target,
+        &parent,
+        &mut Reads::default(),
+    ))
+    .unwrap()
+    .unwrap();
+    assert_eq!(score, Some(0.1));
 }

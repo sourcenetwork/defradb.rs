@@ -4,6 +4,8 @@ use defra_core::vector::Metric;
 use document::Document;
 use schema::{ChunkedField, CollectionVersion, CHUNK_HASH_FIELD, CHUNK_SOURCE_ID_FIELD};
 
+use crate::access_hooks::read::app_allows;
+use crate::access_hooks::AppReadCheck;
 use crate::error::{QueryError, Result};
 use crate::json_convert::normal_value_to_json;
 use crate::mapper::Similarity;
@@ -28,6 +30,8 @@ pub(crate) struct ChunkTarget {
     pub vector: Vec<f64>,
     /// The metric the chunk field's index ranks by.
     pub metric: Metric,
+    /// The chunk collection's own app read check, as a chunk query runs it.
+    pub app: Option<AppReadCheck>,
 }
 
 impl ChunkTarget {
@@ -72,7 +76,21 @@ impl ChunkTarget {
                 similarity.metric,
             )
             .engine_metric(),
+            app: None,
         })
+    }
+
+    pub(crate) fn with_app(mut self, app: Option<AppReadCheck>) -> Self {
+        self.app = app;
+        self
+    }
+
+    /// Whether the chunk collection's own app check lets the reader see `chunk`.
+    pub(crate) async fn readable(&self, chunk: &Document) -> Result<bool> {
+        match chunk.id() {
+            Some(id) => app_allows(self.app.as_ref(), &id.to_string()).await,
+            None => Ok(self.app.is_none()),
+        }
     }
 
     /// A chunk's score, or `None` when it has no vector.

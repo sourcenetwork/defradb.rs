@@ -23,6 +23,7 @@ fn target() -> ChunkTarget {
         field: "body_v".into(),
         vector: vec![1.0],
         metric: Metric::Cosine,
+        app: None,
     }
 }
 

@@ -57,12 +57,13 @@ impl DocFetcher for VectorFetcher {
     }
 }
 
-struct GovernsArticles;
+/// An app read validator that governs one collection.
+struct Governs(&'static str);
 
 #[async_trait]
-impl ReadValidator for GovernsArticles {
+impl ReadValidator for Governs {
     fn governs(&self, collection: &CollectionVersion) -> bool {
-        collection.name == "Article"
+        collection.name == self.0
     }
 
     async fn may_read(&self, _: &ReadRequest<'_>) -> std::result::Result<bool, String> {
@@ -100,6 +101,12 @@ fn a_ranking_without_read_rules_routes_through_the_chunk_index() {
 
 #[test]
 fn an_app_read_validator_keeps_the_ranking_off_the_chunk_index() {
-    let planner = planner().with_read_validator(Some(Arc::new(GovernsArticles)));
+    let planner = planner().with_read_validator(Some(Arc::new(Governs("Article"))));
+    assert_eq!(unused_reasons(planner), vec!["filter".to_string()]);
+}
+
+#[test]
+fn the_chunk_collections_own_app_validator_keeps_the_ranking_off_the_chunk_index() {
+    let planner = planner().with_read_validator(Some(Arc::new(Governs("Article__body_chunk"))));
     assert_eq!(unused_reasons(planner), vec!["filter".to_string()]);
 }

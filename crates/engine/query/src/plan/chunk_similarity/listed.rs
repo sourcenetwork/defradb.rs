@@ -64,6 +64,9 @@ pub(crate) async fn best_score_of(
         if !is_wanted || chunk_parent_id(&chunk) != Some(parent_id) {
             continue;
         }
+        if !target.readable(&chunk).await? {
+            continue;
+        }
         if let Some(score) = target.score(&chunk)? {
             best = Some(best.map_or(score, |best| best.max(score)));
         }

@@ -33,6 +33,14 @@ impl Planner {
         let chunks = collection
             .chunk_embedding(&similarity.target_field, candidates.iter().map(Arc::as_ref))?;
         ChunkTarget::new(collection, chunks, similarity)
+            .map(|target| target.with_app(self.app_read(chunks)))
+    }
+
+    /// Whether an app read validator hides chunks of `collection`'s chunk collections.
+    pub(super) fn chunks_gate_reads(&self, collection: &CollectionVersion) -> bool {
+        self.chunk_collections(collection)
+            .iter()
+            .any(|chunks| self.app_gates_reads(chunks))
     }
 
     /// The indexes `select`'s similarities route through: `collection`'s own,

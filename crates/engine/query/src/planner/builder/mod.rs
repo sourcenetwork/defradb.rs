@@ -249,7 +249,7 @@ impl Planner {
         }
     }
 
-    fn app_read(
+    pub(super) fn app_read(
         &self,
         collection: &CollectionVersion,
     ) -> Option<crate::access_hooks::AppReadCheck> {
@@ -397,7 +397,9 @@ impl Planner {
             || select.filter.as_ref().is_some_and(|filter| filter.has_alias_filter())
             || (self.acp.is_some() && collection.policy.is_some())
             || collection.chunk_of.is_some()
-            || self.app_gates_reads(&collection);
+            || self.app_gates_reads(&collection)
+            // The route reads chunks before their own app check could hide them.
+            || self.chunks_gate_reads(&collection);
 
         let mut warnings: Vec<GqlWarning> = Vec::new();
 
