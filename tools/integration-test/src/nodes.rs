@@ -46,7 +46,9 @@ pub struct NodeSpec {
     /// Rust CLI's loader, so it is a Rust node under every client.
     pub go_config: bool,
     /// Where the node's pinc endpoint binds when `listen` names no address:
-    /// the CLI's resolved bind for a node started from a Go config.
+    /// the CLI's resolved bind for a node started from a Go config, or
+    /// `defra-node`'s default for one that names no bind. Either makes it a
+    /// Rust node under every client.
     pub pinc_bind: Option<std::net::SocketAddr>,
     /// The addresses a node started from a Go config lists first, from its
     /// `net.pinc_public_addrs`.
@@ -127,11 +129,16 @@ impl TestNode {
             Some(address) => address.clone(),
             None => "/ip4/127.0.0.1/tcp/0".to_owned(),
         };
-        // Admission limits, a loaded Go config and a relaying hub are a Rust
-        // node's options: under go-http the node is a Rust node reached over
-        // HTTP, as rust-http does.
+        // Admission limits, a loaded Go config, a relaying hub and a pinc
+        // bind are a Rust node's options: under go-http the node is a Rust
+        // node reached over HTTP, as rust-http does.
         let client_type = match client_type {
-            ClientType::GoHttp if spec.admission.is_some() || spec.go_config || spec.relay_hub => {
+            ClientType::GoHttp
+                if spec.admission.is_some()
+                    || spec.go_config
+                    || spec.relay_hub
+                    || spec.pinc_bind.is_some() =>
+            {
                 ClientType::RustHttp
             }
             other => other,

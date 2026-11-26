@@ -16,7 +16,14 @@ A Rust key that is present in the same section wins over its Go spelling. Keys o
 
 A node started with `defradb start` binds its pinc endpoint on `net.pinc_bind_addr` (`--pinc-bind-addr`, `127.0.0.1` when unset, as Go's CLI listens on loopback by default) and `net.pinc_bind_port` (`--pinc-bind-port`, a port the OS picks when unset), runs topics through the hubs `net.pinc_hubs` names (`--pinc-hubs`), admits inbound connections only from the peer ids `net.pinc_allowed_peers` lists (`--pinc-allowed-peers`, every peer when empty), and dials each of `net.peers` (`--peers`) once started, without waiting for it. A node bound where other hosts can reach it with an empty `net.pinc_allowed_peers` starts and logs one warning that any peer may connect. A hub or peer address is `<peer id>@<udp address>`; any other fails the start with `invalid config: invalid pinc address <address>: …`.
 
-The FFI and `defra-node` embedder defaults are not this one: an embedder that names no bind still binds every interface (`0.0.0.0`).
+The FFI and `defra-node` embedders bind loopback the same way when they name no bind, `defra.cli.pinc.embedder_bind`.
+
+# `defra.cli.pinc.embedder_bind`: An embedder that names no pinc bind binds loopback
+
+- **Parents:** ["defra.cli.pinc"]
+- **Scenarios:** ["net::pinc_bind::a_node_that_names_no_bind_binds_loopback"]
+
+A `defra-node` embedder whose `PincConfig` keeps its default `bind`, and an FFI host whose `listening_addresses` is empty, bind the pinc endpoint on `127.0.0.1` on a port the OS picks, as `defradb start` does, so only this host can connect: the node's peer info lists a loopback address. An embedder that names a bind, `0.0.0.0:<port>` included, binds it.
 
 # `defra.cli.pinc.public_addrs`: A node lists the addresses peers can reach
 

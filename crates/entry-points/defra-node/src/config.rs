@@ -221,8 +221,10 @@ pub enum TransportConfig {
 #[cfg(feature = "p2p")]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PincConfig {
-    /// The UDP address the endpoint binds; port 0 picks one. A wildcard IP
-    /// lists the address of every interface, never loopback.
+    /// The UDP address the endpoint binds; port 0 picks one. Loopback
+    /// (`127.0.0.1:0`) by default, as `defradb start`, so only this host can
+    /// connect until the embedder names a wider bind. A wildcard IP
+    /// (`0.0.0.0`) lists the address of every interface, never loopback.
     pub bind: std::net::SocketAddr,
     /// Addresses peers reach the node at that are on none of its
     /// interfaces (a public address in front of a NAT); listed first.
@@ -262,7 +264,7 @@ pub struct PincConfig {
 impl Default for PincConfig {
     fn default() -> Self {
         Self {
-            bind: std::net::SocketAddr::from(([0, 0, 0, 0], 0)),
+            bind: std::net::SocketAddr::from(([127, 0, 0, 1], 0)),
             public_addrs: Vec::new(),
             allowlist: defra_pinc::PincAllowlistConfig::default(),
             secret_key_path: None,

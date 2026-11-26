@@ -139,7 +139,8 @@ a P2P node with a persistent store, set for example `db_path`, `pinc_hubs`
 (the hubs topics and the KMS key exchange run through, `<peer id>@<udp
 address>`), and `identity_ptr` (an identity handle the node signs as). Leave
 `disable_p2p` at `0` to run P2P; the node binds `listening_addresses`, one
-`ip:port`, or every interface on a port the OS picks when it is empty.
+`ip:port`, or loopback (`127.0.0.1`) on a port the OS picks when it is empty,
+so only this host can connect; `0.0.0.0:<port>` listens on every interface.
 
 For device-bound or delegated identities:
 

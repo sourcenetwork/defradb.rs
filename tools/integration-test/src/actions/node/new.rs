@@ -96,6 +96,10 @@ pub struct NewNode {
     /// by peer id alone.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub relay_hub: bool,
+    /// A Rust node whose pinc endpoint binds where `defra-node` binds an
+    /// embedder that names no bind, in place of the harness's loopback one.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub default_pinc_bind: bool,
     #[serde(default, skip_serializing_if = "Value::is_null")]
     pub expected_data: Value,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -130,6 +134,7 @@ impl Op for NewNode {
         probe.without_node_identity = false;
         probe.go_config = None;
         probe.relay_hub = false;
+        probe.default_pinc_bind = false;
         probe.node_identity_seed = None;
         probe.enable_signing = false;
         probe.key_type = None;
@@ -181,7 +186,12 @@ impl Op for NewNode {
         };
         let (network, pinc_bind, pinc_public_addrs) = match &self.go_config {
             Some(body) => go_config_network(body)?,
-            None => (self.network, None, Vec::new()),
+            None => (
+                self.network,
+                self.default_pinc_bind
+                    .then(|| defra_node::PincConfig::default().bind),
+                Vec::new(),
+            ),
         };
         let spec = NodeSpec {
             network,

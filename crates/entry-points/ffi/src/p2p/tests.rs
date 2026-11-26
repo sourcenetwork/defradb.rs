@@ -149,6 +149,19 @@ mod pinc {
         })
     }
 
+    /// A host that leaves `listening_addresses` empty gets a node bound on
+    /// loopback: its peer info lists a loopback address, which a node bound
+    /// on every interface never lists.
+    #[test]
+    fn a_node_that_names_no_listening_address_binds_loopback() {
+        let node = node_with(NodeInitOptions {
+            disable_p2p: 0,
+            ..local_options()
+        });
+        address(node);
+        close(node);
+    }
+
     #[test]
     fn a_replicator_pushes_documents_to_its_peer() {
         let source = p2p_node();

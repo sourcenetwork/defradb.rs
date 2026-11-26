@@ -33,8 +33,8 @@ The browser client runs no P2P.
 `defradb start` binds `net.pinc_bind_addr`, `127.0.0.1` when unset, on
 `net.pinc_bind_port` (a port the OS picks when unset). Bound where other hosts can
 reach it with an empty `net.pinc_allowed_peers`, it logs a warning: any peer may
-connect. An embedder (`defra-node`, the FFI) that names no bind binds every interface
-(`0.0.0.0`).
+connect. An embedder (`defra-node`, the FFI) that names no bind binds `127.0.0.1` on a
+port the OS picks too; it names `0.0.0.0:<port>` to listen on every interface.
 
 A node bound on a wildcard address lists one address per interface, never loopback or
 IPv6 link-local. The addresses in `net.pinc_public_addrs` (`--pinc-public-addrs`; for a

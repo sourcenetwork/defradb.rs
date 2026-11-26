@@ -81,7 +81,7 @@ fn sync_tuning(
 }
 
 /// The pinc node `options` describe: it binds `listening_addresses` (one
-/// `ip:port`, every interface on a port the OS picks when empty), dials
+/// `ip:port`, loopback on a port the OS picks when empty), dials
 /// `peers` once started, runs topics through `pinc_hubs`, and admits the
 /// peers `pinc_allowed_peers` names, or every peer when it names none.
 ///
@@ -94,7 +94,7 @@ unsafe fn pinc(
     retry_intervals: Option<Vec<u64>>,
 ) -> Result<defra_node::TransportConfig, String> {
     let bind = match split_comma_separated(&go_string(options.listening_addresses)).as_slice() {
-        [] => std::net::SocketAddr::from(([0, 0, 0, 0], 0)),
+        [] => defra_node::PincConfig::default().bind,
         [addr] => addr
             .trim()
             .parse()
@@ -168,9 +168,9 @@ mod tests {
     }
 
     #[test]
-    fn the_default_binds_every_interface_on_a_port_the_os_picks() {
+    fn the_default_binds_loopback_on_a_port_the_os_picks() {
         let config = pinc_config(&NodeInitOptions::default()).unwrap();
-        assert_eq!(config.bind, std::net::SocketAddr::from(([0, 0, 0, 0], 0)));
+        assert_eq!(config.bind, std::net::SocketAddr::from(([127, 0, 0, 1], 0)));
         assert!(config.hubs.is_empty());
         assert!(config.bootstrap_peers.is_empty());
         assert!(matches!(

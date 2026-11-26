@@ -20,7 +20,8 @@ pub struct NodeInitOptions {
     /// Path to the store directory. Null or empty keeps the store in memory.
     pub db_path: *const c_char,
     /// The UDP address the pinc endpoint binds, one `ip:port`. Empty binds
-    /// every interface on a port the OS picks.
+    /// loopback (`127.0.0.1`) on a port the OS picks, so only this host can
+    /// connect; `0.0.0.0:<port>` listens on every interface.
     pub listening_addresses: *const c_char,
     /// Comma-separated seconds between replicator retries, the last one
     /// repeating. Empty keeps the default ladder.
