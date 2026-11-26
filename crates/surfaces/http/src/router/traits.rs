@@ -264,7 +264,7 @@ pub trait CollectionLookup: defra_core::thread_bounds::MaybeSendSync {
 
 /// Trait for collection management operations beyond basic CRUD.
 ///
-/// Provides action listing, purge, collection lookups and collection drops,
+/// Provides action listing, collection lookups and collection drops,
 /// that operate at the collection level rather than the document level.
 #[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
@@ -273,9 +273,6 @@ pub trait CollectionManagementOperations: CollectionLookup {
 
     /// List actions that have not completed successfully.
     async fn list_actions(&self) -> Result<Vec<defra_core::ActionExecution>, String>;
-
-    /// Purge all data from all collections.
-    async fn purge(&self) -> Result<(), String>;
 
     /// Get a collection by name.
     async fn get_collection_by_name(
@@ -528,4 +525,32 @@ pub trait ViewOperations: defra_core::thread_bounds::MaybeSendSync {
 pub trait DumpOperations: defra_core::thread_bounds::MaybeSendSync {
     /// Dump all database key/value pairs as a list of human-readable strings.
     async fn print_dump(&self) -> Result<Vec<String>, String>;
+}
+
+/// The node's answer to `POST /purge`: it records the request and returns
+/// at once; the embedding application wipes the store and restarts the node
+/// once the node has stopped serving, outside the request.
+pub trait PurgeOperations: defra_core::thread_bounds::MaybeSendSync {
+    /// Asks for one purge. A repeat while one is pending is accepted and
+    /// changes nothing.
+    fn request_purge(&self) -> Result<(), PurgeRefusal>;
+
+    /// Whether the node runs in development mode, which a purge needs
+    /// however it is asked for: the route checks this, not its own
+    /// `dev_mode`, which also gates the dump, backup and lens routes.
+    fn development(&self) -> bool;
+}
+
+/// Why a node refused a purge, before anything stopped.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum PurgeRefusal {
+    /// The node is not in development mode (403), Go's text.
+    #[error("operation not permitted whilst development mode is disabled. Operation: Purge")]
+    DevelopmentMode,
+    /// The node has no purge handler to wipe and restart it (501).
+    #[error(
+        "purge needs the embedding application to wipe the store and restart the node: \
+         register a purge handler (NodeBuilder::with_purge_handler)"
+    )]
+    NoHandler,
 }

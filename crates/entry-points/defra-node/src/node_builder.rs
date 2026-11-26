@@ -72,6 +72,10 @@ pub struct NodeBuilder {
     replica_registration: Option<db::merge::ReplicaRegistration>,
     #[cfg(all(test, feature = "p2p"))]
     kms_transport_wrapper: Option<crate::assemble::TestKmsTransportWrapper>,
+    #[cfg(not(target_arch = "wasm32"))]
+    purge_handler: Option<Arc<dyn crate::PurgeHandler>>,
+    #[cfg(not(target_arch = "wasm32"))]
+    development: bool,
     /// How long an idle explicit transaction lives, and how often the sweep
     /// looks; when set, it takes precedence over an HTTP config's setting.
     #[cfg(not(target_arch = "wasm32"))]
@@ -119,6 +123,70 @@ impl NodeBuilder {
     ) -> Self {
         self.kms_transport_wrapper = Some(wrap);
         self
+    }
+
+    /// Let the node accept a purge ([`Node::purge_as`](crate::Node::purge_as),
+    /// `POST /purge` under collection management and dev mode). The handler
+    /// is told once; the application then calls
+    /// [`Node::shutdown_and_wipe`](crate::Node::shutdown_and_wipe) and builds
+    /// the node again with the same settings, as Go's `PurgeAndRestart` does.
+    /// Without one, a purge is refused with a 501.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn with_purge_handler(mut self, handler: Arc<dyn crate::PurgeHandler>) -> Self {
+        self.purge_handler = Some(handler);
+        self
+    }
+
+    /// Development mode, Go's `EnableDevelopment`: a purge is refused without
+    /// it, however it is asked for. An HTTP config's
+    /// [`with_dev_mode`](crate::HttpConfig::with_dev_mode) turns it on too.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn with_development(mut self, development: bool) -> Self {
+        self.development = development;
+        self
+    }
+
+    /// Whether the node runs in development mode.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn development(&self) -> bool {
+        #[cfg(feature = "http")]
+        let http = self.http_config.as_ref().is_some_and(|http| http.dev_mode);
+        #[cfg(not(feature = "http"))]
+        let http = false;
+        self.development || http
+    }
+
+    /// What [`Node::shutdown_and_wipe`](crate::Node::shutdown_and_wipe)
+    /// wipes: the store on disk, opened with its options off any pool, and
+    /// the embedded Vera node's directories.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn wipe_target(&self) -> Result<storage::WipeTarget> {
+        let store = match self.data_path.as_ref() {
+            Some(path) => Some((
+                path.clone(),
+                with_at_rest_keys(
+                    resolve_regolith_options(
+                        self.regolith_options.clone(),
+                        self.storage_profile,
+                        self.storage_durability,
+                    ),
+                    self.at_rest_encryption_key,
+                    &self.previous_at_rest_encryption_keys,
+                )?,
+            )),
+            None => None,
+        };
+        #[allow(unused_mut)]
+        let mut owned_dirs = Vec::new();
+        #[cfg(feature = "embedded-vera")]
+        if let crate::DocumentAcpConfig::EmbeddedVera(vera) = &self.config.document_acp {
+            owned_dirs.extend([vera.data_dir.clone(), vera.worker_dir.clone()]);
+        }
+        Ok(storage::WipeTarget {
+            store,
+            owned_dirs,
+            kept: Vec::new(),
+        })
     }
 
     /// Install a trusted in-process document projector. It stages its changes
@@ -605,12 +673,20 @@ impl NodeBuilder {
             return Err(crate::Error::HttpEmbedderTransactionOwnership);
         }
 
+        #[cfg(not(target_arch = "wasm32"))]
+        let wipe_target = self.wipe_target()?;
         let extras = Extras {
             embedding_url: self.embedding_url.take(),
             embedding_model: self.embedding_model.take(),
             embedding_api_key: self.embedding_api_key.take(),
             txn_ownership: self.txn_ownership,
             document_projector: self.document_projector.take(),
+            #[cfg(not(target_arch = "wasm32"))]
+            purge_handler: self.purge_handler.take(),
+            #[cfg(not(target_arch = "wasm32"))]
+            development: self.development(),
+            #[cfg(not(target_arch = "wasm32"))]
+            wipe_target,
             replica_registration: self.replica_registration.take(),
             #[cfg(all(test, feature = "p2p"))]
             kms_transport_wrapper: self.kms_transport_wrapper.take(),
@@ -692,8 +768,12 @@ impl NodeBuilder {
                     );
                 // The event stream gates chunk events by collection even without the management routes.
                 let server = server.with_collection_lookup_arc(collections.clone());
+                // `/purge` is collection management: without it the route
+                // answers 503, and the gate answers 403 or 501 itself.
                 match http_cfg.collection_management {
-                    true => server.with_collection_mgmt_arc(collections),
+                    true => server
+                        .with_collection_mgmt_arc(collections)
+                        .with_purge_arc(node.purge.clone()),
                     false => server,
                 }
             };

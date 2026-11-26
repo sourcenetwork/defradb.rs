@@ -1,4 +1,4 @@
-use crate::scenario::{Common, Op};
+use crate::scenario::{Common, Failure, Op};
 use crate::test_case::State;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -27,6 +27,22 @@ impl Op for GetNodeIdentity {
 
     fn expected_error(&self) -> Option<&str> {
         self.expected_error.as_deref()
+    }
+
+    /// `GET /node/identity` on a node with a URL.
+    fn run(&self, state: &State) -> Result<Value, Failure> {
+        self.common.plain(Self::name())?;
+        let name = self.common.node();
+        if state.node(name)?.url.is_none() {
+            return Err(Failure::unsupported(Self::name()));
+        }
+        state
+            .http_as(
+                name,
+                None,
+                |client| async move { client.node_identity().await },
+            )?
+            .map_err(|e| Failure::operation(e.to_string()))
     }
 }
 

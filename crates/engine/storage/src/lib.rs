@@ -105,6 +105,10 @@ pub mod namespace;
 
 pub mod index;
 pub mod stores;
+#[cfg(not(target_arch = "wasm32"))]
+mod wipe;
+#[cfg(not(target_arch = "wasm32"))]
+pub use wipe::{check as check_wipe, wipe, WipeTarget};
 
 // See #19 for transaction wrapper module
 

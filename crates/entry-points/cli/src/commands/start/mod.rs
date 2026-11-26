@@ -5,6 +5,7 @@ mod node;
 mod node_identity;
 mod p2p;
 mod pool_args;
+mod purge;
 mod run;
 mod server;
 mod server_acp;
@@ -342,31 +343,63 @@ impl StartArgs {
         // Parse user identity from --identity flag if provided
         let user_identity = self.parse_user_identity()?;
 
-        // Set up Orbis remote signer if configured
+        // Set up Orbis remote signer if configured, held across every run
+        // of the node a purge starts.
         #[cfg(feature = "orbis")]
-        if self.signer_type.as_deref() == Some("orbis") {
-            self.setup_orbis_signer(&user_identity, &edge).await?;
-        }
+        let _orbis_signer = match self.signer_type.as_deref() == Some("orbis") {
+            true => Some(self.setup_orbis_signer(&user_identity, &edge).await?),
+            false => None,
+        };
 
         // regolith keeps a descriptor per live SSTable; a service manager's
         // default soft limit (256 under macOS launchd) runs out.
         fd_limit::raise_nofile_limit();
 
-        // Start the node
-        let node = Node::new(config, user_identity, edge).await?;
-        node.run().await
+        // A purge restarts the node on the address it served, as Go's
+        // PurgeAndRestart does: bound once, so a port 0 stays the same port.
+        let address: std::net::SocketAddr =
+            config
+                .api
+                .address
+                .parse()
+                .map_err(|e: std::net::AddrParseError| {
+                    crate::error::Error::InvalidApiAddress(
+                        config.api.address.clone(),
+                        e.to_string(),
+                    )
+                })?;
+        let listener = std::net::TcpListener::bind(address).map_err(|e| {
+            crate::error::Error::InvalidConfig(format!("failed to bind to {address}: {e}"))
+        })?;
+        config.api.address = listener.local_addr()?.to_string();
+        let mut signals = run::Signals::new()?;
+        loop {
+            let node = Node::new(config.clone(), user_identity.clone(), edge.clone())
+                .await?
+                .with_http_listener(listener.try_clone()?);
+            match node.run_until(&mut signals).await? {
+                run::RunOutcome::Stopped => return Ok(()),
+                run::RunOutcome::Purged(target) => {
+                    tracing::info!("Purging the store and restarting the node");
+                    edge.spawn_blocking(move || storage::wipe(&target))
+                        .await
+                        .map_err(|e| crate::error::Error::PurgeTeardown(e.to_string()))??;
+                }
+            }
+        }
     }
 
     /// Set up Orbis ring threshold signing.
     ///
-    /// Connects to the Orbis ring, derives the BLS public key, and stores
-    /// a SigningConfig with a remote signer under the signer's DID.
+    /// Connects to the Orbis ring, derives the BLS public key, and holds
+    /// a SigningConfig with a remote signer under the signer's DID until the
+    /// returned hold is dropped.
     #[cfg(feature = "orbis")]
     async fn setup_orbis_signer(
         &self,
         user_identity: &Option<std::sync::Arc<identity::RawIdentity>>,
         edge: &edge::Edge,
-    ) -> Result<()> {
+    ) -> Result<defra_core::signing::IdentityHold> {
         let service_identity = match self.parse_orbis_service_identity()? {
             Some(identity) => identity,
             None => user_identity.as_ref().cloned().ok_or_else(|| {
@@ -409,7 +442,7 @@ impl StartArgs {
         let public_key_bytes = client.public_key_bytes().to_vec();
         let public_key_hex = client.public_key_hex().to_string();
 
-        defra_core::signing::store_identity(
+        let hold = Self::hold_remote_signer(
             &signer_did,
             defra_core::signing::SigningConfig {
                 key_type: defra_core::signing::SigningKeyType::BlsAugV1,
@@ -419,15 +452,27 @@ impl StartArgs {
                 remote_signer: Some(std::sync::Arc::new(client)),
                 signing_authorization: None,
             },
-        )
-        .map_err(|e| Error::InvalidConfig(format!("Orbis signer setup failed: {}", e)))?;
+        )?;
 
         tracing::info!(
             signer_did = %signer_did,
             "Orbis remote signer configured"
         );
 
-        Ok(())
+        Ok(hold)
+    }
+
+    /// Registers the Orbis signer under `did` and holds it until the hold is
+    /// dropped: each run of the node clears the identity store as it ends,
+    /// and only a held signer is still there when a purge starts the next
+    /// run (INV_SignerSurvivesRestart in `proofs/tla/StorePurge.tla`).
+    #[cfg(feature = "orbis")]
+    fn hold_remote_signer(
+        did: &str,
+        config: defra_core::signing::SigningConfig,
+    ) -> Result<defra_core::signing::IdentityHold> {
+        defra_core::signing::IdentityHold::new(did, config)
+            .map_err(|e| Error::InvalidConfig(format!("Orbis signer setup failed: {}", e)))
     }
 
     /// Parse `--signer-orbis-identity`, the key used only to authenticate to
@@ -710,6 +755,27 @@ mod tests {
     use super::*;
 
     const SECP256K1_KEY: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+
+    #[cfg(feature = "orbis")]
+    #[test]
+    fn the_orbis_signer_outlives_the_identity_clear_between_runs() {
+        let did = "did:key:orbis-signer-across-purge";
+        let config = defra_core::signing::SigningConfig {
+            key_type: defra_core::signing::SigningKeyType::BlsAugV1,
+            private_key_bytes: vec![],
+            public_key_bytes: vec![1, 2, 3],
+            public_key_hex: "010203".into(),
+            remote_signer: None,
+            signing_authorization: None,
+        };
+        let _hold = StartArgs::hold_remote_signer(did, config).unwrap();
+        // What `run_until` does at the end of every run, a purge's included.
+        defra_core::signing::clear_identity_store();
+        assert!(
+            defra_core::signing::get_identity(did).is_some(),
+            "the restarted node must still find the Orbis signer"
+        );
+    }
 
     /// 64 bytes: seed followed by public key, the layout DefraDB stores an
     /// ed25519 private key in. RFC 8032 test vector 1, so the public half

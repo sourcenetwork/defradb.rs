@@ -42,6 +42,12 @@ pub struct GoOptions {
     pub node_key: Option<NodeKey>,
     pub signing: bool,
     pub se_key: Option<[u8; 32]>,
+    /// `--development`, which a purge needs.
+    pub development: bool,
+    /// Keep the keyring on even with no key to add first.
+    pub keyring: bool,
+    /// More `start` flags, such as `--document-acp-type`.
+    pub extra_args: Vec<String>,
 }
 
 /// A node identity's private key as Go's keyring stores it under
@@ -59,6 +65,8 @@ const KEYRING_SECRET: &str = "testo-keyring-secret";
 pub struct GoNode {
     _process: Process,
     api_url: String,
+    rootdir: PathBuf,
+    log_path: PathBuf,
     _root: TempDir,
 }
 
@@ -112,7 +120,11 @@ impl GoNode {
         for (name, key) in &keys {
             add_key(binary, &data, name, key)?;
         }
-        if keys.is_empty() {
+        if options.development {
+            command.arg("--development");
+        }
+        command.args(&options.extra_args);
+        if keys.is_empty() && !options.keyring {
             command.arg("--no-keyring");
         } else {
             command.env("DEFRA_KEYRING_SECRET", KEYRING_SECRET);
@@ -152,6 +164,8 @@ impl GoNode {
                 return Ok(Self {
                     _process: process,
                     api_url,
+                    rootdir: data,
+                    log_path,
                     _root: root,
                 });
             }
@@ -167,6 +181,37 @@ impl GoNode {
 
     pub fn api_url(&self) -> &str {
         &self.api_url
+    }
+
+    /// The node's `--rootdir`.
+    pub fn rootdir(&self) -> &Path {
+        &self.rootdir
+    }
+
+    /// How many times the node has said it serves HTTP.
+    pub fn ready_count(&self) -> Result<usize, GoNodeError> {
+        let log = std::fs::read(&self.log_path)?;
+        Ok(String::from_utf8_lossy(&log).matches(READY).count())
+    }
+
+    /// Waits for the node to serve HTTP again after `seen` ready lines, as a
+    /// purge's restart does, and returns the URL it serves at.
+    pub fn wait_restarted(&self, seen: usize) -> Result<String, GoNodeError> {
+        let deadline = Instant::now() + READY_TIMEOUT;
+        loop {
+            let text = String::from_utf8_lossy(&std::fs::read(&self.log_path)?).into_owned();
+            let restarted = text
+                .match_indices(READY)
+                .nth(seen)
+                .and_then(|(at, _)| ready_url(&text[at..]));
+            if let Some(url) = restarted {
+                return Ok(url);
+            }
+            if Instant::now() >= deadline {
+                return Err(GoNodeError::NotReady { log: text });
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
     }
 }
 

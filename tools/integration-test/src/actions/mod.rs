@@ -188,6 +188,7 @@ client_actions! {
         NewNode,
         HoldCommit,
         ReleaseCommit,
+        Purge,
         SaveDocs,
         Restart,
         Start,

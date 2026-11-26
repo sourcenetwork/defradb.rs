@@ -100,20 +100,6 @@ where
             .map_err(|error| error.to_string())
     }
 
-    async fn purge(&self) -> Result<(), String> {
-        let collections = self
-            .database
-            .list_collections()
-            .map_err(|e| format!("{}", e))?;
-        for name in &collections {
-            self.database
-                .delete_collection_as(&self.context(), name)
-                .await
-                .map_err(|e| format!("{}", e))?;
-        }
-        Ok(())
-    }
-
     async fn get_collection_by_name(
         &self,
         name: &str,

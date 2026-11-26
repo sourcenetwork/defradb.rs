@@ -73,6 +73,8 @@ mod p2p_runtime;
 #[cfg(any(feature = "p2p", feature = "libp2p"))]
 mod peer_key;
 mod peer_keyring;
+#[cfg(not(target_arch = "wasm32"))]
+mod purge;
 mod request_path;
 mod signed_query;
 mod signer_credential;
@@ -140,12 +142,16 @@ pub use lens::{LensConfig, LensModule, TransformId};
 pub use managed_p2p::{ManagedP2PSystem, ShutdownHandle, TransportKind};
 pub use node_builder::{NodeBuilder, StorageBackend, StoreProfile};
 pub use peer_keyring::PeerKeyring;
+#[cfg(not(target_arch = "wasm32"))]
+pub use purge::PurgeHandler;
 pub use query::owners::{DocumentAccessDecision, DocumentAccessMode};
 pub use query::QueryLimits;
 pub use query::{QueryExecutor, QueryRequest, QueryResponse, TransactionHandle};
 pub use schema::CollectionVersion;
 pub use signer_credential::SignerCredential;
 pub use start_peer_key::StartPeerKey;
+#[cfg(not(target_arch = "wasm32"))]
+pub use storage::WipeTarget;
 pub use telemetry::{ConflictMetricsSnapshot, RetryLayerSnapshot};
 #[cfg(feature = "otel")]
 pub use telemetry::{TelemetryConfig, TelemetryHandle};
@@ -305,6 +311,12 @@ pub struct Node {
     background_tasks: Arc<BackgroundTasks>,
     #[cfg(feature = "managed-p2p")]
     p2p: Option<Arc<ManagedP2PSystem>>,
+    /// Takes the node's purge requests to its handler.
+    #[cfg(not(target_arch = "wasm32"))]
+    purge: Arc<purge::PurgeGate>,
+    /// What [`Node::shutdown_and_wipe`] wipes.
+    #[cfg(not(target_arch = "wasm32"))]
+    wipe_target: storage::WipeTarget,
     /// Idempotency guard for [`Node::shutdown`]: set by its first caller.
     shutdown_started: std::sync::atomic::AtomicBool,
     /// Set once the teardown has finished.
@@ -1361,6 +1373,11 @@ impl Node {
             self.wait_for_shutdown().await;
             return Ok(());
         }
+        self.teardown().await
+    }
+
+    /// The teardown [`Node::shutdown`]'s first caller runs.
+    async fn teardown(&self) -> Result<()> {
         tracing::info!("node shutdown: begin");
 
         #[cfg(not(target_arch = "wasm32"))]

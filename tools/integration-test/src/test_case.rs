@@ -159,6 +159,19 @@ impl State {
         self.nodes.0.insert(name.to_owned(), slot);
     }
 
+    /// Takes running node `name` out of the test without stopping it; its
+    /// spec stays, so it can be started again.
+    pub fn take_running(&mut self, name: &str) -> Option<Arc<TestNode>> {
+        self.nodes.0.get_mut(name)?.node.take()
+    }
+
+    /// Running node `name` is now `node`, as when a process node restarts.
+    pub fn replace_running(&mut self, name: &str, node: TestNode) {
+        if let Some(slot) = self.nodes.0.get_mut(name) {
+            slot.node = Some(Arc::new(node));
+        }
+    }
+
     /// Start stopped node `name` again with NAC options, as Go's `Start`:
     /// `enable_nac` turns NAC on, owned by `owner` when it was never set up.
     /// A start the node refuses leaves it stopped, with the refusal.
@@ -426,10 +439,26 @@ impl TestCase {
         trace_from_env();
         let actions = testo::multiplier::apply(&self.actions, &multipliers);
         let actions = with_stub_embedder(&actions);
+        let process = self.actions().iter().any(starts_process);
         for client_type in clients {
+            // A node in a process of its own is reached over HTTP.
+            let client_type = match (process, client_type) {
+                (true, ClientType::InProcess) => ClientType::RustHttp,
+                (_, other) => other,
+            };
             let actions = client_type.apply(&actions);
             drop(testo::action::execute(State::default(), &actions));
         }
+    }
+}
+
+/// Whether `action` starts a node in a process of its own, looking inside
+/// `Parallel` groups too.
+fn starts_process(action: &Actions) -> bool {
+    match action {
+        Actions::NewNode(node) => node.process.is_some(),
+        Actions::Parallel(group) => group.actions.iter().any(starts_process),
+        _ => false,
     }
 }
 

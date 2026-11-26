@@ -49,10 +49,6 @@ impl CollectionManagementOperations for Collections {
         Ok(Vec::new())
     }
 
-    async fn purge(&self) -> Result<(), String> {
-        Ok(())
-    }
-
     async fn get_collection_by_name(
         &self,
         name: &str,

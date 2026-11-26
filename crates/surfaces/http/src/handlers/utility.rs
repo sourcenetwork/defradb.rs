@@ -15,8 +15,7 @@ use serde_json::{Map, Value};
 use crate::error::{http_error_from_backend_message, HttpError};
 use crate::identity_extractor::ExtractIdentity;
 use crate::nac_guard::require_permission;
-use crate::request_scope::bound;
-use crate::router::{AppState, NodePermission};
+use crate::router::{AppState, NodePermission, PurgeRefusal};
 
 /// Response for node identity endpoint (Go-compatible).
 #[derive(Debug, Clone, Serialize)]
@@ -92,29 +91,44 @@ pub async fn dump(
 
 /// POST /api/v0/purge
 ///
-/// Purges all data from the database.
+/// Asks the embedding application to wipe the store and restart the node, as
+/// Go's `PurgeAndRestart` does. Answered at once: the wipe runs once the node
+/// has stopped serving, outside this request.
 ///
 /// WARNING: This is a destructive operation that cannot be undone.
 ///
-/// Requires `DocumentUpdate` permission when NAC is enabled.
+/// Requires `DocumentUpdate` permission when NAC is enabled, then development
+/// mode (403), then collection management (503), then a purge handler (501).
 pub async fn purge(
     State(state): State<AppState>,
     identity: ExtractIdentity,
 ) -> Result<StatusCode, HttpError> {
     require_permission(&state, &identity, NodePermission::DocumentUpdate).await?;
 
-    if !state.dev_mode {
-        return Err(HttpError::Forbidden(
-            "cannot purge database when development mode is disabled".into(),
-        ));
+    let development = state
+        .purge
+        .as_ref()
+        .map_or(state.dev_mode, |purge| purge.development());
+    if !development {
+        return Err(refused(PurgeRefusal::DevelopmentMode));
     }
+    state.require_collection_mgmt()?;
 
-    bound(state.require_collection_mgmt()?, &identity.context())
-        .purge()
-        .await
-        .map_err(http_error_from_backend_message)?;
+    state
+        .purge
+        .as_ref()
+        .ok_or(PurgeRefusal::NoHandler)
+        .and_then(|purge| purge.request_purge())
+        .map_err(refused)?;
 
     Ok(StatusCode::OK)
+}
+
+fn refused(refusal: PurgeRefusal) -> HttpError {
+    match refusal {
+        PurgeRefusal::DevelopmentMode => HttpError::Forbidden(refusal.to_string()),
+        PurgeRefusal::NoHandler => HttpError::NotImplemented(refusal.to_string()),
+    }
 }
 
 #[cfg(test)]
@@ -123,6 +137,7 @@ mod tests {
     use axum::body::{to_bytes, Body};
     use axum::http::Request;
     use serde_json::json;
+    use std::sync::Arc;
     use tower::ServiceExt;
 
     use crate::mock::MockQueryExecutor;
@@ -202,5 +217,110 @@ mod tests {
             serde_json::from_slice(&to_bytes(response.into_body(), usize::MAX).await.unwrap())
                 .unwrap();
         assert_eq!(body["error"], "node options not available");
+    }
+
+    /// What `POST /purge` answers on a server built by `server`.
+    async fn purge_answer(server: Server) -> (StatusCode, Value) {
+        let response = server
+            .router()
+            .unwrap()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v0/purge")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let status = response.status();
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        (status, serde_json::from_slice(&body).unwrap_or(Value::Null))
+    }
+
+    fn server(dev_mode: bool, collection_mgmt: bool) -> Server {
+        let server =
+            Server::new(MockQueryExecutor::new(), edge::testing::edge()).with_dev_mode(dev_mode);
+        match collection_mgmt {
+            true => server.with_collection_mgmt_arc(Arc::new(
+                crate::mock::MockCollectionManagementOperations::new(),
+            )),
+            false => server,
+        }
+    }
+
+    struct Refusing(PurgeRefusal);
+
+    impl crate::PurgeOperations for Refusing {
+        fn request_purge(&self) -> Result<(), PurgeRefusal> {
+            Err(self.0)
+        }
+
+        fn development(&self) -> bool {
+            true
+        }
+    }
+
+    /// A node that accepts the purge, in development mode or not.
+    struct Accepting {
+        development: bool,
+    }
+
+    impl crate::PurgeOperations for Accepting {
+        fn request_purge(&self) -> Result<(), PurgeRefusal> {
+            Ok(())
+        }
+
+        fn development(&self) -> bool {
+            self.development
+        }
+    }
+
+    #[nuclei::test]
+    async fn the_route_checks_the_nodes_development_mode_not_its_own() {
+        for (route_dev_mode, node_development, expected) in [
+            (false, true, StatusCode::OK),
+            (true, false, StatusCode::FORBIDDEN),
+        ] {
+            let node = Arc::new(Accepting {
+                development: node_development,
+            });
+            let (status, _) = purge_answer(server(route_dev_mode, true).with_purge_arc(node)).await;
+            assert_eq!(status, expected, "route dev_mode {route_dev_mode}");
+        }
+    }
+
+    #[nuclei::test]
+    async fn purge_checks_development_mode_then_collection_management_then_a_handler() {
+        let (status, body) = purge_answer(server(false, false)).await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+        assert_eq!(
+            body["error"],
+            "operation not permitted whilst development mode is disabled. Operation: Purge"
+        );
+
+        let (status, body) = purge_answer(server(true, false)).await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(
+            body["error"],
+            "Collection management operations are not enabled."
+        );
+
+        let (status, body) = purge_answer(server(true, true)).await;
+        assert_eq!(status, StatusCode::NOT_IMPLEMENTED);
+        assert_eq!(body["error"], PurgeRefusal::NoHandler.to_string());
+    }
+
+    #[nuclei::test]
+    async fn a_node_refusing_the_purge_answers_with_its_refusal() {
+        for (refusal, expected) in [
+            (PurgeRefusal::DevelopmentMode, StatusCode::FORBIDDEN),
+            (PurgeRefusal::NoHandler, StatusCode::NOT_IMPLEMENTED),
+        ] {
+            let (status, body) =
+                purge_answer(server(true, true).with_purge_arc(Arc::new(Refusing(refusal)))).await;
+            assert_eq!(status, expected);
+            assert_eq!(body["error"], refusal.to_string());
+        }
     }
 }

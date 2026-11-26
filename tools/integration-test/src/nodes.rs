@@ -81,6 +81,35 @@ pub struct NodeSpec {
     /// An in-process iroh node serving these stream protocols, in place of
     /// the libp2p one `network` starts.
     pub iroh: Option<crate::actions::stream::IrohSpec>,
+    /// The node is `defradb start` in a process of its own, of this binary,
+    /// whatever the client.
+    pub process: Option<ProcessBinary>,
+    /// A Rust node built without a purge handler.
+    pub no_purge_handler: bool,
+    /// Development mode; unset, an in-process Rust node has it and a
+    /// process node does not.
+    pub development: Option<bool>,
+    /// A process node keeps its keyring on, so its peer key lives there.
+    pub keyring: bool,
+    /// More `start` flags for a process node.
+    pub start_args: Vec<String>,
+}
+
+/// Which `defradb` a process node runs.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum ProcessBinary {
+    /// This workspace's `defradb` (`crate::rust_binary`).
+    Rust,
+    /// Go's (`DEFRA_GO_BINARY`).
+    Go,
+}
+
+/// The Rust nodes' purge handler: the test drives the wipe and the restart
+/// itself once a purge is accepted ([`crate::actions::Purge`]).
+struct TestPurgeHandler;
+
+impl defra_node::PurgeHandler for TestPurgeHandler {
+    fn purge_requested(&self) {}
 }
 
 /// A running node: the node itself for the in-process client, or the URL the
@@ -91,6 +120,8 @@ pub struct TestNode {
     pub spec: NodeSpec,
     /// The Rust node behind any client, for its events and its shutdown.
     embedded: Option<Arc<Node>>,
+    /// The `defradb start` process serving the node, when it runs in one.
+    process: Option<Arc<GoNode>>,
     _held: Vec<Arc<dyn Any + Send + Sync>>,
     events: Atom<Option<Arc<Events>>>,
     /// The node's collection action events, once a `ListActions { listen }`
@@ -120,6 +151,9 @@ impl TestNode {
     pub fn try_start(client_type: ClientType, spec: NodeSpec) -> Result<Self, String> {
         if spec.iroh.is_some() {
             return Self::start_iroh(spec);
+        }
+        if let Some(binary) = spec.process {
+            return Self::start_process(binary, spec);
         }
         let listen = match spec.listen.first() {
             Some(address) => address.clone(),
@@ -165,7 +199,7 @@ impl TestNode {
                 let url = format!("http://{}", listener.local_addr().expect("local address"));
                 let mut config = HttpConfig::with_listener(listener)
                     .expect("http config")
-                    .with_dev_mode(true)
+                    .with_dev_mode(spec.development.unwrap_or(true))
                     .with_collection_management(true);
                 if let Some((ttl, tick)) = spec.txn_ttl {
                     config = config
@@ -178,24 +212,52 @@ impl TestNode {
                 let node = Arc::new(build(&spec, &listen, Some(config))?);
                 Ok(Self::new(None, Some(url), spec, Some(node), Vec::new()))
             }
-            ClientType::GoHttp => {
-                let binary = go_binary().unwrap_or_else(|error| panic!("{error}"));
-                let options = GoOptions {
-                    p2p: spec.network.then_some(listen),
-                    dir: spec.dir.as_ref().map(|dir| dir.path().to_owned()),
-                    nac: spec.enable_nac,
-                    identity: spec
-                        .nac_owner
-                        .map(crate::scenario::identity::private_key_hex),
-                    node_key: go_node_key(&spec),
-                    signing: spec.signing.is_some(),
-                    se_key: spec.se_key,
-                };
-                let node = GoNode::start(&binary, &options).map_err(|error| error.to_string())?;
-                let url = node.api_url().to_owned();
-                Ok(Self::new(None, Some(url), spec, None, vec![Arc::new(node)]))
-            }
+            ClientType::GoHttp => Self::start_process(ProcessBinary::Go, spec),
         }
+    }
+
+    /// Start `defradb start` of `binary` in a process of its own.
+    fn start_process(binary: ProcessBinary, spec: NodeSpec) -> Result<Self, String> {
+        let listen = match spec.listen.first() {
+            Some(address) => address.clone(),
+            None => "/ip4/127.0.0.1/tcp/0".to_owned(),
+        };
+        let path = match binary {
+            ProcessBinary::Go => go_binary().unwrap_or_else(|error| panic!("{error}")),
+            ProcessBinary::Rust => crate::rust_binary(),
+        };
+        let options = GoOptions {
+            p2p: spec.network.then_some(listen),
+            dir: spec.dir.as_ref().map(|dir| dir.path().to_owned()),
+            nac: spec.enable_nac,
+            identity: spec
+                .nac_owner
+                .map(crate::scenario::identity::private_key_hex),
+            // The Rust binary makes its own identity in its keyring.
+            node_key: go_node_key(&spec).filter(|_| binary == ProcessBinary::Go),
+            signing: spec.signing.is_some(),
+            se_key: spec.se_key,
+            development: spec.development.unwrap_or(false),
+            keyring: spec.keyring,
+            extra_args: spec.start_args.clone(),
+        };
+        let node = Arc::new(GoNode::start(&path, &options).map_err(|error| error.to_string())?);
+        let url = node.api_url().to_owned();
+        let mut started = Self::new(None, Some(url), spec, None, vec![node.clone()]);
+        started.process = Some(node);
+        Ok(started)
+    }
+
+    /// The node in its own process, when it is one.
+    pub fn process(&self) -> Option<&Arc<GoNode>> {
+        self.process.as_ref()
+    }
+
+    /// This process node, now serving at `url`.
+    pub fn served_at(&self, url: String) -> Self {
+        let mut node = Self::new(None, Some(url), self.spec.clone(), None, self._held.clone());
+        node.process = self.process.clone();
+        node
     }
 
     fn new(
@@ -210,6 +272,7 @@ impl TestNode {
             url,
             spec,
             embedded,
+            process: None,
             _held: held,
             events: Atom::new(None),
             actions: Atom::new(None),
@@ -422,6 +485,10 @@ fn build(spec: &NodeSpec, listen: &str, http: Option<HttpConfig>) -> Result<Node
             None => builder.with_node_acp_enabled(),
         };
     }
+    if !spec.no_purge_handler {
+        builder = builder.with_purge_handler(Arc::new(TestPurgeHandler));
+    }
+    builder = builder.with_development(spec.development.unwrap_or(true));
     let node = workers::block_on(builder.build())
         .expect("run builder")
         .map_err(|error| error.to_string())?;
