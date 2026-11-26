@@ -43,6 +43,10 @@ impl Planner {
         collection: &CollectionVersion,
     ) -> Vec<IndexDescription> {
         let mut indexes = collection.indexes.clone();
+        // A docID query reads a few parents, and a routed search would widen to its budget.
+        if select.doc_ids.is_some() {
+            return indexes;
+        }
         let candidates = self.chunk_collections(collection);
         for field in &select.fields {
             let Requestable::Similarity(similarity) = field else {
