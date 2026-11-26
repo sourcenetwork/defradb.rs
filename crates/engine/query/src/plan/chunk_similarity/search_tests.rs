@@ -580,6 +580,38 @@ fn rescoring_without_index_entries_reads_the_chunks_once_for_the_page() {
     assert_eq!(index.full_reads.load(Ordering::Relaxed), 1);
 }
 
+#[test]
+fn a_parent_below_the_top_k_is_not_read_again() {
+    let mut index = Index::new(vec![
+        chunk("A", 0.9),
+        chunk("A", 0.8),
+        chunk("B", 0.7),
+        chunk("C", 0.6),
+        missed("C", 0.65),
+    ]);
+    index.lookup = Lookup::Entries;
+    let (ranked, reads) = run(&index, 2, &AnyParent);
+    assert_eq!(ranked.unwrap(), vec![("A", 0.9), ("B", 0.7)]);
+    // Four chunks and three parents; A and B hold every copy of their hashes.
+    assert_eq!((reads.docs, reads.index_lookups), (7, 1));
+}
+
+#[test]
+fn a_parent_tied_with_the_kth_is_read_again() {
+    let mut index = Index::new(vec![
+        chunk("A", 0.9),
+        chunk("A", 0.8),
+        chunk("B", 0.7),
+        chunk("C", 0.7),
+        missed("C", 0.95),
+    ]);
+    index.lookup = Lookup::Entries;
+    assert_eq!(
+        search(&index, 2, &AnyParent).unwrap(),
+        vec![("A", 0.9), ("B", 0.7), ("C", 0.95)]
+    );
+}
+
 const LOOKUPS: [Lookup; 3] = [Lookup::FieldValue, Lookup::Entries, Lookup::NoEntries];
 
 #[test]

@@ -118,9 +118,9 @@ pub(super) const PROPERTIES: &[Property] = &[
     },
     Property {
         family: "Text chunking",
-        name: "prefix_best_exact / unread_ranks_no_higher / prefix_top_is_top",
+        name: "prefix_best_exact / unread_ranks_no_higher / prefix_top_is_top / rescore_never_lowers / cut_stays_below / top_of_kept_is_top",
         axis: Lean,
-        anchor: "crates/engine/query/src/plan/chunk_similarity/best.rs best_per_parent; crates/engine/query/src/plan/chunk_similarity/search.rs ChunkSearch::run",
+        anchor: "crates/engine/query/src/plan/chunk_similarity/best.rs best_per_parent, top_with_ties; crates/engine/query/src/plan/chunk_similarity/search.rs ChunkSearch::run, ChunkSearch::rescore",
         model_ref: "ChunkSimilarity (lake build)",
         tiers: &[Boundary],
         bound_by: "",

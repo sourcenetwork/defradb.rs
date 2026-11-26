@@ -4,7 +4,7 @@ use document::Document;
 use rapidhash::{HashMapExt, HashSetExt, RapidHashMap, RapidHashSet};
 use tracing::debug;
 
-use super::best::best_per_parent;
+use super::best::{best_per_parent, top_with_ties};
 use super::listed::{best_scores, drain, Held, Wanted};
 use super::target::{ChunkTarget, Reads};
 use crate::error::Result;
@@ -147,8 +147,9 @@ impl ChunkSearch<'_> {
                 "chunk vector index candidates"
             );
             if best.len() >= self.k {
+                let top = top_with_ties(best, self.k);
                 let ranked = self
-                    .rescore(best, &decided, &mut parents, &held, &mut reads)
+                    .rescore(top, &decided, &mut parents, &held, &mut reads)
                     .await?;
                 return Ok(Search {
                     searched: Searched::Ranked(ranked),
@@ -177,19 +178,19 @@ impl ChunkSearch<'_> {
         })
     }
 
-    /// The exact scores of the found parents, read in one batch.
+    /// The exact scores of the parents that can make the page, read in one batch.
     async fn rescore(
         &self,
-        found: Vec<(String, f64)>,
+        top: Vec<(String, f64)>,
         decided: &RapidHashMap<String, Listed>,
         parents: &mut RapidHashMap<String, Document>,
         held: &RapidHashMap<String, RapidHashMap<String, Held>>,
         reads: &mut Reads,
     ) -> Result<Vec<(Document, f64)>> {
         let none = RapidHashMap::new();
-        let mut kept = Vec::with_capacity(found.len());
-        let mut wanted = Vec::with_capacity(found.len());
-        for (id, found) in &found {
+        let mut kept = Vec::with_capacity(top.len());
+        let mut wanted = Vec::with_capacity(top.len());
+        for (id, found) in &top {
             let Some(Some(listed)) = decided.get(id) else {
                 continue;
             };
