@@ -125,4 +125,13 @@ pub(super) const PROPERTIES: &[Property] = &[
         tiers: &[Boundary],
         bound_by: "",
     },
+    Property {
+        family: "Text chunking",
+        name: "INV_HiddenNeverScored / INV_AnswerIsExact",
+        axis: Tla,
+        anchor: "crates/engine/query/src/planner/builder/mod.rs Planner::plan_with_index_info; crates/engine/query/src/planner/joins/sub_joins.rs Planner::apply_relation_sub_joins; crates/engine/query/src/mapper/filter/split.rs Filter::split_for_scores",
+        model_ref: "MC_SimilarityOrder_Green.cfg / MC_SimilarityOrder_Red_ScoreBeforeAccess.cfg / MC_SimilarityOrder_Red_AliasBeforeScore.cfg",
+        tiers: &[Boundary],
+        bound_by: "tools/integration-test/tests/testo/chunk/rank_nested.rs a_nested_ranking_scores_only_the_articles_the_reader_may_read",
+    },
 ];
