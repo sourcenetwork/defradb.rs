@@ -455,7 +455,8 @@ where
 /// protocol's deadline passes, or the connection closes, whichever comes
 /// first. A handler dropped at its deadline drops the stream's halves, and
 /// their pumps reset the stream, so the opener never mistakes a cut short
-/// reply for a whole one.
+/// reply for a whole one. A handler that returns stops the receive half with
+/// `STOP_HANDLED`, the one stop an opener's finish reads as a success.
 async fn serve_protocol<H>(
     registered: &Registered,
     connection: &Connection<H>,
@@ -479,7 +480,9 @@ async fn serve_protocol<H>(
     let handler = Arc::clone(&registered.handler);
     let handled = async move {
         handler.handle(&mut stream).await;
-        drop(stream);
+        let InboundStream { send, recv, .. } = stream;
+        recv.handled();
+        drop(send);
     };
     let served = async {
         let _ = p2p::rt::time::timeout(deadline, handled).await;

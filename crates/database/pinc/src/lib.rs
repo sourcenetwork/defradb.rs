@@ -59,7 +59,7 @@ pub use config::{PincAllowlistConfig, PincEndpointConfig};
 pub use endpoint::spawn_endpoint;
 pub use hub::{spawn_hub, HubConfig};
 pub use inbound_budget::peer_share_bytes;
-pub use protocol_stream::{ProtocolRecvStream, ProtocolSendStream, RESET_CANCELLED};
+pub use protocol_stream::{ProtocolRecvStream, ProtocolSendStream, RESET_CANCELLED, STOP_HANDLED};
 pub use seed::{generate_seed, load_or_generate_seed};
 pub use serve::{RESET_BUSY, RESET_MESSAGE_TOO_LARGE, RESET_STALLED, RESET_UNKNOWN_SERVICE};
 pub use services::{Priority, ALPN_MUX, SERVICE_POINTER_LEN};

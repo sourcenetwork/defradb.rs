@@ -3568,10 +3568,10 @@ pub const PROPERTIES: &[Property] = &[
     },
     Property {
         family: "Inbound stream admission",
-        name: "INV_OnlyRegisteredServed / INV_ShareBound / INV_RoomIsTheRequest / INV_RevokedIsCut / INV_ShutdownLeavesNone / INV_DeadlineResets / LIVE_HandlerEnds",
+        name: "INV_OnlyRegisteredServed / INV_ShareBound / INV_RoomIsTheRequest / INV_RevokedIsCut / INV_ShutdownLeavesNone / INV_DeadlineResets / INV_CancelFailsFinish / LIVE_HandlerEnds",
         axis: Tla,
-        anchor: "crates/database/pinc/src/serve.rs Node::serve_stream, Node::admit, serve_protocol; crates/database/pinc/src/stream_protocols.rs StreamProtocols::get, ProtocolRequest::release, StreamHandler::handle; crates/database/pinc/src/protocol_stream.rs pump_send; crates/database/pinc/src/endpoint.rs Node::deny; crates/database/pinc/src/command.rs Command::Shutdown",
-        model_ref: "MC_EmbedderStream_{Green,Red_AnyTag,Red_UntilReturn,Red_NoDeadline,Red_BarOnly,Red_NoAbort,Red_NoDropSignal}.cfg",
+        anchor: "crates/database/pinc/src/serve.rs Node::serve_stream, Node::admit, serve_protocol; crates/database/pinc/src/stream_protocols.rs StreamProtocols::get, ProtocolRequest::release, StreamHandler::handle; crates/database/pinc/src/protocol_stream.rs pump_send, finish_outcome, ProtocolRecvStream::handled; crates/database/pinc/src/endpoint.rs Node::deny; crates/database/pinc/src/command.rs Command::Shutdown",
+        model_ref: "MC_EmbedderStream_{Green,Red_AnyTag,Red_UntilReturn,Red_NoDeadline,Red_BarOnly,Red_NoAbort,Red_NoDropSignal,Red_AnyCancel}.cfg",
         tiers: &[Boundary],
         bound_by: "",
     },

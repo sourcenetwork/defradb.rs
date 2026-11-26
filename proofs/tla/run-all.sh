@@ -1346,6 +1346,7 @@ RUNS=(
   "MC_EmbedderStream_Red_BarOnly.cfg MC_EmbedderStream_Common.tla RED" # revocation only bars new connections: the revoked peer stays connected (INV_RevokedIsCut)
   "MC_EmbedderStream_Red_NoAbort.cfg MC_EmbedderStream_Common.tla RED" # shutdown leaves tasks running (INV_ShutdownLeavesNone)
   "MC_EmbedderStream_Red_NoDropSignal.cfg MC_EmbedderStream_Common.tla RED" # no drop signal on the send half: a write blocked on an opener that does not read outlives the deadline (INV_DeadlineResets)
+  "MC_EmbedderStream_Red_AnyCancel.cfg MC_EmbedderStream_Common.tla RED" # a returned handler and a cancel share code 7, so a finish after the deadline cancel reads as delivered (INV_CancelFailsFinish)
   "MC_EmbedderStreamOpen_Green.cfg EmbedderStreamOpen.tla GREEN" # pumps placed before the request is written: an open refused busy delivers nothing
   "MC_EmbedderStreamOpen_Red_WriteFirst.cfg EmbedderStreamOpen.tla RED" # the old write-before-spawn order: a busy open delivered its request and the retry runs it again (INV_BusyDeliversNothing)
   # ---- GovernanceContract.tla: what a merge validator may assume; GovernanceMerge.tla: the merge path checked to refine it ----

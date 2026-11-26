@@ -41,13 +41,17 @@ pub const MAX_STREAM_DEADLINE: Duration = Duration::from_secs(24 * 60 * 60);
 /// with [`RESET_MESSAGE_TOO_LARGE`], a request whose body stops arriving with
 /// [`RESET_STALLED`], and a stream cut short is reset with
 /// [`RESET_CANCELLED`]. An opener sees each as [`Error::StreamReset`] with
-/// that code.
+/// that code. A handler that returns before reading to the end stops the
+/// stream with [`STOP_HANDLED`]: an opener's finish that meets it holds,
+/// while one that meets [`RESET_CANCELLED`] fails, so data a handler cut at
+/// its deadline never took does not read as delivered.
 ///
 /// [`RESET_UNKNOWN_SERVICE`]: crate::RESET_UNKNOWN_SERVICE
 /// [`RESET_BUSY`]: crate::RESET_BUSY
 /// [`RESET_MESSAGE_TOO_LARGE`]: crate::RESET_MESSAGE_TOO_LARGE
 /// [`RESET_STALLED`]: crate::RESET_STALLED
 /// [`RESET_CANCELLED`]: crate::RESET_CANCELLED
+/// [`STOP_HANDLED`]: crate::STOP_HANDLED
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct StreamProtocol {
     /// Names the protocol in a stream's first frame: 1 to 64 bytes, not
@@ -176,14 +180,22 @@ pub struct InboundStream {
 /// revocation with `deny_peer` closes it), or when the endpoint shuts down. A
 /// peer has at most 64 streams open per connection, Defra's own included.
 ///
-/// The handler runs on the network runtime: database work goes through the
-/// node's request path (`defra_node::Node::execute_request`, which runs it on a
-/// database worker), never inline on this task. Anything that blocks here
-/// blocks the network.
+/// # Handlers must yield
+///
+/// The handler runs on the endpoint's own thread, the one thread that
+/// carries every connection, topic, CAR serve and keepalive of the node.
+/// Each `.await` hands that thread back; code between two awaits holds it.
+/// Database work goes through the node's request path
+/// (`defra_node::Node::execute_request`, which runs it on a database
+/// worker), and CPU-heavy or blocking work (hashing a large body, a
+/// synchronous file or lock wait) goes to a worker pool and is awaited,
+/// never run inline. A handler that blocks stalls the whole node's network
+/// until it yields.
 #[async_trait]
 pub trait StreamHandler: Send + Sync {
     /// Serves one stream. A send half left unfinished when this returns is
-    /// reset.
+    /// reset; a receive half not read to its end is stopped with
+    /// [`STOP_HANDLED`](crate::STOP_HANDLED).
     async fn handle(&self, stream: &mut InboundStream);
 }
 

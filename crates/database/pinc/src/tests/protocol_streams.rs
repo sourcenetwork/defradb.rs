@@ -187,3 +187,123 @@ fn a_handler_blocked_writing_to_an_opener_that_does_not_read_is_reset_at_its_dea
         server.shutdown().await;
     });
 }
+
+/// Takes its request and hangs without reading the rest of the stream, until
+/// the node drops it at its deadline.
+struct Stall {
+    cut: mpsc::Sender<()>,
+}
+
+#[async_trait]
+impl StreamHandler for Stall {
+    async fn handle(&self, stream: &mut InboundStream) {
+        let _guard = CutGuard(self.cut.clone());
+        stream.request.release();
+        std::future::pending::<()>().await;
+    }
+}
+
+/// Writes `took`, finishes and returns without reading past its request. Its
+/// guard tells `returned` once it has.
+struct Take {
+    returned: mpsc::Sender<()>,
+}
+
+#[async_trait]
+impl StreamHandler for Take {
+    async fn handle(&self, stream: &mut InboundStream) {
+        let _guard = CutGuard(self.returned.clone());
+        if stream.send.write_all(b"took").await.is_ok() {
+            let _ = stream.send.finish().await;
+        }
+    }
+}
+
+/// Reads `recv` until it ends or fails.
+async fn drain(recv: &mut crate::ProtocolRecvStream) -> Option<p2p::Error> {
+    p2p::rt::time::timeout(IO_TIMEOUT, async {
+        loop {
+            match recv.read_chunk().await {
+                Ok(Some(_)) => {}
+                Ok(None) => return None,
+                Err(error) => return Some(error),
+            }
+        }
+    })
+    .await
+    .expect("the stream stayed open")
+}
+
+/// An upload-only opener finishes after the serving node cancelled the
+/// stream at the handler's deadline: what it wrote was never taken, so its
+/// finish fails rather than reading as delivered.
+#[test]
+fn a_finish_after_the_handler_was_cut_at_its_deadline_fails() {
+    run(async {
+        let (cut, mut was_cut) = mpsc::channel(4);
+        let tag: &'static [u8] = b"/test/stall/1";
+        let deadline = Duration::from_millis(200);
+        let server = serving(protocol(tag, deadline), Arc::new(Stall { cut })).await;
+        let opener = TestNode::spawn().await;
+        let addrs = server.transport.listen_addresses().await.unwrap();
+        let (mut send, mut recv) = opener
+            .transport
+            .open_stream(
+                &server.id,
+                addrs,
+                &protocol(tag, deadline),
+                b"upload".to_vec(),
+            )
+            .await
+            .unwrap();
+        p2p::rt::time::timeout(IO_TIMEOUT, was_cut.recv())
+            .await
+            .expect("the handler outlived its deadline");
+        // The cut resets the reply half and stops the upload half together.
+        let ended = drain(&mut recv).await;
+        assert!(
+            matches!(ended, Some(p2p::Error::StreamReset(RESET_CANCELLED))),
+            "{ended:?}"
+        );
+        let finished = send.finish().await;
+        assert!(
+            matches!(finished, Err(p2p::Error::StreamReset(RESET_CANCELLED))),
+            "a finish after the cancel read as {finished:?}"
+        );
+        opener.shutdown().await;
+        server.shutdown().await;
+    });
+}
+
+/// A handler that returns stops the stream with `STOP_HANDLED`, and the
+/// opener's finish after that holds.
+#[test]
+fn a_finish_after_the_handler_returned_holds() {
+    run(async {
+        let (returned, mut has_returned) = mpsc::channel(4);
+        let tag: &'static [u8] = b"/test/take/1";
+        let deadline = Duration::from_secs(5);
+        let server = serving(protocol(tag, deadline), Arc::new(Take { returned })).await;
+        let opener = TestNode::spawn().await;
+        let addrs = server.transport.listen_addresses().await.unwrap();
+        let (mut send, mut recv) = opener
+            .transport
+            .open_stream(
+                &server.id,
+                addrs,
+                &protocol(tag, deadline),
+                b"upload".to_vec(),
+            )
+            .await
+            .unwrap();
+        p2p::rt::time::timeout(IO_TIMEOUT, has_returned.recv())
+            .await
+            .expect("the handler never returned");
+        assert_eq!(recv.read_to_end(64).await.unwrap(), b"took");
+        send.finish()
+            .await
+            .expect("a finish after the handler returned holds");
+        opener.shutdown().await;
+        server.shutdown().await;
+    });
+}

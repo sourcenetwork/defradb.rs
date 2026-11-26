@@ -467,3 +467,51 @@ fn closing_the_serving_node_cuts_its_open_streams() {
     ])
     .execute();
 }
+
+/// An upload-only opener that finishes after the serving node cancelled its
+/// stream at the handler's deadline is told the finish failed: the handler
+/// never took what it sent.
+#[test]
+#[mantra_macros::req_test("defra.stream_protocols.deadline.finish")]
+fn a_finish_after_the_handler_was_cut_at_its_deadline_fails() {
+    let short = ProtocolSpec {
+        deadline_millis: Some(300),
+        ..protocol("/test/short/1", Handler::Stuck)
+    };
+    TestCase::from_actions(vec![
+        serving("db0", vec![short.clone()]),
+        serving("db1", Vec::new()),
+        kept("db1", "db0", short, "s"),
+        ReadKeptStream {
+            stream: "s".into(),
+            finish: true,
+            expected_error: Some("finish failed: stream reset by the peer with code 7".into()),
+            common: on("db1"),
+            ..Default::default()
+        }
+        .into(),
+    ])
+    .execute();
+}
+
+/// A handler that returns before reading its opener's stream to the end
+/// took what it needed: the opener's finish after that holds.
+#[test]
+#[mantra_macros::req_test("defra.stream_protocols.deadline.finish")]
+fn a_finish_after_the_handler_returned_holds() {
+    let returns = protocol("/test/returns/1", Handler::Returns);
+    TestCase::from_actions(vec![
+        serving("db0", vec![returns.clone()]),
+        serving("db1", Vec::new()),
+        kept("db1", "db0", returns, "s"),
+        ReadKeptStream {
+            stream: "s".into(),
+            finish: true,
+            expected_data: json!({ "finished": true }),
+            common: on("db1"),
+            ..Default::default()
+        }
+        .into(),
+    ])
+    .execute();
+}

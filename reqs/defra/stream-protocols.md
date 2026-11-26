@@ -53,6 +53,13 @@ A handler still running at its protocol's deadline is dropped, and the opener's 
 
 A handler whose write is blocked because the opener stopped reading is dropped at its deadline like any other, and the write in flight is abandoned with it: the stream is reset with code 7 at once, not after the write completes. When the opener reads again it gets only what was in flight at the deadline (the stream's window and its receive queue), then `stream reset by the peer with code 7`.
 
+# `defra.stream_protocols.deadline.finish`: An opener's finish after a deadline cancel fails
+
+- **Parents:** ["defra.stream_protocols.deadline"]
+- **Scenarios:** ["net::stream_protocols::a_finish_after_the_handler_was_cut_at_its_deadline_fails", "net::stream_protocols::a_finish_after_the_handler_returned_holds", "tests::protocol_streams::a_finish_after_the_handler_was_cut_at_its_deadline_fails", "tests::protocol_streams::a_finish_after_the_handler_returned_holds"]
+
+A handler that returns before reading the opener's stream to its end stops it with code 8 (`STOP_HANDLED`), and an opener's finish that meets that stop succeeds: the handler took what it needed. A stream the node cancels at the handler's deadline is stopped with code 7, and an opener that finishes after that cancel fails with `stream reset by the peer with code 7`, so data the handler never took does not read as delivered. A write after a handler returned fails with `stream reset by the peer with code 8`.
+
 # `defra.stream_protocols.open_busy`: An open refused as busy sends no request
 
 - **Parents:** ["defra.stream_protocols"]

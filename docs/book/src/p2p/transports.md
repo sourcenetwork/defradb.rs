@@ -46,7 +46,14 @@ A block sync (a CAR fetch) waits `block_sync_timeout` (30 s by default; the FFI'
 
 An embedder stream protocol's handler is dropped at its deadline and its stream reset
 with code 7, even when its last write is blocked on an opener that stopped reading.
+A handler that returns stops the stream with code 8 instead: an opener's finish holds
+on code 8 and fails on code 7, so an upload the deadline cut does not read as delivered.
 An open refused as busy writes nothing, so a retried open runs its handler once.
+
+A handler runs on the endpoint's thread, the one thread that carries every connection
+of the node. It must yield: database work goes through the node's request path
+(`Node::execute_request`), and CPU-heavy or blocking work goes to a worker, never
+inline, or every connection and keepalive of the node waits on it.
 
 ## Peer identity
 
