@@ -22,11 +22,11 @@
 \* article has no read rules, the route reads the nearest chunks first, a few
 \* at a time, and widens until one is honest, of a live article, and used by
 \* its current text. That picks the article; its score is then its best
-\* current chunk's, read again. The route checks no grant, so an article with
-\* read rules, or a chunk collection with an app check of its own, is never
-\* routed: like an index that runs out, it is scored from its current chunks,
-\* after its access check. A chunk its own app check refuses never adds to a
-\* score.
+\* current chunk's, read again, every copy of each hash counted. The route
+\* checks no grant, so an article with read rules, or a chunk collection with
+\* an app check of its own, is never routed: like an index that runs out, it
+\* is scored from its current chunks, after its access check. A chunk its own
+\* app check refuses never adds to a score.
 \*
 \* A peer may also ask this node for a chunk's block. A chunk can arrive before
 \* its article, and an article this node has never seen counts as public under
@@ -82,6 +82,7 @@
 \*   crates/engine/query/src/planner/builder/mod.rs Planner::plan_with_index_info (rows_rejected_above_the_scan: no route under read rules)
 \*   crates/engine/query/src/plan/chunk_similarity/search.rs ChunkSearch::run (nearest first, widening, the checks per chunk)
 \*   crates/engine/query/src/plan/chunk_similarity/listed.rs best_listed_score (the exhaustive fallback)
+\*   crates/engine/query/src/plan/chunk_similarity/listed.rs best_score_of, Held (every copy of a hash counts)
 \*   crates/engine/query/src/plan/chunk_similarity/target.rs ChunkTarget::readable (the chunk's own app check in a ranking)
 \*   crates/engine/query/src/planner/chunk_similarity.rs Planner::chunks_gate_reads (no route under the chunks' own app check)
 \* Merging the text across peers is ChunkMerge.tla's job, not this one's.
@@ -99,7 +100,8 @@ CONSTANTS
   CheckOwnApp,   \* TRUE: the chunk collection's own app check runs too (the guard)
   CheckDelegationScope, \* TRUE: a delegation is checked against the collection of the block (the guard)
   RouteChecksList, \* TRUE: the similarity route ranks only by chunks the current text uses (the guard)
-  RouteOnlyUnruled \* TRUE: an article with read rules is never routed (the guard)
+  RouteOnlyUnruled, \* TRUE: an article with read rules is never routed (the guard)
+  HeldKeepsBest  \* TRUE: a rescore keeps every copy of a hash, not the last one the route read (the guard)
 
 \* Writers edit at least once.
 ASSUME MaxEdits \in Nat \ {0}
@@ -116,6 +118,8 @@ ASSUME CheckOwnApp \in BOOLEAN
 ASSUME CheckDelegationScope \in BOOLEAN
 \* And the similarity route's two switches.
 ASSUME RouteChecksList \in BOOLEAN /\ RouteOnlyUnruled \in BOOLEAN
+\* And the rescore's switch.
+ASSUME HeldKeepsBest \in BOOLEAN
 
 \* The collections a block can be in, and a delegation bound to: the article's or its chunk collection.
 Collections == {"parent", "chunk"}
@@ -133,21 +137,24 @@ ChunksOf(t) == CASE t = "t1" -> {"a", "b"} [] t = "t2" -> {"c"} [] t = "t3" -> {
 \* Every chunk hash there is.
 Hashes == UNION {ChunksOf(t) : t \in Texts}
 
-\* A stored chunk: the hash it claims, and whether its text really has that hash.
-Stored == [hash : Hashes, honest : BOOLEAN]
+\* A stored chunk: the hash it claims, whether its text really has that hash,
+\* and which copy it is. Peers that sign or encrypt keep a chunk each, so one
+\* hash can have two honest copies, each with its writer's vector.
+Stored == [hash : Hashes, honest : BOOLEAN, copy : {1, 2}]
 
-\* How near each honest chunk is to the query vector: larger is nearer. The
-\* chunks of t1, which an edit to t2 leaves behind, rank above t2's chunk.
-ScoreOf(h) == CASE h = "a" -> 3 [] h = "b" -> 2 [] h = "c" -> 1
+\* How near each hash's first honest copy is to the query vector: larger is
+\* nearer. The chunks of t1, which an edit to t2 leaves behind, rank above t2's.
+ScoreOf(h) == CASE h = "a" -> 6 [] h = "b" -> 4 [] h = "c" -> 2
 
+\* A second copy's vector came from another embedding, a little farther away.
 \* A forged chunk's vector is whatever its writer chose, so it ranks first.
-Score(c) == IF c.honest THEN ScoreOf(c.hash) ELSE 4
+Score(c) == IF c.honest THEN ScoreOf(c.hash) - (c.copy - 1) ELSE 7
 
 \* The largest score in a set of numbers, 0 for none.
 Max(S) == IF S = {} THEN 0 ELSE CHOOSE m \in S : \A n \in S : n <= m
 
-\* The best score among the chunks with hashes H.
-Best(H) == Max({ScoreOf(h) : h \in H})
+\* The best score among view v's honest chunks that its text uses, every copy counted.
+BestStored(v) == Max({Score(c) : c \in {e \in v.stored : e.honest /\ e.hash \in ChunksOf(v.text)}})
 
 \* What a query sees: the article and the chunks, frozen at one moment.
 Views == [text : Texts, merged : BOOLEAN, deleted : BOOLEAN, granted : BOOLEAN,
@@ -185,7 +192,7 @@ rankVars == <<text, merged, deleted, granted, stored, edits, snap, memo, result,
               kind, ruled>>
 
 \* The chunks an honest write of text t stores.
-HonestChunks(t) == {[hash |-> h, honest |-> TRUE] : h \in ChunksOf(t)}
+HonestChunks(t) == {[hash |-> h, honest |-> TRUE, copy |-> 1] : h \in ChunksOf(t)}
 
 \* The store's state right now, as a query would see it.
 Now == [text |-> text, merged |-> merged, deleted |-> deleted, granted |-> granted,
@@ -258,7 +265,7 @@ TypeOK ==
   /\ scopeLeaked \in BOOLEAN                          \* an out of scope key went out
   /\ kind \in {"chunks", "similar"}                   \* a query kind
   /\ width \in Nat                                    \* chunks read so far
-  /\ ranked \in 0..4                                  \* a score, or 0
+  /\ ranked \in 0..7                                  \* a score, or 0
   /\ ruled \in BOOLEAN                                \* read rules or none
 
 \* At the start the chunks of t1 are here but the article hasn't arrived yet,
@@ -306,7 +313,17 @@ Revoke ==
 \* A chunk that claims hash h but holds other text reaches the store by some
 \* route that skipped the write guard.
 Plant(h) ==
-  /\ stored' = stored \cup {[hash |-> h, honest |-> FALSE]}  \* the forged chunk
+  /\ \A c \in stored : c.honest                     \* one forged chunk is enough to show the check
+  /\ stored' = stored \cup {[hash |-> h, honest |-> FALSE, copy |-> 1]}  \* the forged chunk
+  /\ UNCHANGED <<scopeLeaked, merged, text, deleted, granted, edits, phase, snap, memo, result, leaked, resolved, ownApp, kind, width, ranked, ruled>>
+
+\* A peer that embeds differently writes the same text, so hash h of the
+\* current text gets a second honest copy with its own vector.
+Reembed(h) ==
+  /\ h \in ChunksOf(text)                                         \* a chunk the text uses
+  /\ [hash |-> h, honest |-> TRUE, copy |-> 1] \in stored          \* whose first copy is here
+  /\ \A c \in stored : c.copy = 1                                  \* one second copy is enough
+  /\ stored' = stored \cup {[hash |-> h, honest |-> TRUE, copy |-> 2]}  \* and now a second one
   /\ UNCHANGED <<scopeLeaked, merged, text, deleted, granted, edits, phase, snap, memo, result, leaked, resolved, ownApp, kind, width, ranked, ruled>>
 
 \* The chunk collection's own app check starts refusing the reader. Such a
@@ -350,15 +367,26 @@ Widen ==
   /\ width' = width * 2                              \* read twice as many
   /\ UNCHANGED <<rankVars, phase, ranked>>
 
-\* The route found a chunk it may rank by: the best one read is the score.
+\* The route found a chunk it may rank by: the article is picked, and its
+\* score is its best current chunk's, read again. With the guard the rescore
+\* counts every copy of each hash. Without it, the route holds one score per
+\* hash, the last copy it read, and the rescore skips reading a held hash.
 RankRouted ==
   /\ phase = "reading" /\ kind = "similar"          \* a ranking is running
   /\ Routes                                         \* that may use the route
   /\ Accepted(Prefix(width)) # {}                   \* something to rank by
-  /\ LET found == Max({Score(c) : c \in Accepted(Prefix(width))})  \* the best chunk read
-         exact == Max({Score(c) : c \in {e \in snap.stored :           \* the best current chunk,
-                        HashOK(e) /\ OwnAppOK /\ e.hash \in ChunksOf(snap.text)}})  \* read again
-     IN ranked' = IF exact > 0 THEN exact ELSE found      \* the code keeps what it read if none
+  /\ LET read == Accepted(Prefix(width))                           \* the chunks it may rank by
+         found == Max({Score(c) : c \in read})                     \* the best chunk read
+         current == {e \in snap.stored :                           \* the article's current chunks
+                       HashOK(e) /\ OwnAppOK /\ e.hash \in ChunksOf(snap.text)}
+         held == {c.hash : c \in read} \cap ChunksOf(snap.text)    \* the listed hashes it read
+     IN \E last \in [held -> read] :                               \* the copy read last, per hash
+          /\ \A h \in held : last[h].hash = h                       \* is a copy of that hash
+          /\ LET exact == IF HeldKeepsBest
+                          THEN Max({Score(c) : c \in current})     \* every copy, read again
+                          ELSE Max({Score(last[h]) : h \in held}   \* the last held copy,
+                                   \cup {Score(e) : e \in {c \in current : c.hash \notin held}})  \* and the rest
+             IN ranked' = IF exact > 0 THEN exact ELSE found  \* the code keeps what it read if none
   /\ phase' = "done"                                \* the ranking has answered
   /\ UNCHANGED <<rankVars, width>>
 
@@ -409,6 +437,7 @@ Next ==
   \/ Delete                      \* a delete,
   \/ Revoke                      \* a revoke,
   \/ \E h \in Hashes : Plant(h)  \* a forged chunk,
+  \/ \E h \in Hashes : Reembed(h)  \* a second honest copy,
   \/ Arrive                      \* the article arrives,
   \/ Resolve                     \* the collections become known,
   \/ AppRefuse                   \* the own app check refuses,
@@ -446,5 +475,5 @@ INV_DelegatedKeyInScope == ~scopeLeaked
 INV_RankedIsBestListed ==
   (phase = "done" /\ kind = "similar") =>
     ranked = IF snap.merged /\ snap.granted /\ ~snap.deleted /\ snap.ownApp
-             THEN Best(ChunksOf(snap.text)) ELSE 0
+             THEN BestStored(snap) ELSE 0
 ====

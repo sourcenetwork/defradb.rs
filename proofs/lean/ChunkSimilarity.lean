@@ -26,6 +26,9 @@ The promises are `prefix_best_exact`, `unread_ranks_no_higher` and
 `prefix_top_is_top`.
 
 Scores are natural numbers here: only their order matters, and larger is nearer.
+Two chunks of one article may hold the same text, so the same hash, with
+different vectors: peers that sign or encrypt keep a chunk each. Each is its
+own entry in the list, so an article's best is the highest over every copy.
 
 Code it models:
   crates/engine/query/src/plan/chunk_similarity/best.rs   best_per_parent

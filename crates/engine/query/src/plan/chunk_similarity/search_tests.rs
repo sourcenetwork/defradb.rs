@@ -70,6 +70,14 @@ fn forged(parent: &'static str, nearness: f64) -> IndexedChunk {
     }
 }
 
+/// Another stored chunk with `of`'s text, so its hash, but a vector of its own.
+fn copy_of(of: &IndexedChunk, nearness: f64) -> IndexedChunk {
+    IndexedChunk {
+        nearness,
+        ..of.clone()
+    }
+}
+
 /// How the fake looks up one parent's chunks.
 #[derive(Clone, Copy, PartialEq)]
 enum Lookup {
@@ -509,18 +517,53 @@ fn index_missing_a_best(lookup: Lookup) -> Index {
 }
 
 #[test]
-fn rescoring_reads_one_prefix_scan_and_only_the_chunks_not_yet_seen() {
+fn rescoring_reads_one_prefix_scan_per_parent_and_only_the_chunks_not_yet_seen() {
     let (ranked, reads) = run(&index_missing_a_best(Lookup::Entries), 2, &AnyParent);
     assert_eq!(ranked.unwrap(), vec![("A", 0.95), ("B", 0.6)]);
     // Two found chunks and their two parents, then only A's missed chunk.
-    assert_eq!((reads.docs, reads.index_lookups), (5, 1));
+    assert_eq!((reads.docs, reads.index_lookups), (5, 2));
 }
 
 #[test]
-fn rescoring_without_index_entries_matches_each_unseen_hash_exactly() {
+fn rescoring_without_index_entries_matches_each_listed_hash_exactly() {
     let (ranked, reads) = run(&index_missing_a_best(Lookup::ExactMatch), 2, &AnyParent);
     assert_eq!(ranked.unwrap(), vec![("A", 0.95), ("B", 0.6)]);
-    assert_eq!((reads.docs, reads.index_lookups), (5, 1));
+    assert_eq!((reads.docs, reads.index_lookups), (5, 3));
+}
+
+const LOOKUPS: [Lookup; 3] = [Lookup::FieldValue, Lookup::Entries, Lookup::ExactMatch];
+
+#[test]
+fn two_copies_of_one_hash_read_together_rank_by_the_better() {
+    let best = chunk("A", 0.9);
+    for lookup in LOOKUPS {
+        let mut index = Index::new(vec![best.clone(), copy_of(&best, 0.4), chunk("B", 0.3)]);
+        index.lookup = lookup;
+        assert_eq!(
+            search(&index, 2, &AnyParent).unwrap(),
+            vec![("A", 0.9), ("B", 0.3)]
+        );
+    }
+}
+
+#[test]
+fn a_held_hash_is_read_again_when_the_index_missed_a_better_copy() {
+    let found = chunk("A", 0.5);
+    for lookup in LOOKUPS {
+        let mut index = Index::new(vec![
+            chunk("B", 0.6),
+            found.clone(),
+            IndexedChunk {
+                indexed: false,
+                ..copy_of(&found, 0.95)
+            },
+        ]);
+        index.lookup = lookup;
+        assert_eq!(
+            search(&index, 2, &AnyParent).unwrap(),
+            vec![("A", 0.95), ("B", 0.6)]
+        );
+    }
 }
 
 #[test]

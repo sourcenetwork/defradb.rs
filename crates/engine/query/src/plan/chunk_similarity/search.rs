@@ -5,7 +5,7 @@ use rapidhash::{HashMapExt, HashSetExt, RapidHashMap, RapidHashSet};
 use tracing::debug;
 
 use super::best::best_per_parent;
-use super::listed::best_score_of;
+use super::listed::{best_score_of, Held};
 use super::target::{ChunkTarget, Reads};
 use crate::error::Result;
 use crate::fetcher::DocFetcher;
@@ -72,7 +72,7 @@ impl ChunkSearch<'_> {
         let mut decided: RapidHashMap<String, Listed> = RapidHashMap::new();
         let mut parents: RapidHashMap<String, Document> = RapidHashMap::new();
         let mut hits: Vec<(String, f64)> = Vec::new();
-        let mut held: RapidHashMap<String, RapidHashMap<String, f64>> = RapidHashMap::new();
+        let mut held: RapidHashMap<String, RapidHashMap<String, Held>> = RapidHashMap::new();
         let gave_up = loop {
             if width > MAX_VECTOR_CANDIDATES {
                 break GaveUp::Budget;
@@ -120,7 +120,9 @@ impl ChunkSearch<'_> {
                 hits.push((parent.to_string(), score));
                 held.entry(parent.to_string())
                     .or_default()
-                    .insert(hash.to_string(), score);
+                    .entry(hash.to_string())
+                    .and_modify(|held| held.add(score))
+                    .or_insert_with(|| Held::new(score));
             }
             let best = best_per_parent(hits.iter().cloned());
             debug!(

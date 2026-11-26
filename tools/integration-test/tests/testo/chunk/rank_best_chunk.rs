@@ -26,15 +26,15 @@ fn articles_rank_by_their_best_chunk_through_the_chunk_index() {
             ]),
         )
         .into(),
-        // The two nearest chunks and their two articles, then one lookup reads the
-        // late article's music chunk, the one listed chunk the search hadn't seen.
+        // The two nearest chunks and their two articles, then one lookup per article,
+        // which reads only the late article's music chunk, the one the search hadn't seen.
         explained(
             ", limit: 2",
             json!({
                 "iterations": 3,
                 "docFetches": 5,
                 "fieldFetches": 3 * CHUNK_FIELDS + 2 * ARTICLE_FIELDS,
-                "indexFetches": 2,
+                "indexFetches": 3,
                 "vectorIndex": CHUNK_VECTOR_INDEX,
             }),
         )

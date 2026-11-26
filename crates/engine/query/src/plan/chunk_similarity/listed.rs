@@ -34,34 +34,50 @@ pub(crate) async fn best_listed_score(
     .await
 }
 
+/// The copies of one listed hash a search already scored.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct Held {
+    pub best: f64,
+    pub copies: usize,
+}
+
+impl Held {
+    pub(crate) fn new(score: f64) -> Self {
+        Self {
+            best: score,
+            copies: 1,
+        }
+    }
+
+    pub(crate) fn add(&mut self, score: f64) {
+        self.best = self.best.max(score);
+        self.copies += 1;
+    }
+}
+
 /// The best score among `parent_id`'s chunks whose hashes are in `listed`;
-/// `held` gives the scores of listed chunks already read, which aren't read again.
+/// a hash whose stored copies `held` scored already isn't read again.
 pub(crate) async fn best_score_of(
     fetcher: &dyn DocFetcher,
     target: &ChunkTarget,
     parent_id: &str,
     listed: &RapidHashSet<String>,
-    held: &RapidHashMap<String, f64>,
+    held: &RapidHashMap<String, Held>,
     reads: &mut Reads,
 ) -> Result<Option<f64>> {
     let mut best = held
         .iter()
         .filter(|(hash, _)| listed.contains(*hash))
-        .map(|(_, score)| *score)
+        .map(|(_, held)| held.best)
         .reduce(f64::max);
-    let wanted: RapidHashSet<&str> = listed
-        .iter()
-        .filter(|hash| !held.contains_key(*hash))
-        .map(String::as_str)
-        .collect();
-    if wanted.is_empty() {
+    if listed.is_empty() {
         return Ok(best);
     }
-    for chunk in listed_chunks(fetcher, target, parent_id, &wanted, reads).await? {
+    for chunk in listed_chunks(fetcher, target, parent_id, listed, held, reads).await? {
         reads.count(&chunk);
         // Superseded and forged chunks stay stored; only the current list counts.
-        let is_wanted = verified_hash(&chunk).is_some_and(|hash| wanted.contains(hash));
-        if !is_wanted || chunk_parent_id(&chunk) != Some(parent_id) {
+        let is_listed = verified_hash(&chunk).is_some_and(|hash| listed.contains(hash));
+        if !is_listed || chunk_parent_id(&chunk) != Some(parent_id) {
             continue;
         }
         if !target.readable(&chunk).await? {
@@ -74,12 +90,14 @@ pub(crate) async fn best_score_of(
     Ok(best)
 }
 
-/// The stored chunks of one parent with a hash in `wanted`.
+/// The stored chunks of one parent with a hash in `listed`, less the hashes
+/// `held` has every copy of.
 async fn listed_chunks(
     fetcher: &dyn DocFetcher,
     target: &ChunkTarget,
     parent_id: &str,
-    wanted: &RapidHashSet<&str>,
+    listed: &RapidHashSet<String>,
+    held: &RapidHashMap<String, Held>,
     reads: &mut Reads,
 ) -> Result<Vec<Document>> {
     let Some(index) = target
@@ -97,15 +115,21 @@ async fn listed_chunks(
         .await?
     {
         reads.index_lookups += 1;
-        let ids: Vec<u64> = entries
+        let mut by_hash: RapidHashMap<&str, Vec<u64>> = RapidHashMap::new();
+        for entry in &entries {
+            if let Some(hash) = entry_hash(&entry.values).filter(|hash| listed.contains(*hash)) {
+                by_hash.entry(hash).or_default().push(entry.doc_short_id);
+            }
+        }
+        let ids: Vec<u64> = by_hash
             .into_iter()
-            .filter(|entry| entry_hash(&entry.values).is_some_and(|hash| wanted.contains(hash)))
-            .map(|entry| entry.doc_short_id)
+            .filter(|(hash, ids)| !all_held(held, hash, ids.len()))
+            .flat_map(|(_, ids)| ids)
             .collect();
         return read_short_ids(fetcher, &target.chunks, &ids).await;
     }
-    let mut ids = Vec::with_capacity(wanted.len());
-    for hash in wanted {
+    let mut ids = Vec::with_capacity(listed.len());
+    for hash in listed {
         reads.index_lookups += 1;
         let found = fetcher
             .get_by_index_scan(
@@ -122,12 +146,20 @@ async fn listed_chunks(
                 },
             )
             .await?;
-        ids.extend(found.into_doc_ids());
+        let found = found.into_doc_ids();
+        if !all_held(held, hash, found.len()) {
+            ids.extend(found);
+        }
     }
     if ids.is_empty() {
         return Ok(Vec::new());
     }
     Ok(fetcher.get_by_ids(&target.chunks, &ids).await?.into_docs())
+}
+
+/// Whether a search already scored every stored copy of `hash`.
+fn all_held(held: &RapidHashMap<String, Held>, hash: &str, stored: usize) -> bool {
+    held.get(hash).is_some_and(|held| held.copies >= stored)
 }
 
 /// The hash an entry of the `[_sourceID, hash]` index holds.
