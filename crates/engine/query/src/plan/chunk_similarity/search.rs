@@ -5,7 +5,7 @@ use rapidhash::{HashMapExt, HashSetExt, RapidHashMap, RapidHashSet};
 use tracing::debug;
 
 use super::best::{best_per_parent, top_with_ties};
-use super::listed::{best_scores, drain, Held, Wanted};
+use super::listed::{best_scores, drain, page_full, Held, Wanted};
 use super::target::{ChunkTarget, Reads};
 use crate::error::Result;
 use crate::fetcher::DocFetcher;
@@ -208,7 +208,7 @@ impl ChunkSearch<'_> {
         })
     }
 
-    /// The exact scores of the parents that can make the page, read in one batch.
+    /// The exact scores of the parents that can make the page, read a page of parents at a time.
     async fn rescore(
         &self,
         top: Vec<(String, f64)>,
@@ -232,7 +232,10 @@ impl ChunkSearch<'_> {
                 held: held.get(id).unwrap_or(&none),
             });
         }
-        let exact = best_scores(self.fetcher, self.target, &wanted, reads).await?;
+        let mut exact = Vec::with_capacity(wanted.len());
+        for page in pages(&wanted) {
+            exact.extend(best_scores(self.fetcher, self.target, page, reads).await?);
+        }
         Ok(kept
             .into_iter()
             .zip(exact)
@@ -299,6 +302,25 @@ impl ChunkSearch<'_> {
         }
         Ok(())
     }
+}
+
+/// Splits the parents into runs that `page_full` allows, in order.
+fn pages<'a, 'w>(wanted: &'a [Wanted<'w>]) -> impl Iterator<Item = &'a [Wanted<'w>]> {
+    let mut rest = wanted;
+    std::iter::from_fn(move || {
+        if rest.is_empty() {
+            return None;
+        }
+        let mut chunks = 0;
+        let mut len = 0;
+        while len < rest.len() && !page_full(len, chunks) {
+            chunks += rest[len].listed.len();
+            len += 1;
+        }
+        let (page, tail) = rest.split_at(len);
+        rest = tail;
+        Some(page)
+    })
 }
 
 #[cfg(test)]

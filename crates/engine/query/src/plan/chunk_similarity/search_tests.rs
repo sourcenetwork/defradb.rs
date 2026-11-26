@@ -739,3 +739,35 @@ fn a_chunk_read_that_fails_still_closes_its_stream() {
     assert!(failed.is_err());
     assert!(index.closed.load(Ordering::Relaxed));
 }
+
+#[test]
+fn rescoring_more_parents_than_a_page_reads_page_by_page_and_ranks_the_same() {
+    let names: Vec<&'static str> = (0..260)
+        .map(|i| &*Box::leak(format!("P{i}").into_boxed_str()))
+        .collect();
+    let mut index = Index::new(
+        names
+            .iter()
+            .enumerate()
+            .map(|(i, name)| chunk(name, 0.9 - i as f64 * 0.001))
+            .collect(),
+    );
+    index.lookup = Lookup::Entries;
+    let target = target(index.lookup);
+    let search = ChunkSearch {
+        fetcher: &index,
+        target: &target,
+        index_id: 0,
+        k: 260,
+    };
+    let found = workers::block_on(search.run(&AnyParent)).unwrap().unwrap();
+    let Searched::Ranked(ranked) = found.searched else {
+        panic!("every parent is indexed");
+    };
+    let mut scores: Vec<f64> = ranked.iter().map(|(_, score)| *score).collect();
+    scores.sort_by(|a, b| b.total_cmp(a));
+    let expected: Vec<f64> = (0..260).map(|i| 0.9 - i as f64 * 0.001).collect();
+    assert_eq!(scores, expected);
+    // 128 + 128 + 4 parents: one index read each.
+    assert_eq!(found.reads.index_lookups, 3);
+}
