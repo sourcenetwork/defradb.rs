@@ -17,19 +17,15 @@ use crate::plan::similarity::{score_vectors, SimilarityNode};
 /// A `SIMILARITY` on a parent whose target embedding lives on its chunks.
 #[derive(Debug, Clone)]
 pub(crate) struct ChunkTarget {
-    /// The parent collection.
     pub parent: String,
     /// The parent's `@chunk` field the chunks are cut from.
     pub chunked: ChunkedField,
-    /// The chunk collection.
     pub chunks: String,
-    /// The chunk collection's `[_sourceID, hash]` index, which finds one listed chunk.
+    /// The `[_sourceID, hash]` index, when the chunk collection has one.
     pub source_index: Option<String>,
-    /// The chunk collection's vector indexes on `field`, by ID and name.
+    /// The vector indexes on `field`, by ID and name.
     pub vector_indexes: Vec<(u32, String)>,
-    /// The embedding field on the chunks.
     pub field: String,
-    /// The query vector.
     pub vector: Vec<f64>,
     /// The metric the chunk field's index ranks by.
     pub metric: Metric,

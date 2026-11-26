@@ -1,8 +1,4 @@
 //! `SIMILARITY` on a parent whose embedding lives on its `@chunk` collection.
-//!
-//! Each parent is ranked by its best chunk. A routed query reads the chunk
-//! index nearest first and maps chunks to parents; an unrouted one scores each
-//! parent from the chunks its current text lists.
 
 mod best;
 mod listed;
