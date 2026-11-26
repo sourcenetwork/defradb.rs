@@ -322,16 +322,16 @@ iroh-base = { git = "https://github.com/n0-computer/iroh", rev = "26dfe1d469e274
 iroh-dns = { git = "https://github.com/n0-computer/iroh", rev = "26dfe1d469e274d38fe3b41617a20f9bb7a10072" }
 iroh-relay = { git = "https://github.com/n0-computer/iroh", rev = "26dfe1d469e274d38fe3b41617a20f9bb7a10072" }
 # Temporary: the unreleased Vera 0.2.0 crates, from vera.rs main.
-vera-client = { git = "https://github.com/sourcenetwork/vera.rs", rev = "96abb96d3b2823d63a99857f730fc5d69e0ce03f" }
-vera-crypto = { git = "https://github.com/sourcenetwork/vera.rs", rev = "96abb96d3b2823d63a99857f730fc5d69e0ce03f" }
-vera-domain = { git = "https://github.com/sourcenetwork/vera.rs", rev = "96abb96d3b2823d63a99857f730fc5d69e0ce03f" }
-vera-identity = { git = "https://github.com/sourcenetwork/vera.rs", rev = "96abb96d3b2823d63a99857f730fc5d69e0ce03f" }
-vera-modules = { git = "https://github.com/sourcenetwork/vera.rs", rev = "96abb96d3b2823d63a99857f730fc5d69e0ce03f" }
-vera-permission = { git = "https://github.com/sourcenetwork/vera.rs", rev = "96abb96d3b2823d63a99857f730fc5d69e0ce03f" }
+vera-client = { git = "https://github.com/sourcenetwork/vera.rs", rev = "faf4a4f094c1b4f5786bce0cbeb6567966e27999" }
+vera-crypto = { git = "https://github.com/sourcenetwork/vera.rs", rev = "faf4a4f094c1b4f5786bce0cbeb6567966e27999" }
+vera-domain = { git = "https://github.com/sourcenetwork/vera.rs", rev = "faf4a4f094c1b4f5786bce0cbeb6567966e27999" }
+vera-identity = { git = "https://github.com/sourcenetwork/vera.rs", rev = "faf4a4f094c1b4f5786bce0cbeb6567966e27999" }
+vera-modules = { git = "https://github.com/sourcenetwork/vera.rs", rev = "faf4a4f094c1b4f5786bce0cbeb6567966e27999" }
+vera-permission = { git = "https://github.com/sourcenetwork/vera.rs", rev = "faf4a4f094c1b4f5786bce0cbeb6567966e27999" }
 
 # Temporary: backbone at the revision the node crates pin, moved to Vera
-# 96abb96 (its acp-light-client compares acp-rs `PolicyId`s), so the graph
+# faf4a4f (its acp-light-client compares acp-rs `PolicyId`s), so the graph
 # holds one Vera.
 [patch."https://github.com/sourcenetwork/backbone.git"]
-acp-light-client = { path = "../backbone-vera-96abb96/crates/acp-light-client" }
-defra-harness = { path = "../backbone-vera-96abb96/crates/defra-harness" }
+acp-light-client = { path = "../backbone-vera-faf4a4f/crates/acp-light-client" }
+defra-harness = { path = "../backbone-vera-faf4a4f/crates/defra-harness" }
