@@ -17,7 +17,9 @@
 \* handler; a peer holds more than its share of the budget; room is held for
 \* a request nobody keeps any more (so a hung handler that let its request go
 \* still locks its peer out); a revoked peer keeps an open connection; a
-\* handler outlives shutdown; or a handler runs forever, holding its room.
+\* handler outlives shutdown; a handler runs forever, holding its room; or
+\* a stream whose handler was dropped at its deadline stays open because
+\* the handler's last write was blocked on an opener that does not read.
 \*
 \* Code this models:
 \*   crates/database/pinc/src/serve.rs Node::serve_stream (Arrive, the tag
@@ -28,6 +30,9 @@
 \*     check), ProtocolRequest::release (DropRequest: releasing it frees the room),
 \*     StreamHandler::handle (it borrows the stream, so Return, Deadline
 \*     and Cut each end the stream with its task);
+\*   crates/database/pinc/src/protocol_stream.rs pump_send (BlockWrite: a
+\*     write waits on the opener's window; Deadline: the send half's drop
+\*     signal races the write in flight and resets the stream, code 7);
 \*   crates/database/pinc/src/endpoint.rs Node::deny (Revoke: every session of
 \*     the peer ends within the call);
 \*   crates/database/pinc/src/command.rs Command::Shutdown (Shutdown: the
@@ -45,21 +50,25 @@ CONSTANTS
   LeaseMode,      \* "WithRequest": room goes back when the handler releases its request; "UntilReturn": it is held until the handler returns
   DeadlineMode,   \* "Deadline": every handler has one; "None": a handler may run forever
   RevokeMode,     \* "Close": a revocation closes the peer's connection; "BarOnly": it only stops new ones
-  ShutdownMode    \* "Abort": shutdown aborts every stream task; "None": tasks keep running
+  ShutdownMode,   \* "Abort": shutdown aborts every stream task; "None": tasks keep running
+  Unread,         \* the streams whose opener stops reading, so a long write blocks
+  DropMode        \* "Signal": a dropped send half resets the stream mid-write; "None": the write in flight runs on
 
 VARIABLES
-  phase,          \* where each stream is: idle, reading, serving, ended or reset
+  phase,          \* where each stream is: idle, reading, serving, lingering, ended or reset
   leased,         \* whether each stream holds room in the budget
   kept,           \* whether each stream's handler still keeps its request
+  writing,        \* whether each stream's send half is blocked in a write the opener does not read
   open,           \* whether each peer's connection is open
   revoked,        \* whether each peer was revoked
   down            \* whether the node has shut down
 
 \* All the variables, for stuttering steps.
-vars == <<phase, leased, kept, open, revoked, down>>
+vars == <<phase, leased, kept, writing, open, revoked, down>>
 
-\* The phases a stream can be in.
-Phases == {"idle", "reading", "serving", "ended", "reset"}
+\* The phases a stream can be in. "lingering": its handler was dropped at
+\* the deadline, but the stream is still open under a write in flight.
+Phases == {"idle", "reading", "serving", "lingering", "ended", "reset"}
 
 \* The streams of peer p holding budget room right now.
 Held(p) == {s \in Streams : leased[s] /\ PeerOf[s] = p}
@@ -73,6 +82,8 @@ Finish(s, how) == /\ phase' = [phase EXCEPT ![s] = how]
                   /\ leased' = [leased EXCEPT ![s] = FALSE]
                   \* and no handler keeps its request
                   /\ kept' = [kept EXCEPT ![s] = FALSE]
+                  \* and no write is in flight
+                  /\ writing' = [writing EXCEPT ![s] = FALSE]
 
 \* Nothing has happened yet: every connection open, no room taken.
 Init == /\ phase = [s \in Streams |-> "idle"]
@@ -80,6 +91,8 @@ Init == /\ phase = [s \in Streams |-> "idle"]
         /\ leased = [s \in Streams |-> FALSE]
         \* no handler holds a request
         /\ kept = [s \in Streams |-> FALSE]
+        \* no write is in flight
+        /\ writing = [s \in Streams |-> FALSE]
         \* every peer is connected
         /\ open = [p \in Peers |-> TRUE]
         \* no peer is revoked
@@ -96,7 +109,7 @@ Unknown(s) == /\ phase[s] = "idle"
               \* it is reset with the unknown-service code
               /\ phase' = [phase EXCEPT ![s] = "reset"]
               \* nothing else moves
-              /\ UNCHANGED <<leased, kept, open, revoked, down>>
+              /\ UNCHANGED <<leased, kept, writing, open, revoked, down>>
 
 \* A stream whose tag is known (or not checked) takes room and starts
 \* reading its request, on a live connection of a running node.
@@ -114,7 +127,7 @@ Arrive(s) == /\ phase[s] = "idle"
              \* holding room for it
              /\ leased' = [leased EXCEPT ![s] = TRUE]
              \* nothing else moves
-             /\ UNCHANGED <<kept, open, revoked, down>>
+             /\ UNCHANGED <<kept, writing, open, revoked, down>>
 
 \* No room frees up before the admit deadline: the stream is reset busy.
 Busy(s) == /\ phase[s] = "idle"
@@ -123,7 +136,7 @@ Busy(s) == /\ phase[s] = "idle"
            \* it is reset with the busy code
            /\ phase' = [phase EXCEPT ![s] = "reset"]
            \* nothing else moves
-           /\ UNCHANGED <<leased, kept, open, revoked, down>>
+           /\ UNCHANGED <<leased, kept, writing, open, revoked, down>>
 
 \* The request is read and the handler starts on the stream's own task,
 \* holding the request and, with it, the request's room.
@@ -135,7 +148,7 @@ Handoff(s) == /\ phase[s] = "reading"
               \* it holds the request
               /\ kept' = [kept EXCEPT ![s] = TRUE]
               \* nothing else moves; the room stays with the request
-              /\ UNCHANGED <<leased, open, revoked, down>>
+              /\ UNCHANGED <<leased, writing, open, revoked, down>>
 
 \* The handler releases its request, perhaps before hanging. Any handler may.
 DropRequest(s) == /\ phase[s] = "serving"
@@ -146,7 +159,19 @@ DropRequest(s) == /\ phase[s] = "serving"
                   \* the guard: the room goes with the request, unless the bug holds it until return
                   /\ leased' = [leased EXCEPT ![s] = (LeaseMode = "UntilReturn" /\ leased[s])]
                   \* nothing else moves
-                  /\ UNCHANGED <<phase, open, revoked, down>>
+                  /\ UNCHANGED <<phase, writing, open, revoked, down>>
+
+\* The handler writes more than the opener's window to an opener that has
+\* stopped reading: the write waits for room that never comes.
+BlockWrite(s) == /\ phase[s] = "serving"
+                 \* only an opener that stops reading
+                 /\ s \in Unread
+                 \* the write is not blocked yet
+                 /\ ~writing[s]
+                 \* now it is
+                 /\ writing' = [writing EXCEPT ![s] = TRUE]
+                 \* nothing else moves
+                 /\ UNCHANGED <<phase, leased, kept, open, revoked, down>>
 
 \* The connection closed while the request was being read: reset, room freed.
 ReadFails(s) == /\ phase[s] = "reading"
@@ -161,22 +186,35 @@ ReadFails(s) == /\ phase[s] = "reading"
 Return(s) == /\ phase[s] = "serving"
              \* only a handler that is not stuck
              /\ s \notin Stuck
+             \* nor blocked in a write
+             /\ ~writing[s]
              \* the stream ends normally, holding nothing
              /\ Finish(s, "ended")
              \* nothing else moves
              /\ UNCHANGED <<open, revoked, down>>
 
 \* The protocol's deadline passes: the handler is dropped, the stream reset.
+\* The guard: the send half's drop signal abandons a write in flight. With
+\* no signal (the bug) a blocked write runs on, and the stream lingers open
+\* with no handler, its room and request already gone.
 Deadline(s) == /\ phase[s] = "serving"
                \* only when handlers have deadlines
                /\ DeadlineMode = "Deadline"
-               \* the stream is reset, holding nothing
-               /\ Finish(s, "reset")
+               \* reset at once, or left lingering under the write in flight
+               /\ IF writing[s] /\ DropMode = "None"
+                    THEN /\ phase' = [phase EXCEPT ![s] = "lingering"]
+                         \* the handler's request and room went with it
+                         /\ leased' = [leased EXCEPT ![s] = FALSE]
+                         \* it keeps no request
+                         /\ kept' = [kept EXCEPT ![s] = FALSE]
+                         \* the write is still in flight
+                         /\ UNCHANGED writing
+                    ELSE Finish(s, "reset")
                \* nothing else moves
                /\ UNCHANGED <<open, revoked, down>>
 
-\* The connection closed: the handler is dropped, the stream reset.
-Cut(s) == /\ phase[s] = "serving"
+\* The connection closed: the handler (or a lingering write) is dropped, the stream reset.
+Cut(s) == /\ phase[s] \in {"serving", "lingering"}
           \* its connection is closed
           /\ ~open[PeerOf[s]]
           \* the stream is reset, holding nothing
@@ -191,10 +229,11 @@ Revoke(p) == /\ ~revoked[p]
              \* the guard: the connection closes, unless the bug only bars new ones
              /\ open' = [open EXCEPT ![p] = (RevokeMode = "BarOnly" /\ open[p])]
              \* nothing else moves
-             /\ UNCHANGED <<phase, leased, kept, down>>
+             /\ UNCHANGED <<phase, leased, kept, writing, down>>
 
-\* Whether shutdown aborts stream s: it is being read or served, and the guard is on.
-Aborted(s) == ShutdownMode = "Abort" /\ phase[s] \in {"reading", "serving"}
+\* Whether shutdown aborts stream s: it is being read or served, or a write
+\* lingers on it, and the guard is on.
+Aborted(s) == ShutdownMode = "Abort" /\ phase[s] \in {"reading", "serving", "lingering"}
 
 \* The node shuts down: every task is aborted, then the endpoint closes.
 Shutdown == /\ ~down
@@ -208,12 +247,14 @@ Shutdown == /\ ~down
             /\ leased' = [s \in Streams |-> IF Aborted(s) THEN FALSE ELSE leased[s]]
             \* and its request
             /\ kept' = [s \in Streams |-> IF Aborted(s) THEN FALSE ELSE kept[s]]
+            \* and any write in flight
+            /\ writing' = [s \in Streams |-> IF Aborted(s) THEN FALSE ELSE writing[s]]
             \* revocations stay as they were
             /\ UNCHANGED revoked
 
 \* Every step the system can take.
 Next == \/ \E s \in Streams : Unknown(s) \/ Arrive(s) \/ Busy(s) \/ Handoff(s)
-                             \/ DropRequest(s) \/ ReadFails(s) \/ Return(s)
+                             \/ DropRequest(s) \/ BlockWrite(s) \/ ReadFails(s) \/ Return(s)
                              \/ Deadline(s) \/ Cut(s)
         \/ \E p \in Peers : Revoke(p)
         \/ Shutdown
@@ -240,6 +281,8 @@ INV_TypeOK == /\ phase \in [Streams -> Phases]
               /\ leased \in [Streams -> BOOLEAN]
               \* a request is kept or not
               /\ kept \in [Streams -> BOOLEAN]
+              \* a write is blocked or not
+              /\ writing \in [Streams -> BOOLEAN]
               \* a connection is open or not
               /\ open \in [Peers -> BOOLEAN]
               \* a peer is revoked or not
@@ -263,7 +306,12 @@ INV_RoomIsTheRequest == \A s \in Streams :
 INV_RevokedIsCut == \A p \in Peers : revoked[p] => ~open[p]
 
 \* Once the node is down, no stream is still being read or served.
-INV_ShutdownLeavesNone == down => \A s \in Streams : phase[s] \notin {"reading", "serving"}
+INV_ShutdownLeavesNone == down => \A s \in Streams : phase[s] \notin {"reading", "serving", "lingering"}
+
+\* No stream stays open past its handler's deadline: a handler dropped there
+\* resets its stream at once, even when its last write is blocked on an
+\* opener that does not read.
+INV_DeadlineResets == \A s \in Streams : phase[s] # "lingering"
 
 \* Every handler that starts eventually stops, and with it any room it kept.
 LIVE_HandlerEnds == \A s \in Streams : (phase[s] = "serving") ~> (phase[s] \in {"ended", "reset"})

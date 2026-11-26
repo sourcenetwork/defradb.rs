@@ -14,4 +14,7 @@ mcPeerOf == [s \in mcStreams |-> IF s = "u1" THEN "b" ELSE "a"]
 mcRegistered == {"s1", "s2"}
 \* the stream whose handler never returns
 mcStuck == {"s1"}
+\* the stream whose opener stops reading: s2's handler writes more than the
+\* opener's window, so its write blocks until the deadline cuts it
+mcUnread == {"s2"}
 ====

@@ -1345,6 +1345,9 @@ RUNS=(
   "MC_EmbedderStream_Red_NoDeadline.cfg MC_EmbedderStream_Common.tla RED" # no deadline: a hung handler runs forever (LIVE_HandlerEnds)
   "MC_EmbedderStream_Red_BarOnly.cfg MC_EmbedderStream_Common.tla RED" # revocation only bars new connections: the revoked peer stays connected (INV_RevokedIsCut)
   "MC_EmbedderStream_Red_NoAbort.cfg MC_EmbedderStream_Common.tla RED" # shutdown leaves tasks running (INV_ShutdownLeavesNone)
+  "MC_EmbedderStream_Red_NoDropSignal.cfg MC_EmbedderStream_Common.tla RED" # no drop signal on the send half: a write blocked on an opener that does not read outlives the deadline (INV_DeadlineResets)
+  "MC_EmbedderStreamOpen_Green.cfg EmbedderStreamOpen.tla GREEN" # pumps placed before the request is written: an open refused busy delivers nothing
+  "MC_EmbedderStreamOpen_Red_WriteFirst.cfg EmbedderStreamOpen.tla RED" # the old write-before-spawn order: a busy open delivered its request and the retry runs it again (INV_BusyDeliversNothing)
   # ---- GovernanceContract.tla: what a merge validator may assume; GovernanceMerge.tla: the merge path checked to refine it ----
   "MC_GovernanceContract_Green.cfg            MC_GovernanceContract_Orphan.tla       GREEN" # re-drive + sweep: every settleable composite settles
   "MC_GovernanceContract_Green_Nameable.cfg   MC_GovernanceContract_Nameable.tla     GREEN" # nameable awaits: arrival re-drive alone settles them, no sweep
