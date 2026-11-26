@@ -6,9 +6,9 @@ pub(super) const CRATES: &str = "db, query, storage, p2p, p2p-adapter";
 pub(super) const PROPERTIES: &[Property] = &[
     Property {
         family: "Retry input and marker fencing",
-        name: "INV_ProviderOncePerContext / INV_NewRegistrationSurvivesOldAck / ACT_NewRegistrationSurvivesOldClear",
+        name: "INV_ProviderOncePerContext / INV_PreparedAnswerReused / INV_NewRegistrationSurvivesOldAck / ACT_NewRegistrationSurvivesOldClear",
         axis: Tla,
-        anchor: "crates/engine/query/src/error.rs QueryError::NeedsInput; crates/database/db/src/write/autocommit/create.rs create_many_with_resolved_inputs; update.rs update_with_projected_resolved_inputs; delete.rs delete_with_resolved_inputs; crates/database/db/src/write/create.rs embed, compute_many; crates/engine/query/src/prepared.rs; crates/engine/storage/src/stores/peerstore.rs register/complete/clear retry scope",
+        anchor: "crates/engine/query/src/error.rs QueryError::NeedsInput; crates/database/db/src/write/autocommit/create.rs create_many_with_resolved_inputs; update.rs update_with_projected_resolved_inputs; delete.rs delete_with_resolved_inputs; crates/database/db/src/write/create.rs embed, compute_many; crates/engine/query/src/prepared.rs; crates/engine/query/src/runner/prepare.rs prepare_mutations; crates/engine/query/src/runner/mutation.rs authorize_mutation; crates/engine/storage/src/stores/peerstore.rs register/complete/clear retry scope",
         model_ref: "MC_RetryPreparedInputs_{Green,Red_*}.cfg / MC_RetryMarkerGeneration_{Green,Red_*}.cfg",
         tiers: &[Boundary],
         bound_by: "",
