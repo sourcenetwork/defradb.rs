@@ -378,6 +378,14 @@ impl QueryError {
         Self::UnknownField(name.into())
     }
 
+    /// A selection names a field its type does not define, in graphql-go's
+    /// FieldsOnCorrectType words.
+    pub fn undefined_field(field: &str, type_name: &str) -> Self {
+        Self::UnknownField(format!(
+            "Cannot query field \"{field}\" on type \"{type_name}\"."
+        ))
+    }
+
     /// Create a sub-selection-on-scalar error
     pub fn sub_selection_on_leaf(field: impl Into<String>, type_name: impl Into<String>) -> Self {
         Self::SubSelectionOnLeaf {
