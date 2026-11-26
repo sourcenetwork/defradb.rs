@@ -94,8 +94,10 @@ impl ExactMatchIterator {
                 exhausted: false,
             })
         } else {
-            // Non-NULL values: direct lookup, doc short ID stored in the value
-            let unique_result = if let Some(value_bytes) = txn.get(&key_prefix).await? {
+            // A query read decides nothing, so it is never validated: a writer
+            // of this value elsewhere must not fail the reader's commit. A
+            // writer's own uniqueness check is validated in `UniqueIndex::save`.
+            let unique_result = if let Some(value_bytes) = txn.get_parts(&key_prefix, &[]).await? {
                 let doc_short_id = decode_doc_short_id(&value_bytes)?;
                 Some(IndexEntry::new(doc_short_id, values.to_vec()))
             } else {

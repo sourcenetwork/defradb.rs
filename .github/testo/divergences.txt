@@ -47,6 +47,12 @@ testo index::range_filter::an_empty_range_limits_index_fetches
 # the loser with "transaction conflict. Please retry".
 testo txn::new_encrypted_index_concurrent::a_concurrent_encrypted_index_delete_and_adds_all_land
 testo txn::new_encrypted_index_concurrent::concurrent_encrypted_index_adds_all_land
+# A query's read of a unique index entry (an equality filter, or a one-to-one relation's inverse side) decides nothing, so Rust
+# does not check it at commit; Go does and answers "transaction conflict. Please retry" when another writer adds that entry.
+testo mutation::add::field_kinds::one_to_one_to_one::with_txn::transactional_creation_and_linking_of_relational_documents_forward
+testo txn::unique_filter_read::a_nil_writers_unique_filter_read_does_not_fail_the_commit
+testo txn::unique_filter_read::a_unique_eq_filter_read_does_not_fail_the_commit
+testo txn::unique_filter_read::a_unique_in_filter_read_does_not_fail_the_commit
 # Ordered by an indexed field of the publisher, which holds the relation, Go returns a null `_publisherID`; Rust returns the ID.
 testo query::relation_order_with_filter::selected_relation_id::indexed
 testo query::relation_order_with_filter::selected_relation_id_unfiltered::indexed
