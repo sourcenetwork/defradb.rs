@@ -52,6 +52,9 @@ pub struct NodeSpec {
     /// The node was configured from a Go-written `config.yaml` through the
     /// Rust CLI's loader, so it is a Rust node under every client.
     pub go_config: bool,
+    /// The node starts on a directory holding Go DefraDB's Badger store,
+    /// which only a Rust node's refusal is checked against.
+    pub go_datastore: bool,
     /// The node's own identity, Go's `NodeIdentity(seed)`; the node signs as it.
     pub node_identity: Option<u64>,
     /// The node takes `node_identity` from the process's signing registry,
@@ -73,6 +76,8 @@ pub struct NodeSpec {
     /// The gate the node's index backfills pass before each batch; it lives
     /// across a restart, as Go's package-level hook does.
     pub index_gate: Option<Arc<crate::index_gate::TestIndexGate>>,
+    /// Documents an index backfill may index in one transaction.
+    pub backfill_batch_docs: Option<usize>,
     /// The gate explicit commits pass before they begin, for a real-node
     /// scenario that holds a commit past its HTTP bound.
     pub commit_gate: Option<Arc<crate::commit_gate::TestCommitGate>>,
@@ -134,7 +139,8 @@ impl TestNode {
                     || spec.connection_manager.is_some()
                     || spec.iroh_network
                     || spec.resolv_conf.is_some()
-                    || spec.go_config =>
+                    || spec.go_config
+                    || spec.go_datastore =>
             {
                 ClientType::RustHttp
             }
@@ -402,6 +408,9 @@ fn build(spec: &NodeSpec, listen: &str, http: Option<HttpConfig>) -> Result<Node
     }
     if let Some(gate) = &spec.index_gate {
         builder = builder.with_index_build_gate(gate.clone());
+    }
+    if let Some(docs) = spec.backfill_batch_docs {
+        builder = builder.with_backfill_batch_docs(docs);
     }
     if let Some(gate) = &spec.commit_gate {
         builder = builder.with_commit_gate(gate.clone());
