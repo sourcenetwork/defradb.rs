@@ -470,7 +470,7 @@ fn gave_up(index: &Index, k: usize) -> Option<GaveUp> {
         .unwrap()
         .searched
     {
-        Searched::Exhausted(gave_up) => Some(gave_up),
+        Searched::Exhausted { gave_up, .. } => Some(gave_up),
         Searched::Ranked(_) => None,
     }
 }
@@ -549,11 +549,28 @@ fn an_index_that_runs_out_before_k_parents_reports_it() {
 #[test]
 fn the_search_stops_at_the_candidate_budget() {
     let chunks = (0..=MAX_VECTOR_CANDIDATES)
-        .map(|_| chunk("A", 0.5))
+        .map(|_| superseded("A", 0.5))
         .collect();
     let index = Index::new(chunks);
-    assert_eq!(gave_up(&index, 2), Some(GaveUp::Budget));
+    assert_eq!(gave_up(&index, 1), Some(GaveUp::Budget));
     assert_eq!(index.widest.load(Ordering::Relaxed), MAX_VECTOR_CANDIDATES);
+}
+
+#[test]
+fn the_budget_grows_with_the_parents_the_page_needs() {
+    let mut chunks: Vec<IndexedChunk> = (0..MAX_VECTOR_CANDIDATES + 100)
+        .map(|_| superseded("A", 0.5))
+        .collect();
+    chunks.extend([chunk("B", 0.4), chunk("C", 0.3)]);
+    let index = Index::new(chunks);
+    assert_eq!(
+        search(&index, 2, &AnyParent).unwrap(),
+        vec![("B", 0.4), ("C", 0.3)]
+    );
+    assert_eq!(
+        index.widest.load(Ordering::Relaxed),
+        2 * MAX_VECTOR_CANDIDATES
+    );
 }
 
 /// B's and the weaker of A's chunks are found; A's best, missed by the index, is not.
@@ -610,6 +627,40 @@ fn a_parent_tied_with_the_kth_is_read_again() {
         search(&index, 2, &AnyParent).unwrap(),
         vec![("A", 0.9), ("B", 0.7), ("C", 0.95)]
     );
+}
+
+#[test]
+fn a_search_that_runs_out_keeps_what_it_scored_for_the_fallback() {
+    let mut index = Index::new(vec![chunk("A", 0.9), chunk("B", 0.8)]);
+    index.lookup = Lookup::Entries;
+    let target = target(index.lookup);
+    let search = ChunkSearch {
+        fetcher: &index,
+        target: &target,
+        index_id: 0,
+        k: 3,
+    };
+    let found = workers::block_on(search.run(&AnyParent)).unwrap().unwrap();
+    let Searched::Exhausted { gave_up, known } = found.searched else {
+        panic!("two parents can't fill a page of three");
+    };
+    assert_eq!(gave_up, GaveUp::RanOut);
+    let ids = [parent_id("A"), parent_id("B")];
+    let wanted: Vec<Wanted<'_>> = ids
+        .iter()
+        .map(|id| Wanted {
+            parent_id: id,
+            listed: &known[id].listed,
+            held: &known[id].held,
+        })
+        .collect();
+    let mut reads = Reads::default();
+    let scores = workers::block_on(best_scores(&index, &target, &wanted, &mut reads))
+        .unwrap()
+        .unwrap();
+    assert_eq!(scores, vec![Some(0.9), Some(0.8)]);
+    // Every copy is held, so the page reads index entries and no chunk.
+    assert_eq!((reads.docs, reads.index_lookups), (0, 1));
 }
 
 const LOOKUPS: [Lookup; 3] = [Lookup::FieldValue, Lookup::Entries, Lookup::NoEntries];

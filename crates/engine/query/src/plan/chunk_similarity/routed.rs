@@ -1,5 +1,6 @@
 //! The parent scan of a routed chunked `SIMILARITY`: parents come from the chunk index.
 
+use std::borrow::Cow;
 use std::collections::VecDeque;
 use std::sync::Arc;
 
@@ -9,8 +10,8 @@ use rapidhash::{HashMapExt, RapidHashMap, RapidHashSet};
 use schema::CollectionVersion;
 use serde_json::Value as JsonValue;
 
-use super::listed::{best_scores, page_full, Wanted};
-use super::search::{ChunkSearch, GaveUp, ParentCheck, Searched};
+use super::listed::{best_scores, page_full, Held, Wanted};
+use super::search::{ChunkSearch, GaveUp, Known, ParentCheck, Searched};
 use super::target::{ChunkTarget, Reads};
 use crate::doc_stream::DocStream;
 use crate::document::{document_to_plan_doc, DocumentMapping};
@@ -30,6 +31,8 @@ pub struct ChunkSimilarityScanNode {
     fetcher: Arc<dyn DocFetcher>,
     ranked: VecDeque<Doc>,
     fallback: Option<Box<dyn DocStream>>,
+    /// What the search learned about the parents it read, so the fallback reads them no further.
+    known: RapidHashMap<String, Known>,
     searched: bool,
     gave_up: Option<GaveUp>,
     current: Doc,
@@ -76,6 +79,7 @@ impl ChunkSimilarityScanNode {
             fetcher,
             ranked: VecDeque::new(),
             fallback: None,
+            known: RapidHashMap::new(),
             searched: false,
             gave_up: None,
             current: Doc::default(),
@@ -114,7 +118,7 @@ impl ChunkSimilarityScanNode {
             doc_ids: self.doc_ids.as_deref(),
         };
         let mut reads = Reads::default();
-        let mut page: Vec<(Document, Option<RapidHashSet<String>>)> = Vec::new();
+        let mut page: Vec<(Document, Option<Cow<'_, RapidHashSet<String>>>)> = Vec::new();
         let mut chunks = 0;
         let mut drained = false;
         while !page_full(page.len(), chunks) {
@@ -126,7 +130,9 @@ impl ChunkSimilarityScanNode {
             if !accepts.accepts(&parent)? {
                 continue;
             }
-            let listed = self.target.listed(&parent);
+            let listed = reuse_listed(&self.known, &self.target, &parent)
+                .map(Cow::Borrowed)
+                .or_else(|| self.target.listed(&parent).map(Cow::Owned));
             chunks += listed.as_ref().map_or(0, |listed| listed.len());
             page.push((parent, listed));
         }
@@ -143,8 +149,8 @@ impl ChunkSimilarityScanNode {
                 let id = id.as_deref()?;
                 let wanted = Wanted {
                     parent_id: id,
-                    listed: listed.as_ref()?,
-                    held: &none,
+                    listed: listed.as_deref()?,
+                    held: held_of(&self.known, id).unwrap_or(&none),
                 };
                 Some((slot, wanted))
             })
@@ -174,6 +180,24 @@ impl ChunkSimilarityScanNode {
     }
 }
 
+/// The hashes the search cut from `parent`'s text, while that text is unchanged.
+fn reuse_listed<'a>(
+    known: &'a RapidHashMap<String, Known>,
+    target: &ChunkTarget,
+    parent: &Document,
+) -> Option<&'a RapidHashSet<String>> {
+    let known = known.get(&parent.id()?.to_string())?;
+    let field = &target.chunked.field_name;
+    (known.parent.get(field) == parent.get(field)).then_some(&known.listed)
+}
+
+fn held_of<'a>(
+    known: &'a RapidHashMap<String, Known>,
+    id: &str,
+) -> Option<&'a RapidHashMap<String, Held>> {
+    known.get(id).map(|known| &known.held)
+}
+
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl PlanNode for ChunkSimilarityScanNode {
@@ -200,11 +224,13 @@ impl PlanNode for ChunkSimilarityScanNode {
                 }
                 self.ranked = rows;
                 self.fallback = None;
+                self.known = RapidHashMap::new();
                 self.gave_up = None;
             }
-            Searched::Exhausted(gave_up) => {
+            Searched::Exhausted { gave_up, known } => {
                 self.gave_up = Some(gave_up);
                 self.ranked = VecDeque::new();
+                self.known = known;
                 self.fallback = Some(
                     self.fetcher
                         .stream_all_with_deleted(&self.collection.name, false)

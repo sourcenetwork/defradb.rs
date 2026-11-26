@@ -12,6 +12,10 @@ use crate::fetcher::DocFetcher;
 use crate::plan::chunk_parent::{chunk_parent_id, verified_hash};
 use crate::plan::scan::MAX_VECTOR_CANDIDATES;
 
+/// The chunks the search may read for each parent the page needs. Edits and
+/// long texts put many near chunks on one parent.
+const CHUNKS_PER_PARENT: usize = MAX_VECTOR_CANDIDATES;
+
 /// Whether the query may return a parent: its filter and requested document IDs.
 pub(crate) trait ParentCheck {
     fn accepts(&self, parent: &Document) -> Result<bool>;
@@ -21,8 +25,18 @@ pub(crate) trait ParentCheck {
 pub(crate) enum Searched {
     /// At least `k` parents, each with its exact best listed chunk's score.
     Ranked(Vec<(Document, f64)>),
-    /// The search gave up before naming `k` parents.
-    Exhausted(GaveUp),
+    /// The search gave up before naming `k` parents, keeping what it learned.
+    Exhausted {
+        gave_up: GaveUp,
+        known: RapidHashMap<String, Known>,
+    },
+}
+
+/// An accepted parent the search read, with the copies of its hashes it scored.
+pub(crate) struct Known {
+    pub parent: Document,
+    pub listed: RapidHashSet<String>,
+    pub held: RapidHashMap<String, Held>,
 }
 
 /// Why a routed search gave up.
@@ -74,6 +88,7 @@ impl ChunkSearch<'_> {
         C: ParentCheck,
     {
         let mut width = self.k.max(1);
+        let budget = self.k.max(1).saturating_mul(CHUNKS_PER_PARENT);
         let mut searches = 0;
         let mut reads = Reads::default();
         let mut unlisted = 0usize;
@@ -85,7 +100,7 @@ impl ChunkSearch<'_> {
         let mut hits: Vec<(String, f64)> = Vec::new();
         let mut held: RapidHashMap<String, RapidHashMap<String, Held>> = RapidHashMap::new();
         let gave_up = loop {
-            if width > MAX_VECTOR_CANDIDATES {
+            if width > budget {
                 break GaveUp::Budget;
             }
             let ids = self
@@ -171,8 +186,23 @@ impl ChunkSearch<'_> {
             refused,
             "chunk vector index could not fill the page, scoring every parent"
         );
+        let known = parents
+            .into_iter()
+            .filter_map(|(id, parent)| {
+                let listed = decided.remove(&id).flatten()?;
+                let held = held.remove(&id).unwrap_or_default();
+                Some((
+                    id,
+                    Known {
+                        parent,
+                        listed,
+                        held,
+                    },
+                ))
+            })
+            .collect();
         Ok(Search {
-            searched: Searched::Exhausted(gave_up),
+            searched: Searched::Exhausted { gave_up, known },
             searches,
             reads,
         })

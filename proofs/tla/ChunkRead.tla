@@ -83,7 +83,7 @@
 \*   crates/engine/query/src/plan/chunk_similarity/search.rs ChunkSearch::run (nearest first, widening, the checks per chunk)
 \*   crates/engine/query/src/plan/chunk_similarity/search.rs ChunkSearch::rescore (the picked article read again)
 \*   crates/engine/query/src/plan/chunk_similarity/routed.rs ChunkSimilarityScanNode::score_fallback_page (the
-\*                                          exhaustive fallback)
+\*                                          exhaustive fallback, keeping the copies the route held)
 \*   crates/engine/query/src/plan/chunk_similarity/node.rs ChunkSimilarityNode::score_page (no route)
 \*   crates/engine/query/src/plan/chunk_similarity/listed.rs best_scores, Held (every copy of a hash counts,
 \*                                          for a page of articles at once)
@@ -381,6 +381,8 @@ Widen ==
 \* score is its best current chunk's, read again. With the guard the rescore
 \* counts every copy of each hash. Without it, the route holds one score per
 \* hash, the last copy it read, and the rescore skips reading a held hash.
+\* When other articles leave the page short, the fallback scores this one the
+\* same way, from the copies the route held and the rest read again.
 RankRouted ==
   /\ phase = "reading" /\ kind = "similar"          \* a ranking is running
   /\ Routes                                         \* that may use the route
