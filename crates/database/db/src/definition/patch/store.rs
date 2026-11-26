@@ -261,7 +261,10 @@ impl<S: Store> crate::database::DB<S> {
             )
             .await?;
             let txn_lens_store = crate::txn::lenses::TxnLensStore::new(self.lens_store.clone());
-            txn_lens_store.add_with_id(lens.id.clone(), config).await?;
+            txn_lens_store
+                .add_with_id(lens.id.clone(), config.clone())
+                .await?;
+            self.owe_lens_on_commit(txn, lens.id.clone(), config)?;
             new_schema.previous_version = Some(CollectionSource {
                 source_collection_id: old_version_id.to_string(),
                 transform: Some(lens.id.to_string()),

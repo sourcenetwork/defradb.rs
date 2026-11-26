@@ -59,6 +59,7 @@ impl<S: Store + 'static> DbTransactionRegistry<S> {
                 // derived from its schema.
                 caches.invalidate();
 
+                db.owe_lens_on_commit(txn, transform_id.clone(), config.clone())?;
                 let db = db.clone();
                 let cache_db = db.clone();
                 let cache_destination = updated_destination;

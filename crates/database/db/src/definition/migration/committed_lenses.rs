@@ -11,6 +11,11 @@
 //! absent; each use of it registers it first, and fails loud with the reason
 //! while registration still fails. A crash loses nothing: the next open
 //! registers every persisted config again.
+//!
+//! A commit that publishes a collection version naming its lens owes the lens
+//! first, in the same ordered publication ([`DB::owe_lens_on_commit`]): a
+//! request that sees the version finds its transform even while the follow-up
+//! registration is still compiling it.
 
 use std::sync::Arc;
 
@@ -21,7 +26,7 @@ use kovan_map::HopscotchMap;
 use lens::{LensConfig, LensDoc, LensDocResultStream, LensDocStream, TransformId, TransformStore};
 use rapidhash::fast::RandomState;
 use rapidhash::RapidHashMap;
-use storage::corekv::{IterOptions, Key, Store};
+use storage::corekv::{IterOptions, Key, OnCommit, Store};
 use storage::keys::systemstore::LensConfigKey;
 
 use crate::error::{Error, Result};
@@ -37,11 +42,19 @@ pub(crate) struct CommittedLensStore {
 }
 
 impl CommittedLensStore {
-    pub(crate) fn wrap(base: Arc<dyn TransformStore>) -> Arc<dyn TransformStore> {
+    pub(crate) fn wrap(base: Arc<dyn TransformStore>) -> Arc<Self> {
         Arc::new(Self {
             base,
             owed: Arc::new(HopscotchMap::with_hasher(RandomState::default())),
         })
+    }
+
+    /// Owes the committed lens `id` unless it is registered already, so its
+    /// next use registers it first.
+    fn owe(&self, id: TransformId, config: Arc<LensConfig>) {
+        if !self.base.has_transform(&id) {
+            self.owed.insert_if_absent(id, config);
+        }
     }
 
     fn run(
@@ -405,6 +418,24 @@ where
 
         let _ = txn.discard();
         Ok(())
+    }
+
+    /// Owes the lens `id` when `txn` commits, in its ordered publication, ahead
+    /// of what `txn` publishes after this call: a collection version that names
+    /// the lens is never visible while its transform is unknown. The
+    /// registration after the commit ([`Self::register_committed_lens`]) then
+    /// settles it, unless a use got there first.
+    pub(crate) fn owe_lens_on_commit(
+        &self,
+        txn: &crate::txn::DbTxn<S>,
+        id: TransformId,
+        config: LensConfig,
+    ) -> Result<()> {
+        let lenses = Arc::clone(&self.committed_lenses);
+        let config = Arc::new(config);
+        txn.on_commit(OnCommit::Ordered(Box::new(move || {
+            lenses.owe(id, config);
+        })))
     }
 
     /// Registers a lens whose config this database has durably committed. The

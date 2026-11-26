@@ -27,6 +27,7 @@ mod migrations {
     mod query {
         mod simple;
         mod with_collection_branch;
+        mod with_concurrent_update;
         mod with_date_time;
         mod with_doc_id;
         mod with_filter;
