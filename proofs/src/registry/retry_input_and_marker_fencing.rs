@@ -50,6 +50,15 @@ pub(super) const PROPERTIES: &[Property] = &[
         bound_by: "",
     },
     Property {
+        family: "Retry input and marker fencing",
+        name: "INV_EveryMarkerScheduled — an ack or empty-peer clear deletes a peer's schedule row only when a validated scan found no marker, and a registration that saw the row is aborted by its validated row read, so a registration that commits meanwhile is never left unscheduled",
+        axis: Tla,
+        anchor: "crates/engine/storage/src/stores/peerstore.rs scope_markers_left, walk_scope_markers, CompleteMarker, ClearPeer, RegisterScopeMarkerAttempt; crates/engine/storage/src/stores/peerstore_schedule_race_tests.rs",
+        model_ref: "MC_RetryPeerSchedule_{Green,Red_PlainScan,Red_UnvalidatedRowRead}.cfg",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
         // One retry clock per peer serves all of its markers. An acknowledged
         // delivery, live, fenced by a newer marker generation, or replayed,
         // returns it to the first rung, never later than it was, so the next

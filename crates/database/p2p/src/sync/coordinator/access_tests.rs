@@ -6,6 +6,9 @@
 #[path = "../../../tests/unit/car_serving.rs"]
 mod car_serving;
 
+#[path = "../../../tests/unit/cid_check.rs"]
+mod cid_check;
+
 #[path = "../../../tests/unit/selected_car_authority.rs"]
 #[cfg(not(target_arch = "wasm32"))]
 mod selected_car_authority;

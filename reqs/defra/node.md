@@ -19,3 +19,12 @@ An embedder may give a node a `query::access_hooks::WriteValidator` (`AccessHook
 - **Scenarios:** ["write_validation_once::a_write_validator_is_asked_once_per_mutation"]
 
 An autocommit `add`, `update` (by DocID or by filter) or `delete` asks the write validator once, while the request is prepared, and runs with that approval: its first attempt finds the answer and does not end asking for it again. A refusal is asked once too and fails the mutation with the validator's message, such as `a note needs a body`. The validator is asked again only when the attempt's question differs from the one preparation asked (other target documents, another collection version).
+
+# `defra.node.start.go_datastore`: A Go DefraDB datastore is refused at start with what to do
+
+- **Parents:** ["go.node"]
+- **Scenarios:** ["node::go_datastore::a_go_badger_datastore_is_refused_with_what_to_do", "crates/entry-points/cli/tests/go_datastore.rs::the_binary_refuses_a_go_datastore_before_start_and_storage_stats"]
+
+A node whose data directory holds the Badger datastore Go DefraDB writes there (a `MANIFEST` that starts with Badger's magic text `Bdgr`, or a `KEYREGISTRY` file), as a rootdir Go DefraDB created does, does not start. It fails before the storage engine opens the directory, so nothing in it changes, with `the data directory '<path>' holds a Badger datastore written by Go DefraDB, which defradb.rs cannot read; start this node on an empty data directory (another --rootdir or datastore.path), add the same schema to it first, then move the documents with Go's `defradb client backup export` (run against Go DefraDB on the old rootdir) and this node's `defradb client backup import``. The schema step is named because Go's export holds documents and not the schema, and this node's import looks each collection up by name, so it would fail on the first one. A read-only open of such a directory fails with the same error, and `defradb storage stats`, which opens the data path read-only, fails with it too. It never fails with the storage engine's `MANIFEST does not begin with the REGOMAN stamp`.
+
+`defradb start --rootdir <go rootdir>` opens `config.data_path()` in its own process, and `crates/entry-points/cli/tests/go_datastore.rs` runs the binary for both commands against a rootdir whose `data` folder holds Badger's `MANIFEST` header: it asserts the non-zero exit, the message above on stderr, and that the folder still holds only that `MANIFEST` with its bytes unchanged.

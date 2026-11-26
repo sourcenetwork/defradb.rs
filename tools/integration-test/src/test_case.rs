@@ -159,6 +159,26 @@ impl State {
         self.nodes.0.insert(name.to_owned(), slot);
     }
 
+    /// [`State::start_node`], failing with the node builder's error and
+    /// leaving no node `name` when the start is refused.
+    pub fn try_start_node(&mut self, name: &str, spec: NodeSpec) -> Result<(), Failure> {
+        self.stop_node(name, false);
+        self.start_stopped(name, spec)
+    }
+
+    /// Start node `name`, already stopped, keeping its stopped slot when the
+    /// start is refused.
+    fn start_stopped(&mut self, name: &str, spec: NodeSpec) -> Result<(), Failure> {
+        let node =
+            TestNode::try_start(self.client_type(), spec.clone()).map_err(Failure::operation)?;
+        let slot = Slot {
+            spec,
+            node: Some(Arc::new(node)),
+        };
+        self.nodes.0.insert(name.to_owned(), slot);
+        Ok(())
+    }
+
     /// Start stopped node `name` again with NAC options, as Go's `Start`:
     /// `enable_nac` turns NAC on, owned by `owner` when it was never set up.
     /// A start the node refuses leaves it stopped, with the refusal.
@@ -180,14 +200,7 @@ impl State {
         spec.nac_owner = owner;
         configure(&mut spec);
         self.stop_node(name, true);
-        let node =
-            TestNode::try_start(self.client_type(), spec.clone()).map_err(Failure::operation)?;
-        let slot = Slot {
-            spec,
-            node: Some(Arc::new(node)),
-        };
-        self.nodes.0.insert(name.to_owned(), slot);
-        Ok(())
+        self.start_stopped(name, spec)
     }
 
     /// Start the in-process iroh node `name` as `spec` says, failing with the
