@@ -26,7 +26,7 @@
 //! Quarantine's OWN producer-level proof — that a `Rejected` outcome (today:
 //! only the degenerate arms `IndexManager::conflicting_doc_id` can't
 //! identify a holder for) still gets quarantined and never re-driven — lives
-//! in the crate tests, not here: `crates/db-merge/src/merge_handler/mod.rs`
+//! in the crate tests, not here: `crates/database/db/src/merge/merge_handler/mod.rs`
 //! (`remote_composite_merge_with_corrupted_unique_index_entry_is_rejected`)
 //! for the degenerate-arm classification, and
 //! `crates/database/p2p/src/sync/manager/process/pending_dag.rs`

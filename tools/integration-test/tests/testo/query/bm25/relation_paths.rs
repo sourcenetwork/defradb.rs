@@ -1,6 +1,6 @@
 //! `BM25` fields can follow a relation (`file.content`, `functions.name`), and
 //! a `BM25` score can be selected, filtered and ordered on a nested selection.
-//! Two files, `auth.rs` and `utils.rs`, each own functions.
+//! Two File documents, named "auth.rs" and "utils.rs", each own functions.
 
 use super::simple::case;
 use integration_test::actions::{Actions, AddCollection, AddDoc, Request};
@@ -92,7 +92,8 @@ fn handle_requests() -> Vec<Actions> {
     ]
 }
 
-/// `auth.rs` has a function about parsing tokens, `utils.rs` one about output.
+/// The "auth.rs" document has a function about parsing tokens, "utils.rs" one
+/// about output.
 fn parse_token_and_format_output() -> Vec<Actions> {
     vec![
         function(

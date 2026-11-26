@@ -50,10 +50,9 @@ pub fn validate_collection_name(name: &str) -> Result<(), HttpError> {
 /// falling back to a default (`http/handler_p2p.go:272-280`). An absent or
 /// empty value means the caller set no deadline.
 ///
-/// Stricter than the FFI helper in `crates/entry-points/ffi/src/document/parse.rs`, which
-/// accepts a bare integer as seconds for backwards compatibility. Go accepts no
-/// unitless value other than `0`, so allowing `"5"` here would succeed on input
-/// Go rejects.
+/// As strict as the FFI's `crates/entry-points/ffi/src/duration.rs`: Go accepts
+/// no unitless value other than `0`, so allowing `"5"` here would succeed on
+/// input Go rejects.
 pub fn parse_timeout(timeout: Option<&str>) -> Result<Option<std::time::Duration>, HttpError> {
     let Some(raw) = timeout.map(str::trim).filter(|value| !value.is_empty()) else {
         return Ok(None);

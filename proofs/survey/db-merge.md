@@ -15,9 +15,10 @@ local commits (`broadcast_mutator`) and pushes existing docs to replicators
   bounded by `MAX_MERGE_DEPTH`, with `merged_composites`/`merged_collections` dedup
   sets and a blockstore merged-set for CRDT idempotency. Heads advanced in
   `composite_heads.rs` (delete parent heads, set new head + priority index).
-- **Per-doc merge serialization** (`merge_handler/queue.rs`, `batch.rs`):
-  `MergeQueue` keys an async mutex per doc/collection; concurrent same-doc merges
-  serialize, different docs run in parallel; on txn conflict, retry up to 5x.
+- **Per-doc merge serialization** (the merge handler's `MergeQueue`, since
+  removed, and `batch.rs`): `MergeQueue` keyed an async mutex per
+  doc/collection; concurrent same-doc merges serialized, different docs ran in
+  parallel; on txn conflict, retry up to 5x.
 - **Signature gate** (`signature.rs`): verify-before-merge; `Err` ⇒ reject block.
 - **ACP register-on-merge** (`acp_merge_handler.rs`): post-commit replicated-doc
   registration + strict replicated-doc-access gate.
