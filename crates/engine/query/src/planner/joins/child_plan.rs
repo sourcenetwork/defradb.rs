@@ -405,8 +405,11 @@ impl Planner {
                         if let Some(ref fetcher) = self.fetcher {
                             index_scan = index_scan.with_fetcher(fetcher.clone());
                         }
-                        let index_scan = index_scan.with_explain_filter(rel_filter.clone());
-                        Some(Box::new(index_scan) as Box<dyn PlanNode>)
+                        let index_scan: Box<dyn PlanNode> =
+                            Box::new(index_scan.with_explain_filter(rel_filter.clone()));
+                        // The filter may match only the children the selection
+                        // shows the reader.
+                        Some(self.maybe_wrap_with_acp_filter(index_scan, &target_collection))
                     } else {
                         None // No index for filter, use in-memory evaluation
                     }
