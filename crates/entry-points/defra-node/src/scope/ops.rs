@@ -150,14 +150,15 @@ macro_rules! transactional_ops {
                 vector: Option<schema::VectorIndexDescription>,
             ) -> crate::Result<schema::IndexDescription>;
 
-            /// Create an ordered index as `create_index` does, returning once
-            /// it is defined: it is listed as building until its backfill
+            /// Create an index as `create_index` does, returning once it is
+            /// defined: it is listed as building until its backfill
             /// completes. Go's `Collection.NewIndex`.
             fn start_index(
                 collection: &str,
                 name: Option<&str>,
                 fields: Vec<schema::IndexedFieldDescription>,
                 unique: bool,
+                vector: Option<schema::VectorIndexDescription>,
             ) -> crate::Result<schema::IndexDescription>;
 
             /// The indexes of `collection`, each with the state of the action

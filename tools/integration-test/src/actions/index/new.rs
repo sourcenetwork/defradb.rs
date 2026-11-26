@@ -52,6 +52,7 @@ impl Op for NewIndex {
             .collect();
         let node = state.node_on(self.common.node())?;
         let scope = state.scope_as(self.txn, self.common.identity_seed);
+        let vector = self.vector_description()?;
         // Go's NewIndex always returns before the build; its harness waits
         // for the build unless the scenario sets `async`.
         let created = match self.r#async {
@@ -60,13 +61,14 @@ impl Op for NewIndex {
                 self.index_name(),
                 fields,
                 self.unique(),
+                vector,
             )),
             false => state.block_on(scope.on(&node).create_index(
                 &self.collection,
                 self.index_name(),
                 fields,
                 self.unique(),
-                None,
+                vector,
             )),
         };
         created
@@ -94,6 +96,17 @@ impl NewIndex {
                 .unwrap_or_default()
     }
 
+    /// The vector configuration this index requests, read the way the wire
+    /// reads it so the scenario cannot send a shape the API would reject.
+    fn vector_description(&self) -> Result<Option<schema::VectorIndexDescription>, Failure> {
+        match &self.index.vector {
+            None => Ok(None),
+            Some(config) => serde_json::from_value(config.clone())
+                .map(Some)
+                .map_err(|error| Failure::operation(error.to_string())),
+        }
+    }
+
     /// Fails on the arguments no client supports yet.
     fn check_arguments(&self) -> Result<(), Failure> {
         self.common.client_identity(Self::name_of())?;
@@ -114,12 +127,11 @@ impl NewIndex {
                 "index request has more than one kind config".to_owned(),
             ));
         }
-        let unsupported = [("index.vector", self.index.vector.is_some())];
-        unsupported_argument(&unsupported)
+        Ok(())
     }
 
-    /// [`NewIndex::check_arguments`], plus the descending fields the HTTP and
-    /// CLI clients cannot send.
+    /// [`NewIndex::check_arguments`], plus the arguments the HTTP and CLI
+    /// clients cannot send: descending fields and a vector config.
     fn check_remote_arguments(&self) -> Result<(), Failure> {
         self.check_arguments()?;
         let descending = self.index.fields.iter().any(|field| field.descending);
@@ -171,6 +183,7 @@ impl HttpRun for NewIndex {
             }
             let wait_for_build = !action.r#async && !in_txn;
             let build_in_background = action.r#async && !in_txn;
+            let vector = action.vector_description()?;
             let created = state
                 .http_as(
                     action.common.node(),
@@ -183,7 +196,7 @@ impl HttpRun for NewIndex {
                                 &fields,
                                 name.as_deref(),
                                 unique,
-                                None,
+                                vector,
                                 build_in_background,
                             )
                             .await
@@ -260,6 +273,13 @@ impl CliRun for NewIndex {
             // `index new` has no background flag, here or in Go's CLI.
             unsupported_argument(&[("async", action.r#async)])?;
             let fields = action.field_names().join(",");
+            // Held here so the borrowed flags below outlive the argument list.
+            let as_json = match action.vector_description()? {
+                Some(vector) => Some(serde_json::to_string(&vector).map_err(|error| {
+                    Failure::operation(format!("cannot send the vector config: {error}"))
+                })?),
+                None => None,
+            };
             let mut args = vec![
                 "index",
                 "new",
@@ -273,6 +293,9 @@ impl CliRun for NewIndex {
             }
             if action.unique() {
                 args.push("--unique");
+            }
+            if let Some(as_json) = &as_json {
+                args.extend(["--vector", as_json.as_str()]);
             }
             state
                 .defra_client_as(

@@ -124,6 +124,7 @@ impl Scoped<'_> {
             name: Option<&str>,
             fields: Vec<schema::IndexedFieldDescription>,
             unique: bool,
+            vector: Option<schema::VectorIndexDescription>,
         ) -> defra_node::Result<schema::IndexDescription>;
         fn list_indexes(collection: &str) -> defra_node::Result<Vec<defra_node::IndexListing>>;
         fn delete_index(collection: &str, name: &str) -> defra_node::Result<()>;
