@@ -14,14 +14,12 @@ use crate::doc_stream::DocStream;
 use crate::document::{document_to_plan_doc, DocumentMapping};
 use crate::error::Result;
 use crate::fetcher::DocFetcher;
-use crate::mapper::Filter;
 use crate::planner::{Doc, ExecInfo, PlanNode};
 
 /// The parent scan of a routed chunked similarity, scoring each parent by its best chunk.
 pub struct ChunkSimilarityScanNode {
     collection: CollectionVersion,
     mapping: DocumentMapping,
-    filter: Option<Filter>,
     doc_ids: Option<Vec<String>>,
     target: ChunkTarget,
     index_id: u32,
@@ -35,10 +33,8 @@ pub struct ChunkSimilarityScanNode {
     exec_info: ExecInfo,
 }
 
-/// The parent filter and document IDs, checked on the parent's plan row.
+/// The requested document IDs. The planner routes only a query with no filter.
 struct Accepts<'a> {
-    mapping: &'a DocumentMapping,
-    filter: Option<&'a Filter>,
     doc_ids: Option<&'a [String]>,
 }
 
@@ -47,19 +43,11 @@ impl ParentCheck for Accepts<'_> {
         if parent.is_deleted() {
             return Ok(false);
         }
-        let row = document_to_plan_doc(parent, self.mapping)?;
-        if let Some(ids) = self.doc_ids {
-            if !row
-                .doc_id()
-                .is_some_and(|id| ids.iter().any(|want| want == id))
-            {
-                return Ok(false);
-            }
-        }
-        match self.filter {
-            Some(filter) => filter.matches(row.fields(), self.mapping),
-            None => Ok(true),
-        }
+        let Some(ids) = self.doc_ids else {
+            return Ok(true);
+        };
+        let id = parent.id().map(ToString::to_string);
+        Ok(id.is_some_and(|id| ids.contains(&id)))
     }
 }
 
@@ -76,7 +64,6 @@ impl ChunkSimilarityScanNode {
         Self {
             collection,
             mapping,
-            filter: None,
             doc_ids: None,
             target,
             index_id,
@@ -91,11 +78,6 @@ impl ChunkSimilarityScanNode {
         }
     }
 
-    pub(crate) fn with_filter(mut self, filter: Filter) -> Self {
-        self.filter = Some(filter);
-        self
-    }
-
     pub(crate) fn with_doc_ids(mut self, doc_ids: Vec<String>) -> Self {
         if !doc_ids.is_empty() {
             self.doc_ids = Some(doc_ids);
@@ -105,8 +87,6 @@ impl ChunkSimilarityScanNode {
 
     fn accepts(&self) -> Accepts<'_> {
         Accepts {
-            mapping: &self.mapping,
-            filter: self.filter.as_ref(),
             doc_ids: self.doc_ids.as_deref(),
         }
     }
@@ -221,17 +201,12 @@ impl PlanNode for ChunkSimilarityScanNode {
     }
 
     fn explain_inner(&self) -> JsonValue {
-        let filter = match (&self.filter, &self.doc_ids) {
-            (Some(filter), Some(_)) => crate::plan::strip_docid_from_filter(filter),
-            (Some(filter), None) => filter.to_explain_json(),
-            (None, _) => JsonValue::Null,
-        };
         let prefixes = match self.doc_ids {
             Some(_) => Vec::new(),
             None => vec![format!("/{}", self.collection.resolved_root_id())],
         };
         serde_json::json!({
-            "filter": filter,
+            "filter": JsonValue::Null,
             "collectionName": self.collection.name,
             "collectionID": self.collection.version_id,
             "prefixes": prefixes,

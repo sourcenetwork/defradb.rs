@@ -7,7 +7,6 @@ use schema::{CollectionVersion, IndexDescription};
 use super::builder::Planner;
 use crate::document::DocumentMapping;
 use crate::error::{QueryError, Result};
-use crate::mapper::Filter;
 use crate::mapper::{Requestable, Select, Similarity};
 use crate::plan::chunk_similarity::{ChunkTarget, ListedInRow};
 use crate::plan::{ChunkSimilarityNode, ChunkSimilarityScanNode};
@@ -85,7 +84,6 @@ impl Planner {
         select: &Select,
         collection: &CollectionVersion,
         mapping: &DocumentMapping,
-        filter: Option<&Filter>,
     ) -> Result<Option<Box<dyn PlanNode>>> {
         let Some(similarity) = select.fields.iter().find_map(|field| match field {
             Requestable::Similarity(similarity) => Some(similarity),
@@ -111,9 +109,6 @@ impl Planner {
         );
         if let Some(doc_ids) = &select.doc_ids {
             scan = scan.with_doc_ids(doc_ids.clone());
-        }
-        if let Some(filter) = filter {
-            scan = scan.with_filter(filter.clone());
         }
         Ok(Some(Box::new(scan)))
     }

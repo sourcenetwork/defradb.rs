@@ -490,13 +490,7 @@ impl Planner {
         // - Multi-level relation filters: Apply after all joins (like complex filters)
 
         let chunk_scan = match &vector_route {
-            Some(route) => self.chunk_route_scan(
-                route,
-                select,
-                &collection,
-                &scan_mapping,
-                scalar_filter.as_ref(),
-            )?,
+            Some(route) => self.chunk_route_scan(route, select, &collection, &scan_mapping)?,
             None => None,
         };
         let routes_chunks = chunk_scan.is_some();
