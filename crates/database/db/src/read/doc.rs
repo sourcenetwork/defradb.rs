@@ -271,10 +271,11 @@ impl<S: Store + 'static> DocFetcher for DbDocFetcher<S> {
     async fn get_document_arrivals(
         &self,
         options: &query::fetcher::DocumentArrivalOptions,
+        reader: &query::fetcher::DocumentReader<'_>,
     ) -> query::error::Result<query::fetcher::DocumentArrivalPage> {
-        crate::event::arrivals::read(&*self.shared_txn()?, options)
+        crate::event::arrivals::read(None, &*self.shared_txn()?, options, reader)
             .await
-            .map_err(|e| query::error::QueryError::execution(e.to_string()))
+            .map_err(crate::event::updates::query_error)
     }
 
     async fn get_document_updates(

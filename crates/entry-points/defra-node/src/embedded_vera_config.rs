@@ -9,7 +9,7 @@ use std::time::Duration;
 pub use vera_embedded::Deployment as EmbeddedVeraDeployment;
 pub use vera_embedded::SeededPolicy as EmbeddedVeraPolicy;
 
-pub use crate::vera_rs_config::VeraRsActor as EmbeddedVeraActor;
+pub use crate::vera_config::VeraActor as EmbeddedVeraActor;
 
 /// vera.rs document ACP from a single-validator Vera node the DefraDB node
 /// starts before document ACP and stops on shutdown. The node is reached

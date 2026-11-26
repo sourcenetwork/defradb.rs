@@ -10,6 +10,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use testo::prelude::*;
 
+/// Go's `indexBackfillBatchSize`. A watermark gate holds the build after its
+/// first batch, so the corpus sizes its collections against this batch.
+const GO_BACKFILL_BATCH_DOCS: usize = 100;
+
 /// A Rust receiver's admission limits: its pending-DAG map and its per-peer
 /// rate bucket (tokens, and tokens refilled per second).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -22,6 +26,17 @@ pub struct AdmissionSpec {
     /// the default.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub deferral_peer_bytes: Option<u64>,
+}
+
+/// A Rust node's connection manager: it trims to `low_water` once it holds
+/// more than `high_water` connections, sparing those younger than
+/// `grace_period_ms`.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConnectionManagerSpec {
+    pub low_water: u32,
+    pub high_water: u32,
+    pub grace_period_ms: u64,
 }
 
 /// Starts a node. Without options it is a plain in-process node; every option below is one of the corpus's ways to start one.
@@ -76,6 +91,9 @@ pub struct NewNode {
     /// A Rust node with the given admission limits.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub admission: Option<AdmissionSpec>,
+    /// A Rust node with this connection manager.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub connection_manager: Option<ConnectionManagerSpec>,
     /// A Rust node whose network is iroh rather than libp2p.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub iroh: bool,
@@ -98,6 +116,10 @@ pub struct NewNode {
     /// node runs P2P and where it listens.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub go_config: Option<String>,
+    /// A Rust node started on a data directory that already holds the
+    /// Badger datastore Go DefraDB keeps there.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub go_datastore: bool,
     #[serde(default, skip_serializing_if = "Value::is_null")]
     pub expected_data: Value,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -128,11 +150,13 @@ impl Op for NewNode {
         probe.network = false;
         probe.database_dir = None;
         probe.admission = None;
+        probe.connection_manager = None;
         probe.resolv_conf = None;
         probe.iroh = false;
         probe.registered_identity = false;
         probe.without_node_identity = false;
         probe.go_config = None;
+        probe.go_datastore = false;
         probe.node_identity_seed = None;
         probe.enable_signing = false;
         probe.key_type = None;
@@ -176,12 +200,17 @@ impl Op for NewNode {
         }
         let max_txn_retries = self.max_txn_retries(state.client_type())?;
         let registered_identity = self.registered_identity(state.client_type())?;
-        let dir = match self.database_dir {
-            Some(_) => Some(Arc::new(tempfile::tempdir().map_err(|e| {
+        let dir = match self.database_dir.is_some() || self.go_datastore {
+            true => Some(Arc::new(tempfile::tempdir().map_err(|e| {
                 Failure::operation(format!("could not make the node's directory: {e}"))
             })?)),
-            None => None,
+            false => None,
         };
+        if let (true, Some(dir)) = (self.go_datastore, &dir) {
+            std::fs::write(dir.path().join("MANIFEST"), GO_BADGER_MANIFEST).map_err(|e| {
+                Failure::operation(format!("could not write the Go datastore's MANIFEST: {e}"))
+            })?;
+        }
         let (network, listen) = match &self.go_config {
             Some(body) => go_config_network(body)?,
             None => (self.network, Vec::new()),
@@ -191,7 +220,9 @@ impl Op for NewNode {
             dir,
             listen,
             go_config: self.go_config.is_some(),
+            go_datastore: self.go_datastore,
             admission: self.admission.clone(),
+            connection_manager: self.connection_manager.clone(),
             resolv_conf: self.resolv_conf(state.client_type())?,
             iroh_network: self.iroh,
             node_identity,
@@ -201,6 +232,8 @@ impl Op for NewNode {
             txn_ttl,
             se_key: self.searchable_encryption_key()?,
             index_gate,
+            backfill_batch_docs: (self.index_gate == Some(IndexGate::Watermark))
+                .then_some(GO_BACKFILL_BATCH_DOCS),
             commit_gate: self
                 .commit_gate
                 .then(crate::commit_gate::TestCommitGate::default)
@@ -209,10 +242,18 @@ impl Op for NewNode {
             max_txn_retries,
             ..Default::default()
         };
-        state.start_node(self.common.node(), spec);
+        state.try_start_node(self.common.node(), spec)?;
         Ok(json!({}))
     }
 }
+
+/// The `MANIFEST` Go DefraDB's Badger store holds once a new rootdir has
+/// started: Badger's magic text `Bdgr`, its format version 8, and the first
+/// change set.
+const GO_BADGER_MANIFEST: [u8; 32] = [
+    0x42, 0x64, 0x67, 0x72, 0x00, 0x00, 0x00, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x08, 0xb1, 0xdb, 0xb0, 0x99, 0x0a, 0x06, 0x08, 0x01, 0x20, 0x01, 0x30, 0x01,
+];
 
 /// Loads a Go-written `config.yaml` through the CLI's loader, as `defradb
 /// --rootdir <dir>` does, and answers whether the node runs P2P and the

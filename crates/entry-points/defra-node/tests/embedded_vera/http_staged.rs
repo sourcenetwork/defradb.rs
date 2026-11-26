@@ -77,7 +77,7 @@ impl Home {
         let vera = node.vera_acp().expect("vera.rs document ACP").clone();
         let admin = vera.self_did().expect("actor DID");
         let policy = vera.add_policy(&admin, POLICY, None).await.expect("policy");
-        node.add_collection(&users(&policy))
+        node.add_collection(&defra_core::RequestContext::ambient(), &users(&policy))
             .await
             .expect("collection");
         let audience = vera
@@ -117,7 +117,7 @@ impl Home {
             .unwrap();
         assert!(begun.status().is_success(), "{}", begun.status());
         let body: Value = begun.json().await.unwrap();
-        body["id"].as_u64().unwrap().to_string()
+        body["id"].to_string()
     }
 
     async fn finish(&self, auth: &str, tx: &str, commit: bool) -> u16 {

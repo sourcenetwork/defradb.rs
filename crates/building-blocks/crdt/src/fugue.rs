@@ -12,7 +12,9 @@
 //! concurrent edits that point at them still find them.
 //!
 //! [`replay`] rebuilds a field's text from all its blocks; the tree is thrown
-//! away after, and the stored value is the text. A block whose parents are the
+//! away after, and the stored value is the text. Past a critical block the
+//! replay folds the tree down to its text (`fugue_checkpoint.rs`), so it holds
+//! what the blocks since then added, not every character ever inserted. A block whose parents are the
 //! field's current heads needs no replay: its parent version is the stored
 //! text, so [`TextOp::apply_all`] on it gives the same result. Any other
 //! block goes through [`merge_text`], which replays only the blocks after the
@@ -263,6 +265,13 @@ impl Order {
             .into_iter()
             .flat_map(|chunk| chunk.nodes)
             .collect()
+    }
+
+    /// Every node, in reading order.
+    fn nodes(&self) -> impl Iterator<Item = usize> + '_ {
+        self.chunks
+            .iter()
+            .flat_map(|chunk| chunk.nodes.iter().copied())
     }
 }
 
@@ -569,17 +578,8 @@ fn clamp(pos: u64, len: usize) -> usize {
     usize::try_from(pos).map_or(len, |pos| pos.min(len))
 }
 
-/// The text a Text field's blocks produce. `blocks` is the whole history: every
-/// parent a block names is in it. Any order of `blocks` gives the same text.
-pub fn replay(blocks: &[TextBlock]) -> Result<String> {
-    Ok(characters(blocks)?
-        .into_iter()
-        .filter(|c| !c.deleted)
-        .map(|c| c.ch)
-        .collect())
-}
-
 /// One character of a replayed Text field, deleted ones too.
+#[cfg(test)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Character<'history> {
     /// The CID bytes of the block that inserted it.
@@ -657,7 +657,9 @@ pub fn merge_text(
     Ok(Some(text))
 }
 
-/// Every character `blocks` insert, in reading order.
+/// Every character `blocks` insert, in reading order, from a tree never
+/// folded.
+#[cfg(test)]
 fn characters(blocks: &[TextBlock]) -> Result<Vec<Character<'_>>> {
     let (tree, full) = build(blocks, None)?;
     let all = Ancestry::Prefix(tree.ids.len());
@@ -684,33 +686,13 @@ fn characters(blocks: &[TextBlock]) -> Result<Vec<Character<'_>>> {
 /// and a parent outside `blocks` stands for them; without it, every parent is
 /// in `blocks`.
 fn build(blocks: &[TextBlock], base: Option<usize>) -> Result<(Tree<'_>, Vec<usize>)> {
-    let order = topological(blocks, base.is_some())?;
-    let position: RapidHashMap<&[u8], usize> = order
-        .iter()
-        .enumerate()
-        .map(|(position, &index)| (blocks[index].id.as_slice(), position))
-        .collect();
-    let mut tree = Tree::with_placeholder(
-        order
-            .iter()
-            .map(|&index| blocks[index].id.as_slice())
-            .collect(),
-        base.unwrap_or(0),
-    );
-    let mut ancestry: Vec<Ancestry> = Vec::with_capacity(order.len());
-    for (step, &index) in order.iter().enumerate() {
-        let block = &blocks[index];
-        let parents: Vec<usize> = block
-            .parents
-            .iter()
-            .filter_map(|parent| position.get(parent.as_slice()).copied())
-            .collect();
-        let before = ancestry_of(&parents, &ancestry, step);
+    let history = History::of(blocks, base.is_some())?;
+    let mut tree = Tree::with_placeholder(history.ids, base.unwrap_or(0));
+    for (step, &index) in history.order.iter().enumerate() {
         let mut next_offset = 0;
-        for op in &block.ops {
-            tree.apply(op, step, &before, &mut next_offset)?;
+        for op in &blocks[index].ops {
+            tree.apply(op, step, &history.ancestry[step], &mut next_offset)?;
         }
-        ancestry.push(before);
     }
     let full = match tree.order.take() {
         Some(order) => {
@@ -723,6 +705,48 @@ fn build(blocks: &[TextBlock], base: Option<usize>) -> Result<(Tree<'_>, Vec<usi
         None => tree.traverse(None),
     };
     Ok((tree, full))
+}
+
+/// A Text field's blocks in topological order, with what each one sees.
+struct History<'history> {
+    /// Each step's block ID.
+    ids: Vec<&'history [u8]>,
+    /// Each step's index in the blocks.
+    order: Vec<usize>,
+    /// The blocks before each step's block.
+    ancestry: Vec<Ancestry>,
+}
+
+impl<'history> History<'history> {
+    /// The steps of `blocks`. With `outside`, a parent missing from `blocks`
+    /// comes before all of them; without it, that is an error.
+    fn of(blocks: &'history [TextBlock], outside: bool) -> Result<Self> {
+        let order = topological(blocks, outside)?;
+        let ids: Vec<&[u8]> = order
+            .iter()
+            .map(|&index| blocks[index].id.as_slice())
+            .collect();
+        let position: RapidHashMap<&[u8], usize> = ids
+            .iter()
+            .enumerate()
+            .map(|(position, &id)| (id, position))
+            .collect();
+        let mut ancestry: Vec<Ancestry> = Vec::with_capacity(order.len());
+        for (step, &index) in order.iter().enumerate() {
+            let parents: Vec<usize> = blocks[index]
+                .parents
+                .iter()
+                .filter_map(|parent| position.get(parent.as_slice()).copied())
+                .collect();
+            let before = ancestry_of(&parents, &ancestry, step);
+            ancestry.push(before);
+        }
+        Ok(Self {
+            ids,
+            order,
+            ancestry,
+        })
+    }
 }
 
 /// The blocks before the block at topological position `step`, whose parents
@@ -804,6 +828,11 @@ fn topological(blocks: &[TextBlock], outside: bool) -> Result<Vec<usize>> {
     }
     Ok(order)
 }
+
+#[path = "fugue_checkpoint.rs"]
+mod checkpoint;
+
+pub use checkpoint::replay;
 
 #[cfg(test)]
 #[path = "fugue_tests.rs"]

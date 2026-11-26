@@ -89,7 +89,7 @@ async fn run(edge: edge::Edge) -> Result<()> {
     // `start` command (matching Go, which configures it only in start.go) so
     // ephemeral commands like `version` / `client` don't spin up the exporter.
     let logging = cli::logging::init(&config, &edge, should_profile(&cli), enable_telemetry(&cli))?;
-    for warning in &config.ignored_go_keys {
+    for warning in &config.ignored_keys {
         tracing::warn!("{warning}");
     }
 

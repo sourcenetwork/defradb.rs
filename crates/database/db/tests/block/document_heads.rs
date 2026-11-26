@@ -1,3 +1,4 @@
+use crate::common::schema::parsed;
 use cid::Cid;
 use db::block::heads::document::{commit, iterator, load, publish};
 use storage::corekv::{IterOptions, Key};
@@ -269,26 +270,11 @@ fn every_write_path_keeps_a_documents_stored_heads_to_its_live_heads() {
         use query::mutator::DocMutator;
         const WRITES: i64 = 24;
         let db = std::sync::Arc::new(db::DB::new(RegolithStore::in_memory().unwrap()).unwrap());
-        let collection = schema::CollectionVersion::new(
-            "Rewritten",
-            "rewritten-v1",
-            "col-rewritten",
-            vec![
-                schema::FieldDescription::new(
-                    "1",
-                    "_docID",
-                    schema::FieldKind::doc_id(),
-                    schema::CType::LwwRegister,
-                ),
-                schema::FieldDescription::new(
-                    "2",
-                    "value",
-                    schema::FieldKind::int(),
-                    schema::CType::LwwRegister,
-                ),
-            ],
-        );
-        db.create_collection(collection.clone()).await.unwrap();
+        let collection_sdl = "type Rewritten { value: Int }";
+        let collection = parsed(collection_sdl);
+        db.add_collection(&defra_core::RequestContext::ambient(), collection_sdl)
+            .await
+            .unwrap();
         let autocommit = db::AutoCommitMutator::new(db.clone());
         let doc_id = autocommit
             .create(
@@ -338,32 +324,11 @@ fn concurrent_updates_of_one_document_both_commit() {
     workers::block_on(async {
         use query::mutator::DocMutator;
         let db = std::sync::Arc::new(db::DB::new(RegolithStore::in_memory().unwrap()).unwrap());
-        let collection = schema::CollectionVersion::new(
-            "Pair",
-            "pair-v1",
-            "col-pair",
-            vec![
-                schema::FieldDescription::new(
-                    "1",
-                    "_docID",
-                    schema::FieldKind::doc_id(),
-                    schema::CType::LwwRegister,
-                ),
-                schema::FieldDescription::new(
-                    "2",
-                    "left",
-                    schema::FieldKind::int(),
-                    schema::CType::LwwRegister,
-                ),
-                schema::FieldDescription::new(
-                    "3",
-                    "right",
-                    schema::FieldKind::int(),
-                    schema::CType::LwwRegister,
-                ),
-            ],
-        );
-        db.create_collection(collection.clone()).await.unwrap();
+        let collection_sdl = "type Pair { left: Int right: Int }";
+        let collection = parsed(collection_sdl);
+        db.add_collection(&defra_core::RequestContext::ambient(), collection_sdl)
+            .await
+            .unwrap();
         let doc_id = db::AutoCommitMutator::new(db.clone())
             .create(
                 "Pair",
@@ -619,26 +584,11 @@ fn no_write_path_stores_a_publication_guard() {
     workers::block_on(async {
         use query::mutator::DocMutator;
         let db = std::sync::Arc::new(db::DB::new(RegolithStore::in_memory().unwrap()).unwrap());
-        let collection = schema::CollectionVersion::new(
-            "Guarded",
-            "guarded-v1",
-            "col-guarded",
-            vec![
-                schema::FieldDescription::new(
-                    "1",
-                    "_docID",
-                    schema::FieldKind::doc_id(),
-                    schema::CType::LwwRegister,
-                ),
-                schema::FieldDescription::new(
-                    "2",
-                    "value",
-                    schema::FieldKind::int(),
-                    schema::CType::LwwRegister,
-                ),
-            ],
-        );
-        db.create_collection(collection.clone()).await.unwrap();
+        let collection_sdl = "type Guarded { value: Int }";
+        let collection = parsed(collection_sdl);
+        db.add_collection(&defra_core::RequestContext::ambient(), collection_sdl)
+            .await
+            .unwrap();
         let autocommit = db::AutoCommitMutator::new(db.clone());
         let doc_id = autocommit
             .create(

@@ -97,28 +97,18 @@ impl<S: Store + 'static> DbTransactionRegistry<S> {
         .await
     }
 
-    /// [`Self::add_collection_in_txn_as`] in [`RequestContext::ambient`].
-    pub async fn add_collection_in_txn(
-        &self,
-        txn_id: &str,
-        sdl: &str,
-    ) -> Result<Vec<schema::CollectionVersion>> {
-        self.add_collection_in_txn_as(&RequestContext::ambient(), txn_id, sdl)
-            .await
-    }
-
     /// Add a schema within an existing transaction, through the same checks
     /// as [`crate::database::DB::add_collection`]. The collections are only
     /// visible after the transaction commits, but queries within it can use
     /// them. Branchable collection ACP objects are registered before the
     /// storage commit when document ACP is installed.
-    pub async fn add_collection_in_txn_as(
+    pub async fn add_collection(
         &self,
         context: &RequestContext,
         txn_id: &str,
         sdl: &str,
     ) -> Result<Vec<schema::CollectionVersion>> {
-        let to_error = |e: crate::AddCollectionError| Error::Other(e.to_string());
+        let to_error = Error::AddCollection;
         self.db
             .check_node_access_as(context, acp::nac::NodePermission::CollectionPatch)
             .await?;

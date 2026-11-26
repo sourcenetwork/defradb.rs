@@ -18,6 +18,11 @@ reads, unique-index enforcement, writes, updates, commit-history lookup through
 the old public DocID alias, reopen idempotence, and transactional rollback when
 a legacy block is missing.
 
+v0.15 did not derive a DocID from the genesis block, so all three documents are
+stored under an ID that is not their genesis's. The upgrade re-keys each one:
+the genesis ID becomes the primary ID and the v0.15 ID stays as an alias, which
+`rekeys_legacy_doc_ids_to_their_genesis_id_with_an_alias` asserts.
+
 ## Provenance
 
 v0.15.3 wrote to Redb, and this fixture began as `v015_populated.redb.zst.b64`.

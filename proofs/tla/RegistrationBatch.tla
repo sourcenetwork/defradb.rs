@@ -21,7 +21,7 @@
 \* (crates/engine/vera/src/vera_rs/provider/registration_list.rs calldata,
 \* vera.rs `bearerPolicyCmds`). A list the provider refuses applied nothing;
 \* its members are then sent one at a time, first to last
-\* (crates/engine/vera/src/cosmos/dac/registration_batch.rs register_listed),
+\* (crates/engine/vera/src/dac/registration_batch.rs register_listed),
 \* so each is answered as it would be alone. An answer can be lost on the
 \* way: the provider may or may not have applied the request, the records
 \* stay, and a later pass settles them.
@@ -65,7 +65,7 @@
 \*                  (is_doc_registered) before anything is sent;
 \*   AskOnRefusal   registration.rs held_after_refusal, which asks again
 \*                  before a refusal is reported;
-\*   Fallback       cosmos/dac/registration_batch.rs register_listed, which
+\*   Fallback       dac/registration_batch.rs register_listed, which
 \*                  sends a refused list's members one at a time;
 \*   PerCreator     registration_batch.rs Sender, which keeps one creator and
 \*                  one credential per list;

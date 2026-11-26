@@ -121,6 +121,10 @@ pub enum Error {
     #[error("server returned error: {0}")]
     Server(String),
 
+    /// A server refusal with the stable code a client classifies it by.
+    #[error("server returned error: {message}")]
+    ServerRefused { message: String, code: String },
+
     #[error(transparent)]
     Documents(#[from] query::documents::Error),
 
@@ -168,4 +172,14 @@ pub enum Error {
 
     #[error("invalid URL '{0}': {1}")]
     InvalidUrl(String, String),
+}
+
+impl Error {
+    /// The stable code a server refusal carries, when it carries one.
+    pub fn code(&self) -> Option<&str> {
+        match self {
+            Self::ServerRefused { code, .. } => Some(code),
+            _ => None,
+        }
+    }
 }

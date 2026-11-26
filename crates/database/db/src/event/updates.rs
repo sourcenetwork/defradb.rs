@@ -1,7 +1,5 @@
 //! The per-collection journal of committed document updates, and its paged read.
 
-mod gate;
-
 use crate::error::{Error, Result};
 use datastore::NamespaceView;
 use query::fetcher::{DocumentReader, DocumentUpdate, DocumentUpdateOptions, DocumentUpdatePage};
@@ -102,7 +100,7 @@ where
         projection: reader.projection,
         identity: reader.identity,
     };
-    let mut gate = gate::Gate::new(txn, &collection, &reader)?;
+    let mut gate = super::gate::Gate::new(txn, &collection, &reader)?;
     for (_, row) in &rows {
         gate.decide(&row.doc_id).await?;
     }

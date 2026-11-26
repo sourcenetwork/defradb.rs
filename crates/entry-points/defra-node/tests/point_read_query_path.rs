@@ -28,7 +28,7 @@ fn fetches(value: &Value) -> u64 {
 fn exact_id_reads_seek_and_keep_filters_and_deleted_visibility() {
     workers::block_on(async {
     let node = Node::builder().build().await.unwrap();
-    node.add_collection("type Note { title: String owner: String @index }")
+    node.add_collection(&defra_core::RequestContext::ambient(), "type Note { title: String owner: String @index }")
         .await
         .unwrap();
     let mut id = String::new();
@@ -100,6 +100,7 @@ fn deleted_rows_remain_visible_with_indexed_filters_and_ordering() {
     workers::block_on(async {
         let node = Node::builder().build().await.unwrap();
         node.add_collection(
+            &defra_core::RequestContext::ambient(),
             "type RetainedNote { owner: String @index rank: Int @index body: String }",
         )
         .await

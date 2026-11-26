@@ -398,7 +398,7 @@ fn a_node_adopts_a_policy_its_vera_node_was_seeded_with() {
 /// its own actor. What either writes, the other reads.
 #[test]
 fn a_second_node_shares_the_first_nodes_vera_deployment() {
-    use defra_node::{VeraRsActor, VeraRsConfig};
+    use defra_node::{VeraActor, VeraConfig};
     use vera::vera_rs::{DelegationSigner, Ed25519Signer};
 
     workers::block_on(async {
@@ -423,12 +423,12 @@ fn a_second_node_shares_the_first_nodes_vera_deployment() {
             keyring::FileKeyring::open(second_dir.join("keys"), b"test-password").expect("keyring"),
         );
         let second = Node::builder()
-            .with_vera_rs(VeraRsConfig {
+            .with_vera(VeraConfig {
                 rpc_address: format!("http://{rpc}"),
                 consensus_key: trust.consensus_key,
                 genesis_id: None,
                 deployment_id: trust.chain_id,
-                actor: VeraRsActor::Signer(second_signer),
+                actor: VeraActor::Signer(second_signer),
                 worker_dir: second_dir.join("worker"),
                 keyring,
                 tuning: vera::AcpTuning::default(),
@@ -526,7 +526,7 @@ fn a_caller_that_keeps_its_key_writes_through_its_own_delegation() {
         let vera = node.vera_acp().expect("vera.rs document ACP").clone();
         let owner = vera.self_did().expect("actor DID");
         let policy = vera.add_policy(&owner, POLICY, None).await.expect("policy");
-        node.add_collection(&format!(
+        node.add_collection(&defra_core::RequestContext::ambient(), &format!(
             "type Users @policy(id: \"{policy}\", resource: \"users\") {{ name: String }}"
         ))
         .await
@@ -773,7 +773,7 @@ fn a_grant_staged_beside_its_document_lets_the_grantee_read_after_the_commit() {
             .add_policy(owner.as_str(), POLICY, None)
             .await
             .expect("policy");
-        node.add_collection(&users(&policy))
+        node.add_collection(&defra_core::RequestContext::ambient(), &users(&policy))
             .await
             .expect("collection");
         let acting = defra_core::RequestContext::default().with_identity(Some(owner.to_string()));
@@ -898,7 +898,7 @@ fn an_observation_under_writes_is_asked_again_when_a_block_overtakes_it() {
             .add_policy(owner.as_str(), POLICY, None)
             .await
             .expect("policy");
-        node.add_collection(&users(&policy))
+        node.add_collection(&defra_core::RequestContext::ambient(), &users(&policy))
             .await
             .expect("collection");
         let doc = created(node.execute_request(create_user("observed", &owner)).await);
@@ -957,7 +957,7 @@ fn the_grants_one_transaction_stages_land_together() {
             .add_policy(owner.as_str(), POLICY, None)
             .await
             .expect("policy");
-        node.add_collection(&users(&policy))
+        node.add_collection(&defra_core::RequestContext::ambient(), &users(&policy))
             .await
             .expect("collection");
         let acting = defra_core::RequestContext::default().with_identity(Some(owner.to_string()));
@@ -1012,7 +1012,7 @@ fn a_revocation_staged_in_a_transaction_denies_at_the_commit_and_the_chain_follo
             .await
             .expect("policy");
         drop(vera);
-        node.add_collection(&users(&policy))
+        node.add_collection(&defra_core::RequestContext::ambient(), &users(&policy))
             .await
             .expect("collection");
         let acting = defra_core::RequestContext::default().with_identity(Some(owner.to_string()));
@@ -1067,7 +1067,7 @@ fn a_revocation_staged_in_a_transaction_denies_at_the_commit_and_the_chain_follo
 #[test]
 fn a_restart_settles_a_change_the_chain_could_not_take() {
     use acp::RemotePolicies as _;
-    use defra_node::{VeraRsActor, VeraRsConfig};
+    use defra_node::{VeraActor, VeraConfig};
     use vera::vera_rs::{DelegationSigner, Ed25519Signer};
 
     workers::block_on(async {
@@ -1102,12 +1102,12 @@ fn a_restart_settles_a_change_the_chain_could_not_take() {
                     );
                     Node::builder()
                         .data_path(home.join("data"))
-                        .with_vera_rs(VeraRsConfig {
+                        .with_vera(VeraConfig {
                             rpc_address: format!("http://{rpc}"),
                             consensus_key: trust.consensus_key,
                             genesis_id: Some(genesis_id),
                             deployment_id: trust.chain_id,
-                            actor: VeraRsActor::Signer(signer),
+                            actor: VeraActor::Signer(signer),
                             worker_dir: home.join("worker"),
                             keyring,
                             tuning: vera::AcpTuning::default(),
@@ -1134,7 +1134,7 @@ fn a_restart_settles_a_change_the_chain_could_not_take() {
             .expect("hosted genesis");
         let node = consumer(trust.clone(), genesis_id, rpc).await;
         let policy = seeded_policy(&node, chain_owner.as_str()).await;
-        node.add_collection(&users(&policy))
+        node.add_collection(&defra_core::RequestContext::ambient(), &users(&policy))
             .await
             .expect("collection");
         first_chain.shutdown().await.expect("shutdown");
@@ -1200,7 +1200,7 @@ fn a_restart_settles_a_change_the_chain_could_not_take() {
 /// while the provider is away and tries again by itself.
 #[test]
 fn an_idle_node_settles_a_staged_grant_once_its_deployment_is_back() {
-    use defra_node::{VeraRsActor, VeraRsConfig};
+    use defra_node::{VeraActor, VeraConfig};
     use vera::vera_rs::{DelegationSigner, Ed25519Signer};
 
     workers::block_on(async {
@@ -1232,12 +1232,12 @@ fn an_idle_node_settles_a_staged_grant_once_its_deployment_is_back() {
         );
         let node = Node::builder()
             .data_path(home.join("data"))
-            .with_vera_rs(VeraRsConfig {
+            .with_vera(VeraConfig {
                 rpc_address: format!("http://{rpc}"),
                 consensus_key: trust.consensus_key,
                 genesis_id: None,
                 deployment_id: trust.chain_id,
-                actor: VeraRsActor::Signer(Arc::clone(&signer)),
+                actor: VeraActor::Signer(Arc::clone(&signer)),
                 worker_dir: home.join("worker"),
                 keyring,
                 tuning: vera::AcpTuning::default(),
@@ -1246,7 +1246,7 @@ fn an_idle_node_settles_a_staged_grant_once_its_deployment_is_back() {
             .await
             .expect("consumer node");
         let policy = seeded_policy(&node, chain_owner.as_str()).await;
-        node.add_collection(&users(&policy))
+        node.add_collection(&defra_core::RequestContext::ambient(), &users(&policy))
             .await
             .expect("collection");
         first_chain.shutdown().await.expect("shutdown");
@@ -1386,7 +1386,7 @@ impl Grouped {
             .await
             .expect("policy");
         drop(vera);
-        node.add_collection(&users(&policy))
+        node.add_collection(&defra_core::RequestContext::ambient(), &users(&policy))
             .await
             .expect("collection");
         let owner = registered_identity();
@@ -1617,7 +1617,7 @@ fn a_key_registered_under_another_spelling_signs_its_staged_changes() {
             .await
             .expect("policy");
         drop(vera);
-        node.add_collection(&users(&policy))
+        node.add_collection(&defra_core::RequestContext::ambient(), &users(&policy))
             .await
             .expect("collection");
         let owner = registered_under_the_compressed_spelling();

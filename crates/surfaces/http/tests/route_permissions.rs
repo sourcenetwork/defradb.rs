@@ -55,6 +55,10 @@ fn identity_only_routes() {
         RoutePermission::IdentityOnly
     );
     assert_eq!(
+        route_permission("/api/v0/tx/{id}", &Method::GET),
+        RoutePermission::IdentityOnly
+    );
+    assert_eq!(
         route_permission("/api/v0/tx/{id}", &Method::POST),
         RoutePermission::IdentityOnly
     );
@@ -339,6 +343,7 @@ const REVIEWED: &[(&str, &str, &str)] = &[
     ("/api/v0/actions", "GET", "ActionList"),
     ("/api/v0/schema", "GET", "CollectionGet"),
     ("/api/v0/tx", "POST", "identity-only"),
+    ("/api/v0/tx/{id}", "GET", "identity-only"),
     ("/api/v0/tx/{id}", "POST", "identity-only"),
     ("/api/v0/tx/{id}", "DELETE", "identity-only"),
     ("/api/v0/collections", "GET", "CollectionGet"),

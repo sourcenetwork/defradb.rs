@@ -4,9 +4,14 @@ use defra_core::signing::{RemoteSigner, SignFailure, SigningAuthorization};
 use defra_core::thread_bounds::MaybeBoxFuture;
 use nuclei::sync::{mpsc, oneshot};
 
+use crate::client_signing_waves::SigningWaveError;
+
+/// One wave the session asks the client to sign. The session's
+/// [`SigningWaves`](crate::client_signing_waves::SigningWaves) verifies the
+/// answer before it is sent back.
 pub(crate) struct Wave {
     pub(crate) payloads: Vec<Arc<[u8]>>,
-    pub(crate) answer: oneshot::Sender<Vec<Vec<u8>>>,
+    pub(crate) answer: oneshot::Sender<Result<Vec<Vec<u8>>, SigningWaveError>>,
 }
 
 /// One signer belongs to one connection and never consults the DID registry.
@@ -43,35 +48,20 @@ impl RemoteSigner for SessionSigner {
         payloads: Vec<Arc<[u8]>>,
         _: Option<SigningAuthorization>,
     ) -> MaybeBoxFuture<'static, Vec<Result<Vec<u8>, SignFailure>>> {
-        let public = self.public.clone();
         let requests = self.requests.clone();
         Box::pin(async move {
             let count = payloads.len();
             let (answer, received) = oneshot::channel();
-            if requests
-                .send(Wave {
-                    payloads: payloads.clone(),
-                    answer,
-                })
-                .await
-                .is_err()
-            {
+            if requests.send(Wave { payloads, answer }).await.is_err() {
                 return vec![Err(SignFailure::refused("signing connection closed")); count];
             }
-            let signatures = match received.await {
-                Ok(signatures) if signatures.len() == count => signatures,
-                _ => return vec![Err(SignFailure::refused("invalid signing response")); count],
-            };
-            payloads
-                .iter()
-                .zip(signatures)
-                .map(
-                    |(payload, signature)| match public.verify(payload, &signature) {
-                        Ok(true) => Ok(signature),
-                        _ => Err(SignFailure::refused("client signature did not verify")),
-                    },
-                )
-                .collect()
+            match received.await {
+                Ok(Ok(signatures)) if signatures.len() == count => {
+                    signatures.into_iter().map(Ok).collect()
+                }
+                Ok(Err(refused)) => vec![Err(SignFailure::refused(refused.to_string())); count],
+                _ => vec![Err(SignFailure::refused("invalid signing response")); count],
+            }
         })
     }
 }
