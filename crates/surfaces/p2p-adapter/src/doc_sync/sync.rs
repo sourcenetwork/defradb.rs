@@ -15,6 +15,10 @@ use crate::{P2PError, P2PErrorExt as _};
 /// merge is deliberate on a fire-and-forget transport, which cannot tell a
 /// quiet peer from a lost request; where a send confirms a reply, silence with
 /// nothing merged is reported as a timeout instead.
+///
+/// `Ok` returned before the timeouts means every asked document merged. `Ok`
+/// after the idle or overall timeout means only that the sync stopped
+/// waiting.
 pub(crate) async fn sync_documents<D>(
     dispatch: Arc<D>,
     event_bus: &dyn events::Bus,
@@ -33,18 +37,20 @@ where
     }
 
     let mut sub = event_bus.subscribe(&[events::EventName::MergeComplete]);
-    let total_expected = connected_peers.len() * doc_ids.len();
-    let mut total_received = 0;
+    // A merge is reported more than once (by the merge handler and by the
+    // replication loop), and again when another peer sends a head already
+    // held, so completion is the set of asked documents seen merged, not a
+    // count of reports (proofs/tla/DocSyncCompletion.tla).
+    let doc_set: RapidHashSet<String> = doc_ids.iter().cloned().collect();
+    let mut merged = RapidHashSet::<String>::default();
     let mut last_unanswered = 0;
     let mut dispatched = false;
     let idle_timeout = std::time::Duration::from_secs(3);
     let start = web_time::Instant::now();
-    let doc_set: RapidHashSet<String> = doc_ids.iter().cloned().collect();
 
     for _attempt in 0..3 {
-        // Completion first: an empty `doc_ids` makes `total_expected` zero, and
-        // asking for nothing is not a timeout.
-        if total_received >= total_expected {
+        // Completion first: asking for nothing is not a timeout.
+        if merged.len() >= doc_set.len() {
             break;
         }
         // Go builds an already-expired context from a zero or negative timeout
@@ -96,7 +102,7 @@ where
         // nothing to contribute — e.g. source-side explicit sync while
         // collection replication delivers the doc out of band.
         let mut last_merge = web_time::Instant::now();
-        while total_received < total_expected && start.elapsed() < overall_timeout {
+        while merged.len() < doc_set.len() && start.elapsed() < overall_timeout {
             if last_merge.elapsed() > idle_timeout {
                 break;
             }
@@ -105,7 +111,7 @@ where
                 Ok(Some(msg)) => {
                     if let Some(data) = msg.as_merge_complete() {
                         if doc_set.contains(&data.doc_id) {
-                            total_received += 1;
+                            merged.insert(data.doc_id.clone());
                             last_merge = web_time::Instant::now();
                         }
                     }
@@ -122,7 +128,7 @@ where
     // back (`sync_doc.go:155-158`). Only a transport whose send confirms a
     // reply can tell that from a send that merely left the machine, so libp2p
     // keeps returning `Ok` here rather than inventing a timeout it cannot see.
-    if D::SEND_CONFIRMS_REPLY && last_unanswered > 0 && total_received == 0 {
+    if D::SEND_CONFIRMS_REPLY && last_unanswered > 0 && merged.is_empty() {
         return Err(P2PError::transport("timeout while syncing doc"));
     }
     Ok(())
@@ -352,6 +358,56 @@ mod tests {
         )
         .await
         .expect("libp2p cannot tell silence from a failed send");
+    }
+
+    /// #3468: a merge reported twice does not stand for a second document, so
+    /// the sync waits for each document it asked for.
+    #[nuclei::test]
+    async fn a_merge_reported_twice_counts_as_one_document() {
+        let dispatch = Arc::new(MixedDispatch::<false>::new(1, 0));
+        let bus = Arc::new(events::ChannelBus::default());
+        let merged = |doc_id: &str| {
+            events::Message::merge_complete(events::MergeCompleteData {
+                doc_id: doc_id.to_string(),
+                subject_doc_id: None,
+                cid: cid::Cid::default(),
+                collection_id: "collection".to_string(),
+                by_peer: String::new(),
+            })
+        };
+        let publisher = {
+            let bus = Arc::clone(&bus);
+            edge::testing::edge().spawn(async move {
+                use events::Bus as _;
+                edge::testing::edge().sleep(Duration::from_millis(50)).await;
+                bus.publish(merged("bae-first"));
+                bus.publish(merged("bae-first"));
+                edge::testing::edge()
+                    .sleep(Duration::from_millis(400))
+                    .await;
+                bus.publish(merged("bae-second"));
+            })
+        };
+        let started = web_time::Instant::now();
+
+        super::sync_documents(
+            Arc::clone(&dispatch),
+            bus.as_ref(),
+            &p2p::network::Network::on(edge::testing::edge()),
+            vec!["bae-first".to_string(), "bae-second".to_string()],
+            Duration::from_secs(2),
+            1,
+        )
+        .await
+        .expect("both documents merged");
+
+        assert!(
+            started.elapsed() >= Duration::from_millis(400),
+            "the sync returned before the second document merged, after {:?}",
+            started.elapsed()
+        );
+        assert!(started.elapsed() < Duration::from_millis(1500));
+        publisher.await.expect("publisher");
     }
 
     /// #1314 review: `timeout: "0"` is valid Go input. With peers and

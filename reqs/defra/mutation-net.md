@@ -330,6 +330,13 @@ Two nodes share 20 updates of a document, then lose touch. One makes 40 more upd
 
 A node that holds none of a document with 31 updates, told of its next head, fetches the whole DAG and converges on it. It is sent no block it holds besides the head it asked for (`car_received_already_held` zero), however many of the writer's heads gossip delivered before the fetch.
 
+# `defra.net.sync.documents_complete`: A document sync returns once every asked document merged
+
+- **Parents:** ["go.net.sync.documents"]
+- **Scenarios:** ["net::sync::documents_complete::a_document_sync_returns_once_every_asked_document_merged"]
+
+`SyncDocuments` on an iroh node, asking one peer for six documents the node lacks, returns only after all six have merged: a query on the node right after the call returns all six. A merge reported more than once does not stand in for another document, and once every asked document has merged the call does not wait for more reports. Go's `SyncDocuments` likewise blocks until every peer has answered and each advertised head has merged.
+
 # `defra.net.replicator.list_shape`: Replicator list response shape
 
 - **Parents:** ["defra.net"]
