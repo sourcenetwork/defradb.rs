@@ -20,17 +20,21 @@ impl Planner {
     /// Each one scores the document's vector field against the query vector
     /// under the metric that field's vector index was built with, so a query
     /// that misses the routed shape still ranks the collection the way the
-    /// index would have. `indexes` is the collection's, which is where that
-    /// metric comes from.
+    /// index would have. A field whose embedding lives on the collection's
+    /// chunks is left to [`Self::add_chunk_similarity_nodes`].
     pub(super) fn add_similarity_nodes(
         &self,
         mut plan: Box<dyn PlanNode>,
         select: &Select,
         mapping: &DocumentMapping,
-        indexes: &[schema::IndexDescription],
+        collection: &schema::CollectionVersion,
     ) -> Result<Box<dyn PlanNode>> {
+        let indexes = &collection.indexes;
         for field in &select.fields {
             if let Requestable::Similarity(sim) = field {
+                if self.chunk_target(collection, sim).is_some() {
+                    continue;
+                }
                 let field_index =
                     mapping
                         .first_index_of_name(&sim.target_field)

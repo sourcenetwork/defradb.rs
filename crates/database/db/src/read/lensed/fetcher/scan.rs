@@ -54,6 +54,33 @@ impl<S: Store + 'static> LensedDocFetcher<S> {
         Ok(Some(count as u64))
     }
 
+    pub(super) async fn index_prefix_entries_impl(
+        &self,
+        collection_name: &str,
+        index_name: &str,
+        prefix: &[document::NormalValue],
+    ) -> query::error::Result<Option<Vec<query::fetcher::IndexEntryValues>>> {
+        let (collection, datastore, systemstore) =
+            get_collection_with_lazy_load(&*self.shared_txn()?, collection_name).await?;
+        let index_manager = IndexManager::from_indexes(
+            collection.resolved_root_id(),
+            collection.schema(),
+            collection.write_indexes(),
+            collection.crdts(),
+        )
+        .map_err(|e| query::error::QueryError::execution(format!("index manager error: {e}")))?;
+        crate::read::index_entries::prefix_entries(
+            &index_manager,
+            &datastore,
+            &systemstore,
+            Some(&self.lens_store),
+            &collection,
+            index_name,
+            prefix,
+        )
+        .await
+    }
+
     pub(super) fn get_by_index_scan_impl<'a>(
         &'a self,
         collection_name: &'a str,

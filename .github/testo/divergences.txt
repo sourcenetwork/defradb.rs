@@ -58,5 +58,7 @@ testo query::relation_order_with_filter::selected_relation_id::indexed
 testo query::relation_order_with_filter::selected_relation_id_unfiltered::indexed
 testo query::relation_order_with_filter::selected_relation_id_unfiltered_with_limit::indexed
 testo query::relation_order_with_filter::selected_relation_id_with_limit::indexed
+# An _or of two _alias conditions on SIMILARITY scores: Go checks the filter before the scores exist and returns nothing; Rust scores first, so all three users match `sim < 10`.
+testo query::simple::with_similarity::query_simple_with_two_similarity_and_filtering_on_both_should_succeed
 # An execute explain whose plan fails while it runs: Go reports the error as two `executionErrors` entries; Rust reports it once.
 testo explain::simple::with_invalid_request::execute_explain_reports_a_run_time_failure_in_execution_errors

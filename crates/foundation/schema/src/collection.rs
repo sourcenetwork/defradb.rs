@@ -285,6 +285,35 @@ impl CollectionVersion {
         self.chunked_fields.iter().find(|c| c.field_name == field)
     }
 
+    /// The names of the chunk collections this collection's `@chunk` fields generate.
+    pub fn chunk_collection_names(&self) -> impl Iterator<Item = String> + '_ {
+        self.chunked_fields
+            .iter()
+            .map(|chunked| chunked.collection(&self.name))
+    }
+
+    /// The chunk collection among `candidates` holding embedding `field`, when this collection has none.
+    pub fn chunk_embedding<'a, I>(
+        &self,
+        field: &str,
+        candidates: I,
+    ) -> Option<&'a CollectionVersion>
+    where
+        I: IntoIterator<Item = &'a CollectionVersion>,
+    {
+        if self.field_by_name(field).is_some() {
+            return None;
+        }
+        candidates.into_iter().find(|chunks| {
+            chunks.chunk_of.as_ref().is_some_and(|source| {
+                source.collection == self.name && self.chunked_field(&source.field_name).is_some()
+            }) && chunks
+                .vector_embeddings
+                .iter()
+                .any(|embedding| embedding.field_name == field)
+        })
+    }
+
     /// Set the previous version source (for migrations).
     pub fn with_previous_version(mut self, source: CollectionSource) -> Self {
         self.previous_version = Some(source);
