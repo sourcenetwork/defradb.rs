@@ -33,7 +33,7 @@
 \* here takes every row up to the head in one step), and the raw bus's
 \* payload consumers beyond what Red_CounterNoWake shows.
 \* Rust owners: crates/database/db/src/event/updates.rs (record, read,
-\* once_key), crates/database/db/src/event/updates/gate.rs (Gate::admits),
+\* once_key), crates/database/db/src/event/gate.rs (Gate::admits),
 \* crates/database/db/src/merge/merge_handler/composite_persist.rs
 \* (persist_merged_document), crates/foundation/events/src/channel_bus.rs
 \* (ChannelBus::publish_raw, Subscriber::record_overflow),

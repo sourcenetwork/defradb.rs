@@ -108,10 +108,10 @@ impl Node {
         deadline: Duration,
     ) -> Result<acp::OwedWait> {
         let reader = self.owed_reader(context)?;
-        let txn: u64 = handle
+        let txn: defra_core::TxnId = handle
             .as_str()
             .parse()
-            .map_err(|_| query::QueryError::execution("transaction ID must be numeric"))?;
+            .map_err(|_| query::QueryError::execution("invalid transaction ID"))?;
         let acp = self.ops().document_acp;
         self.on_acp(move || async move {
             // An actor's wait is for its own entries: another's neither
@@ -120,12 +120,14 @@ impl Node {
                 Reader::Node => None,
                 Reader::Actor(actor) => Some(actor),
             };
-            let wait = match workers::timeout(deadline, acp.await_owed(txn, only)).await {
+            let wait = match workers::timeout(deadline, acp.await_owed(txn.route, only)).await {
                 Ok(wait) => wait?,
                 // The wait is dropped with whatever it was submitting still
                 // in flight, as a commit that stops waiting leaves it.
                 Err(workers::Error::TimedOut) => {
-                    let mut left = acp.owed_entries(acp::OwedFilter::Transaction(txn)).await?;
+                    let mut left = acp
+                        .owed_entries(acp::OwedFilter::Transaction(txn.route))
+                        .await?;
                     left.retain(|entry| reader.reads(acp.as_ref(), &entry.actor));
                     match left.is_empty() {
                         true => acp::OwedWait::Settled,

@@ -1,34 +1,18 @@
+use crate::common::schema::parsed;
 use std::sync::Arc;
 
 use db::{DbDocMutator, DB};
 use document::Document;
 use query::mutator::DocMutator;
-use schema::{
-    CollectionVersion, FieldDescription, FieldKind, IndexKind, IndexedFieldDescription,
-    OrderedIndexDescription,
-};
+use schema::{CollectionVersion, IndexKind, IndexedFieldDescription, OrderedIndexDescription};
 use storage::RegolithStore;
 
-fn schema(name: &str, version: &str, id: &str) -> CollectionVersion {
-    CollectionVersion::new(
-        name,
-        version,
-        id,
-        vec![
-            FieldDescription::new(
-                "1",
-                "_docID",
-                FieldKind::doc_id(),
-                schema::CType::LwwRegister,
-            ),
-            FieldDescription::new(
-                "2",
-                "value",
-                FieldKind::string(),
-                schema::CType::LwwRegister,
-            ),
-        ],
-    )
+fn schema_sdl(name: &str) -> String {
+    format!("type {name} {{ value: String }}")
+}
+
+fn schema(name: &str) -> CollectionVersion {
+    parsed(&schema_sdl(name))
 }
 
 fn is_txn_conflict(error: db::Error) -> bool {
@@ -40,11 +24,7 @@ fn is_txn_conflict(error: db::Error) -> bool {
 
 async fn stage_create(db: &Arc<DB<RegolithStore>>, collection: &str) -> db::DbTxn<RegolithStore> {
     let mutator = DbDocMutator::new(db.clone(), db.new_txn(false).await.unwrap());
-    let mut doc = Document::new(schema(
-        collection,
-        &format!("{collection}-v1"),
-        &format!("{collection}-id"),
-    ));
+    let mut doc = Document::new(schema(collection));
     doc.set("value", "staged").unwrap();
     mutator.create(collection, doc).await.unwrap();
     mutator.take_txn().await.unwrap()
@@ -59,7 +39,7 @@ async fn open() -> Arc<DB<RegolithStore>> {
 fn document_write_conflicts_with_collection_drop() {
     workers::block_on(async {
         let db = open().await;
-        db.create_collection(schema("race", "race-v1", "race-id"))
+        db.add_collection(&defra_core::RequestContext::ambient(), &schema_sdl("race"))
             .await
             .unwrap();
         let writer = stage_create(&db, "race").await;
@@ -75,7 +55,7 @@ fn document_write_conflicts_with_collection_drop() {
 fn document_write_conflicts_with_index_definition() {
     workers::block_on(async {
         let db = open().await;
-        db.create_collection(schema("race", "race-v1", "race-id"))
+        db.add_collection(&defra_core::RequestContext::ambient(), &schema_sdl("race"))
             .await
             .unwrap();
         let writer = stage_create(&db, "race").await;
@@ -101,10 +81,10 @@ fn document_write_conflicts_with_index_definition() {
 fn disjoint_collection_writes_both_commit() {
     workers::block_on(async {
         let db = open().await;
-        db.create_collection(schema("left", "left-v1", "left-id"))
+        db.add_collection(&defra_core::RequestContext::ambient(), &schema_sdl("left"))
             .await
             .unwrap();
-        db.create_collection(schema("right", "right-v1", "right-id"))
+        db.add_collection(&defra_core::RequestContext::ambient(), &schema_sdl("right"))
             .await
             .unwrap();
         let left = stage_create(&db, "left").await;

@@ -152,8 +152,12 @@ unsafe fn reject_unsupported(options: &NodeInitOptions) -> Result<(), String> {
             "node_acp_path: node ACP lives in the node's store",
         ),
         (
-            non_empty(options.remote_dac_log_id).is_some(),
-            "remote_dac_log_id: remote document ACP is Vera, not SourceHub",
+            non_empty(options.remote_dac_log_id).is_some()
+                || non_empty(options.remote_dac_grpc_address).is_some()
+                || non_empty(options.remote_dac_comet_rpc_address).is_some()
+                || non_empty(options.vera_chain_id).is_some()
+                || !options.vera_signer_key.is_null(),
+            REMOTE_DOCUMENT_ACP,
         ),
     ];
     match unsupported.iter().find(|(set, _)| *set) {
@@ -170,46 +174,20 @@ unsafe fn reject_unsupported(options: &NodeInitOptions) -> Result<(), String> {
 unsafe fn document_acp(options: &NodeInitOptions) -> Result<defra_node::DocumentAcpConfig, String> {
     match go_string(options.document_acp_type).to_lowercase().as_str() {
         "" | "local" => Ok(defra_node::DocumentAcpConfig::Local),
-        "remote" | "vera" => vera(options),
+        "remote" => Err(format!("not supported yet: {REMOTE_DOCUMENT_ACP}")),
         "none" => Err("not supported yet: document_acp_type \"none\"".to_string()),
         other => Err(format!(
-            "unknown document_acp_type '{}'. Supported: local, remote",
+            "unknown document_acp_type '{}'. Supported: local",
             other
         )),
     }
 }
 
-#[cfg(not(feature = "vera"))]
-unsafe fn vera(_options: &NodeInitOptions) -> Result<defra_node::DocumentAcpConfig, String> {
-    Err("this build does not include Vera ACP; rebuild with the vera feature".to_string())
-}
-
-#[cfg(feature = "vera")]
-unsafe fn vera(options: &NodeInitOptions) -> Result<defra_node::DocumentAcpConfig, String> {
-    let required = |value: Option<String>, name: &str| {
-        value.ok_or_else(|| format!("{} is required for remote document ACP", name))
-    };
-    let mut signer_key = key_bytes(
-        options.vera_signer_key,
-        options.vera_signer_key_len,
-        "vera_signer_key",
-    )?
-    .ok_or_else(|| "vera_signer_key is required for remote document ACP".to_string())?;
-    Ok(defra_node::DocumentAcpConfig::Vera(
-        defra_node::VeraConfig {
-            grpc_address: required(
-                non_empty(options.remote_dac_grpc_address),
-                "remote_dac_grpc_address",
-            )?,
-            comet_rpc_address: required(
-                non_empty(options.remote_dac_comet_rpc_address),
-                "remote_dac_comet_rpc_address",
-            )?,
-            chain_id: required(non_empty(options.vera_chain_id), "vera_chain_id")?,
-            signer_key: std::mem::take(&mut *signer_key),
-        },
-    ))
-}
+/// Go's remote document ACP runs against the Go chain, which this
+/// implementation has no client for: its document ACP beyond the local engine
+/// is native Vera, which these options do not configure.
+const REMOTE_DOCUMENT_ACP: &str =
+    "remote document ACP (document_acp_type \"remote\", the remote_dac_ and vera_ options)";
 
 /// A key the caller passed as a buffer and its length, or `None` for none.
 ///

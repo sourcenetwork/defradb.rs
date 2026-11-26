@@ -119,6 +119,7 @@ pub const ROUTES: &[Route] = &[
     row("/api/v0/schema", GET, required(NodePermission::CollectionGet), false),
     // Transactions (permissions enforced per-operation within tx)
     row("/api/v0/tx", POST, IdentityOnly, false),
+    row("/api/v0/tx/{id}", GET, IdentityOnly, false),
     row("/api/v0/tx/{id}", POST, IdentityOnly, false),
     row("/api/v0/tx/{id}", DELETE, IdentityOnly, false),
     // Collections

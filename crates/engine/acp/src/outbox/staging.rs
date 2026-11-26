@@ -54,7 +54,8 @@ pub struct StageRelationship<'a> {
 pub struct StageArchive<'a> {
     /// The transaction deleting the document, where its caller knows one.
     pub txn: Option<u64>,
-    /// The DID the delete runs as, which archives the object.
+    /// The DID the delete runs as. The archive is made as the object's
+    /// owner, which need not be this DID.
     pub actor: &'a Did,
     pub policy_id: &'a str,
     pub resource: &'a str,
@@ -471,51 +472,66 @@ impl TransactionOutbox {
     /// Record, in the delete's transaction, the archive of its document's
     /// object (`proofs/tla/ArchiveOnDelete.tla`).
     ///
-    /// Only the object's owner may archive it, so the delete is refused
-    /// ([`Error::NotOwner`]) unless `request.actor` owns the object: the
+    /// The archive is made as the object's owner, whoever deletes: the
     /// creator of a registration still owed, or the owner the provider
-    /// names. An owner whose request lets the node sign nothing for it has
-    /// its archive parked as awaiting authority: it denies all the same,
-    /// and is sent once the owner hands in a credential. While the provider cannot say who the owner is the delete is
-    /// refused too ([`Error::OwedCheckUnavailable`]): the archive denies
-    /// everyone on the object from the commit on. Earlier changes on the
-    /// object not yet handed to the provider's worker are dropped with the
-    /// delete, each with a note for its actor: the archive takes away
-    /// whatever they would have done. A change already in flight is sent
-    /// before the archive, and the provider refuses any change to an
-    /// archived object.
+    /// names. Whether `request.actor` may delete at all is decided before
+    /// this is asked; an owner is not required of it. The node submits the
+    /// archive only under the owner's authority
+    /// ([`DocumentACP::command_authority`] for the owner: a key the node
+    /// holds for it, or a delegation the request carries for it); when it
+    /// has none the archive is parked as awaiting the owner's authority. It
+    /// denies all the same, and is sent once the owner hands in a credential
+    /// (`reauthorize_owed`). An object nobody owns is refused
+    /// ([`Error::NotOwner`]): there is no one to archive it as. While the
+    /// provider cannot say who the owner is the delete is refused too
+    /// ([`Error::OwedCheckUnavailable`]): the archive denies everyone on the
+    /// object from the commit on. Earlier changes on the object not yet
+    /// handed to the provider's worker are dropped with the delete, each
+    /// with a note for its actor: the archive takes away whatever they
+    /// would have done. A change already in flight is sent before the
+    /// archive, and the provider refuses any change to an archived object.
     pub async fn stage_archive(&self, request: StageArchive<'_>) -> Result<Staged> {
-        let actor = self.provider.canonical_actor(request.actor);
+        let deleter = self.provider.canonical_actor(request.actor);
         let (policy_id, resource, object) = (request.policy_id, request.resource, request.object);
-        let not_owner = || Error::NotOwner {
-            operation: "archive the deleted document's object".into(),
-        };
-        match self.pending.get(policy_id, resource, object).await? {
-            Some(owed) if self.provider.canonical_actor(&owed.creator) == actor => {}
-            Some(_) => return Err(not_owner()),
+        let owner = match self.pending.get(policy_id, resource, object).await? {
+            Some(owed) => self.provider.canonical_actor(&owed.creator),
             None => match self
                 .provider
                 .get_doc_owner(policy_id, resource, object)
                 .await
             {
-                Ok(Some(owner)) if self.provider.canonical_actor(&owner) == actor => {}
-                Ok(_) => return Err(not_owner()),
+                Ok(Some(owner)) => self.provider.canonical_actor(&owner),
+                Ok(None) => {
+                    return Err(Error::NotOwner {
+                        operation: "archive the deleted document's object, which has no owner"
+                            .into(),
+                    })
+                }
                 Err(Error::ProviderUnavailable(_)) => {
                     return Err(Error::OwedCheckUnavailable {
-                        actor: actor.to_string(),
+                        actor: deleter.to_string(),
                         object: object.to_owned(),
                     })
                 }
                 Err(error) => return Err(error),
             },
-        }
+        };
+        let deleted_by_owner = owner == deleter;
         let tuple = OwedTuple::archive(policy_id, resource, object);
-        // The owner may archive; when nothing lets the node sign for it now
-        // (no key, no delegation in the request), the archive waits for its
+        // The owner's own request is asked in the spelling it was made in;
+        // anyone else's request carries nothing for the owner, so only a
+        // key the node holds for it counts.
+        let acting = if deleted_by_owner {
+            request.actor
+        } else {
+            &owner
+        };
+        // When nothing lets the node sign for the owner now (no key, no
+        // delegation in the owner's request), the archive waits for its
         // authority, denying everyone on the object until the owner hands
         // one in (`reauthorize_owed`).
         let (authority, awaiting) = match self.provider.command_authority(
-            request.actor,
+            acting,
             ProviderCommand::Relationship {
                 tuple: &tuple,
                 op: OwedOp::Archive,
@@ -534,14 +550,17 @@ impl TransactionOutbox {
         // delete is not refused for the outbox's bounds on new changes.
         let change = self
             .changes
-            .stage_restored(NewOwedChange {
-                txn: request.txn,
-                tuple,
-                op: OwedOp::Archive,
-                actor,
-                authority,
-                authority_checked: true,
-            })
+            .stage_archive(
+                NewOwedChange {
+                    txn: request.txn,
+                    tuple,
+                    op: OwedOp::Archive,
+                    actor: owner,
+                    authority,
+                    authority_checked: true,
+                },
+                deleted_by_owner,
+            )
             .await?;
         if let Some(reason) = awaiting {
             self.changes

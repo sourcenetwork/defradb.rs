@@ -23,7 +23,6 @@ nuclei.workspace = true
 async-trait.workspace = true
 axum.workspace = true
 cid.workspace = true
-lru.workspace = true
 multihash.workspace = true
 serde_json.workspace = true
 sha2.workspace = true

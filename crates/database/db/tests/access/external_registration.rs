@@ -14,7 +14,6 @@ use db::{
 use identity::Did;
 use query::{QueryExecutor, QueryRequest, QueryRunner};
 use regolith::sync::{HopscotchMap, SegQueue};
-use schema::PolicyDescription;
 use storage::RegolithStore;
 
 pub(super) const POLICY: &str = "remote-policy";
@@ -104,6 +103,9 @@ pub(super) struct RemoteAcp {
     pub(super) refuse_held: AtomicBool,
     /// A deleted document's object is archived, as vera.rs does.
     pub(super) archives: AtomicBool,
+    /// Objects archived by their owner: registered still, with no owner and
+    /// no relationship, and readable by nobody.
+    archived: Set<String>,
 }
 
 /// What a test runs inside an exact observation, after the provider answered.
@@ -145,6 +147,7 @@ impl RemoteAcp {
             raced: SegQueue::new(),
             refuse_held: AtomicBool::new(false),
             archives: AtomicBool::new(false),
+            archived: set(),
         })
     }
 
@@ -249,7 +252,7 @@ impl RemoteAcp {
     }
 
     pub(super) fn manages(&self, requestor: &Did, doc_id: &str) -> bool {
-        self.owners.get(doc_id).as_ref() == Some(requestor)
+        self.owner(doc_id).as_ref() == Some(requestor)
             || self
                 .managers
                 .contains_key(&(doc_id.to_string(), requestor.to_string()))
@@ -293,8 +296,10 @@ impl RemoteAcp {
     }
 
     fn granted(&self, doc_id: &str, subject: &str) -> bool {
-        self.grants
-            .contains_key(&(doc_id.to_string(), subject.to_string()))
+        !self.archived.contains_key(doc_id)
+            && self
+                .grants
+                .contains_key(&(doc_id.to_string(), subject.to_string()))
     }
 
     fn reachable(&self) -> acp::Result<()> {
@@ -307,6 +312,9 @@ impl RemoteAcp {
     }
 
     pub(super) fn owner(&self, doc_id: &str) -> Option<Did> {
+        if self.archived.contains_key(doc_id) {
+            return None;
+        }
         self.owners.get(doc_id)
     }
 }
@@ -436,7 +444,7 @@ impl DocumentACP for RemoteAcp {
         if self.malformed_owner.load(Ordering::SeqCst) {
             return Err(acp::Error::Storage("invalid owner DID".into()));
         }
-        Ok(self.owners.get(doc_id))
+        Ok(self.owner(doc_id))
     }
 
     async fn check_doc_access(
@@ -449,6 +457,9 @@ impl DocumentACP for RemoteAcp {
     ) -> acp::Result<bool> {
         self.reachable()?;
         self.access_checks.fetch_add(1, Ordering::SeqCst);
+        if self.archived.contains_key(doc_id) {
+            return Ok(false);
+        }
         Ok(match (self.owners.get(doc_id), identity) {
             (None, _) => true,
             (Some(_), _) if self.granted(doc_id, "*") => true,
@@ -550,6 +561,24 @@ impl DocumentACP for RemoteAcp {
         self.archives.load(Ordering::SeqCst)
     }
 
+    /// Only the object's owner archives it, as vera.rs decides.
+    async fn archive_doc_object(
+        &self,
+        actor: &Did,
+        _policy_id: &str,
+        _resource_name: &str,
+        doc_id: &str,
+    ) -> acp::Result<()> {
+        self.reachable()?;
+        if self.owner(doc_id).as_ref() != Some(actor) {
+            return Err(acp::Error::NotOwner {
+                operation: "archive object".into(),
+            });
+        }
+        self.archived.insert(doc_id.to_string(), ());
+        Ok(())
+    }
+
     fn command_authority(
         &self,
         actor: &Did,
@@ -607,7 +636,11 @@ impl DocumentACP for RemoteAcp {
         doc_id: &str,
     ) -> acp::Result<()> {
         self.reachable()?;
-        self.owners.remove(doc_id);
+        // A provider that archives on delete keeps the object until its
+        // archive lands, as vera.rs does.
+        if !self.archives.load(Ordering::SeqCst) {
+            self.owners.remove(doc_id);
+        }
         Ok(())
     }
 }
@@ -648,10 +681,12 @@ pub(super) async fn node(
 ) -> Node {
     let db = Arc::new(DB::open_from_arc(store).await.unwrap());
     if create_schema {
-        for mut schema in query::parse_sdl("type Users { name: String }").unwrap() {
-            schema.policy = Some(PolicyDescription::new(POLICY, RESOURCE));
-            db.create_collection(schema).await.unwrap();
-        }
+        db.add_collection(
+            &defra_core::RequestContext::ambient(),
+            r#"type Users @policy(id: "remote-policy", resource: "users") { name: String }"#,
+        )
+        .await
+        .unwrap();
     }
     db.set_document_acp(acp.clone());
     let registry = Arc::new(DbTransactionRegistry::new(Arc::clone(&db)));
