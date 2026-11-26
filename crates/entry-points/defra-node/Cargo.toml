@@ -133,6 +133,8 @@ cid.workspace = true
 base64 = { workspace = true }
 zstd = "0.14"
 tar = "0.4"
+# Per-thread CPU time in the p2p_bench concurrent-writers benchmark.
+libc = "0.2"
 
 [lints]
 workspace = true
