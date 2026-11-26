@@ -89,9 +89,10 @@ pub(super) async fn own<T, K>(
     worker: usize,
     mailbox: UnboundedReceiver<Message<T>>,
     shared: Weak<Shared<T, K>>,
+    _status: Arc<std::sync::atomic::AtomicU8>,
 ) where
     T: MaybeSend + 'static,
-    K: Clone + PartialEq + Send + 'static,
+    K: Clone + PartialEq + Send + Sync + 'static,
 {
     let _drain = Drain(&mailbox);
     let mut active = Instant::now();
@@ -120,11 +121,17 @@ pub(super) async fn own<T, K>(
             Message::Finish { last, fence, begun } => {
                 taker_seen = true;
                 if !begun && fence.abandoned() {
+                    if let Some(shared) = shared.upgrade() {
+                        shared.outcomes[worker].mark(id, super::Outcome::Aborted, Instant::now());
+                    }
                     break;
                 }
                 let Some(txn) = idle.pop() else { break };
                 leave();
                 last(txn).await;
+                if let Some(shared) = shared.upgrade() {
+                    shared.outcomes[worker].touch(id, Instant::now());
+                }
                 // Landed or failed: only now may what began after its caller
                 // stopped waiting go ahead.
                 drop(fence);
@@ -132,6 +139,9 @@ pub(super) async fn own<T, K>(
             }
             Message::Abandon => {
                 taker_seen = true;
+                if let Some(shared) = shared.upgrade() {
+                    shared.outcomes[worker].mark(id, super::Outcome::Aborted, Instant::now());
+                }
                 break;
             }
             Message::Expire { max_idle, reply } => {
@@ -140,6 +150,9 @@ pub(super) async fn own<T, K>(
                     let _ = reply.try_send(stale);
                 }
                 if stale {
+                    if let Some(shared) = shared.upgrade() {
+                        shared.outcomes[worker].mark(id, super::Outcome::Aborted, Instant::now());
+                    }
                     break;
                 }
             }

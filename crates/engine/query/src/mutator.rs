@@ -658,6 +658,16 @@ pub trait DocMutator: MaybeSendSync {
         Ok(None)
     }
 
+    /// The embedding requests the chunks of these new documents will make,
+    /// so preparation can answer them before the first attempt.
+    async fn chunk_embedding_requests(
+        &self,
+        _collection_name: &str,
+        _docs: &[Document],
+    ) -> Result<Vec<crate::prepared::PreparedInputRequest>> {
+        Ok(Vec::new())
+    }
+
     /// Pins `version`, a collection version the request selected (possibly
     /// inactive), for the writes this mutator makes in its transaction, so
     /// they are recorded at that version. A mutator that cannot pin refuses,
@@ -752,10 +762,11 @@ pub trait DocMutator: MaybeSendSync {
         docs: Vec<Document>,
     ) -> Result<Vec<CreateResult>> {
         let mut results = Vec::with_capacity(docs.len());
+        let mut misses = crate::prepared::FirstMiss::default();
         for doc in docs {
-            results.push(self.create(collection_name, doc).await?);
+            results.extend(misses.keep(self.create(collection_name, doc).await)?);
         }
-        Ok(results)
+        misses.finish(results)
     }
 
     /// [`Self::create_many`] for the request `context` serves.
@@ -766,10 +777,11 @@ pub trait DocMutator: MaybeSendSync {
         docs: Vec<Document>,
     ) -> Result<Vec<CreateResult>> {
         let mut results = Vec::with_capacity(docs.len());
+        let mut misses = crate::prepared::FirstMiss::default();
         for doc in docs {
-            results.push(self.create_as(context, collection_name, doc).await?);
+            results.extend(misses.keep(self.create_as(context, collection_name, doc).await)?);
         }
-        Ok(results)
+        misses.finish(results)
     }
 
     /// Update an existing document.

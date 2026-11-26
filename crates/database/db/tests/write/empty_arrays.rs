@@ -2,6 +2,7 @@
 //! document holding one must still pass validation when it is updated, and
 //! rewriting an immutable field with the empty array it holds is not a change.
 
+use crate::common::schema::parsed;
 use db::{AutoCommitMutator, DB};
 use document::{Document, NormalValue};
 use query::mutator::DocMutator;
@@ -14,32 +15,11 @@ use storage::RegolithStore;
 fn updating_a_document_that_holds_an_empty_string_array_succeeds() {
     workers::block_on(async {
         let db = Arc::new(DB::new(RegolithStore::in_memory().unwrap()).unwrap());
-        let post = CollectionVersion::new(
-            "Post",
-            "v1",
-            "col-post",
-            vec![
-                FieldDescription::new(
-                    "1",
-                    "_docID",
-                    FieldKind::doc_id(),
-                    schema::CType::LwwRegister,
-                ),
-                FieldDescription::new(
-                    "2",
-                    "title",
-                    FieldKind::string(),
-                    schema::CType::LwwRegister,
-                ),
-                FieldDescription::new(
-                    "3",
-                    "tags",
-                    FieldKind::nillable_string_array(),
-                    schema::CType::LwwRegister,
-                ),
-            ],
-        );
-        db.create_collection(post.clone()).await.unwrap();
+        let post_sdl = "type Post { title: String tags: [String] }";
+        let post = parsed(post_sdl);
+        db.add_collection(&defra_core::RequestContext::ambient(), post_sdl)
+            .await
+            .unwrap();
         let mutator = AutoCommitMutator::new(Arc::clone(&db));
         let mut doc = Document::new(post);
         doc.set("title", NormalValue::String("first".to_string()))
@@ -127,28 +107,11 @@ async fn immutable_tags_update(
     tags: NormalValue,
 ) -> (AutoCommitMutator<RegolithStore>, document::DocID, Document) {
     let db = Arc::new(DB::new(RegolithStore::in_memory().unwrap()).unwrap());
-    let post = CollectionVersion::new(
-        "Post",
-        "v1",
-        "col-post",
-        vec![
-            FieldDescription::new(
-                "1",
-                "_docID",
-                FieldKind::doc_id(),
-                schema::CType::LwwRegister,
-            ),
-            FieldDescription::new(
-                "2",
-                "title",
-                FieldKind::string(),
-                schema::CType::LwwRegister,
-            ),
-            FieldDescription::new("3", "tags", FieldKind::json(), schema::CType::LwwRegister)
-                .as_immutable(),
-        ],
-    );
-    db.create_collection(post.clone()).await.unwrap();
+    let post_sdl = "type Post { title: String tags: JSON @immutable }";
+    let post = parsed(post_sdl);
+    db.add_collection(&defra_core::RequestContext::ambient(), post_sdl)
+        .await
+        .unwrap();
     let mutator = AutoCommitMutator::new(Arc::clone(&db));
     let mut doc = Document::new(post);
     doc.set("title", NormalValue::String("first".to_string()))

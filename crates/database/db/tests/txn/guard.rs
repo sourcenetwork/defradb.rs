@@ -14,9 +14,12 @@ struct Fixture {
 impl Fixture {
     async fn new() -> Self {
         let db = Arc::new(DB::new(RegolithStore::in_memory().unwrap()).unwrap());
-        for schema in query::parse_sdl("type Users { name: String }").unwrap() {
-            db.create_collection(schema).await.unwrap();
-        }
+        db.add_collection(
+            &defra_core::RequestContext::ambient(),
+            "type Users { name: String }",
+        )
+        .await
+        .unwrap();
         let registry = Arc::new(DbTransactionRegistry::new(db.clone()));
         let runner = Arc::new(query::QueryRunner::with_arc_registry_and_provider(
             LensedAutoCommitFetcher::new(db.clone()),

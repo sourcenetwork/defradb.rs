@@ -1116,8 +1116,12 @@ mod vector_cache_tests {
     fn deleting_a_collection_evicts_its_vector_caches() {
         workers::block_on(async {
             let db = DB::new(storage::RegolithStore::in_memory().unwrap()).unwrap();
-            let mut types = query::parse_sdl("type EvictProbe { value: String }").unwrap();
-            db.create_collection(types.remove(0)).await.unwrap();
+            db.add_collection(
+                &defra_core::RequestContext::ambient(),
+                "type EvictProbe { value: String }",
+            )
+            .await
+            .unwrap();
             let short_id = db
                 .get_collection("EvictProbe")
                 .unwrap()

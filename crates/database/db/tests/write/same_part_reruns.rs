@@ -25,10 +25,7 @@ use query::planner::index_selection::{IndexScanParams, IndexScanType};
 use query::runner::DocFetcher;
 use query::{QueryExecutor, QueryRequest, QueryRunner};
 use regolith::sync::{Barrier, Event, SegQueue};
-use schema::{
-    CollectionVersion, FieldDescription, FieldKind, IndexKind, IndexedFieldDescription,
-    OrderedIndexDescription,
-};
+use schema::{IndexKind, IndexedFieldDescription, OrderedIndexDescription};
 use storage::corekv::{
     Result, RetryAttempt, RetryAttemptError, RetryAttemptFn, RetryAttemptFuture, RetryAttemptValue,
     RetryOptions, RetryTxn, Store, TransactionConflict, Txn,
@@ -152,20 +149,10 @@ async fn node(indexed: bool) -> Node {
         })
         .unwrap(),
     );
-    db.create_collection(CollectionVersion::new(
-        "Sample",
-        "sample-v1",
-        "col-sample",
-        vec![
-            FieldDescription::new(
-                "1",
-                "_docID",
-                FieldKind::doc_id(),
-                schema::CType::LwwRegister,
-            ),
-            FieldDescription::new("2", "left", FieldKind::string(), schema::CType::LwwRegister),
-        ],
-    ))
+    db.add_collection(
+        &defra_core::RequestContext::ambient(),
+        "type Sample { left: String }",
+    )
     .await
     .unwrap();
     if indexed {

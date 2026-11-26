@@ -14,7 +14,6 @@ use db::{
 use identity::Did;
 use query::{QueryExecutor, QueryRequest, QueryRunner};
 use regolith::sync::{HopscotchMap, SegQueue};
-use schema::PolicyDescription;
 use storage::RegolithStore;
 
 pub(super) const POLICY: &str = "remote-policy";
@@ -682,10 +681,12 @@ pub(super) async fn node(
 ) -> Node {
     let db = Arc::new(DB::open_from_arc(store).await.unwrap());
     if create_schema {
-        for mut schema in query::parse_sdl("type Users { name: String }").unwrap() {
-            schema.policy = Some(PolicyDescription::new(POLICY, RESOURCE));
-            db.create_collection(schema).await.unwrap();
-        }
+        db.add_collection(
+            &defra_core::RequestContext::ambient(),
+            r#"type Users @policy(id: "remote-policy", resource: "users") { name: String }"#,
+        )
+        .await
+        .unwrap();
     }
     db.set_document_acp(acp.clone());
     let registry = Arc::new(DbTransactionRegistry::new(Arc::clone(&db)));

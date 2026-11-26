@@ -1,3 +1,4 @@
+use crate::common::schema::parsed;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -11,32 +12,16 @@ use defra_core::{RequestContext, TxnId};
 use document::{DocID, Document, NormalValue};
 use query::documents::Filter;
 use query::{DocFetcher, DocMutator, QueryExecutor, QueryRequest};
-use schema::{CollectionVersion, FieldDescription, FieldKind, IndexDescription};
+use schema::CollectionVersion;
 use storage::corekv::{IterOptions, Key, RetryAttemptFuture};
 use storage::keys::{DatastoreSE, IndexDataStoreKey};
 use storage::RegolithStore;
 
+const USERS_SDL: &str =
+    r#"type Users { name: String @index(name: "users_name", unique: true) age: Int }"#;
+
 fn users_schema() -> CollectionVersion {
-    CollectionVersion::new(
-        "Users",
-        "users-v1",
-        "users-collection",
-        vec![
-            FieldDescription::new(
-                "1",
-                "_docID",
-                FieldKind::doc_id(),
-                schema::CType::LwwRegister,
-            ),
-            FieldDescription::new("2", "name", FieldKind::string(), schema::CType::LwwRegister),
-            FieldDescription::new("3", "age", FieldKind::int(), schema::CType::LwwRegister),
-        ],
-    )
-    .with_index(
-        IndexDescription::new("users_name")
-            .with_field("name", false)
-            .as_unique(),
-    )
+    parsed(USERS_SDL)
 }
 
 fn age_filter(age: i64) -> Filter {
@@ -141,7 +126,10 @@ fn a_conflicted_filtered_truncate_rereads_its_matches() {
     workers::block_on(async {
         let inner = Arc::new(RegolithStore::in_memory().unwrap());
         let racer = Arc::new(DB::open((*inner).clone()).await.unwrap());
-        racer.create_collection(users_schema()).await.unwrap();
+        racer
+            .add_collection(&defra_core::RequestContext::ambient(), USERS_SDL)
+            .await
+            .unwrap();
         let alice = create_user(&AutoCommitMutator::new(Arc::clone(&racer)), "Alice", 30).await;
         let armed = Arc::new(AtomicBool::new(true));
         let attempts = Arc::new(AtomicUsize::new(0));
@@ -262,7 +250,9 @@ fn a_filtered_truncate_rereads_after_a_related_document_leaves_the_filter() {
 fn filtered_truncate_includes_soft_deleted_documents() {
     workers::block_on(async {
         let db = Arc::new(DB::new(RegolithStore::in_memory().unwrap()).unwrap());
-        db.create_collection(users_schema()).await.unwrap();
+        db.add_collection(&defra_core::RequestContext::ambient(), USERS_SDL)
+            .await
+            .unwrap();
         let mutator = AutoCommitMutator::new(db.clone());
 
         let mut doc = Document::new(users_schema());
@@ -293,7 +283,7 @@ fn filtered_truncate_includes_soft_deleted_documents() {
 fn filtered_truncate_rejects_branchable_collections() {
     workers::block_on(async {
         let db = Arc::new(DB::new(RegolithStore::in_memory().unwrap()).unwrap());
-        db.create_collection(users_schema().as_branchable())
+        db.add_collection(&defra_core::RequestContext::ambient(), r#"type Users @branchable { name: String @index(name: "users_name", unique: true) age: Int }"#)
             .await
             .unwrap();
 
@@ -311,14 +301,26 @@ fn filtered_truncate_rejects_branchable_collections() {
 fn filtered_truncate_removes_only_matching_searchable_encryption_records() {
     workers::block_on(async {
         let db = Arc::new(DB::new(RegolithStore::in_memory().unwrap()).unwrap());
-        db.create_collection(users_schema()).await.unwrap();
+        db.add_collection(&defra_core::RequestContext::ambient(), USERS_SDL)
+            .await
+            .unwrap();
         let mutator = AutoCommitMutator::new(db.clone());
         let alice = create_user(&mutator, "Alice", 30).await;
         let bob = create_user(&mutator, "Bob", 40).await;
-        let alice_key =
-            DatastoreSE::new("users-collection", "users-name", vec![1], alice.to_string()).bytes();
-        let bob_key =
-            DatastoreSE::new("users-collection", "users-name", vec![2], bob.to_string()).bytes();
+        let alice_key = DatastoreSE::new(
+            users_schema().collection_id,
+            "users-name",
+            vec![1],
+            alice.to_string(),
+        )
+        .bytes();
+        let bob_key = DatastoreSE::new(
+            users_schema().collection_id,
+            "users-name",
+            vec![2],
+            bob.to_string(),
+        )
+        .bytes();
 
         let txn = db.new_txn(false).await.unwrap();
         let datastore = txn.datastore().unwrap();
@@ -343,14 +345,26 @@ fn filtered_truncate_removes_only_matching_searchable_encryption_records() {
 fn unfiltered_truncate_removes_searchable_encryption_records() {
     workers::block_on(async {
         let db = Arc::new(DB::new(RegolithStore::in_memory().unwrap()).unwrap());
-        db.create_collection(users_schema()).await.unwrap();
+        db.add_collection(&defra_core::RequestContext::ambient(), USERS_SDL)
+            .await
+            .unwrap();
         let mutator = AutoCommitMutator::new(db.clone());
         let alice = create_user(&mutator, "Alice", 30).await;
-        let alice_key =
-            DatastoreSE::new("users-collection", "users-name", vec![1], alice.to_string()).bytes();
+        let alice_key = DatastoreSE::new(
+            users_schema().collection_id,
+            "users-name",
+            vec![1],
+            alice.to_string(),
+        )
+        .bytes();
         // A replicator keeps artifacts for documents it does not hold.
-        let unheld_key =
-            DatastoreSE::new("users-collection", "users-name", vec![2], "bae-unheld").bytes();
+        let unheld_key = DatastoreSE::new(
+            users_schema().collection_id,
+            "users-name",
+            vec![2],
+            "bae-unheld",
+        )
+        .bytes();
         let other_key =
             DatastoreSE::new("other-collection", "users-name", vec![3], "bae-other").bytes();
 
@@ -379,22 +393,11 @@ fn unfiltered_truncate_removes_searchable_encryption_records() {
 fn filtered_truncate_processes_more_than_one_chunk() {
     workers::block_on(async {
         let db = Arc::new(DB::new(RegolithStore::in_memory().unwrap()).unwrap());
-        let schema = CollectionVersion::new(
-            "Users",
-            "users-v1",
-            "users-collection",
-            vec![
-                FieldDescription::new(
-                    "1",
-                    "_docID",
-                    FieldKind::doc_id(),
-                    schema::CType::LwwRegister,
-                ),
-                FieldDescription::new("2", "age", FieldKind::int(), schema::CType::LwwRegister),
-                FieldDescription::new("3", "seq", FieldKind::int(), schema::CType::LwwRegister),
-            ],
-        );
-        db.create_collection(schema.clone()).await.unwrap();
+        let schema_sdl = "type Users { age: Int seq: Int }";
+        let schema = parsed(schema_sdl);
+        db.add_collection(&defra_core::RequestContext::ambient(), schema_sdl)
+            .await
+            .unwrap();
         let mutator = AutoCommitMutator::new(db.clone());
         for seq in 0..=1000 {
             let mut doc = Document::new(schema.clone());
@@ -420,9 +423,11 @@ fn filtered_truncate_processes_more_than_one_chunk() {
 fn filtered_truncate_in_a_transaction_is_refused_and_removes_nothing() {
     workers::block_on(async {
         let db = Arc::new(DB::new(RegolithStore::in_memory().unwrap()).unwrap());
-        db.create_collection(users_schema()).await.unwrap();
+        db.add_collection(&defra_core::RequestContext::ambient(), USERS_SDL)
+            .await
+            .unwrap();
         create_user(&AutoCommitMutator::new(db.clone()), "Alice", 30).await;
-        let in_txn = RequestContext::ambient().with_txn(Some(TxnId(1)));
+        let in_txn = RequestContext::ambient().with_txn(Some(TxnId { start: 0, route: 1 }));
 
         let error = db
             .truncate_collection_as(&in_txn, "Users", Some(&age_filter(30)))
@@ -449,9 +454,11 @@ fn filtered_truncate_in_a_transaction_is_refused_and_removes_nothing() {
 fn unfiltered_truncate_in_a_transaction_applies_at_once() {
     workers::block_on(async {
         let db = Arc::new(DB::new(RegolithStore::in_memory().unwrap()).unwrap());
-        db.create_collection(users_schema()).await.unwrap();
+        db.add_collection(&defra_core::RequestContext::ambient(), USERS_SDL)
+            .await
+            .unwrap();
         create_user(&AutoCommitMutator::new(db.clone()), "Alice", 30).await;
-        let in_txn = RequestContext::ambient().with_txn(Some(TxnId(1)));
+        let in_txn = RequestContext::ambient().with_txn(Some(TxnId { start: 0, route: 1 }));
 
         db.truncate_collection_as(&in_txn, "Users", None)
             .await
@@ -470,7 +477,9 @@ fn unfiltered_truncate_in_a_transaction_applies_at_once() {
 fn a_filter_that_is_not_one_is_refused_with_go_text() {
     workers::block_on(async {
         let db = Arc::new(DB::new(RegolithStore::in_memory().unwrap()).unwrap());
-        db.create_collection(users_schema()).await.unwrap();
+        db.add_collection(&defra_core::RequestContext::ambient(), USERS_SDL)
+            .await
+            .unwrap();
         create_user(&AutoCommitMutator::new(db.clone()), "Alice", 30).await;
 
         for (filter, expected) in [
@@ -506,7 +515,9 @@ fn a_filter_that_is_not_one_is_refused_with_go_text() {
 fn a_source_text_filter_truncates_what_it_matches() {
     workers::block_on(async {
         let db = Arc::new(DB::new(RegolithStore::in_memory().unwrap()).unwrap());
-        db.create_collection(users_schema()).await.unwrap();
+        db.add_collection(&defra_core::RequestContext::ambient(), USERS_SDL)
+            .await
+            .unwrap();
         let mutator = AutoCommitMutator::new(db.clone());
         create_user(&mutator, "Alice", 30).await;
         create_user(&mutator, "Bob", 40).await;
@@ -547,22 +558,12 @@ fn truncating_a_missing_collection_names_it() {
     .unwrap()
 }
 
+fn named_schema_sdl(name: &str) -> String {
+    format!(r#"type {name} {{ name: String @index(name: "{name}_name") }}"#)
+}
+
 fn named_schema(name: &str) -> CollectionVersion {
-    CollectionVersion::new(
-        name,
-        format!("{name}-v1"),
-        format!("{name}-collection"),
-        vec![
-            FieldDescription::new(
-                "1",
-                "_docID",
-                FieldKind::doc_id(),
-                schema::CType::LwwRegister,
-            ),
-            FieldDescription::new("2", "name", FieldKind::string(), schema::CType::LwwRegister),
-        ],
-    )
-    .with_index(IndexDescription::new(format!("{name}_name")).with_field("name", false))
+    parsed(&named_schema_sdl(name))
 }
 
 async fn create_named(db: &Arc<DB<RegolithStore>>, collection: &str) {
@@ -609,12 +610,22 @@ async fn index_keys(db: &Arc<DB<RegolithStore>>, collection: &str) -> usize {
 fn truncating_a_collection_whose_short_id_spells_a_family_keeps_other_collections() {
     workers::block_on(async {
         let db = Arc::new(DB::new(RegolithStore::in_memory().unwrap()).unwrap());
-        db.create_collection(named_schema("Kept")).await.unwrap();
+        db.add_collection(
+            &defra_core::RequestContext::ambient(),
+            &named_schema_sdl("Kept"),
+        )
+        .await
+        .unwrap();
         create_named(&db, "Kept").await;
         let mut spelled = Vec::new();
         for n in 0..200 {
             let name = format!("Filler{n}");
-            db.create_collection(named_schema(&name)).await.unwrap();
+            db.add_collection(
+                &defra_core::RequestContext::ambient(),
+                &named_schema_sdl(&name),
+            )
+            .await
+            .unwrap();
             let short_id = db
                 .get_collection(&name)
                 .unwrap()
@@ -629,8 +640,9 @@ fn truncating_a_collection_whose_short_id_spells_a_family_keeps_other_collection
             }
         }
         assert_eq!(spelled.len(), 2, "no collection got short ID 100 or 118");
-        let kept_documents = datastore_keys(&db, b"/d/Kept-collection/").await;
-        let kept_versions = datastore_keys(&db, b"/v/Kept-collection/").await;
+        let kept_id = named_schema("Kept").collection_id;
+        let kept_documents = datastore_keys(&db, format!("/d/{kept_id}/").as_bytes()).await;
+        let kept_versions = datastore_keys(&db, format!("/v/{kept_id}/").as_bytes()).await;
         let kept_entries = index_keys(&db, "Kept").await;
         assert!(kept_documents > 0 && kept_versions > 0 && kept_entries > 0);
 
@@ -648,11 +660,11 @@ fn truncating_a_collection_whose_short_id_spells_a_family_keeps_other_collection
         }
 
         assert_eq!(
-            datastore_keys(&db, b"/d/Kept-collection/").await,
+            datastore_keys(&db, format!("/d/{kept_id}/").as_bytes()).await,
             kept_documents
         );
         assert_eq!(
-            datastore_keys(&db, b"/v/Kept-collection/").await,
+            datastore_keys(&db, format!("/v/{kept_id}/").as_bytes()).await,
             kept_versions
         );
         assert_eq!(index_keys(&db, "Kept").await, kept_entries);
@@ -676,7 +688,9 @@ fn truncating_a_collection_whose_short_id_spells_a_family_keeps_other_collection
 fn truncate_removes_doc_id_mappings_and_block_ownership() {
     workers::block_on(async {
         let db = Arc::new(DB::new(RegolithStore::in_memory().unwrap()).unwrap());
-        db.create_collection(users_schema()).await.unwrap();
+        db.add_collection(&defra_core::RequestContext::ambient(), USERS_SDL)
+            .await
+            .unwrap();
         let mut doc = Document::new(users_schema());
         doc.set("name", NormalValue::String("Alice".to_owned()))
             .unwrap();

@@ -26,12 +26,16 @@ mod table;
 mod tests;
 
 use std::future::Future;
+use std::sync::atomic::{AtomicU64, AtomicU8, AtomicUsize, Ordering};
 use std::sync::{Arc, Weak};
 use std::time::Duration;
 
 use defra_core::thread_bounds::MaybeSend;
 use futures::future::LocalBoxFuture;
-use regolith::sync::{unbounded, ArrayQueue};
+use rand::random;
+use rapidhash::fast::RandomState;
+use regolith::sync::{unbounded, ArrayQueue, HopscotchMap};
+use web_time::Instant;
 use workers::Target;
 #[cfg(not(target_family = "wasm"))]
 use workers::{Pool, Submit};
@@ -49,8 +53,8 @@ pub(crate) enum Unavailable {
     /// No such transaction on its owner: it never existed, it ended, or the
     /// caller does not own it.
     NotFound,
-    /// Every transaction ID was handed out.
-    Exhausted,
+    /// The worker that began the transaction cannot be named in its ID.
+    Unroutable,
     /// The pool could not run the request.
     Pool(workers::Error),
 }
@@ -59,7 +63,9 @@ impl std::fmt::Display for Unavailable {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Unavailable::NotFound => f.write_str("transaction not found"),
-            Unavailable::Exhausted => f.write_str("no transaction IDs are left on this worker"),
+            Unavailable::Unroutable => {
+                f.write_str("the worker cannot be named in a transaction ID")
+            }
             Unavailable::Pool(error) => write!(f, "{error}"),
         }
     }
@@ -68,6 +74,52 @@ impl std::fmt::Display for Unavailable {
 impl From<workers::Error> for Unavailable {
     fn from(error: workers::Error) -> Self {
         Unavailable::Pool(error)
+    }
+}
+
+/// The outcome a client may ask for after it lost a commit's answer.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Outcome {
+    /// The commit was queued but has not landed yet.
+    Committing,
+    /// The transaction is open and no commit was queued.
+    Open,
+    /// The commit landed.
+    Committed,
+    /// The transaction ended without a commit.
+    Aborted,
+}
+
+impl Outcome {
+    fn is_final(self) -> bool {
+        matches!(self, Outcome::Committed | Outcome::Aborted)
+    }
+
+    pub(crate) fn store_committing_if_open(status: &AtomicU8) {
+        let _ = status.compare_exchange(
+            Outcome::Open as u8,
+            Outcome::Committing as u8,
+            Ordering::AcqRel,
+            Ordering::Acquire,
+        );
+    }
+
+    pub(crate) fn store(self, status: &AtomicU8) {
+        status.store(self as u8, Ordering::Release);
+    }
+}
+
+impl TryFrom<u8> for Outcome {
+    type Error = u8;
+
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        match value {
+            0 => Ok(Outcome::Committing),
+            1 => Ok(Outcome::Open),
+            2 => Ok(Outcome::Committed),
+            3 => Ok(Outcome::Aborted),
+            _ => Err(value),
+        }
     }
 }
 
@@ -80,6 +132,183 @@ where
     K: 'static,
 {
     tables: Box<[Table<T, K>]>,
+    outcomes: Box<[OutcomeStore<K>]>,
+}
+
+/// What one transaction's ID last said, and when the record may go.
+#[derive(Clone)]
+struct OutcomeRecord<K> {
+    status: Arc<AtomicU8>,
+    owner: K,
+    finished: Instant,
+}
+
+const OUTCOME_CAP: usize = 4096;
+
+/// One worker's retained outcomes, keyed by the transaction's full ID.
+struct OutcomeStore<K>
+where
+    K: 'static,
+{
+    records: HopscotchMap<(u64, u64), OutcomeRecord<K>, RandomState>,
+    retention_nanos: AtomicU64,
+    evictions: AtomicU64,
+    /// The size at which an insert scans for final results to drop.
+    next_evict: AtomicUsize,
+    cap: usize,
+}
+
+impl<K> OutcomeStore<K>
+where
+    K: Clone + PartialEq + Send + Sync + 'static,
+{
+    fn new(retention: Duration, cap: usize) -> Self {
+        Self {
+            records: HopscotchMap::with_hasher(RandomState::default()),
+            retention_nanos: AtomicU64::new(retention.as_nanos() as u64),
+            evictions: AtomicU64::new(0),
+            next_evict: AtomicUsize::new(cap),
+            cap,
+        }
+    }
+
+    fn status(&self, id: TxnId) -> Option<Outcome> {
+        self.records
+            .get(&id.key())
+            .and_then(|record| Outcome::try_from(record.status.load(Ordering::Acquire)).ok())
+    }
+
+    /// At the cap the oldest final results make room. A live transaction's
+    /// record is never evicted: there is one per open transaction, as there is
+    /// a table entry, and its result is still to come.
+    fn insert(&self, id: TxnId, record: OutcomeRecord<K>) {
+        if self.records.len() >= self.next_evict.load(Ordering::Relaxed) {
+            self.evict();
+        }
+        self.records.insert(id.key(), record);
+    }
+
+    /// Drops the oldest final results, in one scan, until the store is an
+    /// eighth below the cap or holds only live records. The next scan waits
+    /// for at least that many more inserts, so a store full of live records
+    /// is not rescanned on every begin.
+    fn evict(&self) {
+        let batch = (self.cap / 8).max(1);
+        let mut live = 0;
+        let mut finals: Vec<(Instant, (u64, u64))> = self
+            .records
+            .iter()
+            .filter_map(|(key, candidate)| {
+                let status = Outcome::try_from(candidate.status.load(Ordering::Acquire))
+                    .unwrap_or(Outcome::Open);
+                if !status.is_final() {
+                    live += 1;
+                    return None;
+                }
+                Some((candidate.finished, key))
+            })
+            .collect();
+        let keep = self.cap.saturating_sub(batch).saturating_sub(live);
+        let excess = finals.len().saturating_sub(keep);
+        if excess > 0 && excess < finals.len() {
+            finals.select_nth_unstable_by_key(excess - 1, |(finished, _)| *finished);
+        }
+        finals.truncate(excess);
+        for (_, key) in &finals {
+            self.records.remove(key);
+        }
+        self.next_evict
+            .store(self.cap.max(live + batch), Ordering::Relaxed);
+        if finals.is_empty() {
+            return;
+        }
+        let total = self
+            .evictions
+            .fetch_add(finals.len() as u64, Ordering::Relaxed)
+            + finals.len() as u64;
+        tracing::warn!(
+            evicted = finals.len(),
+            live,
+            total,
+            cap = self.cap,
+            "transaction outcome store is full; the oldest final outcomes were dropped before their retention ended"
+        );
+    }
+
+    fn remove(&self, id: TxnId) {
+        self.records.remove(&id.key());
+    }
+
+    fn mark(&self, id: TxnId, status: Outcome, now: Instant) {
+        let Some(record) = self.records.get(&id.key()) else {
+            return;
+        };
+        record.status.store(status as u8, Ordering::Release);
+        self.records.insert(
+            id.key(),
+            OutcomeRecord {
+                status: Arc::clone(&record.status),
+                owner: record.owner.clone(),
+                finished: now,
+            },
+        );
+    }
+
+    fn touch(&self, id: TxnId, now: Instant) {
+        let Some(record) = self.records.get(&id.key()) else {
+            return;
+        };
+        self.records.insert(
+            id.key(),
+            OutcomeRecord {
+                status: Arc::clone(&record.status),
+                owner: record.owner.clone(),
+                finished: now,
+            },
+        );
+    }
+
+    fn admitted(&self, id: TxnId, key: &K) -> bool {
+        self.records
+            .get(&id.key())
+            .is_some_and(|record| record.owner == *key)
+    }
+
+    fn cell(&self, id: TxnId) -> Option<Arc<AtomicU8>> {
+        self.records
+            .get(&id.key())
+            .map(|record| Arc::clone(&record.status))
+    }
+
+    fn expire(&self, now: Instant) {
+        let retention = Duration::from_nanos(self.retention_nanos.load(Ordering::Relaxed));
+        if retention.is_zero() {
+            return;
+        }
+        let expired: Vec<(u64, u64)> = self
+            .records
+            .iter()
+            .filter_map(|(key, record)| {
+                let status = Outcome::try_from(record.status.load(Ordering::Acquire))
+                    .unwrap_or(Outcome::Open);
+                (now.duration_since(record.finished) >= retention && status.is_final())
+                    .then_some(key)
+            })
+            .collect();
+        for key in expired {
+            self.records.remove(&key);
+        }
+    }
+
+    fn set_retention(&self, retention: Duration) {
+        self.retention_nanos
+            .store(retention.as_nanos() as u64, Ordering::Relaxed);
+    }
+
+    #[cfg(test)]
+    fn evictions(&self) -> u64 {
+        self.evictions.load(Ordering::Relaxed)
+    }
 }
 
 /// The transactions of one registry, spread over the pool's workers. Each is
@@ -96,6 +325,7 @@ where
 {
     #[cfg(not(target_family = "wasm"))]
     pool: Pool,
+    start_token: u64,
     shared: Arc<Shared<T, K>>,
     /// Where a commit whose caller stops waiting is fenced until it lands.
     fences: Arc<CommitFences>,
@@ -110,10 +340,16 @@ where
     /// commits fenced in `fences` when a caller stops waiting.
     #[cfg(not(target_family = "wasm"))]
     pub(crate) fn fenced(pool: Pool, fences: Arc<CommitFences>) -> Self {
-        let tables = (0..pool.workers()).map(|_| Table::new()).collect();
+        let tables = (0..pool.workers())
+            .map(|_| Table::new())
+            .collect::<Box<_>>();
+        let outcomes = (0..pool.workers())
+            .map(|_| OutcomeStore::new(Duration::from_secs(600), OUTCOME_CAP))
+            .collect();
         Self {
             pool,
-            shared: Arc::new(Shared { tables }),
+            start_token: TxnId::start_token(random()),
+            shared: Arc::new(Shared { tables, outcomes }),
             fences,
         }
     }
@@ -129,8 +365,10 @@ where
     #[cfg(target_family = "wasm")]
     pub(crate) fn here(fences: Arc<CommitFences>) -> Self {
         Self {
+            start_token: TxnId::start_token(random()),
             shared: Arc::new(Shared {
                 tables: Box::new([Table::new()]),
+                outcomes: Box::new([OutcomeStore::new(Duration::from_secs(600), OUTCOME_CAP)]),
             }),
             fences,
         }
@@ -214,36 +452,47 @@ where
     {
         let shared = Arc::downgrade(&self.shared);
         let workers = self.workers();
+        let start_token = self.start_token;
         self.place(Target::LeastLoaded, "txn.begin", move || async move {
             let worker = here()?;
             let sequence = match shared.upgrade() {
                 Some(tables) => tables.tables[worker].draw(),
                 None => return Err(Unavailable::NotFound),
             };
-            let id = TxnId::new(sequence, worker, workers).ok_or(Unavailable::Exhausted)?;
+            let id = TxnId::new(sequence, worker, workers, start_token)
+                .ok_or(Unavailable::Unroutable)?;
             let txn = match open(id).await {
                 Ok(txn) => txn,
                 Err(error) => return Ok(Err(error)),
             };
             let (mailbox, inbox) = unbounded();
             let idle = Arc::new(ArrayQueue::new(1));
+            let status = Arc::new(AtomicU8::new(Outcome::Open as u8));
+            let outcome = OutcomeRecord {
+                status: Arc::clone(&status),
+                owner: key.clone(),
+                finished: Instant::now(),
+            };
             // The slot is new and holds one: the push cannot find it full.
             let _ = idle.push(txn);
-            match shared.upgrade() {
-                Some(tables) => tables.tables[worker].insert(
-                    id,
-                    Entry {
-                        mailbox,
-                        idle: Arc::clone(&idle),
-                        key,
-                        ending: false,
-                    },
-                ),
-                None => return Err(Unavailable::NotFound),
-            }
-            if let Err(error) = start(actor::own(idle, id, worker, inbox, shared.clone())) {
+            let Some(tables) = shared.upgrade() else {
+                return Err(Unavailable::NotFound);
+            };
+            tables.tables[worker].insert(
+                id,
+                Entry {
+                    mailbox,
+                    idle: Arc::clone(&idle),
+                    key,
+                    ending: false,
+                },
+            );
+            tables.outcomes[worker].insert(id, outcome);
+            drop(tables);
+            if let Err(error) = start(actor::own(idle, id, worker, inbox, shared.clone(), status)) {
                 if let Some(tables) = shared.upgrade() {
                     tables.tables[worker].take(id);
+                    tables.outcomes[worker].remove(id);
                 }
                 return Err(Unavailable::Pool(error));
             }
@@ -422,6 +671,8 @@ where
                     reply: Some(reply.clone()),
                 });
                 drop(reply);
+                shared.outcomes[worker].set_retention(max_idle);
+                shared.outcomes[worker].expire(Instant::now());
                 drop(shared);
                 let mut ended = 0;
                 for _ in 0..asked {
@@ -444,6 +695,34 @@ where
     /// How many transactions are open now, on every worker.
     pub(crate) fn len(&self) -> usize {
         self.shared.tables.iter().map(Table::len).sum()
+    }
+
+    /// The outcome `id` names for `key`: the live transaction's state, or its
+    /// retained result. A stranger and an ID from another start find nothing.
+    pub(crate) fn outcome(&self, id: TxnId, key: &K) -> Option<Outcome> {
+        let owner = id.owner(self.workers());
+        if self.shared.tables[owner].admits(id, key) {
+            return self.shared.outcomes[owner]
+                .status(id)
+                .or(Some(Outcome::Open));
+        }
+        if self.shared.outcomes[owner].admitted(id, key) {
+            return self.shared.outcomes[owner].status(id);
+        }
+        None
+    }
+
+    /// The status cell a commit or discard updates while ending `id` for
+    /// `key`; none if the transaction is gone or another caller owns it.
+    pub(crate) fn outcome_status(&self, id: TxnId, key: &K) -> Option<Arc<AtomicU8>> {
+        let owner = id.owner(self.workers());
+        if !self.shared.tables[owner].admits(id, key) {
+            return None;
+        }
+        self.shared.outcomes[owner]
+            .records
+            .get(&id.key())
+            .map(|record| Arc::clone(&record.status))
     }
 
     /// Queues the request `build` makes for transaction `id` of the caller
@@ -565,7 +844,10 @@ where
             ending: true,
         },
     );
-    if start(actor::own(idle, id, worker, inbox, shared.clone())).is_err() {
+    let status = tables.outcomes[worker]
+        .cell(id)
+        .unwrap_or_else(|| Arc::new(AtomicU8::new(Outcome::Open as u8)));
+    if start(actor::own(idle, id, worker, inbox, shared.clone(), status)).is_err() {
         tables.tables[worker].take(id);
     }
 }

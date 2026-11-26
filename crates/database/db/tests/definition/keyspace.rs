@@ -6,28 +6,18 @@ use std::sync::Arc;
 use db::{AutoCommitMutator, DB};
 use document::{Document, NormalValue};
 use query::DocMutator;
-use schema::{CollectionVersion, FieldDescription, FieldKind, IndexDescription};
+use schema::CollectionVersion;
 use storage::corekv::{IterOptions, Iterator as _};
 use storage::keys::IndexDataStoreKey;
 use storage::RegolithStore;
 
+fn schema_sdl(number: usize) -> String {
+    let name = collection_name(number);
+    format!(r#"type {name} {{ count: Int @index(name: "{name}_count") }}"#)
+}
+
 fn schema(number: usize) -> CollectionVersion {
-    let name = format!("Tally{number}");
-    CollectionVersion::new(
-        name.clone(),
-        format!("{name}-v1"),
-        format!("{name}-collection"),
-        vec![
-            FieldDescription::new(
-                "1",
-                "_docID",
-                FieldKind::doc_id(),
-                schema::CType::LwwRegister,
-            ),
-            FieldDescription::new("2", "count", FieldKind::int(), schema::CType::LwwRegister),
-        ],
-    )
-    .with_index(IndexDescription::new(format!("{name}_count")).with_field("count", false))
+    crate::common::schema::parsed(&schema_sdl(number))
 }
 
 fn collection_name(number: usize) -> String {
@@ -65,7 +55,9 @@ fn index_keyspace_scans_stay_per_collection_across_short_ids() {
     workers::block_on(async {
         let db = Arc::new(DB::new(RegolithStore::in_memory().unwrap()).unwrap());
         for number in 1..=241 {
-            db.create_collection(schema(number)).await.unwrap();
+            db.add_collection(&defra_core::RequestContext::ambient(), &schema_sdl(number))
+                .await
+                .unwrap();
         }
         for number in 1..=241 {
             create_tally(&db, number).await;
