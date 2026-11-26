@@ -1,6 +1,6 @@
 //! The routed search against a fake index whose chunks come nearest first.
 
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -13,7 +13,7 @@ use schema::{CType, ChunkedField, CollectionBuilder, FieldDescription, FieldKind
 use super::{ChunkSearch, ParentCheck, Searched};
 use crate::access_hooks::{AppReadCheck, ReadRequest, ReadValidator};
 use crate::doc_stream::{DocStream, VecStream};
-use crate::error::Result;
+use crate::error::{QueryError, Result};
 use crate::fetcher::{DocFetcher, FetchByIdsResult, IndexEntryValues, IndexScanResult};
 use crate::plan::chunk_similarity::target::{ChunkTarget, Reads};
 use crate::plan::scan::MAX_VECTOR_CANDIDATES;
@@ -95,6 +95,9 @@ struct Index {
     deleted: Vec<&'static str>,
     searches: AtomicUsize,
     widest: AtomicUsize,
+    /// Whether a chunk read fails after its first chunk.
+    fails: bool,
+    closed: Arc<AtomicBool>,
 }
 
 impl Index {
@@ -105,6 +108,8 @@ impl Index {
             deleted: Vec::new(),
             searches: AtomicUsize::new(0),
             widest: AtomicUsize::new(0),
+            fails: false,
+            closed: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -232,6 +237,12 @@ impl DocFetcher for Index {
         _show_deleted: bool,
     ) -> Result<Box<dyn DocStream>> {
         assert_eq!(collection, CHUNKS);
+        if self.fails {
+            return Ok(Box::new(FailsAfterOne {
+                first: Some(self.chunk_doc(short_ids[0])),
+                closed: Arc::clone(&self.closed),
+            }));
+        }
         let docs = short_ids
             .iter()
             .map(|id| (self.chunk_doc(*id), false))
@@ -324,6 +335,28 @@ impl DocFetcher for Index {
             .filter(|id| self.chunks[*id as usize].indexed)
             .take(k)
             .collect())
+    }
+}
+
+/// A chunk stream that yields one chunk, then fails, and records its close.
+struct FailsAfterOne {
+    first: Option<Document>,
+    closed: Arc<AtomicBool>,
+}
+
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+impl DocStream for FailsAfterOne {
+    async fn next(&mut self) -> Result<Option<(Document, bool)>> {
+        match self.first.take() {
+            Some(chunk) => Ok(Some((chunk, false))),
+            None => Err(QueryError::execution("the chunk read failed")),
+        }
+    }
+
+    async fn close(&mut self) -> Result<()> {
+        self.closed.store(true, Ordering::Relaxed);
+        Ok(())
     }
 }
 
@@ -588,4 +621,20 @@ fn the_exact_score_skips_a_chunk_its_own_app_check_refuses() {
     .unwrap()
     .unwrap();
     assert_eq!(score, Some(0.1));
+}
+
+#[test]
+fn a_chunk_read_that_fails_still_closes_its_stream() {
+    let mut index = Index::new(vec![chunk("A", 0.9), chunk("B", 0.6)]);
+    index.fails = true;
+    let target = target(index.lookup);
+    let search = ChunkSearch {
+        fetcher: &index,
+        target: &target,
+        index_id: 0,
+        k: 2,
+    };
+    let failed = workers::block_on(search.run(&AnyParent)).unwrap();
+    assert!(failed.is_err());
+    assert!(index.closed.load(Ordering::Relaxed));
 }

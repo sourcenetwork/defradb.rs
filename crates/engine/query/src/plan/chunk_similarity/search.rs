@@ -5,7 +5,7 @@ use rapidhash::{HashMapExt, HashSetExt, RapidHashMap, RapidHashSet};
 use tracing::debug;
 
 use super::best::best_per_parent;
-use super::listed::{best_score_of, Held};
+use super::listed::{best_score_of, drain, Held};
 use super::target::{ChunkTarget, Reads};
 use crate::error::Result;
 use crate::fetcher::DocFetcher;
@@ -180,16 +180,14 @@ impl ChunkSearch<'_> {
     }
 
     async fn read_chunks(&self, short_ids: &[u64], reads: &mut Reads) -> Result<Vec<Document>> {
-        let mut stream = self
+        let stream = self
             .fetcher
             .stream_by_doc_short_ids(&self.target.chunks, short_ids, false)
             .await?;
-        let mut chunks = Vec::with_capacity(short_ids.len());
-        while let Some((chunk, _)) = stream.next().await? {
-            reads.count(&chunk);
-            chunks.push(chunk);
+        let chunks = drain(stream, short_ids.len()).await?;
+        for chunk in &chunks {
+            reads.count(chunk);
         }
-        stream.close().await?;
         Ok(chunks)
     }
 

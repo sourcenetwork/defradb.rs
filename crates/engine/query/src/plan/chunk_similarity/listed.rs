@@ -5,6 +5,7 @@ use rapidhash::{HashMapExt, RapidHashMap, RapidHashSet};
 use schema::CHUNK_SOURCE_ID_FIELD;
 
 use super::target::{ChunkTarget, Reads};
+use crate::doc_stream::DocStream;
 use crate::error::Result;
 use crate::fetcher::DocFetcher;
 use crate::plan::chunk_parent::{chunk_parent_id, parent_hashes, verified_hash};
@@ -180,13 +181,27 @@ async fn read_short_ids(
     if ids.is_empty() {
         return Ok(Vec::new());
     }
-    let mut stream = fetcher
+    let stream = fetcher
         .stream_by_doc_short_ids(collection, ids, false)
         .await?;
-    let mut docs = Vec::with_capacity(ids.len());
-    while let Some((doc, _)) = stream.next().await? {
-        docs.push(doc);
-    }
-    stream.close().await?;
+    drain(stream, ids.len()).await
+}
+
+/// Every document `stream` yields, closing it even when a read fails.
+pub(super) async fn drain(
+    mut stream: Box<dyn DocStream>,
+    capacity: usize,
+) -> Result<Vec<Document>> {
+    let mut docs = Vec::with_capacity(capacity);
+    let read = loop {
+        match stream.next().await {
+            Ok(Some((doc, _))) => docs.push(doc),
+            Ok(None) => break Ok(()),
+            Err(error) => break Err(error),
+        }
+    };
+    let closed = stream.close().await;
+    read?;
+    closed?;
     Ok(docs)
 }
