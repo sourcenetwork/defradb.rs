@@ -8,31 +8,15 @@ use db::definition::migration::format::{CURRENT_INDEX_FORMAT, INDEX_FORMAT_KEY};
 use db::AutoCommitMutator;
 use document::{Document, NormalValue};
 use query::DocMutator;
-use schema::{CollectionVersion, FieldDescription, FieldKind, IndexDescription};
 use storage::corekv::{IterOptions, Iterator as _};
 use storage::encoding::json::{JSON_EMPTY_ARRAY, JSON_PATH_END};
 use storage::keys::IndexDataStoreKey;
 use storage::RegolithStore;
 
-fn schema() -> CollectionVersion {
-    CollectionVersion::new(
-        "Profiles",
-        "profiles-v1",
-        "profiles-collection",
-        vec![
-            FieldDescription::new(
-                "1",
-                "_docID",
-                FieldKind::doc_id(),
-                schema::CType::LwwRegister,
-            ),
-            FieldDescription::new("2", "count", FieldKind::int(), schema::CType::LwwRegister),
-            FieldDescription::new("3", "custom", FieldKind::json(), schema::CType::LwwRegister),
-        ],
-    )
-    .with_index(IndexDescription::new("counts").with_field("count", false))
-    .with_index(IndexDescription::new("customs").with_field("custom", false))
-}
+const SDL: &str = r#"type Profiles {
+    count: Int @index(name: "counts")
+    custom: JSON @index(name: "customs")
+}"#;
 
 fn is_marker_entry(key: &[u8]) -> bool {
     key.windows(3)
@@ -71,7 +55,9 @@ fn rebuilds_json_indexes_stamped(stored: u32, every: bool) {
     workers::block_on(async {
         let store = RegolithStore::in_memory().unwrap();
         let db = Arc::new(db::DB::open(store.clone()).await.unwrap());
-        db.create_collection(schema()).await.unwrap();
+        db.add_collection(&defra_core::RequestContext::ambient(), SDL)
+            .await
+            .unwrap();
         let collection = db.require_collection("Profiles").unwrap();
         let prefix_of = |name: &str| {
             let index = collection
