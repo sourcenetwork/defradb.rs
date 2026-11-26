@@ -19,6 +19,8 @@ pub enum FailureKind {
 pub struct Failure {
     pub kind: FailureKind,
     pub message: String,
+    /// The stable code the failure carried, when it carried one.
+    pub code: Option<String>,
 }
 
 impl Failure {
@@ -29,6 +31,7 @@ impl Failure {
         Self {
             kind: FailureKind::Unsupported,
             message: what.into(),
+            code: None,
         }
     }
 
@@ -37,7 +40,20 @@ impl Failure {
             true => FailureKind::TransactionConflict,
             false => FailureKind::Operation,
         };
-        Self { kind, message }
+        Self {
+            kind,
+            message,
+            code: None,
+        }
+    }
+
+    /// This failure, carrying the stable `code` its error had.
+    pub fn with_code<S>(mut self, code: Option<S>) -> Self
+    where
+        S: Into<String>,
+    {
+        self.code = code.map(Into::into);
+        self
     }
 }
 
@@ -64,6 +80,12 @@ pub trait Op:
 
     /// A substring of the error the action must fail with.
     fn expected_error(&self) -> Option<&str>;
+
+    /// The stable code the error matching `expected_error` must carry: a
+    /// GraphQL error's `extensions.code`, or the code a failed op carried.
+    fn expected_error_code(&self) -> Option<&str> {
+        None
+    }
 
     /// The response's `extensions` when the action checks them.
     fn expected_extensions(&self) -> &Value {

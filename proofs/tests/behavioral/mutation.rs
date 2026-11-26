@@ -1,5 +1,6 @@
 use defra_harness::TestCluster;
 use serde_json::Value;
+use std::path::PathBuf;
 use std::process::Command;
 use std::time::Duration;
 
@@ -7,6 +8,8 @@ use std::time::Duration;
 pub enum MutationError {
     #[error("execute mutation: {0}")]
     Spawn(std::io::Error),
+    #[error("create the client root directory: {0}")]
+    Rootdir(std::io::Error),
     #[error("mutation command failed: {0}")]
     Failed(String),
     #[error("mutation output is not UTF-8: {0}")]
@@ -32,11 +35,17 @@ type Result<T> = std::result::Result<T, MutationError>;
 const TXN_CONFLICT: &str = "transaction conflict. Please retry";
 
 /// Go can exit successfully with both mutation data and a commit error.
+/// Go retries a P2P merge that conflicts but not a local mutation, so a write
+/// racing a merge of the same document comes back as a conflict that asks the
+/// client to retry; Go's own test actions retry it (`withRetryOnNode`).
 /// Retry only explicit transaction aborts, never a failed convergence assertion.
 pub async fn execute(cluster: &TestCluster, node: usize, query: &str) -> Result<Value> {
     let address = cluster.api_url(node).trim_start_matches("http://");
+    let rootdir = client_rootdir(cluster, node)?;
     for attempt in 0..5 {
         let output = Command::new(cluster.client(node).binary_path())
+            .arg("--rootdir")
+            .arg(&rootdir)
             .args(["--url", address, "client", "query", query])
             .output()
             .map_err(MutationError::Spawn)?;
@@ -49,11 +58,24 @@ pub async fn execute(cluster: &TestCluster, node: usize, query: &str) -> Result<
         if let Some(data) = mutation_result(&stdout)? {
             return Ok(data);
         }
+        eprintln!("node{node}: transaction conflict on attempt {attempt}, retrying: {query}");
         if attempt < 4 {
             nuclei::time::sleep(Duration::from_millis(50)).await;
         }
     }
     Err(MutationError::Aborted(query.to_owned()))
+}
+
+/// An empty directory beside the node's own, so the client never reads the
+/// developer's `~/.defradb` config.
+fn client_rootdir(cluster: &TestCluster, node: usize) -> Result<PathBuf> {
+    let node_root = &cluster.nodes[node].rootdir;
+    let rootdir = node_root
+        .parent()
+        .unwrap_or(node_root)
+        .join("mutation-client");
+    std::fs::create_dir_all(&rootdir).map_err(MutationError::Rootdir)?;
+    Ok(rootdir)
 }
 
 fn mutation_result(stdout: &str) -> Result<Option<Value>> {

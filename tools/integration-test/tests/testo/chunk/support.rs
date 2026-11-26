@@ -168,7 +168,12 @@ pub fn eventually(action: Actions) -> Actions {
 
 /// Two networked nodes, `db0` pushing `collections` to `db1`, both with the Article collection.
 pub fn replicated_pair(collections: &[&str]) -> Vec<Actions> {
-    replicated_pair_into(collections, None)
+    replicated_pair_with(SCHEMA.into(), collections)
+}
+
+/// [`replicated_pair`] with the Article collection declared by `sdl`.
+pub fn replicated_pair_with(sdl: Text, collections: &[&str]) -> Vec<Actions> {
+    pair(sdl, collections, None)
 }
 
 /// `replicated_pair`, with `db1` admitting what it is sent under `admission`.
@@ -176,6 +181,10 @@ pub fn replicated_pair_into(
     collections: &[&str],
     admission: Option<AdmissionSpec>,
 ) -> Vec<Actions> {
+    pair(SCHEMA.into(), collections, admission)
+}
+
+fn pair(sdl: Text, collections: &[&str], admission: Option<AdmissionSpec>) -> Vec<Actions> {
     let names: Vec<String> = collections.iter().map(|name| (*name).to_owned()).collect();
     let mut actions: Vec<Actions> = Vec::new();
     for node in ["db0", "db1"] {
@@ -192,7 +201,7 @@ pub fn replicated_pair_into(
     for node in ["db0", "db1"] {
         actions.push(
             AddCollection {
-                sdl: SCHEMA.into(),
+                sdl: sdl.clone(),
                 common: on(Some(node)),
                 ..Default::default()
             }

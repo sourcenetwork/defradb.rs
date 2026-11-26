@@ -27,7 +27,6 @@ use document::{Document, NormalValue};
 use query::mutator::{DocMutator, MutationBatchController};
 use query::runner::DocFetcher;
 use regolith::sync::Notify;
-use schema::{CollectionVersion, FieldDescription, FieldKind};
 use storage::RegolithStore;
 
 mod definition;
@@ -147,31 +146,10 @@ impl Node {
                 .unwrap(),
         );
         if create {
-            for (name, id, field) in [
-                ("Grants", "col-grants", "writer"),
-                ("Notes", "col-notes", "grant"),
-            ] {
-                db.create_collection(CollectionVersion::new(
-                    name,
-                    id,
-                    id,
-                    vec![
-                        FieldDescription::new(
-                            "1",
-                            "_docID",
-                            FieldKind::doc_id(),
-                            schema::CType::LwwRegister,
-                        ),
-                        FieldDescription::new(
-                            "2",
-                            field,
-                            FieldKind::string(),
-                            schema::CType::LwwRegister,
-                        ),
-                    ],
-                ))
-                .await
-                .unwrap();
+            for sdl in [GRANTS_SDL, NOTES_SDL] {
+                db.add_collection(&defra_core::RequestContext::ambient(), sdl)
+                    .await
+                    .unwrap();
             }
         }
         db.set_merge_governance(governance);
@@ -187,56 +165,11 @@ impl Node {
                 .await
                 .unwrap(),
         );
-        let mut writer_field = FieldDescription::new(
-            "2",
-            "writer",
-            FieldKind::string(),
-            schema::CType::LwwRegister,
-        );
-        writer_field.immutable = true;
-        db.create_collection(CollectionVersion::new(
-            "Grants",
-            "col-grants",
-            "col-grants",
-            vec![
-                FieldDescription::new(
-                    "1",
-                    "_docID",
-                    FieldKind::doc_id(),
-                    schema::CType::LwwRegister,
-                ),
-                writer_field,
-                FieldDescription::new(
-                    "3",
-                    "label",
-                    FieldKind::string(),
-                    schema::CType::LwwRegister,
-                ),
-            ],
-        ))
-        .await
-        .unwrap();
-        db.create_collection(CollectionVersion::new(
-            "Notes",
-            "col-notes",
-            "col-notes",
-            vec![
-                FieldDescription::new(
-                    "1",
-                    "_docID",
-                    FieldKind::doc_id(),
-                    schema::CType::LwwRegister,
-                ),
-                FieldDescription::new(
-                    "2",
-                    "grant",
-                    FieldKind::string(),
-                    schema::CType::LwwRegister,
-                ),
-            ],
-        ))
-        .await
-        .unwrap();
+        for sdl in [IMMUTABLE_GRANTS_SDL, NOTES_SDL] {
+            db.add_collection(&defra_core::RequestContext::ambient(), sdl)
+                .await
+                .unwrap();
+        }
         db.set_merge_governance(MergeGovernance::new(["Notes"]).with_validator(validator));
         Self::assemble(db, store)
     }
@@ -267,8 +200,9 @@ impl Node {
         self.sink.forwarded.load_clone()
     }
 
-    /// Grants as in `open`, and Notes whose version id differs from its
-    /// collection id, so a re-drive that confuses the two is visible.
+    /// Grants as in `open`, and Notes patched to a second version, whose id
+    /// differs from its collection id, so a re-drive that confuses the two is
+    /// visible.
     async fn with_versioned_notes(governance: MergeGovernance) -> Self {
         let store = Arc::new(RegolithStore::in_memory().unwrap());
         let db = Arc::new(
@@ -276,34 +210,29 @@ impl Node {
                 .await
                 .unwrap(),
         );
-        for (name, id, version, field) in [
-            ("Grants", "col-grants", "col-grants", "writer"),
-            ("Notes", "col-notes", "ver-notes", "grant"),
-        ] {
-            db.create_collection(CollectionVersion::new(
-                name,
-                id,
-                version,
-                vec![
-                    FieldDescription::new(
-                        "1",
-                        "_docID",
-                        FieldKind::doc_id(),
-                        schema::CType::LwwRegister,
-                    ),
-                    FieldDescription::new(
-                        "2",
-                        field,
-                        FieldKind::string(),
-                        schema::CType::LwwRegister,
-                    ),
-                ],
-            ))
-            .await
-            .unwrap();
+        for sdl in [GRANTS_SDL, NOTES_SDL] {
+            db.add_collection(&defra_core::RequestContext::ambient(), sdl)
+                .await
+                .unwrap();
         }
+        db.patch_collection(
+            &defra_core::RequestContext::default(),
+            r#"[{"op":"add","path":"/Notes/Fields/-","value":{"Name":"extra","Kind":"Int"}}]"#,
+            None,
+        )
+        .await
+        .unwrap();
         db.set_merge_governance(governance);
         Self::assemble(db, store)
+    }
+
+    /// Where documents of the collection named `name` are written on this node.
+    fn target(&self, name: &str) -> Target {
+        let collection = self.db.get_collection(name).unwrap().unwrap();
+        Target {
+            version_id: collection.schema().version_id.clone(),
+            collection_id: collection.schema().collection_id.clone(),
+        }
     }
 
     /// Delete a document the way a client mutation does, index cleanup included.
@@ -376,31 +305,64 @@ impl Node {
     }
 }
 
+const GRANTS_SDL: &str = "type Grants { writer: String }";
+const NOTES_SDL: &str = "type Notes { grant: String }";
+const IMMUTABLE_GRANTS_SDL: &str = "type Grants { writer: String @immutable label: String }";
+
+/// The version a document is written at, and the collection it belongs to.
+#[derive(Clone)]
+struct Target {
+    version_id: String,
+    collection_id: String,
+}
+
+fn target(sdl: &str) -> Target {
+    let version = crate::common::schema::parsed(sdl);
+    Target {
+        version_id: version.version_id,
+        collection_id: version.collection_id,
+    }
+}
+
+/// `Grants` as `Node::open` defines it.
+fn grants() -> Target {
+    target(GRANTS_SDL)
+}
+
+fn notes() -> Target {
+    target(NOTES_SDL)
+}
+
+/// `Grants` as `Node::with_immutable_grants` defines it.
+fn immutable_grants() -> Target {
+    target(IMMUTABLE_GRANTS_SDL)
+}
+
 /// A genesis document held by its author, not yet sent to the node.
 struct Genesis {
     cid: Cid,
     doc_id: String,
     blocks: Vec<(Cid, Vec<u8>)>,
-    collection_id: &'static str,
+    collection_id: String,
 }
 
-fn genesis(collection_id: &'static str, field: &str, value: &str, by: &Signer) -> Genesis {
-    authored(collection_id, None, field, value, by)
+fn genesis(target: &Target, field: &str, value: &str, by: &Signer) -> Genesis {
+    authored(target, None, field, value, by)
 }
 
 /// A composite setting `field`, as the genesis or as an update of `update_of`.
 fn authored(
-    collection_id: &'static str,
+    target: &Target,
     update_of: Option<&Genesis>,
     field: &str,
     value: &str,
     by: &Signer,
 ) -> Genesis {
-    authored_fields(collection_id, update_of, &[(field, value)], by)
+    authored_fields(target, update_of, &[(field, value)], by)
 }
 
 fn authored_fields(
-    collection_id: &'static str,
+    target: &Target,
     update_of: Option<&Genesis>,
     fields: &[(&str, &str)],
     by: &Signer,
@@ -414,7 +376,7 @@ fn authored_fields(
             CrdtDelta::Lww(LwwDeltaPayload {
                 field_name: field.to_string(),
                 priority,
-                collection_version_id: collection_id.to_string(),
+                collection_version_id: target.version_id.clone(),
                 data: db::block::builder::encode_value_as_cbor(&NormalValue::String(
                     value.to_string(),
                 ))
@@ -430,7 +392,7 @@ fn authored_fields(
 
     let mut composite = Block::new(
         CrdtDelta::Composite(CompositeDeltaPayload {
-            collection_version_id: collection_id.to_string(),
+            collection_version_id: target.version_id.clone(),
             priority,
             status: 1,
         }),
@@ -455,7 +417,7 @@ fn authored_fields(
         cid,
         doc_id: db::block::builder::derive_doc_id(&update_of.map_or(cid, |genesis| genesis.cid)),
         blocks,
-        collection_id,
+        collection_id: target.collection_id.clone(),
     }
 }
 
@@ -478,7 +440,7 @@ impl Genesis {
                 self.bytes(),
                 BlockMetadata::normal(
                     &self.doc_id,
-                    self.collection_id,
+                    &self.collection_id,
                     creator,
                     Some("peer"),
                     false,
@@ -506,23 +468,23 @@ fn validator_accepts_rejects_and_defers() {
         let writer = signer();
         let stranger = signer();
 
-        let grant = genesis("col-grants", "writer", &writer.did, &writer);
+        let grant = genesis(&grants(), "writer", &writer.did, &writer);
         grant.store(&node).await;
 
-        let accepted = genesis("col-notes", "grant", &grant.cid.to_string(), &writer);
+        let accepted = genesis(&notes(), "grant", &grant.cid.to_string(), &writer);
         assert_eq!(
             accepted.merge(&node, &writer.did).await,
             MergeOutcome::Merged
         );
 
-        let forged = genesis("col-notes", "grant", &grant.cid.to_string(), &stranger);
+        let forged = genesis(&notes(), "grant", &grant.cid.to_string(), &stranger);
         assert_eq!(
             forged.merge(&node, &writer.did).await,
             MergeOutcome::rejected("grant does not name the signer")
         );
 
-        let unheld = genesis("col-grants", "writer", &stranger.did, &stranger);
-        let waiting = genesis("col-notes", "grant", &unheld.cid.to_string(), &stranger);
+        let unheld = genesis(&grants(), "writer", &stranger.did, &stranger);
+        let waiting = genesis(&notes(), "grant", &unheld.cid.to_string(), &stranger);
         assert_eq!(
             waiting.merge(&node, &stranger.did).await,
             MergeOutcome::retryable_skip("grant not held")
@@ -545,8 +507,8 @@ fn deferred_composite_merges_when_its_dependency_merges() {
         .await;
         let writer = signer();
 
-        let grant = genesis("col-grants", "writer", &writer.did, &writer);
-        let note = genesis("col-notes", "grant", &grant.cid.to_string(), &writer);
+        let grant = genesis(&grants(), "writer", &writer.did, &writer);
+        let note = genesis(&notes(), "grant", &grant.cid.to_string(), &writer);
         assert_eq!(
             note.merge(&node, &writer.did).await,
             MergeOutcome::retryable_skip("grant not held")
@@ -582,8 +544,8 @@ fn redrive_verifies_the_signature_at_dispatch() {
         .await;
         let writer = signer();
 
-        let grant = genesis("col-grants", "writer", &writer.did, &writer);
-        let mut note = genesis("col-notes", "grant", &grant.cid.to_string(), &writer);
+        let grant = genesis(&grants(), "writer", &writer.did, &writer);
+        let mut note = genesis(&notes(), "grant", &grant.cid.to_string(), &writer);
         assert_eq!(
             note.merge(&node, &writer.did).await,
             MergeOutcome::retryable_skip("grant not held")
@@ -623,7 +585,7 @@ fn claimed_collection_without_validator_defers() {
         )
         .await;
         let writer = signer();
-        let note = genesis("col-notes", "grant", "anything", &writer);
+        let note = genesis(&notes(), "grant", "anything", &writer);
 
         assert!(matches!(
             note.merge(&node, &writer.did).await,
@@ -644,8 +606,8 @@ fn deferred_forgery_stays_unmerged_after_restart() {
         let path = dir.path().join("node");
         let writer = signer();
         let forger = signer();
-        let grant = genesis("col-grants", "writer", &writer.did, &writer);
-        let forged = genesis("col-notes", "grant", &grant.cid.to_string(), &forger);
+        let grant = genesis(&grants(), "writer", &writer.did, &writer);
+        let forged = genesis(&notes(), "grant", &grant.cid.to_string(), &forger);
 
         {
             let validator = Arc::new(GrantValidator::default());
@@ -677,7 +639,7 @@ fn deferred_forgery_stays_unmerged_after_restart() {
                 forged.bytes(),
                 BlockMetadata::recovered(
                     &forged.doc_id,
-                    forged.collection_id,
+                    &forged.collection_id,
                     &writer.did,
                     Some(writer.did.clone()),
                 ),
@@ -770,8 +732,8 @@ fn update_awaiting_its_genesis_merges_when_the_genesis_merges() {
         )
         .await;
         let writer = signer();
-        let created = genesis("col-notes", "grant", "first", &writer);
-        let updated = authored("col-notes", Some(&created), "grant", "second", &writer);
+        let created = genesis(&notes(), "grant", "first", &writer);
+        let updated = authored(&notes(), Some(&created), "grant", "second", &writer);
 
         assert_eq!(
             updated.merge(&node, &writer.did).await,
@@ -804,8 +766,8 @@ fn batch_deferral_is_released_by_a_batch_merge() {
         )
         .await;
         let writer = signer();
-        let created = genesis("col-notes", "grant", "first", &writer);
-        let updated = authored("col-notes", Some(&created), "grant", "second", &writer);
+        let created = genesis(&notes(), "grant", "first", &writer);
+        let updated = authored(&notes(), Some(&created), "grant", "second", &writer);
 
         updated.store(&node).await;
         let deferred = node
@@ -848,8 +810,8 @@ fn awaiting_a_non_composite_cid_waits_for_the_retry_clock() {
         )
         .await;
         let writer = signer();
-        let created = genesis("col-notes", "grant", "first", &writer);
-        let updated = authored("col-notes", Some(&created), "grant", "second", &writer);
+        let created = genesis(&notes(), "grant", "first", &writer);
+        let updated = authored(&notes(), Some(&created), "grant", "second", &writer);
         let (signature_cid, signature) = created.blocks[1].clone();
         for (cid, bytes) in created
             .blocks
@@ -867,7 +829,7 @@ fn awaiting_a_non_composite_cid_waits_for_the_retry_clock() {
             .put(&signature_cid, &signature)
             .await
             .unwrap();
-        let unrelated = genesis("col-notes", "grant", "unrelated", &writer);
+        let unrelated = genesis(&notes(), "grant", "unrelated", &writer);
         assert_eq!(
             unrelated.merge(&node, &writer.did).await,
             MergeOutcome::Merged
@@ -901,8 +863,15 @@ fn governed_collection_is_not_resolved_from_the_carrier() {
     )
     .await;
     let writer = signer();
-    let mut stray = genesis("unknown-version", "grant", "anything", &writer);
-    stray.collection_id = "col-notes";
+    let stray = genesis(
+        &Target {
+            version_id: "unknown-version".to_string(),
+            collection_id: notes().collection_id,
+        },
+        "grant",
+        "anything",
+        &writer,
+    );
 
     assert_eq!(
         stray.merge(&node, &writer.did).await,
@@ -967,7 +936,7 @@ fn find_documents_refuses_a_mutable_field() {
         )
         .await;
         let writer = signer();
-        let note = genesis("col-notes", "grant", "anything", &writer);
+        let note = genesis(&notes(), "grant", "anything", &writer);
         note.store(&node).await;
 
         let error = node
@@ -975,7 +944,7 @@ fn find_documents_refuses_a_mutable_field() {
             .handle_block(
                 &note.cid,
                 note.bytes(),
-                BlockMetadata::normal(&note.doc_id, note.collection_id, &writer.did, None, false),
+                BlockMetadata::normal(&note.doc_id, &note.collection_id, &writer.did, None, false),
             )
             .await
             .unwrap_err();
@@ -1000,7 +969,7 @@ fn composite_deferred_on_an_immutable_field_merges_when_a_match_merges() {
             value: writer.did.clone(),
         }))
         .await;
-        let note = genesis("col-notes", "grant", "anything", &writer);
+        let note = genesis(&notes(), "grant", "anything", &writer);
 
         assert_eq!(
             note.merge(&node, &writer.did).await,
@@ -1008,11 +977,11 @@ fn composite_deferred_on_an_immutable_field_merges_when_a_match_merges() {
         );
         assert_eq!(node.handler.deferred_composites(), 1);
 
-        let other = genesis("col-grants", "writer", "someone else", &writer);
+        let other = genesis(&immutable_grants(), "writer", "someone else", &writer);
         assert_eq!(other.merge(&node, &writer.did).await, MergeOutcome::Merged);
         assert!(node.doc_ids("Notes").await.is_empty());
 
-        let grant = genesis("col-grants", "writer", &writer.did, &writer);
+        let grant = genesis(&immutable_grants(), "writer", &writer.did, &writer);
         assert_eq!(grant.merge(&node, &writer.did).await, MergeOutcome::Merged);
 
         assert_eq!(node.doc_ids("Notes").await, vec![note.doc_id.clone()]);
@@ -1053,7 +1022,7 @@ fn awaiting_a_mutable_field_is_refused() {
         )
         .await;
         let writer = signer();
-        let note = genesis("col-notes", "grant", "anything", &writer);
+        let note = genesis(&notes(), "grant", "anything", &writer);
         note.store(&node).await;
 
         let error = node
@@ -1061,7 +1030,7 @@ fn awaiting_a_mutable_field_is_refused() {
             .handle_block(
                 &note.cid,
                 note.bytes(),
-                BlockMetadata::normal(&note.doc_id, note.collection_id, &writer.did, None, false),
+                BlockMetadata::normal(&note.doc_id, &note.collection_id, &writer.did, None, false),
             )
             .await
             .unwrap_err();
@@ -1110,16 +1079,22 @@ fn immutable_fields_reads_only_immutable_scalar_fields_of_a_merged_document() {
         });
         let node = Node::with_immutable_grants(validator.clone()).await;
         let writer = signer();
-        let grant = genesis("col-grants", "writer", &writer.did, &writer);
+        let grant = genesis(&immutable_grants(), "writer", &writer.did, &writer);
         assert_eq!(grant.merge(&node, &writer.did).await, MergeOutcome::Merged);
-        let labelled = authored("col-grants", Some(&grant), "label", "mutable", &writer);
+        let labelled = authored(
+            &immutable_grants(),
+            Some(&grant),
+            "label",
+            "mutable",
+            &writer,
+        );
         assert_eq!(
             labelled.merge(&node, &writer.did).await,
             MergeOutcome::Merged
         );
         // `label` is set but mutable, so the read leaves it out.
         validator.doc_id.store(grant.doc_id.clone());
-        let note = genesis("col-notes", "grant", "anything", &writer);
+        let note = genesis(&notes(), "grant", "anything", &writer);
         assert_eq!(note.merge(&node, &writer.did).await, MergeOutcome::Merged);
         assert_eq!(
             validator.read.load_clone().unwrap(),
@@ -1131,7 +1106,7 @@ fn immutable_fields_reads_only_immutable_scalar_fields_of_a_merged_document() {
 
         // An unmerged document reads as `None`.
         validator.doc_id.store("bae-missing".to_string());
-        let other = genesis("col-notes", "grant", "other", &writer);
+        let other = genesis(&notes(), "grant", "other", &writer);
         assert_eq!(other.merge(&node, &writer.did).await, MergeOutcome::Merged);
         assert_eq!(validator.read.load_clone().unwrap(), None);
     })
@@ -1148,7 +1123,7 @@ fn a_local_write_releases_a_composite_awaiting_an_immutable_field() {
             value: writer.did.clone(),
         }))
         .await;
-        let note = genesis("col-notes", "grant", "anything", &writer);
+        let note = genesis(&notes(), "grant", "anything", &writer);
 
         assert_eq!(
             note.merge(&node, &writer.did).await,
@@ -1198,7 +1173,7 @@ fn a_local_write_releases_a_composite_awaiting_its_genesis() {
         let awaited = elsewhere.create_locally("Grants", &grant).await;
 
         let node = Node::with_immutable_grants(Arc::new(AwaitComposite(awaited))).await;
-        let note = genesis("col-notes", "grant", "anything", &writer);
+        let note = genesis(&notes(), "grant", "anything", &writer);
         assert_eq!(
             note.merge(&node, &writer.did).await,
             MergeOutcome::retryable_skip("grant not held")
@@ -1246,7 +1221,7 @@ fn awaiting_a_field_of_an_absent_collection_is_indexed_not_refused() {
         )
         .await;
         let writer = signer();
-        let note = genesis("col-notes", "grant", "anything", &writer);
+        let note = genesis(&notes(), "grant", "anything", &writer);
 
         // `find_documents` answers an unknown collection empty and the validator
         // defers on that; the wait key must be indexed so the arrival of the
@@ -1270,8 +1245,8 @@ fn an_unresolved_update_in_a_claimed_collection_without_validator_is_not_indexed
         )
         .await;
         let writer = signer();
-        let created = genesis("col-notes", "grant", "first", &writer);
-        let updated = authored("col-notes", Some(&created), "grant", "second", &writer);
+        let created = genesis(&notes(), "grant", "first", &writer);
+        let updated = authored(&notes(), Some(&created), "grant", "second", &writer);
 
         // Claimed but no validator: defer, and nothing reaches the deferral
         // machinery, the same as a composite whose document resolves.
@@ -1307,8 +1282,10 @@ fn a_recovered_deferred_composite_is_not_forwarded_under_the_collection_version_
         )
         .await;
         let writer = signer();
-        let created = genesis("ver-notes", "grant", "first", &writer);
-        let updated = authored("ver-notes", Some(&created), "grant", "second", &writer);
+        let notes = node.target("Notes");
+        assert_ne!(notes.version_id, notes.collection_id);
+        let created = genesis(&notes, "grant", "first", &writer);
+        let updated = authored(&notes, Some(&created), "grant", "second", &writer);
 
         // A recovery merge carries no collection id.
         updated.store(&node).await;
@@ -1350,7 +1327,7 @@ fn immutable_fields_of_a_deleted_document_are_still_read() {
         });
         let node = Node::with_immutable_grants(validator.clone()).await;
         let writer = signer();
-        let grant = genesis("col-grants", "writer", &writer.did, &writer);
+        let grant = genesis(&immutable_grants(), "writer", &writer.did, &writer);
         assert_eq!(grant.merge(&node, &writer.did).await, MergeOutcome::Merged);
         node.delete_locally("Grants", &grant.doc_id).await;
         assert!(node.doc_ids("Grants").await.is_empty());
@@ -1359,7 +1336,7 @@ fn immutable_fields_of_a_deleted_document_are_still_read() {
         // judged before the delete read; otherwise one accepts and the other
         // defers forever.
         validator.doc_id.store(grant.doc_id.clone());
-        let note = genesis("col-notes", "grant", "anything", &writer);
+        let note = genesis(&notes(), "grant", "anything", &writer);
         assert_eq!(note.merge(&node, &writer.did).await, MergeOutcome::Merged);
         assert_eq!(
             validator.read.load_clone().unwrap(),

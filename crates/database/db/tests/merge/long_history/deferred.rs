@@ -1,3 +1,4 @@
+use super::fixture::users_collection_id;
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -59,7 +60,7 @@ fn committed_history_frames_release_deferred_composites_before_cleanup() {
 
         let collection = handler
             .db()
-            .find_collection_by_id("col-users")
+            .find_collection_by_id(users_collection_id())
             .unwrap()
             .unwrap();
         let mut document = Document::new(crate::common::schema::open_collection(&["name"]));
@@ -78,7 +79,7 @@ fn committed_history_frames_release_deferred_composites_before_cleanup() {
             cid: blocks.cid,
             block_data: blocks.block,
             doc_id: blocks.doc_id,
-            collection_id: "col-users".into(),
+            collection_id: users_collection_id().to_string(),
             creator: "history-peer".into(),
             sender_peer: Some("history-peer".into()),
             is_explicit_replicator: false,

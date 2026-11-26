@@ -11,6 +11,7 @@
 //! and written, commits a competing write, then lets the first attempt commit
 //! and lose.
 
+use crate::common::schema::parsed;
 use async_trait::async_trait;
 use db::{AutoCommitMutator, DB};
 use document::{Document, NormalValue};
@@ -18,9 +19,7 @@ use kovan_queue::seg_queue::SegQueue;
 use query::mutator::DocMutator;
 use rapidhash::RapidHashSet;
 use regolith::sync::Event;
-use schema::{
-    CollectionVersion, FieldDescription, FieldKind, IndexDescription, IndexedFieldDescription,
-};
+use schema::CollectionVersion;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use storage::corekv::{
@@ -110,14 +109,16 @@ struct Fixture {
 }
 
 impl Fixture {
-    async fn new(collection: CollectionVersion) -> Self {
+    async fn new(sdl: &str) -> Self {
         let gate = Arc::new(Gate::default());
         let store = PausingStore {
             inner: Arc::new(RegolithStore::in_memory().unwrap()),
             gate: Arc::clone(&gate),
         };
         let db = Arc::new(DB::new(store).unwrap());
-        db.create_collection(collection).await.unwrap();
+        db.add_collection(&defra_core::RequestContext::ambient(), sdl)
+            .await
+            .unwrap();
         Self { db, gate }
     }
 
@@ -153,22 +154,10 @@ impl Fixture {
     }
 }
 
+const PATCH_SDL: &str = "type Patch { left: Int right: Int }";
+
 fn patch_collection() -> CollectionVersion {
-    CollectionVersion::new(
-        "Patch",
-        "v1",
-        "col-patch",
-        vec![
-            FieldDescription::new(
-                "1",
-                "_docID",
-                FieldKind::doc_id(),
-                schema::CType::LwwRegister,
-            ),
-            FieldDescription::new("2", "left", FieldKind::int(), schema::CType::LwwRegister),
-            FieldDescription::new("3", "right", FieldKind::int(), schema::CType::LwwRegister),
-        ],
-    )
+    parsed(PATCH_SDL)
 }
 
 fn fields(names: &[&str]) -> RapidHashSet<String> {
@@ -203,7 +192,7 @@ fn lost_once(reasons: &[Option<TransactionConflict>]) -> TransactionConflict {
 #[test]
 fn a_delete_that_loses_to_a_delete_is_a_no_op() {
     workers::block_on(async {
-        let fixture = Fixture::new(patch_collection()).await;
+        let fixture = Fixture::new(PATCH_SDL).await;
         let doc = create(&fixture, r#"{"left": 1, "right": 1}"#).await;
         let id = doc.id().unwrap().clone();
 
@@ -225,7 +214,7 @@ fn a_delete_that_loses_to_a_delete_is_a_no_op() {
 #[test]
 fn an_update_that_loses_to_a_delete_reports_not_found() {
     workers::block_on(async {
-        let fixture = Fixture::new(patch_collection()).await;
+        let fixture = Fixture::new(PATCH_SDL).await;
         let doc = create(&fixture, r#"{"left": 1, "right": 1}"#).await;
         let id = doc.id().unwrap().clone();
 
@@ -252,7 +241,7 @@ fn an_update_that_loses_to_a_delete_reports_not_found() {
 #[test]
 fn an_update_of_a_field_another_update_changed_writes_again_on_top_of_it() {
     workers::block_on(async {
-        let fixture = Fixture::new(patch_collection()).await;
+        let fixture = Fixture::new(PATCH_SDL).await;
         let doc = create(&fixture, r#"{"left": 0, "right": 0}"#).await;
         let id = doc.id().unwrap().clone();
 
@@ -286,19 +275,10 @@ fn an_update_of_a_field_another_update_changed_writes_again_on_top_of_it() {
 #[test]
 fn a_create_that_loses_a_unique_index_race_reports_the_violation() {
     workers::block_on(async {
-        let mut collection = patch_collection();
-        collection.indexes = vec![IndexDescription {
-            name: "unique_left".to_string(),
-            id: 1,
-            fields: vec![IndexedFieldDescription {
-                name: "left".to_string(),
-                descending: false,
-            }],
-            unique: true,
-            kind: None,
-            auto_generated: false,
-        }];
-        let fixture = Fixture::new(collection.clone()).await;
+        let sdl =
+            r#"type Patch { left: Int @index(name: "unique_left", unique: true) right: Int }"#;
+        let collection = parsed(sdl);
+        let fixture = Fixture::new(sdl).await;
         let (first, second) = (collection.clone(), collection);
 
         let (loser, winner) = fixture
@@ -331,7 +311,7 @@ fn a_create_that_loses_a_unique_index_race_reports_the_violation() {
 #[test]
 fn a_compare_and_set_that_loses_reports_the_conflict_with_its_reason() {
     workers::block_on(async {
-        let fixture = Fixture::new(patch_collection()).await;
+        let fixture = Fixture::new(PATCH_SDL).await;
         let doc = create(&fixture, r#"{"left": 0, "right": 0}"#).await;
 
         let expected = doc.clone();

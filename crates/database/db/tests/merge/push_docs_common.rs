@@ -9,11 +9,28 @@ use defra_core::CrdtDelta;
 use document::Document;
 use p2p::transport::PeerId;
 use query::mutator::DocMutator;
-use schema::{CollectionVersion, FieldDescription, FieldKind};
 use std::sync::Arc;
 use storage::corekv::Key;
 use storage::keys::headstore::HeadstorePriorityKey;
 use storage::RegolithStore;
+
+const PUSH_NOTE_SDL: &str = "type PushNote { body: String }";
+
+fn push_note_collection() -> schema::CollectionVersion {
+    crate::common::schema::parsed(PUSH_NOTE_SDL)
+}
+
+fn push_note_version_id() -> &'static str {
+    static ID: regolith::sync::Lazy<String> =
+        regolith::sync::Lazy::new(|| push_note_collection().version_id);
+    &ID
+}
+
+fn push_note_collection_id() -> &'static str {
+    static ID: regolith::sync::Lazy<String> =
+        regolith::sync::Lazy::new(|| push_note_collection().collection_id);
+    &ID
+}
 
 #[test]
 fn current_composite_frontier_retains_lower_priority_sibling() {
@@ -23,7 +40,7 @@ fn current_composite_frontier_retains_lower_priority_sibling() {
         let doc_short_id = 7_u64;
         let first = Block::new_with_options(
             CrdtDelta::Composite(CompositeDeltaPayload {
-                collection_version_id: "schema-v1".to_string(),
+                collection_version_id: push_note_version_id().to_string(),
                 priority: 1,
                 status: 1,
             }),
@@ -37,7 +54,7 @@ fn current_composite_frontier_retains_lower_priority_sibling() {
 
         let second = Block::new_with_options(
             CrdtDelta::Composite(CompositeDeltaPayload {
-                collection_version_id: "schema-v1".to_string(),
+                collection_version_id: push_note_version_id().to_string(),
                 priority: 2,
                 status: 1,
             }),
@@ -122,7 +139,7 @@ fn stale_retry_heads_cannot_clear_a_newer_document_marker() {
 
         let old = Block::new_with_options(
             CrdtDelta::Composite(CompositeDeltaPayload {
-                collection_version_id: "schema-v1".to_string(),
+                collection_version_id: push_note_version_id().to_string(),
                 priority: 1,
                 status: 1,
             }),
@@ -135,7 +152,7 @@ fn stale_retry_heads_cannot_clear_a_newer_document_marker() {
         let old_cid = generate_cid_from_bytes(&old_bytes).unwrap();
         let current = Block::new_with_options(
             CrdtDelta::Composite(CompositeDeltaPayload {
-                collection_version_id: "schema-v1".to_string(),
+                collection_version_id: push_note_version_id().to_string(),
                 priority: 2,
                 status: 1,
             }),
@@ -215,22 +232,9 @@ fn multi_head_doc_reads_acknowledged_after_ladder() {
         let store = Arc::new(RegolithStore::in_memory().unwrap());
         let db = Arc::new(DB::from_arc(store).unwrap());
         db.set_network(edge::testing::edge());
-        db.create_collection(CollectionVersion::new(
-            "PushNote",
-            "v1",
-            "col-push-note",
-            vec![
-                FieldDescription::new(
-                    "1",
-                    "_docID",
-                    FieldKind::doc_id(),
-                    schema::CType::LwwRegister,
-                ),
-                FieldDescription::new("2", "body", FieldKind::string(), schema::CType::LwwRegister),
-            ],
-        ))
-        .await
-        .unwrap();
+        db.add_collection(&defra_core::RequestContext::ambient(), PUSH_NOTE_SDL)
+            .await
+            .unwrap();
         let schema = db.get_collection("PushNote").unwrap().unwrap().schema_arc();
         let mut doc = Document::new(schema);
         doc.set("body", "local".to_owned()).unwrap();
@@ -255,7 +259,7 @@ fn multi_head_doc_reads_acknowledged_after_ladder() {
         .await;
         let remote = Block::new_with_options(
             CrdtDelta::Composite(CompositeDeltaPayload {
-                collection_version_id: "v1".to_string(),
+                collection_version_id: push_note_version_id().to_string(),
                 priority: 1,
                 status: 1,
             }),
@@ -293,7 +297,7 @@ fn multi_head_doc_reads_acknowledged_after_ladder() {
         let peerstore = db.peerstore();
         let info = p2p::ReplicatorInfo::from_raw(
             peer.as_str().to_owned(),
-            vec!["col-push-note".into()],
+            vec![push_note_collection_id().to_string()],
             vec![],
         );
         peerstore
@@ -301,7 +305,7 @@ fn multi_head_doc_reads_acknowledged_after_ladder() {
             .await
             .unwrap();
         let generation = peerstore
-            .observe_push_head_with_generation(peer.as_str(), &doc_id, "col-push-note")
+            .observe_push_head_with_generation(peer.as_str(), &doc_id, push_note_collection_id())
             .await
             .unwrap()
             .unwrap();
@@ -314,7 +318,7 @@ fn multi_head_doc_reads_acknowledged_after_ladder() {
             None,
             &peer,
             &doc_id,
-            "col-push-note",
+            push_note_collection_id(),
             generation,
             &p2p::ReplicationFilters::new(),
             &p2p::EqOnlyFilterMatcher,
@@ -345,7 +349,7 @@ fn multi_head_doc_reads_acknowledged_after_ladder() {
             .record_acknowledged_heads(
                 peer.as_str(),
                 &doc_id,
-                "col-push-note",
+                push_note_collection_id(),
                 false,
                 &[remote_cid.to_string()],
             )

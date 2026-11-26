@@ -46,6 +46,8 @@ fn collection_version_updates_remove_all_fields() {
             }
             .into(),
         ],
+        // The secondary-index multiplier indexes every field, and a patch may not remove or replace an indexed field, as Go's: https://github.com/sourcenetwork/defradb/issues/4722
+        multiplier_excludes: &["secondary-index"],
         ..Default::default()
     }
     .execute();
@@ -214,6 +216,8 @@ fn collection_version_updates_remove_field() {
             }
             .into(),
         ],
+        // The secondary-index multiplier indexes every field, and a patch may not remove or replace an indexed field, as Go's: https://github.com/sourcenetwork/defradb/issues/4722
+        multiplier_excludes: &["secondary-index"],
         ..Default::default()
     }
     .execute();

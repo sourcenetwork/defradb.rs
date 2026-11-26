@@ -1,38 +1,19 @@
 use crate::common::fixture::make_test_db_with_bus;
-use crate::common::schema::test_collection;
+use crate::common::schema::{test_collection, TEST_COLLECTION_SDL};
 use db::write::autocommit::batch::*;
 use document::Document;
 use events::EventName;
 use query::mutator::DocMutator;
 use query::mutator::MutationBatchController;
-use schema::CollectionVersion;
-use schema::FieldDescription;
-use schema::FieldKind;
 use std::sync::Arc;
 
-fn branchable_test_collection() -> CollectionVersion {
-    CollectionVersion::new(
-        "TestBranchable",
-        "v1",
-        "col-test-branchable",
-        vec![
-            FieldDescription::new(
-                "1",
-                "_docID",
-                FieldKind::doc_id(),
-                schema::CType::LwwRegister,
-            ),
-            FieldDescription::new("2", "x", FieldKind::int(), schema::CType::LwwRegister),
-        ],
-    )
-    .as_branchable()
-}
+const BRANCHABLE_TEST_COLLECTION_SDL: &str = "type TestBranchable @branchable { x: Int }";
 
 #[test]
 fn batch_create_publishes_event_on_commit() {
     workers::block_on(async {
         let (db, bus) = make_test_db_with_bus().await;
-        db.create_collection(test_collection())
+        db.add_collection(&defra_core::RequestContext::ambient(), TEST_COLLECTION_SDL)
             .await
             .expect("schema");
 
@@ -73,8 +54,9 @@ fn batch_create_publishes_event_on_commit() {
 fn batch_create_registers_external_acp_before_ordered_event() {
     workers::block_on(async {
         let (db, bus) = make_test_db_with_bus().await;
-        db.create_collection(
-            test_collection().with_policy(schema::PolicyDescription::new("policy1", "test-docs")),
+        db.add_collection(
+            &defra_core::RequestContext::ambient(),
+            r#"type TestDoc @policy(id: "policy1", resource: "test-docs") { x: Int }"#,
         )
         .await
         .expect("schema");
@@ -125,7 +107,7 @@ fn batch_delete_missing_doc_publishes_no_event_and_writes_no_block() {
         // DeleteNode treats existed==false as a no-op; the mutator must not
         // create a tombstone commit or fire an Update event for a missing doc.
         let (db, bus) = make_test_db_with_bus().await;
-        db.create_collection(test_collection())
+        db.add_collection(&defra_core::RequestContext::ambient(), TEST_COLLECTION_SDL)
             .await
             .expect("schema");
 
@@ -164,9 +146,12 @@ fn batch_delete_branchable_surfaces_collection_block_for_broadcast() {
         // collection block so BroadcastMutator can re-broadcast it (matches
         // create/update's broadcast_cid/broadcast_block plumbing).
         let (db, _bus) = make_test_db_with_bus().await;
-        db.create_collection(branchable_test_collection())
-            .await
-            .expect("schema");
+        db.add_collection(
+            &defra_core::RequestContext::ambient(),
+            BRANCHABLE_TEST_COLLECTION_SDL,
+        )
+        .await
+        .expect("schema");
 
         let txn = db.new_txn(false).await.expect("new_txn");
         let mutator = BatchMutator::new(Arc::clone(&db), Arc::new(txn)).await;

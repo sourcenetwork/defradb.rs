@@ -77,7 +77,7 @@ pub(crate) async fn stage_genesis_reader(
                 collection.name()
             ))
         })?;
-    let txn = context.txn().map(|txn| txn.0);
+    let txn = context.txn().map(|txn| txn.route);
     outbox
         .stage_with_registration(acp::StageRelationship {
             txn,
