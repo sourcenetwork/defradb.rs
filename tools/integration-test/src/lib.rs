@@ -11,6 +11,7 @@ mod feature_binaries;
 mod go_node;
 pub mod index_gate;
 pub mod introspection_sdl;
+pub mod merge_validator;
 pub mod multiplier;
 pub mod nodes;
 mod purge;

@@ -1,5 +1,6 @@
 mod connection_manager;
 mod gossip_admission;
+mod governed;
 mod iroh_large_update;
 mod stream_protocols;
 mod info {

@@ -5,9 +5,15 @@ use query::access_hooks::{ReadValidator, WriteValidator};
 
 /// An app's own access control for an iroh node.
 ///
-/// The collections named in [`AccessHooks::new`] are governed by the app:
-/// replicated composites into them are judged by the merge validator, never
-/// by ACP, and a governed collection with no merge validator merges nothing.
+/// The merge validator decides whether a replicated composite merges into a
+/// collection named in [`AccessHooks::new`] and, once a merge validator is
+/// installed, into every collection whose definition declares a governance
+/// root (`@governed(root:)`), named or not, so one defined after the node
+/// started is judged from its first composite. Most of the ACP merge hook
+/// does not run for those collections (see [`MergeGovernance`]). A named
+/// collection with no merge validator merges nothing replicated; with no
+/// merge validator, a collection that declares a root and is not named
+/// merges as any other.
 /// The read and write validators are node-local and narrow what this node's
 /// clients may do; they compose with ACP and never widen it.
 #[derive(Clone, Default)]
@@ -19,7 +25,9 @@ pub struct AccessHooks {
 }
 
 impl AccessHooks {
-    /// Claim collections, by name, for the app's merge validator.
+    /// Claim collections, by name, for the app's merge validator. A merge
+    /// validator also judges every collection that declares a governance
+    /// root, named or not.
     pub fn new(governed: impl IntoIterator<Item = impl Into<String>>) -> Self {
         Self {
             governed: governed.into_iter().map(Into::into).collect(),
