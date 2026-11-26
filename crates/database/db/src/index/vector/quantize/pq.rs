@@ -179,6 +179,22 @@ impl ProductQuantizer {
     fn subspace<'v>(&self, vector: &'v [f32], j: usize) -> &'v [f32] {
         &vector[j * self.dsub..(j + 1) * self.dsub]
     }
+
+    /// [`Quantizer::decode`] for `dsub == D`, writing the same values: row `j`
+    /// of `out` takes centroid `code[j]` of book `j`, for every `j` that the
+    /// code, `out` and the books all reach.
+    fn decode_fixed<const D: usize>(&self, code: &[u8], out: &mut [f32]) {
+        let (rows, _) = out.as_chunks_mut::<D>();
+        for ((row, &part), book) in rows.iter_mut().zip(code).zip(&self.books) {
+            if book.k == 0 {
+                continue;
+            }
+            let at = (part as usize).min(book.k - 1) * D;
+            if let Some(centroid) = book.values.get(at..at + D).and_then(|v| v.as_array()) {
+                *row = *centroid;
+            }
+        }
+    }
 }
 
 impl Quantizer for ProductQuantizer {
@@ -207,6 +223,15 @@ impl Quantizer for ProductQuantizer {
     }
 
     fn decode(&self, code: &[u8], out: &mut [f32]) {
+        // A copy whose width is known at compile time is a few register moves;
+        // one of `dsub` floats is a call to `memcpy` per subvector.
+        match self.dsub {
+            2 => return self.decode_fixed::<2>(code, out),
+            4 => return self.decode_fixed::<4>(code, out),
+            8 => return self.decode_fixed::<8>(code, out),
+            16 => return self.decode_fixed::<16>(code, out),
+            _ => {}
+        }
         for j in 0..self.m {
             let book = &self.books[j];
             if book.k == 0 || code.len() <= j || out.len() < (j + 1) * self.dsub {

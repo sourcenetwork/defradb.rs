@@ -263,3 +263,41 @@ fn encode_picks_the_centroid_nearest_picks() {
         }
     }
 }
+
+/// What `decode` must write: centroid `code[j]` of book `j` into subvector `j`,
+/// for every `j` the code and the output both reach, and nothing else.
+fn decoded_by_hand(pq: &ProductQuantizer, code: &[u8], out: &mut [f32]) {
+    let dsub = pq.dimensions() / pq.code_len();
+    for (j, book) in pq.books().iter().enumerate() {
+        if j >= code.len() || out.len() < (j + 1) * dsub {
+            continue;
+        }
+        let index = (code[j] as usize).min(book.k - 1);
+        out[j * dsub..(j + 1) * dsub].copy_from_slice(book.get(index));
+    }
+}
+
+/// Every subspace width decodes to exactly the centroids, the widths with a
+/// fixed-size copy among them, and a short code or output leaves the rest of
+/// the output as it was.
+#[test]
+fn decode_writes_the_centroids_at_every_width() {
+    for (dimensions, m) in [(16, 8), (16, 4), (32, 4), (64, 4), (48, 4), (24, 8)] {
+        let flat = sample(300, dimensions, dimensions as u64 + 3);
+        let pq = ProductQuantizer::train(&KMeans::new(5), &flat, dimensions, m)
+            .expect("a divisible width trains");
+        let mut code = vec![0u8; m];
+        for i in 0..50 {
+            let vector = &flat[i * dimensions..(i + 1) * dimensions];
+            pq.encode(vector, &mut code);
+            code[i % m] = u8::MAX;
+            for (code_len, out_len) in [(m, dimensions), (m - 1, dimensions), (m, dimensions - 1)] {
+                let mut got = vec![-1.0f32; out_len];
+                let mut want = got.clone();
+                pq.decode(&code[..code_len], &mut got);
+                decoded_by_hand(&pq, &code[..code_len], &mut want);
+                assert_eq!(got, want, "dimensions={dimensions} m={m} vector {i}");
+            }
+        }
+    }
+}
