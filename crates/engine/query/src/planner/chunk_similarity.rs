@@ -102,7 +102,7 @@ impl Planner {
             .fetcher
             .clone()
             .ok_or_else(|| QueryError::internal("a routed similarity query has no fetcher"))?;
-        let mut scan = ChunkSimilarityScanNode::new(
+        let scan = ChunkSimilarityScanNode::new(
             collection.clone(),
             mapping.clone(),
             target,
@@ -111,9 +111,6 @@ impl Planner {
             similarity_slot(mapping, similarity)?,
             fetcher,
         );
-        if let Some(doc_ids) = &select.doc_ids {
-            scan = scan.with_doc_ids(doc_ids.clone());
-        }
         Ok(Some(Box::new(scan)))
     }
 

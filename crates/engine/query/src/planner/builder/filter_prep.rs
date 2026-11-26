@@ -80,7 +80,7 @@ impl super::Planner {
             .map(|f| {
                 f.is_complex()
                     || !self.relation_filter_paths(f, collection).is_empty()
-                    || f.split_for_scores().1.is_some()
+                    || f.waits_for_scores()
             })
             .unwrap_or(false);
 
