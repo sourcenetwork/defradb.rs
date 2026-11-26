@@ -9,6 +9,7 @@ mod cross_runtime;
 pub mod export;
 mod feature_binaries;
 mod go_node;
+pub mod hostile;
 pub mod index_gate;
 pub mod introspection_sdl;
 pub mod multiplier;

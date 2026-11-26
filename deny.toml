@@ -57,14 +57,6 @@ ignore = [
     "RUSTSEC-2026-0118",
     "RUSTSEC-2026-0119",
 
-    # zstd 0.13 and zstd-safe 7 — pulled only by commonware-storage from the
-    # iverc/commonware-upstream fork, through vera.rs and backbone's
-    # acp-light-client (pinned revs). It calls bulk::Decompressor (one-shot
-    # DCtx::decompress) and CCtx, never stream::raw with_context (0391) or
-    # DCtx::decompress_stream (0403). zstd-sys is already on the patched 2.1.2.
-    # Remove when the fork moves to zstd 0.14.3 and vera.rs and backbone repin (#2298).
-    { id = "RUSTSEC-2026-0391", reason = "commonware-storage fork still on zstd 0.13; unreachable call; #2298" },
-    { id = "RUSTSEC-2026-0403", reason = "commonware-storage fork still on zstd-safe 7; no decompress_stream; #2298" },
     # hickory-proto 0.25.2 comes only through libp2p 0.56's libp2p-dns; the fix
     # (0.26.2) needs libp2p 0.57. 0487, 0489 and 0490 panic only when parsing
     # the text (zone file) form, which a resolver never does. 0491 is reachable:

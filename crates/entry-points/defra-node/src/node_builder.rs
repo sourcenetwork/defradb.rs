@@ -345,6 +345,12 @@ impl NodeBuilder {
         self
     }
 
+    /// Indexes at most `docs` documents per backfill transaction.
+    pub fn with_backfill_batch_docs(mut self, docs: usize) -> Self {
+        self.config.backfill_batch_docs = Some(docs.max(1));
+        self
+    }
+
     /// Hold every explicit transaction commit at `gate` before it is handed
     /// to its owner, so a test can prove a commit whose HTTP answer passed its
     /// bound still lands.
@@ -669,7 +675,7 @@ impl NodeBuilder {
             .with_pool(node.pool.clone())
             .with_dev_mode(http_cfg.dev_mode)
             .with_schema_arc(Arc::new(crate::HttpSchemaOps {
-                schema_ops: Arc::clone(&node.schema_ops),
+                schema_ops: node.schema_ops.clone(),
                 context: None,
             }));
             let ops = crate::ops::HttpNodeOps::new(node.ops());
