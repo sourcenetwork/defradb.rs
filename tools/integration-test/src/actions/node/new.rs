@@ -192,6 +192,17 @@ impl Op for NewNode {
             None => None,
         };
         let cli_config = self.go_config.is_some() || !self.start_args.is_empty();
+        if cli_config {
+            // A node the CLI's loader configures is a Rust node under
+            // go-http, and its flags may name a Go node's libp2p address,
+            // which the loader refuses: check the mix before loading them.
+            let rust = NodeSpec {
+                network: true,
+                go_config: true,
+                ..Default::default()
+            };
+            state.check_p2p_peers(self.common.node(), &rust)?;
+        }
         let (network, pinc_bind, pinc_public_addrs, bootstrap_peers) = match cli_config {
             true => {
                 let args: Vec<&str> = self.start_args.iter().map(Text::as_str).collect();
