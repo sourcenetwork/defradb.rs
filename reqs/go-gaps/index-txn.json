@@ -119,7 +119,7 @@
     "verdict": "none",
     "rust_tests": [],
     "evidence": "",
-    "note": "Two collections reindexed concurrently (both listed in progress, both converge) and a migration advancing the epoch mid-build are not tested. See https://github.com/sourcenetwork/defradb.rs/issues/2803"
+    "note": "Two collections reindexed concurrently (both listed in progress, both converge) and a migration advancing the epoch mid-build are not tested. A Rust rebuild after a migration that stops part way, stays owed and resumes is covered by defra.index.owed_reindex.resume."
   },
   {
     "id": "go.index.backfill.txn",
