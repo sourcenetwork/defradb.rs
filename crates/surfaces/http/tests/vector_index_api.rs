@@ -58,6 +58,7 @@ fn the_response_reports_the_kind() {
             ivfflat: None,
             ssg: None,
             diskann: None,
+            maintenance: Default::default(),
         }),
     };
     let json = serde_json::to_value(&described).unwrap();

@@ -48,6 +48,7 @@ fn index(metric: DistanceMetric) -> VectorIndex {
         ivfflat: None,
         ssg: None,
         diskann: None,
+        maintenance: Default::default(),
     });
     VectorIndex::try_new(COLLECTION, desc).expect("a valid vector description")
 }

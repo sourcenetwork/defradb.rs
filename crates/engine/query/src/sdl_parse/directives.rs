@@ -253,6 +253,8 @@ pub struct VectorIndexConfig {
     /// Present when the `hnsw` argument was given. Its absence still means
     /// HNSW, with defaults.
     pub hnsw: Option<HnswConfig>,
+    /// From `maintenance:`; absent means `SYNC`.
+    pub maintenance: Option<schema::VectorIndexMaintenance>,
 }
 
 /// The `flat` block, which has only a metric.

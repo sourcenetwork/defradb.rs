@@ -17,7 +17,7 @@
 
 use schema::{
     DistanceMetric, HnswParams, IndexDescription, IndexKind, OrderedIndexDescription,
-    VectorAlgorithm, VectorIndexDescription,
+    VectorAlgorithm, VectorIndexDescription, VectorIndexMaintenance,
 };
 use serde_json::{json, Value};
 
@@ -46,6 +46,7 @@ fn vector() -> VectorIndexDescription {
         ivfflat: None,
         ssg: None,
         diskann: None,
+        maintenance: Default::default(),
     }
 }
 
@@ -486,5 +487,48 @@ fn an_hnsw_description_carries_no_ivfflat_key() {
     assert_eq!(
         keys(&json["KindDescription"]),
         ["Algorithm", "Dimensions", "HNSW", "Metric"]
+    );
+}
+
+/// Go's `Maintenance` member (sourcenetwork/defradb#5326): `DEFERRED` is
+/// written, `SYNC` is omitted, so every description stored before the modes
+/// keeps its bytes.
+#[test]
+fn maintenance_round_trips_as_go_writes_it() {
+    let deferred = VectorIndexDescription {
+        maintenance: VectorIndexMaintenance::Deferred,
+        ..vector()
+    };
+    let json = serde_json::to_value(deferred).unwrap();
+    assert_eq!(json["Maintenance"], "DEFERRED");
+    assert_eq!(
+        serde_json::from_value::<VectorIndexDescription>(json).unwrap(),
+        deferred
+    );
+
+    let sync = serde_json::to_value(vector()).unwrap();
+    assert!(!keys(&sync).contains(&"Maintenance".to_string()));
+    for spelled in ["SYNC", ""] {
+        let mut read = sync.clone();
+        read["Maintenance"] = json!(spelled);
+        assert_eq!(
+            serde_json::from_value::<VectorIndexDescription>(read).unwrap(),
+            vector(),
+            "{spelled:?} reads as the default"
+        );
+    }
+}
+
+/// Go's create path refuses an unknown mode as `vector index with unknown
+/// maintenance`.
+#[test]
+fn an_unknown_maintenance_is_refused() {
+    let mut json = serde_json::to_value(vector()).unwrap();
+    json["Maintenance"] = json!("LAZY");
+    let err = serde_json::from_value::<VectorIndexDescription>(json).unwrap_err();
+    assert!(
+        err.to_string()
+            .contains("vector index with unknown maintenance. Maintenance: LAZY"),
+        "got: {err}"
     );
 }

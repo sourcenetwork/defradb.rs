@@ -24,6 +24,7 @@ mod selector;
 mod source;
 mod validation;
 mod vector_index_defaults;
+mod vector_maintenance;
 
 pub mod definition_validation;
 
@@ -65,3 +66,4 @@ pub use source::{
     query_select_json_bytes, CollectionSetDescription, CollectionSource, QuerySource,
 };
 pub use validation::{validate_schema, SchemaValidator};
+pub use vector_maintenance::VectorIndexMaintenance;

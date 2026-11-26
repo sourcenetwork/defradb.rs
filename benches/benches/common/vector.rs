@@ -292,6 +292,7 @@ pub async fn trained_ivfpq(
         ivfflat: None,
         ssg: None,
         diskann: None,
+        maintenance: Default::default(),
     });
     let store = storage::RegolithStore::in_memory().expect("an in-memory store");
     let index =

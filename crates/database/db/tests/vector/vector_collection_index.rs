@@ -32,6 +32,7 @@ fn vector_config(dimensions: u32) -> VectorIndexDescription {
         ivfflat: None,
         ssg: None,
         diskann: None,
+        maintenance: Default::default(),
     }
 }
 
@@ -467,6 +468,7 @@ fn dropping_a_trained_ivfflat_index_removes_every_key() {
             }),
             ssg: None,
             diskann: None,
+            maintenance: Default::default(),
         });
         let index = VectorIndex::try_new(COLLECTION, desc).expect("a valid IVF_FLAT description");
 

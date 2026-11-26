@@ -9,6 +9,7 @@ pub mod codec;
 pub mod engine;
 pub mod index;
 pub mod params;
+pub mod pending;
 pub mod quantize;
 pub mod rebuild_task;
 pub mod store;

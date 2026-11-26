@@ -174,6 +174,13 @@ impl IndexManager {
     /// Asks `drains` for a drain of each deferred index a write owes.
     pub fn with_drains(mut self, drains: Option<&crate::index::deferred::DrainRequests>) -> Self {
         self.drains = drains.cloned();
+        if let Some(drains) = drains {
+            for index in self.indexes.values_mut() {
+                if let IndexType::Vector(vector) = index {
+                    vector.defer_through(drains.backlogs());
+                }
+            }
+        }
         self.asked = match drains {
             Some(_) => self
                 .indexes
@@ -626,6 +633,7 @@ impl IndexManager {
                 );
             }
         }
+        self.ask_vector_drains(datastore).await?;
         Ok(conflicts)
     }
 
@@ -680,6 +688,7 @@ impl IndexManager {
                 }
             }
         }
+        self.ask_vector_drains(datastore).await?;
         Ok(conflicts)
     }
 
@@ -724,6 +733,7 @@ impl IndexManager {
             }
         }
 
+        self.ask_vector_drains(datastore).await?;
         Ok(())
     }
 
@@ -783,6 +793,7 @@ impl IndexManager {
             }
         }
 
+        self.ask_vector_drains(datastore).await?;
         Ok(())
     }
 
@@ -848,6 +859,7 @@ impl IndexManager {
                 })?;
             }
         }
+        self.ask_vector_drains(datastore).await?;
         Ok(())
     }
 
@@ -878,6 +890,7 @@ impl IndexManager {
             }
         }
 
+        self.ask_vector_drains(datastore).await?;
         Ok(())
     }
 

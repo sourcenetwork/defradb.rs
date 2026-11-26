@@ -6,6 +6,8 @@ use rapidhash::fast::RandomState;
 use rapidhash::{HashSetExt, RapidHashSet};
 use regolith::sync::{HopscotchMap, Notify};
 
+use crate::index::vector::pending::Backlogs;
+
 /// One deferred index: its collection's short id and its id.
 pub(crate) type IndexRef = (u32, u32);
 
@@ -18,6 +20,8 @@ struct Inner {
     /// deferred indexes, however many commits ask.
     asked: HopscotchMap<IndexRef, (), RandomState>,
     wake: Notify,
+    /// How many writes each deferred vector index holds pending.
+    backlogs: Backlogs,
 }
 
 impl Default for DrainRequests {
@@ -25,6 +29,7 @@ impl Default for DrainRequests {
         Self(Arc::new(Inner {
             asked: HopscotchMap::with_hasher(RandomState::default()),
             wake: Notify::default(),
+            backlogs: Backlogs::default(),
         }))
     }
 }
@@ -54,6 +59,11 @@ impl DrainRequests {
             }
         }
         indexes
+    }
+
+    /// The pending counts of the deferred vector indexes.
+    pub fn backlogs(&self) -> &Backlogs {
+        &self.0.backlogs
     }
 
     /// How many indexes wait for a drain.

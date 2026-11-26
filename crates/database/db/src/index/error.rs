@@ -30,6 +30,14 @@ pub enum Error {
     #[error("DiskANN resident codes outgrow a u32 slot at node {id}")]
     DiskAnnCodeSlots { id: u64 },
 
+    /// Go's `newErrMalformedPending`.
+    #[error("malformed vector pending entry. NodeID: {node}, Length: {length}")]
+    MalformedVectorPending { node: u64, length: usize },
+
+    /// Go's `newErrUnknownPendingOp`.
+    #[error("unknown vector pending entry op. NodeID: {node}, Op: {op}")]
+    UnknownVectorPendingOp { node: u64, op: u8 },
+
     #[error("{0}")]
     Other(String),
 

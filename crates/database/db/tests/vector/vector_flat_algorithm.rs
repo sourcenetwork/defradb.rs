@@ -42,6 +42,7 @@ fn description(algorithm: VectorAlgorithm, hnsw: Option<HnswParams>) -> IndexDes
         ivfflat: None,
         ssg: None,
         diskann: None,
+        maintenance: Default::default(),
     })
 }
 
@@ -238,6 +239,7 @@ fn the_ivfpq_algorithm_is_selectable() {
             ivfflat: None,
             ssg: None,
             diskann: None,
+            maintenance: Default::default(),
         });
         let index = VectorIndex::try_new(COLLECTION, desc).expect("a valid IVF-PQ description");
 
@@ -288,6 +290,7 @@ fn an_ivfpq_index_with_an_unrankable_metric_is_refused() {
             ivfflat: None,
             ssg: None,
             diskann: None,
+            maintenance: Default::default(),
         });
     let err = VectorIndex::try_new(COLLECTION, desc).unwrap_err();
     assert!(
@@ -310,6 +313,7 @@ fn the_ssg_algorithm_is_selectable() {
                 ivfflat: None,
                 ssg: Some(schema::SsgParams::default()),
                 diskann: None,
+                maintenance: Default::default(),
             });
         let index = VectorIndex::try_new(COLLECTION, desc).expect("a valid SSG description");
 
@@ -351,6 +355,7 @@ fn out_of_range_ssg_parameters_are_refused() {
             ..schema::SsgParams::default()
         }),
         diskann: None,
+        maintenance: Default::default(),
     });
     let err = VectorIndex::try_new(COLLECTION, desc).unwrap_err();
     assert!(err.to_string().contains("angle"), "got: {err}");
@@ -366,6 +371,7 @@ fn diskann_description(params: schema::DiskAnnParams) -> schema::IndexDescriptio
         ivfflat: None,
         ssg: None,
         diskann: Some(params),
+        maintenance: Default::default(),
     })
 }
 

@@ -52,6 +52,7 @@ fn ivfpq_vector_description() -> VectorIndexDescription {
         ivfflat: None,
         ssg: None,
         diskann: None,
+        maintenance: Default::default(),
     }
 }
 
@@ -65,6 +66,7 @@ fn hnsw_vector_description() -> VectorIndexDescription {
         ivfflat: None,
         ssg: None,
         diskann: None,
+        maintenance: Default::default(),
     }
 }
 

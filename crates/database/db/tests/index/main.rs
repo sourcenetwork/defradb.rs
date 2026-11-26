@@ -7,6 +7,7 @@ mod bulk;
 mod create;
 mod deferred;
 mod deferred_task;
+mod deferred_vector;
 mod drop;
 mod fence;
 mod manager;

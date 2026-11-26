@@ -635,3 +635,39 @@ fn a_float32_field_takes_a_vector_index() {
     assert_eq!(vector.dimensions, 8);
     assert_eq!(vector.algorithm, VectorAlgorithm::Hnsw);
 }
+
+// ---------------------------------------------------------------------------
+// Maintenance (sourcenetwork/defradb#5326)
+// ---------------------------------------------------------------------------
+
+/// `maintenance:` selects when a write reaches the graph; without it, `SYNC`.
+#[test]
+fn maintenance_selects_the_mode_and_defaults_to_sync() {
+    use schema::VectorIndexMaintenance;
+    let mode = |member: &str| {
+        only_vector(&format!(
+            "type User {{ vector: [Float32!] @index(vector: {{dimensions: 3, {member}hnsw: {{metric: COSINE}}}}) }}"
+        ))
+        .maintenance
+    };
+    assert_eq!(
+        mode("maintenance: DEFERRED, "),
+        VectorIndexMaintenance::Deferred
+    );
+    assert_eq!(mode("maintenance: SYNC, "), VectorIndexMaintenance::Sync);
+    assert_eq!(mode(""), VectorIndexMaintenance::Sync);
+}
+
+/// Go's GraphQL enum refuses an unknown mode with this text.
+#[test]
+fn an_unknown_maintenance_is_refused() {
+    let err = parse_sdl(
+        "type User { vector: [Float32!] @index(vector: {dimensions: 3, maintenance: LAZY}) }",
+    )
+    .unwrap_err();
+    assert!(
+        err.to_string()
+            .contains(r#"Expected type "VectorIndexMaintenance", found LAZY"#),
+        "got: {err}"
+    );
+}

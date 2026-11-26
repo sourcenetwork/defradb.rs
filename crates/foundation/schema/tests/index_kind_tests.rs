@@ -17,6 +17,7 @@ fn vector_description() -> VectorIndexDescription {
         ivfflat: None,
         ssg: None,
         diskann: None,
+        maintenance: Default::default(),
     }
 }
 
@@ -240,6 +241,7 @@ fn index_kinds() -> impl Strategy<Value = IndexKind> {
                         ivfflat,
                         ssg,
                         diskann,
+                        maintenance: Default::default(),
                     })
                 }
             )

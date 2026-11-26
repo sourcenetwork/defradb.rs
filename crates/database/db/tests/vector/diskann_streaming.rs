@@ -354,6 +354,7 @@ pub(crate) fn description() -> IndexDescription {
             m: params().m,
             ..Default::default()
         }),
+        maintenance: Default::default(),
     })
 }
 
