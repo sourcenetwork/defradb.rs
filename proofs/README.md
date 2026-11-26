@@ -102,6 +102,7 @@ section is the **diff**: what is proven vs. the accepted gap.
 | Inbound stream admission | TLA+, Lean | p2p |
 | Vector index link maintenance | TLA+ | storage, db-index |
 | DAG fetch provider ranking | TLA+, Lean | p2p |
+| Peer fetch stats | Lean | pinc |
 | DAG fetch arbitration (EWMA) | Lean | p2p |
 | Pubsub RPC reply addressing | TLA+, Lean | p2p |
 | Reply-driven DAG fetch | TLA+ | p2p |
