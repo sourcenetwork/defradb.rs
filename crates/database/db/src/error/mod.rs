@@ -40,6 +40,11 @@ pub enum Error {
     #[error("index with name doesn't exists. Name: {index}")]
     IndexNotFound { collection: String, index: String },
 
+    /// A new index would repeat the definition of the index named here, which
+    /// Go copies under a numbered name instead.
+    #[error("index with the same definition already exists. Name: {0}")]
+    IndexDefinitionExists(String),
+
     /// Go's `NewErrEncryptedIndexOnNonExistentField`.
     #[error("encrypted index on non-existent field. Field: {0}")]
     EncryptedIndexFieldMissing(String),
