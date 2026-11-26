@@ -502,6 +502,13 @@ On a field with `@index(vector: {dimensions: 3, hnsw: {metric: COSINE}})`, `User
 
 A similarity query with a non-empty scalar filter—including one wrapped in `_and`—does not use the vector index. It exhaustively scores the filter's matches and returns the `VECTOR_INDEX_UNUSED` warning with `reason: filter`. An empty filter selects every row and keeps vector routing.
 
+# `defra.query.simple.similarity.alias_under_combinator`: An alias condition under `_or` sees the scores
+
+- **Parents:** ["go.query.simple.similarity"]
+- **Scenarios:** ["query::simple::with_similarity_or_alias::similarity_alias_under_or_keeps_rows_the_alias_matches"]
+
+`User(filter: {_or: [{status: {_eq: "public"}}, {_alias: {sim: {_gt: 0.9}}}]}) { name sim: SIMILARITY(vector: {...}) }` returns every document that is public or scores above 0.9. The whole filter is decided after the scores exist, so a document the alias branch matches is never dropped. The same holds under `_and` and `_not`.
+
 # `go.query.simple.select.fields`: Plain query returns every document with the selected fields
 
 - **Parents:** ["go.query.simple.select"]
