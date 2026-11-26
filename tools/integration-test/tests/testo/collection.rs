@@ -6,6 +6,7 @@ mod refresh {
 mod truncate {
     mod add;
     mod branchable_add;
+    mod branchable_filter;
     mod dac;
     mod filter;
     mod index_filter;
