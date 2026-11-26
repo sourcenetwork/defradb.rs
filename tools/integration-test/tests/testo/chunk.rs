@@ -11,6 +11,7 @@ mod declare_repeated_argument;
 mod declare_string_only;
 mod declare_underscore_name;
 mod declare_unknown_argument;
+mod journal_visibility;
 mod protect_admin_ops;
 mod protect_api_writes;
 mod protect_chunk_documents;

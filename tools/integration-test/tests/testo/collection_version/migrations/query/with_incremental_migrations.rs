@@ -162,8 +162,6 @@ fn collection_migration_query_intermediate_migration_registered_last_should_prod
             }
             .into(),
         ],
-        // TODO(https://github.com/sourcenetwork/defradb.rs/issues/3044): with indexes, a query after a migration returns unmigrated fields.
-        multiplier_excludes: &["secondary-index"],
         ..Default::default()
     }
     .execute();
@@ -296,8 +294,6 @@ fn collection_migration_query_intermediate_stamp_survives_restart_should_remigra
             }
             .into(),
         ],
-        // TODO(https://github.com/sourcenetwork/defradb.rs/issues/3044): with indexes, a query after a migration returns unmigrated fields.
-        multiplier_excludes: &["secondary-index"],
         ..Default::default()
     }
     .execute();
@@ -598,8 +594,6 @@ fn collection_migration_query_three_incremental_migrations_should_migrate_across
             }
             .into(),
         ],
-        // TODO(https://github.com/sourcenetwork/defradb.rs/issues/3044): with indexes, a query after a migration returns unmigrated fields.
-        multiplier_excludes: &["secondary-index"],
         ..Default::default()
     }
     .execute();

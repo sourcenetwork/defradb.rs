@@ -325,6 +325,13 @@ impl HttpClient {
             .await
             .unwrap_or_else(|e| format!("[failed to read body: {}]", e));
         match serde_json::from_str::<types::ErrorResponse>(&body) {
+            Ok(types::ErrorResponse {
+                error,
+                code: Some(code),
+            }) => Error::ServerRefused {
+                message: error,
+                code,
+            },
             Ok(parsed) => Error::Server(parsed.error),
             Err(_) => Error::Server(format!("HTTP {}: {}", status, body.trim())),
         }

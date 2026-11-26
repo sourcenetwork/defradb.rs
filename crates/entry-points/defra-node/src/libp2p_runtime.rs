@@ -114,6 +114,9 @@ where
                 enable_relay: config.enable_relay,
                 resource_limits: config.resource_limits,
                 resolver: config.resolver.clone(),
+                connection_manager_low_water: config.connection_manager_low_water,
+                connection_manager_high_water: config.connection_manager_high_water,
+                connection_manager_grace_period: config.connection_manager_grace_period,
                 stream_timeout: config
                     .stream_timeout_secs
                     .unwrap_or(p2p::P2PHostConfig::default().stream_timeout),
