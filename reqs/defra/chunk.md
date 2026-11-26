@@ -475,7 +475,7 @@ With an article about rivers and one about rivers and engines, `limit: 1, docID:
 - **Parents:** ["defra.chunk.rank"]
 - **Scenarios:** ["chunk::rank_fallback::an_index_that_cannot_fill_the_page_falls_back_to_every_article"]
 
-With two articles that have chunks and one with no body, `limit: 3` returns all three, best first, the one with no body with similarity `null`. Under `@explain(type: execute)` the article scan names the chunk vector index and reads it twice before reading every article.
+With two articles that have chunks and one with no body, `limit: 3` returns all three, best first, the one with no body with similarity `null`. Under `@explain(type: execute)` the article scan names the chunk vector index, reads it twice before reading every article, and reports `fallback: "nothingNew"`, the reason it gave up.
 
 # `defra.chunk.rank.metric`: A chunk index with another metric ranks by it
 

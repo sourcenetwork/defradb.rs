@@ -22,7 +22,7 @@ pub(crate) enum Searched {
     /// At least `k` parents, each with its exact best listed chunk's score.
     Ranked(Vec<(Document, f64)>),
     /// The search gave up before naming `k` parents.
-    Exhausted,
+    Exhausted(GaveUp),
 }
 
 /// Why a routed search gave up.
@@ -34,6 +34,17 @@ pub(crate) enum GaveUp {
     NothingNew,
     /// The index returned fewer chunks than asked for.
     RanOut,
+}
+
+impl GaveUp {
+    /// The name explain reports.
+    pub(crate) fn name(self) -> &'static str {
+        match self {
+            Self::Budget => "budget",
+            Self::NothingNew => "nothingNew",
+            Self::RanOut => "ranOut",
+        }
+    }
 }
 
 /// A finished search, with what it cost.
@@ -173,7 +184,7 @@ impl ChunkSearch<'_> {
             "chunk vector index could not fill the page, scoring every parent"
         );
         Ok(Search {
-            searched: Searched::Exhausted,
+            searched: Searched::Exhausted(gave_up),
             searches,
             reads,
         })

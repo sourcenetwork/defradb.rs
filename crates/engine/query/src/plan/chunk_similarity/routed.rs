@@ -8,7 +8,7 @@ use schema::CollectionVersion;
 use serde_json::Value as JsonValue;
 
 use super::listed::best_listed_score;
-use super::search::{ChunkSearch, ParentCheck, Searched};
+use super::search::{ChunkSearch, GaveUp, ParentCheck, Searched};
 use super::target::{ChunkTarget, Reads};
 use crate::doc_stream::DocStream;
 use crate::document::{document_to_plan_doc, DocumentMapping};
@@ -29,6 +29,7 @@ pub struct ChunkSimilarityScanNode {
     ranked: std::vec::IntoIter<Doc>,
     fallback: Option<Box<dyn DocStream>>,
     searched: bool,
+    gave_up: Option<GaveUp>,
     current: Doc,
     exec_info: ExecInfo,
 }
@@ -73,6 +74,7 @@ impl ChunkSimilarityScanNode {
             ranked: Vec::new().into_iter(),
             fallback: None,
             searched: false,
+            gave_up: None,
             current: Doc::default(),
             exec_info: ExecInfo::default(),
         }
@@ -131,8 +133,10 @@ impl PlanNode for ChunkSimilarityScanNode {
                 }
                 self.ranked = rows.into_iter();
                 self.fallback = None;
+                self.gave_up = None;
             }
-            Searched::Exhausted => {
+            Searched::Exhausted(gave_up) => {
+                self.gave_up = Some(gave_up);
                 self.ranked = Vec::new().into_iter();
                 self.fallback = Some(
                     self.fetcher
@@ -230,6 +234,10 @@ impl PlanNode for ChunkSimilarityScanNode {
             .flatten()
         {
             obj["vectorIndex"] = JsonValue::String(name.to_string());
+        }
+        // A search that gave up scored every parent, so the index did not answer.
+        if let Some(gave_up) = self.gave_up {
+            obj["fallback"] = JsonValue::String(gave_up.name().to_string());
         }
         obj
     }

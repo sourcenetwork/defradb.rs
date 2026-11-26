@@ -40,6 +40,7 @@ fn an_index_that_cannot_fill_the_page_falls_back_to_every_article() {
                 "fieldFetches": 6 * CHUNK_FIELDS + 4 * ARTICLE_FIELDS + 1,
                 "indexFetches": 4,
                 "vectorIndex": CHUNK_VECTOR_INDEX,
+                "fallback": "nothingNew",
             }),
         )
         .into(),

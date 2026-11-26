@@ -10,7 +10,7 @@ use defra_core::vector::Metric;
 use document::{DocID, Document, NormalValue};
 use schema::{CType, ChunkedField, CollectionBuilder, FieldDescription, FieldKind, ScalarKind};
 
-use super::{ChunkSearch, ParentCheck, Searched};
+use super::{ChunkSearch, GaveUp, ParentCheck, Searched};
 use crate::access_hooks::{AppReadCheck, ReadRequest, ReadValidator};
 use crate::doc_stream::{DocStream, VecStream};
 use crate::error::{QueryError, Result};
@@ -461,6 +461,25 @@ where
     (Some(ranked), found.reads)
 }
 
+/// Why a search for `k` parents gave up, if it did.
+fn gave_up(index: &Index, k: usize) -> Option<GaveUp> {
+    let target = target(index.lookup);
+    let search = ChunkSearch {
+        fetcher: index,
+        target: &target,
+        index_id: 0,
+        k,
+    };
+    match workers::block_on(search.run(&AnyParent))
+        .unwrap()
+        .unwrap()
+        .searched
+    {
+        Searched::Exhausted(gave_up) => Some(gave_up),
+        Searched::Ranked(_) => None,
+    }
+}
+
 /// The parents a search for `k` ranks, by name, sorted.
 fn search<C>(index: &Index, k: usize, check: &C) -> Option<Vec<(&'static str, f64)>>
 where
@@ -528,7 +547,7 @@ fn a_rejected_parent_is_skipped_and_the_search_widens_past_it() {
 #[test]
 fn an_index_that_runs_out_before_k_parents_reports_it() {
     let index = Index::new(vec![chunk("A", 0.9), chunk("B", 0.8)]);
-    assert!(search(&index, 3, &AnyParent).is_none());
+    assert_eq!(gave_up(&index, 3), Some(GaveUp::RanOut));
     assert_eq!(index.searches.load(Ordering::Relaxed), 1);
 }
 
@@ -538,7 +557,7 @@ fn the_search_stops_at_the_candidate_budget() {
         .map(|_| chunk("A", 0.5))
         .collect();
     let index = Index::new(chunks);
-    assert!(search(&index, 2, &AnyParent).is_none());
+    assert_eq!(gave_up(&index, 2), Some(GaveUp::Budget));
     assert_eq!(index.widest.load(Ordering::Relaxed), MAX_VECTOR_CANDIDATES);
 }
 
