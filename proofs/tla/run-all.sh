@@ -513,6 +513,9 @@ RUNS=(
   "MC_StickyDisconnect_Red_PincLocalLoud.cfg StickyDisconnect.tla RED" # pinc with the local half removed: the node that hung up dials back (NoRedialAfterDeliberateClose)
   "MC_StickyDisconnect_Red_KeepsQuiet.cfg StickyDisconnect.tla RED" # an explicit connect lifts no quiet: a disconnected then reconnected peer stays unmendable (UnquietOnConnect)
   "MC_StickyDisconnect_Red_EveryDialChecked.cfg StickyDisconnect.tla RED" # the quiet check refuses every dial: a PushLog to a disconnected peer never lands (RequestsStillDial)
+  "MC_StickyDisconnect_Red_DialNotRechecked.cfg StickyDisconnect.tla RED" # a discovery dial reads the quiet only when decided: a hang-up while it is on its way is overtaken (NoLocalRedial)
+  "MC_StickyDisconnect_Red_UnlinkedLoud.cfg StickyDisconnect.tla RED" # a hang-up with no live link quiets nothing: a later list has the node dial the peer (NoLocalRedial)
+  "MC_StickyDisconnect_Red_LostCloseRedials.cfg StickyDisconnect.tla RED" # witness: a peer whose close was lost may dial back, as after a drop (NoRedialAfterLostClose)
   "MC_SchemaPublication_Green.cfg SchemaPublication.tla GREEN"
   "MC_SchemaPublication_Red_EarlyReply.cfg SchemaPublication.tla RED"
   "MC_ChunkSettingsSync_Green.cfg ChunkSettingsSync.tla GREEN"

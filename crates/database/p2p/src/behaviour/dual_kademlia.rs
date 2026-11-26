@@ -88,7 +88,7 @@ pub struct DefraKademlia {
     inner: kad::Behaviour<MemoryStore>,
     /// Peers this node disconnected on purpose: Kademlia never dials them.
     quiet: QuietPeers<PeerId>,
-    /// Kademlia's own dials the swarm has not started or failed yet, the only
+    /// Kademlia's own dials that have not landed or failed yet, the only
     /// dials `quiet` refuses: an explicit dial of a quiet peer goes through.
     dials: RapidHashSet<ConnectionId>,
     /// A low-peer refresh was asked for while a bootstrap ran: run one more
@@ -243,8 +243,9 @@ impl NetworkBehaviour for DefraKademlia {
         addresses: &[Multiaddr],
         effective_role: Endpoint,
     ) -> Result<Vec<Multiaddr>, ConnectionDenied> {
-        let ours = self.dials.remove(&connection_id);
+        let ours = self.dials.contains(&connection_id);
         if let Some(peer) = maybe_peer.filter(|peer| ours && self.quiet.contains(peer)) {
+            self.dials.remove(&connection_id);
             return Err(ConnectionDenied::new(QuietPeerDial(peer)));
         }
         self.inner.handle_pending_outbound_connection(
@@ -263,6 +264,11 @@ impl NetworkBehaviour for DefraKademlia {
         role_override: Endpoint,
         port_use: PortUse,
     ) -> Result<THandler<Self>, ConnectionDenied> {
+        // A DisconnectPeers can land while one of Kademlia's dials is on its
+        // way: the quiet is read again once the dial lands.
+        if self.dials.remove(&connection_id) && self.quiet.contains(&peer) {
+            return Err(ConnectionDenied::new(QuietPeerDial(peer)));
+        }
         self.inner.handle_established_outbound_connection(
             connection_id,
             peer,
@@ -532,5 +538,32 @@ mod tests {
             dial(&mut kademlia, 3, peer),
             "an unquieted peer stayed refused"
         );
+    }
+
+    /// A DisconnectPeers that lands while Kademlia's dial is on its way: the
+    /// dial was let through, but the connection it makes is refused.
+    #[test]
+    fn a_kademlia_dial_that_lands_after_a_disconnect_is_refused() {
+        let mut kademlia = DefraKademlia::new(PeerId::random(), KademliaNetwork::Lan);
+        let peer = PeerId::random();
+        kademlia.dials.insert(ConnectionId::new_unchecked(1));
+        assert!(
+            dial(&mut kademlia, 1, peer),
+            "a loud peer's dial was refused"
+        );
+
+        kademlia.quiet.insert(peer);
+        let landed = kademlia.handle_established_outbound_connection(
+            ConnectionId::new_unchecked(1),
+            peer,
+            &"/ip4/127.0.0.1/tcp/1".parse().unwrap(),
+            Endpoint::Dialer,
+            PortUse::Reuse,
+        );
+        assert!(
+            landed.is_err(),
+            "the dial landed on a peer quieted meanwhile"
+        );
+        assert!(kademlia.dials.is_empty(), "a landed dial is forgotten");
     }
 }

@@ -3,7 +3,7 @@
 use std::time::Instant;
 
 use libp2p::swarm::dial_opts::{DialOpts, PeerCondition};
-use libp2p::swarm::{DialError, NotifyHandler, ToSwarm};
+use libp2p::swarm::{ConnectionId, DialError, NotifyHandler, ToSwarm};
 use libp2p::PeerId;
 use nuclei::sync::oneshot;
 use tracing::{debug, trace};
@@ -32,14 +32,24 @@ impl<S: Store> Bitswap<S> {
         }
     }
 
-    pub(super) fn on_dial_failure(&mut self, peer: PeerId, error: &DialError) {
+    pub(super) fn on_dial_failure(
+        &mut self,
+        peer: PeerId,
+        connection: ConnectionId,
+        error: &DialError,
+    ) {
         // A dial outcome says nothing about connections that already exist: tearing the peer down here
         // would leave bitswap's view disagreeing with the swarm's, and the refused dial that would have
         // repaired it is what landed here.
         let connected = self.is_connected(&peer);
         let condition_false = matches!(error, DialError::DialPeerConditionFalse { .. });
+        let ours = self.own_dials.remove(&connection);
         if matches!(error, DialError::Denied { .. }) {
-            self.pause_dialing = true;
+            // Only a refusal of a dial bitswap started says its own dials will be refused: another
+            // behaviour's dial is denied for reasons of its own (Kademlia refuses a quiet peer).
+            if ours {
+                self.pause_dialing = true;
+            }
             if !connected {
                 self.set_peer_state(&peer, PeerState::Disconnected);
             }
@@ -89,11 +99,11 @@ impl<S: Store> Bitswap<S> {
                 // Only dial a peer that is not already being talked to: an unconditional dial opened a
                 // second connection to reachable peers, and a redundant dial that failed put the peer in
                 // a ten-minute back-off.
-                return Some(ToSwarm::Dial {
-                    opts: DialOpts::peer_id(peer)
-                        .condition(PeerCondition::DisconnectedAndNotDialing)
-                        .build(),
-                });
+                let opts = DialOpts::peer_id(peer)
+                    .condition(PeerCondition::DisconnectedAndNotDialing)
+                    .build();
+                self.own_dials.insert(opts.connection_id());
+                return Some(ToSwarm::Dial { opts });
             }
         }
         None

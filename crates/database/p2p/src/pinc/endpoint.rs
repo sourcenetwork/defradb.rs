@@ -808,7 +808,7 @@ impl<H: Hosted + 'static> Node<H> {
 
     /// Hang up on `peer` on purpose: quiet it here, and close its links with
     /// [`CLOSE_DISCONNECTED`] so the peer quiets this node too.
-    async fn hang_up(&self, peer: &NodeId) {
+    pub(super) async fn hang_up(&self, peer: &NodeId) {
         self.quiet.borrow_mut().insert(*peer);
         let links: Vec<Connection<H>> = self
             .peers

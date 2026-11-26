@@ -98,8 +98,8 @@ impl<S: Store> P2PHost<S> {
                 // Add peer to Kademlia before any scheduled bootstrap. Kademlia's own
                 // ConnectionEstablished handler doesn't add peers to the
                 // routing table until protocol negotiation completes (async).
-                // We add the address now so the initial or periodic
-                // bootstrap has at least one peer to query.
+                // We add the address now so the low-peer refresh and the
+                // periodic bootstrap have at least one peer to query.
                 self.swarm
                     .behaviour_mut()
                     .kademlia

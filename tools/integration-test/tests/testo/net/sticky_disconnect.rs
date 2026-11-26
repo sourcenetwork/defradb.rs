@@ -109,6 +109,11 @@ fn an_explicit_connect_undoes_a_disconnect() {
 /// list lands within milliseconds of the connect that sends it.
 const DISCOVERY_WINDOW_MILLIS: u64 = 1500;
 
+/// Printed where a pinc-only scenario does not run: libp2p's close carries no
+/// reason, so the peer hung up on still dials back there.
+const LIBP2P_SKIP: &str =
+    "skipped: pinc only; set DEFRA_TRANSPORT=pinc and build with --features pinc";
+
 /// db1 disconnects both its peers, and neither comes back through discovery,
 /// whichever side's discovery would dial. pinc only: libp2p's close carries
 /// no reason, so there the peers' own Kademlia dials db1 back.
@@ -116,6 +121,7 @@ const DISCOVERY_WINDOW_MILLIS: u64 = 1500;
 #[mantra_macros::req_test("defra.net.peers.disconnect_sticks.discovery")]
 fn a_disconnected_peer_is_not_dialed_back_by_discovery() {
     if !integration_test::transport_choice::TransportChoice::from_env().is_pinc() {
+        eprintln!("{LIBP2P_SKIP}");
         return;
     }
     let mut actions = three_connected_nodes();
@@ -153,10 +159,24 @@ fn a_disconnected_peer_is_not_dialed_back_by_discovery() {
 #[mantra_macros::req_test("defra.net.peers.disconnect_sticks.discovery")]
 fn a_fresh_list_does_not_redial_a_disconnected_peer() {
     if !integration_test::transport_choice::TransportChoice::from_env().is_pinc() {
+        eprintln!("{LIBP2P_SKIP}");
         return;
     }
     let mut actions = three_connected_nodes();
     actions.extend([
+        // db2 must hold db0 for its fresh list to name it: db1's peer
+        // exchange introduced them, so wait for that dial to land.
+        Wait {
+            millis: Some(DISCOVERY_WINDOW_MILLIS),
+            ..Default::default()
+        }
+        .into(),
+        ActivePeers {
+            expected_data: json!({ "addresses": m::unordered(json!([m::r("peer0"), m::r("peer1")])) }),
+            common: on("db2"),
+            ..Default::default()
+        }
+        .into(),
         DisconnectPeers {
             targets: vec!["db0".into(), "db2".into()],
             common: on("db1"),

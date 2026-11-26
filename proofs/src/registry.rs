@@ -1008,21 +1008,21 @@ pub const PROPERTIES: &[Property] = &[
         // libp2p's close carries no reason, so only the node that hung up
         // stays quiet there (Red_Libp2pRemote shows the other half).
         family: "Peer connection observation",
-        name: "NoLocalRedial: a node never discovery-dials a peer it ran DisconnectPeers on until ConnectPeers or a replicator names it again; a real drop is still mended (NoRedialAfterDrop witness); an explicit connect lifts the quiet (UnquietOnConnect) and other protocols still dial a quiet peer (RequestsStillDial)",
+        name: "NoLocalRedial: a node never discovery-dials a peer it ran DisconnectPeers on, with a live link or not and with a dial already on its way, until ConnectPeers or a replicator names it again; a real drop is still mended (NoRedialAfterDrop witness); an explicit connect lifts the quiet (UnquietOnConnect) and other protocols still dial a quiet peer (RequestsStillDial)",
         axis: Tla,
-        anchor: "crates/database/p2p/src/quiet_peers.rs QuietPeers; crates/database/p2p/src/behaviour/dual_kademlia.rs DefraKademlia::handle_pending_outbound_connection, DefraKademlia::poll, DualKademlia::quiet, DualKademlia::unquiet; crates/database/p2p/src/host/command_handler/network.rs handle_disconnect; crates/database/p2p/src/host/p2p_host/mod.rs dial_peer",
-        model_ref: "MC_StickyDisconnect_{Green_Libp2p,Red_LocalLoud,Red_Libp2pRemote,Red_DropRedials,Red_KeepsQuiet,Red_EveryDialChecked}.cfg",
+        anchor: "crates/database/p2p/src/quiet_peers.rs QuietPeers; crates/database/p2p/src/behaviour/dual_kademlia.rs DefraKademlia::handle_pending_outbound_connection, DefraKademlia::handle_established_outbound_connection, DefraKademlia::poll, DualKademlia::quiet, DualKademlia::unquiet; crates/database/p2p/src/host/command_handler/network.rs handle_disconnect; crates/database/p2p/src/host/p2p_host/mod.rs dial_peer; crates/building-blocks/bitswap/src/behaviour/dial.rs Bitswap::on_dial_failure",
+        model_ref: "MC_StickyDisconnect_{Green_Libp2p,Red_LocalLoud,Red_Libp2pRemote,Red_DropRedials,Red_KeepsQuiet,Red_EveryDialChecked,Red_DialNotRechecked,Red_UnlinkedLoud}.cfg",
         tiers: &[Boundary],
-        bound_by: "crates/database/p2p/src/behaviour/dual_kademlia.rs kademlia_never_dials_a_quiet_peer_but_an_explicit_dial_does; crates/database/p2p/src/host/command_handler/network.rs an_explicit_dial_lets_kademlia_dial_a_disconnected_peer_again; crates/database/p2p/src/quiet_peers.rs a_full_table_forgets_its_oldest_peer_and_counts_it; tools/integration-test/tests/testo/net/sticky_disconnect.rs an_explicit_connect_undoes_a_disconnect; tools/integration-test/tests/testo/net/info/disconnect_peers.rs net_info_disconnect_multiple_peers",
+        bound_by: "crates/database/p2p/src/behaviour/dual_kademlia.rs kademlia_never_dials_a_quiet_peer_but_an_explicit_dial_does, a_kademlia_dial_that_lands_after_a_disconnect_is_refused; crates/building-blocks/bitswap/tests/dial_pause.rs another_behaviours_refused_dial_leaves_dialing_on; crates/database/p2p/src/host/command_handler/network.rs an_explicit_dial_lets_kademlia_dial_a_disconnected_peer_again; crates/database/p2p/src/quiet_peers.rs a_full_table_forgets_its_oldest_peer_and_counts_it; tools/integration-test/tests/testo/net/sticky_disconnect.rs an_explicit_connect_undoes_a_disconnect; tools/integration-test/tests/testo/net/info/disconnect_peers.rs net_info_disconnect_multiple_peers",
     },
     Property {
         // pinc's close carries CLOSE_DISCONNECTED, so the peer hung up on
         // stays quiet too: both halves, where libp2p has only the first.
         family: "Peer connection observation",
-        name: "NoRedialAfterDeliberateClose: on pinc neither side of a DisconnectPeers discovery-dials the other until an explicit dial or allow names it",
+        name: "NoRedialAfterDeliberateClose: on pinc neither side of a DisconnectPeers discovery-dials the other until an explicit dial or allow names it, when the close arrived (NoRedialAfterLostClose witness: a lost close is a drop to the peer)",
         axis: Tla,
-        anchor: "crates/database/p2p/src/pinc/endpoint.rs CLOSE_DISCONNECTED, hung_up_on, Node::hang_up, Node::is_quiet, Node::allow, Node::handle; crates/database/p2p/src/pinc/command.rs Command::Dial; crates/database/p2p/src/pinc/serve.rs Node::serve_connection; crates/database/p2p/src/pinc/exchange.rs Node::known_or_barred",
-        model_ref: "MC_StickyDisconnect_{Green_Pinc,Red_PincLocalLoud,Red_Libp2pRemote}.cfg",
+        anchor: "crates/database/p2p/src/pinc/endpoint.rs CLOSE_DISCONNECTED, hung_up_on, Node::hang_up, Node::is_quiet, Node::allow, Node::handle; crates/database/p2p/src/pinc/command.rs Command::Dial; crates/database/p2p/src/pinc/serve.rs Node::serve_connection; crates/database/p2p/src/pinc/exchange.rs Node::learn_peers, Node::known_or_barred",
+        model_ref: "MC_StickyDisconnect_{Green_Pinc,Red_PincLocalLoud,Red_Libp2pRemote,Red_DialNotRechecked,Red_UnlinkedLoud,Red_LostCloseRedials}.cfg",
         tiers: &[Boundary],
         bound_by: "crates/database/p2p/src/pinc/tests/sticky_disconnect.rs the_node_that_hung_up_does_not_dial_the_peer_back, the_peer_hung_up_on_does_not_dial_the_node_back; tools/integration-test/tests/testo/net/sticky_disconnect.rs a_disconnected_peer_is_not_dialed_back_by_discovery, a_fresh_list_does_not_redial_a_disconnected_peer; tools/integration-test/tests/testo/net/info/disconnect_peers.rs net_info_disconnect_multiple_peers",
     },

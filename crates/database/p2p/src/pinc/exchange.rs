@@ -106,8 +106,19 @@ impl<H: Hosted + 'static> Node<H> {
             let direct = peer.addr.into_iter().collect();
             let dialer = Rc::clone(self);
             self.spawn(async move {
-                if let Err(error) = dialer.connection(&node, direct).await {
-                    debug!(peer_id = %node_to_peer_id(&node), %error, "pinc dial of an exchanged peer failed");
+                // A hang-up can land after this list was read and before the
+                // dial does: the quiet is read again at each end of the dial,
+                // and a dial that landed on a peer hung up on meanwhile is
+                // hung up on again.
+                if dialer.is_quiet(&node) {
+                    return;
+                }
+                match dialer.connection(&node, direct).await {
+                    Ok(_) if dialer.is_quiet(&node) => dialer.hang_up(&node).await,
+                    Ok(_) => {}
+                    Err(error) => {
+                        debug!(peer_id = %node_to_peer_id(&node), %error, "pinc dial of an exchanged peer failed");
+                    }
                 }
             });
         }

@@ -78,6 +78,8 @@ pub struct Bitswap<S: Store> {
     pending_events: VecDeque<ToSwarm<BitswapEvent, BitswapHandlerIn>>,
     /// Set when dialing is disabled because the connection limit was reached.
     pause_dialing: bool,
+    /// The dials bitswap started that have not landed or failed yet.
+    own_dials: RapidHashSet<ConnectionId>,
     server: Option<Server>,
     client: Client,
     driver: Driver,
@@ -104,6 +106,7 @@ impl<S: Store> Bitswap<S> {
             protected: Default::default(),
             pending_events: Default::default(),
             pause_dialing: false,
+            own_dials: Default::default(),
             server,
             client: Client::new(),
             driver,
@@ -213,6 +216,7 @@ impl<S: Store> Bitswap<S> {
     ) {
         trace!(%peer, other_established, "connection established");
         self.connections.entry(peer).or_default().insert(connection);
+        self.own_dials.remove(&connection);
         if other_established == 0 {
             self.set_peer_state(&peer, PeerState::Connected(connection));
         } else {
@@ -299,8 +303,11 @@ impl<S: Store> NetworkBehaviour for Bitswap<S> {
             FromSwarm::DialFailure(DialFailure {
                 peer_id: Some(peer_id),
                 error,
-                ..
-            }) => self.on_dial_failure(peer_id, error),
+                connection_id,
+            }) => self.on_dial_failure(peer_id, connection_id, error),
+            FromSwarm::DialFailure(DialFailure { connection_id, .. }) => {
+                self.own_dials.remove(&connection_id);
+            }
             _ => {}
         }
     }
