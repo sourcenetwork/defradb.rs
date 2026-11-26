@@ -266,7 +266,8 @@ async fn apply(
                 .get(&index_position_key(short_id, index_id, doc))
                 .await
                 .map_err(Error::Storage)?;
-            Ok::<_, Error>((IndexManager::recorded(record.as_deref())?, new))
+            let frame = super::Frame::new(short_id, index_id, doc);
+            Ok::<_, Error>((IndexManager::recorded(&frame, record.as_deref())?, new))
         };
         match entries.await {
             Ok((old, new)) => {
@@ -330,12 +331,14 @@ async fn move_entries(
     for key in new.iter().filter(|key| !old.contains(key)) {
         datastore.set(key, &[]).await.map_err(Error::Storage)?;
     }
-    let record = index_position_key(short_id, index.description().id, doc);
+    let index_id = index.description().id;
+    let record = index_position_key(short_id, index_id, doc);
     if new.is_empty() {
         datastore.delete(&record).await.map_err(Error::Storage)
     } else {
+        let frame = super::Frame::new(short_id, index_id, doc);
         datastore
-            .set(&record, &super::encode_record(new)?)
+            .set(&record, &super::encode_record(&frame, new)?)
             .await
             .map_err(Error::Storage)
     }
@@ -384,7 +387,8 @@ pub(super) mod tests {
     use storage::RegolithStore;
 
     use super::*;
-    use crate::index::deferred::{decode_record, encode_record};
+    use crate::index::deferred::record::encode_keys;
+    use crate::index::deferred::{decode_record, Frame};
     use crate::AutoCommitMutator;
 
     pub(crate) const NAME: &str = "Tallies";
@@ -497,15 +501,14 @@ pub(super) mod tests {
             let txn = db.new_txn(false).await.unwrap();
             let data = txn.datastore().unwrap();
             let record = index_position_key(short_id, index_id, doc);
+            let frame = Frame::new(short_id, index_id, doc);
             for operation in 0..2 {
                 data.set(&foreign, b"preserve").await.unwrap();
                 data.set(&old_key, b"").await.unwrap();
-                data.set(&record, &encode_record(&old).unwrap())
-                    .await
-                    .unwrap();
+                data.set(&record, &encode_keys(&old)).await.unwrap();
                 if operation == 0 {
                     let recorded = data.get(&record).await.unwrap().unwrap();
-                    let recorded = IndexManager::recorded(Some(&recorded)).unwrap();
+                    let recorded = IndexManager::recorded(&frame, Some(&recorded)).unwrap();
                     move_entries(&data, index, short_id, doc, &recorded, &new_keys)
                         .await
                         .unwrap();
@@ -522,7 +525,7 @@ pub(super) mod tests {
                 assert!(data.get(&old_key).await.unwrap().is_none());
                 assert!(data.get(&new_keys[0]).await.unwrap().is_some());
                 assert_eq!(
-                    decode_record(&data.get(&record).await.unwrap().unwrap()).unwrap(),
+                    decode_record(&frame, &data.get(&record).await.unwrap().unwrap()).unwrap(),
                     new_keys
                 );
             }

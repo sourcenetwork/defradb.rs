@@ -130,14 +130,24 @@ impl IndexDataStoreKey {
             buf = crate::field_value::encode_field_value(buf, &field.value, field.descending)?;
         }
 
-        if self.doc_short_id != 0 {
-            buf.push(SEPARATOR);
-            buf.extend_from_slice(&super::super::doc_id_index::encode_doc_short_id(
-                self.doc_short_id,
-            ));
-        }
+        Self::push_doc_suffix(&mut buf, self.doc_short_id);
 
         Ok(buf)
+    }
+
+    /// The bytes an entry key of the document `doc_short_id` ends with,
+    /// after its field values: none for 0.
+    pub fn doc_suffix(doc_short_id: u64) -> Vec<u8> {
+        let mut suffix = Vec::new();
+        Self::push_doc_suffix(&mut suffix, doc_short_id);
+        suffix
+    }
+
+    fn push_doc_suffix(buf: &mut Vec<u8>, doc_short_id: u64) {
+        if doc_short_id != 0 {
+            buf.push(SEPARATOR);
+            super::super::doc_id_index::push_doc_short_id(buf, doc_short_id);
+        }
     }
 }
 

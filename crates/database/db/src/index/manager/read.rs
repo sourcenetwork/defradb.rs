@@ -15,6 +15,7 @@ use storage::keys::{index_pending_log, index_position_key, IndexDataStoreKey};
 use super::live::LiveDocs;
 use super::{IndexManager, IndexType};
 use crate::collection::Collection;
+use crate::index::deferred::Frame;
 use crate::index::error::{Error, Result};
 
 /// An index as a read sees it.
@@ -60,6 +61,7 @@ impl IndexManager {
             // It only says which stored keys to hide at this snapshot, so a
             // drain that moves it later is no conflict.
             hidden.extend(Self::recorded(
+                &Frame::new(self.collection_short_id, desc.id, doc),
                 datastore
                     .get_parts(&record, &[])
                     .await

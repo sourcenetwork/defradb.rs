@@ -151,9 +151,20 @@ pub(super) const PROPERTIES: &[Property] = &[
         // The drain finds a document's old entries only through its position
         // record, so the record must read back as the keys it names.
         family: "Index-maintenance consistency",
-        name: "decode_encode — a position record reads back as exactly its entry keys",
+        name: "decodeRecord_encodeValues — a position record of field values reads back as exactly its entry keys",
         axis: Lean,
         anchor: "crates/database/db/src/index/deferred/record.rs encode_record, decode_record",
+        model_ref: "PositionRecord (lake build)",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
+        // Stores written before records kept field values hold whole keys;
+        // such a record is never taken for one of values and still reads back.
+        family: "Index-maintenance consistency",
+        name: "decodeRecord_encode — a position record of whole keys still reads back as exactly its entry keys",
+        axis: Lean,
+        anchor: "crates/database/db/src/index/deferred/record.rs decode_record, decode_keys",
         model_ref: "PositionRecord (lake build)",
         tiers: &[Boundary],
         bound_by: "",
