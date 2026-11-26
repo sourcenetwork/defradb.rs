@@ -10,12 +10,9 @@ tuples.
 Three nouns:
 
 - **Policies** (`Policy`, `Resource`, `Relation`, `Subject`): a policy names resource
-  types, relations on them, and permission expressions over those relations. DefraDB's
-  DPI format is a small YAML dialect (`crates/engine/acp/src/policy_yaml/`); the default
-  document policy (used when a collection carries no explicit one) has an `owner`
-  relation, an `admin` computed from `owner`, direct `reader`/`updater`/`deleter`
-  relations, and `read`/`update`/`delete` permissions computed as unions over owner,
-  admin and the direct relations.
+  types, relations on them, and permission expressions over those relations. Policies
+  are written in acp_core's YAML format, parsed and checked by
+  `crates/engine/acp/src/policy_yaml/` ([Writing a policy](#writing-a-policy) below).
 - **Relationship tuples**: `(resource, relation, subject)` facts, stored under
   `a/zanzibar/` as Ordinary keys. Subjects can be actors, wildcards, or usersets
   (a subject that is itself a relation on another object).
@@ -24,6 +21,72 @@ Three nouns:
   `This` (a direct tuple), `ComputedUserset` (follow to another relation on the same
   resource), `TupleToUserset` (follow a tuple relation to a target, then evaluate a
   computed relation there), and the set operations `Union`, `Intersection`, `Difference`.
+
+## Writing a policy
+
+A DAC policy is acp_core's YAML: a `name`, and `resources`, each with `relations` (who
+can be named, by `types`) and `permissions` (an `expr` over the resource's relations and
+permissions). The rules, as `crates/engine/acp/src/policy_yaml/` applies them:
+
+- **`owner` is implicit and reserved.** Every resource gets an `owner` relation, held by
+  the identity that creates the document. A policy that declares a relation named `owner`
+  is refused (``'owner` is a reserved relation name``).
+- **The owner holds every permission.** Each permission's expression is joined to
+  `owner` by union, and a permission with no `expr` grants the owner alone. An expression
+  that names `owner` is refused (``permission cannot reference `owner` relation``,
+  `go.acp.dac.policy.invalid`). No expression can take a permission away from the owner:
+  `reader - blocked` means `owner + (reader - blocked)`.
+- **Operators.** `+` is union, `-` difference, `&` intersection, and `rel->perm` follows
+  relation `rel` to the object it names and checks `perm` there. They have equal
+  precedence and apply left to right; parentheses group. This is the grammar of
+  acp_core's `PermissionExpr.g4`, the parser Go uses.
+- **Relation types.** `actor` admits any actor DID or the all-actors wildcard `*`,
+  `actor:individual` one DID only, a resource name an object of that resource (the target
+  of `rel->perm`), and `resource->relation` a userset.
+- **What a collection needs.** `@policy(id, resource)` accepts a resource that has `read`,
+  `update` and `delete` permissions (`go.acp.dac.link.accepted`,
+  `go.acp.dac.link.bad-policy`). Whoever can update or delete a document can also read
+  it (`DocumentPermission::implies_read_permissions`).
+
+An example, in which a file is readable by its readers, its editors and the readers of
+its directory, except anyone blocked:
+
+```yaml
+name: filesystem
+resources:
+  - name: directory
+    relations:
+      - name: reader
+        types: [actor]
+    permissions:
+      - name: read
+        expr: reader
+      - name: update
+      - name: delete
+  - name: file
+    relations:
+      - name: reader
+        types: [actor]
+      - name: editor
+        types: [actor]
+      - name: blocked
+        types: [actor]
+      - name: parent
+        types: [directory]
+    permissions:
+      - name: read
+        expr: (reader + editor + parent->read) - blocked
+      - name: update
+        expr: editor - blocked
+      - name: delete
+```
+
+With collections `type Directory @policy(id: "<id>", resource: "directory")` and
+`type File @policy(id: "<id>", resource: "file")`, the `parent` edge is a relationship
+whose target names the directory: `defradb client acp document relationship add
+--collection File --docID <file> --relation parent --actor directory:<directory>`. A
+reader of that directory then reads the file, until they are added to `blocked`; the
+owner still reads it if added to `blocked` too.
 
 ## Evaluation
 
@@ -45,9 +108,13 @@ to consult.
 
 ## Policy identity
 
-Policy IDs come from the engine's `Db::allocate` (the same atomic allocator as short
-IDs), so two replicas allocate distinct policies without coordination, and a policy body
-is content-checked: a different body under an existing ID is a typed error, not a
+A local ACP names a policy as Go's acp_core does: a SHA-256 of the policy's name,
+resources, relations and permissions, hashed again with a counter
+(`policy_yaml::generate_policy_id`). The counter comes from the engine's `Db::allocate`
+(the same atomic allocator as short IDs, `PersistentZanzibarStore::next_policy_counter`),
+so two adds of one body get two IDs (`go.acp.dac.policy.ids`). Vera names its policies
+itself ([Vera](vera.md)). A policy body is content-checked: a different body under an
+existing ID is a typed error (`a different policy already exists under ID ...`), not a
 silent overwrite.
 
 > **Why Zanzibar, and why fail-closed on indeterminate.** Relationship tuples express

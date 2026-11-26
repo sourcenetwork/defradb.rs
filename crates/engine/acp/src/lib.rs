@@ -1,29 +1,36 @@
 //! Access Control Policy (ACP) for DefraDB
 //!
-//! This crate provides document-level access control following Go DefraDB's pattern:
-//! 1. If ACP not configured -> allow all
-//! 2. Check if peer is replicator -> allow (fast path)
-//! 3. Verify peer's identity token
-//! 4. Check document-level ACP permissions -> allow/deny
+//! Document access control (DAC) and node access control (NAC), both evaluated
+//! by the `zanzibar` engine over relationship tuples.
 //!
 //! # Architecture
 //!
-//! - `DocumentACP` trait: Core interface for document access control
-//! - `LocalDocumentACP`: Local implementation using in-memory storage
-//! - `DocumentPermission`: Read/Update/Delete permissions
-//! - `RelationTuple`: Subject-relation-object tuples for permission storage
+//! - `DocumentACP` trait: the document-scope interface (register, check, share, revoke)
+//! - `ZanzibarDocumentACP`: the node's local DAC, with its tuples in the node's store
+//! - `ExternalDocumentAcp`: the gate around a remote provider (Vera)
+//! - `LocalDocumentACP`: a DAC over an `AcpStore` such as `MemoryAcpStore`, for tests
+//! - `nac`: the node's NAC policy and its lifecycle
+//! - `policy_yaml`: parses and checks a DAC policy before it is stored
 //!
 //! # Public vs Registered Documents
 //!
-//! - Document created WITHOUT identity -> public (unregistered) -> anyone can access
-//! - Document created WITH identity -> registered -> creator is owner -> ACP enforced
+//! - Document created without an identity: public, anyone can access it
+//! - Document created with an identity: registered, its creator is the owner,
+//!   and the policy decides who else may read, update or delete it
 //!
-//! # DPI Rules (DefraDB Policy Interface)
+//! # Policy rules
 //!
-//! - Every resource MUST have `owner` relation
-//! - Every permission expression MUST include `owner` access
-//! - Difference (`-`) and tuple-to-userset (`->`) are allowed
-//! - Intersection (`&`) is not allowed in DPI-enforced policies
+//! - `owner` is reserved: every resource gets an `owner` relation, and a policy
+//!   that declares one is refused (``'owner` is a reserved relation name``)
+//! - The owner holds every permission: each expression is joined to `owner`
+//!   by union, an empty expression grants the owner alone, and an expression
+//!   may not name `owner` (``permission cannot reference `owner` relation``)
+//! - Expressions use `+` (union), `-` (difference), `&` (intersection) and
+//!   `relation->permission` (follow `relation` to the object it names and
+//!   check `permission` there), with equal precedence, left to right, and
+//!   parentheses to group: the grammar of acp_core's `PermissionExpr.g4`
+//! - A resource a collection links must have `read`, `update` and `delete`
+//!   permissions
 
 mod auth_error;
 mod commit_registrations;
