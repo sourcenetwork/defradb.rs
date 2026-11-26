@@ -1,4 +1,4 @@
-use crate::common::schema::test_schema;
+use crate::common::schema::{test_schema, USERS_SDL};
 use db::database::DB;
 use db::read::doc::DbDocFetcher;
 use db::write::doc::DbDocMutator;
@@ -13,7 +13,9 @@ use storage::RegolithStore;
 /// named `user-0`..`user-{n-1}` in insertion order.
 async fn fixture_with_docs(n: usize) -> (Arc<DB<RegolithStore>>, String) {
     let db = Arc::new(DB::new(RegolithStore::in_memory().unwrap()).unwrap());
-    db.create_collection(test_schema()).await.unwrap();
+    db.add_collection(&defra_core::RequestContext::ambient(), USERS_SDL)
+        .await
+        .unwrap();
 
     for i in 0..n {
         let txn = db.new_txn(false).await.unwrap();

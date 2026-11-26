@@ -81,6 +81,7 @@ fn open_with_steps(
     if !Arc::ptr_eq(&env, &regolith::env::std_env()) {
         return open_engine(path, engine);
     }
+    super::foreign::refuse_badger(path)?;
     let names = Names::new(path)?;
     let mut lock = None;
     if names.leftovers(&*env) {

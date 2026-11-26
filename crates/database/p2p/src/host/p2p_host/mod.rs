@@ -61,7 +61,7 @@ const DHT_BOOTSTRAP_DEBOUNCE: Duration = Duration::from_millis(100);
 const DEFAULT_CONNECTION_MANAGER_GRACE_PERIOD: Duration = Duration::from_secs(20);
 
 /// Frequency for checking whether the active connection set should be pruned.
-const CONNECTION_PRUNE_INTERVAL: Duration = Duration::from_secs(5);
+pub const CONNECTION_PRUNE_INTERVAL: Duration = Duration::from_secs(5);
 
 /// Go ResourceManager minimum FD cap. See go-libp2p resource-manager defaults.
 const GO_RESOURCE_MANAGER_MIN_FD_LIMIT: u64 = 256;
@@ -310,6 +310,8 @@ pub struct P2PHost<S: Store> {
     /// `ActivePeers` after `Disconnect` no longer lists it, as in Go.
     pub(super) pending_disconnects:
         RapidHashMap<PeerId, Vec<crate::rt::oneshot::Sender<Result<()>>>>,
+    /// Peers for which a connected event was emitted and not yet balanced.
+    pub(super) announced_peers: RapidHashSet<PeerId>,
     /// Peers that dialed us and have not identified yet: their address is
     /// still the connection's source port, which nothing listens on.
     pub(super) unidentified: RapidHashSet<PeerId>,
@@ -634,6 +636,7 @@ impl<S: Store + Clone + Send + Sync + 'static> P2PHost<S> {
             )),
             peer_addrs: RapidHashMap::new(),
             pending_disconnects: RapidHashMap::new(),
+            announced_peers: RapidHashSet::new(),
             unidentified: RapidHashSet::new(),
             pending_peer_addresses: Vec::new(),
             node_identity,
@@ -780,6 +783,13 @@ impl<S: Store + Clone + Send + Sync + 'static> P2PHost<S> {
     }
 
     fn run_kademlia_bootstrap(&mut self, reason: &'static str) {
+        // Discovery is not allowed to undo an explicit disconnect. Remove any
+        // sticky disconnects from the routing table before every refresh; a
+        // later explicit dial clears the marker and restores ordinary behavior.
+        let behaviour = self.swarm.behaviour_mut();
+        for peer_id in behaviour.disconnect_gate.peers() {
+            behaviour.kademlia.remove_peer(peer_id);
+        }
         for (network, result) in self.swarm.behaviour_mut().kademlia.bootstrap() {
             match result {
                 Ok(query_id) => {

@@ -43,12 +43,39 @@ A counter field can be indexed. After local increments, or after two nodes incre
 
 An ordered query over an indexed field with `limit: 3, offset: 2` reads `limit + offset` index entries, returns exactly the page after skipping two, and leaves the query offset to the limit node so it is not applied twice. The same paging is correct when the ordered field is not indexed.
 
+# `defra.index.partial_lens_read`: A partial lens read is indexed but not stamped
+
+- **Parents:** ["defra.index"]
+- **Scenarios:** ["issues::t_3044::indexed_collection_query_after_two_lenses_returns_migrated_fields"]
+
+When any transition from a stored version to the active version runs no transform, a read applies the registered transforms, indexes the migrated result, and does not stamp it as the active version. Registering another transform later still applies it, and a query over an indexed field after two migrations returns the migrated fields.
+
+A transition without a lens may be given one later, so the same rule applies to an intended identity transition. Until the path is complete, reads may rerun the earlier lenses. Explicit identity materialization is a separate operation.
+
+# `defra.index.descending_json_path`: Descending JSON paths filter with unambiguous sentinels
+
+- **Parents:** ["defra.index"]
+- **Scenarios:** ["index::json_descending::descending_json_index_filters_an_array_path", "index::json_descending::descending_json_index_filters_a_nested_path_range"]
+
+A JSON field indexed `DESC` serves `_any` over an array path and `_gt` over a nested scalar path. The path remains in its ordinary encoded order while only the scalar value is inverted, so an array path and a longer property path cannot collide and the path range sentinels bracket every value at that path.
+
 # `defra.index.keyspace`: Collection short IDs cannot collide with another family
 
 - **Parents:** ["defra.index"]
 - **Scenarios:** ["index::keyspace::a_tagged_index_keyspace_keeps_collections_separate"]
 
 Collections whose short IDs are `100` and `118`, the bytes `d` and `v` that name the document and version key families, each answer a query filtered on their indexed field with only their own row. Since truncate removes one index at a time (`defra.collection.truncate.other_collections`), no client operation reads or deletes by a whole collection's index prefix, so this scenario also passes on the untagged layout. The fixed `/index/` tag that keeps index keys out of the other families is checked in storage, by `index_keyspace_is_tagged_across_the_byte_boundary` and `index_keyspace_scans_stay_per_collection_across_short_ids`.
+
+# `defra.index.patch_indexed_field`: A patch refuses to remove an indexed field
+
+- **Parents:** ["defra.index"]
+- **Scenarios:** ["index::remove_indexed_field::removing_an_indexed_field_names_the_index_and_keeps_the_collection_usable", "index::remove_indexed_field::removing_a_fulltext_field_names_the_field_and_keeps_the_collection_usable", "index::remove_indexed_field::removing_an_embedding_source_keeps_the_collection_usable"]
+
+A collection patch that removes a field named by an index, full-text index, or vector embedding is refused, and nothing changes: the collection keeps the field and its index or embedding, and documents can still be written. The error names what still uses the field:
+
+- a regular index: `index '<index name>' references field '<field>' which does not exist in schema`, e.g. `index 'Users_name_ASC' references field 'name' which does not exist in schema`;
+- a full-text index: `full-text index on field '<field>' references a field which does not exist in schema`;
+- a vector embedding's source field: `the given field does not exist. Embedding generation field: <field>`.
 
 # `defra.index.backfill_under_writes`: An index created under writes finishes its backfill
 
@@ -374,6 +401,13 @@ A node with a replication filter also asks it in the P2P receive path. On arriva
 - **Scenarios:** ["net::gossip_admission::a_gossip_burst_over_the_admission_limits_loses_no_document", "net::gossip_admission::a_gossip_head_past_the_deferral_budget_is_reported"]
 
 Gossip has no reply and no retry, so a gossip head a node refuses for its per-peer rate limit or its pending-DAG capacity is kept as a durable pending record that takes no slot, and is fetched once a slot frees: a burst over both limits loses no document. These records are bounded by bytes, per source peer (`gossip_deferral_peer_bytes`) and in all (`gossip_deferral_total_bytes`). Past a budget the head is dropped, and the node reports a `p2p-gossip-head-dropped` event naming the peer and the root, so the application can resync it.
+
+# `defra.p2p.cid_check`: A block that does not hash to its CID is refused on every arrival path
+
+- **Parents:** ["defra"]
+- **Scenarios:** ["net::cid_check::a_pushed_block_not_matching_its_cid_stores_no_document", "p2p::sync::coordinator::access_tests::cid_check::a_pushed_head_not_matching_its_cid_is_refused", "p2p::sync::coordinator::access_tests::cid_check::the_receive_gate_leaves_a_head_not_matching_its_cid_to_the_ingest", "p2p::sync::coordinator::access_tests::cid_check::a_synced_block_not_matching_its_cid_is_refused", "p2p::sync::coordinator::access_tests::cid_check::a_fetched_car_with_a_block_not_matching_its_cid_is_refused", "p2p::sync::manager::process::gossip_deferral::tests::a_deferred_gossip_head_not_matching_its_cid_is_refused"]
+
+A block the node admits for processing whose bytes do not hash to the CID it names is refused before anything of it is stored, whichever way it arrives: a PushLog (gossip, pubsub or a replicator's direct push), a gossip head kept for later, a block fetched by block sync, or a fetched CAR, which is refused whole. An admitted push is answered with `block CID verification failed for <cid>: content hash does not match`, and no document is stored from it. The receive gate does not judge such a head, so a push it would refuse is still answered with that error rather than as a handled skip. A CAR refused this way leaves its document waiting for another provider. A push or gossip head the node sheds before processing it (at pending-DAG or byte-budget capacity) is not checked.
 
 # `defra.p2p.iroh_large_update`: An update too large for gossip still replicates over iroh
 

@@ -548,6 +548,14 @@ impl Error {
             within: within.to_string(),
         }
     }
+
+    /// The stable code a client classifies this failure by, when it has one.
+    pub fn code(&self) -> Option<&'static str> {
+        match self {
+            Self::AddCollection(refused) => refused.code(),
+            _ => None,
+        }
+    }
 }
 
 /// Result alias for node operations.

@@ -170,12 +170,12 @@ impl<S: storage::corekv::Store + 'static> DbAcpOps<S> {
         let guard =
             query::TransactionGuard::begin_as(self.executor.as_ref(), context.clone(), false)
                 .await?;
-        let id = guard
+        let id: defra_core::TxnId = guard
             .handle()
             .ok_or_else(|| query::QueryError::execution("transaction is unavailable"))?
             .as_str()
             .parse()
-            .map_err(|_| query::QueryError::execution("transaction ID must be numeric"))?;
+            .map_err(|_| query::QueryError::execution("invalid transaction ID"))?;
         let txn_context = context.clone().with_txn(Some(id));
         let changed = self
             .relationship_in_txn(

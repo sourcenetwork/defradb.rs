@@ -238,13 +238,16 @@ pub async fn run_counter_storm(
     for round in 0..rounds {
         for _ in 0..burst {
             for (n, delta) in node_deltas.iter().enumerate() {
-                cluster
-                    .client(n)
-                    .query(&format!(
+                crate::mutation::execute(
+                    cluster,
+                    n,
+                    &format!(
                         r#"mutation {{ update_Tally(docID: "{id}", input: {{hits: {}}}) {{ _docID }} }}"#,
                         lit(*delta)
-                    ))
-                    .expect("increment");
+                    ),
+                )
+                .await
+                .unwrap_or_else(|error| panic!("round {round} node{n} increment: {error:#}"));
             }
         }
         expected += per_round;

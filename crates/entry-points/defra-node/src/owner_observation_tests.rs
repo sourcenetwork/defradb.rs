@@ -8,14 +8,12 @@ const POLICY: &str = "name: Rows\nresources:\n  - name: rows\n    relations:\n  
 
 async fn fixture() -> (Node, String, String) {
     let node = Node::builder().build().await.unwrap();
+    let owner_context = defra_core::RequestContext::ambient().with_identity(Some(String::from(A)));
     let policy = node
-        .add_dac_policy_as(
-            &defra_core::RequestContext::ambient().with_identity(Some(String::from(A))),
-            POLICY,
-        )
+        .add_dac_policy_as(&owner_context, POLICY)
         .await
         .unwrap();
-    node.add_collection(&format!("type Users @policy(id: \"{policy}\", resource: \"rows\") {{ name: String }}\ntype Other {{ name: String }}"))
+    node.add_collection(&owner_context, &format!("type Users @policy(id: \"{policy}\", resource: \"rows\") {{ name: String }}\ntype Other {{ name: String }}"))
         .await.unwrap();
     let response = node
         .execute_request(
@@ -479,8 +477,9 @@ fn unified_access_matches_lean_and_validates_authority_at_commit() {
             public_key_bytes: public, remote_signer: None, signing_authorization: None,
         }).expect("the store takes the identity");
         let node = Node::builder().with_node_identity_did(&owner).with_node_acp_enabled().build().await.unwrap();
-        let policy = node.add_dac_policy_as(&actor(&owner), POLICY).await.unwrap();
-        node.add_collection(&format!("type Users @policy(id: \"{policy}\", resource: \"rows\") {{ name: String }}\ntype Other {{ name: String }}")).await.unwrap();
+        let owner_context = actor(&owner);
+        let policy = node.add_dac_policy_as(&owner_context, POLICY).await.unwrap();
+        node.add_collection(&owner_context, &format!("type Users @policy(id: \"{policy}\", resource: \"rows\") {{ name: String }}\ntype Other {{ name: String }}")).await.unwrap();
         let response = node.execute("mutation { add_Users(input: {name: \"private\"}) { _docID } }").await;
         assert!(!response.has_errors(), "{:?}", response.errors);
         let doc = response.data.unwrap()["add_Users"][0]["_docID"].as_str().unwrap().to_owned();
@@ -606,7 +605,8 @@ fn unified_named_access_follows_parent_and_conflicts_on_parent_revoke() {
     );
     workers::block_on(async {
         let node = Node::builder().build().await.unwrap();
-        let policy = node.add_dac_policy_as(&actor(A), r#"
+        let owner_context = actor(A);
+        let policy = node.add_dac_policy_as(&owner_context, r#"
 name: filesystem
 resources:
 - name: directory
@@ -628,7 +628,7 @@ resources:
   - name: update
   - name: delete
 "#).await.unwrap();
-        node.add_collection(&format!("type Directory @policy(id: \"{policy}\", resource: \"directory\") {{ name: String }}\ntype File @policy(id: \"{policy}\", resource: \"file\") {{ name: String }}\ntype Other {{ name: String }}")).await.unwrap();
+        node.add_collection(&owner_context, &format!("type Directory @policy(id: \"{policy}\", resource: \"directory\") {{ name: String }}\ntype File @policy(id: \"{policy}\", resource: \"file\") {{ name: String }}\ntype Other {{ name: String }}")).await.unwrap();
         let mut ids = Vec::new();
         for collection in ["Directory", "File"] {
             let response = node.execute_request(query::QueryRequest::new(format!("mutation {{ add_{collection}(input: {{name: \"x\"}}) {{ _docID }} }}")).with_identity(Some(Did::new(A).unwrap()))).await;

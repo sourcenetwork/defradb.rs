@@ -182,7 +182,7 @@ fn a_projection_stages_through_vera_for_a_manager_in_a_transaction_and_for_the_n
             .add_policy(actor.as_str(), MANAGED_POLICY, None)
             .await
             .expect("policy");
-        node.add_collection(&users(&policy))
+        node.add_collection(&defra_core::RequestContext::ambient(), &users(&policy))
             .await
             .expect("collection");
         let manager = registered_identity();

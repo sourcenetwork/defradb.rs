@@ -4,6 +4,7 @@ import OrderEncoding.PerType
 import OrderEncoding.BytesEnc
 import OrderEncoding.CrossType
 import OrderEncoding.InLookup
+import OrderEncoding.JsonPath
 
 /-!
 # OrderEncoding_DESIGN — order-preserving key-encoding monotonicity (Lean slice)
@@ -235,6 +236,7 @@ from the byte-emitting definitions. -/
 #print axioms OrderEncoding.neg_swapped_bool_markers_not_order_preserving
 #print axioms OrderEncoding.neg_no_escape_bytes_collision
 #print axioms OrderEncoding.neg_shared_marker_breaks_cross_type
+#print axioms OrderEncoding.JsonPath.descending_json_sentinels_bracket_values
 #print axioms OrderEncoding.lookups_strictly_increasing
 #print axioms OrderEncoding.reversed_lookups_strictly_decreasing
 #print axioms OrderEncoding.mem_lookups

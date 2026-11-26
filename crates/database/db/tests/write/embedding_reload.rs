@@ -2,7 +2,7 @@ use crate::common::http::HttpServer;
 use db::{AutoCommitMutator, DB};
 use document::{Document, NormalValue};
 use query::mutator::DocMutator;
-use schema::{CollectionVersion, FieldDescription, FieldKind, VectorEmbeddingDescription};
+use schema::CollectionVersion;
 use serde_json::json;
 use std::sync::Arc;
 use storage::RegolithStore;
@@ -38,48 +38,24 @@ async fn fixture_with_counter(counter: bool) -> Fixture {
         json!({"data": [{"embedding": vector}]})
     });
     let db = Arc::new(DB::new(RegolithStore::in_memory().unwrap()).unwrap());
-    let mut collection = CollectionVersion::new(
-        "Texts",
-        "texts-v1",
-        "col-texts",
-        vec![
-            FieldDescription::new(
-                "1",
-                "_docID",
-                FieldKind::doc_id(),
-                schema::CType::LwwRegister,
-            ),
-            if counter {
-                FieldDescription::new("2", "text", FieldKind::int(), schema::CType::LwwRegister)
-                    .with_crdt_type(schema::CType::PnCounter)
-            } else {
-                FieldDescription::new("2", "text", FieldKind::string(), schema::CType::LwwRegister)
-            },
-            FieldDescription::new(
-                "3",
-                "vector",
-                FieldKind::float64_array(),
-                schema::CType::LwwRegister,
-            ),
-            FieldDescription::new(
-                "4",
-                "suffix",
-                FieldKind::string(),
-                schema::CType::LwwRegister,
-            ),
-        ],
+    let text = if counter {
+        r#"Int @crdt(type: "pncounter")"#
+    } else {
+        "String"
+    };
+    let sdl = format!(
+        r#"type Texts {{
+            text: {text}
+            vector: [Float32!] @embedding(fields: ["text", "suffix"], provider: "openai", model: "test-model", url: "{}")
+            suffix: String
+        }}"#,
+        server.url()
     );
-    collection
-        .vector_embeddings
-        .push(VectorEmbeddingDescription {
-            field_name: "vector".to_string(),
-            fields: vec!["text".to_string(), "suffix".to_string()],
-            model: "test-model".to_string(),
-            provider: "openai".to_string(),
-            template: String::new(),
-            url: server.url(),
-        });
-    db.create_collection(collection.clone()).await.unwrap();
+    let collection = db
+        .add_collection(&defra_core::RequestContext::ambient(), &sdl)
+        .await
+        .unwrap()
+        .remove(0);
     Fixture {
         db,
         collection,
@@ -87,8 +63,19 @@ async fn fixture_with_counter(counter: bool) -> Fixture {
     }
 }
 
+/// The embedding `doc` holds, whatever float width carries it: a document
+/// just embedded holds the provider's f64 values, and one read back from the
+/// store holds its `[Float32!]` field's f32 values.
+fn vector(doc: &Document) -> Option<Vec<f64>> {
+    match doc.get("vector")? {
+        NormalValue::Float64Array(values) => Some(values.clone()),
+        NormalValue::Float32Array(values) => Some(values.iter().copied().map(f64::from).collect()),
+        _ => None,
+    }
+}
+
 fn assert_vector(doc: &Document, values: Vec<f64>) {
-    assert_eq!(doc.get("vector"), Some(&NormalValue::Float64Array(values)));
+    assert_eq!(vector(doc), Some(values));
 }
 
 #[test]
