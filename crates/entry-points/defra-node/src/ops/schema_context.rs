@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use defra_core::RequestContext;
 
 use crate::{Node, Result};
@@ -12,7 +10,7 @@ impl Node {
         collection_name: &str,
     ) -> Result<usize> {
         self.admit(context)?;
-        let ops = Arc::clone(&self.schema_ops);
+        let ops = self.schema_ops.clone();
         let context = context.clone();
         let name = collection_name.to_owned();
         self.on_pool(move || async move { ops.materialize_collection(&context, &name).await })

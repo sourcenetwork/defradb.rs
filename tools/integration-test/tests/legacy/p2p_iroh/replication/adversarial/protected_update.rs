@@ -1,11 +1,11 @@
 use serial_test::serial;
 
-use super::blocks::{
+use super::protected::{Outcome, ProtectedNode};
+use super::receiver::{user_by_id, wait_for_user};
+use integration_test::hostile::blocks::{
     aged, author, genesis, genesis_parent_of, update, user, with_creator, Author, Fragment, Parent,
     Signing,
 };
-use super::protected::{Outcome, ProtectedNode};
-use super::receiver::{user_by_id, wait_for_user};
 
 /// Push `hostile`, then the owner's own rename; once the node has judged the
 /// hostile root, check the hostile age never landed.

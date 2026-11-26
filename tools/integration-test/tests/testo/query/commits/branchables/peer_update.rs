@@ -6,7 +6,7 @@ use integration_test::actions::{
     Request, UpdateDoc, WaitForPeersEvents, WaitForSync,
 };
 use integration_test::m;
-use integration_test::scenario::{captures, Common, Eventually, Text};
+use integration_test::scenario::{captures, Common, Text};
 use integration_test::test_case::TestCase;
 use serde_json::json;
 
@@ -344,15 +344,7 @@ fn query_commits_branchables_handles_concurrent_updates_across_peer_connection()
                         },
                     ],
                 }),
-                common: Common {
-                    node: Some("db0".into()),
-                    // Retry while investigating the branchable DAG mismatch; see #2759.
-                    eventually: Some(Eventually {
-                        timeout_millis: Some(20000),
-                        interval_millis: Some(100),
-                    }),
-                    ..Default::default()
-                },
+                common: Common { node: Some("db0".into()), ..Default::default() },
                 ..Default::default()
             }
             .into(),
@@ -497,15 +489,7 @@ fn query_commits_branchables_handles_concurrent_updates_across_peer_connection()
                         },
                     ],
                 }),
-                common: Common {
-                    node: Some("db1".into()),
-                    // Retry while investigating the branchable DAG mismatch; see #2759.
-                    eventually: Some(Eventually {
-                        timeout_millis: Some(20000),
-                        interval_millis: Some(100),
-                    }),
-                    ..Default::default()
-                },
+                common: Common { node: Some("db1".into()), ..Default::default() },
                 ..Default::default()
             }
             .into(),
