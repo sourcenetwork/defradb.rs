@@ -20,7 +20,6 @@ use crate::planner::{Doc, ExecInfo, PlanNode};
 pub struct ChunkSimilarityScanNode {
     collection: CollectionVersion,
     mapping: DocumentMapping,
-    doc_ids: Option<Vec<String>>,
     target: ChunkTarget,
     index_id: u32,
     k: usize,
@@ -34,21 +33,12 @@ pub struct ChunkSimilarityScanNode {
     exec_info: ExecInfo,
 }
 
-/// The requested document IDs. The planner routes only a query with no filter.
-struct Accepts<'a> {
-    doc_ids: Option<&'a [String]>,
-}
+/// Drops deleted parents. The planner routes only a query with no filter and no docID.
+struct Accepts;
 
-impl ParentCheck for Accepts<'_> {
+impl ParentCheck for Accepts {
     fn accepts(&self, parent: &Document) -> Result<bool> {
-        if parent.is_deleted() {
-            return Ok(false);
-        }
-        let Some(ids) = self.doc_ids else {
-            return Ok(true);
-        };
-        let id = parent.id().map(ToString::to_string);
-        Ok(id.is_some_and(|id| ids.contains(&id)))
+        Ok(!parent.is_deleted())
     }
 }
 
@@ -66,7 +56,6 @@ impl ChunkSimilarityScanNode {
         Self {
             collection,
             mapping,
-            doc_ids: None,
             target,
             index_id,
             k,
@@ -78,19 +67,6 @@ impl ChunkSimilarityScanNode {
             gave_up: None,
             current: Doc::default(),
             exec_info: ExecInfo::default(),
-        }
-    }
-
-    pub(crate) fn with_doc_ids(mut self, doc_ids: Vec<String>) -> Self {
-        if !doc_ids.is_empty() {
-            self.doc_ids = Some(doc_ids);
-        }
-        self
-    }
-
-    fn accepts(&self) -> Accepts<'_> {
-        Accepts {
-            doc_ids: self.doc_ids.as_deref(),
         }
     }
 
@@ -121,7 +97,7 @@ impl PlanNode for ChunkSimilarityScanNode {
             index_id: self.index_id,
             k: self.k,
         }
-        .run(&self.accepts())
+        .run(&Accepts)
         .await?;
         self.searched = search.searches > 0;
         self.exec_info.indexes_fetched += search.searches;
@@ -169,7 +145,7 @@ impl PlanNode for ChunkSimilarityScanNode {
             };
             let mut reads = Reads::default();
             reads.count(&parent);
-            if !self.accepts().accepts(&parent)? {
+            if !Accepts.accepts(&parent)? {
                 self.count(reads);
                 continue;
             }
@@ -206,15 +182,11 @@ impl PlanNode for ChunkSimilarityScanNode {
     }
 
     fn explain_inner(&self) -> JsonValue {
-        let prefixes = match self.doc_ids {
-            Some(_) => Vec::new(),
-            None => vec![format!("/{}", self.collection.resolved_root_id())],
-        };
         serde_json::json!({
             "filter": JsonValue::Null,
             "collectionName": self.collection.name,
             "collectionID": self.collection.version_id,
-            "prefixes": prefixes,
+            "prefixes": [format!("/{}", self.collection.resolved_root_id())],
         })
     }
 

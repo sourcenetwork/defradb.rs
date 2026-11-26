@@ -38,8 +38,8 @@ fn a_filtered_query_scores_the_matching_articles_without_the_index() {
 }
 
 #[test]
-#[mantra_macros::req_test("defra.chunk.rank.doc_ids")]
-fn requested_doc_ids_narrow_a_routed_query() {
+#[mantra_macros::req_test("defra.chunk.rank.requested_docs")]
+fn requested_doc_ids_score_only_those_articles() {
     TestCase::from_actions(vec![
         model_embedded(&[]),
         add_embedded_collection(None),

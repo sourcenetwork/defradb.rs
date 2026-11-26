@@ -464,12 +464,12 @@ With an app read validator that governs only `Article__body_chunk` and refuses t
 
 With the three articles of `defra.chunk.rank.best_chunk`, `limit: 1, offset: 1` returns the article about rivers and engines, with similarity 0.7071.
 
-# `defra.chunk.rank.doc_ids`: Requested docIDs narrow a routed query
+# `defra.chunk.rank.requested_docs`: Requested docIDs score only those articles
 
 - **Parents:** ["defra.chunk.rank"]
-- **Scenarios:** ["chunk::rank_filtered::requested_doc_ids_narrow_a_routed_query"]
+- **Scenarios:** ["chunk::rank_filtered::requested_doc_ids_score_only_those_articles"]
 
-With an article about rivers and one about rivers and engines, `limit: 1, docID: [<the second>]` returns the second, with similarity 0.7071.
+With an article about rivers and one about rivers and engines, `limit: 1, docID: [<the second>]` returns the second, with similarity 0.7071. The query is not routed through the chunk index: it scores only the requested articles, each from its listed chunks.
 
 # `defra.chunk.rank.fallback`: An index that can't fill the page falls back to every article
 
