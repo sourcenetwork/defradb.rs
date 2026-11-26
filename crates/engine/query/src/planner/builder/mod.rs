@@ -394,7 +394,7 @@ impl Planner {
             || is_complex_filter
             || select.group_by.is_some()
             // prepare_filter removes computed aliases before classifying the filter.
-            || select.filter.as_ref().is_some_and(|filter| filter.has_alias_filter())
+            || select.filter.as_ref().is_some_and(|filter| filter.split_for_scores().1.is_some())
             || (self.acp.is_some() && collection.policy.is_some())
             || collection.chunk_of.is_some()
             || self.app_gates_reads(&collection)
@@ -511,9 +511,8 @@ impl Planner {
             // so remaining conditions are applied as post-filtering on the fetched documents.
             // Strip _alias for complex filters (same reason as ScanNode below).
             if let Some(ref filter) = scalar_filter {
-                if is_complex_filter && filter.has_alias_filter() {
-                    let (non_alias, _alias) = filter.split_alias();
-                    if let Some(f) = non_alias {
+                if is_complex_filter && filter.split_for_scores().1.is_some() {
+                    if let Some(f) = filter.split_for_scores().0 {
                         index_scan_node = index_scan_node
                             .with_explain_filter(f.clone())
                             .with_residual_filter(f);
@@ -545,9 +544,8 @@ impl Planner {
             // the relation index. The full filter (including _alias) is applied after
             // joins at the complex filter SelectNode.
             if let Some(ref filter) = scalar_filter {
-                if is_complex_filter && filter.has_alias_filter() {
-                    let (non_alias, _alias) = filter.split_alias();
-                    if let Some(f) = non_alias {
+                if is_complex_filter && filter.split_for_scores().1.is_some() {
+                    if let Some(f) = filter.split_for_scores().0 {
                         scan = scan.with_filter(f);
                     }
                 } else {
@@ -738,11 +736,10 @@ impl Planner {
         // that must be evaluated together on the merged document.
         if is_complex_filter {
             if let Some(ref filter) = select.filter {
-                // For grouped queries, strip _alias from pre-aggregation filter
                 let pre_agg_filter = if select.group_by.is_some() {
                     filter.split_alias().0
                 } else {
-                    Some(filter.clone())
+                    filter.split_for_scores().0
                 };
                 if let Some(f) = pre_agg_filter {
                     let mut select_node =
@@ -828,16 +825,11 @@ impl Planner {
         select: &Select,
         scan_mapping: &crate::document::DocumentMapping,
     ) -> Box<dyn PlanNode> {
-        // Only apply alias conditions that do NOT reference aggregate fields.
-        // Aggregate alias conditions (e.g., _alias: {publishedCount: {_gt: 0}}) must wait
-        // until after aggregate nodes compute their values (handled by compute_relation_aggregates).
+        // Aggregate alias conditions wait for the aggregate nodes.
         if select.group_by.is_none() {
             if let Some(ref filter) = select.filter {
-                let (_non_alias, alias_filter) = filter.split_alias();
+                let (_row, alias_filter) = filter.split_for_scores();
                 if let Some(alias_f) = alias_filter {
-                    // Build a list of aggregate-only output names (not similarity).
-                    // Similarity alias conditions CAN be applied here (after SimilarityNode),
-                    // but aggregate alias conditions must be deferred.
                     let aggregate_only_names: Vec<&str> = select
                         .fields
                         .iter()
@@ -851,7 +843,6 @@ impl Planner {
                         .collect();
                     let (stripped_alias, _) =
                         alias_f.strip_aggregate_alias_conditions(&aggregate_only_names);
-                    // Only apply alias filter if there are non-aggregate alias conditions remaining
                     if !stripped_alias.conditions().is_empty() {
                         plan = Box::new(
                             SelectNode::new(plan, scan_mapping.clone()).with_filter(stripped_alias),

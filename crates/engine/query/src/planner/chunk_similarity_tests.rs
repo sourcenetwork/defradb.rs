@@ -90,6 +90,19 @@ fn unused_reasons(planner: Planner) -> Vec<String> {
         .collect()
 }
 
+/// The node kinds of the plan for `query`, from the top down.
+fn plan_kinds(planner: Planner, query: &str) -> Vec<&'static str> {
+    let select = &crate::parse_query(query).unwrap()[0];
+    let result = planner.plan_with_index_info(select).unwrap();
+    let mut kinds = Vec::new();
+    let mut node: Option<&dyn crate::planner::PlanNode> = Some(result.plan.as_ref());
+    while let Some(current) = node {
+        kinds.push(current.kind());
+        node = current.source();
+    }
+    kinds
+}
+
 fn planner() -> Planner {
     Planner::new(crate::parse_sdl(SDL).unwrap()).with_fetcher(Arc::new(VectorFetcher))
 }
@@ -97,12 +110,22 @@ fn planner() -> Planner {
 #[test]
 fn a_ranking_without_read_rules_routes_through_the_chunk_index() {
     assert!(unused_reasons(planner()).is_empty());
+    assert!(!plan_kinds(planner(), RANKING).contains(&"similarityNode"));
+}
+
+#[test]
+fn a_ranking_narrowed_by_doc_ids_scores_the_chunks_of_its_documents() {
+    let query = r#"query { Article(docID: "bae-1", order: {_alias: {sim: DESC}}, limit: 2) {
+        sim: SIMILARITY(body_v: {vector: [1, 0, 0]})
+    } }"#;
+    assert!(plan_kinds(planner(), query).contains(&"similarityNode"));
 }
 
 #[test]
 fn an_app_read_validator_keeps_the_ranking_off_the_chunk_index() {
-    let planner = planner().with_read_validator(Some(Arc::new(Governs("Article"))));
-    assert_eq!(unused_reasons(planner), vec!["filter".to_string()]);
+    let governed = || planner().with_read_validator(Some(Arc::new(Governs("Article"))));
+    assert_eq!(unused_reasons(governed()), vec!["filter".to_string()]);
+    assert!(plan_kinds(governed(), RANKING).contains(&"similarityNode"));
 }
 
 #[test]
