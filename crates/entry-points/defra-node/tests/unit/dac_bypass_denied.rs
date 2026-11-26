@@ -6,11 +6,9 @@
 //! denial belongs to the request: a transaction begun with it does not deny
 //! a later request in that transaction.
 //!
-//! In-process, the identity-based bypass reaches only a query and a commits
-//! query. An administrator without the denial already counts 0, reads nothing
-//! from a subscription's scoped query and changes nothing by a mutation, so
-//! there the denied 0 is what document access control gives either way, not
-//! a sign of the denial.
+//! The bypass reaches every path: a query, a commits query, an aggregate, a
+//! subscription's scoped query and a mutation, so on each the denied 0
+//! contrasts with what an administrator without the denial gets.
 
 use defra_core::RequestContext;
 use query::QueryRequest;
@@ -144,8 +142,6 @@ fn an_administrator_denied_the_bypass_reads_and_writes_nothing_dac_hides() {
     workers::block_on(async {
         let (node, doc, cid) = fixture().await;
 
-        // Only the query and the commits query contrast with an administrator
-        // without the denial; the other paths give 0 to both.
         assert_eq!(reads(&node, &denied(ADMIN), &doc, &cid).await, [0; 4]);
         assert_eq!(writes(&node, &denied(ADMIN), &doc).await, (0, 0));
         let kept = run(&node, &actor(NAC_OWNER), "{ Record { pending } }").await;
@@ -175,11 +171,8 @@ fn an_administrator_without_the_denial_keeps_the_bypass() {
         let [query, commits, count, subscribed] = reads(&node, &actor(ADMIN), &doc, &cid).await;
         assert_eq!(query, 1);
         assert!(commits >= 1);
-        // The identity-based bypass does not reach an aggregate, a
-        // subscription's scoped query or a mutation, so an administrator
-        // without the denial gets there what document access control gives.
-        assert_eq!((count, subscribed), (0, 0));
-        assert_eq!(writes(&node, &actor(ADMIN), &doc).await, (0, 0));
+        assert_eq!((count, subscribed), (1, 1));
+        assert_eq!(writes(&node, &actor(ADMIN), &doc).await, (1, 1));
         node.shutdown().await.unwrap();
 
         let (node, doc, _) = fixture().await;

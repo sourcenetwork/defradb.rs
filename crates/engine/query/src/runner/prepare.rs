@@ -138,6 +138,12 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
                 prepared.inputs.insert(request, Arc::<[u8]>::from(response));
             }
         }
+        // The documents a write may target, as the bypass reads now; each
+        // attempt decides the bypass and checks its documents again.
+        let bypassed = self
+            .with_decided_dac_bypass(self.fetcher.as_ref(), identity.as_ref())
+            .await?;
+        let this = bypassed.as_ref().unwrap_or(self);
         let mut documents = Vec::new();
         let mut projected_ids = rapidhash::RapidHashSet::default();
         for mutation in mutations {
@@ -154,7 +160,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
                 base: self.fetcher.as_ref(),
                 documents: &documents,
             };
-            let authorized = self
+            let authorized = this
                 .authorize_mutation(
                     mutation,
                     &identity,

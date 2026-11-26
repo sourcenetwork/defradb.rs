@@ -94,12 +94,14 @@ pub(super) const PROPERTIES: &[Property] = &[
         // caller `bypass-dac`, decided at the read's own snapshot, and its
         // caller did not deny it the bypass. A bypass the caller set on the
         // request (`RequestContext::with_dac_bypass`) is honoured as set,
-        // without the engine consulting node access control.
+        // without the engine consulting node access control. Every path
+        // honours the decided bypass: queries, commits, aggregates, version
+        // and subscription reads, explain and writes.
         family: "Node access control operations",
         name: "INV_BypassOnlyWhenGranted / INV_BypassWhenGranted / INV_DeniedNeverBypasses",
         axis: Tla,
-        anchor: "crates/engine/query/src/runner/turn.rs lent; crates/database/db/src/read/lensed/fetcher/mod.rs dac_bypass; crates/database/db/src/collection/acp.rs check_doc_permission_as; crates/foundation/defra-core/src/request_context.rs RequestContext::with_dac_bypass_denied, RequestContext::with_dac_bypass",
-        model_ref: "MC_NacDacBypass_{Green,Red_NacOff,Red_Never,Red_Live,Red_IgnoreDenial}.cfg",
+        anchor: "crates/engine/query/src/runner/turn.rs lent; crates/database/db/src/read/lensed/fetcher/mod.rs dac_bypass; crates/database/db/src/collection/acp.rs check_doc_permission_as; crates/foundation/defra-core/src/request_context.rs RequestContext::with_dac_bypass_denied, RequestContext::with_dac_bypass; crates/engine/query/src/runner/dac_bypass.rs QueryRunner::dac_bypassed, QueryRunner::with_decided_dac_bypass; crates/engine/query/src/runner/prepare.rs QueryRunner::prepare_mutations; crates/database/db/src/read/lensed/autocommit/mod.rs LensedAutoCommitFetcher::dac_bypass; crates/engine/query/src/runner/mutation.rs QueryRunner::execute_parsed_mutations, QueryRunner::check_doc_access_for_read, QueryRunner::check_doc_access_prepared; crates/engine/query/src/plan/permission_filter.rs AcpReadCheck::allows",
+        model_ref: "MC_NacDacBypass_{Green,Red_NacOff,Red_Never,Red_Live,Red_IgnoreDenial,Red_SomePaths}.cfg",
         tiers: &[Boundary],
         bound_by: "",
     },

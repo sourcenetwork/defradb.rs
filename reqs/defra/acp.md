@@ -11,6 +11,13 @@ Access-control behaviour beyond what Go's integration suite checks.
 
 A store NAC was enabled on comes back with NAC enforced when the node restarts without `--node-acp-enable`: the owner still sees status `enabled`, an anonymous caller adding a document fails with `not authorized to perform operation. Permission: get-collection`, and the owner's add succeeds. A store NAC was never configured on serves no NAC checks: its status is `not configured` and anonymous callers are not refused (`go.acp.nac.lifecycle.start`).
 
+# `defra.acp.nac_admin_dac_bypass_paths`: A NAC admin bypasses DAC on every path
+
+- **Parents:** ["defra.acp"]
+- **Scenarios:** ["acp::nac::relation_admin::dac_bypass_paths::a_nac_admin_bypasses_dac_on_commits_aggregates_subscriptions_and_writes"]
+
+While NAC is enabled, an identity NAC grants `bypass-dac` (a NAC admin) reads and writes documents DAC would hide from it on every path, as Go's `canDACBypass` decides: a query, a `_commits` query, a top-level aggregate such as `COUNT(Users: {})`, the events of a subscription it opened, a filtered `update_Users` and a `delete_Users` by docID. A request whose caller denied it the bypass, and an identity without `bypass-dac`, get on those paths only what DAC grants them: no rows, a count of 0, no events, and no document changed, without an error (`go.acp.nac.admin.dac-bypass`).
+
 # `defra.acp.vera_delete_archive`: A vera.rs delete retires its object
 
 - **Parents:** ["defra.acp"]
