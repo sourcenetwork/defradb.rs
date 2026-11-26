@@ -390,11 +390,15 @@ impl<H: Hosted + 'static> Node<H> {
         for (_, sync) in self.syncs.borrow_mut().drain() {
             sync.abort();
         }
-        // Every task holds the node; they end first, so the socket closes with
+        // The sessions close before the tasks end. A task dropped first drops
+        // the pinc send halves it holds, and pinc finishes a dropped send half
+        // cleanly: a stream cut short by the shutdown would read as a whole
+        // one if its end reached the peer ahead of the goodbye.
+        self.ep.close().await;
+        // Every task holds the node; they end next, so the socket closes with
         // the node when this returns, before the caller hears the shutdown.
         let mut tasks = std::mem::replace(&mut *self.tasks.borrow_mut(), JoinSet::new());
         tasks.shutdown().await;
-        self.ep.close().await;
         debug!(peer_id = %local, "pinc endpoint stopped");
         shutdown_reply
     }

@@ -90,7 +90,7 @@ impl PublishCounters {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct PublishStats {
     /// Refused, to their caller, as larger than one topic message
-    /// ([`MAX_TOPIC_MESSAGE`]).
+    /// (`MAX_TOPIC_MESSAGE`).
     pub oversized: u64,
     /// Waiting publishes that failed after their caller was answered.
     pub failed_after_reply: u64,

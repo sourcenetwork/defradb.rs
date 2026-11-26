@@ -85,7 +85,7 @@ pub fn format_public_listen_addrs(peer_id: &PeerId, raw_addrs: &[PeerAddr]) -> V
 }
 
 /// The one address to share: the first that is not loopback. A node bound
-/// to a wildcard lists no loopback address ([`advertised`]), so this is
+/// to a wildcard lists no loopback address (`advertised`), so this is
 /// loopback only for a node bound to loopback on purpose, and `None` for a
 /// node with no address another host can reach.
 pub fn best_shareable_public_addr(peer_id: &PeerId, raw_addrs: &[PeerAddr]) -> Option<String> {

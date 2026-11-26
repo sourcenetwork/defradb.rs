@@ -51,7 +51,7 @@ pub struct NodeSpec {
     /// The addresses a node started from a Go config lists first, from its
     /// `net.pinc_public_addrs`.
     pub pinc_public_addrs: Vec<std::net::SocketAddr>,
-    /// The node names [`RELAY_HUB`] in place of [`PINC_HUB`]: a Rust node
+    /// The node names `RELAY_HUB` in place of `PINC_HUB`: a Rust node
     /// under every client.
     pub relay_hub: bool,
     /// The node's own identity, Go's `NodeIdentity(seed)`; the node signs as it.
