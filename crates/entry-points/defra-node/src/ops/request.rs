@@ -29,7 +29,8 @@ impl Node {
             )
             .into());
         }
-        let created = Arc::clone(&self.schema_ops)
+        let created = self
+            .schema_ops
             .add_collection(
                 &context
                     .clone()

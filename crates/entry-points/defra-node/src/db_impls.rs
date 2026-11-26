@@ -1,4 +1,4 @@
-//! Trait implementations bridging DB to the node's type-erased traits.
+//! The block and schema operations bridging DB to the node.
 
 use std::sync::Arc;
 
@@ -6,20 +6,23 @@ use defra_core::RequestContext;
 use identity::Did;
 use schema::CollectionVersion;
 
-use crate::{BlockOps, Error, Result, SchemaOps};
+use crate::{Error, Result};
 
-pub(crate) struct DbBlockOps<S: storage::corekv::Store + 'static> {
-    database: Arc<db::DB<S>>,
+/// Every field is a shared handle or an immutable value, so a clone shares all
+/// state; a field with state of its own breaks that and belongs behind an `Arc`.
+#[derive(Clone)]
+pub(crate) struct DbBlockOps {
+    database: Arc<db::DB<storage::RegolithStore>>,
     document_acp: Arc<dyn acp::DocumentACP>,
-    transaction_registry: Arc<db::DbTransactionRegistry<S>>,
+    transaction_registry: Arc<db::DbTransactionRegistry<storage::RegolithStore>>,
     caller_identity: acp::Identity,
 }
 
-impl<S: storage::corekv::Store + 'static> DbBlockOps<S> {
+impl DbBlockOps {
     pub(crate) fn new(
-        database: Arc<db::DB<S>>,
+        database: Arc<db::DB<storage::RegolithStore>>,
         document_acp: Arc<dyn acp::DocumentACP>,
-        transaction_registry: Arc<db::DbTransactionRegistry<S>>,
+        transaction_registry: Arc<db::DbTransactionRegistry<storage::RegolithStore>>,
         node_identity: Option<Did>,
     ) -> Self {
         let caller_identity = node_identity.into();
@@ -30,11 +33,8 @@ impl<S: storage::corekv::Store + 'static> DbBlockOps<S> {
             caller_identity,
         }
     }
-}
 
-#[async_trait::async_trait]
-impl<S: storage::corekv::Store + 'static> BlockOps for DbBlockOps<S> {
-    async fn signed_block_bytes(
+    pub(crate) async fn signed_block_bytes(
         &self,
         cid: &str,
         caller_did: Option<&str>,
@@ -53,7 +53,7 @@ impl<S: storage::corekv::Store + 'static> BlockOps for DbBlockOps<S> {
         .map_err(Error::BlockAccess)
     }
 
-    async fn verified_signer_did(&self, cid: &str) -> Result<String> {
+    pub(crate) async fn verified_signer_did(&self, cid: &str) -> Result<String> {
         db::block::verify::verified_block_signer_did(
             &self.database,
             self.document_acp.as_ref(),
@@ -64,7 +64,7 @@ impl<S: storage::corekv::Store + 'static> BlockOps for DbBlockOps<S> {
         .map_err(Error::BlockAccess)
     }
 
-    async fn verified_signer_did_in_txn(
+    pub(crate) async fn verified_signer_did_in_txn(
         &self,
         context: &RequestContext,
         cid: &str,
@@ -83,20 +83,23 @@ impl<S: storage::corekv::Store + 'static> BlockOps for DbBlockOps<S> {
     }
 }
 
-pub(crate) struct DbSchemaOps<S: storage::corekv::Store + 'static> {
-    database: Arc<db::DB<S>>,
+/// Every field is a shared handle or an immutable value, so a clone shares all
+/// state; a field with state of its own breaks that and belongs behind an `Arc`.
+#[derive(Clone)]
+pub(crate) struct DbSchemaOps {
+    database: Arc<db::DB<storage::RegolithStore>>,
     query_limits: query::QueryLimits,
     document_acp: Arc<dyn acp::DocumentACP>,
     /// Runs the operations a request makes inside its transaction.
-    transaction_registry: Arc<db::DbTransactionRegistry<S>>,
+    transaction_registry: Arc<db::DbTransactionRegistry<storage::RegolithStore>>,
 }
 
-impl<S: storage::corekv::Store + 'static> DbSchemaOps<S> {
+impl DbSchemaOps {
     pub(crate) fn new(
-        database: Arc<db::DB<S>>,
+        database: Arc<db::DB<storage::RegolithStore>>,
         query_limits: query::QueryLimits,
         document_acp: Arc<dyn acp::DocumentACP>,
-        transaction_registry: Arc<db::DbTransactionRegistry<S>>,
+        transaction_registry: Arc<db::DbTransactionRegistry<storage::RegolithStore>>,
     ) -> Self {
         Self {
             database,
@@ -139,9 +142,8 @@ impl<S: storage::corekv::Store + 'static> DbSchemaOps<S> {
     }
 }
 
-#[async_trait::async_trait]
-impl<S: storage::corekv::Store + 'static> SchemaOps for DbSchemaOps<S> {
-    async fn add_collection(
+impl DbSchemaOps {
+    pub(crate) async fn add_collection(
         &self,
         context: &RequestContext,
         sdl: &str,
@@ -149,7 +151,7 @@ impl<S: storage::corekv::Store + 'static> SchemaOps for DbSchemaOps<S> {
         Ok(self.database.add_collection(context, sdl).await?)
     }
 
-    async fn ensure_ordinary_index(
+    pub(crate) async fn ensure_ordinary_index(
         &self,
         context: &RequestContext,
         collection: &str,
@@ -170,7 +172,7 @@ impl<S: storage::corekv::Store + 'static> SchemaOps for DbSchemaOps<S> {
             .map_err(Error::from)
     }
 
-    async fn add_view(
+    pub(crate) async fn add_view(
         &self,
         context: &RequestContext,
         source_query: &str,
@@ -298,7 +300,7 @@ impl<S: storage::corekv::Store + 'static> SchemaOps for DbSchemaOps<S> {
         Ok(created)
     }
 
-    async fn refresh_views(
+    pub(crate) async fn refresh_views(
         &self,
         context: &RequestContext,
         selector: db::CollectionSelector,
@@ -320,7 +322,7 @@ impl<S: storage::corekv::Store + 'static> SchemaOps for DbSchemaOps<S> {
             .map_err(Error::MaterializedViewRefresh)
     }
 
-    async fn materialize_collection(
+    pub(crate) async fn materialize_collection(
         &self,
         context: &RequestContext,
         collection_name: &str,
@@ -330,17 +332,17 @@ impl<S: storage::corekv::Store + 'static> SchemaOps for DbSchemaOps<S> {
             .map_err(Error::from)
     }
 
-    fn list_collections(&self) -> Result<Vec<String>> {
+    pub(crate) fn list_collections(&self) -> Result<Vec<String>> {
         db::DB::list_collections(&self.database).map_err(Error::from)
     }
 
-    fn get_collection(&self, name: &str) -> Result<Option<CollectionVersion>> {
+    pub(crate) fn get_collection(&self, name: &str) -> Result<Option<CollectionVersion>> {
         Ok(db::DB::get_collection(&self.database, name)
             .map_err(Error::from)?
             .map(|collection| collection.schema().clone()))
     }
 
-    async fn get_collection_by_version_id(
+    pub(crate) async fn get_collection_by_version_id(
         &self,
         version_id: &str,
     ) -> Result<Option<CollectionVersion>> {
@@ -352,7 +354,7 @@ impl<S: storage::corekv::Store + 'static> SchemaOps for DbSchemaOps<S> {
         )
     }
 
-    async fn get_all_collection_versions(&self) -> Result<Vec<CollectionVersion>> {
+    pub(crate) async fn get_all_collection_versions(&self) -> Result<Vec<CollectionVersion>> {
         db::DB::get_all_collection_versions(&self.database)
             .await
             .map_err(Error::from)
