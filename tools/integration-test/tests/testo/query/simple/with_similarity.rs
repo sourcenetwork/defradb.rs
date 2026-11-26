@@ -828,7 +828,25 @@ fn query_simple_with_two_similarity_and_filtering_on_both_should_succeed() {
                                         }
                                     }
                 "#.into(),
-                expected_data: json!({ "User": [] }),
+                expected_data: json!({
+                    "User": [
+                        {
+                            "name": "John",
+                            "sim": m::similarity_score("COSINE", json!([2, 4, 1]), json!([1, 2, 0])),
+                            "sim2": m::similarity_score("COSINE", json!([2, 4, 1]), json!([2, 3, 0])),
+                        },
+                        {
+                            "name": "Bob",
+                            "sim": m::similarity_score("COSINE", json!([1, 1, 1]), json!([1, 2, 0])),
+                            "sim2": m::similarity_score("COSINE", json!([1, 1, 1]), json!([2, 3, 0])),
+                        },
+                        {
+                            "name": "Alice",
+                            "sim": m::similarity_score("COSINE", json!([4, 5, 3]), json!([1, 2, 0])),
+                            "sim2": m::similarity_score("COSINE", json!([4, 5, 3]), json!([2, 3, 0])),
+                        },
+                    ],
+                }),
                 common: Common { compare: Some(true), ..Default::default() },
                 ..Default::default()
             }

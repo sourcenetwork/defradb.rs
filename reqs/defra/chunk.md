@@ -428,6 +428,7 @@ With an article whose second paragraph is about rivers, one about rivers and eng
 - **Scenarios:** ["chunk::rank_filtered::a_filtered_query_scores_the_matching_articles_without_the_index"]
 
 With three draft articles about rivers and one titled `kept` about rivers and engines, the same query with `limit: 1, filter: {title: {_eq: "kept"}}` returns `kept` with similarity 0.7071, scored from its chunks. It warns `VECTOR_INDEX_UNUSED` with reason `filter`, as a single-vector field does: a scalar filter can change which articles qualify before the similarity order.
+
 # `defra.chunk.rank.unrouted`: An unrouted query scores every article from its chunks
 
 - **Parents:** ["defra.chunk.rank"]

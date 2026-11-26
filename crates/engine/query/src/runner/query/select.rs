@@ -291,14 +291,24 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
 
         // Validate similarity fields against the collection schema
         if has_similarity {
-            // An embedding over a `@chunk` field lives on its chunk collection.
-            let mut chunk_collections = Vec::new();
-            for name in collection.chunk_collection_names() {
-                chunk_collections.push(self.get_collection(&name).await?);
-            }
+            let mut chunk_collections = None;
             for field in &select.fields {
                 if let Requestable::Similarity(sim) = field {
                     let target = &sim.target_field;
+                    // An embedding over a `@chunk` field lives on its chunk collection.
+                    // A missing one is no match, so a plain parent field never needs it.
+                    if collection.field_by_name(target).is_none() && chunk_collections.is_none() {
+                        let mut found = Vec::new();
+                        for name in collection.chunk_collection_names() {
+                            if let Some(chunks) =
+                                self.effective_provider().get_collection(&name).await?
+                            {
+                                found.push(chunks);
+                            }
+                        }
+                        chunk_collections = Some(found);
+                    }
+                    let chunk_collections = chunk_collections.as_deref().unwrap_or_default();
                     let schema_field = collection.field_by_name(target).or_else(|| {
                         collection
                             .chunk_embedding(target, chunk_collections.iter().map(Arc::as_ref))
