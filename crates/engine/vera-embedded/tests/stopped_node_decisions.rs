@@ -95,7 +95,7 @@ async fn a_remembered_decision_is_not_given_past_the_freshness_limit() {
             .expect("registration");
     }
 
-    let document_acp = VeraDocumentACP::without_access_cache(provider);
+    let document_acp = VeraDocumentACP::new(provider);
     let identity = Identity::authenticated(identity::Did::new(&owner).unwrap());
     let reads = |document: &'static str| {
         document_acp.check_doc_access(

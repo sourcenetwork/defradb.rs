@@ -384,7 +384,7 @@ fn carrying(acp: &VeraDocumentACP, actor: &str, token: &str) -> Arc<dyn Document
 #[test]
 fn a_change_records_the_nodes_key_before_the_requests_delegation() {
     let provider = OwedProvider::new(true);
-    let acp = VeraDocumentACP::without_access_cache(provider.clone());
+    let acp = VeraDocumentACP::new(provider.clone());
     let unbound = carrying(&acp, "did:key:nobody", "unused");
 
     assert_eq!(
@@ -427,7 +427,7 @@ fn a_change_records_the_nodes_key_before_the_requests_delegation() {
 
 #[test]
 fn a_provider_that_takes_no_delegation_is_passed_its_callers_token() {
-    let acp = VeraDocumentACP::without_access_cache(OwedProvider::new(false));
+    let acp = VeraDocumentACP::new(OwedProvider::new(false));
     assert_eq!(
         carrying(&acp, REMOTE, "a.plain.token")
             .owed_authority(&did(REMOTE))
@@ -441,7 +441,7 @@ fn a_provider_that_takes_no_delegation_is_passed_its_callers_token() {
 #[nuclei::test]
 async fn a_submission_is_read_as_applied_refused_or_not_delivered() {
     let provider = OwedProvider::new(true);
-    let acp = VeraDocumentACP::without_access_cache(provider.clone());
+    let acp = VeraDocumentACP::new(provider.clone());
     // The request a submission runs under lends it nothing.
     let bound = carrying(&acp, HELD, "the.running.requests.token");
     let keyed = change(HELD, OwedAuthority::NodeKey, OwedOp::Add);
@@ -504,7 +504,7 @@ async fn a_submission_is_read_as_applied_refused_or_not_delivered() {
 #[nuclei::test]
 async fn a_change_whose_authority_is_gone_is_not_sent_and_awaits_it() {
     let provider = OwedProvider::new(true);
-    let acp = VeraDocumentACP::without_access_cache(provider.clone());
+    let acp = VeraDocumentACP::new(provider.clone());
     let delegated = change(REMOTE, delegation(REMOTE), OwedOp::Delete);
 
     assert_eq!(
@@ -550,7 +550,7 @@ async fn a_change_whose_authority_is_gone_is_not_sent_and_awaits_it() {
 #[nuclei::test]
 async fn a_key_that_vanishes_before_signing_is_not_replaced_by_the_process_token() {
     let provider = OwedProvider::new(true);
-    let acp = VeraDocumentACP::without_access_cache(provider.clone());
+    let acp = VeraDocumentACP::new(provider.clone());
     defra_core::signing::set_request_bearer_token(HELD, format!("delegation:{HELD}"));
     provider.key_vanishes.store(true, Ordering::Relaxed);
     let submitted = acp
@@ -566,7 +566,7 @@ async fn a_key_that_vanishes_before_signing_is_not_replaced_by_the_process_token
 
 #[nuclei::test]
 async fn a_managing_relation_is_asked_as_a_named_permission() {
-    let acp = VeraDocumentACP::without_access_cache(OwedProvider::new(true));
+    let acp = VeraDocumentACP::new(OwedProvider::new(true));
     let held = |relation: &'static str| {
         let acp = &acp;
         async move {
@@ -589,7 +589,7 @@ async fn a_managing_relation_is_asked_as_a_named_permission() {
 #[nuclei::test]
 async fn a_change_of_a_userset_subject_is_sent_under_its_recorded_authority() {
     let provider = OwedProvider::new(true);
-    let acp = VeraDocumentACP::without_access_cache(provider.clone());
+    let acp = VeraDocumentACP::new(provider.clone());
     let members = OwedSubject::EntitySet {
         resource: "groups".into(),
         object: "team".into(),
@@ -641,7 +641,7 @@ fn a_subject_is_staged_only_where_the_provider_can_be_sent_it() {
         resource: "groups".into(),
     };
     for takes in [true, false] {
-        let acp = VeraDocumentACP::without_access_cache(OwedProvider::new(takes));
+        let acp = VeraDocumentACP::new(OwedProvider::new(takes));
         assert!(acp.submits_subject(&Subject::Entity(did(REMOTE))));
         assert!(acp.submits_subject(&Subject::Wildcard));
         assert_eq!(acp.submits_subject(&members), takes);
@@ -652,7 +652,7 @@ fn a_subject_is_staged_only_where_the_provider_can_be_sent_it() {
 #[test]
 fn a_delegation_bound_to_one_request_counts_for_the_command_it_names_only() {
     let provider = OwedProvider::new(true);
-    let acp = VeraDocumentACP::without_access_cache(provider.clone());
+    let acp = VeraDocumentACP::new(provider.clone());
     let registration = |object| acp::ProviderCommand::RegisterObject {
         policy_id: "policy-1",
         resource: "users",
@@ -720,7 +720,7 @@ fn a_delegation_bound_to_one_request_counts_for_the_command_it_names_only() {
 #[nuclei::test]
 async fn a_command_is_not_sent_with_a_delegation_bound_to_another() {
     let provider = OwedProvider::new(true);
-    let acp = VeraDocumentACP::without_access_cache(provider.clone());
+    let acp = VeraDocumentACP::new(provider.clone());
     let granting = bound_to(REMOTE, &format!("set doc-1 reader {REMOTE}"));
     let bound = presenting(&acp, REMOTE, &granting);
     let grant = |object: &'static str, relation: &'static str| {
@@ -775,7 +775,7 @@ async fn a_command_is_not_sent_with_a_delegation_bound_to_another() {
 #[nuclei::test]
 async fn an_owed_change_under_a_delegation_bound_to_it_is_sent_until_that_lapses() {
     let provider = OwedProvider::new(true);
-    let acp = VeraDocumentACP::without_access_cache(provider.clone());
+    let acp = VeraDocumentACP::new(provider.clone());
     let token = bound_to(REMOTE, &format!("set doc-1 reader {REMOTE}"));
     let owed = change(
         REMOTE,
@@ -813,7 +813,7 @@ async fn an_owed_change_under_a_delegation_bound_to_it_is_sent_until_that_lapses
 #[nuclei::test]
 async fn a_plain_delegation_is_checked_again_as_its_command_is_sent() {
     let provider = OwedProvider::new(true);
-    let acp = VeraDocumentACP::without_access_cache(provider.clone());
+    let acp = VeraDocumentACP::new(provider.clone());
     let token = format!("delegation:{REMOTE}");
     let grant = |acp: Arc<dyn DocumentACP>| async move {
         acp.add_actor_relationship(
@@ -876,7 +876,7 @@ async fn a_plain_delegation_is_checked_again_as_its_command_is_sent() {
 
 #[test]
 fn a_verified_write_takes_no_delegation_the_node_cannot_verify() {
-    let acp = VeraDocumentACP::without_access_cache(OwedProvider::new(false));
+    let acp = VeraDocumentACP::new(OwedProvider::new(false));
     let verified = acp
         .bind_request(
             &RequestContext::default()

@@ -397,7 +397,8 @@ order:
    (`acp_light_client::FreshnessPolicy::default().max_age`, 30 seconds, with 15 seconds
    of allowed clock skew; set in `VeraRsProvider::connect`). It is never a local guess:
    the read path, the replicated-merge path and this one ask the same
-   `VeraDocumentACP::check_doc_access`, and the node's access cache is off for vera.rs
+   `VeraDocumentACP::check_doc_access`, which keeps no decision cache of its own: only
+   a decision read at a verified state is reused, keyed by that state
    (`DocumentACP::proves_decisions`). A provider that cannot be reached, or whose newest
    verified revision is older than that limit, gives no decision and the write is
    refused: it fails closed.
@@ -406,7 +407,7 @@ A user without the permission, a reader who may read but not update, and a revok
 writer are refused, and nothing is written; the refusal is the one an ordinary update or
 delete gets (the document is not found, or not authorized), or the provider's
 unavailability, not `WRITE_AUTHORITY_UNAVAILABLE`. On a provider that proves no
-decisions, or behind an access cache, `None` still needs a key the node holds.
+decisions, `None` still needs a key the node holds.
 
 **Freshness and revocations.** The guarantee is the permission at the proof's revision,
 not at the moment of admission. A decision is read at the light client's newest verified

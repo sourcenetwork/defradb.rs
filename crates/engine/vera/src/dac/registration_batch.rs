@@ -65,11 +65,7 @@ impl VeraDocumentACP {
                 })
                 .await;
             match sent {
-                Ok(()) => {
-                    for object in listed {
-                        self.invalidate_cached_access(object.policy_id);
-                    }
-                }
+                Ok(()) => {}
                 Err(error @ ProviderError::Unavailable(_)) => {
                     return Err(RegistrationFailure::new(offset, provider_err(error)));
                 }

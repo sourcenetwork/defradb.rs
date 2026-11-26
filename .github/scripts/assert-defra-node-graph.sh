@@ -151,8 +151,9 @@ assert_absent ffi iroh "${NO_TRANSPORT_FFI[@]}"
 # Default ffi keeps libp2p.
 assert_present ffi libp2p
 
-# Default ffi still carries the full Go-interop capability set.
-assert_present ffi vera
+# Default ffi carries Lens migrations, and no Vera client: no FFI option
+# configures one.
+assert_absent ffi vera
 assert_present ffi wasmtime
 
 # Delegation minting (#3038) builds wherever a client runs: no vera.rs client
