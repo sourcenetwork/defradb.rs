@@ -95,6 +95,7 @@ where
                     generation,
                     last_active_unix: now_unix(),
                     sender_peer: metadata.sender_peer.map(str::to_owned),
+                    keys: 2,
                     ..Progress::default()
                 }
             }
@@ -112,7 +113,7 @@ where
                     reason,
                 })));
             }
-            let more = cleanup(store, root, budget).await?;
+            let more = cleanup(store, root, budget, &mut progress).await?;
             if more {
                 write(store, &state_key(root), &progress).await?;
             }
@@ -202,14 +203,14 @@ where
                     root_checked = true;
                 }
                 if Self::composite_was_applied(store, headstore, &cid, payload, doc).await? {
-                    store
-                        .set(&node_key(&cid), &[1])
-                        .await
-                        .map_err(storage_error)?;
+                    // The headstore records an applied node, so its mark
+                    // goes with its frame: finished history retains nothing.
+                    store.delete(&node_key(&cid)).await.map_err(storage_error)?;
                     store
                         .delete(&stack_key(progress.top))
                         .await
                         .map_err(storage_error)?;
+                    progress.keys = progress.keys.saturating_sub(2);
                     if progress.top == 0 {
                         progress.outcome = Some(Completion::Merged);
                         break;
@@ -255,6 +256,7 @@ where
                     .set(&node_key(parent), &[0])
                     .await
                     .map_err(storage_error)?;
+                progress.keys = progress.keys.saturating_add(2);
                 continue;
             }
             let doc = progress
@@ -313,14 +315,20 @@ where
                 waiting = Some(outcome);
                 break;
             }
-            store
-                .set(&node_key(&cid), &[1])
-                .await
-                .map_err(storage_error)?;
+            if Self::composite_was_applied(store, headstore, &cid, payload, doc).await? {
+                store.delete(&node_key(&cid)).await.map_err(storage_error)?;
+                progress.keys = progress.keys.saturating_sub(1);
+            } else {
+                store
+                    .set(&node_key(&cid), &[1])
+                    .await
+                    .map_err(storage_error)?;
+            }
             store
                 .delete(&stack_key(progress.top))
                 .await
                 .map_err(storage_error)?;
+            progress.keys = progress.keys.saturating_sub(1);
             if progress.top == 0 {
                 progress.outcome = Completion::from_outcome(outcome);
                 break;

@@ -42,6 +42,11 @@ struct Progress {
     last_active_unix: u64,
     #[serde(default)]
     sender_peer: Option<String>,
+    /// Live traversal bookkeeping keys under the root's data prefix: one
+    /// frame per stack level, one mark per node on the stack, and one mark
+    /// per finished node the headstore does not record as applied.
+    #[serde(default)]
+    keys: u64,
 }
 
 fn now_unix() -> u64 {
@@ -140,8 +145,14 @@ impl Completion {
     }
 }
 
-/// Delete only traversal bookkeeping, never document or block data.
-async fn cleanup(store: &NamespaceView, root: &Cid, budget: usize) -> Result<bool, MergeError> {
+/// Delete only traversal bookkeeping, never document or block data, and
+/// account every deleted key against the root's progress.
+async fn cleanup(
+    store: &NamespaceView,
+    root: &Cid,
+    budget: usize,
+    progress: &mut Progress,
+) -> Result<bool, MergeError> {
     let mut iter = store
         .iterator(
             IterOptions::new()
@@ -159,10 +170,12 @@ async fn cleanup(store: &NamespaceView, root: &Cid, budget: usize) -> Result<boo
     }
     let more = iter.next().await.map_err(storage_error)?.is_some();
     iter.close().await.map_err(storage_error)?;
+    progress.keys = progress.keys.saturating_sub(keys.len() as u64);
     for key in keys {
         store.delete(&key).await.map_err(storage_error)?;
     }
     if !more {
+        progress.keys = 0;
         store
             .delete(&state_key(root))
             .await
@@ -216,7 +229,14 @@ where
             return Ok(MergeOutcome::Yielded);
         }
         progress.outcome = Some(Completion::Rejected(reason.to_owned()));
-        if cleanup(store, root, self.max_merge_depth.clamp(1, PAGE_STEPS)).await? {
+        if cleanup(
+            store,
+            root,
+            self.max_merge_depth.clamp(1, PAGE_STEPS),
+            &mut progress,
+        )
+        .await?
+        {
             write(store, &state_key(root), &progress).await?;
             Ok(MergeOutcome::Yielded)
         } else {
