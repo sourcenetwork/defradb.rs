@@ -52,6 +52,9 @@ pub struct NodeSpec {
     /// The node was configured from a Go-written `config.yaml` through the
     /// Rust CLI's loader, so it is a Rust node under every client.
     pub go_config: bool,
+    /// The node starts on a directory holding Go DefraDB's Badger store,
+    /// which only a Rust node's refusal is checked against.
+    pub go_datastore: bool,
     /// The node's own identity, Go's `NodeIdentity(seed)`; the node signs as it.
     pub node_identity: Option<u64>,
     /// The node takes `node_identity` from the process's signing registry,
@@ -134,7 +137,8 @@ impl TestNode {
                     || spec.connection_manager.is_some()
                     || spec.iroh_network
                     || spec.resolv_conf.is_some()
-                    || spec.go_config =>
+                    || spec.go_config
+                    || spec.go_datastore =>
             {
                 ClientType::RustHttp
             }
