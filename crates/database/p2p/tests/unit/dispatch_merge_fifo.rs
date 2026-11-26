@@ -495,7 +495,7 @@ async fn sourceless_latched_completion_does_not_block_merge_loop() {
 
     assert_eq!(dispatched, 1);
     assert!(
-        matches!(fetch, Ok(ReplicationResult::BitswapFetchStarted { root_cid, .. }) if root_cid == head),
+        matches!(fetch, Ok(ReplicationResult::BlockSyncFetchStarted { root_cid, .. }) if root_cid == head),
         "the merge loop waited for room in its own channel: {fetch:?}"
     );
     assert_eq!(
@@ -642,7 +642,7 @@ async fn complete_sourceless_root_merges_without_block_sync() {
     let dispatched = coordinator.dispatch_due_pending_dag_fetches_for_test(now);
     let config = ReplicationConfig::default();
     let result = ReplicationLoop::process_next(&coordinator, &mut events, &MergeAll, &config).await;
-    if let ReplicationResult::BitswapFetchStarted { query_id, .. } = result {
+    if let ReplicationResult::BlockSyncFetchStarted { query_id, .. } = result {
         coordinator
             .handle_block_sync_complete(query_id, Ok(()), None)
             .await

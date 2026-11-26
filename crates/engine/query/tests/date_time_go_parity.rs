@@ -1,6 +1,6 @@
 //! DateTime inputs and outputs match Go (#2364): a `[DateTime]` element may
-//! be `UTC_NOW`, a malformed element's error names it, and a mutation renders
-//! a time as Go's `time.RFC3339Nano` does.
+//! be `UTC_NOW`, a malformed element's error names it, and a mutation or a
+//! query renders a time as Go's `time.RFC3339Nano` does.
 
 use chrono::DateTime;
 use document::NormalValue;
@@ -66,6 +66,40 @@ fn mutation_output_renders_time_as_go_rfc3339_nano() {
         normal_value_to_json(&NormalValue::TimeArray(vec![whole])),
         json!(["2031-07-23T03:23:23Z"])
     );
+}
+
+#[test]
+fn query_output_renders_time_as_go_rfc3339_nano() {
+    use query::json_convert::normal_value_to_json;
+
+    let whole = DateTime::parse_from_rfc3339("2026-08-01T12:34:56Z").unwrap();
+    let fraction = DateTime::parse_from_rfc3339("2026-08-01T12:34:56.120Z").unwrap();
+    let cases = [
+        (NormalValue::Time(whole), json!("2026-08-01T12:34:56Z")),
+        (
+            NormalValue::Time(fraction),
+            json!("2026-08-01T12:34:56.12Z"),
+        ),
+        (
+            NormalValue::NillableTime(Some(whole)),
+            json!("2026-08-01T12:34:56Z"),
+        ),
+        (
+            NormalValue::TimeArray(vec![whole, fraction]),
+            json!(["2026-08-01T12:34:56Z", "2026-08-01T12:34:56.12Z"]),
+        ),
+        (
+            NormalValue::NillableTimeArray(Some(vec![whole])),
+            json!(["2026-08-01T12:34:56Z"]),
+        ),
+        (
+            NormalValue::NillableTimeElementArray(vec![Some(whole), None]),
+            json!(["2026-08-01T12:34:56Z", null]),
+        ),
+    ];
+    for (value, expected) in cases {
+        assert_eq!(normal_value_to_json(&value).unwrap(), expected, "{value:?}");
+    }
 }
 
 #[test]

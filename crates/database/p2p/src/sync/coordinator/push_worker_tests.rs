@@ -178,6 +178,68 @@ fn an_offline_probe_keeps_queued_jobs() {
     })
 }
 
+#[test]
+fn reconnect_wakes_offline_queue_and_fences_stale_parks() {
+    edge::testing::paused(|edge| async move {
+        let backlog = PushBacklog::new(64, usize::MAX, 1, 1, edge);
+        let transport = TestTransport::new(Vec::new());
+        let (context, _failures) = test_context(transport, backlog.clone(), Duration::from_secs(1));
+        backlog.try_enqueue(job("offline", b"1")).await;
+        backlog.try_enqueue(job("offline", b"2")).await;
+        let first = backlog.next_job().await.unwrap();
+        assert_eq!(run_push_job(&context, &first).await, JobCompletion::Parked);
+        backlog.job_done(&first, JobCompletion::Parked).await;
+        assert!(
+            backlog
+                .snapshot()
+                .await
+                .per_peer
+                .iter()
+                .find(|p| p.peer_id == "offline")
+                .unwrap()
+                .cooldown_remaining_ms
+                > 0
+        );
+        context.peer_state.peer_connected("offline");
+        backlog.peer_connected(&first.peer_id, Arc::clone(&context.peer_state));
+        // An offline observation that began before reconnect may arrive late.
+        backlog.park_peer_offline(&first, Arc::clone(&context.peer_state));
+        let next = crate::rt::time::timeout(Duration::from_millis(1), backlog.next_job())
+            .await
+            .expect("reconnect must wake the queue")
+            .unwrap();
+        backlog.job_done(&next, JobCompletion::Retired).await;
+        backlog.close();
+    });
+}
+
+#[test]
+fn reconnect_preserves_newer_transport_cooldown() {
+    edge::testing::paused(|edge| async move {
+        let backlog = PushBacklog::new(64, usize::MAX, 1, 1, edge);
+        let transport = TestTransport::new(Vec::new());
+        let (context, _failures) = test_context(transport, backlog.clone(), Duration::from_secs(1));
+        backlog.try_enqueue(job("offline", b"1")).await;
+        let active = backlog.next_job().await.unwrap();
+        backlog.park_peer_offline(&active, Arc::clone(&context.peer_state));
+        backlog.park_peer_unreachable(&active).await;
+        context.peer_state.peer_connected("offline");
+        backlog.peer_connected(&active.peer_id, Arc::clone(&context.peer_state));
+        let snapshot = backlog.snapshot().await;
+        assert!(
+            snapshot
+                .per_peer
+                .iter()
+                .find(|p| p.peer_id == "offline")
+                .unwrap()
+                .cooldown_remaining_ms
+                > 0
+        );
+        backlog.job_done(&active, JobCompletion::Retired).await;
+        backlog.close();
+    });
+}
+
 /// A durable recorder that denies an offline push still fails the job; it is
 /// not counted as parked and does not park the peer.
 #[nuclei::test]
@@ -848,8 +910,24 @@ async fn retire_older_head(
     }
     backlog.try_enqueue(newer).await;
 
-    assert_eq!(push.join().await.unwrap(), JobCompletion::Retired);
-    backlog.job_done(&active, JobCompletion::Retired).await;
+    assert_eq!(
+        push.join().await.unwrap(),
+        JobCompletion::RetiredAfterDelivery
+    );
+    backlog
+        .job_done(&active, JobCompletion::RetiredAfterDelivery)
+        .await;
+    let snapshot = backlog.snapshot().await;
+    assert_eq!(snapshot.completed_total, 0);
+    assert!(
+        snapshot
+            .per_peer
+            .iter()
+            .find(|peer| peer.peer_id == "peer")
+            .unwrap()
+            .last_success_at_ms
+            > 0
+    );
     backlog.close();
     // The fake recorder forwards on its own task; wait for it to go quiet.
     let mut reported = Vec::new();
@@ -859,6 +937,34 @@ async fn retire_older_head(
         reported.push(event);
     }
     reported
+}
+
+#[nuclei::test]
+async fn retired_before_send_does_not_record_delivery() {
+    let backlog = PushBacklog::new(64, usize::MAX, 1, 1, edge::testing::edge());
+    let transport = TestTransport::new(Vec::new());
+    let (context, _failures) =
+        test_context(transport.clone(), backlog.clone(), Duration::from_secs(1));
+    backlog.try_enqueue(versioned_job("peer", 1)).await;
+    let active = backlog.next_job().await.unwrap();
+    backlog.try_enqueue(versioned_job("peer", 2)).await;
+    assert_eq!(
+        run_push_job(&context, &active).await,
+        JobCompletion::Retired
+    );
+    assert!(transport.sent().is_empty());
+    backlog.job_done(&active, JobCompletion::Retired).await;
+    let snapshot = backlog.snapshot().await;
+    assert_eq!(
+        snapshot
+            .per_peer
+            .iter()
+            .find(|peer| peer.peer_id == "peer")
+            .unwrap()
+            .last_success_at_ms,
+        0
+    );
+    backlog.close();
 }
 
 /// A push the peer acknowledged after a newer job for its document was

@@ -28,6 +28,8 @@ mod first_start;
 #[path = "embedded_vera/projection.rs"]
 mod projection;
 
+#[path = "embedded_vera/archive.rs"]
+mod archive;
 #[path = "embedded_vera/registration_batch.rs"]
 mod registration_batch;
 
@@ -99,10 +101,11 @@ async fn node_serving(
     actor: EmbeddedVeraActor,
     policies: Vec<EmbeddedVeraPolicy>,
 ) -> (Node, std::net::SocketAddr) {
-    rpc_port::on_free_rpc_port(|rpc| {
-        starting(directory, actor.clone(), policies.clone(), Some(rpc))
-    })
-    .await
+    let node = starting(directory, actor, policies, Some(([127, 0, 0, 1], 0).into()))
+        .await
+        .expect("hosted node");
+    let rpc = node.embedded_vera_rpc_addr().expect("bound RPC listener");
+    (node, rpc)
 }
 
 async fn starting(
@@ -1063,6 +1066,7 @@ fn a_revocation_staged_in_a_transaction_denies_at_the_commit_and_the_chain_follo
 /// registers the document and then submits the grant.
 #[test]
 fn a_restart_settles_a_change_the_chain_could_not_take() {
+    use acp::RemotePolicies as _;
     use defra_node::{VeraRsActor, VeraRsConfig};
     use vera::vera_rs::{DelegationSigner, Ed25519Signer};
 
@@ -1087,38 +1091,48 @@ fn a_restart_settles_a_change_the_chain_could_not_take() {
                 vec![seed(chain_owner.as_str())],
             )
         };
-        let consumer = |trust: defra_node::EmbeddedVeraTrust, rpc: std::net::SocketAddr| {
-            let home = directory.path().join("consumer");
-            let signer = Arc::clone(&signer);
-            async move {
-                let keyring: Arc<dyn keyring::Keyring> = Arc::new(
-                    keyring::FileKeyring::open(home.join("keys"), b"test-password")
-                        .expect("keyring"),
-                );
-                Node::builder()
-                    .data_path(home.join("data"))
-                    .with_vera_rs(VeraRsConfig {
-                        rpc_address: format!("http://{rpc}"),
-                        consensus_key: trust.consensus_key,
-                        genesis_id: None,
-                        deployment_id: trust.chain_id,
-                        actor: VeraRsActor::Signer(signer),
-                        worker_dir: home.join("worker"),
-                        keyring,
-                        tuning: vera::AcpTuning::default(),
-                    })
-                    .build()
-                    .await
-                    .expect("consumer node")
-            }
-        };
+        let consumer =
+            |trust: defra_node::EmbeddedVeraTrust, genesis_id, rpc: std::net::SocketAddr| {
+                let home = directory.path().join("consumer");
+                let signer = Arc::clone(&signer);
+                async move {
+                    let keyring: Arc<dyn keyring::Keyring> = Arc::new(
+                        keyring::FileKeyring::open(home.join("keys"), b"test-password")
+                            .expect("keyring"),
+                    );
+                    Node::builder()
+                        .data_path(home.join("data"))
+                        .with_vera_rs(VeraRsConfig {
+                            rpc_address: format!("http://{rpc}"),
+                            consensus_key: trust.consensus_key,
+                            genesis_id: Some(genesis_id),
+                            deployment_id: trust.chain_id,
+                            actor: VeraRsActor::Signer(signer),
+                            worker_dir: home.join("worker"),
+                            keyring,
+                            tuning: vera::AcpTuning::default(),
+                        })
+                        .build()
+                        .await
+                        .expect("consumer node")
+                }
+            };
 
         let (first_chain, rpc) = chain().await;
         let trust = first_chain
             .embedded_vera_trust()
             .expect("deployment")
             .clone();
-        let node = consumer(trust, rpc).await;
+        let genesis_id = first_chain
+            .vera_acp()
+            .unwrap()
+            .light_client_status()
+            .unwrap()
+            .delegation
+            .unwrap()
+            .genesis_id
+            .expect("hosted genesis");
+        let node = consumer(trust.clone(), genesis_id, rpc).await;
         let policy = seeded_policy(&node, chain_owner.as_str()).await;
         node.add_collection(&users(&policy))
             .await
@@ -1152,12 +1166,8 @@ fn a_restart_settles_a_change_the_chain_could_not_take() {
         drop(node);
 
         let (second_chain, rpc) = chain().await;
-        let trust = second_chain
-            .embedded_vera_trust()
-            .expect("deployment")
-            .clone();
         assert!(!reads_doc(&second_chain, &reader, &policy, &doc).await);
-        let node = consumer(trust, rpc).await;
+        let node = consumer(trust, genesis_id, rpc).await;
         let deadline = std::time::Instant::now() + Duration::from_secs(60);
         while !reads_doc(&second_chain, &reader, &policy, &doc).await {
             assert!(

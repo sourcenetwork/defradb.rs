@@ -5,9 +5,7 @@ use integration_test::scenario::Text;
 use integration_test::test_case::TestCase;
 use serde_json::json;
 
-use super::support::{
-    add_article, add_article_collection, body, chunks_are_listed, no_chunks, read_list,
-};
+use super::support::{add_article, add_article_collection, body, chunk_texts_are, no_chunks};
 
 #[test]
 #[mantra_macros::req_test("defra.chunk.write.document_api")]
@@ -15,8 +13,7 @@ fn document_api_writes_keep_chunks_exact() {
     TestCase::from_actions(vec![
         add_article_collection(),
         add_article(&body(5, "deserts"), "article"),
-        read_list("created", 5, None),
-        chunks_are_listed("created", 5, None),
+        chunk_texts_are(&[&body(5, "deserts")], None),
         UpdateDoc {
             collection: "Article".into(),
             doc_id: Text::reference("article"),
@@ -24,8 +21,7 @@ fn document_api_writes_keep_chunks_exact() {
             ..Default::default()
         }
         .into(),
-        read_list("updated", 3, None),
-        chunks_are_listed("updated", 3, None),
+        chunk_texts_are(&[&body(3, "oceans")], None),
         DeleteDoc {
             collection: "Article".into(),
             doc_id: Text::reference("article"),

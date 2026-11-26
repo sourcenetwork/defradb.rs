@@ -1,0 +1,140 @@
+name: Queue conflicts
+
+# Tells a pull request, before it is queued, whether it conflicts with the merge
+# queue as it stands (#3317). Each queue entry's merge-group commit is main plus
+# every pull request ahead of it plus that entry, so the first entry whose commit
+# conflicts with this pull request names the one to stack on. Advisory: the
+# "Queue conflicts" check is not required.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    branches: [main]
+  pull_request_review:
+    types: [submitted]
+  # The queue changed: check every approved pull request again.
+  merge_group:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  actions: read
+  contents: read
+  pull-requests: read
+  checks: write
+
+concurrency:
+  group: queue-conflicts-${{ github.event.pull_request.number || 'queue' }}
+  cancel-in-progress: true
+
+jobs:
+  scan:
+    name: Scan the merge queue for conflicts
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          filter: blob:none
+      - uses: actions/github-script@v9
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const q = await github.graphql(`query($owner: String!, $repo: String!) {
+              repository(owner: $owner, name: $repo) {
+                mergeQueue(branch: "main") { entries(first: 100) {
+                  pageInfo { hasNextPage }
+                  nodes { position headCommit { oid } pullRequest { number } }
+                } }
+                pullRequests(states: OPEN, baseRefName: "main", first: 100, orderBy: {field: UPDATED_AT, direction: DESC}) {
+                  pageInfo { hasNextPage }
+                  nodes { number headRefOid reviewDecision isInMergeQueue isDraft }
+                }
+              }
+            }`, { owner, repo });
+            const queue = q.repository.mergeQueue.entries;
+            const entries = queue.nodes.sort((a, b) => a.position - b.position);
+            const pr = context.payload.pull_request;
+            // A review event has no branch filter, and a fork's token cannot write checks.
+            if (pr && (pr.base.ref !== 'main' || pr.head.repo.fork)) return core.info(`#${pr.number}: not checked (base ${pr.base.ref}, fork ${pr.head.repo.fork})`);
+            // ponytail: one page of the 100 most recently updated PRs; older ones are checked on their own events.
+            if (!pr && q.repository.pullRequests.pageInfo.hasNextPage) core.warning('Over 100 open pull requests: only the 100 most recently updated were checked.');
+            const targets = pr
+              ? [{ number: pr.number, headRefOid: pr.head.sha }]
+              : q.repository.pullRequests.nodes.filter((p) => p.reviewDecision === 'APPROVED' && !p.isInMergeQueue && !p.isDraft);
+
+            const git = (...args) => exec.getExecOutput('git', args, { ignoreReturnCode: true, silent: true });
+            const fetch = async (refs) => refs.length && git('fetch', '--quiet', '--filter=blob:none', 'origin', ...refs);
+            await fetch([...entries.filter((e) => e.headCommit).map((e) => e.headCommit.oid), 'main']);
+            await fetch(targets.map((t) => `+refs/pull/${t.number}/head:refs/remotes/pr/${t.number}`));
+            // Exit 1 from merge-tree is a conflict; the tree id comes first, then the file list.
+            const merge = async (base, head) => {
+              const r = await git('merge-tree', '--write-tree', '--name-only', '--no-messages', base, head);
+              if (r.exitCode > 1) throw new Error(`git merge-tree ${base} ${head}: ${r.stderr}`);
+              const [tree, ...files] = r.stdout.trim().split('\n');
+              return { tree, files: r.exitCode === 1 ? files.filter(Boolean) : null };
+            };
+            // The trees a ci:full run on this head passed (Merge gate's stamp, ci.yml); the
+            // queue reuses that run for an entry whose tree is one of them.
+            // A stamp counts only on a job of this repository's own pull_request run of
+            // the workflow, never on a check run another workflow or an app created.
+            const passed = async (workflow, sha, name) => {
+              const runs = (await github.rest.actions.listWorkflowRuns({ ...context.repo, workflow_id: workflow, head_sha: sha, event: 'pull_request', per_page: 20 })).data.workflow_runs;
+              const jobs = [];
+              for (const run of runs) {
+                jobs.push(...(await github.paginate(github.rest.actions.listJobsForWorkflowRun, { ...context.repo, run_id: run.id, filter: 'latest', per_page: 100 }))
+                  .filter((j) => j.name === name && j.conclusion === 'success'));
+              }
+              return jobs;
+            };
+            const stamped = async (sha) => {
+              const gates = await passed('ci.yml', sha, 'Merge gate');
+              const trees = [];
+              for (const gate of gates) {
+                const notes = await github.paginate(github.rest.checks.listAnnotations, { owner, repo, check_run_id: gate.id });
+                trees.push(...notes.filter((a) => a.title === 'Heavy suite passed').map((a) => a.message.replace(/^tree /, '')));
+              }
+              return trees;
+            };
+
+            for (const t of targets) try {
+              const head = `refs/remotes/pr/${t.number}`;
+              const fetched = (await git('rev-parse', head)).stdout.trim();
+              if (fetched !== t.headRefOid) throw new Error(`head moved to ${fetched} after ${t.headRefOid} was selected`);
+              const own = entries.find((e) => e.pullRequest.number === t.number);
+              const before = entries.filter((e) => !own || e.position < own.position);
+              const unresolved = before.filter((e) => !e.headCommit).map((e) => `#${e.pullRequest.number}`);
+              let found = null;
+              for (const e of before.filter((e) => e.headCommit)) {
+                const { files } = await merge(e.headCommit.oid, head);
+                if (files) { found = { pr: e.pullRequest.number, position: e.position, files }; break; }
+              }
+              const complete = !unresolved.length && !(queue.pageInfo.hasNextPage && !own);
+              let output;
+              if (found) {
+                output = {
+                  title: `Conflicts with #${found.pr} (queue position ${found.position})`,
+                  summary: `Merged after the queue up to #${found.pr}, this pull request conflicts in:\n\n${found.files.map((f) => `- \`${f}\``).join('\n')}\n\nStack it on #${found.pr} (\`gh stack link\`) or wait for #${found.pr} to land and rebase.`,
+                };
+              } else {
+                output = complete
+                  ? { title: `No conflict with the ${before.length} queued pull request(s) ahead`, summary: 'Checked against every merge-group commit ahead of it in the queue.' }
+                  : { title: 'Queue only partly checked', summary: `No conflict found, but these entries could not be checked: ${unresolved.join(', ') || 'entries past the first 100'}.` };
+                const last = before.filter((e) => e.headCommit).at(-1);
+                const { tree } = await merge(last?.headCommit.oid ?? 'origin/main', head);
+                output.summary += (await stamped(t.headRefOid)).includes(tree)
+                  ? '\n\nThe queue would build a tree a ci:full run here already passed, so it reruns only Merge gate.'
+                  : last
+                    ? `\n\nThe queue will run full CI on it, because #${last.pullRequest.number} and the entries before it are not in main yet.`
+                    : '\n\nThe queue will run full CI on it. To skip that, run ci:full here against the current main.';
+              }
+              core.info(`#${t.number}: ${output.title}`);
+              await github.rest.checks.create({
+                owner, repo, name: 'Queue conflicts', head_sha: t.headRefOid,
+                status: 'completed', conclusion: found ? 'failure' : complete ? 'success' : 'neutral', output,
+              });
+            } catch (e) {
+              // A ref that vanished or moved mid-run skips only its target; the next event checks it again.
+              core.warning(`#${t.number}: not checked: ${e.message}`);
+            }

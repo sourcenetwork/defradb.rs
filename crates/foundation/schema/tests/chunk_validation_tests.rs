@@ -16,13 +16,7 @@ fn article() -> CollectionVersion {
         "c-article",
         vec![
             FieldDescription::new("1", "_docID", FieldKind::doc_id(), CType::LwwRegister),
-            FieldDescription::new(
-                "2",
-                "_body_chunks",
-                FieldKind::string_array(),
-                CType::LwwRegister,
-            ),
-            FieldDescription::new("3", "body", FieldKind::string(), CType::LwwRegister),
+            FieldDescription::new("2", "body", FieldKind::string(), CType::LwwRegister),
         ],
     );
     article.chunked_fields.push(ChunkedField {
@@ -186,19 +180,6 @@ fn a_chunk_parent_on_a_collection_with_another_name_is_refused() {
 }
 
 #[test]
-fn a_chunked_field_without_its_list_field_is_refused() {
-    let mut article = article();
-    article.fields.retain(|field| field.name != "_body_chunks");
-    let errors = first_version_errors(&article);
-    assert!(
-        errors
-            .iter()
-            .any(|e| e.contains("needs the list field _body_chunks")),
-        "{errors:?}"
-    );
-}
-
-#[test]
 fn reordered_chunk_fields_pass() {
     let summary = ChunkedField {
         field_name: "summary".into(),
@@ -209,13 +190,7 @@ fn reordered_chunk_fields_pass() {
     let with_summary = || {
         let mut article = article();
         article.fields.push(FieldDescription::new(
-            "4",
-            "_summary_chunks",
-            FieldKind::string_array(),
-            CType::LwwRegister,
-        ));
-        article.fields.push(FieldDescription::new(
-            "5",
+            "3",
             "summary",
             FieldKind::string(),
             CType::LwwRegister,
@@ -400,6 +375,20 @@ fn an_embedding_of_a_chunked_field_on_the_parent_is_refused() {
     patched
         .vector_embeddings
         .push(embedding("body_v", "body", "m1"));
+    let err = check(vec![article(), chunk()], vec![patched, chunk()]).unwrap_err();
+    assert!(
+        err.contains("an embedding over a chunked field belongs to its chunk collection. Field: Article.body_v"),
+        "{err}"
+    );
+}
+
+#[test]
+fn a_template_embedding_that_reads_a_chunked_field_on_the_parent_is_refused() {
+    let mut patched = article();
+    let mut templated = embedding("body_v", "body", "m1");
+    templated.fields = vec![];
+    templated.template = "{{ .body }}".into();
+    patched.vector_embeddings.push(templated);
     let err = check(vec![article(), chunk()], vec![patched, chunk()]).unwrap_err();
     assert!(
         err.contains("an embedding over a chunked field belongs to its chunk collection. Field: Article.body_v"),

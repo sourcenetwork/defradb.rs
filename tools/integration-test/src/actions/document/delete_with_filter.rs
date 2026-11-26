@@ -37,7 +37,7 @@ impl Op for DeleteWithFilter {
         let identity = self.common.client_identity(Self::name())?;
         state
             .block_on(state.node_on(self.common.node())?.delete_with_filter(
-                &state.context_as(None, identity),
+                &state.context_on(self.common.node(), None, identity, None),
                 &self.collection,
                 &self.filter.to_core(),
             ))

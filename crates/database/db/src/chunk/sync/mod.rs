@@ -1,14 +1,15 @@
 //! Keeps a parent's chunk documents in step with its text, inside the parent's
 //! own transaction.
 //!
-//! [`set_lists`] puts the new list on the parent before it is written, so the
-//! text and its list are saved together. [`ChunkWrites`] then creates the
-//! missing chunks, or deletes them all when the parent is deleted.
+//! [`plan_chunks`] splits the text a write sets. [`ChunkWrites`] then creates
+//! the missing chunks, or deletes them all when the parent is deleted.
 //! `proofs/tla/ParentChunks.tla` checks that this keeps them consistent.
 
 mod lookup;
+mod prefetch;
 mod write;
 
+pub(crate) use prefetch::embedding_requests;
 pub(crate) use write::chunk_document;
 
 use std::sync::Arc;
@@ -23,7 +24,7 @@ use rapidhash::RapidHashSet;
 use schema::CollectionVersion;
 use storage::corekv::Store;
 
-use crate::chunk::list::{chunk_list, distinct};
+use crate::chunk::hash::distinct;
 use crate::chunk::split::split;
 use crate::collection::Collection;
 use crate::database::DB;
@@ -46,62 +47,40 @@ pub(crate) struct FieldChunks {
     encrypt: bool,
 }
 
-/// Splits every chunked field this write sets and puts its list on `doc`.
-/// A null text gets a null list.
-pub(crate) fn set_lists(
+/// Splits every chunked field this write sets to a text.
+pub(crate) fn plan_chunks(
     schema: &CollectionVersion,
-    doc: &mut Document,
-    mut modified: Option<&mut RapidHashSet<String>>,
+    doc: &Document,
+    modified: Option<&RapidHashSet<String>>,
     encryption: Option<&EncryptionConfig>,
 ) -> Result<Vec<FieldChunks>> {
     let mut plans = Vec::new();
     for chunked in &schema.chunked_fields {
         let field = chunked.field_name.as_str();
-        let written = match modified.as_deref() {
+        let written = match modified {
             Some(modified) => modified.contains(field),
             None => doc.get(field).is_some(),
         };
         if !written {
             continue;
         }
-        let list_field = chunked.list_field();
-        let text = doc
-            .get(field)
-            .and_then(NormalValue::as_str)
-            .map(str::to_owned);
-        match text {
-            Some(text) => {
-                let config = crate::chunk::chunk_config(&schema.name, chunked)
-                    .map_err(|error| QueryError::execution(error.to_string()))?;
-                let chunks = split(&text, &config);
-                doc.set(
-                    list_field.clone(),
-                    NormalValue::StringArray(chunk_list(&text, &chunks)),
-                )
-                .map_err(list_error)?;
-                plans.push(FieldChunks {
-                    field: field.to_string(),
-                    chunk_collection: chunked.collection(&schema.name),
-                    chunks: distinct(&chunks)
-                        .into_iter()
-                        .map(|chunk| (chunk.text.clone(), chunk.hash.clone()))
-                        .collect(),
-                    encrypt: encryption.is_some_and(|config| config.should_encrypt_field(field)),
-                });
-            }
-            None => doc
-                .set(list_field.clone(), NormalValue::Null)
-                .map_err(list_error)?,
-        }
-        if let Some(modified) = modified.as_deref_mut() {
-            modified.insert(list_field);
-        }
+        let Some(text) = doc.get(field).and_then(NormalValue::as_str) else {
+            continue;
+        };
+        let config = crate::chunk::chunk_config(&schema.name, chunked)
+            .map_err(|error| QueryError::execution(error.to_string()))?;
+        let chunks = split(text, &config);
+        plans.push(FieldChunks {
+            field: field.to_string(),
+            chunk_collection: chunked.collection(&schema.name),
+            chunks: distinct(&chunks)
+                .into_iter()
+                .map(|chunk| (chunk.text.clone(), chunk.hash.clone()))
+                .collect(),
+            encrypt: encryption.is_some_and(|config| config.should_encrypt_field(field)),
+        });
     }
     Ok(plans)
-}
-
-fn list_error(error: document::Error) -> QueryError {
-    QueryError::execution(format!("chunk list: {error}"))
 }
 
 /// What a chunk write needs from the parent's write.
@@ -156,6 +135,7 @@ where
             // transaction's writes each time.
             let planned: RapidHashSet<&str> =
                 plan.chunks.iter().map(|(_, hash)| hash.as_str()).collect();
+            // TODO(https://github.com/sourcenetwork/defradb.rs/issues/3381): reuse trusts the vector of a chunk any peer sent.
             let existing = target.existing_of(parent_doc_id, &planned).await?;
             let mut docs = Vec::new();
             for (text, hash) in plan.chunks {
@@ -170,6 +150,7 @@ where
             }
             missing.push((target, encrypt, docs));
         }
+        // TODO(https://github.com/sourcenetwork/defradb.rs/issues/3380): one deadline bounds the whole wave.
         if let Some(miss) = first_miss {
             return Err(QueryError::NeedsInput(miss));
         }

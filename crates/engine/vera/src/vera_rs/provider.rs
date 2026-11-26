@@ -43,6 +43,9 @@ mod exact_relationship;
 mod genesis;
 mod owed_request;
 mod reach;
+#[cfg(test)]
+#[path = "provider/recovery_tests.rs"]
+mod recovery_tests;
 mod registration_list;
 #[cfg(test)]
 mod signer_tests;
@@ -302,7 +305,7 @@ impl VeraRsProvider {
                              the configured 0x{}",
                             hex::encode(served),
                             hex::encode(id)
-                        )))
+                        )));
                     }
                     Some(_) => {}
                     None => {
@@ -343,6 +346,7 @@ impl VeraRsProvider {
             follow,
             bus: event_bus.clone(),
             sink: regolith::sync::OnceCell::new(),
+            recovery: regolith::sync::OnceCell::new(),
             shared: std::sync::atomic::AtomicBool::new(false),
             holds_key: Box::new(move |did| did == own || holds_registered_key(did)),
         });
@@ -374,7 +378,7 @@ impl VeraRsProvider {
             _light_client_observer,
             edge: edge.clone(),
         };
-        provider.follower.check().await;
+        provider.follower.check_with(&provider).await;
         provider.recover_pending().await?;
         Ok(provider)
     }
@@ -387,7 +391,7 @@ impl VeraRsProvider {
         match self.follower.admit() {
             Ok(epoch) => Ok(epoch),
             Err(_) => {
-                self.follower.check().await;
+                self.follower.check_with(self).await;
                 self.follower.admit()
             }
         }
@@ -534,11 +538,17 @@ impl VeraProvider for VeraRsProvider {
         self.worker_did.clone()
     }
 
+    /// Nothing is archived after a delete commits: the node that deletes a
+    /// document archives its object as an owed change staged in the
+    /// delete's transaction ([`Self::archives_owed_on_delete`]), refused
+    /// unless its caller owns the object, and a replica that merges the
+    /// delete archives nothing.
     fn archive_object_on_document_delete(&self) -> bool {
-        // A local document tombstone may still be rejected by another
-        // replica. Archiving the shared ACP object here would revoke grants
-        // before the replicated delete has been authorized.
         false
+    }
+
+    fn archives_owed_on_delete(&self) -> bool {
+        true
     }
 
     async fn create_bearer_token(&self, did: &str) -> Result<String, ProviderError> {
@@ -666,6 +676,29 @@ impl VeraProvider for VeraRsProvider {
         );
 
         Ok(())
+    }
+
+    async fn register_under_parent(
+        &self,
+        bearer_token: &str,
+        policy_id: &str,
+        resource: &str,
+        object_id: &str,
+        parent: &acp::RegistrationParent,
+    ) -> Result<(), ProviderError> {
+        self.send_command(
+            bearer_token,
+            &crate::PolicyCommand {
+                policy_id,
+                resource,
+                object_id,
+                action: crate::PolicyAction::RegisterUnderParent {
+                    resource: &parent.resource,
+                    object_id: &parent.object_id,
+                },
+            },
+        )
+        .await
     }
 
     async fn register_objects(
@@ -933,6 +966,34 @@ impl VeraProvider for VeraRsProvider {
         .await
     }
 
+    async fn verify_transport_sentinel(
+        &self,
+        query: &acp::TransportSentinelQuery,
+    ) -> Result<bool, ProviderError> {
+        self.admitted_read(async {
+            verified(self.light_client.header_chain(), || async {
+                exact_relationship::sentinel(&self.light_client, query)
+                    .await
+                    .map_err(|error| Box::new(error) as Box<dyn std::error::Error + Send + Sync>)
+            })
+            .await
+            .map_err(|error| match error.downcast::<ProviderError>() {
+                Ok(error) => *error,
+                Err(error) => ProviderError::Query(error.to_string()),
+            })
+        })
+        .await
+    }
+
+    async fn replica_group_member(
+        &self,
+        group: &acp::ReplicaGroup,
+        signer: &identity::Did,
+    ) -> Result<bool, ProviderError> {
+        self.admitted_read(assignments::group_member(self, group, signer))
+            .await
+    }
+
     async fn verify_access(
         &self,
         policy_id: &str,
@@ -1050,6 +1111,12 @@ impl VeraProvider for VeraRsProvider {
         }
     }
 
+    fn set_recovery_source(&self, source: std::sync::Weak<dyn acp::RecoverySource>) {
+        if self.follower.recovery.set(source).is_err() {
+            tracing::warn!("this vera.rs provider already has a recovery source");
+        }
+    }
+
     fn delegation_audience(&self) -> Option<acp::DelegationAudience> {
         Some(acp::DelegationAudience {
             worker: self.worker_did.clone(),
@@ -1076,6 +1143,102 @@ impl VeraProvider for VeraRsProvider {
         let audience = self.delegation_audience()?;
         bearer::caller_of_request_delegation(token, &audience, || request_digest(command))
             .map(|caller| caller.map_err(|error| refused("request delegation", error)))
+    }
+}
+
+impl VeraRsProvider {
+    /// Whether `term` is still the certified one. A pass asks before and
+    /// after each proof it reads, so a page holds only what its term showed.
+    fn still_recovering(&self, term: u64) -> Result<(), String> {
+        if self.follower.certified() == term {
+            return Ok(());
+        }
+        Err(format!("Vera recovery term changed from {term}"))
+    }
+}
+
+#[async_trait]
+impl acp::RecoveryVerifier for VeraRsProvider {
+    async fn term(&self) -> Result<u64, String> {
+        Ok(self.follower.certified())
+    }
+
+    async fn object_owner(
+        &self,
+        term: u64,
+        policy_id: &str,
+        resource: &str,
+        object_id: &str,
+    ) -> Result<Option<String>, String> {
+        self.still_recovering(term)?;
+        let policy = Self::policy_id_to_bytes32(policy_id)
+            .map_err(|error| error.to_string())
+            .map(hex::encode)?;
+        let object = acp_light_client::Object {
+            resource: resource.into(),
+            id: object_id.into(),
+        };
+        let owner = verified(self.light_client.header_chain(), || {
+            self.light_client.read_object_owner(&policy, &object)
+        })
+        .await
+        .map_err(|error| {
+            reach::read_error(&self.light_client, "recovery owner proof", error).to_string()
+        })?;
+        self.still_recovering(term)?;
+        Ok(owner.map(|owner| did_spelling::defra(owner.0.as_str()).into_owned()))
+    }
+
+    async fn relationship(
+        &self,
+        term: u64,
+        owner: &identity::Did,
+        policy_id: &str,
+        resource: &str,
+        object_id: &str,
+        relation: &str,
+        subject: &acp::OwedSubject,
+    ) -> Result<acp::Observed, String> {
+        self.still_recovering(term)?;
+        // The deployment is asked about one explicit actor, as every other
+        // observation is; any other subject cannot be read.
+        let actor = match acp::Subject::from(subject.clone()) {
+            acp::Subject::Entity(did) if !did.is_wildcard() => did.as_str().to_owned(),
+            other => {
+                return Ok(acp::Observed::Unobservable(format!(
+                    "a recovery pass cannot read the subject {other:?}"
+                )))
+            }
+        };
+        // The deployment shows a relationship to the object's owner and to
+        // the relation's managers. The pass reads the node's own record of
+        // the object, whose owner the deployment was just seen to hold.
+        let query = ActorRelationshipQuery {
+            requester: owner.as_str(),
+            actor: &actor,
+            policy: policy_id,
+            resource,
+            object: object_id,
+            relation,
+        };
+        let observed = verified(self.light_client.header_chain(), || async {
+            exact_relationship::query(&self.light_client, query)
+                .await
+                .map_err(|error| Box::new(error) as Box<dyn std::error::Error + Send + Sync>)
+        })
+        .await;
+        self.still_recovering(term)?;
+        match observed {
+            Ok(true) => Ok(acp::Observed::Held),
+            Ok(false) => Ok(acp::Observed::Absent),
+            Err(error) => match error.downcast::<ProviderError>() {
+                Ok(error) if matches!(*error, ProviderError::RelationshipObservationDenied) => {
+                    Ok(acp::Observed::Unobservable(error.to_string()))
+                }
+                Ok(error) => Err(error.to_string()),
+                Err(error) => Err(error.to_string()),
+            },
+        }
     }
 }
 

@@ -192,15 +192,27 @@ impl HttpClient {
         url: &str,
         body: Option<&str>,
     ) -> Result<Response> {
+        self.send_with_retries(method, url, body, MAX_RETRIES).await
+    }
+
+    /// Execute a request, retrying a transient failure at most `max_retries`
+    /// times.
+    async fn send_with_retries(
+        &self,
+        method: &str,
+        url: &str,
+        body: Option<&str>,
+        max_retries: u32,
+    ) -> Result<Response> {
         let mut last_error = None;
         let mut backoff_ms = INITIAL_BACKOFF_MS;
 
-        for attempt in 0..=MAX_RETRIES {
+        for attempt in 0..=max_retries {
             if attempt > 0 {
                 // Always log retries so users know about transient failures
                 eprintln!(
                     "Warning: Request failed, retry attempt {}/{} after {}ms delay...",
-                    attempt, MAX_RETRIES, backoff_ms
+                    attempt, max_retries, backoff_ms
                 );
                 nuclei::time::sleep(Duration::from_millis(backoff_ms)).await;
                 backoff_ms *= 2; // Exponential backoff
@@ -265,7 +277,7 @@ impl HttpClient {
                     }
 
                     // Check if this status is retryable
-                    if Self::is_retryable_status(response.status()) && attempt < MAX_RETRIES {
+                    if Self::is_retryable_status(response.status()) && attempt < max_retries {
                         if self.verbose {
                             eprintln!("Retryable status code: {}", response.status());
                         }
@@ -281,7 +293,7 @@ impl HttpClient {
                     }
 
                     // Only retry on transient errors
-                    if Self::is_retryable_error(&e) && attempt < MAX_RETRIES {
+                    if Self::is_retryable_error(&e) && attempt < max_retries {
                         if self.verbose {
                             eprintln!("Retryable error, will retry...");
                         }
@@ -298,7 +310,7 @@ impl HttpClient {
         Err(last_error.unwrap_or_else(|| {
             Error::Server(format!(
                 "{} {} failed after {} retries",
-                method, url, MAX_RETRIES
+                method, url, max_retries
             ))
         }))
     }

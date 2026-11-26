@@ -1,6 +1,5 @@
 use std::sync::Arc;
 
-use db::chunk::list::chunk_list;
 use db::chunk::split::{split, ChunkConfig, SplitterVersion};
 use db::write::autocommit::batch::BatchMutator;
 use document::{DocID, Document, NormalValue};
@@ -68,17 +67,15 @@ pub(super) fn modified(fields: &[&str]) -> RapidHashSet<String> {
     fields.iter().map(|f| f.to_string()).collect()
 }
 
-pub(super) async fn list_of(mutator: &impl DocMutator, doc_id: &DocID) -> Option<Vec<String>> {
+pub(super) async fn body_of(mutator: &impl DocMutator, doc_id: &DocID) -> Option<String> {
     let doc = mutator
         .get_for_update("Article", doc_id)
         .await
         .unwrap()
         .expect("parent");
-    match doc.get("_body_chunks") {
-        Some(NormalValue::StringArray(list)) => Some(list.clone()),
-        Some(NormalValue::NillableStringArray(Some(list))) => Some(list.clone()),
-        _ => None,
-    }
+    doc.get("body")
+        .and_then(NormalValue::as_str)
+        .map(str::to_owned)
 }
 
 pub(super) async fn update_body(
@@ -96,7 +93,7 @@ pub(super) async fn update_body(
 }
 
 #[test]
-fn create_writes_the_list_and_every_chunk() {
+fn create_writes_the_text_and_every_chunk() {
     workers::block_on(async {
         let (mutator, _db, _keep) = setup().await;
         let text = text_of(&book());
@@ -107,8 +104,8 @@ fn create_writes_the_list_and_every_chunk() {
 
         let chunks = split(&text, &CONFIG);
         assert_eq!(
-            list_of(&mutator, &created.doc_id).await.unwrap(),
-            chunk_list(&text, &chunks)
+            body_of(&mutator, &created.doc_id).await.unwrap(),
+            text.as_str()
         );
         assert_eq!(created.derived.len(), chunks.len());
         for (write, chunk) in created.derived.iter().zip(&chunks) {
@@ -148,8 +145,8 @@ fn editing_one_paragraph_writes_only_its_chunk() {
 
         assert_eq!(updated.derived.len(), 1);
         assert_eq!(
-            list_of(&mutator, &created.doc_id).await.unwrap(),
-            chunk_list(&edited, &split(&edited, &CONFIG))
+            body_of(&mutator, &created.doc_id).await.unwrap(),
+            edited.as_str()
         );
         for old in &created.derived {
             assert!(mutator.exists(CHUNKS, &old.doc_id).await.unwrap());
@@ -167,7 +164,7 @@ fn an_update_that_leaves_the_text_alone_writes_no_chunk() {
             .create("Article", article("t", &text))
             .await
             .unwrap();
-        let before = list_of(&mutator, &created.doc_id).await;
+        let before = body_of(&mutator, &created.doc_id).await;
 
         let mut doc = blank("Article");
         doc.set_id(created.doc_id.clone());
@@ -179,7 +176,7 @@ fn an_update_that_leaves_the_text_alone_writes_no_chunk() {
             .unwrap();
 
         assert!(updated.derived.is_empty());
-        assert_eq!(list_of(&mutator, &created.doc_id).await, before);
+        assert_eq!(body_of(&mutator, &created.doc_id).await, before);
     })
     .unwrap()
 }
@@ -200,15 +197,15 @@ fn reverting_the_text_reuses_the_old_chunks() {
 
         assert!(back.derived.is_empty());
         assert_eq!(
-            list_of(&mutator, &created.doc_id).await.unwrap(),
-            chunk_list(&a, &split(&a, &CONFIG))
+            body_of(&mutator, &created.doc_id).await.unwrap(),
+            a.as_str()
         );
     })
     .unwrap()
 }
 
 #[test]
-fn a_null_text_has_a_null_list_and_no_chunks() {
+fn a_null_text_has_no_chunks() {
     workers::block_on(async {
         let (mutator, _db, _keep) = setup().await;
         let mut doc = blank("Article");
@@ -217,7 +214,7 @@ fn a_null_text_has_a_null_list_and_no_chunks() {
         let created = mutator.create("Article", doc).await.unwrap();
 
         assert!(created.derived.is_empty());
-        assert_eq!(list_of(&mutator, &created.doc_id).await, None);
+        assert_eq!(body_of(&mutator, &created.doc_id).await, None);
     })
     .unwrap()
 }
@@ -274,7 +271,7 @@ fn purging_parents_deletes_their_chunks() {
 }
 
 #[test]
-fn users_cannot_write_chunks_or_the_list() {
+fn users_cannot_write_chunks() {
     workers::block_on(async {
         let (mutator, _db, _keep) = setup().await;
         let created = mutator
@@ -306,20 +303,6 @@ fn users_cannot_write_chunks_or_the_list() {
             .unwrap_err()
             .to_string();
         assert!(err.contains("written only by writes to Article"), "{err}");
-
-        let mut doc = blank("Article");
-        doc.set_id(created.doc_id.clone());
-        doc.set(
-            "_body_chunks",
-            NormalValue::StringArray(vec!["forged".into()]),
-        )
-        .unwrap();
-        let err = mutator
-            .update("Article", doc, modified(&["_body_chunks"]))
-            .await
-            .unwrap_err()
-            .to_string();
-        assert!(err.contains("read-only"), "{err}");
     })
     .unwrap()
 }
@@ -354,15 +337,11 @@ fn an_explicit_transaction_writes_and_deletes_chunks() {
         let text = text_of(&book());
         let txn = db::DbDocMutator::new(Arc::clone(&db), db.new_txn(false).await.unwrap());
         let created = txn.create("Article", article("t", &text)).await.unwrap();
-        let chunks = split(&text, &CONFIG);
-        assert_eq!(
-            list_of(&txn, &created.doc_id).await.unwrap(),
-            chunk_list(&text, &chunks)
-        );
+        assert_eq!(body_of(&txn, &created.doc_id).await.unwrap(), text.as_str());
         txn.take_txn().await.unwrap().commit().await.unwrap();
         assert_eq!(
-            list_of(&autocommit, &created.doc_id).await.unwrap(),
-            chunk_list(&text, &chunks)
+            body_of(&autocommit, &created.doc_id).await.unwrap(),
+            text.as_str()
         );
 
         let txn = db::DbDocMutator::new(Arc::clone(&db), db.new_txn(false).await.unwrap());
@@ -463,8 +442,8 @@ fn an_update_of_an_unchanged_document_goes_through() {
             .unwrap();
         assert_eq!(updated.derived.len(), 1);
         assert_eq!(
-            list_of(&mutator, &created.doc_id).await.unwrap(),
-            chunk_list("Rewritten.", &split("Rewritten.", &CONFIG))
+            body_of(&mutator, &created.doc_id).await.unwrap(),
+            "Rewritten."
         );
     })
     .unwrap()

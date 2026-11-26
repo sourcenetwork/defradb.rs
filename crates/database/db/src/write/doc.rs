@@ -350,13 +350,8 @@ impl<S: Store + 'static> DocMutator for DbDocMutator<S> {
         self.ensure_collection_can_write(collection_name, &collection)
             .await?;
         crate::chunk::user_writes::ensure_user_writable(collection.schema())?;
-        crate::chunk::user_writes::refuse_list_writes(collection.schema(), &doc, None)?;
-        let chunk_plans = crate::chunk::sync::set_lists(
-            collection.schema(),
-            &mut doc,
-            None,
-            context.encryption(),
-        )?;
+        let chunk_plans =
+            crate::chunk::sync::plan_chunks(collection.schema(), &doc, None, context.encryption())?;
 
         let inputs = Some(&self.prepared_inputs);
         pipeline::embed(&self.db, &collection, &mut doc, inputs).await?;
@@ -472,15 +467,10 @@ impl<S: Store + 'static> DocMutator for DbDocMutator<S> {
         self.ensure_collection_can_write(collection_name, &collection)
             .await?;
         crate::chunk::user_writes::ensure_user_writable(collection.schema())?;
-        crate::chunk::user_writes::refuse_list_writes(
+        let chunk_plans = crate::chunk::sync::plan_chunks(
             collection.schema(),
             &doc,
             Some(&modified_fields),
-        )?;
-        let chunk_plans = crate::chunk::sync::set_lists(
-            collection.schema(),
-            &mut doc,
-            Some(&mut modified_fields),
             context.encryption(),
         )?;
 
@@ -666,13 +656,24 @@ impl<S: Store + 'static> DocMutator for DbDocMutator<S> {
         if !existed {
             return Ok(DeleteResult::new(canonical_doc_id, existed));
         }
-        crate::write::autocommit::helpers::unregister_deleted_doc(
-            self.db.document_acp(),
-            &systemstore,
-            &collection,
-            &canonical_doc_id,
-        )
-        .await?;
+        {
+            let txn = &*self.shared_txn()?;
+            // What the delete records as owed names the transaction by its
+            // handle, whether or not the request did.
+            let recorded_in = match (context.txn(), txn.handle_id()) {
+                (None, Some(id)) => context.clone().with_txn(Some(defra_core::TxnId(id))),
+                _ => context.clone(),
+            };
+            crate::write::autocommit::helpers::unregister_deleted_doc(
+                self.db.document_acp(),
+                &systemstore,
+                &collection,
+                &canonical_doc_id,
+                &recorded_in,
+                txn.owed_staged(),
+            )
+            .await?;
+        }
 
         let (doc_cid, doc_block, col_block_data) = {
             let txn = &*self.shared_txn()?;

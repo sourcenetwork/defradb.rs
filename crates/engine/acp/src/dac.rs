@@ -203,6 +203,29 @@ pub trait DocumentACP: MaybeSendSync {
         matches!(subject, Subject::Entity(_) | Subject::Wildcard)
     }
 
+    /// Whether deleting a document archives its object on this provider as
+    /// an owed change staged in the delete's transaction
+    /// ([`crate::TransactionOutbox::stage_archive`]), so the delete is
+    /// refused before it commits when its caller may not archive. The
+    /// default archives nothing that way.
+    fn stages_archive_on_delete(&self) -> bool {
+        false
+    }
+
+    /// Archive one object as `actor`: the provider removes every
+    /// relationship on it and its owner no longer counts. Sent for an owed
+    /// archive ([`crate::OwedOp::Archive`]). The default takes none.
+    async fn archive_doc_object(
+        &self,
+        actor: &Did,
+        policy_id: &str,
+        resource_name: &str,
+        doc_id: &str,
+    ) -> Result<()> {
+        let _ = (actor, policy_id, resource_name, doc_id);
+        Err(Error::UnsupportedArchive)
+    }
+
     /// What lets the node submit a relationship change as `actor` after the
     /// request that made it is gone: the node's own key for `actor`, or the
     /// delegation the request this provider serves carries for it. With
@@ -471,6 +494,64 @@ pub trait DocumentACP: MaybeSendSync {
             .await
     }
 
+    /// Resolve the resource type of the parent referenced by the document.
+    async fn registration_parent(
+        &self,
+        _policy_id: &str,
+        _child: &str,
+        _id: &str,
+    ) -> Result<crate::RegistrationParent> {
+        Err(Error::UnsupportedParentRegistration)
+    }
+
+    /// Resolve the parent and the permission a remote registration will require.
+    async fn registration_parent_rule(
+        &self,
+        _policy_id: &str,
+        _child: &str,
+        _id: &str,
+    ) -> Result<(crate::RegistrationParent, String)> {
+        Err(Error::UnsupportedParentRegistration)
+    }
+
+    /// Authorize a create before queuing its registration with a remote provider.
+    async fn authorized_registration_parent(
+        &self,
+        actor: &Did,
+        policy_id: &str,
+        child: &str,
+        id: &str,
+    ) -> Result<crate::RegistrationParent> {
+        let (parent, permission) = self.registration_parent_rule(policy_id, child, id).await?;
+        if !self
+            .check_named_permission(
+                actor,
+                &permission,
+                policy_id,
+                &parent.resource,
+                &parent.object_id,
+            )
+            .await?
+        {
+            return Err(Error::PermissionDenied(format!(
+                "parent requires '{permission}'"
+            )));
+        }
+        Ok(parent)
+    }
+
+    /// Atomically register a child and its parent link as the supplied identity.
+    async fn register_under_parent(
+        &self,
+        _identity: &Did,
+        _policy_id: &str,
+        _resource: &str,
+        _object_id: &str,
+        _parent: &crate::RegistrationParent,
+    ) -> Result<()> {
+        Err(Error::UnsupportedParentRegistration)
+    }
+
     /// Check if document/object is registered with ACP.
     ///
     /// Documents created without identity may be unregistered; public access is backend-specific.
@@ -519,6 +600,17 @@ pub trait DocumentACP: MaybeSendSync {
         doc_id: &str,
     ) -> Result<bool>;
 
+    /// Verify that this receiver belongs to the named owner's group and check
+    /// the signer's membership at the same finalized state. Only a proven
+    /// nonmember returns false.
+    async fn replica_group_member(
+        &self,
+        _group: &crate::ReplicaGroup,
+        _signer: &Did,
+    ) -> Result<bool> {
+        Err(Error::UnsupportedReplicaMembership)
+    }
+
     /// Evaluate a named permission for an explicit actor. Backends that cannot
     /// evaluate named permissions must fail rather than infer a grant.
     async fn check_named_permission(
@@ -549,6 +641,13 @@ pub trait DocumentACP: MaybeSendSync {
     async fn observe_actor_relationship(
         &self,
         _observation: ActorRelationshipObservation<'_>,
+    ) -> Result<bool> {
+        Err(Error::UnsupportedRelationshipListing)
+    }
+
+    async fn verify_transport_sentinel(
+        &self,
+        _query: &crate::TransportSentinelQuery,
     ) -> Result<bool> {
         Err(Error::UnsupportedRelationshipListing)
     }

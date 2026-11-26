@@ -244,5 +244,9 @@ harness = false
 name = "vector_search"
 harness = false
 
+[[bench]]
+name = "child_page"
+harness = false
+
 [lints]
 workspace = true

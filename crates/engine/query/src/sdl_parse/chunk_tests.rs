@@ -46,13 +46,11 @@ fn chunk_collection_has_source_text_and_hash() {
 }
 
 #[test]
-fn parent_gets_the_list_field_and_settings() {
+fn parent_gets_the_settings_and_no_generated_field() {
     let collections = parse_sdl(SDL).unwrap();
     let article = &collections[0];
-    assert_eq!(
-        article.field_by_name("_body_chunks").unwrap().kind,
-        FieldKind::string_array()
-    );
+    let names: Vec<&str> = article.fields.iter().map(|f| f.name.as_str()).collect();
+    assert_eq!(names, vec!["_docID", "body", "title"]);
     let chunked = article.chunked_field("body").unwrap();
     assert_eq!(chunked.collection(&article.name), "Article__body_chunk");
     assert_eq!((chunked.max_chars, chunked.overlap), (1600, 0));
@@ -134,11 +132,6 @@ fn chunk_refuses_names_that_are_taken() {
         .unwrap_err()
         .to_string()
         .contains("already taken"));
-    let taken_field = "type A { body: String @chunk _body_chunks: [String] }";
-    assert!(parse_sdl(taken_field)
-        .unwrap_err()
-        .to_string()
-        .contains("already taken"));
 }
 
 #[test]
@@ -176,11 +169,9 @@ fn refusal(sdl: &str) -> String {
 }
 
 #[test]
-fn chunk_refuses_a_field_whose_list_name_would_start_with_two_underscores() {
-    assert_eq!(
-        refusal("type R { _x: String @chunk }"),
-        "parse error: @chunk is not allowed on a field whose name starts with \"_\", because its list field __x_chunks would start with \"__\". Field: R._x"
-    );
+fn a_field_whose_name_starts_with_an_underscore_can_be_chunked() {
+    let parsed = parse_sdl("type R { _x: String @chunk }").unwrap();
+    assert!(parsed.iter().any(|version| version.name == "R___x_chunk"));
 }
 
 #[test]
@@ -244,8 +235,8 @@ fn chunk_ids_match_the_ones_made_before_the_splitter_version() {
     assert_eq!(
         ids,
         vec![
-            pinned("bafyreig4d3ybunzta5bmevpw3gpzw3tlwrt7i3zaavl5cgxtbp2thn6pbi"),
-            pinned("bafyreibq7m5mock2yfemrorb7lwdxexm6v453xjy5vn6g3hdsmfxwggd3a"),
+            pinned("bafyreibhwcm7e5z3dnkm4bdln3brw2yzepkcuedo2gm5tndai37xxshypu"),
+            pinned("bafyreiexmt3lfq2dpckd4dllhurkfuvdj6t3hn4du647bb6xolokfox7ea"),
         ]
     );
 }
@@ -307,6 +298,54 @@ fn an_embedding_of_a_chunked_field_with_a_template_is_refused() {
         ),
         "{err}"
     );
+}
+
+#[test]
+fn a_template_embedding_that_reads_a_chunked_field_is_refused() {
+    let sdl = r#"type Article {
+        body: String @chunk
+        body_v: [Float32!] @embedding(template: "{{ .body }}")
+    }"#;
+    let err = parse_sdl(sdl).unwrap_err().to_string();
+    assert!(
+        err.contains(
+            "@embedding over a @chunk field must embed only that field. Field: Article.body_v"
+        ),
+        "{err}"
+    );
+}
+
+#[test]
+fn a_template_read_after_a_quoted_closing_brace_is_refused() {
+    let sdl = r#"type Article {
+        title: String
+        body: String @chunk
+        title_v: [Float32!] @embedding(fields: ["title"], template: "{{ printf \"%s}}\" .body }}")
+    }"#;
+    let err = parse_sdl(sdl).unwrap_err().to_string();
+    assert!(
+        err.contains(
+            "@embedding over a @chunk field must embed only that field. Field: Article.title_v"
+        ),
+        "{err}"
+    );
+}
+
+#[test]
+fn a_chunked_field_named_only_in_a_template_comment_stays_on_the_parent() {
+    let sdl = r#"type Article {
+        title: String
+        body: String @chunk
+        title_v: [Float32!] @embedding(fields: ["title"], template: "{{ .title }} {{/* .body */}}")
+    }"#;
+    let collections = parse_sdl(sdl).unwrap();
+    let names: Vec<&str> = collections[0]
+        .vector_embeddings
+        .iter()
+        .map(|e| e.field_name.as_str())
+        .collect();
+    assert_eq!(names, vec!["title_v"]);
+    assert!(collections[1].vector_embeddings.is_empty());
 }
 
 #[test]

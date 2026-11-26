@@ -159,6 +159,7 @@ pub(crate) async fn register_created_doc(
     doc: &Document,
     doc_short_id: u64,
     block_result: &BlockResult,
+    inputs: Option<&query::prepared::PreparedInputMemo>,
 ) -> query::error::Result<DocID> {
     let doc_id_str = &block_result.doc_id;
 
@@ -201,39 +202,101 @@ pub(crate) async fn register_created_doc(
     // Registration happens only here, on the create branch. A local provider
     // registers in this transaction; an external one cannot join it, so the
     // registration it is owed is recorded here and settled after the commit.
+    let parent_field = collection
+        .schema()
+        .policy
+        .as_ref()
+        .and_then(|policy| policy.parent_field.as_deref());
+    if parent_field.is_some() && (acp.is_none() || context.creator().is_none()) {
+        return Err(query::error::QueryError::execution(
+            "parent-authorized registration requires an authenticated creator and ACP provider",
+        ));
+    }
     if let (Some(provider), Some(policy), Some(creator)) =
         (acp, collection.schema().policy.as_ref(), context.creator())
     {
         let creator = identity::Did::new(creator)
             .map_err(|e| query::error::QueryError::execution(e.to_string()))?;
         let acpstore = systemstore.sibling(storage::namespace::Namespace::Acpstore);
-        match provider.bind_transaction(acpstore.clone()) {
-            Some(scoped) => scoped
-                .register_doc_object(&creator, &policy.id, &policy.resource_name, doc_id_str)
-                .await
-                .map_err(|e| query::error::QueryError::execution(e.to_string()))?,
-            None => {
-                // What is recorded is used when no request is there: a
-                // bearer this request carries for the creator, or a key the
-                // node holds. A request that carries none records none.
-                let authority = acp::bound_to_request(provider, context).command_authority(
-                    &creator,
-                    acp::ProviderCommand::RegisterObject {
-                        policy_id: &policy.id,
-                        resource: &policy.resource_name,
-                        object: doc_id_str,
-                    },
-                );
-                acp::PendingRegistrations::new(&acpstore)
-                    .record(
-                        &acp::PendingRegistration::new(
-                            creator.clone(),
+        let scoped = provider.bind_transaction(acpstore.clone());
+        let registrar = scoped.as_deref().unwrap_or(provider.as_ref());
+        let parent = match parent_field {
+            Some(field) => {
+                let id = doc
+                    .get(field)
+                    .and_then(document::NormalValue::as_str)
+                    .filter(|s| !s.is_empty())
+                    .ok_or_else(|| {
+                        query::error::QueryError::execution(format!(
+                            "missing parent document ID in '{field}'"
+                        ))
+                    })?;
+                let parent = if scoped.is_some() {
+                    registrar
+                        .registration_parent(&policy.id, &policy.resource_name, id)
+                        .await
+                        .map_err(query::error::QueryError::from_acp)?
+                } else {
+                    inputs
+                        .ok_or_else(|| {
+                            query::error::QueryError::execution(
+                                "remote parent registration requires prepared inputs",
+                            )
+                        })?
+                        .registration_parent(
+                            &creator,
+                            context,
                             &policy.id,
                             &policy.resource_name,
-                            doc_id_str,
-                        )
-                        .with_authority(authority, context.bearer_names_request())
-                        .in_transaction(context.txn().map(|txn| txn.0)),
+                            id,
+                        )?
+                };
+                Some(parent)
+            }
+            None => None,
+        };
+        match scoped {
+            Some(local) => {
+                match &parent {
+                    Some(parent) => {
+                        local
+                            .register_under_parent(
+                                &creator,
+                                &policy.id,
+                                &policy.resource_name,
+                                doc_id_str,
+                                parent,
+                            )
+                            .await
+                    }
+                    None => {
+                        local
+                            .register_doc_object(
+                                &creator,
+                                &policy.id,
+                                &policy.resource_name,
+                                doc_id_str,
+                            )
+                            .await
+                    }
+                }
+                .map_err(|e| query::error::QueryError::execution(e.to_string()))?;
+            }
+            None => {
+                let mut owed = acp::PendingRegistration::new(
+                    creator.clone(),
+                    &policy.id,
+                    &policy.resource_name,
+                    doc_id_str,
+                );
+                owed.parent = parent;
+                let authority = acp::bound_to_request(provider, context)
+                    .command_authority(&creator, owed.command());
+                acp::PendingRegistrations::new(&acpstore)
+                    .record(
+                        &owed
+                            .with_authority(authority, context.bearer_names_request())
+                            .in_transaction(context.txn().map(|txn| txn.0)),
                     )
                     .await
                     .map_err(|e| query::error::QueryError::execution(e.to_string()))?;
@@ -573,23 +636,68 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
 }
 
 /// Local ownership disappears in the same commit as the deletion marker. A
-/// remote provider keeps the object: its registration, owed or held, stays,
-/// so the delete and every earlier change replicate to nodes that wait for
-/// the provider to hold the document.
+/// remote provider that archives a deleted document's object
+/// ([`acp::DocumentACP::stages_archive_on_delete`], vera.rs) is owed the
+/// archive in this transaction, as `context`'s identity, so the delete and
+/// the archive commit together; the delete is refused, and nothing is
+/// deleted, unless that identity owns the object
+/// ([`acp::TransactionOutbox::stage_archive`], `proofs/tla/ArchiveOnDelete.tla`).
+/// Any other remote provider keeps the object: its registration, owed or
+/// held, stays, so the delete and every earlier change replicate to nodes
+/// that wait for the provider to hold the document.
 pub(crate) async fn unregister_deleted_doc(
     provider: Option<&Arc<dyn acp::DocumentACP>>,
     systemstore: &NamespaceView,
     collection: &Collection,
     doc_id: &DocID,
+    context: &defra_core::RequestContext,
+    staged: acp::StagedCount,
 ) -> query::error::Result<()> {
-    if let (Some(provider), Some(policy)) = (provider, collection.schema().policy.as_ref()) {
-        let acpstore = systemstore.sibling(storage::namespace::Namespace::Acpstore);
-        if let Some(scoped) = provider.bind_transaction(acpstore) {
-            scoped
-                .unregister_doc_object(&policy.id, &policy.resource_name, &doc_id.to_string())
-                .await
-                .map_err(|error| query::error::QueryError::execution(error.to_string()))?;
-        }
+    let (Some(provider), Some(policy)) = (provider, collection.schema().policy.as_ref()) else {
+        return Ok(());
+    };
+    let acpstore = systemstore.sibling(storage::namespace::Namespace::Acpstore);
+    if let Some(scoped) = provider.bind_transaction(acpstore.clone()) {
+        return scoped
+            .unregister_doc_object(&policy.id, &policy.resource_name, &doc_id.to_string())
+            .await
+            .map_err(|error| query::error::QueryError::execution(error.to_string()));
     }
+    if !provider.stages_archive_on_delete() {
+        return Ok(());
+    }
+    let refused =
+        |error: acp::Error| query::error::QueryError::permission_denied(error.to_string());
+    let actor = context
+        .identity()
+        .map(identity::Did::new)
+        .transpose()
+        .map_err(|error| query::error::QueryError::execution(error.to_string()))?
+        .ok_or_else(|| {
+            refused(acp::Error::NotOwner {
+                operation: "archive the deleted document's object without an identity".into(),
+            })
+        })?;
+    let bound = provider
+        .bind_request(context)
+        .unwrap_or_else(|| Arc::clone(provider));
+    let Some(outbox) = bound.transaction_outbox(&acpstore, staged) else {
+        return Ok(());
+    };
+    outbox
+        .stage_archive(acp::StageArchive {
+            txn: context.txn().map(|txn| txn.0),
+            actor: &actor,
+            policy_id: &policy.id,
+            resource: &policy.resource_name,
+            object: &doc_id.to_string(),
+        })
+        .await
+        .map_err(|error| match error {
+            acp::Error::ProviderUnavailable(_) | acp::Error::OwedCheckUnavailable { .. } => {
+                query::error::QueryError::execution(error.to_string())
+            }
+            other => refused(other),
+        })?;
     Ok(())
 }

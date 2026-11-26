@@ -120,6 +120,8 @@ pub mod nac_adapter;
 #[cfg(feature = "server")]
 pub mod nac_guard;
 #[cfg(feature = "server")]
+pub mod openapi;
+#[cfg(feature = "server")]
 pub mod pool_layer;
 #[cfg(feature = "server")]
 pub mod query_context;
@@ -129,6 +131,8 @@ mod request_path;
 pub mod request_scope;
 #[cfg(feature = "server")]
 pub mod route_permissions;
+#[cfg(feature = "server")]
+mod route_table;
 pub mod router;
 #[cfg(feature = "server")]
 pub mod server;
@@ -153,7 +157,9 @@ pub use router::{
     IndexOperations, NacStatus, NodeAcpOperations, NodePermission, PermissionCheck, ViewOperations,
 };
 #[cfg(feature = "server")]
-pub use server::{RouterTransform, Server, ServerConfig, DEFAULT_MAX_BACKUP_SIZE};
+pub use server::{
+    RouterTransform, Server, ServerConfig, DEFAULT_COMMIT_TIMEOUT_MS, DEFAULT_MAX_BACKUP_SIZE,
+};
 #[cfg(feature = "server")]
 pub use tls::TlsConfig;
 

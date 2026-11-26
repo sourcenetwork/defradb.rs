@@ -3,7 +3,7 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use async_trait::async_trait;
-use chunk_split::list::text_hash;
+use chunk_split::hash::text_hash;
 use chunk_split::split::{split, ChunkConfig};
 use defra_core::vector::Metric;
 use document::{DocID, Document, NormalValue};

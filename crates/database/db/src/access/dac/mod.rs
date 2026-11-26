@@ -210,6 +210,31 @@ where
             .map_err(DacPolicyError::Assignments)
     }
 
+    /// Validate the collection's parent field against the resource's registration rule.
+    pub async fn validate_collection_policy(
+        &self,
+        policy: &schema::PolicyDescription,
+    ) -> Result<(), DacPolicyError> {
+        let stored = self
+            .dac_policies()
+            .ok_or(DacPolicyError::AcpNotAvailable)?
+            .get(&policy.id)
+            .await?;
+        acp::validate_resource_interface(&policy.id, &policy.resource_name, stored.as_ref())
+            .map_err(DacPolicyError::ResourceInterface)?;
+        let gated = stored
+            .as_ref()
+            .and_then(|p| p.get_resource(&policy.resource_name))
+            .is_some_and(|r| r.create.is_some());
+        if gated != policy.parent_field.is_some() {
+            return Err(DacPolicyError::ResourceInterface(format!(
+                "parentField must be supplied exactly when resource '{}' declares a create rule",
+                policy.resource_name
+            )));
+        }
+        Ok(())
+    }
+
     /// Whether resource `resource_name` of policy `policy_id` can guard a
     /// collection: the policy exists and the resource has the permissions
     /// documents need. Go's `ValidateResourceInterface`.

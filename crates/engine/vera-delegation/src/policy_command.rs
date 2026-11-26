@@ -21,6 +21,11 @@ pub struct PolicyCommand<'a> {
 pub enum PolicyAction<'a> {
     /// Register the object with the token's actor as its owner.
     RegisterObject,
+    /// Register the object and attach it to the parent authorizing creation.
+    RegisterUnderParent {
+        resource: &'a str,
+        object_id: &'a str,
+    },
     /// Add one relationship.
     SetRelationship {
         relation: &'a str,
@@ -31,6 +36,9 @@ pub enum PolicyAction<'a> {
         relation: &'a str,
         subject: PolicySubject<'a>,
     },
+    /// Archive the object: every relationship on it goes and its owner no
+    /// longer counts. Only its owner may.
+    ArchiveObject,
 }
 
 /// The subject of a relationship command, in the two forms a provider is

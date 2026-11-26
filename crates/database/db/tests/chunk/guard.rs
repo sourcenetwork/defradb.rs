@@ -1,5 +1,5 @@
 use db::chunk::guard::{check_chunk_merge, ChunkMergeError};
-use db::chunk::list::text_hash;
+use db::chunk::hash::text_hash;
 use document::{Document, NormalValue};
 
 fn chunks() -> schema::CollectionVersion {
@@ -54,6 +54,19 @@ fn a_chunk_cannot_change_after_its_create() {
 }
 
 #[test]
+fn a_merge_cannot_fill_in_a_fixed_field_the_stored_chunk_lacks() {
+    let text = "Some text.";
+    let mut old = Document::new(chunks());
+    old.set("text", NormalValue::String(text.into())).unwrap();
+    old.set("hash", NormalValue::String(text_hash(text)))
+        .unwrap();
+    assert!(matches!(
+        check_chunk_merge(Some(&old), &chunk("bae-p", text, &text_hash(text)), false),
+        Err(ChunkMergeError::Changed(field)) if field == "_sourceID"
+    ));
+}
+
+#[test]
 fn an_encrypted_chunk_this_node_cannot_read_is_not_hash_checked_here() {
     let mut doc = Document::new(chunks());
     doc.set("_sourceID", NormalValue::String("bae-p".into()))
@@ -100,5 +113,56 @@ fn a_chunk_whose_text_or_hash_is_not_a_string_is_refused() {
                 Err(ChunkMergeError::NotText)
             ));
         }
+    }
+}
+
+fn embedded_chunk(vector: Option<NormalValue>) -> Document {
+    let chunks = query::parse_sdl(
+        r#"type Article { body: String @chunk body_v: [Float32!] @embedding(fields: ["body"]) }"#,
+    )
+    .unwrap()
+    .into_iter()
+    .find(|c| c.name == "Article__body_chunk")
+    .expect("chunk collection");
+    let text = "Some text.";
+    let mut doc = Document::new(chunks);
+    doc.set("_sourceID", NormalValue::String("bae-p".into()))
+        .unwrap();
+    doc.set("text", NormalValue::String(text.into())).unwrap();
+    doc.set("hash", NormalValue::String(text_hash(text)))
+        .unwrap();
+    if let Some(vector) = vector {
+        doc.set_unchecked("body_v".into(), vector);
+    }
+    doc
+}
+
+#[test]
+fn a_readable_chunk_without_its_vector_is_refused() {
+    assert!(check_chunk_merge(
+        None,
+        &embedded_chunk(Some(NormalValue::Float64Array(vec![1.0]))),
+        false
+    )
+    .is_ok());
+    for missing in [None, Some(NormalValue::Null)] {
+        let doc = embedded_chunk(missing);
+        assert!(matches!(
+            check_chunk_merge(None, &doc, false),
+            Err(ChunkMergeError::NoVector(field)) if field == "body_v"
+        ));
+        assert!(check_chunk_merge(None, &doc, true).is_ok());
+    }
+}
+
+#[test]
+fn a_merge_cannot_add_or_change_a_chunk_vector() {
+    let vector = |v: f64| Some(NormalValue::Float64Array(vec![v]));
+    let cases = [(None, vector(1.0)), (vector(1.0), vector(2.0))];
+    for (old, merged) in cases {
+        assert!(matches!(
+            check_chunk_merge(Some(&embedded_chunk(old)), &embedded_chunk(merged), false),
+            Err(ChunkMergeError::Changed(field)) if field == "body_v"
+        ));
     }
 }

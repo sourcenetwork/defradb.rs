@@ -1,6 +1,6 @@
 //! Checks whether a parent's current text uses a chunk.
 
-use chunk_split::list::text_hash;
+use chunk_split::hash::text_hash;
 use chunk_split::split::{split, ChunkConfig};
 use document::{Document, NormalValue};
 use rapidhash::RapidHashSet;

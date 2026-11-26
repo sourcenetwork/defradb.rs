@@ -115,6 +115,8 @@ pub struct TypeJoinMany {
     /// Optional direct indexed child-fetch path used to build child_cache from FK lookups
     /// instead of scanning the entire child plan.
     pub(super) indexed_child_fetch: Option<IndexedChildFetch>,
+    /// Whether [`PlanNode::join_fetched`] has built the child caches.
+    pub(super) fetched_child_cache_built: bool,
 }
 
 impl std::fmt::Debug for TypeJoinMany {
@@ -196,6 +198,7 @@ impl TypeJoinMany {
             filter_child_fk_index: None,
             parent_scoped_child_cache: false,
             indexed_child_fetch: None,
+            fetched_child_cache_built: false,
         })
     }
 

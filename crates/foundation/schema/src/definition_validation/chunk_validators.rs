@@ -49,6 +49,7 @@ pub(super) fn validate_chunks_not_modified(
                 new_col.name
             ));
         } else if old_col.is_generated() && new_col.vector_embeddings != old_col.vector_embeddings {
+            // TODO(https://github.com/sourcenetwork/defradb.rs/issues/3382): a way off a retired model.
             errs.push(format!(
                 "a generated chunk collection's embeddings cannot be mutated. Collection: {}",
                 new_col.name
@@ -56,10 +57,10 @@ pub(super) fn validate_chunks_not_modified(
         }
         // The SDL moves such an embedding onto the chunks; on the parent it would embed the whole text.
         for embedding in &new_col.vector_embeddings {
-            if embedding
-                .fields
+            if new_col
+                .chunked_fields
                 .iter()
-                .any(|source| new_col.chunked_field(source).is_some())
+                .any(|chunked| embedding.reads(&chunked.field_name))
             {
                 errs.push(format!(
                     "an embedding over a chunked field belongs to its chunk collection. Field: {}.{}",
@@ -68,12 +69,9 @@ pub(super) fn validate_chunks_not_modified(
             }
         }
         for chunked in &old_col.chunked_fields {
-            let list = chunked.list_field();
-            if new_col.field_by_name(&chunked.field_name).is_none()
-                || new_col.field_by_name(&list).is_none()
-            {
+            if new_col.field_by_name(&chunked.field_name).is_none() {
                 errs.push(format!(
-                    "a chunked field and its chunk list cannot be removed. Field: {}.{}",
+                    "a chunked field cannot be removed. Field: {}.{}",
                     new_col.name, chunked.field_name
                 ));
             }

@@ -35,6 +35,13 @@ pub fn chunk_max_chars() -> Option<u32> {
         })
 }
 
+/// `DEFRA_BASELINE_EMBEDDING_URL` embeds the chunked `left` through that provider.
+pub fn embedding_url() -> Option<String> {
+    // Only a chunked field is embedded, so the URL alone changes nothing.
+    chunk_max_chars()?;
+    std::env::var("DEFRA_BASELINE_EMBEDDING_URL").ok()
+}
+
 async fn create_plain(db: &DB<RegolithStore>) {
     let collection = CollectionVersion::new(
         COLLECTION,
@@ -85,9 +92,17 @@ impl Scenario {
     fn mutation(self, writer: usize, operation: usize, ids: &[String]) -> String {
         let token = format!("writer-{writer}-operation-{operation}");
         match self {
-            Self::Creates => format!(
-                r#"mutation {{ add_Sample(input: {{label: "{token}", left: "same", right: "same", count: 0}}) {{ _docID }} }}"#
-            ),
+            Self::Creates => {
+                // Each create embeds a text of its own, so the cache answers none of them.
+                let left = if embedding_url().is_some() {
+                    token.as_str()
+                } else {
+                    "same"
+                };
+                format!(
+                    r#"mutation {{ add_Sample(input: {{label: "{token}", left: "{left}", right: "same", count: 0}}) {{ _docID }} }}"#
+                )
+            }
             Self::SharedUpdates | Self::CountersIndexes | Self::Counters | Self::CounterIndex => {
                 let id = &ids[operation % ids.len()];
                 let input = match self {
@@ -144,10 +159,18 @@ impl Fixture {
         }
         match chunk_max_chars() {
             Some(max_chars) => {
+                let embedded = embedding_url()
+                    .map(|url| {
+                        format!(
+                            r#"left_v: [Float32!] @embedding(fields: ["left"], provider: "openai", model: "bench", url: "{url}")"#
+                        )
+                    })
+                    .unwrap_or_default();
                 let sdl = format!(
                     r#"type {COLLECTION} {{
                         label: String
                         left: String @chunk(maxChars: {max_chars})
+                        {embedded}
                         right: String
                         count: Int @crdt(type: "pncounter")
                     }}"#

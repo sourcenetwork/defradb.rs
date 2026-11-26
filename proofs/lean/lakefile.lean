@@ -7,6 +7,18 @@ lean_lib ChildPage where
 package defraConvergence where
 
 @[default_target]
+lean_lib HeaderRetry where
+
+@[default_target]
+lean_lib SyncedMigrationTransform where
+
+@[default_target]
+lean_lib AssignmentPosition where
+
+@[default_target]
+lean_lib OrderedIndexPage where
+
+@[default_target]
 lean_lib LocalFetchPermit where
 
 @[default_target]
@@ -41,6 +53,9 @@ lean_lib VeraEmbeddedTransport where
 
 @[default_target]
 lean_lib VeraConfirmationJournal where
+
+@[default_target]
+lean_lib VeraRecoveryLedger where
 
 @[default_target]
 lean_lib VeraTakeoverReport where
@@ -131,6 +146,9 @@ lean_lib SingleFlight where
 
 @[default_target]
 lean_lib CommitFence where
+
+@[default_target]
+lean_lib CommitResponseWait where
 
 @[default_target]
 lean_lib HistoryTurns where
@@ -256,6 +274,9 @@ lean_lib JsonSubPathCut where
 lean_lib RelationFilterNoChild where
 
 @[default_target]
+lean_lib JoinFetchedParent where
+
+@[default_target]
 lean_lib CommitsDepthCast where
 
 @[default_target]
@@ -311,6 +332,9 @@ lean_lib AdministrativeRelationship where
 
 @[default_target]
 lean_lib ProjectionRelationship where
+
+@[default_target]
+lean_lib ParentRegistration where
 
 @[default_target]
 lean_lib ExactRelationshipObservation where
@@ -388,6 +412,9 @@ lean_lib BackupImportSigner where
 lean_lib FloatEquality where
 
 @[default_target]
+lean_lib MigratedCounterMerge where
+
+@[default_target]
 lean_lib OwedParts where
 
 @[default_target]
@@ -407,6 +434,15 @@ lean_lib SeTruncatePrefix where
 
 @[default_target]
 lean_lib ReplicatorEmptyCollections where
+
+@[default_target]
+lean_lib RemovedLensOrigin where
+
+@[default_target]
+lean_lib MaterializeResume where
+
+@[default_target]
+lean_lib ExplainIndexName where
 
 @[default_target]
 lean_lib PendingKeyArrival where

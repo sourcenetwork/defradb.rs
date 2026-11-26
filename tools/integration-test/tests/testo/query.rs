@@ -48,6 +48,7 @@ mod cyclic_fragments;
 mod mutation_introspection;
 mod optional_variables;
 mod relation_field_args;
+mod relation_order_with_filter;
 mod schema_descriptions;
 mod subscription_introspection;
 mod inline_array {
@@ -135,6 +136,7 @@ mod one_to_many {
     mod with_order_filter;
     mod with_order_filter_limit;
     mod with_related_id;
+    mod with_relation_filter_indexed_fk;
     mod with_same_field_name;
     mod with_sum;
     mod with_sum_filter_order;

@@ -57,7 +57,7 @@ pub(super) async fn run(
         .get_typed_func::<(), i32>(&mut store, func_name)
         .map_err(|e| {
             if func_name == "inverse" && e.to_string().contains("failed to find function export") {
-                Error::WasmExecution("Export `inverse` does not exist".to_string())
+                Error::InverseNotExported
             } else {
                 Error::WasmExecution(format!("{func_name} func not found: {e}"))
             }

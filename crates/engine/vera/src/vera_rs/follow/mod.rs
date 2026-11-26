@@ -36,7 +36,7 @@ mod lost;
 pub(crate) mod owed;
 
 pub(crate) use chain::ProviderChain;
-pub(crate) use journal::{Confirmation, Journal, JournalError};
+pub(crate) use journal::{Confirmation, Journal, JournalError, RecoveryNeed};
 pub(crate) use owed::owed_again;
 
 use effect::effect_of;
@@ -76,6 +76,7 @@ struct Standing {
     handled: u64,
     undelivered: bool,
     closed: Option<Arc<str>>,
+    recoverable: Option<RecoveryNeed>,
 }
 
 /// [`Standing`], read on every decision without waiting.
@@ -106,13 +107,19 @@ impl Follow {
         self.standing.store(Standing {
             handled: previous.handled.max(journal.handled_term()),
             undelivered: !journal.undelivered().is_empty(),
-            closed: journal.closed().map(Arc::from).or(previous.closed),
+            closed: journal.closed().map(Arc::from),
+            recoverable: journal.recovery_needed(),
         });
     }
 
     /// Whether the node could not tell what a term voided.
     pub(crate) fn is_closed(&self) -> bool {
         self.standing.load_clone().closed.is_some()
+    }
+
+    /// Whether the node, closed, can rebuild from its own state.
+    pub(crate) fn needs_recovery(&self) -> bool {
+        self.standing.load_clone().recoverable.is_some()
     }
 
     /// Whether changes a term voided are still to be owed again.
@@ -222,7 +229,7 @@ where
             let scanned = match scan(journal, chain).await? {
                 Ok(first) => first,
                 Err(reason) => {
-                    journal.close(reason.clone()).map_err(failure)?;
+                    journal.close_recoverable(reason.clone()).map_err(failure)?;
                     return Ok(Reconciled::Closed {
                         reason,
                         report: TakeoverReport::default(),
@@ -260,31 +267,6 @@ where
             let effect = effect_of(&entry.wire);
             let held = held_again(&effect, replayed);
             lost_effects(&mut losses, &mut tainted, effect, held);
-            if let Some(Unrestorable::Archive {
-                policy_id,
-                resource,
-                object,
-                ..
-            }) = losses.unrestorable.last()
-            {
-                let reason = format!(
-                    "the Vera deployment switched its active device and voided the archive of \
-                     {}/{}/{} this node confirmed; it was refused when sent again, so access it \
-                     removed may be back. Archive the object again, then restart the node with \
-                     a new worker directory",
-                    policy_id, resource, object
-                );
-                warn_refused(&losses);
-                journal.close(reason.clone()).map_err(failure)?;
-                return Ok(Reconciled::Closed {
-                    reason,
-                    report: TakeoverReport {
-                        applied: losses.applied,
-                        owed: losses.owed,
-                        unrestorable: losses.unrestorable,
-                    },
-                });
-            }
             journal
                 .record(&Confirmation {
                     height: replayed.height,
@@ -367,13 +349,12 @@ fn failure(error: JournalError) -> ProviderError {
 /// to publish its takeover report to still says so.
 fn warn_refused(losses: &Losses) {
     for lost in &losses.unrestorable {
-        if let Unrestorable::PolicyCreation { policy_id, .. } = lost {
-            tracing::warn!(
-                %policy_id,
-                "a policy a Vera term voided was refused when sent again; it is gone and the \
-                 documents under it cannot be read until it is created again"
-            );
-        }
+        let Unrestorable::PolicyCreation { policy_id, .. } = lost;
+        tracing::warn!(
+            %policy_id,
+            "a policy a Vera term voided was refused when sent again; it is gone and the \
+             documents under it cannot be read until it is created again"
+        );
     }
     if losses.other > 0 {
         tracing::warn!(

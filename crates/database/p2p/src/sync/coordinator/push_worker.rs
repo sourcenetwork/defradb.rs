@@ -272,7 +272,9 @@ where
             return JobCompletion::Failed;
         }
         context.backlog.record_head_hint_parked_offline();
-        context.backlog.park_peer_offline(job);
+        context
+            .backlog
+            .park_peer_offline(job, Arc::clone(&context.peer_state));
         return JobCompletion::Parked;
     }
 
@@ -423,7 +425,11 @@ where
         if job.marker_generation.is_some() && is_whole_frontier(context, job).await {
             let _ = report_push_ack(&context.failure_tx, job).await;
         }
-        JobCompletion::Retired
+        if any_failed {
+            JobCompletion::Retired
+        } else {
+            JobCompletion::RetiredAfterDelivery
+        }
     }
 }
 

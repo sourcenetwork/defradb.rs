@@ -44,6 +44,11 @@ pub(super) struct OwedReindex {
     /// The IDs of the indexes to rebuild; `None` for every index.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) indexes: Option<Vec<u32>>,
+    /// Whether every page of this reindex writes transformed values back, as
+    /// a rebuild asked for directly does; a schema change's settlement does
+    /// not. A page that resumes the reindex walks the way it was recorded.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub(super) persists_migrations: bool,
 }
 
 fn owed_key(collection_id: &str) -> Vec<u8> {
@@ -90,6 +95,7 @@ pub(crate) async fn owe_reindex(
             token: rand::random(),
             migration_destination: migration_destination.map(str::to_owned),
             indexes: None,
+            persists_migrations: false,
         },
     )
     .await
@@ -97,13 +103,15 @@ pub(crate) async fn owe_reindex(
 
 /// Records, in the transaction of `systemstore`, a reindex of `indexes`
 /// (every index `collection_id` has, for `None`), owed under `token` by the
-/// rebuild that writes it.
+/// rebuild that writes it, which writes transformed values back when
+/// `persists_migrations` holds.
 pub(super) async fn owe_full_reindex(
     systemstore: &NamespaceView,
     collections: &Arc<EpochedCollections>,
     collection_id: &str,
     token: u64,
     indexes: Option<Vec<u32>>,
+    persists_migrations: bool,
 ) -> Result<()> {
     write_owed(
         systemstore,
@@ -113,6 +121,7 @@ pub(super) async fn owe_full_reindex(
             token,
             migration_destination: None,
             indexes,
+            persists_migrations,
         },
     )
     .await

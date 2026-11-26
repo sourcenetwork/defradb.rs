@@ -41,6 +41,67 @@ pub struct VectorEmbeddingDescription {
     pub url: String,
 }
 
+/// Whether a Go `template` reads `field`, as `.field` inside `{{ }}`.
+pub fn template_reads(template: &str, field: &str) -> bool {
+    let is_name = |c: char| c.is_alphanumeric() || c == '_';
+    let mut rest = template;
+    while let Some(start) = rest.find("{{") {
+        let (code, after) = action_code(&rest[start + 2..]);
+        let read = code.match_indices('.').any(|(at, _)| {
+            let before = code[..at].chars().next_back();
+            !before.is_some_and(is_name)
+                && code[at + 1..]
+                    .strip_prefix(field)
+                    .is_some_and(|after| !after.starts_with(is_name))
+        });
+        if read {
+            return true;
+        }
+        rest = after;
+    }
+    false
+}
+
+/// An action's code with its comments and quoted text blanked, and the
+/// template after its `}}`. A `}}` inside a string doesn't end the action.
+fn action_code(action: &str) -> (String, &str) {
+    if action
+        .trim_start_matches('-')
+        .trim_start()
+        .starts_with("/*")
+    {
+        let end = action.find("*/").map_or(action.len(), |at| at + 2);
+        let close = action[end..]
+            .find("}}")
+            .map_or(action.len(), |at| end + at + 2);
+        return (String::new(), &action[close..]);
+    }
+    let mut code = String::new();
+    let (mut quote, mut escaped) = (None, false);
+    for (at, c) in action.char_indices() {
+        match quote {
+            Some(open) => {
+                if escaped {
+                    escaped = false;
+                } else if c == '\\' && open != '`' {
+                    escaped = true;
+                } else if c == open {
+                    quote = None;
+                }
+                code.push(' ');
+            }
+            None if action[at..].starts_with("}}") => return (code, &action[at + 2..]),
+            None => {
+                if matches!(c, '"' | '`' | '\'') {
+                    quote = Some(c);
+                }
+                code.push(c);
+            }
+        }
+    }
+    (code, "")
+}
+
 impl VectorEmbeddingDescription {
     /// Create a new vector embedding description.
     pub fn new(
@@ -68,6 +129,11 @@ impl VectorEmbeddingDescription {
     pub fn with_template(mut self, template: impl Into<String>) -> Self {
         self.template = template.into();
         self
+    }
+
+    /// Whether it embeds `field`, through `fields` or its template.
+    pub fn reads(&self, field: &str) -> bool {
+        self.fields.iter().any(|source| source == field) || template_reads(&self.template, field)
     }
 
     /// Set the API URL.
@@ -107,5 +173,28 @@ mod tests {
 
         let parsed: VectorEmbeddingDescription = serde_json::from_str(&json).unwrap();
         assert_eq!(embedding, parsed);
+    }
+
+    #[test]
+    fn a_template_reads_the_fields_it_names() {
+        assert!(template_reads("{{ .body }}", "body"));
+        assert!(template_reads(
+            "Title: {{.title}}\n{{ .body | trim }}",
+            "body"
+        ));
+        assert!(!template_reads("{{ .bodyText }}", "body"));
+        assert!(!template_reads("{{ .meta.body }}", "body"));
+        assert!(!template_reads("body .body", "body"));
+        assert!(!template_reads("", "body"));
+    }
+
+    #[test]
+    fn a_template_reads_no_field_in_its_comments_or_strings() {
+        assert!(!template_reads("{{ .title }} {{/* .body */}}", "body"));
+        assert!(!template_reads("{{- /* .body */ -}}", "body"));
+        assert!(!template_reads(r#"{{ printf ".body" .title }}"#, "body"));
+        assert!(template_reads(r#"{{ printf "%s}}" .body }}"#, "body"));
+        assert!(template_reads(r#"{{ printf "a\"}}" .body }}"#, "body"));
+        assert!(template_reads("{{/* note */}}{{ .body }}", "body"));
     }
 }
