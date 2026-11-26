@@ -114,7 +114,7 @@ fn creates_updated_at_once_under_load_project_without_refusal() {
             .await
             .expect("policy");
         drop(vera);
-        node.add_collection(&users(&policy))
+        node.add_collection(&defra_core::RequestContext::ambient(), &users(&policy))
             .await
             .expect("collection");
         let admin_context =

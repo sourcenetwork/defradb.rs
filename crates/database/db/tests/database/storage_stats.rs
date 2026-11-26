@@ -73,9 +73,12 @@ fn signed_branchable_documents_classify_collection_and_signature_blocks() {
         use defra_core::signing::{set_signing_config, SigningConfig, SigningKeyType};
 
         let db = Arc::new(DB::new(RegolithStore::in_memory().unwrap()).unwrap());
-        db.create_collection(crate::common::schema::test_schema().as_branchable())
-            .await
-            .unwrap();
+        db.add_collection(
+            &defra_core::RequestContext::ambient(),
+            "type Users @branchable { name: String }",
+        )
+        .await
+        .unwrap();
         let key = crypto::generate_ed25519().unwrap();
         let public_key = key.public_key();
         set_signing_config(Some(SigningConfig {
@@ -358,9 +361,12 @@ fn offline_scan_is_read_only_and_matches_the_live_snapshot() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("data");
         let db = Arc::new(DB::new(RegolithStore::open(&path).unwrap()).unwrap());
-        db.create_collection(crate::common::schema::test_schema())
-            .await
-            .unwrap();
+        db.add_collection(
+            &defra_core::RequestContext::ambient(),
+            crate::common::schema::USERS_SDL,
+        )
+        .await
+        .unwrap();
         let mutator = DbDocMutator::new(db.clone(), db.new_txn(false).await.unwrap());
         let mut doc = Document::new(crate::common::schema::test_schema());
         doc.set("name", NormalValue::String("private value".into()))
@@ -508,14 +514,11 @@ fn malformed_schema_is_reported_without_its_contents() {
 fn shared_blocks_count_each_document_history_once() {
     workers::block_on(async {
         let db = Arc::new(DB::new(RegolithStore::in_memory().unwrap()).unwrap());
-        let mut schema = crate::common::schema::test_schema();
-        schema.fields.push(schema::FieldDescription::new(
-            "3",
-            "other",
-            schema::FieldKind::string(),
-            schema::CType::LwwRegister,
-        ));
-        db.create_collection(schema.clone()).await.unwrap();
+        let sdl = "type Users { name: String other: String }";
+        let schema = crate::common::schema::parsed(sdl);
+        db.add_collection(&defra_core::RequestContext::ambient(), sdl)
+            .await
+            .unwrap();
         let mut ids = Vec::new();
         for other in ["first", "second"] {
             let mutator = DbDocMutator::new(db.clone(), db.new_txn(false).await.unwrap());
@@ -527,7 +530,7 @@ fn shared_blocks_count_each_document_history_once() {
             mutator.take_txn().await.unwrap().commit().await.unwrap();
         }
         let stats = db.storage_stats(true).await.unwrap();
-        let field = &stats.collections["col-users"].fields["name"];
+        let field = &stats.collections[&schema.collection_id].fields["name"];
         assert_eq!(field.blocks.keys, 1);
         assert_eq!(field.documents, Some(2));
         assert_eq!(field.versions, Some(2));
@@ -543,13 +546,16 @@ fn shared_blocks_count_each_document_history_once() {
             .unwrap();
         mutator.take_txn().await.unwrap().commit().await.unwrap();
         let stats = db.storage_stats(true).await.unwrap();
-        let field = &stats.collections["col-users"].fields["name"];
+        let field = &stats.collections[&schema.collection_id].fields["name"];
         assert_eq!(field.blocks.keys, 2);
         assert_eq!(field.documents, Some(2));
         assert_eq!(field.versions, Some(3));
         assert_eq!(field.max_versions_per_document, Some(2));
         let stats = db.storage_stats(false).await.unwrap();
-        assert_eq!(stats.collections["col-users"].fields["name"].versions, None);
+        assert_eq!(
+            stats.collections[&schema.collection_id].fields["name"].versions,
+            None
+        );
     })
     .unwrap()
 }

@@ -61,7 +61,7 @@ impl MockP2POperations {
             replicators.push(ReplicatorInfo {
                 id: Some("12D3KooWReplicator".to_string()),
                 collections: collections.clone(),
-                address: address.clone(),
+                addresses: address.clone().into_iter().collect(),
                 status: Some(0),
                 last_status_change: Some("0001-01-01T00:00:00Z".to_string()),
                 filters: Default::default(),
@@ -148,7 +148,7 @@ impl P2POperations for MockP2POperations {
             replicators.push(ReplicatorInfo {
                 id: Some("12D3KooWNewReplicator".to_string()),
                 collections: collections.clone(),
-                address: addr.map(|s| s.to_string()),
+                addresses: addr.map(|s| vec![s.to_string()]).unwrap_or_default(),
                 status: Some(0),
                 last_status_change: Some("0001-01-01T00:00:00Z".to_string()),
                 filters: filters.clone(),

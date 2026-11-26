@@ -138,7 +138,12 @@ pub enum PreparedInputKind {
 pub struct PreparedInputMemo {
     answers: Arc<HopscotchMap<PreparedInputRequest, Arc<[u8]>, RandomState>>,
     wanted: Arc<Wanted>,
+    known: Option<KnownInputs>,
 }
+
+/// Answers a caller already holds, such as a backup's chunk vectors, shared
+/// by many requests. A request copies only the ones it reads.
+pub type KnownInputs = Arc<rapidhash::RapidHashMap<PreparedInputRequest, Arc<[u8]>>>;
 
 /// The misses a pass recorded, and the projection authorities prepared for
 /// the request. The authorities' map is made only when a projection asks for
@@ -162,6 +167,7 @@ impl Default for PreparedInputMemo {
                 queue: SegQueue::new(),
                 projection_authorities: regolith::sync::OnceCell::new(),
             }),
+            known: None,
         }
     }
 }
@@ -219,7 +225,17 @@ impl PreparedInputMemo {
             .get_or_insert(request, authority);
     }
     pub fn get(&self, request: &PreparedInputRequest) -> Option<Arc<[u8]>> {
-        self.answers.get(request)
+        if let Some(answer) = self.answers.get(request) {
+            return Some(answer);
+        }
+        let known = self.known.as_ref()?.get(request)?;
+        Some(self.insert(request.clone(), Arc::clone(known)))
+    }
+
+    /// Lets `get` answer from `known` before asking for a wave.
+    pub fn with_known(mut self, known: KnownInputs) -> Self {
+        self.known = Some(known);
+        self
     }
 
     /// The answer to `request`, or, when the memo holds none, a note that the
@@ -326,6 +342,34 @@ impl PreparedInputMemo {
     }
 }
 
+/// The first input miss of a pass over several documents. The pass carries on
+/// past a miss, so the documents after it note their misses too and one
+/// wave answers them all.
+#[derive(Debug, Default)]
+pub struct FirstMiss(Option<PreparedInputRequest>);
+
+impl FirstMiss {
+    /// The value of `result`, or `None` when it ended on a miss, which is kept.
+    pub fn keep<T>(&mut self, result: Result<T>) -> Result<Option<T>> {
+        match result {
+            Ok(value) => Ok(Some(value)),
+            Err(QueryError::NeedsInput(request)) => {
+                self.0.get_or_insert(request);
+                Ok(None)
+            }
+            Err(error) => Err(error),
+        }
+    }
+
+    /// `value`, unless the pass met a miss: then the attempt ends asking for it.
+    pub fn finish<T>(self, value: T) -> Result<T> {
+        match self.0 {
+            Some(request) => Err(QueryError::NeedsInput(request)),
+            None => Ok(value),
+        }
+    }
+}
+
 /// Immutable write inputs shared by attempts of one mutation request.
 #[derive(Debug, Clone)]
 pub struct PreparedMutations {
@@ -408,6 +452,50 @@ pub(crate) fn prepared_doc_id(write: &WritePreparation) -> document::DocID {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn miss(name: &str) -> PreparedInputRequest {
+        PreparedInputRequest::new(PreparedInputKind::Embedding, name.as_bytes())
+    }
+
+    fn missed_on(error: QueryError) -> Vec<u8> {
+        match error {
+            QueryError::NeedsInput(request) => request.exact_request().to_vec(),
+            other => panic!("expected a miss, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_pass_with_no_miss_returns_its_values() {
+        let mut misses = FirstMiss::default();
+        let kept = misses.keep(Ok(1)).unwrap();
+        assert_eq!(misses.finish(kept).unwrap(), Some(1));
+    }
+
+    #[test]
+    fn a_pass_with_two_misses_ends_on_the_first() {
+        let mut misses = FirstMiss::default();
+        assert!(misses
+            .keep::<()>(Err(QueryError::NeedsInput(miss("first"))))
+            .unwrap()
+            .is_none());
+        assert!(misses
+            .keep::<()>(Err(QueryError::NeedsInput(miss("second"))))
+            .unwrap()
+            .is_none());
+        assert_eq!(missed_on(misses.finish(()).unwrap_err()), b"first");
+    }
+
+    #[test]
+    fn a_real_error_after_a_miss_ends_the_pass_with_that_error() {
+        let mut misses = FirstMiss::default();
+        misses
+            .keep::<()>(Err(QueryError::NeedsInput(miss("first"))))
+            .unwrap();
+        let error = misses
+            .keep::<()>(Err(QueryError::execution("broken")))
+            .unwrap_err();
+        assert!(error.to_string().contains("broken"), "{error}");
+    }
 
     #[test]
     fn prepared_input_memo_reuses_only_identical_wire_requests() {

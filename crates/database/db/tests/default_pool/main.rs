@@ -5,7 +5,7 @@ mod common;
 
 use std::sync::Arc;
 
-use common::schema::test_schema;
+use common::schema::{test_schema, USERS_SDL};
 use db::{AutoCommitMutator, DB};
 use document::{Document, NormalValue};
 use query::mutator::DocMutator;
@@ -26,7 +26,9 @@ fn documents() -> Vec<Document> {
 
 async fn pool_less_db() -> Arc<DB<RegolithStore>> {
     let db = Arc::new(DB::new(RegolithStore::in_memory().unwrap()).unwrap());
-    db.create_collection(test_schema()).await.unwrap();
+    db.add_collection(&defra_core::RequestContext::ambient(), USERS_SDL)
+        .await
+        .unwrap();
     db
 }
 

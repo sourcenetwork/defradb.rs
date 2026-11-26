@@ -122,4 +122,52 @@ pub(super) const PROPERTIES: &[Property] = &[
         tiers: &[Contract],
         bound_by: "crates/database/p2p/tests/iroh/shared_connection.rs authenticated_reconnection_replaces_an_open_old_rpc_path, legacy_only_peer_reuses_and_refreshes_its_shared_rpc_path, legacy_mux_does_not_replace_the_modern_shared_rpc_handle, disconnect_closes_replacement_despite_stale_cleanup",
     },
+    Property {
+        family: "Peer connection observation",
+        name: "INV_NoRedialAfterDeliberateClose / INV_RemoteExplicitDialAccepted",
+        axis: Tla,
+        anchor: "crates/database/p2p/src/behaviour/disconnect_gate.rs DisconnectGate, handle_established_inbound_connection; crates/database/p2p/src/host/p2p_host/mod.rs run_kademlia_bootstrap; crates/database/p2p/src/host/command_handler/network.rs handle_dial, handle_explicit_dial; crates/surfaces/p2p-adapter/src/libp2p.rs connect_peer; crates/database/p2p/src/host/command_handler/mod.rs handle_command; tools/integration-test/tests/testo/net/info/disconnect_reconnect.rs",
+        model_ref: "MC_ExplicitDisconnect_{Green_Libp2p,Red_Libp2p,Red_ClearOnDial,Red_Inbound,Red_BackgroundInbound,Red_RefuseAllowed}.cfg",
+        tiers: &[Boundary],
+        bound_by: "tools/integration-test/tests/testo/net/info/disconnect_reconnect.rs net_info_disconnect_sticks_until_explicit_reconnect",
+    },
+    Property {
+        family: "Peer connection observation",
+        name: "ExplicitDisconnectGate.blocked_peer_is_refused / explicit_reconnect_is_admitted / other_peer_is_unchanged",
+        axis: Lean,
+        anchor: "crates/database/p2p/src/behaviour/disconnect_gate.rs check, block, unblock",
+        model_ref: "ExplicitDisconnectGate (lake build)",
+        tiers: &[Boundary],
+        bound_by: "crates/database/p2p/src/behaviour/disconnect_gate.rs disconnected_peer_is_denied_until_unblocked",
+    },
+    Property {
+        // A generic dial cannot clear an explicit disconnect marker.
+        family: "Peer connection observation",
+        name: "INV_GenericKeepsMarker",
+        axis: Tla,
+        anchor: "crates/database/p2p/src/host/command_handler/network.rs P2PHost::handle_dial, handle_explicit_dial, handle_disconnect",
+        model_ref: "MC_GenericDisconnectDial_{Green,Red_Clear}.cfg",
+        tiers: &[Boundary],
+        bound_by: "tools/integration-test/tests/testo/net/info/disconnect_reconnect.rs a_replicator_retry_does_not_redial_a_disconnected_peer",
+    },
+    Property {
+        // Rejected connections do not emit unmatched disconnect events.
+        family: "Peer connection observation",
+        name: "INV_NoSpuriousDisconnect",
+        axis: Tla,
+        anchor: "crates/database/p2p/src/host/p2p_host/swarm.rs P2PHost::handle_connection_closed",
+        model_ref: "MC_PeerDisconnectEvents_{Green,Red_Unannounced}.cfg",
+        tiers: &[Boundary],
+        bound_by: "crates/database/p2p/src/host/p2p_host/swarm.rs refused_connection_does_not_emit_a_disconnect",
+    },
+    Property {
+        // A disconnect is emitted only for a previously announced peer.
+        family: "Peer connection observation",
+        name: "PeerDisconnectEvents.unannounced_is_silent / announced_is_reported",
+        axis: Lean,
+        anchor: "crates/database/p2p/src/host/p2p_host/swarm.rs P2PHost::handle_connection_closed",
+        model_ref: "PeerDisconnectEvents (lake build)",
+        tiers: &[Boundary],
+        bound_by: "crates/database/p2p/src/host/p2p_host/swarm.rs refused_connection_does_not_emit_a_disconnect, peer_disconnect_only_on_last_connection_close",
+    },
 ];

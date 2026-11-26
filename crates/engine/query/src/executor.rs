@@ -113,6 +113,11 @@ pub struct QueryRequest {
     /// client cannot turn filter input validation off.
     #[serde(skip)]
     pub filter_origin: FilterOrigin,
+
+    /// Inputs the caller already holds, such as a backup's chunk vectors.
+    /// Never read from the wire, so a client cannot plant an answer.
+    #[serde(skip)]
+    pub known_inputs: Option<crate::prepared::KnownInputs>,
 }
 
 /// Who wrote a request's filters, which decides whether they are checked
@@ -139,7 +144,14 @@ impl QueryRequest {
             context: RequestContext::default(),
             parsed: None,
             filter_origin: FilterOrigin::Request,
+            known_inputs: None,
         }
+    }
+
+    /// Attach answers the request's attempts use instead of asking for them.
+    pub fn with_known_inputs(mut self, inputs: crate::prepared::KnownInputs) -> Self {
+        self.known_inputs = Some(inputs);
+        self
     }
 
     /// Set who wrote the request's filters.
@@ -741,6 +753,20 @@ pub trait QueryExecutor: MaybeSendSync {
         handle: &TransactionHandle,
     ) -> std::result::Result<(), TransactionError> {
         context.mirror(self.discard_txn(handle)).await
+    }
+
+    /// Ask whether an explicit transaction's lost commit landed. Only its
+    /// owner gets a state; any other caller gets the same `unknown` answer as
+    /// an ID that does not exist.
+    async fn txn_outcome_as(
+        &self,
+        context: &RequestContext,
+        handle: &TransactionHandle,
+    ) -> std::result::Result<crate::txn::TransactionOutcome, TransactionError> {
+        let _ = (context, handle);
+        Err(TransactionError::not_supported(
+            "transaction outcomes are not supported by this executor",
+        ))
     }
 
     /// [`TransactionRegistry::add_collection_as`](crate::txn::TransactionRegistry::add_collection_as).

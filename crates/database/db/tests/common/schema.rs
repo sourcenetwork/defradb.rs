@@ -7,71 +7,29 @@ use schema::IndexKind;
 use schema::VectorAlgorithm;
 use schema::VectorIndexDescription;
 
+/// The version `sdl` defines first, exactly as `DB::add_collection` registers
+/// it, so documents and blocks built from it carry the registered IDs.
+pub fn parsed(sdl: &str) -> CollectionVersion {
+    query::parse_sdl(sdl).unwrap().remove(0)
+}
+
+pub const USERS_SDL: &str = "type Users { name: String }";
+
 pub fn test_schema() -> CollectionVersion {
-    CollectionVersion::new(
-        "Users",
-        "v1",
-        "col-users",
-        vec![
-            FieldDescription::new(
-                "1",
-                "_docID",
-                FieldKind::doc_id(),
-                schema::CType::LwwRegister,
-            ),
-            FieldDescription::new("2", "name", FieldKind::string(), schema::CType::LwwRegister),
-        ],
-    )
+    parsed(USERS_SDL)
 }
 
 pub fn users_schema() -> CollectionVersion {
-    let mut schema = CollectionVersion::new(
-        "Users",
-        "users-v1",
-        "users-collection",
-        vec![
-            FieldDescription::new(
-                "1",
-                "_docID",
-                FieldKind::doc_id(),
-                schema::CType::LwwRegister,
-            ),
-            FieldDescription::new("2", "name", FieldKind::string(), schema::CType::LwwRegister),
-        ],
-    );
-    schema.is_materialized = true;
-    schema
+    parsed(USERS_SDL)
 }
 
 pub const COLLECTION_SHORT_ID: u32 = 1;
 pub const DIMENSIONS: u32 = 4;
 
+pub const DOCS_SDL: &str = "type docs { title: String embedding: [Float!] }";
+
 pub fn docs_schema() -> CollectionVersion {
-    CollectionVersion::new(
-        "docs",
-        "v1",
-        "col-docs",
-        vec![
-            FieldDescription::new(
-                "1",
-                "_docID",
-                FieldKind::doc_id(),
-                schema::CType::LwwRegister,
-            ),
-            FieldDescription::new(
-                "2",
-                "title",
-                FieldKind::string(),
-                schema::CType::LwwRegister,
-            ),
-            FieldDescription::new(
-                "3",
-                "embedding",
-                FieldKind::float64_array(),
-                schema::CType::LwwRegister,
-            ),
-        ],
-    )
+    parsed(DOCS_SDL)
 }
 
 pub fn vector_kind() -> IndexKind {
@@ -87,21 +45,10 @@ pub fn vector_kind() -> IndexKind {
     })
 }
 
+pub const TEST_COLLECTION_SDL: &str = "type TestDoc { x: Int }";
+
 pub fn test_collection() -> CollectionVersion {
-    CollectionVersion::new(
-        "TestDoc",
-        "v1",
-        "col-test-doc",
-        vec![
-            FieldDescription::new(
-                "1",
-                "_docID",
-                FieldKind::doc_id(),
-                schema::CType::LwwRegister,
-            ),
-            FieldDescription::new("2", "x", FieldKind::int(), schema::CType::LwwRegister),
-        ],
-    )
+    parsed(TEST_COLLECTION_SDL)
 }
 
 /// A collection at `version_id` with no fields, for building blocks of a

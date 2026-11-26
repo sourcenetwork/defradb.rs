@@ -51,7 +51,7 @@ fn a_strict_read_fails_while_the_deployment_cannot_be_reached() {
             .await
             .expect("consumer node");
         let policy = super::seeded_policy(&node, chain_owner.as_str()).await;
-        node.add_collection(&users(&policy))
+        node.add_collection(&defra_core::RequestContext::ambient(), &users(&policy))
             .await
             .expect("collection");
         created(node.execute_request(create_user("kept", &reader)).await);

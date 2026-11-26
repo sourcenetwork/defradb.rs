@@ -99,10 +99,16 @@
 \*   Restrict,      crates/building-blocks/crdt/src/fugue.rs Tree::present and Tree::dead: a
 \*   DeadIn         node or delete counts in a version when its block is in
 \*                  the version's Ancestry
-\*   Canon          crates/building-blocks/crdt/src/fugue.rs replay, through TextField's
-\*                  CausalCrdt::replay, from causal_history in
+\*   Canon          crates/building-blocks/crdt/src/fugue_checkpoint.rs replay, through
+\*                  TextField's CausalCrdt::replay, from causal_history in
 \*                  merge_handler/field_causal.rs; the stored value is the
-\*                  replayed text, the tree is thrown away
+\*                  replayed text, the tree is thrown away. Past a critical
+\*                  block (critical_steps, the way Critical defines it) the
+\*                  replay folds its tree to that block's text (Tree::fold),
+\*                  so the rest replays as PhReplay does from that block, and
+\*                  INV_CriticalReplay makes each fold keep the text;
+\*                  proofs/lean/TextCrdt/Compact.lean run_compact shows a fold
+\*                  changes no later edit that sees the whole tree
 \*   PhReplay       crates/building-blocks/crdt/src/fugue.rs merge_text, through TextField's
 \*                  CausalCrdt::merge_from, called from
 \*                  merge_handler/field_causal.rs merge_field_causal once

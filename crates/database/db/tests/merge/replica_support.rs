@@ -25,13 +25,14 @@ use identity::{Did, Identity as _};
 use query::mutator::DocMutator;
 use rapidhash::RapidHashSet;
 use regolith::sync::HopscotchMap;
-use schema::{CType, CollectionVersion, FieldDescription, FieldKind, PolicyDescription};
+use schema::CollectionVersion;
 use storage::RegolithStore;
 use zanzibar::types::Subject;
 
 pub(crate) const POLICY: &str = "replica-policy";
 pub(crate) const RESOURCE: &str = "users";
-pub(crate) const COLLECTION_ID: &str = "col-users";
+pub(crate) const USERS_SDL: &str =
+    r#"type Users @policy(id: "replica-policy", resource: "users") { name: String }"#;
 
 type Map<K, V> = HopscotchMap<K, V, rapidhash::fast::RandomState>;
 type Blocks = DefraBlockstore<RegolithStore>;
@@ -307,18 +308,11 @@ impl ReplicaOwnership for Embedder {
     }
 }
 
-pub(crate) fn users() -> CollectionVersion {
-    CollectionVersion::new(
-        "Users",
-        "v1",
-        COLLECTION_ID,
-        vec![
-            FieldDescription::new("1", "_docID", FieldKind::doc_id(), CType::LwwRegister),
-            FieldDescription::new("2", "name", FieldKind::string(), CType::LwwRegister),
-        ],
-    )
-    .with_policy(PolicyDescription::new(POLICY, RESOURCE))
-}
+/// `Users` whose policy registers each document under the object its `name`
+/// field names.
+pub(crate) const PARENT_USERS_SDL: &str = r#"type Users @policy(id: "replica-policy", resource: "users", parentField: "name") {
+    name: String
+}"#;
 
 /// A key that signs blocks, and its DID.
 #[derive(Clone)]
@@ -345,21 +339,62 @@ pub(crate) fn key() -> Key {
     }
 }
 
-/// The creator's node, on its own deployment: no ACP, every block signed by
-/// the key that writes it.
+/// The creator's node, on its own deployment, every block signed by the key
+/// that writes it. It has no ACP, unless its collection registers documents
+/// under a parent: then a local ACP of its own admits each creator under the
+/// parent it names.
 pub(crate) struct Source {
     db: Arc<DB<RegolithStore>>,
     pub(crate) blocks: Arc<Blocks>,
+    version: CollectionVersion,
+    acp: Option<Arc<dyn DocumentACP>>,
 }
+
+/// The policy a gated source's own ACP holds: a `users` document is created
+/// under a `nodes` object its creator owns.
+const ADMISSIONS: &str = "name: admissions\nresources:\n- name: nodes\n- name: users\n  relations: [{name: parent, types: [nodes]}]\n  create: {parent: parent, requires: owner}\n";
 
 impl Source {
     pub(crate) async fn open() -> Self {
+        Self::with_sdl(USERS_SDL).await
+    }
+
+    /// A creator's node holding the `Users` that `sdl` defines.
+    pub(crate) async fn with_sdl(sdl: &str) -> Self {
         let store = Arc::new(RegolithStore::in_memory().unwrap());
         let db = Arc::new(DB::from_arc(store.clone()).unwrap());
-        db.create_collection(users()).await.unwrap();
+        let version = db
+            .add_collection(&defra_core::RequestContext::ambient(), sdl)
+            .await
+            .unwrap()
+            .remove(0);
+        let gated = version
+            .policy
+            .as_ref()
+            .is_some_and(|policy| policy.parent_field.is_some());
+        let acp: Option<Arc<dyn DocumentACP>> = match gated {
+            true => {
+                use zanzibar::ZanzibarStore as _;
+
+                let zanzibar = Arc::new(acp::PersistentZanzibarStore::from_store(store.clone()));
+                let mut policy = acp::policy_yaml::build_policy(
+                    &acp::policy_yaml::parse_policy_yaml(ADMISSIONS).unwrap(),
+                    1,
+                )
+                .unwrap();
+                policy.id = POLICY.into();
+                zanzibar.store_policy(&policy).await.unwrap();
+                let acp: Arc<dyn DocumentACP> = Arc::new(acp::ZanzibarDocumentACP::new(zanzibar));
+                db.set_document_acp(acp.clone());
+                Some(acp)
+            }
+            false => None,
+        };
         Self {
             db,
             blocks: Arc::new(DefraBlockstore::new(store, false)),
+            version,
+            acp,
         }
     }
 
@@ -373,13 +408,28 @@ impl Source {
         )
     }
 
+    /// `by` creates a document named `name`. On a gated source, `by` is
+    /// admitted under the parent `name` names, and creates as itself.
     pub(crate) async fn create(&self, by: &Key, name: &str) -> (String, Composite) {
         let mut doc = self.document();
         doc.set("name", NormalValue::String(name.into())).unwrap();
+        let creator = match &self.acp {
+            Some(acp) => {
+                if !acp.is_doc_registered(POLICY, "nodes", name).await.unwrap() {
+                    acp.register_doc_object(&by.did, POLICY, "nodes", name)
+                        .await
+                        .unwrap();
+                }
+                Some(by.did.to_string())
+            }
+            None => None,
+        };
         set_signing_config(Some(by.signing.clone()));
-        let created = AutoCommitMutator::new(self.db.clone())
-            .create("Users", doc)
-            .await;
+        let created = defra_core::signing::scope_broadcast_creator_did(
+            creator,
+            AutoCommitMutator::new(self.db.clone()).create("Users", doc),
+        )
+        .await;
         set_signing_config(None);
         let created = created.unwrap();
         (
@@ -416,7 +466,7 @@ impl Source {
     ) -> Composite {
         let mut block = Block::new(
             CrdtDelta::Composite(CompositeDeltaPayload {
-                collection_version_id: "v1".to_string(),
+                collection_version_id: self.version.version_id.clone(),
                 priority,
                 status,
             }),
@@ -447,7 +497,7 @@ impl Source {
     pub(crate) async fn unsigned(&self, heads: Vec<Cid>, priority: u64) -> Composite {
         let block = Block::new(
             CrdtDelta::Composite(CompositeDeltaPayload {
-                collection_version_id: "v1".to_string(),
+                collection_version_id: self.version.version_id.clone(),
                 priority,
                 status: 1,
             }),
@@ -474,6 +524,7 @@ impl Source {
 /// A receiving node of the shared deployment, signing as `actor`, under an
 /// identity of its own.
 pub(crate) struct Receiver {
+    collection_id: String,
     handler: AcpMergeHandler<RegolithStore, Blocks>,
     blocks: Arc<Blocks>,
     pub(crate) db: Arc<DB<RegolithStore>>,
@@ -497,11 +548,12 @@ impl Receiver {
         replicas: Option<Arc<dyn ReplicaOwnership>>,
         strict: bool,
     ) -> Self {
-        Self::open_collection(users(), acp, replicas, strict).await
+        Self::open_collection(USERS_SDL, acp, replicas, strict).await
     }
 
+    /// A node holding the `Users` that `sdl` defines.
     pub(crate) async fn open_collection(
-        definition: CollectionVersion,
+        sdl: &str,
         acp: impl FnOnce(Arc<RegolithStore>) -> Arc<dyn DocumentACP>,
         replicas: Option<Arc<dyn ReplicaOwnership>>,
         strict: bool,
@@ -515,7 +567,12 @@ impl Receiver {
             DB::from_arc_with_options(store.clone(), DbOptions::new().with_node_identity(node))
                 .unwrap(),
         );
-        db.create_collection(definition).await.unwrap();
+        let collection_id = db
+            .add_collection(&defra_core::RequestContext::ambient(), sdl)
+            .await
+            .unwrap()
+            .remove(0)
+            .collection_id;
         if let Some(ownership) = replicas {
             db.set_replica_registration(ReplicaRegistration::new(["Users"], ownership));
         }
@@ -525,6 +582,7 @@ impl Receiver {
                 .with_document_acp(acp);
         handler.set_strict_replicated_doc_access(strict);
         Self {
+            collection_id,
             handler,
             blocks,
             db,
@@ -555,7 +613,7 @@ impl Receiver {
                 &composite.1,
                 BlockMetadata::normal(
                     doc_id,
-                    COLLECTION_ID,
+                    &self.collection_id,
                     "did:key:z6MkCarrier",
                     Some("peer"),
                     false,
@@ -593,7 +651,7 @@ impl Receiver {
             cid: composite.0,
             block_data: composite.1.clone(),
             doc_id: doc_id.to_owned(),
-            collection_id: COLLECTION_ID.into(),
+            collection_id: self.collection_id.clone(),
             creator: "did:key:z6MkCarrier".into(),
             sender_peer: Some("peer".into()),
             is_explicit_replicator: false,

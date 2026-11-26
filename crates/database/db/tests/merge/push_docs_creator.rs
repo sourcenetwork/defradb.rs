@@ -6,8 +6,6 @@ use acp::MemoryAcpStore;
 use db::merge::push_docs_creator::*;
 use db::Collection;
 use identity::Did;
-use schema::CollectionVersion;
-use schema::PolicyDescription;
 use std::sync::Arc;
 
 #[test]
@@ -31,7 +29,7 @@ fn resolve_push_creator_uses_owner_for_protected_document() {
 fn resolve_push_creator_falls_back_without_collection_policy() {
     workers::block_on(async {
         let collection = Collection::new(
-            CollectionVersion::new("Users", "v1", "col1", vec![]),
+            crate::common::schema::parsed("type Users { name: String }"),
             crdt::Crdts::default(),
         );
 
@@ -84,8 +82,9 @@ fn resolve_push_creator_falls_back_without_document_acp() {
 
 fn protected_collection() -> Collection {
     Collection::new(
-        CollectionVersion::new("Users", "v1", "col1", vec![])
-            .with_policy(PolicyDescription::new("policy-1", "Users")),
+        crate::common::schema::parsed(
+            r#"type Users @policy(id: "policy-1", resource: "Users") { name: String }"#,
+        ),
         crdt::Crdts::default(),
     )
 }

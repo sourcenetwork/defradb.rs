@@ -19,9 +19,12 @@ fn http_write_signs_as_a_generated_node_identity() {
                 .build()
                 .await
                 .unwrap();
-            node.add_collection("type User { name: String }")
-                .await
-                .unwrap();
+            node.add_collection(
+                &defra_core::RequestContext::ambient(),
+                "type User { name: String }",
+            )
+            .await
+            .unwrap();
             let client = net::http::Client::builder(edge::testing::edge())
                 .no_proxy()
                 .timeout(Duration::from_secs(5))
@@ -61,7 +64,7 @@ fn http_client_signs_the_complete_agent_create_graph() {
         let node = Node::builder().enable_signing()
             .with_http(HttpConfig::with_listener(listener).unwrap())
             .build().await.unwrap();
-        node.add_collection("type Agent { agent_did: String @immutable, creation_nonce: String @immutable, node_did: String @immutable, display_name: String, tags: [String!] }").await.unwrap();
+        node.add_collection(&defra_core::RequestContext::ambient(), "type Agent { agent_did: String @immutable, creation_nonce: String @immutable, node_did: String @immutable, display_name: String, tags: [String!] }").await.unwrap();
         let schema = node.get_collection("Agent").unwrap().unwrap();
         let private = crypto::generate_ed25519().unwrap();
         let public = private.public_key();
@@ -100,7 +103,7 @@ fn http_client_signs_the_complete_agent_create_graph() {
             let txn = if explicit {
                 let response: Value = http.post(format!("http://{address}/api/v0/tx"))
                     .bearer_auth(&token).send().await.unwrap().json().await.unwrap();
-                Some(response["id"].as_u64().unwrap().to_string())
+                Some(response["id"].to_string())
             } else { None };
             let response = defra_http::client_signed_create::execute(
                 &format!("ws://{address}/api/v0/graphql/client-sign"), &authorization, request, txn.as_deref(), &mut graph,
@@ -222,13 +225,18 @@ resources:
             let node_did = node.node_identity_did().unwrap().to_owned();
             let context = defra_core::RequestContext::default().with_identity(Some(owner.clone()));
             let policy = node.add_dac_policy_as(&context, POLICY).await.unwrap();
-            node.add_collection(&format!(
+            node.add_collection(
+                &context,
+                &format!(
                 "type Node @policy(id: \"{policy}\", resource: \"nodes\") {{ node_did: String }}"
-            ))
+            ),
+            )
             .await
             .unwrap();
-            node.add_collection(&format!(
-                r#"type Agent @policy(id: "{policy}", resource: "agents") {{
+            node.add_collection(
+                &context,
+                &format!(
+                    r#"type Agent @policy(id: "{policy}", resource: "agents") {{
             agent_did: String @index(unique: true) @immutable
             creation_nonce: String @immutable
             node_did: String @index @immutable
@@ -241,7 +249,8 @@ resources:
             created_at: String
             updated_at: DateTime @index(direction: DESC)
         }}"#
-            ))
+                ),
+            )
             .await
             .unwrap();
             let parent = node
@@ -289,7 +298,7 @@ resources:
                 parent_id,
                 node_did,
                 token,
-                txn["id"].as_u64().unwrap().to_string(),
+                txn["id"].to_string(),
             )
         })
         .await
@@ -393,7 +402,7 @@ fn http_client_signs_a_single_document_update() {
         let node = Node::builder().enable_signing()
             .with_http(HttpConfig::with_listener(listener).unwrap())
             .build().await.unwrap();
-        node.add_collection("type Settings { name: String, tags: [String!], host: JSON, extra: String }").await.unwrap();
+        node.add_collection(&defra_core::RequestContext::ambient(), "type Settings { name: String, tags: [String!], host: JSON, extra: String }").await.unwrap();
         let schema = node.get_collection("Settings").unwrap().unwrap();
         let private = crypto::generate_ed25519().unwrap();
         let public = private.public_key();
@@ -476,7 +485,7 @@ fn http_client_signs_a_single_document_update() {
         let mut transactions = Vec::new();
         for _ in 0..2 {
             let value: Value = http.post(format!("http://{address}/api/v0/tx")).bearer_auth(&token).send().await.unwrap().json().await.unwrap();
-            transactions.push(value["id"].as_u64().unwrap().to_string());
+            transactions.push(value["id"].to_string());
         }
         for (txn, patch) in transactions.iter().zip([json!({"name":"disjoint"}), json!({"extra":"first"})]) {
             let mut graph = ClientUpdateSignatures::from_input(&storage::Crdts::default(), &schema, &doc_id, &patch, &latest, &signing).unwrap();
@@ -499,7 +508,7 @@ fn http_client_signs_a_single_document_update() {
         let mut transactions = Vec::new();
         for _ in 0..2 {
             let value: Value = http.post(format!("http://{address}/api/v0/tx")).bearer_auth(&token).send().await.unwrap().json().await.unwrap();
-            transactions.push(value["id"].as_u64().unwrap().to_string());
+            transactions.push(value["id"].to_string());
         }
         for (txn, patch) in transactions.iter().zip([json!({"name":"winner"}), json!({"name":"loser"})]) {
             let mut graph = ClientUpdateSignatures::from_input(&storage::Crdts::default(), &schema, &doc_id, &patch, &merged, &signing).unwrap();
@@ -525,7 +534,7 @@ fn http_client_signs_a_single_document_update() {
         let mut transactions = Vec::new();
         for _ in 0..2 {
             let value: Value = http.post(format!("http://{address}/api/v0/tx")).bearer_auth(&token).send().await.unwrap().json().await.unwrap();
-            transactions.push(value["id"].as_u64().unwrap().to_string());
+            transactions.push(value["id"].to_string());
         }
         let conditional_patch = json!({"extra":"conditional"});
         let mut conditional = ClientUpdateSignatures::from_input(&storage::Crdts::default(), &schema, &doc_id, &conditional_patch, &latest, &signing).unwrap();
@@ -606,7 +615,7 @@ resources:
             .with_http(HttpConfig::with_listener(listener).unwrap()).build().await.unwrap();
         let owner_context = defra_core::RequestContext::default().with_identity(Some(owner_did.clone()));
         let policy = node.add_dac_policy_as(&owner_context, POLICY).await.unwrap();
-        node.add_collection(&format!("type ProtectedSettings @policy(id: \"{policy}\", resource: \"settings\") {{ name: String }}")).await.unwrap();
+        node.add_collection(&owner_context, &format!("type ProtectedSettings @policy(id: \"{policy}\", resource: \"settings\") {{ name: String }}")).await.unwrap();
         let schema = node.get_collection("ProtectedSettings").unwrap().unwrap();
         for permission in [acp::nac::NodePermission::DocumentRead, acp::nac::NodePermission::DocumentUpdate, acp::nac::NodePermission::CollectionGet] {
             node.add_nac_actor_relationship_as(&owner_context, permission.as_str(), &editor_did).await.unwrap();
@@ -647,11 +656,11 @@ resources:
         let mut revoked_graph = graph();
         let signatures = revoked_graph.respond(&blocks).unwrap().iter().map(hex::encode).collect::<Vec<_>>();
         node.delete_dac_actor_relationship_as(&owner_context, "ProtectedSettings", &doc_id, "editor", &editor_did).await.unwrap();
-        socket.send(Message::Text(json!({"signatures":signatures}).to_string().into())).await.unwrap();
+        socket.send(Message::Text(json!({"wave":wave["wave"],"signatures":signatures}).to_string().into())).await.unwrap();
         let frame = edge::testing::edge().timeout(Duration::from_secs(5), socket.next()).await.unwrap().unwrap().unwrap();
         let Message::Text(frame) = frame else { panic!("expected denied response") };
         let response: Value = serde_json::from_str(&frame).unwrap();
-        assert!(!response["response"]["errors"].as_array().unwrap().is_empty(), "{response}");
+        assert_eq!(response["response"]["errors"], json!([{"message":"document not found: document not found or not authorized to access"}]), "{response}");
 
         node.add_dac_actor_relationship_as(&owner_context, "ProtectedSettings", &doc_id, "editor", &editor_did).await.unwrap();
         let handshake = defra_http::client_signed_create::websocket_request(&url, &format!("Bearer {editor_token}")).unwrap();
@@ -694,7 +703,11 @@ resources:
         let wave: Value = serde_json::from_str(&frame).unwrap();
         let blocks = wave["blocks"].as_array().unwrap().iter().map(|value| hex::decode(value.as_str().unwrap()).unwrap()).collect::<Vec<_>>();
         let signatures = uncertain.respond(&blocks).unwrap().iter().map(hex::encode).collect::<Vec<_>>();
-        socket.send(Message::Text(json!({"signatures":signatures}).to_string().into())).await.unwrap();
+        socket.send(Message::Text(json!({"wave":wave["wave"],"signatures":signatures}).to_string().into())).await.unwrap();
+        let frame = edge::testing::edge().timeout(Duration::from_secs(5), socket.next()).await.unwrap().unwrap().unwrap();
+        let Message::Text(frame) = frame else { panic!("expected committed response") };
+        let response: Value = serde_json::from_str(&frame).unwrap();
+        assert_eq!(response["response"], json!({"data":{"update_ProtectedSettings":[{"_docID":doc_id}]}}), "{response}");
         drop(socket);
         assert!(uncertain.is_complete());
         assert!(uncertain.respond(&blocks).is_err());
@@ -743,7 +756,7 @@ resources:
             .with_http(HttpConfig::with_listener(listener).unwrap()).build().await.unwrap();
         let context = defra_core::RequestContext::default().with_identity(Some(owner_did.clone()));
         let policy = node.add_dac_policy_as(&context, POLICY).await.unwrap();
-        node.add_collection(&format!("type DeleteRecord @policy(id: \"{policy}\", resource: \"records\") {{ name: String }}")).await.unwrap();
+        node.add_collection(&context, &format!("type DeleteRecord @policy(id: \"{policy}\", resource: \"records\") {{ name: String }}")).await.unwrap();
         let schema = node.get_collection("DeleteRecord").unwrap().unwrap();
         for permission in [acp::nac::NodePermission::DocumentRead, acp::nac::NodePermission::DocumentDelete, acp::nac::NodePermission::CollectionGet] {
             node.add_nac_actor_relationship_as(&context, permission.as_str(), &other_did).await.unwrap();
@@ -779,13 +792,13 @@ resources:
         assert!(denied.is_err() || denied.unwrap().has_errors());
         let new_tx = |token: &str| http.post(format!("http://{address}/api/v0/tx")).bearer_auth(token);
         let other_tx: Value = new_tx(&other_token).send().await.unwrap().json().await.unwrap();
-        let other_tx = other_tx["id"].as_u64().unwrap().to_string();
+        let other_tx = other_tx["id"].to_string();
         let mut mismatch = make_graph(&owner_signing);
         let result = defra_http::client_signed_delete::execute(&ws, &auth(&owner_token), delete(), Some(&other_tx), &mut mismatch).await;
         assert!(result.is_err() || result.unwrap().has_errors());
         http.delete(format!("http://{address}/api/v0/tx/{other_tx}")).bearer_auth(&other_token).send().await.unwrap().error_for_status().unwrap();
         let owner_tx: Value = new_tx(&owner_token).send().await.unwrap().json().await.unwrap();
-        let owner_tx = owner_tx["id"].as_u64().unwrap().to_string();
+        let owner_tx = owner_tx["id"].to_string();
         let mut rolled_back = make_graph(&owner_signing);
         let deleted = defra_http::client_signed_delete::execute(&ws, &auth(&owner_token), delete(), Some(&owner_tx), &mut rolled_back).await.unwrap();
         assert!(!deleted.has_errors());
@@ -824,7 +837,11 @@ resources:
         let wave: Value = serde_json::from_str(&frame).unwrap();
         let blocks = wave["blocks"].as_array().unwrap().iter().map(|value| hex::decode(value.as_str().unwrap()).unwrap()).collect::<Vec<_>>();
         let signatures = unknown.respond(&blocks).unwrap().iter().map(hex::encode).collect::<Vec<_>>();
-        socket.send(Message::Text(json!({"signatures":signatures}).to_string().into())).await.unwrap();
+        socket.send(Message::Text(json!({"wave":wave["wave"],"signatures":signatures}).to_string().into())).await.unwrap();
+        let frame = edge::testing::edge().timeout(Duration::from_secs(5), socket.next()).await.unwrap().unwrap().unwrap();
+        let Message::Text(frame) = frame else { panic!("expected committed response") };
+        let response: Value = serde_json::from_str(&frame).unwrap();
+        assert_eq!(response["response"], json!({"data":{"delete_DeleteRecord":[{"_docID":unknown_id}]}}), "{response}");
         drop(socket);
         assert!(unknown.is_complete());
         assert!(unknown.respond(&blocks).is_err());
@@ -845,7 +862,7 @@ fn http_client_signs_large_document_in_an_explicit_transaction() {
         let node = Node::builder().enable_signing()
             .with_http(HttpConfig::with_listener(listener).unwrap())
             .build().await.unwrap();
-        node.add_collection("type LargeRecord { contents: String }").await.unwrap();
+        node.add_collection(&defra_core::RequestContext::ambient(), "type LargeRecord { contents: String }").await.unwrap();
         let schema = node.get_collection("LargeRecord").unwrap().unwrap();
         let private = crypto::generate_ed25519().unwrap();
         let public = private.public_key();
@@ -863,7 +880,7 @@ fn http_client_signs_large_document_in_an_explicit_transaction() {
         let http = net::http::Client::builder(edge::testing::edge()).no_proxy().build().unwrap();
         let txn: Value = http.post(format!("http://{address}/api/v0/tx")).bearer_auth(&token)
             .send().await.unwrap().json().await.unwrap();
-        let txn = txn["id"].as_u64().unwrap().to_string();
+        let txn = txn["id"].to_string();
         let mut doc = Document::new(schema);
         let text = "session history ✓".repeat(120_000);
         assert!(text.len() > 1024 * 1024);
@@ -906,7 +923,7 @@ fn incomplete_fragmented_signing_request_can_be_discarded_without_a_write() {
         let address = listener.local_addr().unwrap();
         let node = Node::builder().enable_signing()
             .with_http(HttpConfig::with_listener(listener).unwrap()).build().await.unwrap();
-        node.add_collection("type LargeRecord { contents: String }").await.unwrap();
+        node.add_collection(&defra_core::RequestContext::ambient(), "type LargeRecord { contents: String }").await.unwrap();
         let private = crypto::generate_ed25519().unwrap();
         let public_key_hex = hex::encode(private.public_key().raw());
         let identity = identity::RawIdentity::from_private_key(private).unwrap();
@@ -914,7 +931,7 @@ fn incomplete_fragmented_signing_request_can_be_discarded_without_a_write() {
         let http = net::http::Client::builder(edge::testing::edge()).no_proxy().build().unwrap();
         let txn: Value = http.post(format!("http://{address}/api/v0/tx")).bearer_auth(&token)
             .send().await.unwrap().json().await.unwrap();
-        let txn = txn["id"].as_u64().unwrap().to_string();
+        let txn = txn["id"].to_string();
         let mut handshake = format!("ws://{address}/api/v0/graphql/client-sign").into_client_request().unwrap();
         handshake.headers_mut().insert("authorization", format!("Bearer {token}").parse().unwrap());
         let stream = net::connect(handshake.uri()).await.unwrap();

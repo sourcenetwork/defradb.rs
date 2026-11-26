@@ -262,32 +262,23 @@ mod tests {
     use document::{Document, NormalValue};
     use p2p::message::{PushSEArtifactsRequest, SEArtifact, SEFieldQuery};
     use query::DocMutator;
-    use schema::{CollectionVersion, FieldDescription, FieldKind};
+    use schema::CollectionVersion;
     use storage::corekv::{IterOptions, Iterator, Reader, Store};
     use storage::RegolithStore;
 
     use super::*;
     use crate::{AutoCommitMutator, DB};
 
-    const COLLECTION_ID: &str = "users-collection";
     const TAG: [u8; 16] = [7; 16];
 
+    const USERS_SDL: &str = "type Users { name: String age: Int }";
+
     fn users_schema() -> CollectionVersion {
-        CollectionVersion::new(
-            "Users",
-            "users-v1",
-            COLLECTION_ID,
-            vec![
-                FieldDescription::new(
-                    "1",
-                    "_docID",
-                    FieldKind::doc_id(),
-                    schema::CType::LwwRegister,
-                ),
-                FieldDescription::new("2", "name", FieldKind::string(), schema::CType::LwwRegister),
-                FieldDescription::new("3", "age", FieldKind::int(), schema::CType::LwwRegister),
-            ],
-        )
+        query::parse_sdl(USERS_SDL).unwrap().remove(0)
+    }
+
+    fn collection_id() -> String {
+        users_schema().collection_id
     }
 
     /// Pushes one artifact per doc the way a document owner does, through
@@ -297,7 +288,7 @@ mod tests {
             .iter()
             .map(|doc_id| SEArtifact::new(*doc_id, "name", TAG.to_vec()))
             .collect();
-        let mut request = PushSEArtifactsRequest::new(COLLECTION_ID, artifacts);
+        let mut request = PushSEArtifactsRequest::new(collection_id(), artifacts);
         request.message_id = "push-1".into();
         let data = defra_core::cbor::to_vec(&request).unwrap();
         let mut stored =
@@ -308,7 +299,7 @@ mod tests {
 
     async fn served(store: &Arc<RegolithStore>) -> Vec<String> {
         let request = QuerySEArtifactsRequest::new(
-            COLLECTION_ID,
+            collection_id(),
             vec![SEFieldQuery::new("name", "name", TAG.to_vec())],
         );
         let mut doc_ids = build_reply(&**store, &request).await.unwrap();
@@ -337,7 +328,9 @@ mod tests {
     fn received_se_artifacts_removed_by_truncate() {
         workers::block_on(edge::compat(async {
             let db = Arc::new(DB::new(RegolithStore::in_memory().unwrap()).unwrap());
-            db.create_collection(users_schema()).await.unwrap();
+            db.add_collection(&defra_core::RequestContext::ambient(), USERS_SDL)
+                .await
+                .unwrap();
             let store = Arc::clone(db.store());
             // A host that is not running: the push's ack fails and is
             // logged, which leaves the stored artifacts as they are.

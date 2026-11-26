@@ -102,7 +102,7 @@ fn raw_document_mutations_stage_sources_in_the_same_transaction() {
             .with_document_projector(Arc::new(Projector))
             .build().await.unwrap();
         let owner = defra_core::RequestContext::default().with_identity(Some(node.node_identity_did().unwrap().to_owned()));
-        node.add_collection_as(&owner, "type ProjectedTool { enabled: Boolean, name: String }").await.unwrap();
+        node.add_collection(&owner, "type ProjectedTool { enabled: Boolean, name: String }").await.unwrap();
         let created = node.execute_request(request("mutation { create_ProjectedTool(input:{enabled:true, name:\"one\"}) { _docID } }".into())).await;
         assert!(!created.has_errors(), "{:?}", created.errors);
         let id = created.data.unwrap()["add_ProjectedTool"][0]["_docID"].as_str().unwrap().to_owned();
@@ -171,9 +171,12 @@ fn refused_projection_rolls_back_document_and_staged_native_changes() {
             .build()
             .await
             .unwrap();
-        node.add_collection("type ProjectedTool { enabled: Boolean }")
-            .await
-            .unwrap();
+        node.add_collection(
+            &defra_core::RequestContext::ambient(),
+            "type ProjectedTool { enabled: Boolean }",
+        )
+        .await
+        .unwrap();
         let result = node
             .execute("mutation { create_ProjectedTool(input:{enabled:true}) { _docID } }")
             .await;
@@ -305,7 +308,7 @@ fn scoped_projection_uses_owner_authority_without_read_bypass() {
         }
         assert!(!node.nac_manager().check_permission(&Did::new(&node_did).unwrap(), NodePermission::DacBypass).await.unwrap());
         let policy = node.add_dac_policy_as(&admin, "name: Scoped projection\nresources:\n  - name: records\n    relations:\n      - name: reader\n        types: [actor]\n      - name: reader_manager\n        types: [actor]\n        manages: [reader]\n    permissions:\n      - name: read\n        expr: reader\n      - name: update\n      - name: delete\n").await.unwrap();
-        node.add_collection_as(&admin, &format!("type ScopedProjected @policy(id: \"{policy}\", resource: \"records\") {{ name: String }}")).await.unwrap();
+        node.add_collection(&admin, &format!("type ScopedProjected @policy(id: \"{policy}\", resource: \"records\") {{ name: String }}")).await.unwrap();
         let result = node.execute_request(crate::EmbeddedSigner::from_config(signing).unwrap().attach(
             QueryRequest::new("mutation { create_ScopedProjected(input:{name:\"one\"}) { _docID } }")
                 .with_identity(Some(Did::new(&node_did).unwrap())))).await;
@@ -426,7 +429,7 @@ fn local_signed_foreign_creator_is_registered_before_projector_admin_grant() {
             node.add_nac_actor_relationship_as(&owner, permission.as_str(), user_did.as_str()).await.unwrap();
         }
         let policy = node.add_dac_policy_as(&owner, "name: Projection fixture\nresources:\n  - name: records\n    relations:\n      - name: reader\n        types: [actor]\n    permissions:\n      - name: read\n        expr: reader\n      - name: update\n      - name: delete\n").await.unwrap();
-        node.add_collection_as(&owner, &format!("type ForeignProjected @policy(id: \"{policy}\", resource: \"records\") {{ name: String }}")).await.unwrap();
+        node.add_collection(&owner, &format!("type ForeignProjected @policy(id: \"{policy}\", resource: \"records\") {{ name: String }}")).await.unwrap();
         let response = node.execute_request(crate::EmbeddedSigner::from_config(signing).unwrap().attach(QueryRequest::new("mutation { create_ForeignProjected(input:{name:\"one\"}) { _docID } }")
                 .with_identity(Some(user_did.clone())))).await;
         assert!(!response.has_errors(), "{:?}", response.errors);
@@ -463,7 +466,7 @@ fn foreign_owner_projection_without_node_bypass_is_refused() {
         let node_did = Did::new(node.node_identity_did().unwrap()).unwrap();
         assert!(!node.nac_manager().check_permission(&node_did, NodePermission::DacBypass).await.unwrap());
         let policy = node.add_dac_policy_as(&admin, "name: Projection fixture\nresources:\n  - name: records\n    relations:\n      - name: reader\n        types: [actor]\n    permissions:\n      - name: read\n        expr: reader\n      - name: update\n      - name: delete\n").await.unwrap();
-        node.add_collection_as(&admin, &format!("type ForeignProjected @policy(id: \"{policy}\", resource: \"records\") {{ name: String }}")).await.unwrap();
+        node.add_collection(&admin, &format!("type ForeignProjected @policy(id: \"{policy}\", resource: \"records\") {{ name: String }}")).await.unwrap();
         let response = node.execute_request(crate::EmbeddedSigner::from_config(signing).unwrap().attach(
             QueryRequest::new("mutation { create_ForeignProjected(input:{name:\"one\"}) { _docID } }")
                 .with_identity(Some(user_did)))).await;
@@ -596,7 +599,7 @@ fn source_projection_authorizes_the_actual_mutation_actor_atomically() {
         for permission in [NodePermission::DocumentUpdate, NodePermission::DocumentRead, NodePermission::CollectionGet] {
             node.add_nac_actor_relationship_as(&owner, permission.as_str(), user.as_str()).await.unwrap();
         }
-        node.add_collection_as(&owner, "type ActorProjectedTool { enabled: Boolean, name: String }").await.unwrap();
+        node.add_collection(&owner, "type ActorProjectedTool { enabled: Boolean, name: String }").await.unwrap();
         let created = node.execute_request(request("mutation { create_ActorProjectedTool(input:{enabled:false,name:\"before\"}) {_docID} }".into())).await;
         assert!(!created.has_errors(), "{:?}", created.errors);
         let id = created.data.unwrap()["add_ActorProjectedTool"][0]["_docID"].as_str().unwrap().to_owned();
@@ -653,7 +656,7 @@ fn revoked_source_manager_conflicts_with_the_staged_document_and_grant() {
             node.add_nac_actor_relationship_as(&owner, permission.as_str(), actor.as_str()).await.unwrap();
         }
         node.add_nac_actor_relationship_as(&owner, "admin", actor.as_str()).await.unwrap();
-        node.add_collection_as(&owner, "type ActorProjectedTool { enabled: Boolean, name: String }").await.unwrap();
+        node.add_collection(&owner, "type ActorProjectedTool { enabled: Boolean, name: String }").await.unwrap();
         let created = node.execute_request(request("mutation { create_ActorProjectedTool(input:{enabled:false,name:\"before\"}) {_docID} }".into())).await;
         assert!(!created.has_errors(), "{:?}", created.errors);
         let id = created.data.unwrap()["add_ActorProjectedTool"][0]["_docID"].as_str().unwrap().to_owned();

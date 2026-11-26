@@ -239,7 +239,10 @@ pub trait CollectionOperations: defra_core::thread_bounds::MaybeSendSync {
     ///
     /// Parses the SDL and creates collections for each type defined.
     /// Returns the created collection versions.
-    async fn add_collection(&self, sdl: &str) -> Result<Vec<schema::CollectionVersion>, String>;
+    async fn add_collection(
+        &self,
+        sdl: &str,
+    ) -> Result<Vec<schema::CollectionVersion>, super::CollectionRefusal>;
 }
 
 /// Collection lookups the event stream needs, which a host gives it without the management routes.

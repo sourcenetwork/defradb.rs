@@ -1,10 +1,8 @@
-use std::num::NonZeroUsize;
 use std::sync::Arc;
 
 use blockstore::{Blockstore, DefraBlockstore};
 use cid::Cid;
 use criterion::{criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion};
-use lru::LruCache;
 use multihash::Multihash;
 use sha2::{Digest, Sha256};
 use std::hint::black_box;
@@ -28,34 +26,6 @@ fn make_payload(size: usize, seed: u8) -> Vec<u8> {
 
 fn make_blockstore() -> DefraBlockstore<RegolithStore> {
     DefraBlockstore::new(Arc::new(RegolithStore::in_memory().unwrap()), false)
-}
-
-fn bench_raw_lru(c: &mut Criterion) {
-    let mut cache: LruCache<Cid, Vec<u8>> = LruCache::new(NonZeroUsize::new(1_000).unwrap());
-    let payload = make_payload(256, 37);
-    let cid = cid_from_data(&payload);
-    cache.put(cid, payload);
-
-    c.bench_function("raw_lru_get_clone", |b| {
-        b.iter(|| {
-            let data = cache.get(&cid).unwrap();
-            black_box(data.clone())
-        })
-    });
-}
-
-fn bench_raw_lru_arc(c: &mut Criterion) {
-    let mut cache: LruCache<Cid, Arc<Vec<u8>>> = LruCache::new(NonZeroUsize::new(1_000).unwrap());
-    let payload = make_payload(256, 41);
-    let cid = cid_from_data(&payload);
-    cache.put(cid, Arc::new(payload));
-
-    c.bench_function("raw_lru_get_arc", |b| {
-        b.iter(|| {
-            let data = cache.get(&cid).unwrap();
-            black_box(Arc::clone(data))
-        })
-    });
 }
 
 fn bench_txn_creation(c: &mut Criterion) {
@@ -172,11 +142,5 @@ fn bench_blockstore(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(
-    benches,
-    bench_raw_lru,
-    bench_raw_lru_arc,
-    bench_txn_creation,
-    bench_blockstore
-);
+criterion_group!(benches, bench_txn_creation, bench_blockstore);
 criterion_main!(benches);

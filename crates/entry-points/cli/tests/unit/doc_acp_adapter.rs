@@ -10,7 +10,7 @@ fn a_named_transaction_never_falls_back_to_autocommit() {
         let caller = identity::Did::new("did:key:caller").unwrap();
         let context = RequestContext::default()
             .with_identity(Some(caller.to_string()))
-            .with_txn(Some(defra_core::TxnId(1)));
+            .with_txn(Some(defra_core::TxnId { start: 0, route: 1 }));
         let bound = adapter.bind_request(&context).unwrap();
         assert!(bound
             .add_doc_relationship(Some(&caller), "did:key:reader", "Record", "doc", "reader")
