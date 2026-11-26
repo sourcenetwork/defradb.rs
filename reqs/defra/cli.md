@@ -12,9 +12,18 @@ A Rust key that is present in the same section wins over its Go spelling. Keys o
 # `defra.cli.pinc`: A CLI node's pinc settings
 
 - **Parents:** ["defra"]
-- **Scenarios:** ["hub::nodes_replicate_a_subscribed_collection_through_a_cli_hub"]
+- **Scenarios:** ["hub::nodes_replicate_a_subscribed_collection_through_a_cli_hub", "node::go_config::a_go_config_runs_p2p_on_pinc"]
 
-A node started with `defradb start` binds its pinc endpoint on `net.pinc_bind_addr` (`--pinc-bind-addr`, every interface when unset) and `net.pinc_bind_port` (`--pinc-bind-port`, a port the OS picks when unset), runs topics through the hubs `net.pinc_hubs` names (`--pinc-hubs`), admits inbound connections only from the peer ids `net.pinc_allowed_peers` lists (`--pinc-allowed-peers`, every peer when empty), and dials each of `net.peers` (`--peers`) once started, without waiting for it. A hub or peer address is `<peer id>@<udp address>`; any other fails the start with `invalid config: invalid pinc address <address>: …`.
+A node started with `defradb start` binds its pinc endpoint on `net.pinc_bind_addr` (`--pinc-bind-addr`, `127.0.0.1` when unset, as Go's CLI listens on loopback by default) and `net.pinc_bind_port` (`--pinc-bind-port`, a port the OS picks when unset), runs topics through the hubs `net.pinc_hubs` names (`--pinc-hubs`), admits inbound connections only from the peer ids `net.pinc_allowed_peers` lists (`--pinc-allowed-peers`, every peer when empty), and dials each of `net.peers` (`--peers`) once started, without waiting for it. A node bound where other hosts can reach it with an empty `net.pinc_allowed_peers` starts and logs one warning that any peer may connect. A hub or peer address is `<peer id>@<udp address>`; any other fails the start with `invalid config: invalid pinc address <address>: …`.
+
+The FFI and `defra-node` embedder defaults are not this one: an embedder that names no bind still binds every interface (`0.0.0.0`).
+
+# `defra.cli.pinc.public_addrs`: A node lists the addresses peers can reach
+
+- **Parents:** ["defra.cli.pinc"]
+- **Scenarios:** ["node::go_config::a_configured_public_address_is_listed_first", "addr::tests::a_wildcard_bind_lists_every_interface_but_loopback_and_public_first"]
+
+The addresses in `net.pinc_public_addrs` (`--pinc-public-addrs`, each `<ip>:<port>`: a public address in front of a NAT, a forwarded port) come first in the node's peer info, ahead of the addresses it binds. A node bound on a wildcard address lists the address of each of its interfaces, and never a loopback or IPv6 link-local one; only a node bound on loopback lists loopback. Its shareable address is never loopback unless it bound loopback.
 
 # `defra.cli.hub`: `defradb hub` runs a pinc hub
 
@@ -22,3 +31,12 @@ A node started with `defradb start` binds its pinc endpoint on `net.pinc_bind_ad
 - **Scenarios:** ["hub::nodes_replicate_a_subscribed_collection_through_a_cli_hub"]
 
 `defradb hub` binds a pinc hub on `--bind` (`127.0.0.1:9172` by default), prints its address `<peer id>@<ip>:<port>` on one line of standard output, and runs until SIGINT or SIGTERM, then exits 0. Its key lives in `--key-file` (`<rootdir>/hub.key` by default), created when missing, so the hub keeps its peer id across restarts. Two nodes naming the hub in `--pinc-hubs`, connected and subscribed to the same collection, replicate a document created on one to the other.
+
+Each `--public-addr` (`<ip>:<port>`, repeatable) is listed first in the printed address. A hub bound on a wildcard address lists its interfaces' addresses but never loopback; with none of those and no `--public-addr` it fails to start rather than print an address no node can reach. `--relay` (off by default) adds pinc's relay role, `defra.cli.hub.relay`.
+
+# `defra.cli.hub.relay`: A relaying hub's members reach each other by peer id
+
+- **Parents:** ["defra.cli.hub"]
+- **Scenarios:** ["net::pinc_relay::members_of_a_relaying_hub_connect_by_peer_id_alone", "net::pinc_relay::members_of_a_hub_that_does_not_relay_cannot_connect_by_peer_id_alone", "tests::relay::members_of_a_relaying_hub_reach_each_other_by_id_alone"]
+
+Two nodes naming a hub that runs the relay role connect by peer id alone, with no address of each other: `ConnectPeers` naming only the peer id succeeds and `ActivePeers` lists the peer. The relay carries the session until a direct path works. Through a hub without the role the same connect fails. The relay runs over UDP only: a node whose UDP is blocked is not reached through it.

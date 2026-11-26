@@ -393,6 +393,13 @@ The same two nodes and collection with no `reader` grant to the peer: the encryp
 
 After a subscribed peer receives an encrypted document's blocks but not yet its key, the document can wait as a pending merge. When the KMS delivers the key, that pending merge wakes, the document becomes queryable, and its plaintext fields are returned.
 
+# `defra.encryption.peer.kms_batch_split`: A key batch larger than one topic message is split
+
+- **Parents:** ["go.encryption.peer"]
+- **Scenarios:** ["encryption::peer_kms_batch::a_peer_gets_the_keys_of_more_encrypted_documents_than_one_topic_message_holds", "tests::topics::an_oversized_raw_publish_fails_its_caller_and_is_counted", "tests::topics::a_raw_publish_of_one_whole_topic_message_is_delivered", "kms::request_keys::tests::a_request_and_its_reply_fit_one_pinc_topic_message"]
+
+A peer that receives more encrypted documents at once than one 64 KiB pinc topic message holds keys for (470) gets every key, and every document becomes queryable: the KMS sends its key request in chunks whose request and reply each fit one topic message. A raw topic publish over 64 KiB fails its caller with `GossipTooLarge` before anything is sent, and is counted and logged at warn; a publish that fails after its caller was answered is also counted and logged at warn.
+
 # `defra.backup.import.signed_and_replicated`: An imported document is signed and replicated as a created one is
 
 - **Parents:** ["go.backup.import"]

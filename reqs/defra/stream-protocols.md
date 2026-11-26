@@ -46,6 +46,20 @@ A request's room in the peer's share of its priority's inbound budget is held by
 
 A handler still running at its protocol's deadline is dropped, and the opener's read fails with `stream reset by the peer with code 7`. A send half left unfinished, by the node or by a handler that returns, resets the stream the same way rather than finishing it.
 
+# `defra.stream_protocols.deadline.unread`: A handler blocked on an opener that does not read is cut too
+
+- **Parents:** ["defra.stream_protocols.deadline"]
+- **Scenarios:** ["net::stream_protocols::a_handler_flooding_an_opener_that_does_not_read_is_cut_at_its_deadline", "tests::protocol_streams::a_handler_blocked_writing_to_an_opener_that_does_not_read_is_reset_at_its_deadline"]
+
+A handler whose write is blocked because the opener stopped reading is dropped at its deadline like any other, and the write in flight is abandoned with it: the stream is reset with code 7 at once, not after the write completes. When the opener reads again it gets only what was in flight at the deadline (the stream's window and its receive queue), then `stream reset by the peer with code 7`.
+
+# `defra.stream_protocols.open_busy`: An open refused as busy sends no request
+
+- **Parents:** ["defra.stream_protocols"]
+- **Scenarios:** ["tests::protocol_streams::an_open_refused_busy_leaves_the_peer_no_request_to_serve"]
+
+An open that the opener's endpoint refuses for want of room for the stream's tasks fails with `busy` before anything is written: the serving peer gets no request and runs no handler for it, so a retried open runs its handler once.
+
 # `defra.stream_protocols.revocation`: Revoking a peer cuts its open protocol streams
 
 - **Parents:** ["defra.stream_protocols"]
