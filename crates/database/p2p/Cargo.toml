@@ -92,8 +92,6 @@ rapidhash = { workspace = true }
 # Varint encoding for CARv1 format
 unsigned-varint = "0.8"
 
-lru = { workspace = true, optional = true }
-
 # Iroh transport (optional)
 iroh = { workspace = true, optional = true }
 iroh-gossip = { workspace = true, optional = true }
@@ -123,7 +121,7 @@ libp2p-transport = [
 # KMS transport slot). Transport-generic; implied by libp2p-transport and
 # opt-in for iroh-only builds.
 kms = ["dep:kms"]
-iroh-transport = ["dep:iroh", "dep:iroh-gossip", "dep:iroh-tickets", "dep:noq", "dep:rand", "dep:blake3", "dep:lru"]
+iroh-transport = ["dep:iroh", "dep:iroh-gossip", "dep:iroh-tickets", "dep:noq", "dep:rand", "dep:blake3"]
 # Host an iroh relay server next to the endpoint. Pulls in the relay's HTTP,
 # WebSocket, and TLS stack, so it stays out of plain iroh builds.
 iroh-relay-server = ["iroh-transport", "dep:iroh-relay", "dep:rustls"]
