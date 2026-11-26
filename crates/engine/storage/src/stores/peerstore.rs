@@ -16,7 +16,10 @@ use bytes::Bytes;
 use std::sync::Arc;
 use tracing;
 
+mod scope_batch;
 mod selected_car;
+
+pub use scope_batch::{ScopeOutcome, ScopeRecord};
 
 const RETRY_MARKER_GENERATION_MAGIC: &[u8] = b"DFRGMARKER1";
 
@@ -1619,6 +1622,28 @@ impl<S: Store> Peerstore<S> {
         expected_generation: Option<u64>,
         acked_heads: &[String],
     ) -> Result<bool> {
+        self.transact_conflicts(Box::new(self.complete_marker_attempt(
+            peer_id,
+            doc_id,
+            collection_id,
+            is_collection,
+            expected_generation,
+            acked_heads,
+        )))
+        .await
+    }
+
+    /// The attempt that completes one scope, for [`Self::complete_scope`] and
+    /// a batch of scope records.
+    fn complete_marker_attempt(
+        &self,
+        peer_id: &str,
+        doc_id: &str,
+        collection_id: &str,
+        is_collection: bool,
+        expected_generation: Option<u64>,
+        acked_heads: &[String],
+    ) -> PeerstoreRetryAttempt {
         let scope_id = if is_collection { collection_id } else { doc_id };
         let key = if is_collection {
             ReplicatorRetryCollectionKey::new(peer_id, collection_id).bytes()
@@ -1628,15 +1653,14 @@ impl<S: Store> Peerstore<S> {
         let acked_key = ReplicatorAckedHeadsKey::new(peer_id, scope_id, is_collection).bytes();
         let mut acked = acked_heads.to_vec();
         acked.sort_unstable();
-        self.transact_conflicts(Box::new(PeerstoreRetryAttempt::CompleteMarker {
+        PeerstoreRetryAttempt::CompleteMarker {
             peer_id: peer_id.to_owned(),
             key,
             expected_generation,
             acked_key,
             acked: acked.join("\n").into_bytes(),
             schedule: self.retry_schedule.clone(),
-        }))
-        .await
+        }
     }
 
     /// Return the current replicator incarnation, defaulting to zero for a
@@ -1860,3 +1884,7 @@ mod tests;
 #[cfg(test)]
 #[path = "peerstore_schedule_race_tests.rs"]
 mod schedule_race_tests;
+
+#[cfg(test)]
+#[path = "peerstore_scope_batch_tests.rs"]
+mod scope_batch_tests;

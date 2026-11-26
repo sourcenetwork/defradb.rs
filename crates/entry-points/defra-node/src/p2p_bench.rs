@@ -695,3 +695,5 @@ fn bench_pull_from_providers() {
         })
         .unwrap()
 }
+
+mod replicator_writes;
