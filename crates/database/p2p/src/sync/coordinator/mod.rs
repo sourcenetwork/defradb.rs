@@ -631,16 +631,17 @@ impl SyncShutdownHandle {
     where
         F: std::future::Future<Output = ()> + MaybeSend + 'static,
     {
-        // Retire completed handles on every registration so retained handles
-        // track live tasks instead of total spawn count (#1099).
-        self.prune_finished_tasks();
         self.register_task(TrackedTask::spawn(self.network().edge(), future))
     }
 
-    /// Publish the handle, then re-read the shutdown flag behind a full fence.
-    /// The drain sets the flag, fences, then takes the queue, so either it
-    /// sees this handle or this sees the flag and cancels the task itself.
+    /// Retire finished handles, publish this one, then re-read the shutdown
+    /// flag behind a full fence. Pruning here, on every registration path,
+    /// keeps the retained handles at the live tasks instead of every task
+    /// ever spawned (#1099, #3469). The drain sets the flag, fences, then
+    /// takes the queue, so either it sees this handle or this sees the flag
+    /// and cancels the task itself.
     fn register_task(&self, task: TrackedTask) -> bool {
+        self.prune_finished_tasks();
         let abort = task.abort_handle();
         self.inner.background_tasks.push(task);
         fence(Ordering::SeqCst);
@@ -2032,6 +2033,36 @@ mod shutdown_tests {
         assert!(
             shutdown.spawn_pending_dag_fetch(root, async {}),
             "the root must become eligible after its prior fetch finishes"
+        );
+        shutdown.shutdown().await;
+    }
+
+    /// #3469: a pending-DAG fetch registers its handle too, so it must retire
+    /// finished ones, or a receiving node keeps one handle per fetch.
+    #[nuclei::test(threads = 0)]
+    async fn pending_dag_fetches_retire_finished_handles() {
+        let shutdown = SyncShutdownHandle::new(4, test_network());
+        let completed = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        for index in 0..50u32 {
+            let root = Cid::new_v1(0x55, Code::Sha2_256.digest(&index.to_be_bytes()));
+            let completed_by_task = Arc::clone(&completed);
+            assert!(shutdown.spawn_pending_dag_fetch(root, async move {
+                completed_by_task.fetch_add(1, Ordering::SeqCst);
+            }));
+            let deadline = crate::rt::time::Instant::now() + Duration::from_secs(2);
+            while completed.load(Ordering::SeqCst) <= index as usize {
+                assert!(crate::rt::time::Instant::now() < deadline);
+                crate::rt::yield_now().await;
+            }
+        }
+
+        let root = Cid::new_v1(0x55, Code::Sha2_256.digest(b"last-root"));
+        assert!(shutdown.spawn_pending_dag_fetch(root, std::future::pending()));
+
+        let held = shutdown.inner.background_tasks.len();
+        assert!(
+            held <= 2,
+            "finished fetch handles must be retired on registration, held {held}"
         );
         shutdown.shutdown().await;
     }

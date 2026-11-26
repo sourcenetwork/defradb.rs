@@ -27,11 +27,12 @@
 \*   5. every caller waits for the completion: Ok when the drain sent it, an
 \*      error (logged as a warning) when the sender was dropped unsent,
 \*      because the drain was cancelled or panicked.
-\* Meanwhile a late spawn may race the shutdown (spawn_task, spawn_here): it
-\* reads the flag, prunes the set (takes each handle out, drops the finished
-\* ones, puts the live ones back), spawns its task, puts the new handle in
-\* the set, then reads the flag again and aborts its own task when shutdown
-\* has begun.
+\* Meanwhile a late spawn may race the shutdown (spawn_task, spawn_here, or
+\* spawn_pending_dag_fetch): it reads the flag, spawns its task, prunes the
+\* set (takes each handle out, drops the finished ones, puts the live ones
+\* back), puts the new handle in the set, then reads the flag again and
+\* aborts its own task when shutdown has begun. Every registration prunes,
+\* so the set holds the live tasks, not one handle per task ever spawned.
 \*
 \* A tiny example. The edge has closed when shutdown is called. The winner's
 \* try_spawn hands the drain back, so the winner runs it itself: it takes the
@@ -88,10 +89,12 @@
 \*   |                   | its future still runs (MarkFinished sets `finished` when |
 \*   |                   | it drops), and where its handle is                       |
 \*   | RegCheck          | spawn_task: `if self.is_shutting_down() { return false }`|
-\*   | PruneEnter ..     | prune_finished_tasks: pruning.fetch_add, the loop over   |
-\*   | PruneExit         | background_tasks.len() that pops and re-pushes the live  |
-\*   |                   | handles, pruning.fetch_sub                               |
-\*   | RegSpawn          | spawn_here: TrackedTask::spawn                           |
+\*   |                   | (spawn_pending_dag_fetch: the same read in its claim)    |
+\*   | RegSpawn          | spawn_here, spawn_pending_dag_fetch: TrackedTask::spawn  |
+\*   | PruneEnter ..     | prune_finished_tasks, called first by register_task:     |
+\*   | PruneExit         | pruning.fetch_add, the loop over background_tasks.len()  |
+\*   |                   | that pops and re-pushes the live handles,                |
+\*   |                   | pruning.fetch_sub                                        |
 \*   | RegPush,          | register_task: background_tasks.push, fence, re-read of  |
 \*   | RegRecheck        | is_shutting_down, abort.abort()                          |
 \*   | SwapFlag          | begin_shutdown's swap (RED: a load, then a store, so two |
@@ -521,15 +524,15 @@ RegCheck(r) ==
   \* Late spawn r reads the flag before anything else.
   /\ rpc[r] = "idle"
   \* it has not begun;
-  /\ rpc' = [rpc EXCEPT ![r] = IF flag THEN "over" ELSE "enter"]
-  \* shutdown has begun: it spawns nothing; otherwise it goes on to prune;
+  /\ rpc' = [rpc EXCEPT ![r] = IF flag THEN "over" ELSE "spawn"]
+  \* shutdown has begun: it spawns nothing; otherwise it goes on to spawn;
   /\ UNCHANGED <<flag, edgeOpen, cpc, drains, dr, dw, snd, life, loc, held, budget, pruning>>
   \* and nothing else changes.
 
 PruneEnter(r) ==
   \* r's pruner says it is at work.
   /\ rpc[r] = "enter"
-  \* r passed its check;
+  \* r spawned its task and holds its handle;
   /\ pruning' = pruning + 1
   \* one more pruner at work;
   /\ rpc' = [rpc EXCEPT ![r] = "look"]
@@ -600,28 +603,28 @@ PruneExit(r) ==
   \* it stopped taking handles;
   /\ pruning' = pruning - 1
   \* one fewer pruner at work;
-  /\ rpc' = [rpc EXCEPT ![r] = "spawn"]
-  \* and r goes on to spawn its task;
+  /\ rpc' = [rpc EXCEPT ![r] = "push"]
+  \* and r goes on to put its handle in the set;
   /\ UNCHANGED <<flag, edgeOpen, cpc, drains, dr, dw, snd, life, loc, held, budget>>
   \* and nothing else changes.
 
 RegSpawn(r) ==
   \* r spawns its task: the task runs, its handle in r's hand.
   /\ rpc[r] = "spawn"
-  \* r pruned;
+  \* r passed its check;
   /\ life' = [life EXCEPT ![r] = "live"]
   \* the task runs;
   /\ loc' = [loc EXCEPT ![r] = "hand"]
   \* r holds its handle;
-  /\ rpc' = [rpc EXCEPT ![r] = "push"]
-  \* and goes on to put it in the set;
+  /\ rpc' = [rpc EXCEPT ![r] = "enter"]
+  \* and goes on to prune the set before it registers the handle;
   /\ UNCHANGED <<flag, edgeOpen, cpc, drains, dr, dw, snd, held, budget, pruning>>
   \* and nothing else changes.
 
 RegPush(r) ==
   \* r puts its task's handle in the set.
   /\ rpc[r] = "push"
-  \* r holds the handle;
+  \* r pruned and holds the handle;
   /\ loc' = [loc EXCEPT ![r] = "queue"]
   \* it is in the set;
   /\ rpc' = [rpc EXCEPT ![r] = "recheck"]
