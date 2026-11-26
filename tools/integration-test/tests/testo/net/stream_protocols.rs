@@ -6,7 +6,7 @@
 use integration_test::actions::stream::{Handler, ProtocolSpec, ReadMode, Size, StreamNodeSpec};
 use integration_test::actions::{
     Actions, AddCollection, AddDoc, AllowStreamPeer, Close, DenyStreamPeer, NewStreamNode,
-    OpenStream, ReadKeptStream,
+    OpenStream, ReadKeptStream, Wait,
 };
 use integration_test::scenario::{Common, Eventually};
 use integration_test::test_case::TestCase;
@@ -387,6 +387,41 @@ fn a_handler_past_its_deadline_is_cut_with_code_7() {
         kept("db1", "db0", short, "s"),
         ReadKeptStream {
             stream: "s".into(),
+            expected_error: Some("stream reset by the peer with code 7".into()),
+            common: on("db1"),
+            ..Default::default()
+        }
+        .into(),
+    ])
+    .execute();
+}
+
+/// A handler blocked writing to an opener that stopped reading is cut at its
+/// deadline too: once the opener reads again, only what was in flight at the
+/// deadline arrives, then the reset.
+#[test]
+#[mantra_macros::req_test("defra.stream_protocols.deadline.unread")]
+fn a_handler_flooding_an_opener_that_does_not_read_is_cut_at_its_deadline() {
+    let flood = ProtocolSpec {
+        deadline_millis: Some(300),
+        ..protocol("/test/flood/1", Handler::Flood)
+    };
+    TestCase::from_actions(vec![
+        serving("db0", vec![flood.clone()]),
+        serving("db1", Vec::new()),
+        kept("db1", "db0", flood, "s"),
+        // The opener reads nothing past the deadline, so the handler's write
+        // is blocked on the stream's window when the deadline fires.
+        Wait {
+            millis: Some(1_000),
+            ..Default::default()
+        }
+        .into(),
+        ReadKeptStream {
+            stream: "s".into(),
+            // The window and receive queue in flight at the deadline fit;
+            // a flood that went on does not.
+            limit: Some(4 << 20),
             expected_error: Some("stream reset by the peer with code 7".into()),
             common: on("db1"),
             ..Default::default()

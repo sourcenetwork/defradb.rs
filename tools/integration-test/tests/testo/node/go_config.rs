@@ -84,9 +84,11 @@ fn introspection() -> Request {
 }
 
 /// Go's `p2paddresses` are libp2p addresses, which a pinc node has no use
-/// for: the node still runs P2P, on its own pinc address.
+/// for: the node still runs P2P, on its own pinc address, which a config
+/// naming no `net.pinc_bind_addr` binds on loopback.
 #[test]
 #[mantra_macros::req_test("defra.cli.config.go_layout")]
+#[mantra_macros::req_test("defra.cli.pinc")]
 fn a_go_config_runs_p2p_on_pinc() {
     TestCase {
         id: integration_test::scenario_id!(),
@@ -104,6 +106,38 @@ fn a_go_config_runs_p2p_on_pinc() {
             }
             .into(),
             introspection().into(),
+        ],
+        ..Default::default()
+    }
+    .execute();
+}
+
+/// `net.pinc_public_addrs` are listed ahead of the addresses the node binds.
+#[test]
+#[mantra_macros::req_test("defra.cli.pinc.public_addrs")]
+fn a_configured_public_address_is_listed_first() {
+    let config = go_config("/ip4/127.0.0.1/tcp/9171", false).replace(
+        "    relay: false\n",
+        "    relay: false\n    pinc_public_addrs:\n        - 203.0.113.7:9171\n",
+    );
+    TestCase {
+        id: integration_test::scenario_id!(),
+        actions: vec![
+            NewNode {
+                go_config: Some(config),
+                ..Default::default()
+            }
+            .into(),
+            PeerInfo {
+                expected_data: json!({
+                    "addresses": [
+                        m::substring("@203.0.113.7:9171"),
+                        m::substring("@127.0.0.1:"),
+                    ],
+                }),
+                ..Default::default()
+            }
+            .into(),
         ],
         ..Default::default()
     }

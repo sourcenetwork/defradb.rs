@@ -48,6 +48,9 @@ pub struct NodeSpec {
     /// Where the node's pinc endpoint binds when `listen` names no address:
     /// the CLI's resolved bind for a node started from a Go config.
     pub pinc_bind: Option<std::net::SocketAddr>,
+    /// The addresses a node started from a Go config lists first, from its
+    /// `net.pinc_public_addrs`.
+    pub pinc_public_addrs: Vec<std::net::SocketAddr>,
     /// The node names [`RELAY_HUB`] in place of [`PINC_HUB`]: a Rust node
     /// under every client.
     pub relay_hub: bool,
@@ -414,6 +417,7 @@ fn pinc_transport(
     };
     let mut config = defra_node::PincConfig {
         bind,
+        public_addrs: spec.pinc_public_addrs.clone(),
         peer_key: defra_node::PeerKeySource::Store,
         max_connections: 16,
         hubs: vec![hub],

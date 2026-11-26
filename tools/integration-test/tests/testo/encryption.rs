@@ -7,6 +7,7 @@ mod peer;
 mod peer_acp;
 mod peer_acp_branchable;
 mod peer_branchable_diverged_versions;
+mod peer_kms_batch;
 mod peer_multipeer;
 mod peer_nac;
 mod peer_node_identity_grant;

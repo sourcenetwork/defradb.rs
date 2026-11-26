@@ -179,14 +179,15 @@ impl Op for NewNode {
             })?)),
             None => None,
         };
-        let (network, pinc_bind) = match &self.go_config {
+        let (network, pinc_bind, pinc_public_addrs) = match &self.go_config {
             Some(body) => go_config_network(body)?,
-            None => (self.network, None),
+            None => (self.network, None, Vec::new()),
         };
         let spec = NodeSpec {
             network,
             dir,
             pinc_bind,
+            pinc_public_addrs,
             go_config: self.go_config.is_some(),
             relay_hub: self.relay_hub,
             admission: self.admission.clone(),
@@ -210,12 +211,20 @@ impl Op for NewNode {
     }
 }
 
+/// Whether a node runs P2P, its pinc bind and the public addresses it lists.
+type GoNetwork = (
+    bool,
+    Option<std::net::SocketAddr>,
+    Vec<std::net::SocketAddr>,
+);
+
 /// Loads a Go-written `config.yaml` through the CLI's loader, as `defradb
-/// --rootdir <dir>` does, and answers whether the node runs P2P and where
-/// `defradb start` binds its pinc endpoint for it. Go's listen addresses are
-/// libp2p's, which a pinc node has no use for, so the bind is the CLI's own
-/// default: loopback.
-fn go_config_network(body: &str) -> Result<(bool, Option<std::net::SocketAddr>), Failure> {
+/// --rootdir <dir>` does, and answers whether the node runs P2P, where
+/// `defradb start` binds its pinc endpoint for it and the public addresses it
+/// lists first. Go's listen addresses are libp2p's, which a pinc node has no
+/// use for, so the bind is the CLI's own: loopback unless the config's
+/// `net.pinc_bind_addr` names another.
+fn go_config_network(body: &str) -> Result<GoNetwork, Failure> {
     use clap::Parser;
     let root = tempfile::tempdir()
         .map_err(|e| Failure::operation(format!("could not make the node's rootdir: {e}")))?;
@@ -227,7 +236,11 @@ fn go_config_network(body: &str) -> Result<(bool, Option<std::net::SocketAddr>),
         .map_err(|e| Failure::operation(format!("could not parse the CLI arguments: {e}")))?;
     let config = cli::config::Config::load(&args)
         .map_err(|e| Failure::operation(format!("could not load config.yaml: {e}")))?;
-    Ok((!config.net.p2p_disabled, Some(config.net.pinc_bind())))
+    Ok((
+        !config.net.p2p_disabled,
+        Some(config.net.pinc_bind()),
+        config.net.pinc_public_addrs.clone(),
+    ))
 }
 
 impl NewNode {

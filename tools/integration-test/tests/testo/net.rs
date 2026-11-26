@@ -1,6 +1,7 @@
 mod disjoint_groups;
 mod gossip_admission;
 mod large_update;
+mod pinc_relay;
 mod sticky_disconnect;
 mod stream_protocols;
 mod info {

@@ -14,6 +14,10 @@ use crate::test_case::State;
 #[serde(rename_all = "camelCase")]
 pub struct ReadKeptStream {
     pub stream: String,
+    /// The most bytes read before the read fails as too long; 1 MiB when
+    /// unset.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limit: Option<usize>,
     #[serde(default, skip_serializing_if = "Value::is_null")]
     pub expected_data: Value,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -42,7 +46,7 @@ impl Op for ReadKeptStream {
         let read = state
             .block_on(workers::timeout(
                 Duration::from_secs(10),
-                kept.recv.read_to_end(1 << 20),
+                kept.recv.read_to_end(self.limit.unwrap_or(1 << 20)),
             ))
             .map_err(|_| Failure::operation("the stream is still open".into()))?
             .map_err(|e| Failure::operation(format!("stream ended: {e}")))?;

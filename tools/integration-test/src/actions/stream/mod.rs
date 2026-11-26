@@ -50,6 +50,9 @@ pub enum Handler {
     Stuck,
     /// Keeps its request, writes `started` and never returns.
     Hold,
+    /// Releases its request, writes `started`, then writes 16 MiB in one
+    /// write, far past any stream window, and never returns.
+    Flood,
 }
 
 /// A request limit: bytes, or a peer's share of the priority's budget.
@@ -199,6 +202,12 @@ impl StreamHandler for TestHandler {
             }
             Handler::Hold => {
                 let _ = stream.send.write_all(STARTED).await;
+                std::future::pending::<()>().await;
+            }
+            Handler::Flood => {
+                stream.request.release();
+                let _ = stream.send.write_all(STARTED).await;
+                let _ = stream.send.write_all(&vec![0u8; 16 << 20]).await;
                 std::future::pending::<()>().await;
             }
         }
