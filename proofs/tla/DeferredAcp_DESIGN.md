@@ -20,8 +20,8 @@ only one that models the **uncommitted projection → committed transition** its
 between concurrent txns, atomic commit-time hook application, no-op rollback, and the
 fail-closed gate across the projected→committed boundary.
 
-The model assumes public access to unregistered objects, matching the local and
-Cosmos backends. Rust now obtains that rule from
+The model assumes public access to unregistered objects, matching the local
+backend. Rust now obtains that rule from
 `DocumentACP::unregistered_documents_are_public()`. Native Vera returns `false`;
 its missing-registration behavior is covered by Rust and integration tests, not
 by this model. Branchable collection inheritance is also outside this slice.
@@ -149,8 +149,10 @@ the named invariant "is violated" with a concrete two-txn counterexample trace.
   `proofs/README.md` "Model ≠ code"). Keep anchors in step manually if `txn/context.rs` changes
   the projection-first gate or the owner check, or if `DbTxn::acp_registration_projection`
   stops reading through the transaction's own view.
-- **Integrator TODO (run-all):** add the four `MC_DeferredAcp_*` rows to
-  `proofs/tla/run-all.sh` (shared file, intentionally not edited by this slice):
+- **Integrator TODO (run-all):** the four `MC_DeferredAcp_*` configs below
+  must run in `proofs/tla/run-all.sh` (it now picks up every top-level
+  `*.cfg`, taking the module and verdict from each cfg's `\* run-all:` header,
+  so no row is added to the script itself):
 
 ```
   "MC_DeferredAcp_Green.cfg              MC_DeferredAcp_Green.tla              GREEN"  # deferred-acp overlay correct

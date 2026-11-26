@@ -12,7 +12,7 @@ use super::{create_user, created, names, node_serving, read_users, users};
 
 #[test]
 fn a_strict_read_fails_while_the_deployment_cannot_be_reached() {
-    use defra_node::{VeraRsActor, VeraRsConfig};
+    use defra_node::{VeraActor, VeraConfig};
 
     workers::block_on(async {
         let directory = tempfile::tempdir().unwrap();
@@ -37,12 +37,12 @@ fn a_strict_read_fails_while_the_deployment_cannot_be_reached() {
         );
         let node = Node::builder()
             .data_path(home.join("data"))
-            .with_vera_rs(VeraRsConfig {
+            .with_vera(VeraConfig {
                 rpc_address: format!("http://{rpc}"),
                 consensus_key: trust.consensus_key,
                 genesis_id: None,
                 deployment_id: trust.chain_id,
-                actor: VeraRsActor::Signer(Arc::clone(&signer)),
+                actor: VeraActor::Signer(Arc::clone(&signer)),
                 worker_dir: home.join("worker"),
                 keyring,
                 tuning: vera::AcpTuning::default(),
@@ -51,7 +51,7 @@ fn a_strict_read_fails_while_the_deployment_cannot_be_reached() {
             .await
             .expect("consumer node");
         let policy = super::seeded_policy(&node, chain_owner.as_str()).await;
-        node.add_collection(&users(&policy))
+        node.add_collection(&defra_core::RequestContext::ambient(), &users(&policy))
             .await
             .expect("collection");
         created(node.execute_request(create_user("kept", &reader)).await);

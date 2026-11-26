@@ -10,6 +10,7 @@ mod lens;
 mod list_actions;
 mod nac;
 mod node;
+mod openapi_document;
 mod parallel;
 mod peer;
 mod query;
@@ -31,6 +32,7 @@ pub use lens::*;
 pub use list_actions::ListActions;
 pub use nac::*;
 pub use node::*;
+pub use openapi_document::OpenApiDocument;
 pub use parallel::Parallel;
 pub use peer::*;
 pub use query::*;
@@ -120,6 +122,7 @@ client_actions! {
         AddView,
         ConfigureMigration,
         ConnectPeers,
+        DeleteCollection,
         DeleteCollectionSubscription,
         DeleteDACActorRelationship,
         DeleteDoc,
@@ -145,6 +148,7 @@ client_actions! {
         ListReplicators,
         NewEncryptedIndex,
         NewIndex,
+        OpenApiDocument,
         PatchCollection,
         PeerInfo,
         PurgeDocs,
@@ -159,6 +163,7 @@ client_actions! {
         TxnBegin,
         TxnCommit,
         TxnDiscard,
+        TxnOutcome,
         UpdateDoc,
         UpdateWithFilter,
         VerifyBlockSignature,
@@ -174,8 +179,8 @@ client_actions! {
         ReadKeptStream,
         Await,
         Benchmark,
+        ClientSigningSession,
         Close,
-        DeleteCollection,
         GetNodeIdentity,
         ListAllEncryptedIndexes,
         NewNode,

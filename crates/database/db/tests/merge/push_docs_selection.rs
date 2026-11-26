@@ -7,9 +7,10 @@ use db::{AutoCommitMutator, DB};
 use document::Document;
 use p2p::transport::PeerId;
 use query::mutator::DocMutator;
-use schema::{CollectionVersion, FieldDescription, FieldKind};
 use std::process::Command;
 use std::sync::Arc;
+
+const PUSH_NOTE_SDL: &str = "type PushNote { body: String }";
 
 #[test]
 #[ignore = "requires Lean; executed explicitly by the Lean Conformance CI job"]
@@ -91,22 +92,9 @@ async fn exercise(
     let store = Arc::new(storage::RegolithStore::in_memory().unwrap());
     let db = Arc::new(DB::from_arc(store).unwrap());
     db.set_network(edge::testing::edge());
-    db.create_collection(CollectionVersion::new(
-        "PushNote",
-        "v1",
-        "col-push-note",
-        vec![
-            FieldDescription::new(
-                "1",
-                "_docID",
-                FieldKind::doc_id(),
-                schema::CType::LwwRegister,
-            ),
-            FieldDescription::new("2", "body", FieldKind::string(), schema::CType::LwwRegister),
-        ],
-    ))
-    .await
-    .unwrap();
+    db.add_collection(&defra_core::RequestContext::ambient(), PUSH_NOTE_SDL)
+        .await
+        .unwrap();
     let mutator = AutoCommitMutator::new(db.clone());
     let schema = db.get_collection("PushNote").unwrap().unwrap().schema_arc();
     let mut ids = Vec::new();
@@ -127,7 +115,7 @@ async fn exercise(
     if present {
         let info = p2p::ReplicatorInfo::from_raw(
             peer.as_str().to_owned(),
-            vec!["col-push-note".into()],
+            vec![crate::common::schema::parsed(PUSH_NOTE_SDL).collection_id],
             vec![],
         );
         peerstore

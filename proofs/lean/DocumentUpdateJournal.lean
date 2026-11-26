@@ -10,8 +10,12 @@ A provider outside the page's transaction also lets through a document it
 finds unregistered. The page then drops what is deleted, which is enough as
 long as a document is unregistered only once it is deleted.
 
+The arrival journal's page passes its rows through the same gate, so what is
+proved here about which rows a reader sees holds for its rows too.
+
 Rust owners: crates/database/db/src/event/updates.rs (record, read, rows, once_key),
-crates/database/db/src/event/updates/gate.rs (Gate::decide, Gate::confirm), and the
+crates/database/db/src/event/arrivals.rs (read),
+crates/database/db/src/event/gate.rs (Gate::decide, Gate::confirm), and the
 document update and merge writers that append the journal entry in the
 document transaction.
 -/

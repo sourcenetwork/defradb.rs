@@ -58,9 +58,8 @@ pub(super) struct Remote {
     /// Its newest verified state is past the freshness limit: every decision
     /// fails as the vera.rs light client's does.
     pub(super) stale: AtomicBool,
-    /// The provider gives the node nothing to check a delegation against,
-    /// as the Cosmos provider does: it is passed its caller's token as it
-    /// is.
+    /// The provider gives the node nothing to check a delegation against:
+    /// it is passed its caller's token as it is.
     pub(super) unverifying: AtomicBool,
     /// A relationship write does not answer until `released`, and then
     /// fails as not delivered.
@@ -71,6 +70,11 @@ pub(super) struct Remote {
     pub(super) hold_owner_read: AtomicBool,
     pub(super) owner_read_waiting: regolith::sync::Event,
     pub(super) owner_reads_released: regolith::sync::Event,
+    /// A registration the provider admits does not take effect until
+    /// `registrations_released`: what keeps the node's drainer from
+    /// settling one while a test looks at it.
+    pub(super) hold_registrations: AtomicBool,
+    registrations_released: regolith::sync::Event,
     /// Objects whose access checks fail as unavailable while every other
     /// call answers.
     pub(super) unchecked: Map<String, ()>,
@@ -132,8 +136,15 @@ impl Remote {
             hold_owner_read: AtomicBool::new(false),
             owner_read_waiting: regolith::sync::Event::new(),
             owner_reads_released: regolith::sync::Event::new(),
+            hold_registrations: AtomicBool::new(false),
+            registrations_released: regolith::sync::Event::new(),
             unchecked: map(),
         })
+    }
+
+    /// Let every registration held by `hold_registrations` take effect.
+    pub(super) fn release_registrations(&self) {
+        self.registrations_released.set();
     }
 
     /// Fail every relationship write on `object` as unreachable, or take
@@ -372,6 +383,9 @@ impl VeraProvider for Remote {
                 action: PolicyAction::RegisterObject,
             },
         )?;
+        if self.hold_registrations.load(Ordering::SeqCst) {
+            self.registrations_released.wait().await;
+        }
         self.owners
             .insert(object_id.to_string(), Self::actor(bearer_token).to_string());
         Ok(())
@@ -573,10 +587,15 @@ pub(super) async fn start(
 }
 
 pub(super) async fn provision(node: &Node) {
-    let policy = node.add_dac_policy_as(&actor(OWNER), POLICY).await.unwrap();
-    node.add_collection(&format!(
-        "type Record @policy(id: \"{policy}\", resource: \"rows\") {{ name: String }}"
-    ))
+    let owner_context = actor(OWNER);
+    let policy = node
+        .add_dac_policy_as(&owner_context, POLICY)
+        .await
+        .unwrap();
+    node.add_collection(
+        &owner_context,
+        &format!("type Record @policy(id: \"{policy}\", resource: \"rows\") {{ name: String }}"),
+    )
     .await
     .unwrap();
 }
@@ -729,9 +748,7 @@ fn a_local_provider_applies_in_the_transaction_and_a_remote_one_stages() {
             .unwrap());
         // A caller stages in a transaction of its own through its context.
         let own = node.runner().begin_txn_as(&owner, false).await.unwrap();
-        let in_own = owner
-            .clone()
-            .with_txn(own.as_str().parse().ok().map(defra_core::TxnId));
+        let in_own = owner.clone().with_txn(own.as_str().parse().ok());
         assert!(matches!(
             node.change_dac_actor_relationship_as(&in_own, "Record", &doc, "reader", READER, false)
                 .await,

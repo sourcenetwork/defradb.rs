@@ -16,6 +16,7 @@ mod comment;
 mod crdt_type;
 mod describe_string_kind;
 mod duplicate_relation_name;
+mod field_type_forms;
 mod filter;
 mod get_collection_version;
 mod group;

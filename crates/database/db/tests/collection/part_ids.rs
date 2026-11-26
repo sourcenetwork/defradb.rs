@@ -2,13 +2,14 @@
 //! decoded once and shared, and the document's head set is read by one point read
 //! for both its value operands and its blocks, with no head prefix scanned.
 
+use crate::common::schema::parsed;
 use std::sync::Arc;
 
 use db::{AutoCommitMutator, DbDocMutator, DB};
 use document::{DocID, Document, NormalValue};
 use query::mutator::DocMutator;
 use rapidhash::RapidHashSet;
-use schema::{CollectionVersion, FieldDescription, FieldKind};
+use schema::CollectionVersion;
 use storage::corekv::Key;
 use storage::keys::HeadstoreDocSetKey;
 use storage::namespace::Namespace;
@@ -18,27 +19,17 @@ use crate::common::counting_store::CountingStore;
 
 type CountingDb = Arc<DB<CountingStore<RegolithStore>>>;
 
+const COLLECTION_SDL: &str = "type Parted { left: Int right: Int }";
+
 fn collection() -> CollectionVersion {
-    CollectionVersion::new(
-        "Parted",
-        "parted-v1",
-        "col-parted",
-        vec![
-            FieldDescription::new(
-                "1",
-                "_docID",
-                FieldKind::doc_id(),
-                schema::CType::LwwRegister,
-            ),
-            FieldDescription::new("2", "left", FieldKind::int(), schema::CType::LwwRegister),
-            FieldDescription::new("3", "right", FieldKind::int(), schema::CType::LwwRegister),
-        ],
-    )
+    parsed(COLLECTION_SDL)
 }
 
 async fn seeded() -> (CountingDb, DocID) {
     let db = Arc::new(DB::new(CountingStore::new(RegolithStore::in_memory().unwrap())).unwrap());
-    db.create_collection(collection()).await.unwrap();
+    db.add_collection(&defra_core::RequestContext::ambient(), COLLECTION_SDL)
+        .await
+        .unwrap();
     let created = AutoCommitMutator::new(Arc::clone(&db))
         .create(
             "Parted",

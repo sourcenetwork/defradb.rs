@@ -192,7 +192,7 @@
 \* the provider at start and every other command that finds the request
 \* still journaled, JDrop for a commit that stops waiting, and JAdopt and
 \* JDecide for a change found marked: the configurations with
-\* Journaled = TRUE. Through a provider without one (Cosmos, the test
+\* Journaled = TRUE. Through a provider without one (a host's own, the test
 \* providers) a pass that submits a change and reads the provider's answer
 \* is Mark, Land and Lookup taken together with nothing stored in between,
 \* which is the model with Marker = FALSE: MC_AcpOutbox_Green_NoMarker holds

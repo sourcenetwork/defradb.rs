@@ -34,10 +34,17 @@ async fn fixture() -> (Node, String, String) {
         .build()
         .await
         .unwrap();
-    let policy = node.add_dac_policy_as(&actor(OWNER), POLICY).await.unwrap();
-    node.add_collection(&format!(
-        "type Record @policy(id: \"{policy}\", resource: \"rows\") {{ pending: Boolean }}"
-    ))
+    let owner_context = actor(OWNER);
+    let policy = node
+        .add_dac_policy_as(&owner_context, POLICY)
+        .await
+        .unwrap();
+    node.add_collection(
+        &owner_context,
+        &format!(
+            "type Record @policy(id: \"{policy}\", resource: \"rows\") {{ pending: Boolean }}"
+        ),
+    )
     .await
     .unwrap();
     let response = node
@@ -83,7 +90,10 @@ fn node_owned_transaction_keeps_the_selected_actor_and_finality() {
         assert!(node.add_dac_actor_relationship_for_in_txn(
             &handle, &owner.clone().with_authorization_expiration(Some(0)), "Record", &doc, "reader", READER,
         ).await.is_err());
-        let mismatched = owner.clone().with_txn(Some(defra_core::TxnId(u64::MAX)));
+        let mismatched = owner.clone().with_txn(Some(defra_core::TxnId {
+            start: 0,
+            route: u64::MAX,
+        }));
         assert!(node.add_dac_actor_relationship_for_in_txn(
             &handle, &mismatched, "Record", &doc, "reader", READER,
         ).await.is_err());

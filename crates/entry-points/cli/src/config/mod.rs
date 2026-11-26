@@ -8,6 +8,7 @@
 
 mod go_layout;
 mod iroh_relay_server;
+mod removed_keys;
 mod secret_file;
 mod sections;
 mod types;
@@ -56,10 +57,10 @@ pub struct Config {
     /// The worker pool the data path runs on.
     #[serde(default)]
     pub workers: WorkersConfig,
-    /// One message per Go key `config.yaml` set that defradb.rs ignores, logged
-    /// once logging is up.
+    /// One message per key `config.yaml` set that defradb.rs ignores, a Go
+    /// key or a removed one of its own, logged once logging is up.
     #[serde(skip)]
-    pub ignored_go_keys: Vec<String>,
+    pub ignored_keys: Vec<String>,
 }
 
 fn default_replicator_retry_intervals() -> Vec<u32> {
@@ -82,7 +83,7 @@ impl Default for Config {
             telemetry_disabled: false,
             replicator_retry_intervals: default_replicator_retry_intervals(),
             workers: WorkersConfig::default(),
-            ignored_go_keys: Vec::new(),
+            ignored_keys: Vec::new(),
         }
     }
 }
@@ -171,10 +172,11 @@ impl Config {
             source,
         };
         let mut value: serde_yaml::Value = serde_yaml::from_str(&contents).map_err(parse_error)?;
-        let ignored_go_keys = go_layout::apply(&mut value);
+        let mut ignored_keys = go_layout::apply(&mut value);
+        removed_keys::apply(&mut value, &mut ignored_keys);
         let config: Self = serde_yaml::from_value(value).map_err(parse_error)?;
         Ok(Self {
-            ignored_go_keys,
+            ignored_keys,
             ..config
         })
     }
@@ -252,52 +254,10 @@ impl Config {
             self.acp.remote_address = addr.clone();
         }
 
-        // Vera
-        #[cfg(feature = "vera")]
-        if let Some(addr) = cli
-            .vera_address
-            .clone()
-            .or_else(|| std::env::var("DEFRA_SOURCE_HUB_ADDRESS").ok())
-        {
-            self.acp.vera_address = addr;
-        }
-        #[cfg(feature = "vera")]
-        if let Some(addr) = cli
-            .vera_grpc_address
-            .clone()
-            .or_else(|| std::env::var("DEFRA_SOURCE_HUB_GRPC_ADDRESS").ok())
-        {
-            self.acp.vera_grpc_address = addr;
-        }
-        #[cfg(feature = "vera")]
-        if let Some(addr) = cli
-            .vera_comet_address
-            .clone()
-            .or_else(|| std::env::var("DEFRA_SOURCE_HUB_COMET_ADDRESS").ok())
-        {
-            self.acp.vera_comet_address = addr;
-        }
-        #[cfg(feature = "vera")]
-        if let Some(addr) = cli
-            .vera_events_ws
-            .clone()
-            .or_else(|| std::env::var("DEFRA_SOURCE_HUB_EVENTS_WS").ok())
-        {
-            self.acp.vera_events_ws = addr;
-        }
-        #[cfg(feature = "vera")]
-        if let Some(id) = cli
-            .vera_chain_id
-            .clone()
-            .or_else(|| std::env::var("DEFRA_SOURCE_HUB_CHAIN_ID").ok())
-        {
-            self.acp.vera_chain_id = id;
-        }
-
         // vera.rs
         #[cfg(feature = "vera")]
-        if let Some(ref addr) = cli.vera_rs_address {
-            self.acp.vera_rs_address = addr.clone();
+        if let Some(ref addr) = cli.vera_address {
+            self.acp.vera_address = addr.clone();
         }
         #[cfg(feature = "vera")]
         if let Some(ref key) = cli.vera_consensus_key {

@@ -24,7 +24,10 @@ use storage::RegolithStore;
 use super::create::{by_name, create_user, index_entries, open_with_collection};
 
 const COLLECTION: &str = "Dropped";
-const COLLECTION_ID: &str = "col-index-dropped";
+
+fn collection_id() -> String {
+    super::create::users_schema(COLLECTION).collection_id
+}
 
 async fn actions_for(db: &DB<RegolithStore>, action: Action) -> Vec<defra_core::ActionExecution> {
     db.list_actions()
@@ -68,7 +71,7 @@ async fn half_backfilled(
     CollectionVersion,
     IndexDescription,
 ) {
-    let (store, db) = open_with_collection(COLLECTION, "dropped-v1", COLLECTION_ID).await;
+    let (store, db) = open_with_collection(COLLECTION).await;
     let mutator = AutoCommitMutator::new(db.clone());
     for i in 0..total {
         create_user(&mutator, COLLECTION, &format!("user-{i}")).await;
@@ -95,7 +98,7 @@ async fn half_backfilled(
         drop(
             db.stage_action(
                 &systemstore,
-                COLLECTION_ID,
+                &collection_id(),
                 Action::BACKFILL_INDEX,
                 &index.id.to_string(),
             )
@@ -131,7 +134,7 @@ async fn half_backfilled(
         systemstore
             .set(
                 &ActionProgressKey::new(
-                    COLLECTION_ID,
+                    collection_id(),
                     Action::BACKFILL_INDEX,
                     index.id.to_string(),
                 )
@@ -180,7 +183,7 @@ fn drop_index_clears_an_unfinished_backfill() {
 #[test]
 fn drop_index_reports_a_missing_index() {
     workers::block_on(async {
-        let (_store, db) = open_with_collection(COLLECTION, "dropped-v1", COLLECTION_ID).await;
+        let (_store, db) = open_with_collection(COLLECTION).await;
         let error = db.drop_index(COLLECTION, "by_name").await.unwrap_err();
         assert!(
             matches!(error, db::Error::IndexNotFound { ref index, .. } if index == "by_name"),
@@ -193,7 +196,7 @@ fn drop_index_reports_a_missing_index() {
 #[test]
 fn a_drop_during_a_running_backfill_leaves_no_action() {
     workers::block_on(async {
-        let (_store, db) = open_with_collection(COLLECTION, "dropped-v1", COLLECTION_ID).await;
+        let (_store, db) = open_with_collection(COLLECTION).await;
         let mutator = AutoCommitMutator::new(db.clone());
         for i in 0..2_000 {
             create_user(&mutator, COLLECTION, &format!("user-{i}")).await;
@@ -246,17 +249,17 @@ fn a_restart_finishes_an_unfinished_drop() {
         let txn = db.new_txn(false).await.unwrap();
         {
             let systemstore = txn.systemstore().unwrap();
-            db.clear_action(COLLECTION_ID, Action::BACKFILL_INDEX, &subject)
+            db.clear_action(&collection_id(), Action::BACKFILL_INDEX, &subject)
                 .await
                 .unwrap();
             drop(
-                db.stage_action(&systemstore, COLLECTION_ID, Action::DROP_INDEX, &subject)
+                db.stage_action(&systemstore, &collection_id(), Action::DROP_INDEX, &subject)
                     .await
                     .unwrap(),
             );
             systemstore
                 .set(
-                    &ActionProgressKey::new(COLLECTION_ID, Action::DROP_INDEX, &subject).bytes(),
+                    &ActionProgressKey::new(collection_id(), Action::DROP_INDEX, &subject).bytes(),
                     &DropProgress::new(schema.resolved_root_id(), index.clone(), None)
                         .encode()
                         .unwrap(),
@@ -288,15 +291,20 @@ fn a_restart_clears_a_failed_backfill_of_a_dropped_index() {
             let systemstore = txn.systemstore().unwrap();
             systemstore
                 .set(
-                    &ActionStatusKey::with_subject(COLLECTION_ID, Action::BACKFILL_INDEX, &subject)
-                        .bytes(),
+                    &ActionStatusKey::with_subject(
+                        collection_id(),
+                        Action::BACKFILL_INDEX,
+                        &subject,
+                    )
+                    .bytes(),
                     &db::database::action::encode_status(ActionStatus::ERRORED),
                 )
                 .await
                 .unwrap();
             systemstore
                 .set(
-                    &ActionReasonKey::new(COLLECTION_ID, Action::BACKFILL_INDEX, &subject).bytes(),
+                    &ActionReasonKey::new(collection_id(), Action::BACKFILL_INDEX, &subject)
+                        .bytes(),
                     b"index 'by_name' changed during backfill",
                 )
                 .await
@@ -321,9 +329,12 @@ fn a_dropped_index_id_is_never_handed_out_again() {
         let db = Arc::new(DB::from_arc(store).unwrap());
         // An index from the SDL numbers its id from a counter of its own,
         // which the id of an index created later used not to look past.
-        for schema in query::parse_sdl("type Reused { name: String @index }").unwrap() {
-            db.create_collection(schema).await.unwrap();
-        }
+        db.add_collection(
+            &defra_core::RequestContext::ambient(),
+            "type Reused { name: String @index }",
+        )
+        .await
+        .unwrap();
         let dropped = db.require_collection("Reused").unwrap().schema().indexes[0].clone();
         db.drop_index("Reused", &dropped.name).await.unwrap();
 
