@@ -269,27 +269,29 @@ impl<S: Store> crate::database::DB<S> {
     }
 
     pub async fn complete_action(&self, lease: ActionExecutionLease) -> Result<()> {
-        let collection_id = lease.collection_id();
-        let action = lease.action();
-        let subject = lease.subject();
         let txn = self.new_txn(false).await?;
         let systemstore = txn.systemstore()?;
         delete_keys(
             &systemstore,
-            &action_record_keys(collection_id, action, subject),
+            &action_record_keys(lease.collection_id(), lease.action(), lease.subject()),
         )
         .await?;
         drop(systemstore);
         txn.commit().await?;
+        self.publish_completed_action(&lease);
+        Ok(())
+    }
 
+    /// Announce that the action of `lease` completed, once the commit that
+    /// cleared its record has landed.
+    pub(crate) fn publish_completed_action(&self, lease: &ActionExecutionLease) {
         self.publish_action(ActionExecution {
-            collection_id: collection_id.to_string(),
-            action,
-            subject: subject.to_string(),
+            collection_id: lease.collection_id().to_string(),
+            action: lease.action(),
+            subject: lease.subject().to_string(),
             status: ActionStatus::COMPLETED,
             ..Default::default()
         });
-        Ok(())
     }
 
     pub async fn clear_action(
@@ -431,8 +433,36 @@ pub(crate) async fn index_action_executions(
     systemstore: &datastore::NamespaceView,
     collection_id: &str,
 ) -> Result<RapidHashMap<u32, ActionExecution>> {
+    index_action_records(systemstore, collection_id, false).await
+}
+
+/// [`index_action_statuses`] read as a validated scan: a status written in
+/// the range before this transaction commits aborts it. What a transaction
+/// publishes to the collection cache from these statuses is then the state
+/// at its own commit, so a publication never puts back an index status that
+/// a concurrent commit changed (`proofs/tla/IndexCachePublication.tla`).
+pub(crate) async fn validated_index_action_statuses(
+    systemstore: &datastore::NamespaceView,
+    collection_id: &str,
+) -> Result<RapidHashMap<u32, ActionStatus>> {
+    Ok(index_action_records(systemstore, collection_id, true)
+        .await?
+        .into_iter()
+        .map(|(index_id, execution)| (index_id, execution.status))
+        .collect())
+}
+
+async fn index_action_records(
+    systemstore: &datastore::NamespaceView,
+    collection_id: &str,
+    validated: bool,
+) -> Result<RapidHashMap<u32, ActionExecution>> {
     let mut iter = systemstore
-        .iterator(IterOptions::new().with_prefix(ActionStatusKey::collection_prefix(collection_id)))
+        .iterator(
+            IterOptions::new()
+                .with_prefix(ActionStatusKey::collection_prefix(collection_id))
+                .with_validation(validated),
+        )
         .await
         .map_err(Error::Storage)?;
     let pairs = iter.collect_all().await.map_err(Error::Storage)?;

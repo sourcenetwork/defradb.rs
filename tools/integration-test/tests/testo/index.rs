@@ -12,6 +12,7 @@ mod backfill_unique;
 mod backfill_unique_txn;
 mod composite_in_order;
 mod crdt;
+mod ddl_under_writes;
 mod delete;
 mod get;
 mod group_order;

@@ -33,8 +33,9 @@ impl<S: Store> DB<S> {
     /// index every document the collection already holds. A missing or empty
     /// `name` is generated.
     ///
-    /// The definition and in-progress action commit together, and the cache
-    /// reloads before the new fence is captured. This makes writes that land
+    /// The definition and in-progress action commit together, and the
+    /// commit publishes them to the collection cache before it returns,
+    /// before the new fence is captured. This makes writes that land
     /// before publication part of the backfill range and lets later writes
     /// maintain the index themselves. Backfill then runs in bounded
     /// transactions detached from this future so a caller that gives up on
@@ -193,7 +194,10 @@ impl<S: Store> DB<S> {
     }
 
     /// Write the definition of a new index and its in-progress action into
-    /// `txn`, and refresh the collection cache when `txn` commits.
+    /// `txn`, and publish them to the collection cache when `txn` commits,
+    /// before the commit returns: the caller's next request, the backfill
+    /// first of all, works from this definition, even while writers' commit
+    /// hooks hold back ordered events.
     pub(super) async fn stage_index_definition(
         &self,
         txn: &DbTxn<S>,
@@ -255,7 +259,7 @@ impl<S: Store> DB<S> {
         )
         .await?;
         let cache = std::sync::Arc::clone(&self.collections);
-        txn.on_commit(OnCommit::Ordered(Box::new(move || {
+        txn.on_commit(OnCommit::OrderedAndWait(Box::new(move || {
             cache.rcu(|old| {
                 let mut cache = old.clone();
                 cache.put(cached_collection.clone());

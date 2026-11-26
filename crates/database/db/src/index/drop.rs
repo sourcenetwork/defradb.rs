@@ -123,7 +123,9 @@ where
     }
 
     /// Take the index out of the definition this attempt reads, delete its
-    /// backfill record and write the drop record, all in `txn`.
+    /// backfill record and write the drop record, all in `txn`, whose commit
+    /// publishes the new definition to the collection cache before it
+    /// returns, so a create right after the drop works from it.
     pub(super) async fn stage_index_drop(
         &self,
         txn: &DbTxn<S>,
@@ -189,7 +191,7 @@ where
 
         let cached = Collection::load_index_actions(schema, &systemstore).await?;
         let cache = Arc::clone(&self.collections);
-        txn.on_commit(OnCommit::Ordered(Box::new(move || {
+        txn.on_commit(OnCommit::OrderedAndWait(Box::new(move || {
             cache.rcu(|old| {
                 let mut cache = old.clone();
                 cache.put(cached.clone());

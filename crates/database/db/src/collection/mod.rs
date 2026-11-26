@@ -205,11 +205,15 @@ fn serialize_definition_hint(def: &CollectionVersion) -> Option<Arc<[u8]>> {
 }
 
 impl Collection {
+    /// `def` with the index statuses its transaction reads, as a validated
+    /// scan: what a transaction publishes to the collection cache. A status
+    /// another commit writes first aborts the transaction, so the handle it
+    /// publishes is the state at its own commit.
     pub(crate) async fn load_index_actions(
         def: CollectionVersion,
         systemstore: &datastore::NamespaceView,
     ) -> crate::error::Result<Self> {
-        let statuses = IndexStatuses::load_for(systemstore, &def).await?;
+        let statuses = IndexStatuses::load_validated_for(systemstore, &def).await?;
         Ok(Self::with_index_actions(
             def,
             &statuses,
