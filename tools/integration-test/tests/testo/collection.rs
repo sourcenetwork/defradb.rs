@@ -1,5 +1,6 @@
 mod add_relation_with_collection;
 mod deterministic_ids;
+mod retention;
 mod refresh {
     mod list_actions;
 }

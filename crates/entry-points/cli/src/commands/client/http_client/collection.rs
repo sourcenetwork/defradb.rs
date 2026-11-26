@@ -39,6 +39,14 @@ impl HttpClient {
         Ok(response.json().await?)
     }
 
+    /// Prune each document's history in collection `name` to the
+    /// collection's `@retention(maxDepth: N)`; the response, `{"count": pruned}`.
+    pub async fn collection_prune_history(&self, name: &str) -> Result<serde_json::Value> {
+        let path = format!("collections/{}/history/prune", encode(name));
+        let response = self.send(Method::POST, &path, &[], None, None).await?;
+        Ok(response.json().await?)
+    }
+
     /// Delete one or more collections by name via Go-compatible
     /// `DELETE /collections?name=Users,Books&active-only=true`.
     pub async fn collection_delete(&self, names: &[String], active_only: bool) -> Result<()> {

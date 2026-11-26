@@ -27,6 +27,7 @@ pub mod lens;
 pub mod nac;
 pub mod openapi;
 pub mod p2p;
+pub mod prune_history;
 pub mod schema;
 pub(crate) mod txn_header;
 pub mod utility;

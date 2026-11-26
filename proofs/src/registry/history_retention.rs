@@ -1,0 +1,30 @@
+use super::{Axis::*, Property, Tier::*};
+
+/// The crates this family's models cover.
+pub(super) const CRATES: &str = "db";
+
+pub(super) const PROPERTIES: &[Property] = &[
+    Property {
+        // Pruning a collection's history to @retention(maxDepth: N): one
+        // transact attempt per document keeps the top N heights, every live
+        // composite and field head and every block another document owns
+        // (a validated owner scan decides each delete), and keeps the pruned
+        // commits' priority entries so a replayed pruned commit stays applied.
+        family: "History retention",
+        name: "INV_HeadsStored / INV_FieldHeadsStored / INV_OwnedStored / INV_WindowKept / INV_NoStaleHead / INV_Pruned",
+        axis: Tla,
+        anchor: "crates/database/db/src/collection/ops/prune_history.rs DB::prune_history_as, DB::prune_doc_history, prune_doc_in; crates/database/db/src/block/cleanup.rs delete_owned_commit; crates/database/db/src/docid/map.rs block_has_owners; crates/database/db/src/merge/merge_handler/history.rs composite_was_applied",
+        model_ref: "MC_HistoryRetention_{Green,Red_PruneHead,Red_PruneFieldHead,Red_PlainScan,Red_DropMarker,Red_OffByOne}.cfg",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
+        family: "History retention",
+        name: "head_kept / window_kept / short_history_kept / below_pruned / stale_top_safe",
+        axis: Lean,
+        anchor: "crates/database/db/src/collection/ops/prune_history.rs prune_doc_in",
+        model_ref: "HistoryWindow (lake build)",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+];

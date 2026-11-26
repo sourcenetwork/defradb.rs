@@ -174,6 +174,15 @@ pub struct CollectionVersion {
     )]
     pub downsample_source: Option<QuerySource>,
 
+    /// How many commit heights of each document's history `@retention`
+    /// keeps when the collection's history is pruned.
+    #[serde(
+        rename = "RetentionMaxDepth",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub retention_max_depth: Option<u64>,
+
     /// Whether the collection history is tracked as a single verifiable entity
     #[serde(rename = "IsBranchable", default)]
     pub is_branchable: bool,
@@ -260,6 +269,7 @@ impl CollectionVersion {
             downsample_time_field: None,
             downsample_retention: None,
             downsample_source: None,
+            retention_max_depth: None,
             is_branchable: false,
             is_embedded_only: false,
             is_placeholder: false,
@@ -396,7 +406,23 @@ impl CollectionVersion {
         self.validate_relation_id_field_kinds()?;
         self.validate_policy()?;
         self.validate_downsample()?;
+        self.validate_retention()?;
         Ok(())
+    }
+
+    fn validate_retention(&self) -> Result<()> {
+        match self.retention_max_depth {
+            None => Ok(()),
+            Some(0) => Err(SchemaError::InvalidRetention(format!(
+                "maxDepth must be a positive integer. Collection: {}",
+                self.name
+            ))),
+            Some(_) if self.is_branchable => Err(SchemaError::InvalidRetention(format!(
+                "a branchable collection keeps its whole history. Collection: {}",
+                self.name
+            ))),
+            Some(_) => Ok(()),
+        }
     }
 
     fn validate_materialization(&self) -> Result<()> {

@@ -375,6 +375,11 @@ const REVIEWED: &[(&str, &str, &str)] = &[
         "CollectionTruncate",
     ),
     (
+        "/api/v0/collections/{name}/history/prune",
+        "POST",
+        "CollectionTruncate",
+    ),
+    (
         "/api/v0/collections/{name}/document/{docID}",
         "GET",
         "DocumentRead",

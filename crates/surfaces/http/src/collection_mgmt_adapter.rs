@@ -154,4 +154,24 @@ where
             .await
             .map_err(|e| format!("{}", e))
     }
+
+    async fn prune_history(&self, name: &str) -> Result<usize, String> {
+        let (database, context, name) = (
+            Arc::clone(&self.database),
+            self.context().into_owned(),
+            name.to_owned(),
+        );
+        workers::run_on(
+            self.database.pool(),
+            workers::Target::LeastLoaded,
+            move || async move {
+                database
+                    .prune_history_as(&context, &name)
+                    .await
+                    .map_err(|e| e.to_string())
+            },
+        )
+        .await
+        .map_err(|error| error.report("history prune").to_string())?
+    }
 }

@@ -77,6 +77,9 @@ pub enum SchemaError {
     #[error("invalid downsample configuration: {0}")]
     InvalidDownsample(String),
 
+    #[error("invalid retention configuration: {0}")]
+    InvalidRetention(String),
+
     #[error("non-materialized collections are not supported. Collection: {0}")]
     NonMaterializedCollection(String),
 

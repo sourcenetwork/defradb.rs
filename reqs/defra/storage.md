@@ -227,6 +227,26 @@ A signature block received over P2P starts out marked to-merge. Merging a block 
 
 The node configuration's `Libp2pConfig::orphan_sweep` sets whether the sweep runs (off by default), the interval between sweeps (5 minutes by default) and how long a to-merge block is kept (30 minutes by default). The node runs it only on a persistent store; an in-memory store never sweeps. The first sweep waits one TTL; each sweep examines at most 100,000 marks and resumes where the previous one stopped. With the sweep on, a block put through the P2P blockstore and never merged is deleted once its mark ages past the TTL.
 
+# `defra.retention`: Keeping only the recent history of each document
+
+- **Parents:** ["defra"]
+
+A collection can declare how much of each document's commit history it keeps with `@retention(maxDepth: N)`. Nothing happens on write: the operator applies it with a history prune of the collection (`DB::prune_history_as`, `POST /api/v0/collections/{name}/history/prune`, `defradb client collection --collection-name <name> prune-history`), which runs on this node only and replicates nothing. Go has no history retention.
+
+# `defra.retention.directive`: Declaring a retention depth
+
+- **Parents:** ["defra.retention"]
+- **Scenarios:** ["collection::retention::retention_needs_a_positive_max_depth", "collection::retention::a_branchable_collection_refuses_retention"]
+
+`type User @retention(maxDepth: 2) { name: String age: Int }` records `"RetentionMaxDepth": 2` in the collection definition; a collection without the directive has no such field. A `maxDepth` that is missing, not an integer, zero or negative fails with `@retention directive requires a positive integer 'maxDepth' argument`. A `@branchable` collection keeps its whole history, since its collection DAG links every commit, so `@retention` on one fails with `invalid retention configuration: a branchable collection keeps its whole history. Collection: User`.
+
+# `defra.retention.prune`: A history prune keeps the top N heights of each document
+
+- **Parents:** ["defra.retention"]
+- **Scenarios:** ["collection::retention::prune_keeps_the_top_heights_and_the_value", "collection::retention::a_pruned_document_takes_updates_and_prunes_again", "collection::retention::a_collection_without_retention_keeps_its_history"]
+
+With `maxDepth: 2`, a document created as `{"name":"John","age":21}` and updated three times (`age` 22, 23, 24) has composite commits at heights 1 to 4. A prune removes the composites at heights 1 and 2 and reports `{"count": 2}`: `_commits` then returns composite and `age` commits at heights 4 and 3 only (a walk from the heads stops where the history was cut, with no error), while the `name` commit at height 1 stays because it is still that field's head, and the document still reads `{"name":"John","age":24}`. A composite that is a live head is never pruned, and a block another document owns is kept. Running the prune again removes nothing and counts 0; after another update it removes the one composite that fell below the window. A collection without `@retention` keeps its whole history and counts 0. Deleted documents are pruned the same way. A prune is checked against the node permission of a collection truncate; an unknown collection fails with the collection-not-found error. A pruned commit cannot be fetched by a peer any more, and a pruned commit a peer sends again is recognised as already applied: it never becomes a head again.
+
 # `defra.replication_filter`: An embedder's filter on replicated documents
 
 - **Parents:** ["defra"]

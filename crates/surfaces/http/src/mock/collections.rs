@@ -93,4 +93,8 @@ impl CollectionManagementOperations for MockCollectionManagementOperations {
     ) -> Result<(), String> {
         Ok(())
     }
+
+    async fn prune_history(&self, _name: &str) -> Result<usize, String> {
+        Ok(0)
+    }
 }

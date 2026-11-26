@@ -41,6 +41,7 @@ pub(crate) fn same_schema_except_indexes(
         downsample_time_field: left_downsample_time_field,
         downsample_retention: left_downsample_retention,
         downsample_source: left_downsample_source,
+        retention_max_depth: left_retention_max_depth,
         is_branchable: left_is_branchable,
         is_embedded_only: left_is_embedded_only,
         is_placeholder: left_is_placeholder,
@@ -69,6 +70,7 @@ pub(crate) fn same_schema_except_indexes(
         downsample_time_field: right_downsample_time_field,
         downsample_retention: right_downsample_retention,
         downsample_source: right_downsample_source,
+        retention_max_depth: right_retention_max_depth,
         is_branchable: right_is_branchable,
         is_embedded_only: right_is_embedded_only,
         is_placeholder: right_is_placeholder,
@@ -96,6 +98,7 @@ pub(crate) fn same_schema_except_indexes(
         && left_downsample_time_field == right_downsample_time_field
         && left_downsample_retention == right_downsample_retention
         && left_downsample_source == right_downsample_source
+        && left_retention_max_depth == right_retention_max_depth
         && left_is_branchable == right_is_branchable
         && left_is_embedded_only == right_is_embedded_only
         && left_is_placeholder == right_is_placeholder

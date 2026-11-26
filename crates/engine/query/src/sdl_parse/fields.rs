@@ -27,6 +27,21 @@ use super::helpers::{
 use super::parser::{CompositeIndex, ParsedField, ParsedTypeDirectives, SdlParser};
 use super::warnings::{DirectiveLocation, ParseWarning};
 
+/// `@retention(maxDepth: N)`: how many commit heights of each document's
+/// history the collection keeps when its history is pruned.
+fn parse_retention_directive(directive: &Directive<'_, String>) -> Result<u64> {
+    match get_directive_arg(directive, "maxDepth") {
+        Some(graphql_parser::schema::Value::Int(value)) => value
+            .as_i64()
+            .and_then(|value| u64::try_from(value).ok())
+            .filter(|value| *value > 0),
+        _ => None,
+    }
+    .ok_or_else(|| {
+        QueryError::parse("@retention directive requires a positive integer 'maxDepth' argument")
+    })
+}
+
 impl<'a> SdlParser<'a> {
     pub(super) fn parse_field(&mut self, field: &Field<'_, String>) -> Result<ParsedField> {
         let object = self.current_type.as_deref().unwrap_or_default();
@@ -395,6 +410,9 @@ impl<'a> SdlParser<'a> {
                     result.downsample_interval = Some(interval);
                     result.downsample_time_field = Some(time_field);
                     result.downsample_retention = retention;
+                }
+                "retention" => {
+                    result.retention_max_depth = Some(parse_retention_directive(directive)?);
                 }
                 "branchable" => {
                     result.is_branchable = self

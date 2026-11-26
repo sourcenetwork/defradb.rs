@@ -51,6 +51,7 @@ pub(super) struct ParsedTypeDirectives {
     pub(super) downsample_interval: Option<String>,
     pub(super) downsample_time_field: Option<String>,
     pub(super) downsample_retention: Option<String>,
+    pub(super) retention_max_depth: Option<u64>,
     pub(super) is_branchable: bool,
     pub(super) policy: Option<PolicyConfig>,
     /// The governance root from `@governed(root:)`, a self-addressing
@@ -69,6 +70,7 @@ impl Default for ParsedTypeDirectives {
             downsample_interval: None,
             downsample_time_field: None,
             downsample_retention: None,
+            retention_max_depth: None,
             is_branchable: false,
             policy: None,
             governance_root: None,
