@@ -5,6 +5,7 @@
 //! sampling, clustering and quantization they train with. Metric and distance
 //! primitives live in `defra_core::vector`. Nothing below `store` knows what a
 //! database is.
+pub mod budget;
 pub mod codec;
 pub mod engine;
 pub mod index;

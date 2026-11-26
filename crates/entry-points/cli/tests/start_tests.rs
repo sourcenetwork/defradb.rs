@@ -18,6 +18,7 @@ fn default_start_args() -> StartArgs {
         max_txn_retries: None,
         store: None,
         valuelogfilesize: None,
+        vector_memory_budget: None,
         p2paddr: None,
         no_p2p: None,
         allowed_origins: None,
@@ -151,6 +152,7 @@ fn test_apply_to_config_all_flags() {
         max_txn_retries: Some(10),
         store: Some("memory".to_string()),
         valuelogfilesize: Some(2 << 30),
+        vector_memory_budget: Some(1 << 20),
         p2paddr: Some(vec!["/ip4/0.0.0.0/tcp/4001".to_string()]),
         no_p2p: Some(true),
         allowed_origins: Some(vec!["http://localhost:3000".to_string()]),
@@ -248,6 +250,7 @@ fn test_apply_to_config_all_flags() {
     assert_eq!(config.datastore.max_txn_retries, 10);
     assert_eq!(config.datastore.store, DatastoreType::Memory);
     assert_eq!(config.datastore.valuelogfilesize, Some(2 << 30));
+    assert_eq!(config.datastore.vector_memory_budget, 1 << 20);
     assert_eq!(config.datastore.durability, DurabilityMode::Eventual);
     assert_eq!(config.net.p2p_addresses, vec!["/ip4/0.0.0.0/tcp/4001"]);
     assert!(config.net.p2p_disabled);
@@ -357,6 +360,7 @@ const STORAGE_START_FLAGS: &[&str] = &[
     "max-txn-retries",
     "store",
     "valuelogfilesize",
+    "vector-memory-budget",
     "no-encryption",
     "default-key-type",
     "no-searchable-encryption",

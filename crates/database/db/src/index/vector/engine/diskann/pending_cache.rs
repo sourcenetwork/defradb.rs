@@ -23,8 +23,9 @@ use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Arc;
 
 use rapidhash::{HashSetExt, RapidHashMap, RapidHashSet};
-use regolith::sync::Atom;
+use regolith::sync::{Atom, OnceCell};
 
+use crate::index::vector::budget::{Charge, MemoryBudget};
 use crate::index::vector::store::NodeId;
 
 /// The most a copy holds. A pending list bigger than this is scanned, as it
@@ -65,6 +66,10 @@ pub struct Segment {
     /// An entry broke the run (a gap, or past `u32` entries): the segment
     /// cannot be kept.
     broken: bool,
+    /// The room the segment holds in the node's budget, taken when a copy
+    /// holding it is first published. Copies share segments, so each is
+    /// charged once, and given back when the last copy holding it goes.
+    charge: OnceCell<Charge>,
 }
 
 /// What an entry costs besides its code: its id and marker, and a slot in
@@ -247,25 +252,60 @@ impl Copy {
 }
 
 /// The copy one index's searches share.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct PendingCache {
     current: Atom<Arc<Copy>>,
+    budget: Arc<MemoryBudget>,
+}
+
+/// A cache nothing is refused from, for an index used outside a node.
+impl Default for PendingCache {
+    fn default() -> Self {
+        Self::with_budget(MemoryBudget::unlimited())
+    }
 }
 
 impl PendingCache {
+    /// A cache whose copies are charged to `budget`.
+    pub fn with_budget(budget: Arc<MemoryBudget>) -> Self {
+        Self {
+            current: Atom::default(),
+            budget,
+        }
+    }
+
+    /// Charges every segment of `copy` not charged yet, and says whether the
+    /// budget had room for them all. A segment charged here and never
+    /// published gives its room back when it is dropped.
+    fn charge(&self, copy: &Copy) -> bool {
+        copy.segments.iter().all(|segment| {
+            if segment.charge.get().is_some() {
+                return true;
+            }
+            match self.budget.charge(segment.bytes() as u64) {
+                Some(charge) => {
+                    let _ = segment.charge.set(charge);
+                    true
+                }
+                None => false,
+            }
+        })
+    }
+
     pub fn load(&self) -> Arc<Copy> {
         self.current.load().clone()
     }
 
     /// Publishes `next` if it is newer than the current copy: a later
     /// generation, or the same one caught up further. A copy past
-    /// [`MAX_PENDING_CACHE_BYTES`] is published as an oversized marker instead,
-    /// so searches at its generation scan without building a copy to discard.
+    /// [`MAX_PENDING_CACHE_BYTES`], or one the node's budget has no room
+    /// for, is published as an oversized marker instead, so searches at its
+    /// generation scan without building a copy to discard.
     pub fn publish(&self, next: Arc<Copy>) {
         let Some(tag) = next.tag else {
             return;
         };
-        let next = if next.fits() {
+        let next = if next.fits() && self.charge(&next) {
             next
         } else {
             Arc::new(Copy {

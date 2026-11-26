@@ -67,6 +67,10 @@ pub struct DbOptions {
     /// Documents an index backfill may index in one transaction. `None` uses
     /// the built-in page size.
     pub backfill_batch_size: Option<usize>,
+    /// Bytes vector indexes may keep in memory between searches, across
+    /// every index on the node. `None` is
+    /// [`DEFAULT_VECTOR_MEMORY_BUDGET`](crate::index::vector::budget::DEFAULT_VECTOR_MEMORY_BUDGET).
+    pub vector_memory_budget: Option<u64>,
 }
 
 impl std::fmt::Debug for DbOptions {
@@ -94,6 +98,7 @@ impl std::fmt::Debug for DbOptions {
             .field("index_build_gate", &self.index_build_gate.is_some())
             .field("commit_gate", &self.commit_gate.is_some())
             .field("backfill_batch_size", &self.backfill_batch_size)
+            .field("vector_memory_budget", &self.vector_memory_budget)
             .finish()
     }
 }
@@ -114,6 +119,18 @@ impl DbOptions {
     pub fn with_node_identity_arc(mut self, identity: Arc<RawIdentity>) -> Self {
         self.node_identity = Some(identity);
         self
+    }
+
+    /// Sets the bytes vector indexes may keep in memory between searches.
+    pub fn with_vector_memory_budget(mut self, bytes: u64) -> Self {
+        self.vector_memory_budget = Some(bytes);
+        self
+    }
+
+    /// The bytes vector indexes may keep in memory between searches.
+    pub fn vector_memory_budget(&self) -> u64 {
+        self.vector_memory_budget
+            .unwrap_or(crate::index::vector::budget::DEFAULT_VECTOR_MEMORY_BUDGET)
     }
 
     /// Sets the maximum number of transaction retries.
@@ -324,6 +341,14 @@ pub struct DB<S: Store> {
     replication_runtime: Arc<replication::ReplicationRuntime>,
 }
 
+/// The node's vector caches, all charged to the budget `options` names.
+fn vector_codes(options: &DbOptions) -> Arc<crate::index::vector::engine::diskann::CodeCaches> {
+    let budget = crate::index::vector::budget::MemoryBudget::new(options.vector_memory_budget());
+    Arc::new(crate::index::vector::engine::diskann::CodeCaches::new(
+        budget,
+    ))
+}
+
 impl<S: Store> DB<S> {
     /// Create a new database with the given store.
     ///
@@ -343,6 +368,7 @@ impl<S: Store> DB<S> {
         Ok(Self {
             doc_short_id_allocator: crate::docid::map::DocShortIdAllocator::new(store.clone()),
             store,
+            vector_codes: vector_codes(&options),
             options,
             txn_id_counter: AtomicU64::new(0),
             migration_generation: AtomicU64::new(0),
@@ -353,7 +379,6 @@ impl<S: Store> DB<S> {
             collections: Arc::new(crate::collection::epoch::EpochedCollections::new(
                 crate::collection::CollectionMap::default(),
             )),
-            vector_codes: Arc::default(),
             document_projector: regolith::sync::OnceCell::new(),
             projection_binding: regolith::sync::OnceCell::new(),
             event_bus: None,
@@ -420,6 +445,7 @@ impl<S: Store> DB<S> {
         Ok(Self {
             doc_short_id_allocator: crate::docid::map::DocShortIdAllocator::new(store.clone()),
             store,
+            vector_codes: vector_codes(&options),
             options,
             txn_id_counter: AtomicU64::new(0),
             migration_generation: AtomicU64::new(0),
@@ -430,7 +456,6 @@ impl<S: Store> DB<S> {
             collections: Arc::new(crate::collection::epoch::EpochedCollections::new(
                 crate::collection::CollectionMap::default(),
             )),
-            vector_codes: Arc::default(),
             document_projector: regolith::sync::OnceCell::new(),
             projection_binding: regolith::sync::OnceCell::new(),
             event_bus: None,
@@ -886,6 +911,12 @@ impl<S: Store> DB<S> {
 
     pub(crate) fn vector_codes(&self) -> &crate::index::vector::engine::diskann::CodeCaches {
         &self.vector_codes
+    }
+
+    /// The budget every vector index's in-memory caches on this database
+    /// are charged to: its limit, and the bytes they hold now.
+    pub fn vector_memory_budget(&self) -> &Arc<crate::index::vector::budget::MemoryBudget> {
+        self.vector_codes.budget()
     }
 
     /// Drops this node's in-memory caches of an index, once its drop has

@@ -57,6 +57,11 @@ pub struct StartArgs {
     #[arg(long)]
     pub valuelogfilesize: Option<u64>,
 
+    /// Bytes vector indexes may keep in memory between searches, across every
+    /// index on the node (default: 268435456, 256 MiB)
+    #[arg(long)]
+    pub vector_memory_budget: Option<u64>,
+
     /// Listen addresses for the p2p network (formatted as a libp2p MultiAddr)
     #[arg(long, value_delimiter = ',')]
     pub p2paddr: Option<Vec<String>>,
@@ -535,6 +540,9 @@ impl StartArgs {
         }
         if let Some(size) = self.valuelogfilesize {
             config.datastore.valuelogfilesize = Some(size);
+        }
+        if let Some(bytes) = self.vector_memory_budget {
+            config.datastore.vector_memory_budget = bytes;
         }
         if let Some(ref addrs) = self.p2paddr {
             config.net.p2p_addresses = addrs.clone();

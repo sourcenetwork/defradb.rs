@@ -19,6 +19,8 @@
 //! loading them; later passes are warm. `EFFORT` is the engine's own knob: `L`
 //! for DiskANN, `ef` for HNSW, probes for IVF-PQ; unset takes its default.
 //! `THREADS=8` then measures warm queries per second with 8 searches in flight.
+//! `BUDGET=<bytes>` gives the shared cache a node's vector memory budget of
+//! that size (unset: unlimited), and the run reports the bytes it held.
 //! `WARMUP=<file>` first runs the vectors in that file (same format as
 //! `queries.f32`) unmeasured, so pass 0 is warm on queries it has not seen.
 //! A build with `SPLIT=1` writes the resident layout into its own store,
@@ -38,6 +40,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use crate::support::Corpus;
+use db::index::vector::budget::MemoryBudget;
 use db::index::vector::engine::ann::VectorIndexEngine;
 use db::index::vector::engine::diskann::codec;
 use db::index::vector::engine::diskann::{CodeCache, DiskAnn, DiskAnnParams};
@@ -564,7 +567,11 @@ async fn query(dir: &Path, engine: &str, profile: &str, effort: Option<usize>, p
     options.engine = options.engine.statistics(Some(stats));
     let store =
         Arc::new(RegolithStore::open_with_options(dir.join(env("DB", "db")), options).unwrap());
-    let codes = Arc::new(CodeCache::default());
+    let budget = std::env::var("BUDGET").map_or_else(
+        |_| MemoryBudget::unlimited(),
+        |bytes| MemoryBudget::new(bytes.parse().unwrap()),
+    );
+    let codes = Arc::new(CodeCache::with_budget(budget.clone()));
     let mut txn = store.new_txn(true).await.unwrap();
     with_engine!(engine, &mut txn, codes, e => run.measure(&e).await);
     txn.discard();
@@ -572,6 +579,13 @@ async fn query(dir: &Path, engine: &str, profile: &str, effort: Option<usize>, p
     if threads > 0 {
         run.throughput(&store, engine, &codes, threads).await;
     }
+    eprintln!(
+        "BUDGET {} limit={} used={} codes={}",
+        run.label,
+        budget.limit(),
+        budget.used(),
+        codes.resident_bytes()
+    );
     store.close().await.ok();
 }
 

@@ -42,6 +42,7 @@ mod graph;
 mod merge;
 mod params;
 mod pending_cache;
+mod reload;
 
 #[cfg(test)]
 pub(crate) use cache::BUILT as CODE_CACHES_BUILT;
@@ -55,6 +56,7 @@ pub use params::{
 pub use pending_cache::{
     Copy, PendingCache, Segment, Tag, ENTRY_OVERHEAD, MAX_PENDING_CACHE_BYTES,
 };
+pub use reload::Reload;
 
 use std::sync::Arc;
 

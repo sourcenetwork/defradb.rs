@@ -2,6 +2,7 @@
 
 mod diskann_back_edges;
 mod diskann_engine;
+mod diskann_memory_budget;
 mod diskann_pending_cache;
 mod diskann_resident;
 mod diskann_shared_quantizer;

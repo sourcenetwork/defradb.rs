@@ -284,6 +284,16 @@ pub struct DatastoreConfig {
     /// matching key fails loudly rather than returning garbage.
     #[serde(default)]
     pub at_rest_encryption: bool,
+    /// Bytes vector indexes may keep in memory between searches, across every
+    /// index on the node: DiskANN's resident codes and pending copies. What
+    /// does not fit is read from storage, so searches slow down, mostly at
+    /// the tail, but return the same results. Default: 256 MiB.
+    #[serde(default = "default_vector_memory_budget")]
+    pub vector_memory_budget: u64,
+}
+
+fn default_vector_memory_budget() -> u64 {
+    db::index::vector::budget::DEFAULT_VECTOR_MEMORY_BUDGET
 }
 
 fn default_max_merge_depth() -> usize {
@@ -304,6 +314,7 @@ impl Default for DatastoreConfig {
             durability: DurabilityMode::default(),
             max_merge_depth: default_max_merge_depth(),
             at_rest_encryption: false,
+            vector_memory_budget: default_vector_memory_budget(),
         }
     }
 }
