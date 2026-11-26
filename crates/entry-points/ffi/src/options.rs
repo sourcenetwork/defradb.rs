@@ -7,12 +7,13 @@
 //! <name>(..., opts)` that takes the struct by value and passes `&opts` and
 //! `sizeof opts`, so the size is always the caller's.
 //!
-//! A struct only ever grows at its end, and zero is every field's default.
-//! So the library reads the bytes the caller has, and treats the rest as
-//! zero: an older caller's shorter struct gets defaults for the fields it
-//! does not know. A newer caller's longer struct is accepted when the bytes
-//! past the library's struct are all zero; a set field this library does not
-//! know is refused, never ignored (`proofs/lean/FfiOptions.lean`).
+//! Between two C API breaks, a struct only ever grows at its end, and zero
+//! is every field's default. So the library reads the bytes the caller has,
+//! and treats the rest as zero: an older caller's shorter struct gets
+//! defaults for the fields it does not know. A newer caller's longer struct
+//! is accepted when the bytes past the library's struct are all zero; a set
+//! field this library does not know is refused, never ignored
+//! (`proofs/lean/FfiOptions.lean`).
 //!
 //! That needs every byte of a struct to belong to a field. An options struct
 //! has no implicit padding, and its size is a multiple of 8: a gap is filled
@@ -22,11 +23,19 @@
 //! bytes, so none crosses an 8-byte boundary: a size that is not a multiple
 //! of 8 ends inside a field, and is refused rather than read as half of one.
 //!
-//! A reserved field never becomes a field. The library reads reserved fields
-//! and drops them, so an older library would ignore a caller who set a
-//! reserved field that a later version had turned into an option, where the
-//! size rule refuses a field it does not know. New fields only ever go after
-//! a struct's last field.
+//! Between breaks, a reserved field never becomes a field. The library reads
+//! reserved fields and drops them, so an older library would ignore a caller
+//! who set a reserved field that a later version had turned into an option,
+//! where the size rule refuses a field it does not know. New fields only
+//! ever go after a struct's last field.
+//!
+//! A C API break is the exception: a pull request labelled `c-api:break`
+//! removes, moves or renames fields on purpose (the pinc-only transport
+//! dropped the libp2p and iroh fields from the middle of
+//! `DefraNodeInitOptions`). The size cannot tell a struct from before the
+//! break from one after it, so these rules hold only for a caller and a
+//! library on the same side of the last break: a caller built against an
+//! older header must be rebuilt.
 
 use std::mem::{size_of, MaybeUninit};
 

@@ -31,8 +31,8 @@ pub struct DefraViewRefreshOptions {
     pub collection_id: *const c_char,
     /// Include inactive collection versions (1=true, 0=false).
     pub collection_get_inactive: c_int,
-    /// Reserved, so the struct has no padding: leave it zero. It never
-    /// becomes a field; new fields go after the struct's last one.
+    /// Reserved, so the struct has no padding: leave it zero. Short of a C API
+    /// break (`c-api:break`), it never becomes a field and new fields go last.
     pub _reserved0: u32,
 }
 
@@ -56,8 +56,8 @@ pub struct DefraBackupExportOptions {
     pub format: *const c_char,
     /// Indent the JSON (1=true, 0=false).
     pub pretty: c_int,
-    /// Reserved, so the struct has no padding: leave it zero. It never
-    /// becomes a field; new fields go after the struct's last one.
+    /// Reserved, so the struct has no padding: leave it zero. Short of a C API
+    /// break (`c-api:break`), it never becomes a field and new fields go last.
     pub _reserved0: u32,
 }
 

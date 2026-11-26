@@ -12,10 +12,12 @@ header = """
  * drop-in for libdefradb.h. A call that works on a store takes a handle
  * naming a node or one of its transactions. Each call that can grow takes
  * its options as a struct, by value, whose zero value is every default; the
- * caller's identity (0 for none) is one of its fields. Fields are only ever
- * appended, so code built against an older header keeps working. A field
- * whose name starts with _reserved fills what would be padding: leave it
- * zero; it never becomes a field. Free every result a call returns with its
+ * caller's identity (0 for none) is one of its fields. Between C API breaks
+ * fields are only ever appended, so code built against an older header keeps
+ * working; after a break (a release that removes or moves fields) it must be
+ * rebuilt. A field whose name starts with _reserved fills what would be
+ * padding: leave it zero; between breaks it never becomes a field. Free
+ * every result a call returns with its
  * free function: defra_result_free, or
  * defra_new_<kind>_result_free.
  */

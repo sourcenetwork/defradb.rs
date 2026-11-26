@@ -60,8 +60,8 @@ pub struct NodeInitOptions {
     pub searchable_encryption_key: *const u8,
     /// Length of `searchable_encryption_key` in bytes.
     pub searchable_encryption_key_len: c_int,
-    /// Reserved, so the struct has no padding: leave it zero. It never
-    /// becomes a field; new fields go after the struct's last one.
+    /// Reserved, so the struct has no padding: leave it zero. Short of a C API
+    /// break (`c-api:break`), it never becomes a field and new fields go last.
     pub _reserved0: u32,
     /// Milliseconds a P2P block sync (a CAR fetch) may take before it is
     /// abandoned. 0 keeps the default, 30 s; negative fails the node.
@@ -81,8 +81,8 @@ pub struct NodeInitOptions {
     /// Clear dial backoff before retrying a replicator. Not supported yet:
     /// must be 0.
     pub enable_clear_backoff_on_retry: c_int,
-    /// Reserved, so the struct has no padding: leave it zero. It never
-    /// becomes a field; new fields go after the struct's last one.
+    /// Reserved, so the struct has no padding: leave it zero. Short of a C API
+    /// break (`c-api:break`), it never becomes a field and new fields go last.
     pub _reserved1: u32,
     /// The Ed25519 private key the node's peer identity uses for this start
     /// (its 32-byte seed, or seed and public key), or null for the node's
@@ -92,8 +92,8 @@ pub struct NodeInitOptions {
     pub p2p_private_key: *const u8,
     /// Length of `p2p_private_key` in bytes.
     pub p2p_private_key_len: c_int,
-    /// Reserved, so the struct has no padding: leave it zero. It never
-    /// becomes a field; new fields go after the struct's last one.
+    /// Reserved, so the struct has no padding: leave it zero. Short of a C API
+    /// break (`c-api:break`), it never becomes a field and new fields go last.
     pub _reserved2: u32,
 
     /// HTTP API address. Not supported yet: must be null or empty.
@@ -134,8 +134,8 @@ pub struct NodeInitOptions {
     pub vera_signer_key: *const u8,
     /// Length of `vera_signer_key` in bytes.
     pub vera_signer_key_len: c_int,
-    /// Reserved, so the struct has no padding: leave it zero. It never
-    /// becomes a field; new fields go after the struct's last one.
+    /// Reserved, so the struct has no padding: leave it zero. Short of a C API
+    /// break (`c-api:break`), it never becomes a field and new fields go last.
     pub _reserved3: u32,
     /// Comma-separated pinc hubs topics run through, each
     /// `<peer id>@<udp address>`, at most four. Topic broadcasts and the KMS
@@ -152,8 +152,8 @@ pub struct NodeInitOptions {
     pub max_doc_sync_request_doc_ids: usize,
     /// Per-peer rate limit burst capacity. 0 means use default (500).
     pub rate_limit_burst: u32,
-    /// Reserved, so the struct has no padding: leave it zero. It never
-    /// becomes a field; new fields go after the struct's last one.
+    /// Reserved, so the struct has no padding: leave it zero. Short of a C API
+    /// break (`c-api:break`), it never becomes a field and new fields go last.
     pub _reserved4: u32,
     /// Per-peer rate limit refill rate (tokens/sec). 0 means use default (50).
     pub rate_limit_rate: f64,

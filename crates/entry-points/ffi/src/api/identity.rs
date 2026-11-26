@@ -21,8 +21,8 @@ pub struct DefraIdentityNewOptions {
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct DefraIdentityBearerOptions {
-    /// Reserved, so the struct has room to grow: leave it zero. It never
-    /// becomes a field; options go after it.
+    /// Reserved, so the struct has room to grow: leave it zero. Short of a C
+    /// API break (`c-api:break`), it never becomes a field; options go after it.
     pub _reserved0: u64,
 }
 

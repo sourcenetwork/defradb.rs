@@ -1,9 +1,10 @@
 /-!
 The story: a program calls the DefraDB C library with an options struct. The
 program was built against one version of the header, the library against
-another, so their structs can differ in length: a struct only ever grows at
-its end, and zero is every field's default. The program passes its struct's
-bytes and how many there are. The library reads its own struct from them.
+another, so their structs can differ in length: between two C API breaks, a
+struct only ever grows at its end, and zero is every field's default. The
+program passes its struct's bytes and how many there are. The library reads
+its own struct from them.
 Every byte of a struct belongs to a field: the structs have no hidden padding
 (a gap is filled with a reserved field), so a byte past an older struct's end
 is always part of a field added since, never filler. Every struct's length is
@@ -16,6 +17,13 @@ as anything but zero (its default); a field the program set that the library
 does not know silently ignored; a newer program that leaves its new fields
 unset read differently from an older one; a length that ends inside a field
 accepted, so that half a field (half a pointer) is read.
+
+Out of scope: a C API break (a pull request labelled `c-api:break`) removes,
+moves or renames fields on purpose, as the pinc-only transport did to
+`DefraNodeInitOptions`. The length cannot tell a struct from before the break
+from one after it, so nothing here covers a program built against a header
+from before the last break: it must be rebuilt. Every version below is on the
+same side of the last break.
 
 Rust owners:
   crates/entry-points/ffi/src/options.rs   read (the size-prefix copy), ZeroDefault
