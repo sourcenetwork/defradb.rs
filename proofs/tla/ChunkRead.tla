@@ -290,13 +290,19 @@ Init ==
   /\ ranked = 0                            \* nothing ranked
   /\ ruled \in BOOLEAN                     \* the article has read rules, or not
 
-\* A writer edits the live article to text t, storing t's chunks with it.
+\* A writer edits the live article to text t. On a peer the new text can
+\* arrive before its chunks, so they come in a step of their own.
 Edit(t) ==
   /\ ~deleted /\ edits < MaxEdits                   \* live, edits left
   /\ text' = t                                      \* the new text
-  /\ stored' = stored \cup HonestChunks(t)          \* and its chunks
   /\ edits' = edits + 1                             \* one more edit
-  /\ UNCHANGED <<scopeLeaked, merged, deleted, granted, phase, snap, memo, result, leaked, resolved, ownApp, kind, width, ranked, ruled>>
+  /\ UNCHANGED <<scopeLeaked, merged, deleted, granted, stored, phase, snap, memo, result, leaked, resolved, ownApp, kind, width, ranked, ruled>>
+
+\* The chunks of the current text arrive and are stored.
+ChunksArrive ==
+  /\ ~(HonestChunks(text) \subseteq stored)         \* some are still missing
+  /\ stored' = stored \cup HonestChunks(text)       \* now they are all here
+  /\ UNCHANGED <<scopeLeaked, text, merged, deleted, granted, edits, phase, snap, memo, result, leaked, resolved, ownApp, kind, width, ranked, ruled>>
 
 \* A writer deletes the article. Its chunks stay stored.
 Delete ==
@@ -434,6 +440,7 @@ DelegatedKey(d, b) ==
 \* Every step anyone can take.
 Next ==
   \/ \E t \in Texts : Edit(t)    \* an edit,
+  \/ ChunksArrive               \* the text's chunks arrive,
   \/ Delete                      \* a delete,
   \/ Revoke                      \* a revoke,
   \/ \E h \in Hashes : Plant(h)  \* a forged chunk,
