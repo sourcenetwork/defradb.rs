@@ -1867,6 +1867,12 @@ async fn parity_unique_twins_mixed() {
             "[{label}] Go node1 must not expose merged commits for the atomically rejected Rust twin"
         );
         assert_rust_explain_uses_index(&cluster.client(0), label);
+
+        assert!(
+            poll_replicators_all_status(&cluster.client(0), 1, Duration::from_secs(15)).await,
+            "[{label}] Rust node0 replicator must report Inactive after the rejected twin push; got {:?}",
+            cluster.client(0).p2p_replicator_list()
+        );
     })
     .await
 }
