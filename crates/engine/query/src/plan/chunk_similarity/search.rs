@@ -9,7 +9,7 @@ use super::listed::{best_score_of, drain, Held};
 use super::target::{ChunkTarget, Reads};
 use crate::error::Result;
 use crate::fetcher::DocFetcher;
-use crate::plan::chunk_parent::{chunk_parent_id, parent_hashes, verified_hash};
+use crate::plan::chunk_parent::{chunk_parent_id, verified_hash};
 use crate::plan::scan::MAX_VECTOR_CANDIDATES;
 
 /// Whether the query may return a parent: its filter and requested document IDs.
@@ -235,7 +235,7 @@ impl ChunkSearch<'_> {
             let Some(id) = parent.id().map(ToString::to_string) else {
                 continue;
             };
-            let listed = match parent_hashes(&parent, &self.target.chunked) {
+            let listed = match self.target.listed(&parent) {
                 Some(listed) if check.accepts(&parent)? => Some(listed),
                 _ => None,
             };

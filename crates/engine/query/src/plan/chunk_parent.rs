@@ -1,7 +1,7 @@
 //! Checks whether a parent's current text uses a chunk.
 
 use chunk_split::hash::text_hash;
-use chunk_split::split::{split, ChunkConfig};
+use chunk_split::split::{split, ChunkConfig, UnknownSplitterVersion};
 use document::{Document, NormalValue};
 use rapidhash::RapidHashSet;
 use schema::{ChunkedField, CHUNK_HASH_FIELD, CHUNK_SOURCE_ID_FIELD, CHUNK_TEXT_FIELD};
@@ -53,11 +53,7 @@ pub(crate) fn parent_hashes(
 /// The hashes of the chunks `text` cuts into, or `None` when this node
 /// can't run the field's splitter.
 pub(crate) fn text_hashes(text: &str, chunked: &ChunkedField) -> Option<RapidHashSet<String>> {
-    let config = match ChunkConfig::new(
-        chunked.splitter_version,
-        chunked.max_chars as usize,
-        chunked.overlap as usize,
-    ) {
+    let config = match splitter(chunked) {
         Ok(config) => config,
         Err(error) => {
             tracing::warn!(
@@ -69,12 +65,24 @@ pub(crate) fn text_hashes(text: &str, chunked: &ChunkedField) -> Option<RapidHas
             return None;
         }
     };
-    Some(
-        split(text, &config)
-            .into_iter()
-            .map(|chunk| chunk.hash)
-            .collect(),
+    Some(cut_hashes(text, &config))
+}
+
+/// The splitter `chunked` cuts its text with, if this node can run it.
+pub(crate) fn splitter(chunked: &ChunkedField) -> Result<ChunkConfig, UnknownSplitterVersion> {
+    ChunkConfig::new(
+        chunked.splitter_version,
+        chunked.max_chars as usize,
+        chunked.overlap as usize,
     )
+}
+
+/// The hashes of the chunks `config` cuts `text` into.
+pub(crate) fn cut_hashes(text: &str, config: &ChunkConfig) -> RapidHashSet<String> {
+    split(text, config)
+        .into_iter()
+        .map(|chunk| chunk.hash)
+        .collect()
 }
 
 /// The parent a chunk names.

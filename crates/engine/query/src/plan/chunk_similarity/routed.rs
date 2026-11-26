@@ -62,6 +62,7 @@ impl ChunkSimilarityScanNode {
         similarity_index: usize,
         fetcher: Arc<dyn DocFetcher>,
     ) -> Self {
+        target.warn_without_splitter();
         Self {
             collection,
             mapping,

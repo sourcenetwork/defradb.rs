@@ -376,6 +376,7 @@ fn target(lookup: Lookup) -> ChunkTarget {
         vector: vec![1.0, 0.0],
         metric: Metric::NegativeDot,
         app: None,
+        splitter: ChunkConfig::new(defra_core::DEFAULT_SPLITTER_VERSION, 64, 0).ok(),
     }
 }
 

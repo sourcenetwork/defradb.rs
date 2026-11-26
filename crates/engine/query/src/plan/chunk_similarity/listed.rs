@@ -8,7 +8,7 @@ use super::target::{ChunkTarget, Reads};
 use crate::doc_stream::DocStream;
 use crate::error::Result;
 use crate::fetcher::DocFetcher;
-use crate::plan::chunk_parent::{chunk_parent_id, parent_hashes, verified_hash};
+use crate::plan::chunk_parent::{chunk_parent_id, verified_hash};
 use crate::planner::index_selection::{IndexScanParams, IndexScanType};
 
 /// The best score among the chunks `parent`'s current text lists, or `None`
@@ -19,8 +19,7 @@ pub(crate) async fn best_listed_score(
     parent: &Document,
     reads: &mut Reads,
 ) -> Result<Option<f64>> {
-    let (Some(parent_id), Some(listed)) = (parent.id(), parent_hashes(parent, &target.chunked))
-    else {
+    let (Some(parent_id), Some(listed)) = (parent.id(), target.listed(parent)) else {
         return Ok(None);
     };
     let none = RapidHashMap::new();

@@ -1,7 +1,9 @@
 //! What a parent's `SIMILARITY` on a chunked embedding reads and scores.
 
+use chunk_split::split::ChunkConfig;
 use defra_core::vector::Metric;
 use document::Document;
+use rapidhash::RapidHashSet;
 use schema::{ChunkedField, CollectionVersion, CHUNK_HASH_FIELD, CHUNK_SOURCE_ID_FIELD};
 
 use crate::access_hooks::read::app_allows;
@@ -9,6 +11,7 @@ use crate::access_hooks::AppReadCheck;
 use crate::error::{QueryError, Result};
 use crate::json_convert::normal_value_to_json;
 use crate::mapper::Similarity;
+use crate::plan::chunk_parent::{cut_hashes, splitter};
 use crate::plan::similarity::{score_vectors, SimilarityNode};
 
 /// A `SIMILARITY` on a parent whose target embedding lives on its chunks.
@@ -32,6 +35,8 @@ pub(crate) struct ChunkTarget {
     pub metric: Metric,
     /// The chunk collection's own app read check, as a chunk query runs it.
     pub app: Option<AppReadCheck>,
+    /// `None` when this node can't run the field's splitter, so nothing scores.
+    pub splitter: Option<ChunkConfig>,
 }
 
 impl ChunkTarget {
@@ -77,12 +82,37 @@ impl ChunkTarget {
             )
             .engine_metric(),
             app: None,
+            splitter: splitter(chunked).ok(),
         })
     }
 
     pub(crate) fn with_app(mut self, app: Option<AppReadCheck>) -> Self {
         self.app = app;
         self
+    }
+
+    /// Warns that this field never scores here; a scoring node calls it once, not per row.
+    pub(crate) fn warn_without_splitter(&self) {
+        if self.splitter.is_none() {
+            tracing::warn!(
+                field = %self.chunked.field_name,
+                splitter_version = self.chunked.splitter_version,
+                "chunk splitter not supported on this node; this field's similarity scores are null"
+            );
+        }
+    }
+
+    /// The chunk hashes a live parent's current text uses.
+    pub(crate) fn listed(&self, parent: &Document) -> Option<RapidHashSet<String>> {
+        if parent.is_deleted() {
+            return None;
+        }
+        self.listed_in(parent.get(&self.chunked.field_name)?.as_str()?)
+    }
+
+    /// The chunk hashes `text` cuts into.
+    pub(crate) fn listed_in(&self, text: &str) -> Option<RapidHashSet<String>> {
+        Some(cut_hashes(text, self.splitter.as_ref()?))
     }
 
     /// Whether the chunk collection's own app check lets the reader see `chunk`.

@@ -12,7 +12,6 @@ use super::target::{ChunkTarget, Reads};
 use crate::document::DocumentMapping;
 use crate::error::Result;
 use crate::fetcher::DocFetcher;
-use crate::plan::chunk_parent::text_hashes;
 use crate::planner::{index_selection::CursorSeek, Doc, ExecInfo, PlanNode};
 
 /// Scores each parent row by its best listed chunk, as `SimilarityNode` scores its own vector.
@@ -43,8 +42,7 @@ pub(crate) fn listed_in_row(
     if row.is_deleted() {
         return None;
     }
-    let text = row.get(at.text)?.as_str()?;
-    text_hashes(text, &target.chunked)
+    target.listed_in(row.get(at.text)?.as_str()?)
 }
 
 impl ChunkSimilarityNode {
@@ -56,6 +54,7 @@ impl ChunkSimilarityNode {
         fetcher: Option<Arc<dyn DocFetcher>>,
         in_row: ListedInRow,
     ) -> Self {
+        target.warn_without_splitter();
         Self {
             source,
             mapping,
