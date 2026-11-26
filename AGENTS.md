@@ -601,6 +601,7 @@ open PR ──▶ lean CI ──▶ approval ──▶ "Merge when ready" ──
   `ci:macos` the macOS unit tests.
 - **`c-api:break`** marks a PR that breaks the C API (`defra.h`) on purpose: C API
   compatibility still lists every break, as warnings, and passes, in the queue too.
+  Removing the label reruns CI, so the check fails again.
 - **One commit.** Its subject is the PR title, or the title followed by `(#N)` for
   this PR. The queue rebase-merges, so every commit lands on main as it is:
   squash before queueing. A PR with several commits is a batch (below).
@@ -616,7 +617,8 @@ open PR ──▶ lean CI ──▶ approval ──▶ "Merge when ready" ──
 ### In the queue
 
 The queue runs full CI on each entry, unless the entry's tree is one a `ci:full`
-run on the PR already passed; then only `Merge gate` runs. To get that, rebase
+run on the PR already passed; then only `C API compatibility` (the label may
+have changed since) and `Merge gate` run. To get that, rebase
 onto main, run `ci:full`, then queue while nothing is ahead of it. A PR keeps
 its own commit only, so it is never rebased onto a queue entry. The queue
 reads the passed tree only from a `Merge gate` job of a `ci.yml` pull request

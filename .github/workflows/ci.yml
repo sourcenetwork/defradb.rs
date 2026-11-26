@@ -5,8 +5,9 @@ on:
     branches: [main]
   pull_request:
     branches: ['**']
-    # labeled: adding a ci:* label runs the jobs it names.
-    types: [opened, synchronize, reopened, labeled]
+    # labeled: adding a ci:* label runs the jobs it names. unlabeled: removing
+    # c-api:break reruns C API compatibility, so its green check is not stale.
+    types: [opened, synchronize, reopened, labeled, unlabeled]
   merge_group:
     branches: [main]
 
@@ -85,7 +86,7 @@ jobs:
             const tested = await tree(context.sha);
             core.setOutput('tree', tested);
             // A queue entry whose tree a pull request run already passed with the heavy
-            // suite (`ci:full`) runs nothing but Merge gate: the queue would build and
+            // suite (`ci:full`) runs nothing but C API compatibility and Merge gate: the queue would build and
             // test the same bytes again (#3315). That holds when the pull request is
             // rebased onto main and nothing is queued ahead of it.
             let reused = false;
@@ -307,11 +308,11 @@ jobs:
         run: cargo doc --workspace --no-deps --keep-going
 
   # Mirrors `just check-c-api`: defra.h as this change generates it against the
-  # one its base generates.
+  # one its base generates. It runs on a queue entry that reuses its pull
+  # request run too: c-api:break may have been removed since that run.
   c-api:
     name: C API compatibility
     needs: ci-scope
-    if: needs.ci-scope.outputs.reused != 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -1187,7 +1188,7 @@ jobs:
           check "Feature checks" "$FEATURE_CHECKS" "$RUN_FEATURE_CHECKS"
           check "Dependency checks" "$DEPENDENCY_CHECKS" "$FAST"
           check "Docs" "$DOCS" "$FAST"
-          check "C API compatibility" "$C_API" "$FAST"
+          check "C API compatibility" "$C_API" true
           check "Lint" "$LINT" "$FAST"
           check "Unit tests" "$UNIT_TESTS" "$FULL"
           check "Go DefraDB binary" "$GO_DEFRADB" "$FULL"

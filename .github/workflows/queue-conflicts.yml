@@ -124,7 +124,7 @@ jobs:
                 const last = before.filter((e) => e.headCommit).at(-1);
                 const { tree } = await merge(last?.headCommit.oid ?? 'origin/main', head);
                 output.summary += (await stamped(t.headRefOid)).includes(tree)
-                  ? '\n\nThe queue would build a tree a ci:full run here already passed, so it reruns only Merge gate.'
+                  ? '\n\nThe queue would build a tree a ci:full run here already passed, so it reruns only C API compatibility and Merge gate.'
                   : last
                     ? `\n\nThe queue will run full CI on it, because #${last.pullRequest.number} and the entries before it are not in main yet.`
                     : '\n\nThe queue will run full CI on it. To skip that, run ci:full here against the current main.';
