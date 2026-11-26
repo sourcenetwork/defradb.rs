@@ -8,6 +8,7 @@ use integration_test::actions::{
 use integration_test::m;
 use integration_test::scenario::{captures, Common};
 use integration_test::test_case::TestCase;
+use integration_test::ClientType;
 use serde_json::json;
 
 fn on(node: &str) -> Common {
@@ -140,6 +141,11 @@ fn a_disconnected_peer_is_not_dialed_back_by_discovery() {
     .execute();
 }
 
+/// The clients whose nodes are Rust ones. Under go-http the nodes are Go's
+/// libp2p nodes, which hand out no peer exchange list, so db2 never learns
+/// db0 and the fresh list this scenario needs never exists.
+const RUST_CLIENTS: &[ClientType] = &[ClientType::InProcess, ClientType::RustHttp, ClientType::Cli];
+
 /// db1 disconnects db0, then reconnects to db2, which hands it a fresh list
 /// naming db0: db1's own discovery leaves db0 alone.
 #[test]
@@ -188,6 +194,7 @@ fn a_fresh_list_does_not_redial_a_disconnected_peer() {
         id: integration_test::scenario_id!(),
         actions: actions.into_iter().map(Into::into).collect(),
         without_db: true,
+        client_types: Some(RUST_CLIENTS),
         ..Default::default()
     }
     .execute();
