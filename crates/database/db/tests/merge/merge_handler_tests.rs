@@ -1,3 +1,4 @@
+use crate::common::arrivals::arrivals_page;
 use async_trait::async_trait;
 use blockstore::Blockstore as _;
 use blockstore::DefraBlockstore;
@@ -4447,7 +4448,7 @@ fn resolve_composite_doc_id_explores_first_head_before_probing_later_siblings() 
 #[test]
 fn first_materialization_arrivals_include_peer_batches_once() {
     workers::block_on(async {
-        use query::fetcher::{DocFetcher, DocumentArrivalOptions};
+        use query::fetcher::DocumentArrivalOptions;
         let (handler, blockstore, _) = make_handler_with_schema_and_bus().await;
         let first = build_merge_block(&blockstore, "arrival-first", 30).await;
         let second = build_merge_block(&blockstore, "arrival-second", 31).await;
@@ -4464,15 +4465,16 @@ fn first_materialization_arrivals_include_peer_batches_once() {
         let results = handler.handle_block_batch(&blocks).await;
         assert!(results.iter().all(Result::is_ok), "{results:?}");
         let fetcher = db::LensedAutoCommitFetcher::new(handler.db().clone());
-        let page = fetcher
-            .get_document_arrivals(&DocumentArrivalOptions {
+        let page = arrivals_page(
+            &fetcher,
+            &DocumentArrivalOptions {
                 collection: "Users".into(),
                 after: 0,
                 limit: 10,
                 doc_ids: None,
-            })
-            .await
-            .unwrap();
+            },
+        )
+        .await;
         assert_eq!(page.head, 2);
         assert_eq!(
             page.entries
@@ -4558,7 +4560,7 @@ fn peer_update_is_discovered_once_by_committed_cursor() {
 #[test]
 fn first_materialization_and_local_create_arrive_in_commit_order() {
     workers::block_on(async {
-        use query::fetcher::{DocFetcher, DocumentArrivalOptions};
+        use query::fetcher::DocumentArrivalOptions;
         use query::DocMutator;
         let (handler, blockstore, _) = make_handler_with_schema_and_bus().await;
         let local = db::DbDocMutator::new(
@@ -4584,15 +4586,16 @@ fn first_materialization_and_local_create_arrive_in_commit_order() {
         );
         local.take_txn().await.unwrap().commit().await.unwrap();
         let fetcher = db::LensedAutoCommitFetcher::new(handler.db().clone());
-        let page = fetcher
-            .get_document_arrivals(&DocumentArrivalOptions {
+        let page = arrivals_page(
+            &fetcher,
+            &DocumentArrivalOptions {
                 collection: "Users".into(),
                 after: 0,
                 limit: 10,
                 doc_ids: None,
-            })
-            .await
-            .unwrap();
+            },
+        )
+        .await;
         assert_eq!(page.head, 2);
         assert_eq!(page.entries[0].doc_id, peer_id);
         assert_eq!(page.entries[1].doc_id, local_id);
