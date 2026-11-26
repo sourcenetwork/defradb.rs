@@ -7,7 +7,7 @@ use db::DB;
 use schema::{HnswParams, IndexKind, IndexedFieldDescription, VectorIndexDescription};
 use storage::RegolithStore;
 
-use crate::common::schema::{docs_schema, vector_kind};
+use crate::common::schema::{vector_kind, DOCS_SDL};
 use crate::create::{by_name, open_with_collection};
 
 fn embedding() -> Vec<IndexedFieldDescription> {
@@ -20,7 +20,7 @@ fn embedding() -> Vec<IndexedFieldDescription> {
 #[test]
 fn a_repeated_ordered_index_is_refused_and_nothing_is_defined() {
     workers::block_on(async {
-        let (_store, db) = open_with_collection("Users", "v1", "col-users").await;
+        let (_store, db) = open_with_collection("Users").await;
         let (fields, kind) = by_name();
         db.create_index("Users", None, fields.clone(), kind)
             .await
@@ -51,7 +51,9 @@ fn a_repeated_ordered_index_is_refused_and_nothing_is_defined() {
 fn a_vector_index_repeated_with_unset_defaults_is_refused() {
     workers::block_on(async {
         let db = Arc::new(DB::from_arc(Arc::new(RegolithStore::in_memory().unwrap())).unwrap());
-        db.create_collection(docs_schema()).await.unwrap();
+        db.add_collection(&defra_core::RequestContext::ambient(), DOCS_SDL)
+            .await
+            .unwrap();
         db.create_index("docs", Some("by_embedding"), embedding(), vector_kind())
             .await
             .unwrap();
@@ -84,7 +86,9 @@ fn a_vector_index_repeated_with_unset_defaults_is_refused() {
 fn a_vector_index_with_other_parameters_is_created() {
     workers::block_on(async {
         let db = Arc::new(DB::from_arc(Arc::new(RegolithStore::in_memory().unwrap())).unwrap());
-        db.create_collection(docs_schema()).await.unwrap();
+        db.add_collection(&defra_core::RequestContext::ambient(), DOCS_SDL)
+            .await
+            .unwrap();
         db.create_index("docs", Some("by_embedding"), embedding(), vector_kind())
             .await
             .unwrap();
@@ -114,7 +118,7 @@ fn a_vector_index_with_other_parameters_is_created() {
 #[test]
 fn ensure_ordinary_index_defines_its_name_beside_a_same_definition_index() {
     workers::block_on(async {
-        let (_store, db) = open_with_collection("Users", "v1", "col-users").await;
+        let (_store, db) = open_with_collection("Users").await;
         let (fields, kind) = by_name();
         db.create_index("Users", None, fields.clone(), kind)
             .await
