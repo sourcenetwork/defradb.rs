@@ -5,6 +5,7 @@ mod dac;
 mod document;
 mod encrypted_index;
 mod expect;
+mod hub;
 mod index;
 mod lens;
 mod list_actions;
@@ -26,6 +27,7 @@ pub use collection::*;
 pub use dac::*;
 pub use document::*;
 pub use encrypted_index::*;
+pub use hub::{CliHub, HubSignal, StartCliHub, StopCliHub};
 pub use index::*;
 pub use lens::*;
 pub use list_actions::ListActions;
@@ -164,6 +166,8 @@ client_actions! {
         VerifyBlockSignature,
     ],
     shared: [
+        StartCliHub,
+        StopCliHub,
         Connect,
         Parallel,
         AllowStreamPeer,

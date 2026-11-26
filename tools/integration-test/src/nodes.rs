@@ -42,8 +42,9 @@ pub struct NodeSpec {
     pub nac_owner: Option<u64>,
     /// The node's admission limits, if not the defaults.
     pub admission: Option<crate::actions::AdmissionSpec>,
-    /// The node was configured from a Go-written `config.yaml` through the
-    /// Rust CLI's loader, so it is a Rust node under every client.
+    /// The node was configured through the Rust CLI's loader, from a
+    /// Go-written `config.yaml` or `defradb start` flags, so it is a Rust
+    /// node under every client.
     pub go_config: bool,
     /// Where the node's pinc endpoint binds when `listen` names no address:
     /// the CLI's resolved bind for a node started from a Go config, or

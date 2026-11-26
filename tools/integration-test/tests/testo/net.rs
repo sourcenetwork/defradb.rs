@@ -1,3 +1,4 @@
+mod cli_hub;
 mod disjoint_groups;
 mod gossip_admission;
 mod large_update;

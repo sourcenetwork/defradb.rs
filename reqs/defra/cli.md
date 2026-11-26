@@ -19,7 +19,7 @@ A `config.yaml` whose `net` section holds a key the node has no setting for (onc
 # `defra.cli.pinc`: A CLI node's pinc settings
 
 - **Parents:** ["defra"]
-- **Scenarios:** ["hub::nodes_replicate_a_subscribed_collection_through_a_cli_hub", "node::go_config::a_go_config_runs_p2p_on_pinc"]
+- **Scenarios:** ["hub::nodes_replicate_a_subscribed_collection_through_a_cli_hub", "node::go_config::a_go_config_runs_p2p_on_pinc", "net::cli_hub::a_node_started_with_peers_dials_them"]
 
 A node started with `defradb start` binds its pinc endpoint on `net.pinc_bind_addr` (`--pinc-bind-addr`, `127.0.0.1` when unset, as Go's CLI listens on loopback by default) and `net.pinc_bind_port` (`--pinc-bind-port`, a port the OS picks when unset), runs topics through the hubs `net.pinc_hubs` names (`--pinc-hubs`), admits inbound connections only from the peer ids `net.pinc_allowed_peers` lists (`--pinc-allowed-peers`, every peer when empty), and dials each of `net.peers` (`--peers`) once started, without waiting for it. A node bound where other hosts can reach it with an empty `net.pinc_allowed_peers` starts and logs one warning that any peer may connect. A hub or peer address is `<peer id>@<udp address>`; any other fails the start with `invalid config: invalid pinc address <address>: …`.
 
@@ -49,7 +49,7 @@ The bootstrap peers a node's configuration names (`net.peers`, `--peers`; `PincC
 # `defra.cli.hub`: `defradb hub` runs a pinc hub
 
 - **Parents:** ["defra"]
-- **Scenarios:** ["hub::nodes_replicate_a_subscribed_collection_through_a_cli_hub"]
+- **Scenarios:** ["hub::nodes_replicate_a_subscribed_collection_through_a_cli_hub", "net::cli_hub::a_cli_hub_exits_0_on_sigint", "net::cli_hub::a_cli_hub_exits_0_on_sigterm", "net::cli_hub::a_cli_hub_keeps_its_peer_id_across_a_restart"]
 
 `defradb hub` binds a pinc hub on `--bind` (`127.0.0.1:9172` by default), prints its address `<peer id>@<ip>:<port>` on one line of standard output, and runs until SIGINT or SIGTERM, then exits 0. Its key lives in `--key-file` (`<rootdir>/hub.key` by default), created when missing, so the hub keeps its peer id across restarts. Two nodes naming the hub in `--pinc-hubs`, connected and subscribed to the same collection, replicate a document created on one to the other.
 

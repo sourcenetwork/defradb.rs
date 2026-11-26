@@ -29,6 +29,9 @@ pub struct State {
     pub subscriptions: crate::actions::Subscriptions,
     /// Stream-protocol streams the test keeps open across actions.
     pub streams: crate::actions::stream::KeptStreams,
+    /// `defradb hub` processes by name, with the rootdir each keeps across
+    /// a stop.
+    pub cli_hubs: RapidHashMap<String, Arc<crate::actions::CliHub>>,
     /// How many nodes the test has started, Go's next node index.
     pub go_nodes_started: u64,
 }

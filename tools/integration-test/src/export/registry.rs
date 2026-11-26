@@ -90,6 +90,8 @@ registry! {
     NewStreamNode => [v("stream.openNode")],
     OpenStream => [v("stream.open")],
     ReadKeptStream => [v("stream.readKept")],
+    StartCliHub => [v("hub.startCli")],
+    StopCliHub => [v("hub.stopCli")],
     AddCollection => [v("schema.addWithMetadata").all(&["expectedResults"]).renames(&[("expectedResults", "expectedData")]), v("schema.add")],
     AddCollectionSubscription => [v("peer.collections.add")],
     AddDACActorRelationship => [v("dac.addActorRelationship")],
