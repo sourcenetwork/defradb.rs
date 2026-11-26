@@ -604,8 +604,8 @@ impl P2PTransport for PincTransport {
             wire::encode(&req)?,
             Outbound::Event {
                 to_event: |peer_id, bytes| {
-                    let reply: QuerySEArtifactsReply = wire::decode(bytes)?;
-                    super::serve::verify_signed_sender(&peer_id, &reply)?;
+                    let mut reply: QuerySEArtifactsReply = wire::decode(bytes)?;
+                    super::serve::verify_signed_sender(&peer_id, &mut reply)?;
                     Ok(p2p::transport::TransportEvent::SEQueryReply { peer_id, reply })
                 },
                 answer_when_sent: true,
@@ -634,8 +634,8 @@ impl P2PTransport for PincTransport {
             wire::encode(&req)?,
             Outbound::Event {
                 to_event: |peer_id, bytes| {
-                    let reply: ManageReply = wire::decode(bytes)?;
-                    super::serve::verify_signed_sender(&peer_id, &reply)?;
+                    let mut reply: ManageReply = wire::decode(bytes)?;
+                    super::serve::verify_signed_sender(&peer_id, &mut reply)?;
                     Ok(p2p::transport::TransportEvent::ManageReply { peer_id, reply })
                 },
                 answer_when_sent: true,
@@ -668,8 +668,8 @@ impl P2PTransport for PincTransport {
             wire::encode(&req)?,
             Outbound::Event {
                 to_event: |peer_id, bytes| {
-                    let reply: ManageQueryReply = wire::decode(bytes)?;
-                    super::serve::verify_signed_sender(&peer_id, &reply)?;
+                    let mut reply: ManageQueryReply = wire::decode(bytes)?;
+                    super::serve::verify_signed_sender(&peer_id, &mut reply)?;
                     Ok(p2p::transport::TransportEvent::ManageQueryReply { peer_id, reply })
                 },
                 answer_when_sent: true,

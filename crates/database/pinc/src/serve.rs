@@ -298,8 +298,8 @@ impl<H: Hosted + 'static> Node<H> {
                 }
             }
             services::STREAM_SE => {
-                let request: p2p::message::PushSEArtifactsRequest = wire::decode(&payload)?;
-                verify_signed_sender(peer_id, &request)?;
+                let mut request: p2p::message::PushSEArtifactsRequest = wire::decode(&payload)?;
+                verify_signed_sender(peer_id, &mut request)?;
                 drop(request);
                 // The sender waits for this end before it lets go.
                 let _ = send.finish().await;
@@ -313,8 +313,8 @@ impl<H: Hosted + 'static> Node<H> {
                 .await;
             }
             services::STREAM_SE_QUERY => {
-                let request: p2p::message::QuerySEArtifactsRequest = wire::decode(payload)?;
-                verify_signed_sender(peer_id, &request)?;
+                let mut request: p2p::message::QuerySEArtifactsRequest = wire::decode(payload)?;
+                verify_signed_sender(peer_id, &mut request)?;
                 if let Some(token) = self.token(send, serial).await {
                     self.emit(
                         TransportEvent::SEQueryRequest {
@@ -328,8 +328,8 @@ impl<H: Hosted + 'static> Node<H> {
                 }
             }
             services::STREAM_MANAGE => {
-                let request: p2p::message::ManageRequest = wire::decode(payload)?;
-                verify_signed_sender(peer_id, &request)?;
+                let mut request: p2p::message::ManageRequest = wire::decode(payload)?;
+                verify_signed_sender(peer_id, &mut request)?;
                 if let Some(token) = self.token(send, serial).await {
                     self.emit(
                         TransportEvent::ManageRequest {
@@ -343,8 +343,8 @@ impl<H: Hosted + 'static> Node<H> {
                 }
             }
             services::STREAM_MANAGE_QUERY => {
-                let request: p2p::message::ManageQueryRequest = wire::decode(payload)?;
-                verify_signed_sender(peer_id, &request)?;
+                let mut request: p2p::message::ManageQueryRequest = wire::decode(payload)?;
+                verify_signed_sender(peer_id, &mut request)?;
                 if let Some(token) = self.token(send, serial).await {
                     self.emit(
                         TransportEvent::ManageQueryRequest {
@@ -521,9 +521,13 @@ where
 
 /// A signed message whose signature verifies under its own public key, and
 /// whose signer is the peer pinc authenticated.
-pub(super) fn verify_signed_sender<M>(peer_id: &PeerId, msg: &M) -> Result<()>
+///
+/// The signed bytes are the message's CBOR with no signature, as Go and
+/// `p2p::signing` sign it, so the signature is lifted out for the encode and
+/// put back after: no copy of the message is made.
+pub(super) fn verify_signed_sender<M>(peer_id: &PeerId, msg: &mut M) -> Result<()>
 where
-    M: Message + serde::Serialize + Clone,
+    M: Message + serde::Serialize,
 {
     if msg.sender_id() != peer_id.as_str() {
         return Err(Error::Transport(format!(
@@ -536,17 +540,103 @@ where
         .pubkey()
         .try_into()
         .map_err(|_| Error::PublicKeyDecode("expected a 32-byte Ed25519 public key".into()))?;
-    if hex::encode(pubkey) != peer_id.as_str() {
+    if !is_lower_hex_of(peer_id.as_str(), &pubkey) {
         return Err(Error::PubkeyPeerIdMismatch);
     }
     let key = ed25519_dalek::VerifyingKey::from_bytes(&pubkey)
         .map_err(|error| Error::PublicKeyDecode(error.to_string()))?;
     let signature =
         ed25519_dalek::Signature::from_slice(signature).map_err(|_| Error::InvalidSignature)?;
-    let mut unsigned = msg.clone();
-    unsigned.set_signature(None);
-    let bytes =
-        defra_core::cbor::to_vec(&unsigned).map_err(|e| Error::CborSerialization(e.to_string()))?;
+    msg.set_signature(None);
+    let bytes = defra_core::cbor::to_vec(&*msg);
+    msg.set_signature(Some(signature.to_bytes().to_vec()));
+    let bytes = bytes.map_err(|e| Error::CborSerialization(e.to_string()))?;
     key.verify_strict(&bytes, &signature)
         .map_err(|_| Error::InvalidSignature)
+}
+
+/// Whether `hex` is the lowercase hex of `bytes`, as `hex::encode` writes a
+/// peer id, compared digit by digit without building the string.
+fn is_lower_hex_of(hex: &str, bytes: &[u8]) -> bool {
+    const DIGITS: &[u8; 16] = b"0123456789abcdef";
+    hex.len() == bytes.len() * 2
+        && hex
+            .as_bytes()
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .zip(bytes)
+            .all(|([high, low], byte)| {
+                *high == DIGITS[usize::from(byte >> 4)] && *low == DIGITS[usize::from(byte & 0xf)]
+            })
+}
+
+#[cfg(test)]
+mod signed_sender_tests {
+    use ed25519_dalek::Signer as _;
+    use p2p::message::{Message, PushLogRequest};
+    use p2p::transport::PeerId;
+
+    use super::verify_signed_sender;
+    use p2p::error::Error;
+
+    /// A PushLog request signed as `p2p::signing` signs it, and its signer.
+    fn signed() -> (PeerId, PushLogRequest) {
+        let key = ed25519_dalek::SigningKey::from_bytes(&[7; 32]);
+        let pubkey = key.verifying_key().to_bytes();
+        let peer = PeerId::new(hex::encode(pubkey));
+        let mut msg = PushLogRequest::new(
+            "doc".into(),
+            bytes::Bytes::from_static(&[1, 2, 3]),
+            "collection".into(),
+            "creator".into(),
+            bytes::Bytes::from_static(b"block"),
+        );
+        msg.set_message_id("1".into());
+        msg.set_version(p2p::MESSAGE_VERSION.to_string());
+        msg.set_sender_id(peer.as_str().to_owned());
+        msg.set_pubkey(pubkey.to_vec());
+        msg.set_signature(None);
+        let bytes = defra_core::cbor::to_vec(&msg).unwrap();
+        msg.set_signature(Some(key.sign(&bytes).to_bytes().to_vec()));
+        (peer, msg)
+    }
+
+    #[test]
+    fn a_signed_message_verifies_and_keeps_its_signature() {
+        let (peer, mut msg) = signed();
+        let before = msg.signature().map(<[u8]>::to_vec);
+        verify_signed_sender(&peer, &mut msg).unwrap();
+        assert_eq!(msg.signature().map(<[u8]>::to_vec), before);
+        verify_signed_sender(&peer, &mut msg).unwrap();
+    }
+
+    #[test]
+    fn a_tampered_body_fails_the_signature() {
+        let (peer, mut msg) = signed();
+        msg.set_message_id("2".into());
+        assert!(matches!(
+            verify_signed_sender(&peer, &mut msg),
+            Err(Error::InvalidSignature)
+        ));
+    }
+
+    #[test]
+    fn a_pubkey_that_is_not_the_peer_is_refused() {
+        let (peer, mut msg) = signed();
+        let mut other = msg.pubkey().to_vec();
+        other[0] ^= 1;
+        msg.set_pubkey(other);
+        assert!(matches!(
+            verify_signed_sender(&peer, &mut msg),
+            Err(Error::PubkeyPeerIdMismatch)
+        ));
+        let upper = PeerId::new(peer.as_str().to_uppercase());
+        let (_, mut msg) = signed();
+        msg.set_sender_id(upper.as_str().to_owned());
+        assert!(matches!(
+            verify_signed_sender(&upper, &mut msg),
+            Err(Error::PubkeyPeerIdMismatch)
+        ));
+    }
 }
