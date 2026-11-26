@@ -116,6 +116,10 @@ pub struct NewNode {
     /// node runs P2P and where it listens.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub go_config: Option<String>,
+    /// A Rust node started on a data directory that already holds the
+    /// Badger datastore Go DefraDB keeps there.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub go_datastore: bool,
     #[serde(default, skip_serializing_if = "Value::is_null")]
     pub expected_data: Value,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -152,6 +156,7 @@ impl Op for NewNode {
         probe.registered_identity = false;
         probe.without_node_identity = false;
         probe.go_config = None;
+        probe.go_datastore = false;
         probe.node_identity_seed = None;
         probe.enable_signing = false;
         probe.key_type = None;
@@ -195,12 +200,17 @@ impl Op for NewNode {
         }
         let max_txn_retries = self.max_txn_retries(state.client_type())?;
         let registered_identity = self.registered_identity(state.client_type())?;
-        let dir = match self.database_dir {
-            Some(_) => Some(Arc::new(tempfile::tempdir().map_err(|e| {
+        let dir = match self.database_dir.is_some() || self.go_datastore {
+            true => Some(Arc::new(tempfile::tempdir().map_err(|e| {
                 Failure::operation(format!("could not make the node's directory: {e}"))
             })?)),
-            None => None,
+            false => None,
         };
+        if let (true, Some(dir)) = (self.go_datastore, &dir) {
+            std::fs::write(dir.path().join("MANIFEST"), GO_BADGER_MANIFEST).map_err(|e| {
+                Failure::operation(format!("could not write the Go datastore's MANIFEST: {e}"))
+            })?;
+        }
         let (network, listen) = match &self.go_config {
             Some(body) => go_config_network(body)?,
             None => (self.network, Vec::new()),
@@ -210,6 +220,7 @@ impl Op for NewNode {
             dir,
             listen,
             go_config: self.go_config.is_some(),
+            go_datastore: self.go_datastore,
             admission: self.admission.clone(),
             connection_manager: self.connection_manager.clone(),
             resolv_conf: self.resolv_conf(state.client_type())?,
@@ -231,10 +242,18 @@ impl Op for NewNode {
             max_txn_retries,
             ..Default::default()
         };
-        state.start_node(self.common.node(), spec);
+        state.try_start_node(self.common.node(), spec)?;
         Ok(json!({}))
     }
 }
+
+/// The `MANIFEST` Go DefraDB's Badger store holds once a new rootdir has
+/// started: Badger's magic text `Bdgr`, its format version 8, and the first
+/// change set.
+const GO_BADGER_MANIFEST: [u8; 32] = [
+    0x42, 0x64, 0x67, 0x72, 0x00, 0x00, 0x00, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x08, 0xb1, 0xdb, 0xb0, 0x99, 0x0a, 0x06, 0x08, 0x01, 0x20, 0x01, 0x30, 0x01,
+];
 
 /// Loads a Go-written `config.yaml` through the CLI's loader, as `defradb
 /// --rootdir <dir>` does, and answers whether the node runs P2P and the
