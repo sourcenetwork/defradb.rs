@@ -262,10 +262,10 @@ impl DocFetcher for FetcherWrapper {
         &self,
         collection_name: &str,
         index_name: &str,
-        prefix: &[document::NormalValue],
-    ) -> Result<Option<Vec<crate::fetcher::IndexEntryValues>>> {
+        prefixes: &[Vec<document::NormalValue>],
+    ) -> Result<Option<Vec<Vec<crate::fetcher::IndexEntryValues>>>> {
         self.get_fetcher()
-            .index_prefix_entries(collection_name, index_name, prefix)
+            .index_prefix_entries(collection_name, index_name, prefixes)
             .await
     }
 

@@ -1,13 +1,15 @@
 //! The parent scan of a routed chunked `SIMILARITY`: parents come from the chunk index.
 
+use std::collections::VecDeque;
 use std::sync::Arc;
 
 use async_trait::async_trait;
 use document::Document;
+use rapidhash::{HashMapExt, RapidHashMap, RapidHashSet};
 use schema::CollectionVersion;
 use serde_json::Value as JsonValue;
 
-use super::listed::best_listed_score;
+use super::listed::{best_scores, page_full, Wanted};
 use super::search::{ChunkSearch, GaveUp, ParentCheck, Searched};
 use super::target::{ChunkTarget, Reads};
 use crate::doc_stream::DocStream;
@@ -26,7 +28,7 @@ pub struct ChunkSimilarityScanNode {
     k: usize,
     similarity_index: usize,
     fetcher: Arc<dyn DocFetcher>,
-    ranked: std::vec::IntoIter<Doc>,
+    ranked: VecDeque<Doc>,
     fallback: Option<Box<dyn DocStream>>,
     searched: bool,
     gave_up: Option<GaveUp>,
@@ -72,7 +74,7 @@ impl ChunkSimilarityScanNode {
             k,
             similarity_index,
             fetcher,
-            ranked: Vec::new().into_iter(),
+            ranked: VecDeque::new(),
             fallback: None,
             searched: false,
             gave_up: None,
@@ -86,12 +88,6 @@ impl ChunkSimilarityScanNode {
             self.doc_ids = Some(doc_ids);
         }
         self
-    }
-
-    fn accepts(&self) -> Accepts<'_> {
-        Accepts {
-            doc_ids: self.doc_ids.as_deref(),
-        }
     }
 
     fn scored(&self, parent: &Document, score: Option<f64>) -> Result<Doc> {
@@ -108,6 +104,74 @@ impl ChunkSimilarityScanNode {
         self.exec_info.fields_fetched += reads.fields;
         self.exec_info.indexes_fetched += reads.index_lookups;
     }
+
+    /// Scores the fallback's next page of accepted parents together, in scan order.
+    async fn score_fallback_page(&mut self) -> Result<()> {
+        let Some(stream) = self.fallback.as_mut() else {
+            return Ok(());
+        };
+        let accepts = Accepts {
+            doc_ids: self.doc_ids.as_deref(),
+        };
+        let mut reads = Reads::default();
+        let mut page: Vec<(Document, Option<RapidHashSet<String>>)> = Vec::new();
+        let mut chunks = 0;
+        let mut drained = false;
+        while !page_full(page.len(), chunks) {
+            let Some((parent, _)) = stream.next().await? else {
+                drained = true;
+                break;
+            };
+            reads.count(&parent);
+            if !accepts.accepts(&parent)? {
+                continue;
+            }
+            let listed = self.target.listed(&parent);
+            chunks += listed.as_ref().map_or(0, |listed| listed.len());
+            page.push((parent, listed));
+        }
+        let none = RapidHashMap::new();
+        let ids: Vec<Option<String>> = page
+            .iter()
+            .map(|(parent, _)| parent.id().map(ToString::to_string))
+            .collect();
+        let (slots, wanted): (Vec<usize>, Vec<Wanted<'_>>) = page
+            .iter()
+            .zip(&ids)
+            .enumerate()
+            .filter_map(|(slot, ((_, listed), id))| {
+                let id = id.as_deref()?;
+                let wanted = Wanted {
+                    parent_id: id,
+                    listed: listed.as_ref()?,
+                    held: &none,
+                };
+                Some((slot, wanted))
+            })
+            .unzip();
+        let mut scores = vec![None; page.len()];
+        if !wanted.is_empty() {
+            let found =
+                best_scores(self.fetcher.as_ref(), &self.target, &wanted, &mut reads).await?;
+            for (slot, score) in slots.into_iter().zip(found) {
+                scores[slot] = score;
+            }
+        }
+        drop(wanted);
+        let mut rows = VecDeque::with_capacity(page.len());
+        for ((parent, _), score) in page.iter().zip(scores) {
+            rows.push_back(self.scored(parent, score)?);
+        }
+        drop(page);
+        self.count(reads);
+        self.ranked = rows;
+        if drained {
+            if let Some(mut stream) = self.fallback.take() {
+                stream.close().await?;
+            }
+        }
+        Ok(())
+    }
 }
 
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
@@ -121,24 +185,26 @@ impl PlanNode for ChunkSimilarityScanNode {
             index_id: self.index_id,
             k: self.k,
         }
-        .run(&self.accepts())
+        .run(&Accepts {
+            doc_ids: self.doc_ids.as_deref(),
+        })
         .await?;
         self.searched = search.searches > 0;
         self.exec_info.indexes_fetched += search.searches;
         self.count(search.reads);
         match search.searched {
             Searched::Ranked(parents) => {
-                let mut rows = Vec::with_capacity(parents.len());
+                let mut rows = VecDeque::with_capacity(parents.len());
                 for (parent, score) in &parents {
-                    rows.push(self.scored(parent, Some(*score))?);
+                    rows.push_back(self.scored(parent, Some(*score))?);
                 }
-                self.ranked = rows.into_iter();
+                self.ranked = rows;
                 self.fallback = None;
                 self.gave_up = None;
             }
             Searched::Exhausted(gave_up) => {
                 self.gave_up = Some(gave_up);
-                self.ranked = Vec::new().into_iter();
+                self.ranked = VecDeque::new();
                 self.fallback = Some(
                     self.fetcher
                         .stream_all_with_deleted(&self.collection.name, false)
@@ -155,30 +221,15 @@ impl PlanNode for ChunkSimilarityScanNode {
 
     async fn next(&mut self) -> Result<bool> {
         self.exec_info.iterations += 1;
-        if let Some(row) = self.ranked.next() {
-            self.current = row;
-            return Ok(true);
+        // A page can hold no accepted parent, so read on until one does or the scan ends.
+        while self.ranked.is_empty() && self.fallback.is_some() {
+            self.score_fallback_page().await?;
         }
-        loop {
-            let pulled = match self.fallback.as_mut() {
-                Some(stream) => stream.next().await?,
-                None => None,
-            };
-            let Some((parent, _)) = pulled else {
-                return Ok(false);
-            };
-            let mut reads = Reads::default();
-            reads.count(&parent);
-            if !self.accepts().accepts(&parent)? {
-                self.count(reads);
-                continue;
-            }
-            let score =
-                best_listed_score(self.fetcher.as_ref(), &self.target, &parent, &mut reads).await?;
-            self.count(reads);
-            self.current = self.scored(&parent, score)?;
-            return Ok(true);
-        }
+        let Some(row) = self.ranked.pop_front() else {
+            return Ok(false);
+        };
+        self.current = row;
+        Ok(true)
     }
 
     fn value(&self) -> &Doc {

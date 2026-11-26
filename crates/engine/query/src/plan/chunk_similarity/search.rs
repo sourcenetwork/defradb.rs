@@ -5,7 +5,7 @@ use rapidhash::{HashMapExt, HashSetExt, RapidHashMap, RapidHashSet};
 use tracing::debug;
 
 use super::best::best_per_parent;
-use super::listed::{best_score_of, drain, Held};
+use super::listed::{best_scores, drain, Held, Wanted};
 use super::target::{ChunkTarget, Reads};
 use crate::error::Result;
 use crate::fetcher::DocFetcher;
@@ -147,22 +147,9 @@ impl ChunkSearch<'_> {
                 "chunk vector index candidates"
             );
             if best.len() >= self.k {
-                let mut ranked = Vec::with_capacity(best.len());
-                let none = RapidHashMap::new();
-                for (id, found) in best {
-                    let (Some(parent), Some(Some(listed))) =
-                        (parents.remove(&id), decided.get(&id))
-                    else {
-                        continue;
-                    };
-                    // The index may have missed a better chunk of this parent.
-                    let known = held.get(&id).unwrap_or(&none);
-                    let exact =
-                        best_score_of(self.fetcher, self.target, &id, listed, known, &mut reads)
-                            .await?
-                            .unwrap_or(found);
-                    ranked.push((parent, exact));
-                }
+                let ranked = self
+                    .rescore(best, &decided, &mut parents, &held, &mut reads)
+                    .await?;
                 return Ok(Search {
                     searched: Searched::Ranked(ranked),
                     searches,
@@ -188,6 +175,38 @@ impl ChunkSearch<'_> {
             searches,
             reads,
         })
+    }
+
+    /// The exact scores of the found parents, read in one batch.
+    async fn rescore(
+        &self,
+        found: Vec<(String, f64)>,
+        decided: &RapidHashMap<String, Listed>,
+        parents: &mut RapidHashMap<String, Document>,
+        held: &RapidHashMap<String, RapidHashMap<String, Held>>,
+        reads: &mut Reads,
+    ) -> Result<Vec<(Document, f64)>> {
+        let none = RapidHashMap::new();
+        let mut kept = Vec::with_capacity(found.len());
+        let mut wanted = Vec::with_capacity(found.len());
+        for (id, found) in &found {
+            let Some(Some(listed)) = decided.get(id) else {
+                continue;
+            };
+            kept.push((id, *found));
+            // The index may have missed a better chunk of this parent.
+            wanted.push(Wanted {
+                parent_id: id,
+                listed,
+                held: held.get(id).unwrap_or(&none),
+            });
+        }
+        let exact = best_scores(self.fetcher, self.target, &wanted, reads).await?;
+        Ok(kept
+            .into_iter()
+            .zip(exact)
+            .filter_map(|((id, found), exact)| Some((parents.remove(id)?, exact.unwrap_or(found))))
+            .collect())
     }
 
     async fn read_chunks(&self, short_ids: &[u64], reads: &mut Reads) -> Result<Vec<Document>> {

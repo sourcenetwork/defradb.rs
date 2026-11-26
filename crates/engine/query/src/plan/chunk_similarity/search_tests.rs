@@ -10,14 +10,16 @@ use defra_core::vector::Metric;
 use document::{DocID, Document, NormalValue};
 use schema::{CType, ChunkedField, CollectionBuilder, FieldDescription, FieldKind, ScalarKind};
 
+use rapidhash::{HashMapExt, RapidHashMap};
+
 use super::{ChunkSearch, GaveUp, ParentCheck, Searched};
 use crate::access_hooks::{AppReadCheck, ReadRequest, ReadValidator};
 use crate::doc_stream::{DocStream, VecStream};
 use crate::error::{QueryError, Result};
-use crate::fetcher::{DocFetcher, FetchByIdsResult, IndexEntryValues, IndexScanResult};
+use crate::fetcher::{DocFetcher, FetchByIdsResult, IndexEntryValues};
+use crate::plan::chunk_similarity::listed::{best_scores, Wanted};
 use crate::plan::chunk_similarity::target::{ChunkTarget, Reads};
 use crate::plan::scan::MAX_VECTOR_CANDIDATES;
-use crate::planner::index_selection::{IndexScanParams, IndexScanType};
 
 const PARENTS: &str = "Article";
 const CHUNKS: &str = "Article__body_chunk";
@@ -78,15 +80,15 @@ fn copy_of(of: &IndexedChunk, nearness: f64) -> IndexedChunk {
     }
 }
 
-/// How the fake looks up one parent's chunks.
+/// How the fake finds a page's chunks.
 #[derive(Clone, Copy, PartialEq)]
 enum Lookup {
-    /// By the `_sourceID` field, with no index.
+    /// No `[_sourceID, hash]` index: a read of every chunk.
     FieldValue,
-    /// One `[_sourceID, hash]` prefix scan, reading the hashes from the entries.
+    /// One read of the `[_sourceID, hash]` entries of every parent on the page.
     Entries,
-    /// One `[_sourceID, hash]` exact match per hash.
-    ExactMatch,
+    /// An index whose entries this fetcher can't read: a read of every chunk.
+    NoEntries,
 }
 
 struct Index {
@@ -95,6 +97,8 @@ struct Index {
     deleted: Vec<&'static str>,
     searches: AtomicUsize,
     widest: AtomicUsize,
+    /// How many times a whole chunk collection was read.
+    full_reads: AtomicUsize,
     /// Whether a chunk read fails after its first chunk.
     fails: bool,
     closed: Arc<AtomicBool>,
@@ -108,6 +112,7 @@ impl Index {
             deleted: Vec::new(),
             searches: AtomicUsize::new(0),
             widest: AtomicUsize::new(0),
+            full_reads: AtomicUsize::new(0),
             fails: false,
             closed: Arc::new(AtomicBool::new(false)),
         }
@@ -218,8 +223,12 @@ fn loose(fields: &[&str]) -> schema::CollectionVersion {
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl DocFetcher for Index {
-    async fn get_all(&self, _collection: &str) -> Result<Vec<Document>> {
-        unreachable!("the search never reads a whole collection")
+    async fn get_all(&self, collection: &str) -> Result<Vec<Document>> {
+        assert_eq!(collection, CHUNKS);
+        self.full_reads.fetch_add(1, Ordering::Relaxed);
+        Ok((0..self.chunks.len() as u64)
+            .map(|id| self.chunk_doc(id))
+            .collect())
     }
 
     async fn stream_all_with_deleted(
@@ -269,51 +278,36 @@ impl DocFetcher for Index {
         &self,
         collection: &str,
         _index: &str,
-        prefix: &[NormalValue],
-    ) -> Result<Option<Vec<IndexEntryValues>>> {
+        prefixes: &[Vec<NormalValue>],
+    ) -> Result<Option<Vec<Vec<IndexEntryValues>>>> {
         assert_eq!(collection, CHUNKS);
         if self.lookup != Lookup::Entries {
             return Ok(None);
         }
-        Ok(Some(
-            self.entries_of(prefix[0].as_str().unwrap())
-                .map(|(doc_short_id, hash)| IndexEntryValues {
-                    doc_short_id,
-                    values: vec![prefix[0].clone(), NormalValue::String(hash)],
-                })
-                .collect(),
-        ))
-    }
-
-    async fn get_by_index_scan(
-        &self,
-        collection: &str,
-        params: &IndexScanParams,
-    ) -> Result<IndexScanResult> {
-        assert_eq!(collection, CHUNKS);
-        let IndexScanType::ExactMatch { values } = &params.scan_type else {
-            unreachable!("one listed chunk is an exact match")
-        };
-        let (parent, hash) = (values[0].as_str().unwrap(), values[1].as_str().unwrap());
-        Ok(IndexScanResult::new(
-            self.entries_of(parent)
-                .filter(|(_, entry)| entry == hash)
-                .map(|(id, _)| self.chunk_doc(id).id().unwrap().to_string())
-                .collect(),
-        ))
+        let entries = prefixes
+            .iter()
+            .map(|prefix| {
+                let [parent] = prefix.as_slice() else {
+                    unreachable!("a page asks for each parent's entries")
+                };
+                self.entries_of(parent.as_str().unwrap())
+                    .map(|(doc_short_id, entry)| IndexEntryValues {
+                        doc_short_id,
+                        values: vec![parent.clone(), NormalValue::String(entry)],
+                    })
+                    .collect()
+            })
+            .collect();
+        Ok(Some(entries))
     }
 
     async fn get_by_field_value(
         &self,
-        collection: &str,
-        field: &str,
-        value: &str,
+        _collection: &str,
+        _field: &str,
+        _value: &str,
     ) -> Result<Vec<Document>> {
-        assert_eq!((collection, field), (CHUNKS, "_sourceID"));
-        Ok((0..self.chunks.len() as u64)
-            .filter(|id| parent_id(self.chunks[*id as usize].parent) == value)
-            .map(|id| self.chunk_doc(id))
-            .collect())
+        unreachable!("a page reads its chunks together")
     }
 
     fn supports_vector_search(&self) -> bool {
@@ -570,21 +564,23 @@ fn index_missing_a_best(lookup: Lookup) -> Index {
 }
 
 #[test]
-fn rescoring_reads_one_prefix_scan_per_parent_and_only_the_chunks_not_yet_seen() {
+fn rescoring_reads_one_index_page_and_only_the_chunks_not_yet_seen() {
     let (ranked, reads) = run(&index_missing_a_best(Lookup::Entries), 2, &AnyParent);
     assert_eq!(ranked.unwrap(), vec![("A", 0.95), ("B", 0.6)]);
     // Two found chunks and their two parents, then only A's missed chunk.
-    assert_eq!((reads.docs, reads.index_lookups), (5, 2));
+    assert_eq!((reads.docs, reads.index_lookups), (5, 1));
 }
 
 #[test]
-fn rescoring_without_index_entries_matches_each_listed_hash_exactly() {
-    let (ranked, reads) = run(&index_missing_a_best(Lookup::ExactMatch), 2, &AnyParent);
+fn rescoring_without_index_entries_reads_the_chunks_once_for_the_page() {
+    let index = index_missing_a_best(Lookup::NoEntries);
+    let (ranked, reads) = run(&index, 2, &AnyParent);
     assert_eq!(ranked.unwrap(), vec![("A", 0.95), ("B", 0.6)]);
-    assert_eq!((reads.docs, reads.index_lookups), (5, 3));
+    assert_eq!((reads.docs, reads.index_lookups), (7, 0));
+    assert_eq!(index.full_reads.load(Ordering::Relaxed), 1);
 }
 
-const LOOKUPS: [Lookup; 3] = [Lookup::FieldValue, Lookup::Entries, Lookup::ExactMatch];
+const LOOKUPS: [Lookup; 3] = [Lookup::FieldValue, Lookup::Entries, Lookup::NoEntries];
 
 #[test]
 fn two_copies_of_one_hash_read_together_rank_by_the_better() {
@@ -632,15 +628,17 @@ fn the_exact_score_skips_a_chunk_its_own_app_check_refuses() {
     let index = Index::new(vec![chunk("A", 0.9), chunk("A", 0.1)]);
     let target = target(index.lookup).with_app(refusing(&[0]));
     let parent = index.parent_doc(&parent_id("A")).unwrap();
-    let score = workers::block_on(super::super::listed::best_listed_score(
-        &index,
-        &target,
-        &parent,
-        &mut Reads::default(),
-    ))
-    .unwrap()
-    .unwrap();
-    assert_eq!(score, Some(0.1));
+    let (id, listed) = (parent_id("A"), target.listed(&parent).unwrap());
+    let held = RapidHashMap::new();
+    let wanted = [Wanted {
+        parent_id: &id,
+        listed: &listed,
+        held: &held,
+    }];
+    let scores = workers::block_on(best_scores(&index, &target, &wanted, &mut Reads::default()))
+        .unwrap()
+        .unwrap();
+    assert_eq!(scores, vec![Some(0.1)]);
 }
 
 #[test]

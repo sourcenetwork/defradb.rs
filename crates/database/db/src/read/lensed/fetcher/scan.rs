@@ -58,8 +58,8 @@ impl<S: Store + 'static> LensedDocFetcher<S> {
         &self,
         collection_name: &str,
         index_name: &str,
-        prefix: &[document::NormalValue],
-    ) -> query::error::Result<Vec<query::fetcher::IndexEntryValues>> {
+        prefixes: &[Vec<document::NormalValue>],
+    ) -> query::error::Result<Vec<Vec<query::fetcher::IndexEntryValues>>> {
         let (collection, datastore, _) =
             get_collection_with_lazy_load(&*self.shared_txn()?, collection_name).await?;
         let index_manager = IndexManager::from_indexes(
@@ -74,7 +74,7 @@ impl<S: Store + 'static> LensedDocFetcher<S> {
             &datastore,
             collection_name,
             index_name,
-            prefix,
+            prefixes,
         )
         .await
     }

@@ -81,8 +81,12 @@
 \*   crates/surfaces/http/src/handlers/events.rs     can_observe_document_event (an unknown collection's event)
 \*   crates/engine/query/src/planner/builder/mod.rs Planner::plan_with_index_info (rows_rejected_above_the_scan: no route under read rules)
 \*   crates/engine/query/src/plan/chunk_similarity/search.rs ChunkSearch::run (nearest first, widening, the checks per chunk)
-\*   crates/engine/query/src/plan/chunk_similarity/listed.rs best_listed_score (the exhaustive fallback)
-\*   crates/engine/query/src/plan/chunk_similarity/listed.rs best_score_of, Held (every copy of a hash counts)
+\*   crates/engine/query/src/plan/chunk_similarity/search.rs ChunkSearch::rescore (the picked article read again)
+\*   crates/engine/query/src/plan/chunk_similarity/routed.rs ChunkSimilarityScanNode::score_fallback_page (the
+\*                                          exhaustive fallback)
+\*   crates/engine/query/src/plan/chunk_similarity/node.rs ChunkSimilarityNode::score_page (no route)
+\*   crates/engine/query/src/plan/chunk_similarity/listed.rs best_scores, Held (every copy of a hash counts,
+\*                                          for a page of articles at once)
 \*   crates/engine/query/src/plan/chunk_similarity/target.rs ChunkTarget::readable (the chunk's own app check in a ranking)
 \*   crates/engine/query/src/planner/chunk_similarity.rs Planner::chunks_gate_reads (no route under the chunks' own app check)
 \* Merging the text across peers is ChunkMerge.tla's job, not this one's.
@@ -397,7 +401,8 @@ RankRouted ==
   /\ UNCHANGED <<rankVars, width>>
 
 \* No route, or the index ran out first: the article's current chunks are
-\* scored one by one, after its access check.
+\* scored, after its access check. The code reads them for a page of articles
+\* at once; each article's score is still its own best.
 RankExhaustive ==
   /\ phase = "reading" /\ kind = "similar"          \* a ranking is running
   /\ \/ ~Routes                                     \* it may not route,
