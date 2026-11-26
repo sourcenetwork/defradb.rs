@@ -51,6 +51,10 @@ impl RegolithTxn {
         path: impl AsRef<std::path::Path>,
         options: super::RegolithStoreOptions,
     ) -> Result<Self> {
+        #[cfg(not(target_arch = "wasm32"))]
+        if Arc::ptr_eq(&options.files_env(), &regolith::env::std_env()) {
+            super::foreign::refuse_badger(path.as_ref())?;
+        }
         let db = regolith::Db::open_read_only(path.as_ref(), options.engine_for_open()).map_err(
             |error| Error::Backend(format!("failed to open regolith read-only: {error}")),
         )?;

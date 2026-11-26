@@ -19,6 +19,7 @@ use schema::{
 };
 
 use super::directives::IndexDirection;
+use super::field_type_refusal::{unlisted, FieldTypeRefusal, FieldTypeRefusals};
 use super::helpers::{
     generate_collection_id, generate_field_id, generate_index_name, generate_relation_name,
 };
@@ -81,24 +82,44 @@ impl<'a> SdlParser<'a> {
         ]
         .into_iter()
         .collect();
-        let mut field_type_errors = Vec::new();
+        let mut unlisted_scalars = Vec::new();
+        let mut unknown_types = Vec::new();
         for type_def in self.type_defs.values() {
             for field in &type_def.fields {
                 let base = &field.field_type.base_type;
-                if !scalar_types.contains(base.as_str())
+                let refused = field
+                    .field_type
+                    .is_list
+                    .then(|| unlisted(&field.name, base))
+                    .flatten();
+                if let Some(refused) = refused {
+                    unlisted_scalars.push(refused);
+                } else if !scalar_types.contains(base.as_str())
                     && !type_names.contains(base)
                     && base != &type_def.name
                 {
-                    field_type_errors.push(format!(
-                        "no type found for given name. Field: {}, Kind: {}",
-                        field.name, base
-                    ));
+                    let kind = match field.field_type.is_list {
+                        true => format!("[{base}]"),
+                        false => base.clone(),
+                    };
+                    unknown_types.push(FieldTypeRefusal::UnknownType {
+                        field: field.name.clone(),
+                        kind,
+                    });
                 }
             }
         }
-        if !field_type_errors.is_empty() {
-            field_type_errors.sort();
-            return Err(QueryError::parse(field_type_errors.join("\n")));
+        if !unlisted_scalars.is_empty() {
+            // An unknown type beside a refused one keeps the refusal's code.
+            let mut refusals = unlisted_scalars;
+            refusals.append(&mut unknown_types);
+            refusals.sort_by_key(ToString::to_string);
+            return Err(FieldTypeRefusals(refusals).into());
+        }
+        if !unknown_types.is_empty() {
+            let mut lines: Vec<String> = unknown_types.iter().map(ToString::to_string).collect();
+            lines.sort();
+            return Err(QueryError::parse(lines.join("\n")));
         }
 
         // Collect @primary directive information for determining actual primaryness

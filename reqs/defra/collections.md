@@ -279,6 +279,38 @@ Fields of kind `Blob`, `JSON`, `Float32`, `Float64`, `Float` and every other sup
 
 Adding a collection whose name already exists (in the store or twice in one SDL) fails with `collection already exists` (one `collection already exists. Name: Users` line per duplicate); an unknown field type fails with `no type found for given name. Field: name, Kind: NotAType` (one line per bad field); a non-null list relation such as `[Dogs!]` fails with `NonNull variants for type are not supported. Type: Dogs`; a field with no type fails with `field type not specified. Object: User, Field: name`.
 
+# `go.collection_version.define.field_type_forms`: Which field type declarations are accepted
+
+- **Parents:** ["go.collection_version.define"]
+- **Scenarios:** ["collection_version::field_type_forms::every_scalar_and_a_relation_is_accepted_nillable", "collection_version::field_type_forms::every_scalar_but_id_is_accepted_non_null", "collection_version::field_type_forms::lists_of_array_scalars_and_relations_are_accepted", "collection_version::field_type_forms::lists_of_non_null_array_scalars_are_accepted", "collection_version::field_type_forms::a_non_null_id_is_refused", "collection_version::field_type_forms::a_non_null_relation_is_refused", "collection_version::field_type_forms::a_non_null_scalar_list_is_refused", "collection_version::field_type_forms::a_non_null_list_of_non_null_scalars_is_refused", "collection_version::field_type_forms::a_non_null_relation_list_is_refused", "collection_version::field_type_forms::a_list_of_non_null_ids_is_refused", "collection_version::field_type_forms::a_list_of_non_null_blobs_is_refused", "collection_version::field_type_forms::a_list_of_non_null_json_is_refused", "collection_version::field_type_forms::a_list_of_non_null_relations_is_refused", "collection_version::field_type_forms::a_list_of_ids_is_refused", "collection_version::field_type_forms::a_list_of_blobs_is_refused", "collection_version::field_type_forms::a_list_of_json_is_refused", "collection_version::field_type_forms::a_nested_list_is_refused", "collection_version::field_type_forms::a_refusal_in_a_transaction_keeps_its_code", "collection_version::field_type_forms::an_unknown_type_beside_a_refused_list_keeps_the_code"]
+
+A field declared in SDL takes one of these forms; `Author` stands for any collection (a relation):
+
+| Type | `T` | `T!` | `[T]` | `[T!]` | `[T]!`, `[T!]!` |
+|------|-----|------|-------|--------|-----------------|
+| `String`, `Int`, `Float`, `Float64`, `Float32`, `Boolean`, `DateTime` | accepted | accepted | accepted | accepted | refused (1) |
+| `JSON`, `Blob` | accepted | accepted | refused (3) | refused (2) | refused (1) |
+| `ID` | accepted | refused (1) | refused (3) | refused (2) | refused (1) |
+| `Author` | accepted | refused (1) | accepted | refused (2) | refused (1) |
+
+A list of lists (`[[Int]]`, with or without `!`) is refused with (4), and with (1) when the outer list is non-null. Each refusal fails with Go's text, for a field `value` on `User`:
+
+1. `NonNull fields are not currently supported`
+2. `NonNull variants for type are not supported. Type: ID` (the element type)
+3. `no type found for given name. Field: value, Kind: [ID]` (the element type)
+4. `nested list types are not supported. Object: User, Field: value`
+
+A field of an unknown type beside a list refused with (3) adds its own line (`no type found for given name. Field: a, Kind: NotAType`); the lines are sorted, one per field. A refusal inside an explicit transaction has the same text.
+
+Accepting a form the table refuses, refusing one it accepts, or changing a refusal's text or code (`defra.collection_version.define.field_type_code`) is a breaking change.
+
+# `defra.collection_version.define.field_type_code`: A refused field type declaration carries a code
+
+- **Parents:** ["go.collection_version.define"]
+- **Scenarios:** ["collection_version::field_type_forms::a_non_null_id_is_refused", "collection_version::field_type_forms::a_non_null_relation_is_refused", "collection_version::field_type_forms::a_non_null_scalar_list_is_refused", "collection_version::field_type_forms::a_non_null_list_of_non_null_scalars_is_refused", "collection_version::field_type_forms::a_non_null_relation_list_is_refused", "collection_version::field_type_forms::a_list_of_non_null_ids_is_refused", "collection_version::field_type_forms::a_list_of_non_null_blobs_is_refused", "collection_version::field_type_forms::a_list_of_non_null_json_is_refused", "collection_version::field_type_forms::a_list_of_non_null_relations_is_refused", "collection_version::field_type_forms::a_list_of_ids_is_refused", "collection_version::field_type_forms::a_list_of_blobs_is_refused", "collection_version::field_type_forms::a_list_of_json_is_refused", "collection_version::field_type_forms::a_nested_list_is_refused", "collection_version::field_type_forms::a_refusal_in_a_transaction_keeps_its_code", "collection_version::field_type_forms::an_unknown_type_beside_a_refused_list_keeps_the_code"]
+
+Every refusal in `go.collection_version.define.field_type_forms` reaches an in-process or HTTP client of a Rust node with the code `UNSUPPORTED_FIELD_TYPE` beside Go's text, in autocommit and inside an explicit transaction alike: the in-process error's `code()` (`AddCollectionError::UnsupportedFieldType`), and the `code` member of the HTTP error body (`{"error": "NonNull fields are not currently supported", "code": "UNSUPPORTED_FIELD_TYPE"}`, status 400). An SDL whose fields include such a refusal keeps the code when other fields have unknown types; an SDL whose only bad fields have unknown types fails with no code. `defradb client collection add` prints Go's text alone (`Error: server returned error: <message>`): the refusal is no GraphQL error, and only `client query` prints a GraphQL error's code (`defra.cli.query.error_code`). A Go node sends no code.
+
 # `go.collection_version.define.embeddings`: `@embedding` vector field definitions
 
 - **Parents:** ["go.collection_version.define"]

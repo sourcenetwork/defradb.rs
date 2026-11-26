@@ -35,6 +35,9 @@ pub struct GoCreateIndexRequest {
     /// Vector index config. Present iff this is a vector index request.
     #[serde(rename = "Vector", default)]
     pub vector: Option<schema::VectorIndexDescription>,
+    /// Return after the index definition commits while backfill continues.
+    #[serde(rename = "BuildInBackground", default)]
+    pub build_in_background: bool,
 }
 
 /// Go-compatible indexed field description.
@@ -222,6 +225,7 @@ pub async fn go_create_index(
             name.as_deref(),
             request.unique,
             request.vector,
+            request.build_in_background,
         )
         .await
         .map_err(http_error_from_backend_message)?;
@@ -372,6 +376,7 @@ mod tests {
         assert_eq!(request.fields[0].name, "email");
         assert!(!request.fields[0].descending);
         assert!(request.unique);
+        assert!(!request.build_in_background);
     }
 
     #[test]
@@ -381,6 +386,29 @@ mod tests {
         assert!(request.name.is_none());
         assert_eq!(request.fields.len(), 1);
         assert!(!request.unique);
+    }
+
+    #[test]
+    fn background_build_and_vector_configuration_are_independent() {
+        let ordered: GoCreateIndexRequest =
+            serde_json::from_str(r#"{"Fields":[{"Name":"name"}],"BuildInBackground":true}"#)
+                .unwrap();
+        assert!(ordered.build_in_background);
+        assert!(ordered.vector.is_none());
+
+        let vector: GoCreateIndexRequest = serde_json::from_str(
+            r#"{"Fields":[{"Name":"embedding"}],"Vector":{"Dimensions":3},"BuildInBackground":true}"#,
+        )
+        .unwrap();
+        assert!(vector.build_in_background);
+        assert_eq!(vector.vector.unwrap().dimensions, 3);
+
+        let legacy: GoCreateIndexRequest = serde_json::from_str(
+            r#"{"Fields":[{"Name":"embedding"}],"Vector":{"Dimensions":3},"IsExhaustive":true}"#,
+        )
+        .unwrap();
+        assert!(!legacy.build_in_background);
+        assert_eq!(legacy.vector.unwrap().dimensions, 3);
     }
 
     #[test]

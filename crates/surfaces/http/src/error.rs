@@ -54,6 +54,10 @@ pub enum HttpError {
 
     #[error("query execution failed: {0}")]
     QueryExecution(String),
+
+    /// A bad request whose refusal has a stable code a client classifies it by.
+    #[error("{message}")]
+    Refused { message: String, code: &'static str },
 }
 
 /// Error response body matching Go DefraDB format.
@@ -82,10 +86,14 @@ impl IntoResponse for HttpError {
             HttpError::Internal(msg) => (StatusCode::INTERNAL_SERVER_ERROR, msg.clone()),
             HttpError::NotImplemented(msg) => (StatusCode::NOT_IMPLEMENTED, msg.clone()),
             HttpError::QueryExecution(msg) => (StatusCode::BAD_REQUEST, msg.clone()),
+            HttpError::Refused { message, .. } => (StatusCode::BAD_REQUEST, message.clone()),
         };
 
-        let code = matches!(self, Self::StorageFull(_))
-            .then_some(query::executor::STORAGE_FULL_ERROR_CODE);
+        let code = match self {
+            Self::StorageFull(_) => Some(query::executor::STORAGE_FULL_ERROR_CODE),
+            Self::Refused { code, .. } => Some(code),
+            _ => None,
+        };
         (
             status,
             Json(ErrorResponse {
@@ -292,6 +300,18 @@ pub(crate) fn peer_refused(error: defra_p2p_adapter::peer::Error) -> HttpError {
     http_error_from_backend_message(error.to_string())
 }
 
+/// A refused add-collection request: its code when it has one, otherwise the
+/// status its message names.
+pub(crate) fn collection_refused(refusal: crate::router::CollectionRefusal) -> HttpError {
+    match refusal.code {
+        Some(code) => HttpError::Refused {
+            message: refusal.message,
+            code,
+        },
+        None => http_error_from_backend_message(refusal.message),
+    }
+}
+
 pub(crate) fn http_error_from_backend_message(message: String) -> HttpError {
     match classify_backend_message(&message) {
         Some(status) => http_error_from_status(status, message),
@@ -334,6 +354,7 @@ impl From<TransactionError> for HttpError {
                 HttpError::Internal(message)
             }
             TransactionError::NotSupported(_) => HttpError::BadRequest(message),
+            TransactionError::UnsupportedFieldType(refusals) => collection_refused(refusals.into()),
         }
     }
 }
@@ -581,6 +602,30 @@ mod storage_failure_tests {
                 .unwrap();
             let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
             assert_eq!(body["code"], query::executor::STORAGE_FULL_ERROR_CODE);
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn a_coded_collection_refusal_is_a_bad_request_with_its_code() {
+        workers::block_on(async {
+            let refusal = crate::router::CollectionRefusal {
+                message: "NonNull fields are not currently supported".into(),
+                code: Some(query::sdl_parse::UNSUPPORTED_FIELD_TYPE_ERROR_CODE),
+            };
+            let response = collection_refused(refusal).into_response();
+            assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+            let bytes = axum::body::to_bytes(response.into_body(), 4096)
+                .await
+                .unwrap();
+            let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(
+                body,
+                serde_json::json!({
+                    "error": "NonNull fields are not currently supported",
+                    "code": "UNSUPPORTED_FIELD_TYPE",
+                })
+            );
         })
         .unwrap();
     }

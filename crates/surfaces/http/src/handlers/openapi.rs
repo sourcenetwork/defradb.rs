@@ -133,10 +133,28 @@ mod tests {
         assert_eq!(compared, operations, "every operation of Go's document");
     }
 
-    /// Every path Go documents still resolves in this router. The baseline is
-    /// read from the tree rather than from the served body: the served body is
-    /// generated from the route table, so comparing it with itself would prove
-    /// nothing about Go.
+    /// The mounts a documented path is served under: its own `servers` when
+    /// it names them, the document's otherwise, as OpenAPI resolves them.
+    fn mounts(document: &Value, item: &Value) -> Vec<String> {
+        let servers = item
+            .get("servers")
+            .unwrap_or(&document["servers"])
+            .as_array()
+            .expect("servers");
+        assert!(!servers.is_empty(), "a path with no server to probe");
+        servers
+            .iter()
+            .map(|server| {
+                let url = server["url"].as_str().expect("server url");
+                url.trim_end_matches('/').to_string()
+            })
+            .collect()
+    }
+
+    /// Every path Go documents still resolves in this router, under every
+    /// mount Go documents it at. The baseline is read from the tree rather
+    /// than from the served body: the served body is generated from the route
+    /// table, so comparing it with itself would prove nothing about Go.
     #[nuclei::test]
     async fn every_go_documented_path_exists_in_the_rust_router() {
         let app = Server::new(MockQueryExecutor::new(), edge::testing::edge())
@@ -144,24 +162,41 @@ mod tests {
             .unwrap();
         let go: Value = serde_json::from_str(OPENAPI_GO).expect("the baseline parses");
 
-        for path in go["paths"].as_object().expect("paths").keys() {
-            let response = app
-                .clone()
-                .oneshot(
-                    Request::builder()
-                        .method(Method::TRACE)
-                        .uri(format!("/api/v0{}", concrete_path(path)))
-                        .body(Body::empty())
-                        .unwrap(),
-                )
-                .await
-                .unwrap();
-            assert_eq!(
-                response.status(),
-                StatusCode::METHOD_NOT_ALLOWED,
-                "documented path does not resolve: {path}"
-            );
+        for (path, item) in go["paths"].as_object().expect("paths") {
+            for mount in mounts(&go, item) {
+                let uri = format!("{mount}{}", concrete_path(path));
+                let response = app
+                    .clone()
+                    .oneshot(
+                        Request::builder()
+                            .method(Method::TRACE)
+                            .uri(&uri)
+                            .body(Body::empty())
+                            .unwrap(),
+                    )
+                    .await
+                    .unwrap();
+                assert_eq!(
+                    response.status(),
+                    StatusCode::METHOD_NOT_ALLOWED,
+                    "documented path does not resolve: {uri}"
+                );
+            }
         }
+    }
+
+    /// A path that names its own servers is probed there, not under the
+    /// document's, so a root-mounted path in a future snapshot is probed at
+    /// the root.
+    #[test]
+    fn a_path_is_probed_under_the_servers_it_names() {
+        let document = serde_json::json!({
+            "servers": [{ "url": "/api/v0" }, { "url": "/api" }],
+        });
+        let inherited = serde_json::json!({ "get": {} });
+        let rooted = serde_json::json!({ "servers": [{ "url": "/" }], "get": {} });
+        assert_eq!(mounts(&document, &inherited), ["/api/v0", "/api"]);
+        assert_eq!(mounts(&document, &rooted), [""]);
     }
 
     /// A baseline bump changes the snapshot and the constant together; this

@@ -72,6 +72,67 @@ pub(super) const PROPERTIES: &[Property] = &[
         bound_by: "",
     },
     Property {
+        // HTTP build mode does not change the requested index kind.
+        family: "Schema-evolution operations in the core",
+        name: "INV_KindPreserved / INV_SyncWaits",
+        axis: Tla,
+        anchor: "crates/surfaces/http/src/handlers/index/go_api.rs go_create_index; crates/surfaces/http/src/index_adapter.rs IndexAdapter::create_index; crates/database/db/src/index/create.rs create_index, start_index",
+        model_ref: "MC_HttpIndexBuild_{Green,Green_Sync,Red_Vector,Red_Early}.cfg",
+        tiers: &[Boundary],
+        bound_by: "tools/integration-test/tests/testo/index/async_backfill_migration.rs async_backfill_restart_after_non_zero_watermark_resumes_to_ready",
+    },
+    Property {
+        // The vector config and background selection are independent.
+        family: "Schema-evolution operations in the core",
+        name: "IndexBuildMode.kind_independent / background_ordered / background_vector",
+        axis: Lean,
+        anchor: "crates/surfaces/http/src/handlers/index/go_api.rs go_create_index; crates/surfaces/http/src/index_adapter.rs IndexAdapter::create_index",
+        model_ref: "IndexBuildMode (lake build)",
+        tiers: &[Boundary],
+        bound_by: "crates/surfaces/http/src/handlers/index/go_api.rs background_build_and_vector_configuration_are_independent",
+    },
+    Property {
+        // A backfill page never indexes more documents than the configured batch.
+        family: "Schema-evolution operations in the core",
+        name: "INV_BatchBound / INV_SizeBound / INV_Indexed",
+        axis: Tla,
+        anchor: "crates/database/db/src/index/backfill.rs DB::backfill_batches; crates/database/db/src/index/pages.rs DB::run_page, PageAttempt::run",
+        model_ref: "MC_BackfillPageSize_{Green,Green_Large,Red_Uncapped}.cfg",
+        tiers: &[Boundary],
+        bound_by: "crates/database/db/tests/index/create.rs create_index_honors_a_smaller_backfill_batch",
+    },
+    Property {
+        // Doubling and halving keep a backfill page within the batch limit.
+        family: "Schema-evolution operations in the core",
+        name: "BackfillPageSize.grow_le_limit / grow_le_pageItems / shrink_le_limit / shrink_pos",
+        axis: Lean,
+        anchor: "crates/database/db/src/index/backfill.rs DB::backfill_batches; crates/database/db/src/index/pages.rs DB::run_page, PageAttempt::run",
+        model_ref: "BackfillPageSize (lake build)",
+        tiers: &[Boundary],
+        bound_by: "crates/database/db/tests/index/create.rs create_index_honors_a_smaller_backfill_batch",
+    },
+    Property {
+        // A partially transformed document remains at its source version so
+        // a lens registered later still runs.
+        family: "Schema-evolution operations in the core",
+        name: "INV_NoPartialStamp",
+        axis: Tla,
+        anchor: "crates/database/db/src/definition/lens.rs migration_path_transforms; crates/database/db/src/definition/migration/helpers.rs migrate_to_active; crates/database/db/src/definition/migration/reindex/page.rs ReindexPage::walk",
+        model_ref: "MC_PartialLensPath_{Green,Red_Partial}.cfg",
+        tiers: &[Boundary],
+        bound_by: "tools/integration-test/tests/testo/issues/t_3044.rs",
+    },
+    Property {
+        // The completeness guard holds only when every hop has a lens.
+        family: "Schema-evolution operations in the core",
+        name: "PartialLensPath.partial_not_materialized / empty_not_materialized / missing_hop_not_materialized / filled_hop_materialized",
+        axis: Lean,
+        anchor: "crates/database/db/src/definition/lens.rs migration_path_transforms; crates/database/db/src/definition/migration/reindex/page.rs ReindexPage::walk",
+        model_ref: "PartialLensPath (lake build)",
+        tiers: &[Boundary],
+        bound_by: "tools/integration-test/tests/testo/issues/t_3044.rs",
+    },
+    Property {
         // Removing a transform must not invert native documents.
         family: "Schema-evolution operations in the core",
         name: "INV_NativePreserved",

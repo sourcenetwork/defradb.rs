@@ -158,50 +158,9 @@ use network::NodeEdge;
 #[cfg(not(target_arch = "wasm32"))]
 use signed_query::{execute_with_signing_context, unavailable_node_signer_response};
 
-/// Type-erased schema operations so we can store `DB<S>` without leaking the `Store` generic.
-#[async_trait::async_trait]
-trait SchemaOps: Send + Sync {
-    async fn add_collection(
-        &self,
-        context: &RequestContext,
-        sdl: &str,
-    ) -> Result<Vec<CollectionVersion>>;
-    async fn ensure_ordinary_index(
-        &self,
-        context: &RequestContext,
-        collection: &str,
-        name: &str,
-        fields: Vec<schema::IndexedFieldDescription>,
-    ) -> Result<schema::IndexDescription>;
-    async fn add_view(
-        &self,
-        context: &RequestContext,
-        source_query: &str,
-        target_sdl: &str,
-        transform: Option<&str>,
-    ) -> Result<Vec<CollectionVersion>>;
-    async fn refresh_views(
-        &self,
-        context: &RequestContext,
-        selector: db::CollectionSelector,
-    ) -> Result<()>;
-    async fn materialize_collection(
-        &self,
-        context: &RequestContext,
-        collection_name: &str,
-    ) -> Result<usize>;
-    fn list_collections(&self) -> Result<Vec<String>>;
-    fn get_collection(&self, name: &str) -> Result<Option<CollectionVersion>>;
-    async fn get_collection_by_version_id(
-        &self,
-        version_id: &str,
-    ) -> Result<Option<CollectionVersion>>;
-    async fn get_all_collection_versions(&self) -> Result<Vec<CollectionVersion>>;
-}
-
 #[cfg(feature = "http")]
 struct HttpSchemaOps {
-    schema_ops: Arc<dyn SchemaOps>,
+    schema_ops: db_impls::DbSchemaOps,
     /// The request these operations serve, for ones bound to it.
     context: Option<RequestContext>,
 }
@@ -214,36 +173,26 @@ impl defra_http::router::CollectionOperations for HttpSchemaOps {
         context: &RequestContext,
     ) -> Option<Arc<dyn defra_http::router::CollectionOperations>> {
         Some(Arc::new(Self {
-            schema_ops: Arc::clone(&self.schema_ops),
+            schema_ops: self.schema_ops.clone(),
             context: Some(context.clone()),
         }))
     }
 
-    async fn add_collection(&self, sdl: &str) -> Result<Vec<CollectionVersion>, String> {
+    async fn add_collection(
+        &self,
+        sdl: &str,
+    ) -> Result<Vec<CollectionVersion>, defra_http::router::CollectionRefusal> {
         self.schema_ops
             .add_collection(
                 &RequestContext::bound_or_ambient(self.context.as_ref()),
                 sdl,
             )
             .await
-            .map_err(|error| error.to_string())
+            .map_err(|error| match error {
+                Error::AddCollection(refused) => refused.into(),
+                other => other.to_string().into(),
+            })
     }
-}
-
-#[async_trait::async_trait]
-trait BlockOps: Send + Sync {
-    async fn signed_block_bytes(
-        &self,
-        cid: &str,
-        caller_did: Option<&str>,
-    ) -> Result<(Vec<u8>, Vec<u8>)>;
-    async fn verified_signer_did(&self, cid: &str) -> Result<String>;
-    async fn verified_signer_did_in_txn(
-        &self,
-        context: &RequestContext,
-        cid: &str,
-        transaction: &TransactionHandle,
-    ) -> Result<String>;
 }
 
 /// An embedded DefraDB node with query execution and event subscription.
@@ -259,8 +208,8 @@ pub struct Node {
     #[cfg(feature = "http")]
     rest: Arc<dyn query::rest::RestOperations>,
     event_bus: Arc<dyn events::Bus>,
-    schema_ops: Arc<dyn SchemaOps>,
-    block_ops: Arc<dyn BlockOps>,
+    schema_ops: db_impls::DbSchemaOps,
+    block_ops: db_impls::DbBlockOps,
     acp_ops: Arc<dyn acp_ops::AcpOps>,
     document_acp: Arc<dyn acp::DocumentACP>,
     embedding_config: db::EmbeddingClientConfig,
@@ -745,7 +694,7 @@ impl Node {
     /// canonical DAG-CBOR block bytes, and derives the DID from the verified
     /// public key. Unsigned, malformed, missing, or invalid blocks fail closed.
     pub async fn verified_block_signer_did(&self, cid: &str) -> Result<String> {
-        let (ops, cid) = (Arc::clone(&self.block_ops), cid.to_owned());
+        let (ops, cid) = (self.block_ops.clone(), cid.to_owned());
         self.on_pool(move || async move { ops.verified_signer_did(&cid).await })
             .await
     }
@@ -758,7 +707,7 @@ impl Node {
         cid: &str,
         caller_did: Option<&str>,
     ) -> Result<(Vec<u8>, Vec<u8>)> {
-        let (ops, cid) = (Arc::clone(&self.block_ops), cid.to_owned());
+        let (ops, cid) = (self.block_ops.clone(), cid.to_owned());
         let caller = caller_did.map(str::to_owned);
         self.on_pool(move || async move { ops.signed_block_bytes(&cid, caller.as_deref()).await })
             .await
@@ -794,7 +743,7 @@ impl Node {
         }
 
         let (ops, sdl, context) = (
-            Arc::clone(&self.schema_ops),
+            self.schema_ops.clone(),
             sdl.to_owned(),
             self.txn_owner(&context),
         );
@@ -811,7 +760,7 @@ impl Node {
         name: &str,
         fields: Vec<schema::IndexedFieldDescription>,
     ) -> Result<schema::IndexDescription> {
-        let (ops, context) = (Arc::clone(&self.schema_ops), self.node_context());
+        let (ops, context) = (self.schema_ops.clone(), self.node_context());
         let (collection, name) = (collection.to_owned(), name.to_owned());
         self.on_pool(move || async move {
             ops.ensure_ordinary_index(&context, &collection, &name, fields)
@@ -868,7 +817,7 @@ impl Node {
     /// Returns the number of documents advanced to the active version. This is a
     /// datastore-only operation and does not create or broadcast document commits.
     pub async fn materialize_collection(&self, collection_name: &str) -> Result<usize> {
-        let (ops, context) = (Arc::clone(&self.schema_ops), self.node_context());
+        let (ops, context) = (self.schema_ops.clone(), self.node_context());
         let name = collection_name.to_owned();
         self.on_pool(move || async move { ops.materialize_collection(&context, &name).await })
             .await
@@ -898,14 +847,14 @@ impl Node {
         &self,
         version_id: &str,
     ) -> Result<Option<CollectionVersion>> {
-        let (ops, version) = (Arc::clone(&self.schema_ops), version_id.to_owned());
+        let (ops, version) = (self.schema_ops.clone(), version_id.to_owned());
         self.on_pool(move || async move { ops.get_collection_by_version_id(&version).await })
             .await
     }
 
     /// Return every collection version known to the node, active and inactive.
     pub async fn get_all_collection_versions(&self) -> Result<Vec<CollectionVersion>> {
-        let ops = Arc::clone(&self.schema_ops);
+        let ops = self.schema_ops.clone();
         self.on_pool(move || async move { ops.get_all_collection_versions().await })
             .await
     }

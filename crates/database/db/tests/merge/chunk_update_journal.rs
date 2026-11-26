@@ -304,6 +304,7 @@ pub(super) async fn merge_updated_chunk(author: &Node, peer: &Node, parent: &str
 }
 
 #[test]
+#[mantra_macros::req_test("defra.events.delivery.chunk")]
 fn a_chunks_updates_show_only_to_a_reader_of_its_parent() {
     workers::block_on(async {
         let author = node().await;

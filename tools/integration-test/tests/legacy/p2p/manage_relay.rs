@@ -765,10 +765,29 @@ fn active_peers_contains(
         .unwrap_or(false)
 }
 
+/// Number of `Peer disconnected` lines naming `peer_id` in node `idx`'s log: each
+/// one is the close of the node's last connection to that peer.
+fn disconnects_logged(cluster: &TestCluster, idx: usize, peer_id: &str) -> usize {
+    let logs = cluster.nodes[idx]
+        .rootdir
+        .parent()
+        .expect("node dir")
+        .join("logs");
+    ["stdout.log", "stderr.log"]
+        .iter()
+        .filter_map(|file| std::fs::read_to_string(logs.join(file)).ok())
+        .map(|log| {
+            log.lines()
+                .filter(|line| line.contains("Peer disconnected") && line.contains(peer_id))
+                .count()
+        })
+        .sum()
+}
+
 /// 3-node e2e: a relayed `PeerDisconnect` must SEVER a live connection, not just
 /// return 200. Node A (HTTP relay) tells node B to disconnect from node C, while
 /// a live B<->C connection (established directly, not over the relay) exists.
-/// The disconnect is proven by C disappearing from B's active peers. The third
+/// The disconnect is proven by B logging C's disconnect after the request. The third
 /// node is essential: the A<->B relay link is a different connection, so the
 /// relay reply still returns even after C is dropped.
 #[nuclei::test]
@@ -800,6 +819,7 @@ async fn manage_peer_disconnect_severs_live_connection() {
         }
 
         // Relay a PeerDisconnect to B targeting C's address.
+        let disconnects_before = disconnects_logged(&cluster, 1, &peer_id_c);
         let token = crate::manage_relay_common::mint_manage_token(&admin_key, &peer_id_b);
         let status = post_manage(
             &api_a,
@@ -815,17 +835,15 @@ async fn manage_peer_disconnect_severs_live_connection() {
             "authorized PeerDisconnect relay should return 200"
         );
 
-        // The real assertion: C must vanish from B's active peers - the relayed verb
-        // severed a live connection.
+        // The real assertion: B logged the close of its last connection to C - the
+        // relayed verb severed a live connection. Background discovery may dial C
+        // again right after, so sampling B's active peers can miss the gap.
         let deadline = Instant::now() + Duration::from_secs(20);
-        loop {
-            if !active_peers_contains(&cluster, 1, &admin_key, &peer_id_c) {
-                break;
-            }
+        while disconnects_logged(&cluster, 1, &peer_id_c) <= disconnects_before {
             assert!(
                 Instant::now() < deadline,
                 "relayed PeerDisconnect did not sever the live B<->C connection: \
-             node C is still in node B's active peers"
+             node B never logged C's disconnect"
             );
             nuclei::time::sleep(Duration::from_millis(200)).await;
         }

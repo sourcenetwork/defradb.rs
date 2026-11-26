@@ -1,3 +1,5 @@
+mod cid_check;
+mod connection_manager;
 mod gossip_admission;
 mod iroh_large_update;
 mod stream_protocols;
@@ -68,6 +70,7 @@ mod simple {
             mod text;
         }
         mod cross_version;
+        mod list_shape;
         mod with_add;
         mod with_add_add_field;
         mod with_add_restart;

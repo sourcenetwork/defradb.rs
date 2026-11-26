@@ -220,11 +220,20 @@ pub struct Libp2pConfig {
     /// Where the DNS layers read the resolver configuration; the system's by
     /// default.
     pub resolver: p2p::ResolverSource,
+    /// The connection manager's low watermark: a trim closes peers until
+    /// the host is back at it.
+    pub connection_manager_low_water: u32,
+    /// The connection manager's high watermark: the host trims once it holds
+    /// more connections than this.
+    pub connection_manager_high_water: u32,
+    /// How long a new connection is safe from a trim.
+    pub connection_manager_grace_period: std::time::Duration,
 }
 
 #[cfg(feature = "libp2p")]
 impl Default for Libp2pConfig {
     fn default() -> Self {
+        let host = p2p::P2PHostConfig::default();
         Self {
             listen_addrs: Vec::new(),
             bootstrap_peers: Vec::new(),
@@ -235,6 +244,9 @@ impl Default for Libp2pConfig {
             orphan_sweep: db::block::orphan_gc::OrphanSweepConfig::default(),
             resource_limits: p2p::ResourceLimits::default(),
             resolver: p2p::ResolverSource::System,
+            connection_manager_low_water: host.connection_manager_low_water,
+            connection_manager_high_water: host.connection_manager_high_water,
+            connection_manager_grace_period: host.connection_manager_grace_period,
         }
     }
 }
@@ -432,6 +444,9 @@ pub struct NodeConfig {
     pub replication_filter: Option<ReplicationFilterHandle>,
     /// The gate index backfills pass before each batch; `None` holds none.
     pub index_build_gate: Option<IndexBuildGateHandle>,
+    /// Documents an index backfill may index in one transaction; `None`
+    /// uses the built-in page size.
+    pub backfill_batch_docs: Option<usize>,
     /// The gate explicit transaction commits pass before they are handed to
     /// their owner.
     pub commit_gate: Option<CommitGateHandle>,
