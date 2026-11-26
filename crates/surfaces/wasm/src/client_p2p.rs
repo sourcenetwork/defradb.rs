@@ -46,7 +46,7 @@ impl DefraClient {
     pub async fn peer_info(&self) -> std::result::Result<JsValue, JsValue> {
         let ops = self.p2p_ops()?;
         let id = ops.local_peer_id().await.map_err(p2p_error)?;
-        let addresses = ops.listen_addresses().await.map_err(p2p_error)?;
+        let addresses = peer::peer_info(&**ops).await.map_err(core_error)?;
         Ok(to_js(
             &serde_json::json!({ "id": id, "addresses": addresses }),
         )?)
@@ -103,10 +103,12 @@ impl DefraClient {
         )
     }
 
-    /// Every replicator this peer pushes to.
+    /// Every replicator this peer pushes to, as Go's `client.Replicator`.
     #[wasm_bindgen]
     pub async fn replicators(&self) -> std::result::Result<JsValue, JsValue> {
-        let replicators = self.p2p_ops()?.get_replicators().await.map_err(p2p_error)?;
+        let replicators = peer::list_replicators(&**self.p2p_ops()?)
+            .await
+            .map_err(core_error)?;
         Ok(to_js(&replicators)?)
     }
 
