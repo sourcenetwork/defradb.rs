@@ -96,10 +96,10 @@ fn a_bad_timeout_fails_before_syncing() {
     close(node);
 }
 
-/// Tests that run a node with a transport, which a build without the libp2p
+/// Tests that run a node with a transport, which a build without the p2p
 /// feature does not have.
-#[cfg(feature = "libp2p")]
-mod libp2p {
+#[cfg(feature = "p2p")]
+mod pinc {
     use std::time::Duration;
 
     use serde_json::{json, Value};
@@ -110,24 +110,25 @@ mod libp2p {
     };
     use crate::types::NodeInitOptions;
 
-    /// A node listening for libp2p on a free local port.
+    /// A pinc node on a free loopback port.
     fn p2p_node() -> usize {
-        let listen = cstr("/ip4/127.0.0.1/tcp/0");
+        let listen = cstr("127.0.0.1:0");
         node_with(NodeInitOptions {
             disable_p2p: 0,
             listening_addresses: listen.as_ptr(),
-            enable_pub_sub: 1,
             ..local_options()
         })
     }
 
-    /// The first address other peers reach `node` at.
+    /// The loopback address other peers reach `node` at.
     fn address(node: usize) -> String {
         wait_for(Duration::from_secs(10), || {
             let info = ok_json(defra_p2p_info(node, 0));
             info.as_array()
-                .and_then(|a| a.first())
-                .and_then(Value::as_str)
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_str)
+                .find(|addr| addr.contains("@127.0.0.1:"))
                 .map(str::to_string)
                 .ok_or_else(|| format!("the node never listened: {info}"))
         })
@@ -146,6 +147,19 @@ mod libp2p {
                 Err(format!("wanted {want}, still {got}"))
             }
         })
+    }
+
+    /// A host that leaves `listening_addresses` empty gets a node bound on
+    /// loopback: its peer info lists a loopback address, which a node bound
+    /// on every interface never lists.
+    #[test]
+    fn a_node_that_names_no_listening_address_binds_loopback() {
+        let node = node_with(NodeInitOptions {
+            disable_p2p: 0,
+            ..local_options()
+        });
+        address(node);
+        close(node);
     }
 
     #[test]
@@ -228,45 +242,6 @@ mod libp2p {
         close(target);
     }
 
-    /// A libp2p node that listens on nothing.
-    fn dial_only_node() -> usize {
-        node_with(NodeInitOptions {
-            disable_p2p: 0,
-            disable_p2p_listen: 1,
-            enable_pub_sub: 1,
-            ..local_options()
-        })
-    }
-
-    /// Dial-only nodes run side by side in one process, competing for no
-    /// port, and one still replicates out to a peer that listens.
-    #[test]
-    fn dial_only_nodes_share_a_process_and_replicate_out() {
-        let source = dial_only_node();
-        let other = dial_only_node();
-        let target = p2p_node();
-        for node in [source, target] {
-            add_collection(node, "type User { name: String }");
-        }
-
-        let collections = cstr("User");
-        let target_address = cstr(&address(target));
-        ok(unsafe {
-            defra_p2p_replicator_add(source, collections.as_ptr(), target_address.as_ptr(), 0)
-        });
-        query(
-            source,
-            r#"mutation { add_User(input: {name: "dialed"}) { _docID } }"#,
-        );
-        eventually(json!([{"name": "dialed"}]), || {
-            query(target, "{ User { name } }")["data"]["User"].clone()
-        });
-
-        close(source);
-        close(other);
-        close(target);
-    }
-
     #[test]
     fn p2p_collections_are_added_listed_and_removed() {
         let node = p2p_node();
@@ -324,7 +299,7 @@ mod libp2p {
     #[test]
     fn peer_details_answer_for_a_peer_and_refuse_a_bad_id() {
         let node = p2p_node();
-        let peer = "12D3KooWD3eckifWpRn9wQpMG9R9hX3sD158z7EqHWmweQAJU5SA";
+        let peer = "ae58ff8833241ac82d6ff7611046ed67b5072d142c588d0063e942d9a75502b6";
         let peer_id = cstr(peer);
         let details = ok_json(unsafe { defra_mobile_peer_details(node, peer_id.as_ptr(), 0) });
         assert_eq!(details["peer_id"], peer, "{details}");
@@ -340,6 +315,30 @@ mod libp2p {
     fn a_network_change_is_accepted_with_p2p() {
         let node = p2p_node();
         ok(defra_mobile_notify_network_change(node, 0));
+        close(node);
+    }
+
+    /// Go's FFI node keeps its peer key in its store: a node reopened on the
+    /// same store answers to the same peer id.
+    #[test]
+    fn a_persistent_node_keeps_its_peer_id_across_a_restart() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = cstr(&directory.path().to_string_lossy());
+        let listen = cstr("127.0.0.1:0");
+        let options = || NodeInitOptions {
+            disable_p2p: 0,
+            listening_addresses: listen.as_ptr(),
+            db_path: path.as_ptr(),
+            ..local_options()
+        };
+        let peer_id = |node: usize| address(node).split('@').next().unwrap().to_string();
+
+        let node = node_with(options());
+        let first = peer_id(node);
+        close(node);
+
+        let node = node_with(options());
+        assert_eq!(peer_id(node), first);
         close(node);
     }
 }

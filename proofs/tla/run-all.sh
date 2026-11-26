@@ -34,11 +34,6 @@ RUNS=(
   "MC_MissingRelationFilter_Green.cfg MissingRelationFilter.tla GREEN"
   "MC_MissingRelationFilter_Red_NoId.cfg MissingRelationFilter.tla RED"
   "MC_MissingRelationFilter_Red_Sibling.cfg MissingRelationFilter.tla RED"
-  "MC_DisplacedConnectionRestore_Green.cfg DisplacedConnectionRestore.tla GREEN"
-  "MC_DisplacedConnectionRestore_Red_NoEvict.cfg DisplacedConnectionRestore.tla RED"
-  "MC_DisplacedConnectionRestore_Red_Closed.cfg DisplacedConnectionRestore.tla RED"
-  "MC_DisplacedConnectionRestore_Red_EvictAny.cfg DisplacedConnectionRestore.tla RED" # a newer connection is evicted (FreshKept)
-  "MC_DisplacedConnectionRestore_Red_Overwrite.cfg DisplacedConnectionRestore.tla RED" # the restore overwrites a newer connection (FreshKept)
   "MC_DocumentUpdateJournal_Green.cfg DocumentUpdateJournal.tla GREEN"
   "MC_DocumentUpdateJournal_Green_Outside.cfg DocumentUpdateJournal.tla GREEN"
   "MC_DocumentUpdateJournal_Red_Detached.cfg DocumentUpdateJournal.tla RED"
@@ -105,12 +100,6 @@ RUNS=(
   "MC_DagReadiness_Red_ConflictStringified.cfg DagReadiness.tla RED" # a storage conflict loses its type (INV_ConflictTyped)
   "MC_DagReadiness_Red_RootFaultErrs.cfg DagReadiness.tla RED" # a gone or unreadable root fails the retry (INV_SweepTotal, INV_RegisteredNeverErrors)
   "MC_DagReadiness_Red_CarFaultBlamesPeer.cfg DagReadiness.tla RED" # a local fault in the CAR size-limit check fails the response (INV_LocalFaultNotBlamed)
-  "MC_HeldPubsubRequest_Green.cfg HeldPubsubRequest.tla GREEN"
-  "MC_HeldPubsubRequest_Red_NoHold.cfg HeldPubsubRequest.tla RED" # a refused publish fails the sync at once (Delivered)
-  "MC_HeldPubsubRequest_Red_NoResend.cfg HeldPubsubRequest.tla RED" # a later subscriber is never sent the request (Delivered)
-  "MC_HeldPubsubRequest_Red_LateWatch.cfg HeldPubsubRequest.tla RED" # the wake-up is armed after the publish (Delivered)
-  "MC_HeldPubsubRequest_Red_NoDedupe.cfg HeldPubsubRequest.tla RED" # a resend's duplicate reply reaches the caller (OneReplyEach)
-  "MC_HeldPubsubRequest_Red_ResendLate.cfg HeldPubsubRequest.tla RED" # a resend goes out after the deadline (NoResendAfterDeadline)
   "MC_LensSettlement_Green.cfg LensSettlement.tla GREEN"
   "MC_LensSettlement_Red_Early.cfg LensSettlement.tla RED" # settlement runs before the staged lens registers (INV_SettleAfterLens)
   "MC_FloatEquality_Green.cfg FloatEquality.tla GREEN"
@@ -287,13 +276,6 @@ RUNS=(
   "MC_SelectedUpdate_Green.cfg SelectedUpdate.tla GREEN" # an update of a selected document loses only to a change of a field it depends on
   "MC_SelectedUpdate_Red_ExpectedOnly.cfg SelectedUpdate.tla RED" # a written field is not compared and a change to it is written over (INV_NoSilentOverwrite)
   "MC_SelectedUpdate_Red_Whole.cfg SelectedUpdate.tla RED" # every field is compared and an unrelated change loses the race (INV_LosesOnlyToItsFields)
-  "MC_EndpointBind_Green.cfg EndpointBind.tla GREEN"
-  "MC_EndpointBind_Red_Retain.cfg EndpointBind.tla RED"
-  "MC_EndpointBind_Red_Address.cfg EndpointBind.tla RED"
-  "MC_EndpointBind_Red_Port.cfg EndpointBind.tla RED"
-  "MC_EndpointBind_Red_Defaults.cfg EndpointBind.tla RED"
-  "MC_EndpointBind_Red_MappingScope.cfg EndpointBind.tla RED"
-  "MC_EndpointBind_Red_MappingDefaults.cfg EndpointBind.tla RED"
   "MC_SelectiveCarCapacity_Green.cfg SelectiveCarCapacity.tla GREEN"
   "MC_SelectiveCarCapacity_Red_NoReclaim.cfg SelectiveCarCapacity.tla RED"
   "MC_SelectiveCarCapacity_Red_ActiveEviction.cfg SelectiveCarCapacity.tla RED"
@@ -375,10 +357,6 @@ RUNS=(
   "MC_SelectedPushIsolation_Red_partial.cfg SelectedPushIsolation.tla RED"
   "MC_SelectedPushIsolation_Red_expiry_stop.cfg SelectedPushIsolation.tla RED"
   "MC_DocumentPush_Red_Admission.cfg DocumentPush.tla RED"
-  "MC_PeerStreamCap_Green.cfg PeerStreamCap.tla GREEN"
-  "MC_PeerStreamCap_Red_NoCheck.cfg PeerStreamCap.tla RED"
-  "MC_PeerStreamCap_Red_Leak.cfg PeerStreamCap.tla RED"
-  "MC_PeerStreamCap_Red_EvictLive.cfg PeerStreamCap.tla RED"
   "MC_ReceiveGate_Green.cfg ReceiveGate.tla GREEN" # a refused push stores and imports nothing, a kept one is merged
   "MC_ReceiveGate_Red_StoreFirst.cfg ReceiveGate.tla RED" # the head is stored before the first check (INV_ArrivalRefusalStoresNothing)
   "MC_ReceiveGate_Red_NoAfter.cfg ReceiveGate.tla RED" # a fetched CAR is imported unchecked (INV_FetchRefusalImportsNothing)
@@ -481,36 +459,10 @@ RUNS=(
   "MC_RemoteOwnerObservation_Red_StaleAdmission.cfg RemoteOwnerObservation.tla RED"
   "MC_PeerConnection_Green.cfg PeerConnection.tla GREEN"
   "MC_PeerConnection_Red_StaleObservation.cfg PeerConnection.tla RED"
-  "MC_SharedRpcConnection_Green.cfg SharedRpcConnection.tla GREEN"
-  "MC_LegacyRpcCache_Green.cfg LegacyRpcCache.tla GREEN"
-  "MC_RpcCacheEviction_Green.cfg RpcCacheEviction.tla GREEN"
-  "MC_RpcCacheEviction_Red_Reinsert.cfg RpcCacheEviction.tla RED"
-  "MC_LegacyRpcCache_Red_NoCache.cfg LegacyRpcCache.tla RED"
-  "MC_LegacyRpcCache_Red_Preference.cfg LegacyRpcCache.tla RED"
-  "MC_SharedRpcConnection_Red_NoAdoption.cfg SharedRpcConnection.tla RED"
-  "MC_SharedRpcConnection_Red_NoPostCheck.cfg SharedRpcConnection.tla RED"
-  "MC_SharedRpcConnection_Red_NoOutboundCheck.cfg SharedRpcConnection.tla RED"
-  "MC_SharedRpcConnection_Red_StaleEviction.cfg SharedRpcConnection.tla RED"
-  "MC_SharedRpcConnection_Red_WrongMux.cfg SharedRpcConnection.tla RED"
-  "MC_SharedRpcConnection_Red_RetainedClosed.cfg SharedRpcConnection.tla RED"
-  "MC_ConnectionAdoption_Green.cfg ConnectionAdoption.tla GREEN"
-  "MC_ConnectionAdoption_Red_OpenUncounted.cfg ConnectionAdoption.tla RED"
-  "MC_ConnectionAdoption_Red_RevokeCacheOnly.cfg ConnectionAdoption.tla RED"
-  "MC_ConnectionAdoption_Red_NoRpcAdoption.cfg ConnectionAdoption.tla RED"
-  "MC_ConnectionAdoption_Red_PumpLate.cfg ConnectionAdoption.tla RED"
-  "MC_ConnectionAdoption_Red_NoCleanup.cfg ConnectionAdoption.tla RED"
-  "MC_ConnectionAdoption_Red_HitAdopts.cfg ConnectionAdoption.tla RED"
-  "MC_ConnectionAdoption_Red_PeerWide.cfg ConnectionAdoption.tla RED"
-  "MC_ConnectionAdoption_Red_NoRestore.cfg ConnectionAdoption.tla RED"
-  "MC_ConnectionAdoption_Red_AdoptAnnounces.cfg ConnectionAdoption.tla RED"
-  "MC_PeerDisconnect_Green.cfg PeerDisconnect.tla GREEN" # Disconnect answers only once the peer's last connection closed
-  "MC_PeerDisconnect_Red_EarlyAck.cfg PeerDisconnect.tla RED" # answering before the closes (INV_AnsweredMeansClosed)
-  "MC_StickyDisconnect_Green_Libp2p.cfg StickyDisconnect.tla GREEN" # #2992 libp2p: lists in flight around a DisconnectPeers, the node that hung up never discovery-dials the peer back
+  "MC_StickyDisconnect_Green.cfg StickyDisconnect.tla GREEN" # #2992: the close carries CLOSE_DISCONNECTED, so neither side of a hang-up discovery-dials the other back
   "MC_StickyDisconnect_Red_LocalLoud.cfg StickyDisconnect.tla RED" # a hang-up quiets nothing: a late list has the node dial the peer back (NoLocalRedial)
-  "MC_StickyDisconnect_Red_Libp2pRemote.cfg StickyDisconnect.tla RED" # libp2p's close carries no reason: the peer hung up on dials back from a late list (NoRedialAfterDeliberateClose)
+  "MC_StickyDisconnect_Red_RemoteLoud.cfg StickyDisconnect.tla RED" # the close code is ignored: the peer hung up on dials back from a late list (NoRedialAfterDeliberateClose)
   "MC_StickyDisconnect_Red_DropRedials.cfg StickyDisconnect.tla RED" # witness: discovery still mends a real drop (NoRedialAfterDrop)
-  "MC_StickyDisconnect_Green_Pinc.cfg StickyDisconnect.tla GREEN" # #2992 pinc: the close carries CLOSE_DISCONNECTED, so neither side of a hang-up discovery-dials the other back
-  "MC_StickyDisconnect_Red_PincLocalLoud.cfg StickyDisconnect.tla RED" # pinc with the local half removed: the node that hung up dials back (NoRedialAfterDeliberateClose)
   "MC_StickyDisconnect_Red_KeepsQuiet.cfg StickyDisconnect.tla RED" # an explicit connect lifts no quiet: a disconnected then reconnected peer stays unmendable (UnquietOnConnect)
   "MC_StickyDisconnect_Red_EveryDialChecked.cfg StickyDisconnect.tla RED" # the quiet check refuses every dial: a PushLog to a disconnected peer never lands (RequestsStillDial)
   "MC_StickyDisconnect_Red_DialNotRechecked.cfg StickyDisconnect.tla RED" # a discovery dial reads the quiet only when decided: a hang-up while it is on its way is overtaken (NoLocalRedial)
@@ -600,11 +552,6 @@ RUNS=(
   "MC_RootSingleFlight_Red_NoGuard.cfg RootSingleFlight.tla RED" # every reply fetches, as before (INV_OneFetchPerRoot)
   "MC_RootSingleFlight_Red_Keep.cfg RootSingleFlight.tla RED" # a failed fetch keeps its claim: the next reply starts nothing (INV_NoReplyLost)
   "MC_RootSingleFlight_Red_RootOnly.cfg RootSingleFlight.tla RED" # claim keyed by root alone: a trusted reply waits behind a plain fetch (INV_NoReplyLost)
-  "MC_ProviderLookup_Green.cfg ProviderLookup.tla GREEN" # #2121: an empty lookup asks a connected peer, once per interval, and finds the owner
-  "MC_ProviderLookup_GreenOwner.cfg ProviderLookup.tla GREEN" # the connected peer is the owner: its own record answers
-  "MC_ProviderLookup_Red_NoAsk.cfg ProviderLookup.tla RED" # an empty lookup asks nobody, as before (LIVE_Found)
-  "MC_ProviderLookup_Red_BookOnly.cfg ProviderLookup.tla RED" # the answer leaves out the answerer's own record (LIVE_Found)
-  "MC_ProviderLookup_Red_Always.cfg ProviderLookup.tla RED" # every lookup asks, even one the book answers (INV_AskOnlyWhenEmpty)
   "MC_DagFetchBudget_Green.cfg DagFetchBudget.tla GREEN" # one attempt waits at most a rotation of stalls plus the free refusals, however many batches
   "MC_DagFetchBudget_Red_SlowIsRefusal.cfg DagFetchBudget.tla RED" # a failure at the response timeout counts as a free refusal (INV_WaitBounded)
   "MC_DagFetchBudget_Red_Uncapped.cfg DagFetchBudget.tla RED" # every fast refusal is free (INV_WaitBounded)
@@ -1259,8 +1206,8 @@ RUNS=(
   "MC_PendingDagRestart_Green.cfg MC_PendingDagRestart_Common.tla GREEN" # #1099: pending-DAG registrations persisted + restored after crash -> acks stay backed, all docs merge
   "MC_PendingDagRestart_Red_ProcessLocal.cfg MC_PendingDagRestart_Common.tla RED" # process-local registrations: hub crash after success-ack -> silent permanent loss (INV_AckBacked)
   "MC_SyncOwnership_Green.cfg SyncOwnership.tla GREEN" # #1116 stage 3: one head hint transfers durable completion ownership to the receiver
-  "MC_SyncOwnership_Green_IrohOrigin.cfg SyncOwnership.tla GREEN" # Iroh binds durable recovery to the signed, routable origin that owns the linked DAG
-  "MC_SyncOwnership_Green_Liveness_IrohRelay.cfg SyncOwnership.tla GREEN" # unreachable signed origin remains bound while a durable qualified same-root provider completes recovery
+  "MC_SyncOwnership_Green_RelayOrigin.cfg SyncOwnership.tla GREEN" # a relayed hint binds durable recovery to the signed, routable origin that owns the linked DAG
+  "MC_SyncOwnership_Green_Liveness_Relay.cfg SyncOwnership.tla GREEN" # unreachable signed origin remains bound while a durable qualified same-root provider completes recovery
   "MC_SyncOwnership_Green_Liveness_Doc.cfg SyncOwnership.tla GREEN" # document supersession eventually reaches currency and quiescence
   "MC_SyncOwnership_Green_Liveness_Collection.cfg SyncOwnership.tla GREEN" # collection supersession eventually reaches currency and quiescence
   "MC_SyncOwnership_Red_DocOnlyMarkers.cfg SyncOwnership.tla RED" # no collection marker loses a dropped collection-head obligation
@@ -1272,7 +1219,7 @@ RUNS=(
   "MC_SyncOwnership_Red_RelayOnlyProvider.cfg SyncOwnership.tla RED" # an unverified payload relay is not an authenticated recovery provider
   "MC_SyncOwnership_Red_ProviderRebind.cfg SyncOwnership.tla RED" # same-root replay cannot overwrite the durably bound recovery origin
   "MC_SyncOwnership_Red_UnroutableOrigin.cfg SyncOwnership.tla RED" # publisher identity without a direct-or-relayed CAR route cannot discharge ownership
-  "MC_SyncOwnership_Red_UnsignedIrohOrigin.cfg SyncOwnership.tla RED" # unsigned Iroh payload SourcePeerID is not an authenticated recovery provider
+  "MC_SyncOwnership_Red_UnsignedRelayOrigin.cfg SyncOwnership.tla RED" # an unsigned relayed payload SourcePeerID is not an authenticated recovery provider
   "MC_SyncOwnership_Red_RootOnlyHop.cfg SyncOwnership.tla RED" # authenticated gossip hop owns only the root, not the linked DAG promised by the hint
   "MC_SyncOwnership_Red_UnauthorizedOrigin.cfg SyncOwnership.tla RED" # a complete authenticated origin that cannot authorize the requester still cannot discharge ownership
   "MC_SyncOwnership_Red_CancelOnProgress.cfg SyncOwnership.tla RED" # first arriving CAR block truncates the receiver-owned response before DAG completion
@@ -1343,7 +1290,7 @@ RUNS=(
   "MC_P2PDelivery_Red_F4_LoopFirst.cfg MC_P2PDelivery_E2E.tla RED" # F4, main: a restarted hub merges a pushed head before its replicators are restored (INV_ObligationOwned)
   "MC_P2PDelivery_Red_F5_FanoutAbort.cfg MC_P2PDelivery_E2E.tla RED" # F5, main: a failed registration on the hub drops the intent of the peer not registered yet (INV_ObligationOwned)
   "MC_P2PDelivery_Red_F5_FailedDropped.cfg MC_P2PDelivery_E2E.tla RED" # F5, main: a failed registration's own intent is never retried (INV_ObligationOwned)
-  "MC_P2PDelivery_Red_F27_HalfRegistered.cfg MC_P2PDelivery_E2E.tla RED" # F27, main only (the rc1 pin adopts): the accepting side sends on a connection its dialer does not serve (INV_ReverseBorrowServed)
+  "MC_P2PDelivery_Red_F27_HalfRegistered.cfg MC_P2PDelivery_E2E.tla RED" # F27: the accepting side sends on a connection its dialer does not serve (INV_ReverseBorrowServed)
   "MC_P2PDelivery_Trace_TwoNode.cfg MC_P2PDelivery_Trace_TwoNode.tla TRACE:20" # a recorded run, a -> b, create and update: all 19 events are model steps and the run settles
   "MC_P2PDelivery_Trace_HubRelay.cfg MC_P2PDelivery_Trace_HubRelay.tla TRACE:36" # a recorded run, a -> h -> b: all 35 events replay; the hub's merge lays its marker for b
   "MC_P2PDelivery_Trace_Red_Unscheduled.cfg MC_P2PDelivery_Trace_Mutants.tla DEADLOCK:14" # the recorded run without its dispatches: a fetch with no slot (deadlock at the first Acquire)
@@ -1398,37 +1345,10 @@ RUNS=(
   "MC_EmbedderStream_Red_NoDeadline.cfg MC_EmbedderStream_Common.tla RED" # no deadline: a hung handler runs forever (LIVE_HandlerEnds)
   "MC_EmbedderStream_Red_BarOnly.cfg MC_EmbedderStream_Common.tla RED" # revocation only bars new connections: the revoked peer stays connected (INV_RevokedIsCut)
   "MC_EmbedderStream_Red_NoAbort.cfg MC_EmbedderStream_Common.tla RED" # shutdown leaves tasks running (INV_ShutdownLeavesNone)
-  "MC_GossipOwnership_Green.cfg MC_GossipOwnership_Common.tla GREEN" # #2078: gossip rides the mux connection; a revoked peer has no gossip, gossip never closes a shared connection
-  "MC_GossipOwnership_Red_OwnConnection.cfg MC_GossipOwnership_Common.tla RED" # former design: gossip dials its own connection and re-reaches a revoked peer (INV_RevokedHasNoGossip)
-  "MC_GossipOwnership_Red_NoRecheck.cfg MC_GossipOwnership_Common.tla RED" # no admission check after connecting: a revoke during the dial is missed (INV_RevokedHasNoGossip)
-  "MC_GossipOwnership_Red_GossipCloses.cfg MC_GossipOwnership_Common.tla RED" # forgetting a peer closes the shared connection (INV_GossipNeverClosesShared)
-  "MC_GossipOwnership_Red_ForgetForever.cfg MC_GossipOwnership_Common.tla RED" # gossip may drop the healthy peer forever: it is never reached (LIVE_HealthyReached)
-  "MC_GossipOwnership_Green_Legacy.cfg MC_GossipOwnership_Common.tla GREEN" # a dial that lands on the older mux answers gossip's ask as a failure
-  "MC_GossipOwnership_Red_SilentLegacy.cfg MC_GossipOwnership_Common.tla RED" # an older-mux connection is dropped silently: gossip waits on the peer forever (LIVE_AskAnswered)
-  "MC_GossipInbox_Green.cfg GossipInbox.tla GREEN" # control input never waits and received gossip is dropped when full: every endpoint request is answered
-  "MC_GossipInbox_Red_Shared.cfg GossipInbox.tla RED" # one bounded inbox: peers fill it while the driver waits on events, the endpoint loop stalls (LIVE_RequestAnswered)
-  "MC_GossipInbox_Red_LossyShared.cfg GossipInbox.tla RED" # received dropped when full but control waits in the same queue: same stall (LIVE_RequestAnswered)
-  "MC_GossipDelivery_Green.cfg MC_GossipDelivery_Common.tla GREEN" # #2820: every gossip broadcast fits a frame; a publish over the budget goes by direct push; no message is lost unreported
-  "MC_GossipDelivery_Red_LimitMismatch.cfg MC_GossipDelivery_Common.tla RED" # gossip sized at the frame limit, forgetting the topic: an accepted broadcast cannot be framed (INV_BroadcastFits)
-  "MC_GossipDelivery_Red_NoFallback.cfg MC_GossipDelivery_Common.tla RED" # a publish over the budget goes to gossip, which drops it silently (INV_NoSilentLoss)
-  "MC_GossipDelivery_Red_NeighboursOnly.cfg MC_GossipDelivery_Common.tla RED" # the direct push reaches only gossip's neighbours, not a connected subscriber beyond them (INV_NoSilentLoss)
-  "MC_GossipDelivery_Red_EndStream.cfg MC_GossipDelivery_Common.tla RED" # an unsendable frame ends the stream and the queue behind it (INV_NoSilentLoss)
-  "MC_GossipDelivery_Red_SilentFailure.cfg MC_GossipDelivery_Common.tla RED" # a failed stream drops its queue without a report (INV_NoSilentLoss)
-  "MC_ServiceRecords_Green.cfg ServiceRecords.tla GREEN" # #2080: a record replaces only a lower seq, an expired record is never used, a stale pointer triggers a query
-  "MC_ServiceRecords_Red_AnySeq.cfg ServiceRecords.tla RED" # the last record in wins: a late older record replaces a newer one (INV_SeqNeverGoesBack)
-  "MC_ServiceRecords_Red_NoExpiryCheck.cfg ServiceRecords.tla RED" # peers picked from an expired record (INV_NoExpiredChosen)
-  "MC_ServiceRecords_Red_GossipOnly.cfg ServiceRecords.tla RED" # no query on a stale pointer: lost gossip leaves an old record forever (LIVE_NewestReached)
-  "MC_ServiceRecords_Red_QueryOnConnect.cfg ServiceRecords.tla RED" # pointer looked up only at connect: gossip lost later leaves an old record forever (LIVE_NewestReached)
-  "MC_SolicitedReplies_Green.cfg SolicitedReplies.tla GREEN" # #2081: a reply stream is admitted only while a reply is owed, and an owed one is never refused
-  "MC_SolicitedReplies_Red_NoMatch.cfg SolicitedReplies.tla RED" # every reply stream read, as before: one nobody asked for is admitted (INV_NoUnsolicitedAdmitted)
-  "MC_SolicitedReplies_Red_Keep.cfg SolicitedReplies.tla RED" # admitting does not use up the expectation: a second reply is admitted (INV_NoUnsolicitedAdmitted)
-  "MC_SolicitedReplies_Red_Carry.cfg SolicitedReplies.tla RED" # an expired entry's leftovers carry into the next window (INV_NoUnsolicitedAdmitted)
-  "MC_SolicitedReplies_Red_PruneLive.cfg SolicitedReplies.tla RED" # prune removes a live entry: the owed reply is refused (INV_SolicitedAdmitted)
-  "MC_SolicitedReplies_Red_PruneRace.cfg SolicitedReplies.tla RED" # prune between an expect's read and write loses it (INV_SolicitedAdmitted)
-  "MC_SolicitedReplies_Red_SendFirst.cfg SolicitedReplies.tla RED" # send before expect: a fast reply is refused (INV_SolicitedAdmitted)
-  "MC_SolicitedReplies_GreenV2.cfg SolicitedReplies.tla GREEN" # mux 0.2: replies on the request stream, every reply stream refused
-  "MC_SolicitedReplies_Red_GateOnV2.cfg SolicitedReplies.tla RED" # 0.2 still gates reply streams: a forged second reply is admitted (INV_NoReplyStreamOnV2)
-  "MC_SolicitedReplies_Red_NewStreamOnV2.cfg SolicitedReplies.tla RED" # the peer answers a 0.2 request on a new stream: the reply is refused (INV_SolicitedAdmitted)
+  "MC_EmbedderStream_Red_NoDropSignal.cfg MC_EmbedderStream_Common.tla RED" # no drop signal on the send half: a write blocked on an opener that does not read outlives the deadline (INV_DeadlineResets)
+  "MC_EmbedderStream_Red_AnyCancel.cfg MC_EmbedderStream_Common.tla RED" # a returned handler and a cancel share code 7, so a finish after the deadline cancel reads as delivered (INV_CancelFailsFinish)
+  "MC_EmbedderStreamOpen_Green.cfg EmbedderStreamOpen.tla GREEN" # pumps placed before the request is written: an open refused busy delivers nothing
+  "MC_EmbedderStreamOpen_Red_WriteFirst.cfg EmbedderStreamOpen.tla RED" # the old write-before-spawn order: a busy open delivered its request and the retry runs it again (INV_BusyDeliversNothing)
   # ---- GovernanceContract.tla: what a merge validator may assume; GovernanceMerge.tla: the merge path checked to refine it ----
   "MC_GovernanceContract_Green.cfg            MC_GovernanceContract_Orphan.tla       GREEN" # re-drive + sweep: every settleable composite settles
   "MC_GovernanceContract_Green_Nameable.cfg   MC_GovernanceContract_Nameable.tla     GREEN" # nameable awaits: arrival re-drive alone settles them, no sweep
@@ -1474,10 +1394,6 @@ RUNS=(
   "MC_EdgeGateContinuation_Red_PlainSpawn.cfg EdgeGateContinuation.tla RED" # the code before (#2546): a request in flight is refused its connection (INV_InFlightContinues)
   "MC_EdgeGateContinuation_Red_NoSeal.cfg EdgeGateContinuation.tla RED" # no seal: a passing count lets a continuation in after the drain (INV_NothingAfterDrain)
   "MC_EdgeGateContinuation_Red_NoCas.cfg EdgeGateContinuation.tla RED" # no compare-and-swap: a continuation starts from an idle closed gate (INV_NoContinuationWhenIdle)
-  "MC_IrohDialOutcome_Green.cfg IrohDialOutcome.tla GREEN" # a refused dial answers from its close reason; connect_peer ends with the answer
-  "MC_IrohDialOutcome_Green_Admitted.cfg IrohDialOutcome.tla GREEN" # an admitted dial answers ok
-  "MC_IrohDialOutcome_Red_Poll.cfg IrohDialOutcome.tla RED" # the code before: connect_peer polls the connected set and misses a refused connection (LIVE_DialAnswered)
-  "MC_IrohDialOutcome_Red_NoCheck.cfg IrohDialOutcome.tla RED" # the dial answers ok without the close reason (INV_RefusalKnownIsSaid)
   "MC_ServerDrain_Green.cfg ServerDrain.tla GREEN" # requests in flight finish, idle connections close, subscription streams end, the server returns by the deadline
   "MC_ServerDrain_Red_Service.cfg ServerDrain.tla RED" # the code before: server tasks stopped as services, a request in flight dropped (INV_NoDropBeforeDeadline)
   "MC_ServerDrain_Red_CheckInside.cfg ServerDrain.tla RED" # closing looked at inside a request cuts it off (INV_NoDropBeforeDeadline)
@@ -1516,9 +1432,8 @@ RUNS=(
   "MC_RegistrationBatch_Red_MixedCreators.cfg RegistrationBatch.tla RED" # one list under the first creator's token: another's document is registered to it (INV_OwnerIsCreator)
   "MC_RegistrationBatch_Red_OutOfOrder.cfg RegistrationBatch.tla RED" # a refused list's members go alone in any order (INV_Order)
   "MC_NodeStartup_Green.cfg NodeStartup.tla GREEN" # every config starts as asked or fails holding nothing; startup ends
-  "MC_NodeStartup_Red_IrohDefaultLadder.cfg NodeStartup.tla RED" # iroh keeps the default retry ladder (INV_OneSchedule)
-  "MC_NodeStartup_Red_ListenLeak.cfg NodeStartup.tla RED" # failed listen leaves the host running (INV_FailedHoldsNothing)
-  "MC_NodeStartup_Red_LateNacCheck.cfg NodeStartup.tla RED" # NAC owner checked after the host started (INV_FailedHoldsNothing)
+  "MC_NodeStartup_Red_DefaultLadder.cfg NodeStartup.tla RED" # the pinc peer keeps the default retry ladder (INV_OneSchedule)
+  "MC_NodeStartup_Red_LateNacCheck.cfg NodeStartup.tla RED" # NAC owner checked after the peer started (INV_FailedHoldsNothing)
   "MC_NodeStartup_Red_NacUnowned.cfg NodeStartup.tla RED" # NAC enabled with no owner (INV_NacAsAsked)
   "MC_NodeStartup_Red_DialBeforeNac.cfg NodeStartup.tla RED" # bootstrap peer dialed before NAC (INV_NoPeerBeforeNac)
   "MC_NodeStartup_Red_BootstrapFatal.cfg NodeStartup.tla RED" # unreachable bootstrap peer fails startup (INV_BootstrapNonFatal)
@@ -1553,9 +1468,6 @@ RUNS=(
   "MC_PubsubRpcReply_Green.cfg PubsubRpcReply.tla GREEN" # three peers, each request copy direct or relayed in every order: every answer reaches the asker, the deadline cuts off only an answer not yet sent or still on its way, the asker stops
   "MC_PubsubRpcReply_Red_AnswerRelay.cfg PubsubRpcReply.tla RED" # a peer answers the relay that handed it the request (INV_NoAnswerLost)
   "MC_PubsubRpcReply_Red_DeadlineCutsOff.cfg PubsubRpcReply.tla RED" # the same: every peer answered, one answer lost, the asker stops at its deadline (INV_AllAnswered)
-  "MC_ActivePeersIdentify_Green.cfg ActivePeersIdentify.tla GREEN" # two peers dial in around an ActivePeers call: never a waiting peer at its source port, never held by a later peer, every call answered
-  "MC_ActivePeersIdentify_Red_AnswerAtOnce.cfg ActivePeersIdentify.tla RED" # ActivePeers answers at once, before the Identify (INV_ListenAddress)
-  "MC_ActivePeersIdentify_Red_WaitOnLater.cfg ActivePeersIdentify.tla RED" # the answer waits on peers that dialed in after the call (INV_NotHeldByLater)
   "MC_AnnounceAudience_Green.cfg AnnounceAudience.tla GREEN" # the other peer away, connected or subscribed at the commit, connecting and subscribing around it: only a peer subscribed at the commit gets the write, and every write is announced
   "MC_AnnounceAudience_Red_HoldWhenAlone.cfg AnnounceAudience.tla RED" # a write made alone is held for the window and reaches a peer that joined during it (INV_GoAudience)
   "MC_AnnounceAudience_Red_AloneMeansDisconnected.cfg AnnounceAudience.tla RED" # alone means no peer connected: a write made while the peer is connected but not subscribed waits out the window and reaches it (INV_GoAudience)

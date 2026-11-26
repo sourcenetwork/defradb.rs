@@ -4,7 +4,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crate::nodes::NodeSpec;
-use crate::scenario::{Common, Failure, Op};
+use crate::scenario::{Common, Failure, Op, Text};
 use crate::test_case::State;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -76,18 +76,11 @@ pub struct NewNode {
     /// A Rust node with the given admission limits.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub admission: Option<AdmissionSpec>,
-    /// A Rust node whose network is iroh rather than libp2p.
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub iroh: bool,
     /// A Rust node that takes its node identity from the process's signing
     /// registry, where the test registers it first as an FFI host does,
     /// rather than loading it from a key it is given.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub registered_identity: bool,
-    /// A Rust node whose libp2p DNS layers read this `resolv.conf` text in
-    /// place of the host's file.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub resolv_conf: Option<String>,
     /// A Rust node with no node identity at all, neither one of Go's
     /// `NodeIdentity(i)` nor a key of its own, so it neither signs nor
     /// authenticates as a node.
@@ -98,6 +91,21 @@ pub struct NewNode {
     /// node runs P2P and where it listens.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub go_config: Option<String>,
+    /// A Rust node naming the process's relaying hub (pinc's relay role) in
+    /// place of its topic-only one, so it reaches the other nodes naming it
+    /// by peer id alone.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub relay_hub: bool,
+    /// A Rust node whose pinc endpoint binds where `defra-node` binds an
+    /// embedder that names no bind, in place of the harness's loopback one.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub default_pinc_bind: bool,
+    /// `defradb start` flags (`--peers <addr>`, `--pinc-bind-addr ..`) the
+    /// CLI's loader reads into the node's config, over `go_config` when that
+    /// is set: a Rust node under every client, configured as `defradb start`
+    /// with those flags would be.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub start_args: Vec<Text>,
     #[serde(default, skip_serializing_if = "Value::is_null")]
     pub expected_data: Value,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -128,11 +136,12 @@ impl Op for NewNode {
         probe.network = false;
         probe.database_dir = None;
         probe.admission = None;
-        probe.resolv_conf = None;
-        probe.iroh = false;
         probe.registered_identity = false;
         probe.without_node_identity = false;
         probe.go_config = None;
+        probe.relay_hub = false;
+        probe.default_pinc_bind = false;
+        probe.start_args = Vec::new();
         probe.node_identity_seed = None;
         probe.enable_signing = false;
         probe.key_type = None;
@@ -182,18 +191,40 @@ impl Op for NewNode {
             })?)),
             None => None,
         };
-        let (network, listen) = match &self.go_config {
-            Some(body) => go_config_network(body)?,
-            None => (self.network, Vec::new()),
+        let cli_config = self.go_config.is_some() || !self.start_args.is_empty();
+        if cli_config {
+            // A node the CLI's loader configures is a Rust node under
+            // go-http, and its flags may name a Go node's libp2p address,
+            // which the loader refuses: check the mix before loading them.
+            let rust = NodeSpec {
+                network: true,
+                go_config: true,
+                ..Default::default()
+            };
+            state.check_p2p_peers(self.common.node(), &rust)?;
+        }
+        let (network, pinc_bind, pinc_public_addrs, bootstrap_peers) = match cli_config {
+            true => {
+                let args: Vec<&str> = self.start_args.iter().map(Text::as_str).collect();
+                cli_config_network(self.go_config.as_deref(), &args)?
+            }
+            false => (
+                self.network,
+                self.default_pinc_bind
+                    .then(|| defra_node::PincConfig::default().bind),
+                Vec::new(),
+                Vec::new(),
+            ),
         };
         let spec = NodeSpec {
             network,
             dir,
-            listen,
-            go_config: self.go_config.is_some(),
+            pinc_bind,
+            pinc_public_addrs,
+            go_config: cli_config,
+            bootstrap_peers,
+            relay_hub: self.relay_hub,
             admission: self.admission.clone(),
-            resolv_conf: self.resolv_conf(state.client_type())?,
-            iroh_network: self.iroh,
             node_identity,
             registered_identity,
             go_index: Some(go_index),
@@ -209,27 +240,61 @@ impl Op for NewNode {
             max_txn_retries,
             ..Default::default()
         };
+        state.check_p2p_peers(self.common.node(), &spec)?;
         state.start_node(self.common.node(), spec);
         Ok(json!({}))
     }
 }
 
-/// Loads a Go-written `config.yaml` through the CLI's loader, as `defradb
-/// --rootdir <dir>` does, and answers whether the node runs P2P and the
-/// addresses it listens on.
-fn go_config_network(body: &str) -> Result<(bool, Vec<String>), Failure> {
+/// Whether a node runs P2P, its pinc bind, the public addresses it lists and
+/// the peers it dials at start.
+type CliNetwork = (
+    bool,
+    Option<std::net::SocketAddr>,
+    Vec<std::net::SocketAddr>,
+    Vec<String>,
+);
+
+/// Loads a Go-written `config.yaml` (when given) and `defradb start` flags
+/// (when given) through the CLI's loader, as `defradb --rootdir <dir> start
+/// <flags>` does, and answers whether the node runs P2P, where `defradb
+/// start` binds its pinc endpoint for it, the public addresses it lists
+/// first and the peers (`net.peers`, `--peers`) it dials once started. Go's
+/// listen addresses are libp2p's, which a pinc node has no use for, so the
+/// bind is the CLI's own: loopback unless `net.pinc_bind_addr` names another.
+fn cli_config_network(body: Option<&str>, start_args: &[&str]) -> Result<CliNetwork, Failure> {
     use clap::Parser;
     let root = tempfile::tempdir()
         .map_err(|e| Failure::operation(format!("could not make the node's rootdir: {e}")))?;
-    std::fs::write(root.path().join("config.yaml"), body)
-        .map_err(|e| Failure::operation(format!("could not write config.yaml: {e}")))?;
+    if let Some(body) = body {
+        std::fs::write(root.path().join("config.yaml"), body)
+            .map_err(|e| Failure::operation(format!("could not write config.yaml: {e}")))?;
+    }
     let rootdir = root.path().to_string_lossy().into_owned();
-    let args = ["defradb", "--rootdir", rootdir.as_str(), "version"];
+    // A config alone is read as any command reads it; flags as `start`'s.
+    let command: &[&str] = match start_args.is_empty() {
+        true => &["version"],
+        false => &["start"],
+    };
+    let prefix = ["defradb", "--rootdir", rootdir.as_str()];
+    let args = prefix.iter().chain(command).chain(start_args).copied();
     let args = cli::cli::Cli::try_parse_from(args)
         .map_err(|e| Failure::operation(format!("could not parse the CLI arguments: {e}")))?;
-    let config = cli::config::Config::load(&args)
+    let mut config = cli::config::Config::load(&args)
         .map_err(|e| Failure::operation(format!("could not load config.yaml: {e}")))?;
-    Ok((!config.net.p2p_disabled, config.net.p2p_addresses))
+    // `defradb start` applies its own flags over the loaded config, then checks it.
+    if let cli::cli::Command::Start(start) = &args.command {
+        start
+            .apply_to_config(&mut config)
+            .and_then(|()| config.validate())
+            .map_err(|e| Failure::operation(format!("invalid start flags: {e}")))?;
+    }
+    Ok((
+        !config.net.p2p_disabled,
+        Some(config.net.pinc_bind()),
+        config.net.pinc_public_addrs.clone(),
+        config.net.peers.clone(),
+    ))
 }
 
 impl NewNode {
@@ -244,18 +309,6 @@ impl NewNode {
         key.try_into()
             .map(Some)
             .map_err(|_| Failure::operation("an AES-256 key is 32 bytes".into()))
-    }
-
-    /// The `resolv.conf` text the node's DNS layers read. Only a unix host
-    /// reads one, so elsewhere the option is unsupported.
-    fn resolv_conf(&self, client: ClientType) -> Result<Option<String>, Failure> {
-        match (&self.resolv_conf, cfg!(unix)) {
-            (Some(_), false) => Err(Failure::unsupported(format!(
-                "{} argument resolvConf under {client:?}: only a unix host reads resolv.conf",
-                Self::name()
-            ))),
-            (text, _) => Ok(text.clone()),
-        }
     }
 
     /// The gate the node's index backfills pass, Go's `db.IndexBuildGate`. It

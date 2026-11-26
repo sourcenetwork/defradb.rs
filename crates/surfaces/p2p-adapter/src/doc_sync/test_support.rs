@@ -1,120 +1,12 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::Arc;
 use std::time::Duration;
 
 use crate::P2PResult;
 use async_trait::async_trait;
-use cid::Cid;
 use p2p::message::DocSyncRequest;
-
-use p2p::transport::PeerId;
-
-use crate::transport_doc_pusher::TransportDocPusher;
 
 use super::dispatch::DocSyncDispatch;
 use crate::{P2PError, P2PErrorExt as _};
-
-/// Satisfies `TransportDocPusher` for doc-sync tests. `sync_documents` calls
-/// only `validate_collection_exists`; every
-/// other method is unreachable from these tests and panics if that
-/// assumption ever breaks.
-pub(crate) struct StubPusher;
-
-impl StubPusher {
-    pub(crate) fn arc() -> Arc<dyn TransportDocPusher> {
-        Arc::new(Self)
-    }
-}
-
-#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
-#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
-impl TransportDocPusher for StubPusher {
-    async fn push_existing_docs(
-        &self,
-        _peer_id: &PeerId,
-        _collections: &[String],
-        _filters: &p2p::ReplicationFilters,
-        _se_key: Option<&[u8]>,
-        _se_identity_pubkey: Option<&[u8]>,
-        _install_incarnation: u64,
-    ) -> P2PResult<()> {
-        unimplemented!("not reached by doc-sync tests")
-    }
-
-    async fn retry_doc(
-        &self,
-        _peer_id: &PeerId,
-        _doc_id: &str,
-        _collection_id: &str,
-        _generation: u64,
-    ) -> P2PResult<()> {
-        unimplemented!("not reached by doc-sync tests")
-    }
-
-    async fn retry_collection_commit(
-        &self,
-        _peer_id: &PeerId,
-        _collection_id: &str,
-        _generation: u64,
-    ) -> P2PResult<()> {
-        unimplemented!("not reached by doc-sync tests")
-    }
-
-    async fn load_document_head_blocks(
-        &self,
-        _doc_id: &str,
-    ) -> P2PResult<Vec<(Cid, bytes::Bytes)>> {
-        unimplemented!("not reached by doc-sync tests")
-    }
-
-    async fn load_doc_creator_did(
-        &self,
-        _collection_name: &str,
-        _doc_id: &str,
-    ) -> P2PResult<Option<String>> {
-        unimplemented!("not reached by doc-sync tests")
-    }
-
-    fn get_collection_id(&self, _name: &str) -> Option<String> {
-        unimplemented!("not reached by doc-sync tests")
-    }
-
-    fn get_collection_name(&self, _collection_id: &str) -> P2PResult<Option<String>> {
-        unimplemented!("not reached by doc-sync tests")
-    }
-
-    fn list_collections(&self) -> P2PResult<Vec<String>> {
-        unimplemented!("not reached by doc-sync tests")
-    }
-
-    async fn persist_replicator(&self, _peer_id: &str, _collections: &[String]) -> P2PResult<()> {
-        unimplemented!("not reached by doc-sync tests")
-    }
-
-    async fn delete_persisted_replicator(&self, _peer_id: &str) -> P2PResult<()> {
-        unimplemented!("not reached by doc-sync tests")
-    }
-
-    async fn persist_p2p_documents(&self, _doc_ids: &[String]) -> P2PResult<()> {
-        unimplemented!("not reached by doc-sync tests")
-    }
-
-    async fn load_p2p_documents(&self) -> P2PResult<Vec<String>> {
-        unimplemented!("not reached by doc-sync tests")
-    }
-
-    async fn persist_p2p_collections(&self, _collections: &[String]) -> P2PResult<()> {
-        unimplemented!("not reached by doc-sync tests")
-    }
-
-    fn validate_collection_exists(&self, _name: &str) -> P2PResult<()> {
-        Ok(())
-    }
-
-    fn validate_branchable_collection(&self, _collection_id: &str) -> P2PResult<()> {
-        Ok(())
-    }
-}
 
 /// Reports `peer_count` connected peers and fails every send, so
 /// `sync_documents`'s `!any_sent` branch is reachable without a live
@@ -133,8 +25,7 @@ impl FailingDispatch {
     }
 }
 
-#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
-#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[async_trait]
 impl DocSyncDispatch for FailingDispatch {
     type Peer = String;
 
@@ -161,7 +52,7 @@ impl DocSyncDispatch for FailingDispatch {
 /// Reports `peer_count` connected peers and sends successfully to all but the
 /// last `failing_peers` of them, so "one peer answered, one stayed silent" is
 /// reachable without a live transport. `CONFIRMS` selects the transport's
-/// reply semantics, so one double covers iroh and libp2p.
+/// reply semantics.
 pub(crate) struct MixedDispatch<const CONFIRMS: bool> {
     peer_count: usize,
     failing_peers: usize,
@@ -176,8 +67,7 @@ impl<const CONFIRMS: bool> MixedDispatch<CONFIRMS> {
     }
 }
 
-#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
-#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[async_trait]
 impl<const CONFIRMS: bool> DocSyncDispatch for MixedDispatch<CONFIRMS> {
     type Peer = String;
 
@@ -221,8 +111,7 @@ impl SlowDispatch {
     }
 }
 
-#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
-#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[async_trait]
 impl DocSyncDispatch for SlowDispatch {
     type Peer = String;
 

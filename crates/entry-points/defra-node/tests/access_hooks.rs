@@ -1,6 +1,6 @@
 #![cfg(feature = "p2p")]
 
-//! An app's own access control on iroh nodes: a merge validator that
+//! An app's own access control on pinc nodes: a merge validator that
 //! accepts, rejects and defers replicated notes, and node-local read and
 //! write validators.
 
@@ -18,7 +18,7 @@ use clock::sleep;
 use db::merge::governance::{
     FieldValue, MergeCandidate, MergeValidator, MergeVerdict, MergeView, SignatureStatus,
 };
-use defra_node::{AccessHooks, Node, NodeBuilder, P2PConfig};
+use defra_node::{AccessHooks, Node, NodeBuilder, PincConfig};
 use document::NormalValue;
 use outcome::Result;
 use query::access_hooks::{ReadRequest, ReadValidator, WriteRequest, WriteValidator};
@@ -101,12 +101,12 @@ fn merge_validator_accepts_rejects_and_defers_replicated_notes() -> Result<()> {
     edge::testing::edge()
         .block_on(async {
             let author = NodeBuilder::default()
-                .with_p2p(iroh_config())
+                .with_pinc(pinc_config())
                 .enable_signing()
                 .build()
                 .await?;
             let receiver = NodeBuilder::default()
-                .with_p2p(iroh_config())
+                .with_pinc(pinc_config())
                 .with_access_hooks(
                     AccessHooks::new(["Note"]).with_merge_validator(Arc::new(GrantValidator)),
                 )
@@ -175,7 +175,7 @@ fn read_and_write_validators_narrow_local_clients() -> Result<()> {
     edge::testing::edge()
         .block_on(async {
             let node = NodeBuilder::default()
-                .with_p2p(iroh_config())
+                .with_pinc(pinc_config())
                 .with_access_hooks(
                     AccessHooks::new(Vec::<String>::new())
                         .with_read_validator(Arc::new(HideDrafts))
@@ -233,7 +233,7 @@ fn read_and_write_validators_narrow_local_clients() -> Result<()> {
 }
 
 #[test]
-fn access_hooks_require_iroh() {
+fn access_hooks_require_p2p() {
     edge::testing::edge()
         .block_on(async {
             let error = NodeBuilder::default()
@@ -241,19 +241,16 @@ fn access_hooks_require_iroh() {
                 .build()
                 .await
                 .err()
-                .expect("a node without iroh refuses access hooks");
-            assert!(error.to_string().contains("iroh"), "{error}");
+                .expect("a node without P2P refuses access hooks");
+            assert!(error.to_string().contains("P2P transport"), "{error}");
         })
         .unwrap()
 }
 
-fn iroh_config() -> P2PConfig {
-    P2PConfig {
+fn pinc_config() -> PincConfig {
+    PincConfig {
+        bind: std::net::SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0),
         peer_key: defra_node::PeerKeySource::Store,
-        bind_addr: Some(IpAddr::V4(Ipv4Addr::LOCALHOST)),
-        port: Some(0),
-        relay_mode: p2p::iroh::IrohRelayModeConfig::Disabled,
-        discovery: p2p::iroh::IrohDiscoveryConfig::Disabled,
         ..Default::default()
     }
 }
@@ -296,14 +293,11 @@ async fn connect(from: &Node, to: &Node) -> Result<()> {
     let deadline = Instant::now() + Duration::from_secs(10);
     let addr = loop {
         let addrs = to.ops().listen_addresses().await?;
-        if let Some(addr) = addrs
-            .into_iter()
-            .find(|addr| addr.contains("/p2p/") || addr.starts_with("endpoint"))
-        {
+        if let Some(addr) = addrs.into_iter().find(|addr| addr.contains("@127.0.0.1:")) {
             break addr;
         }
         if Instant::now() >= deadline {
-            panic!("no iroh listen address");
+            panic!("no pinc listen address");
         }
         sleep(Duration::from_millis(100)).await;
     };

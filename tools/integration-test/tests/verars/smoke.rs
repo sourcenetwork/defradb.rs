@@ -18,7 +18,7 @@ async fn rust_verars_smoke() {
         let hub_rpc_url = hub.node(0).rpc_url();
 
         let cluster =
-            helpers::build_defra_with_vera_rs(&hub_rpc_url, &jack.private_key_hex, 1, false).await;
+            helpers::build_defra_with_vera_rs(&hub_rpc_url, &jack.private_key_hex, 1).await;
         let node = cluster.client(0);
 
         let policy_result = node

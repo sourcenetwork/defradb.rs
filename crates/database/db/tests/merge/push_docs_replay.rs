@@ -881,10 +881,6 @@ impl p2p::P2PTransport for ConnectedPeerTransport {
         Ok(())
     }
 
-    async fn listen(&self, _addr: p2p::transport::PeerAddr) -> p2p::Result<()> {
-        Ok(())
-    }
-
     async fn connected_peers(&self) -> p2p::Result<Vec<PeerId>> {
         Ok(vec![self.remote.clone()])
     }
@@ -977,26 +973,10 @@ impl p2p::P2PTransport for ConnectedPeerTransport {
         Ok(reply)
     }
 
-    async fn send_two_stream_response(
-        &self,
-        _peer_id: &PeerId,
-        _reply: PushLogReply,
-    ) -> p2p::Result<()> {
-        Err(unreachable_transport())
-    }
-
     async fn send_doc_sync_request(
         &self,
         _peer_id: &PeerId,
         _req: p2p::message::DocSyncRequest,
-    ) -> p2p::Result<()> {
-        Err(unreachable_transport())
-    }
-
-    async fn send_doc_sync_response(
-        &self,
-        _peer_id: &PeerId,
-        _reply: p2p::message::DocSyncReply,
     ) -> p2p::Result<()> {
         Err(unreachable_transport())
     }
@@ -1006,22 +986,6 @@ impl p2p::P2PTransport for ConnectedPeerTransport {
         _peer_id: &PeerId,
         _req: p2p::message::BranchableSyncRequest,
     ) -> p2p::Result<()> {
-        Err(unreachable_transport())
-    }
-
-    async fn send_branchable_sync_response(
-        &self,
-        _peer_id: &PeerId,
-        _reply: p2p::message::BranchableSyncReply,
-    ) -> p2p::Result<()> {
-        Err(unreachable_transport())
-    }
-
-    async fn send_car_request(&self, _peer_id: &PeerId, _root_cid: cid::Cid) -> p2p::Result<()> {
-        Err(unreachable_transport())
-    }
-
-    async fn send_car_response(&self, _peer_id: &PeerId, _car_data: Vec<u8>) -> p2p::Result<()> {
         Err(unreachable_transport())
     }
 

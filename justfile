@@ -59,7 +59,7 @@ export PATH := tooling_bin + ":" + go_root + "/bin" + ":" + cargo_bin + ":" + el
 
 # Integration areas: the top-level modules of the testo and legacy test binaries
 # in tools/integration-test. An area in both runs in both.
-integration_suites := "acp backup collection collection_version encryption explain export index issues matchers mutation net node query searchable_encryption signature subscription txn view basic cursor fts identity nac p2p p2p_iroh vector vera verars"
+integration_suites := "acp backup collection collection_version encryption explain export index issues matchers mutation net node query searchable_encryption signature subscription txn view basic cursor fts identity nac vector vera verars"
 
 # Cargo profile for the build and test recipes. `dev` is the stock debug
 # profile and the default; `just profile=super-dev test` opts into the lean
@@ -554,19 +554,6 @@ test-wasm:
     export CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER=wasm-bindgen-test-runner
     cargo test -p defra-wasm --target wasm32-unknown-unknown --lib --tests
 
-[doc("A browser peer replicating with a native node through its hosted relay (needs `just setup-browser`).")]
-[group('test')]
-test-browser-p2p:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    firefox="$(bash tools/find-firefox.sh "{{ tooling }}")" || { echo "error: no firefox; run: just setup-browser" >&2; exit 1; }
-    # Same rule as test-wasm: only a Firefox found outside PATH is exported,
-    # and .tooling/bin stays first either way.
-    if ! command -v firefox >/dev/null 2>&1; then
-        export PATH="{{ tooling_bin }}:$(dirname "$firefox"):$PATH"
-    fi
-    tools/browser-p2p-e2e.sh
-
 # Unit tests for one crate: `just test-crate crdt`.
 [group('test')]
 test-crate crate *args:
@@ -603,19 +590,6 @@ integration-suite suite *args: build-lenses
 [group('test')]
 integration-one-worker *args:
     DEFRA_WORKERS=1 cargo nextest run -p integration-test --test legacy -E 'test(/^(basic|query)::/)' --cargo-profile {{ profile }} {{ args }}
-
-# The pure-Rust half of the P2P topologies, serialized. The `::go_` filter drops the
-# dual-runtime variants; the harness port allocator has a bind race in parallel
-# (see the P2P Integration job's comment in ci.yml).
-[doc("Pure-Rust P2P topologies, serialized (skips the go_ variants).")]
-[group('test')]
-integration-p2p:
-    cargo nextest run -p integration-test --test legacy -E 'test(/^p2p::/) & not test(/^[a-z0-9_]+::.*::go_/)' --cargo-profile {{ profile }}
-
-# The go_* half, which needs a Go DefraDB binary on PATH.
-[group('test')]
-integration-go:
-    cargo nextest run -p integration-test --test legacy -E 'test(/^p2p::/) & test(/^[a-z0-9_]+::.*::go_/)' --cargo-profile {{ profile }}
 
 # The ffi-test tool's own unit tests. No Go checkout or generated header needed.
 [group('test')]
@@ -710,14 +684,12 @@ lint:
     cargo clippy -p cli --features otel --all-targets -- -D warnings
     cargo clippy -p defra-node --features otel --all-targets -- -D warnings
     cargo clippy -p defra-node --features p2p --all-targets -- -D warnings
-    cargo clippy -p db --features p2p --all-targets -- -D warnings
     cargo clippy -p defra-node --no-default-features --features regolith,redb,native --all-targets -- -D warnings
     cargo clippy -p defra-node --no-default-features --features regolith,redb,native,p2p --all-targets -- -D warnings
-    cargo clippy -p ffi --no-default-features --features native,libp2p --all-targets -- -D warnings
+    cargo clippy -p ffi --no-default-features --features native,p2p --all-targets -- -D warnings
     cargo clippy -p ffi --no-default-features --features native --all-targets -- -D warnings
-    cargo check -p ffi --no-default-features --features native,iroh
     cargo test -p ffi --no-default-features --features native --lib
-    cargo check -p p2p --no-default-features --features iroh-transport
+    cargo check -p p2p --no-default-features
     cargo check -p db --no-default-features --features native
     just check-node-graph
 

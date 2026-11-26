@@ -308,12 +308,9 @@ fn context() -> DagFetchContext {
 
 fn transport(
     blockstore: &FaultyBlockstore,
-    root: Cid,
-    root_data: Vec<u8>,
-    car: RapidHashMap<Cid, Vec<u8>>,
     selective: RapidHashMap<Cid, Vec<u8>>,
 ) -> TestTransport {
-    TestTransport::new(blockstore.inner.clone(), root, root_data, car, selective)
+    TestTransport::new(blockstore.inner.clone(), selective)
 }
 
 async fn attempt(
@@ -324,7 +321,8 @@ async fn attempt(
 ) -> FetchAttemptOutcome {
     let context = context();
     let mut providers = ProviderRotation::new(context.providers());
-    let mut state = ProviderFetchState::new(&mut providers, None, diagnostics);
+    let health = crate::sync::coordinator::provider_health::ProviderHealth::default();
+    let mut state = ProviderFetchState::new(&mut providers, &health, diagnostics);
     fetch_dag_attempt(transport, blockstore, root, &context, &mut state).await
 }
 
@@ -336,13 +334,7 @@ fn a_read_fault_at_final_verification_is_not_complete() {
         let blockstore = FaultyBlockstore::new();
         let (root, root_data, child, child_data) = single_child_dag();
         blockstore.put(&root, &root_data).await.unwrap();
-        let transport = transport(
-            &blockstore,
-            root,
-            root_data,
-            RapidHashMap::new(),
-            RapidHashMap::from_iter([(child, child_data)]),
-        );
+        let transport = transport(&blockstore, RapidHashMap::from_iter([(child, child_data)]));
         // The child is fetched in the loop, read by its next walk, then fails.
         blockstore.fail_some(child, Fault::Storage, 1, usize::MAX);
         let diagnostics = SyncDiagnostics::default();
@@ -359,52 +351,49 @@ fn a_read_fault_at_final_verification_is_not_complete() {
     .unwrap();
 }
 
-/// A rooted CAR delivers the DAG and the walk right after it fails: the
-/// attempt goes on to the selective walk and ends incomplete.
+/// A rooted reply delivers the missing child and the walk right after it
+/// fails: the attempt goes on to the selective walk and ends incomplete.
 #[test]
-fn a_read_fault_after_rooted_car_ingest_is_not_complete() {
+fn a_read_fault_after_a_rooted_reply_is_not_complete() {
     workers::block_on(async {
         let blockstore = FaultyBlockstore::new();
         let (root, root_data, child, child_data) = single_child_dag();
-        let transport = transport(
-            &blockstore,
-            root,
-            root_data,
-            RapidHashMap::from_iter([(child, child_data)]),
-            RapidHashMap::new(),
-        );
-        // Neither block is stored before the CAR lands.
+        blockstore.put(&root, &root_data).await.unwrap();
+        let transport = transport(&blockstore, RapidHashMap::from_iter([(child, child_data)]));
+        // The child reads as absent until the rooted reply stores it, then
+        // every read of it fails.
         blockstore.fail(child, Fault::Storage);
         let diagnostics = SyncDiagnostics::default();
+        let context = context().with_rooted_provider_discovery();
+        let mut providers = ProviderRotation::new(context.providers());
+        let health = crate::sync::coordinator::provider_health::ProviderHealth::default();
+        let mut state = ProviderFetchState::new(&mut providers, &health, &diagnostics);
 
-        let outcome = attempt(&transport, &blockstore, root, &diagnostics).await;
+        let outcome = fetch_dag_attempt(&transport, &blockstore, root, &context, &mut state).await;
 
-        assert_eq!(transport.car_request_count(), 1);
+        assert_eq!(
+            transport.sync_batches().first(),
+            Some(&vec![child]),
+            "the rooted request asks the publisher for the missing child"
+        );
         assert!(
             matches!(outcome, FetchAttemptOutcome::Incomplete(..)),
-            "a fault after the CAR reported {outcome:?}"
+            "a fault after the rooted reply reported {outcome:?}"
         );
         assert!(diagnostics.snapshot().missing_link_walk_errors >= 1);
     })
     .unwrap();
 }
 
-/// With cancellable rooted sync and the root held, a child that fails to
-/// read fails the opening walk and the selective walk: the attempt ends
-/// incomplete and both failed walks are counted.
+/// With the root held, a child that fails to read fails the opening walk
+/// and the selective walk: the attempt ends incomplete and both failed walks
+/// are counted.
 #[test]
-fn a_read_fault_under_cancellable_rooted_sync_counts_each_failed_walk() {
+fn a_read_fault_counts_each_failed_walk() {
     workers::block_on(async {
         let blockstore = FaultyBlockstore::new();
-        let (root, root_data, child, _) = stored_dag(&blockstore, false).await;
-        let transport = transport(
-            &blockstore,
-            root,
-            root_data,
-            RapidHashMap::new(),
-            RapidHashMap::new(),
-        );
-        transport.set_force_rooted_sync();
+        let (root, _, child, _) = stored_dag(&blockstore, false).await;
+        let transport = transport(&blockstore, RapidHashMap::new());
         blockstore.fail(child, Fault::Storage);
         let diagnostics = SyncDiagnostics::default();
 
@@ -428,7 +417,7 @@ fn a_read_fault_under_cancellable_rooted_sync_counts_each_failed_walk() {
 fn a_child_gone_between_walks_is_fetched_again() {
     workers::block_on(async {
         let blockstore = FaultyBlockstore::new();
-        let (root, root_data, child, _) = stored_dag(&blockstore, false).await;
+        let (root, _, child, _) = stored_dag(&blockstore, false).await;
         let child_data = blockstore
             .inner
             .get(&child)
@@ -436,13 +425,7 @@ fn a_child_gone_between_walks_is_fetched_again() {
             .unwrap()
             .unwrap()
             .to_vec();
-        let transport = transport(
-            &blockstore,
-            root,
-            root_data,
-            RapidHashMap::new(),
-            RapidHashMap::from_iter([(child, child_data)]),
-        );
+        let transport = transport(&blockstore, RapidHashMap::from_iter([(child, child_data)]));
         // Read at the attempt's first walk, deleted as the next one reads it.
         blockstore.fail_some(child, Fault::Gone, 1, 1);
         let diagnostics = SyncDiagnostics::default();
@@ -494,14 +477,8 @@ async fn fetch_events(
 fn no_provider_and_a_read_fault_is_not_ready() {
     workers::block_on(async {
         let blockstore = FaultyBlockstore::new();
-        let (root, root_data, child, _) = stored_dag(&blockstore, false).await;
-        let transport = transport(
-            &blockstore,
-            root,
-            root_data,
-            RapidHashMap::new(),
-            RapidHashMap::new(),
-        );
+        let (root, _, child, _) = stored_dag(&blockstore, false).await;
+        let transport = transport(&blockstore, RapidHashMap::new());
         transport.set_connected_peers(Vec::new());
         blockstore.fail(child, Fault::Storage);
 
@@ -530,14 +507,8 @@ fn no_provider_and_a_read_fault_is_not_ready() {
 fn a_cancelled_fetch_with_a_read_fault_is_not_ready() {
     workers::block_on(async {
         let blockstore = FaultyBlockstore::new();
-        let (root, root_data, child, _) = stored_dag(&blockstore, false).await;
-        let transport = transport(
-            &blockstore,
-            root,
-            root_data,
-            RapidHashMap::new(),
-            RapidHashMap::new(),
-        );
+        let (root, _, child, _) = stored_dag(&blockstore, false).await;
+        let transport = transport(&blockstore, RapidHashMap::new());
         blockstore.fail(child, Fault::Storage);
         let (manager, _events) = SyncManager::new(
             blockstore.clone(),
@@ -572,14 +543,8 @@ fn a_cancelled_fetch_with_a_read_fault_is_not_ready() {
 fn a_conflicting_read_is_incomplete_and_releases_its_permit() {
     workers::block_on(async {
         let blockstore = FaultyBlockstore::new();
-        let (root, root_data, child, _) = stored_dag(&blockstore, false).await;
-        let transport = transport(
-            &blockstore,
-            root,
-            root_data,
-            RapidHashMap::new(),
-            RapidHashMap::new(),
-        );
+        let (root, _, child, _) = stored_dag(&blockstore, false).await;
+        let transport = transport(&blockstore, RapidHashMap::new());
         blockstore.fail(child, Fault::Conflict);
         let limiter = DagFetchLimiter::new(1);
         let diagnostics = diagnostics();
@@ -604,8 +569,8 @@ fn a_conflicting_read_is_incomplete_and_releases_its_permit() {
         );
         assert_eq!(
             diagnostics.snapshot().missing_link_walk_errors,
-            3 * u64::from(MAX_FETCH_ATTEMPTS),
-            "each attempt's opening, post-CAR and selective walks fail and are counted"
+            2 * u64::from(MAX_FETCH_ATTEMPTS),
+            "each attempt's opening and selective walks fail and are counted"
         );
         let peer = PeerId::new("remote-peer".to_string());
         assert!(

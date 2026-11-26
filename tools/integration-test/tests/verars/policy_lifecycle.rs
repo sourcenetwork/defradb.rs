@@ -14,7 +14,7 @@ async fn rust_verars_policy_lifecycle() {
         let hub_rpc_url = hub.node(0).rpc_url();
 
         let cluster =
-            helpers::build_defra_with_vera_rs(&hub_rpc_url, &alice.private_key_hex, 1, false).await;
+            helpers::build_defra_with_vera_rs(&hub_rpc_url, &alice.private_key_hex, 1).await;
         let node = cluster.client(0);
 
         let bob = generate_identity(&binary).expect("Bob identity");

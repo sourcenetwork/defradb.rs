@@ -24,13 +24,14 @@ the whole document from a stale snapshot that clobbers the other field.
 
 ## Behavioral Binding
 
-The model is bound to Rust by:
+The model was bound to Rust by these tests, deleted with libp2p in #3415; #3411
+ports them to testo on pinc:
 
 - `partition::convergence_concurrent_mixed_lww_and_counter_fields_merge`
 - `partition::convergence_restart_mixed_lww_and_counter_fields_merge`
 - `partition::convergence_mixed_lww_and_counter_3node_full_mesh`
 
-The 3-node test is the strongest live behavioral witness: node0 writes the LWW
+The 3-node test was the strongest live behavioral witness: node0 writes the LWW
 field (`name=alice`) while node1 and node2 each increment the counter
 (`views += 10` and `views += 7`). All three replicas must converge to the exact
 mixed product state (`name=alice, views=17`) after their commit DAGs match — a

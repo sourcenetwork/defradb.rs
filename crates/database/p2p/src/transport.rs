@@ -1,8 +1,7 @@
 //! Transport-agnostic types and trait for P2P networking.
 //!
 //! This module defines the `P2PTransport` trait that abstracts the sync engine
-//! from the concrete libp2p transport, enabling alternative implementations
-//! (e.g., iroh) without modifying the coordinator.
+//! from the concrete transport (pinc), so tests can drive it with a mock.
 
 use std::fmt;
 use std::time::Duration;
@@ -21,10 +20,18 @@ use crate::replicator::ReplicatorInfo;
 use crate::topics::DefraTopic;
 use crate::QueryId;
 
+/// Every reply goes on its request's stream, which every request carries; a
+/// reply without one has nowhere to go.
+pub fn no_reply_stream(kind: &str) -> crate::error::Error {
+    crate::error::Error::Transport(format!(
+        "a pinc {kind} reply goes on its request's stream, and this one has none"
+    ))
+}
+
 /// Transport-agnostic peer identifier.
 ///
 /// Wraps a string representation of a peer ID, allowing conversion from
-/// both `libp2p::PeerId` and iroh node IDs.
+/// any transport's peer ID text.
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
 pub struct PeerId(String);
 
@@ -41,27 +48,6 @@ impl PeerId {
 impl fmt::Display for PeerId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(&self.0)
-    }
-}
-
-#[cfg(feature = "libp2p-transport")]
-impl From<libp2p::PeerId> for PeerId {
-    fn from(peer_id: libp2p::PeerId) -> Self {
-        Self(peer_id.to_string())
-    }
-}
-
-#[cfg(feature = "libp2p-transport")]
-impl From<&libp2p::PeerId> for PeerId {
-    fn from(peer_id: &libp2p::PeerId) -> Self {
-        Self(peer_id.to_string())
-    }
-}
-
-#[cfg(feature = "iroh-transport")]
-impl From<iroh::EndpointId> for PeerId {
-    fn from(id: iroh::EndpointId) -> Self {
-        Self(id.to_string())
     }
 }
 
@@ -85,13 +71,6 @@ impl fmt::Display for PeerAddr {
     }
 }
 
-#[cfg(feature = "libp2p-transport")]
-impl From<libp2p::Multiaddr> for PeerAddr {
-    fn from(addr: libp2p::Multiaddr) -> Self {
-        Self(addr.to_string())
-    }
-}
-
 /// Transport-agnostic message identifier.
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
 pub struct MessageId(String);
@@ -109,13 +88,6 @@ impl MessageId {
 impl fmt::Display for MessageId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(&self.0)
-    }
-}
-
-#[cfg(feature = "libp2p-transport")]
-impl From<libp2p::gossipsub::MessageId> for MessageId {
-    fn from(id: libp2p::gossipsub::MessageId) -> Self {
-        Self(id.to_string())
     }
 }
 
@@ -381,7 +353,7 @@ pub struct PeerConnectionInfo {
 /// Trait abstracting the P2P transport layer.
 ///
 /// The sync coordinator is generic over this trait, allowing different transport
-/// implementations (libp2p, iroh) without modifying coordinator logic.
+/// implementations (pinc, test mocks) without modifying coordinator logic.
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 pub trait P2PTransport: Clone + Send + Sync + 'static {
@@ -420,8 +392,6 @@ pub trait P2PTransport: Clone + Send + Sync + 'static {
             "parse_dial_addr is not supported on this transport".to_string(),
         ))
     }
-
-    async fn listen(&self, addr: PeerAddr) -> Result<()>;
 
     async fn connected_peers(&self) -> Result<Vec<PeerId>>;
 
@@ -522,39 +492,13 @@ pub trait P2PTransport: Clone + Send + Sync + 'static {
         req: PushLogRequest,
     ) -> Result<PushLogReply>;
 
-    async fn send_two_stream_response(&self, peer_id: &PeerId, reply: PushLogReply) -> Result<()>;
-
     async fn send_doc_sync_request(&self, peer_id: &PeerId, req: DocSyncRequest) -> Result<()>;
-
-    async fn send_doc_sync_response(&self, peer_id: &PeerId, reply: DocSyncReply) -> Result<()>;
 
     async fn send_branchable_sync_request(
         &self,
         peer_id: &PeerId,
         req: BranchableSyncRequest,
     ) -> Result<()>;
-
-    async fn send_branchable_sync_response(
-        &self,
-        peer_id: &PeerId,
-        reply: BranchableSyncReply,
-    ) -> Result<()>;
-
-    async fn send_car_request(&self, peer_id: &PeerId, root_cid: Cid) -> Result<()>;
-
-    /// [`send_car_request`](Self::send_car_request) naming merged blocks held
-    /// here, so the provider leaves their closures out. Transports that cannot
-    /// carry them keep the default and ask for the whole DAG.
-    async fn send_car_request_with_haves(
-        &self,
-        peer_id: &PeerId,
-        root_cid: Cid,
-        _haves: Vec<Cid>,
-    ) -> Result<()> {
-        self.send_car_request(peer_id, root_cid).await
-    }
-
-    async fn send_car_response(&self, peer_id: &PeerId, car_data: Vec<u8>) -> Result<()>;
 
     async fn send_car_response_token(
         &self,
@@ -663,13 +607,6 @@ pub trait P2PTransport: Clone + Send + Sync + 'static {
         _haves: Vec<Cid>,
     ) -> Result<QueryId> {
         self.sync_blocks(root, providers, missing).await
-    }
-
-    /// Whether `sync_blocks(root, providers, [])` is a cancellable recursive
-    /// CAR request.  The iroh transport provides that contract; libp2p's
-    /// implementation is exact-CID Bitswap, where an empty set is a no-op.
-    fn supports_cancellable_rooted_sync(&self) -> bool {
-        false
     }
 
     async fn cancel_sync(&self, query_id: QueryId) -> Result<bool>;

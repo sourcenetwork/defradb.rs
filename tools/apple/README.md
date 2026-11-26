@@ -21,18 +21,18 @@
 tools/apple/build-ffi.sh
 ```
 
-The script defaults to an iroh-capable build by setting
-`FEATURES=iroh,native` and `NO_DEFAULT_FEATURES=1`.
+The script defaults to a P2P build (pinc) by setting
+`FEATURES=p2p,native` and `NO_DEFAULT_FEATURES=1`.
 It also defaults to `APPLE_DEPLOYMENT_TARGET=15.0` so Rust and native dependencies
 are linked against a modern iOS target instead of Rust's legacy iOS 10 default.
-The default iOS feature set avoids desktop-only FFI defaults such as libp2p,
-Vera, and the Wasmtime lens runtime. The store is regolith on every target.
+The default iOS feature set avoids desktop-only FFI defaults such as Vera and
+the Wasmtime lens runtime. The store is regolith on every target.
 
 Override the defaults with environment variables when needed:
 
 ```bash
 APPLE_DEPLOYMENT_TARGET=16.0 \
-FEATURES="iroh,native" \
+FEATURES="p2p,native" \
 OUT_DIR="$PWD/dist/apple" \
 FRAMEWORK_NAME="DefraMobile" \
 tools/apple/build-ffi.sh
@@ -85,10 +85,12 @@ results with `defra_new_node_result_free`, `defra_new_txn_result_free` and
 
 A call that can grow takes its options as a struct, passed by value, whose
 zero value is every default; the caller's identity handle (`0` for none) is
-its `identity` field. Fields are only ever appended, so an app built against
-an older header keeps working with a newer library. A field whose name
-starts with `_reserved` (`_reserved0`, `_reserved1`, ...) fills what would
-otherwise be padding: leave it zero. It never becomes a field. In Swift, start
+its `identity` field. Between C API breaks fields are only ever appended, so
+an app built against an older header keeps working with a newer library; a
+release that breaks the C API (removes or moves fields) needs the app rebuilt
+against its header. A field whose name starts with `_reserved` (`_reserved0`,
+`_reserved1`, ...) fills what would otherwise be padding: leave it zero.
+Between breaks it never becomes a field. In Swift, start
 from the zero value and set what you need:
 
 ```swift
@@ -135,10 +137,12 @@ Rebuild the XCFramework after updating the FFI crate so the generated header
 includes newly added symbols.
 
 A node is configured with `DefraNodeInitOptions` fields rather than JSON. For
-an iroh node with a persistent store, set for example `db_path`,
-`p2p_transport = "iroh"`, `iroh_relay_url`, and `identity_ptr` (an identity
-handle the node signs as). Leave `disable_p2p` at `0` to run P2P; a libp2p
-node listens on the comma-separated `listening_addresses`.
+a P2P node with a persistent store, set for example `db_path`, `pinc_hubs`
+(the hubs topics and the KMS key exchange run through, `<peer id>@<udp
+address>`), and `identity_ptr` (an identity handle the node signs as). Leave
+`disable_p2p` at `0` to run P2P; the node binds `listening_addresses`, one
+`ip:port`, or loopback (`127.0.0.1`) on a port the OS picks when it is empty,
+so only this host can connect; `0.0.0.0:<port>` listens on every interface.
 
 For device-bound or delegated identities:
 

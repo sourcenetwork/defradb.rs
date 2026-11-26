@@ -7,15 +7,17 @@ value. The cause is the two-store split — local increments RMW the materialize
 key while merges touch a separate accumulation key, so the storage layer's
 transactional conflict detection never fires between a local write and a same-doc
 merge, and a merge's stale reconciled snapshot clobbers an interleaved local
-increment. Evidence: the asserting in-suite test
+increment. Evidence: the asserting test
 `proofs/tests/behavioral/partition.rs::convergence_concurrent_same_doc_merge_storm`
-(and the rest of the `convergence_concurrent_counter_*` family), which converge to the
-exact expected value after the fix.
+(and the rest of the `convergence_concurrent_counter_*` family), which converged to the
+exact expected value after the fix. It ran on libp2p and was deleted in #3415; testo
+`net::simple::peer::crdt::pncounter_convergence` now checks the exact sum on pinc,
+and #3411 ports the storm.
 
 (A SEPARATE, still-open issue — a load-dependent gossip/DAG-delivery under-count where
-the DAG itself fails to fully converge under a burst — is probed by the non-asserting,
-`#[ignore]`'d `proofs/tests/behavioral/bughunt.rs::bughunt_same_doc_merge_storm`. That
-is NOT the #1021 bug modeled here and is NOT fixed by this PR.)
+the DAG itself fails to fully converge under a burst — was probed by the non-asserting,
+`#[ignore]`'d `proofs/tests/behavioral/bughunt.rs::bughunt_same_doc_merge_storm`,
+deleted in #3415. That is NOT the #1021 bug modeled here and is NOT fixed by this PR.)
 
 ## What it abstracts
 
@@ -117,8 +119,9 @@ one directional invariant their bug violates.
 increments and merges use engine conflict validation and counter merge operands, while
 reconcile is init-if-absent (PCounter migrate-via-max), so a local write and a same-doc
 merge cannot silently overwrite each other's RMW.
-Validated by the asserting in-suite test
-`partition::convergence_concurrent_same_doc_merge_storm` (driven by
-`support::run_counter_storm`) and the rest of the `convergence_concurrent_counter_*`
-family, which converge to the exact expected value. The GREEN `Unified` mode here
+Validated by the asserting test
+`partition::convergence_concurrent_same_doc_merge_storm` (deleted with libp2p in
+#3415; #3411 ports it) and, on pinc, testo
+`net::simple::peer::crdt::pncounter_convergence`, which converge to the exact expected
+value. The GREEN `Unified` mode here
 abstracts that fix as a conflict-checked RMW. Engine OCC remains outside this model.

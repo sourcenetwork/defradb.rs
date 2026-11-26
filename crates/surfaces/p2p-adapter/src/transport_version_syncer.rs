@@ -10,8 +10,7 @@ use rapidhash::{HashSetExt, RapidHashSet};
 use crate::{P2PError, P2PErrorExt as _, P2PResult};
 
 /// Trait for syncing collection versions via a generic transport.
-#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
-#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[async_trait]
 pub trait TransportVersionSyncer: defra_core::thread_bounds::MaybeSendSync {
     async fn sync_versions(
         &self,
@@ -228,12 +227,10 @@ async fn sync_lens<S: storage::corekv::Store + 'static, B: Blockstore, T: P2PTra
     Ok(())
 }
 
-#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
-#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[async_trait]
 impl<S: storage::corekv::Store + 'static, B: Blockstore + 'static, T: P2PTransport>
     TransportVersionSyncer for DbTransportVersionSyncer<S, B, T>
 {
-    #[cfg(not(target_arch = "wasm32"))]
     async fn sync_versions(
         &self,
         version_ids: Vec<String>,
@@ -246,16 +243,6 @@ impl<S: storage::corekv::Store + 'static, B: Blockstore + 'static, T: P2PTranspo
         })
         .await
         .map_err(|error| P2PError::internal(error.report("version sync")))?
-    }
-
-    /// A browser's one worker is the page's thread: the sync runs in place.
-    #[cfg(target_arch = "wasm32")]
-    async fn sync_versions(
-        &self,
-        version_ids: Vec<String>,
-        connected_peers: Vec<PeerId>,
-    ) -> P2PResult<()> {
-        self.sync(version_ids, connected_peers).await
     }
 }
 

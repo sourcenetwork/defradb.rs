@@ -372,19 +372,19 @@ On a DAC-protected collection, verifying a doc's block as an identity without ac
 
 A node can take its node identity from the process's signing registry, where the embedding host registered it before starting the node (the FFI's `identity_ptr`, defradb.rs's `NodeBuilder::with_node_identity_did`), instead of loading it from a key it is given. The key-holding node needs no node identity of its own (started with signing disabled and no key) to serve it, and its KMS authenticates that peer's key request against the registered DID exactly as against a loaded one: on a private `@branchable` collection whose owner grants `reader` on the collection to the peer's node identity, a document the key-holding node creates anonymously with `encrypt: true` reaches the subscribed peer, and the owner reads `{name: "Fred"}` there.
 
-# `defra.encryption.peer.iroh_grant`: A granted iroh peer obtains a policy-bound document's key
+# `defra.encryption.peer.node_identity_grant`: A granted peer obtains a policy-bound document's key
 
 - **Parents:** ["go.encryption.peer"]
-- **Scenarios:** ["encryption::peer_iroh_acp_branchable::a_granted_iroh_peer_obtains_the_key"]
+- **Scenarios:** ["encryption::peer_node_identity_grant::a_granted_peer_obtains_the_key"]
 
-Over iroh, the key-holding node's KMS releases a document's key to the node identity the iroh handshake authenticated. With two iroh nodes, the key holder started with no node identity and the peer with one the host registered, a private `@branchable` collection whose owner grants `reader` on the collection to the peer's node identity, and both nodes subscribed to it: a document the key holder creates anonymously with `encrypt: true` reaches the peer, and the owner reads `{name: "Fred"}` there.
+The key-holding node's KMS releases a document's key to the node identity the pinc handshake authenticated. With two nodes, the key holder started with no node identity and the peer with one the host registered, a private `@branchable` collection whose owner grants `reader` on the collection to the peer's node identity, and both nodes subscribed to it: a document the key holder creates anonymously with `encrypt: true` reaches the peer, and the owner reads `{name: "Fred"}` there.
 
-# `defra.encryption.peer.iroh_no_grant`: An ungranted iroh peer receives the blocks but not the key
+# `defra.encryption.peer.node_identity_no_grant`: An ungranted peer receives the blocks but not the key
 
 - **Parents:** ["go.encryption.peer"]
-- **Scenarios:** ["encryption::peer_iroh_acp_branchable::an_ungranted_iroh_peer_receives_the_blocks_but_not_the_key"]
+- **Scenarios:** ["encryption::peer_node_identity_grant::an_ungranted_peer_receives_the_blocks_but_not_the_key"]
 
-The same two iroh nodes and collection with no `reader` grant to the peer: the encrypted document's blocks still replicate to the subscribed peer, but the key holder's KMS withholds the key, so the owner querying `Users { name }` on the peer gets `[]`, and still gets `[]` after the peer has had time to fetch the key.
+The same two nodes and collection with no `reader` grant to the peer: the encrypted document's blocks still replicate to the subscribed peer, but the key holder's KMS withholds the key, so the owner querying `Users { name }` on the peer gets `[]`, and still gets `[]` after the peer has had time to fetch the key.
 
 # `defra.encryption.peer.pending_key_arrival`: A pending merge appears when its key arrives
 
@@ -392,6 +392,13 @@ The same two iroh nodes and collection with no `reader` grant to the peer: the e
 - **Scenarios:** ["encryption::peer_pending_key::an_encrypted_doc_appears_after_its_key_arrives", "p2p_tests::remote_key_arrival_wakes_a_parked_encrypted_merge"]
 
 After a subscribed peer receives an encrypted document's blocks but not yet its key, the document can wait as a pending merge. When the KMS delivers the key, that pending merge wakes, the document becomes queryable, and its plaintext fields are returned.
+
+# `defra.encryption.peer.kms_batch_split`: A key batch larger than one topic message is split
+
+- **Parents:** ["go.encryption.peer"]
+- **Scenarios:** ["encryption::peer_kms_batch::a_peer_gets_the_keys_of_more_encrypted_documents_than_one_topic_message_holds", "tests::topics::an_oversized_raw_publish_fails_its_caller_and_is_counted", "tests::topics::a_raw_publish_of_one_whole_topic_message_is_delivered", "kms::request_keys::tests::a_request_and_its_reply_fit_one_pinc_topic_message"]
+
+A peer that receives more encrypted documents at once than one 64 KiB pinc topic message holds keys for (470) gets every key, and every document becomes queryable: the KMS sends its key request in chunks whose request and reply each fit one topic message. A raw topic publish over 64 KiB fails its caller with `GossipTooLarge` before anything is sent, and is counted and logged at warn; a publish that fails after its caller was answered is also counted and logged at warn.
 
 # `defra.backup.import.signed_and_replicated`: An imported document is signed and replicated as a created one is
 

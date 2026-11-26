@@ -11,9 +11,8 @@ use query::{
 };
 use storage::backends::DurabilityMode;
 
-use super::iroh_relay_server::IrohRelayServerConfig;
 use super::types::{
-    AcpDocumentType, DatastoreType, KeyringBackend, LogFormat, LogLevel, LogOutput, TransportType,
+    AcpDocumentType, DatastoreType, KeyringBackend, LogFormat, LogLevel, LogOutput,
 };
 use crate::error::{Error, Result};
 
@@ -308,134 +307,46 @@ impl Default for DatastoreConfig {
     }
 }
 
-/// The hex network secret, kept out of logs.
-#[derive(Clone, Serialize, Deserialize)]
-#[serde(transparent)]
-pub struct NetworkSecretHex(pub String);
-
-impl std::fmt::Debug for NetworkSecretHex {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("NetworkSecretHex([REDACTED])")
-    }
-}
-
-/// Network configuration
+/// Network configuration. An unknown key fails the load, naming it: a stale
+/// `net.iroh_allowed_peers` or a misspelt `net.pinc_allowed_peers` would
+/// otherwise leave the node accepting every peer without a word.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct NetConfig {
     pub p2p_disabled: bool,
-    pub p2p_addresses: Vec<String>,
+    /// Peers dialed at start, each `<peer id>@<udp address>`.
     #[serde(default)]
     pub peers: Vec<String>,
-    pub pubsub_enabled: bool,
-    /// Enable libp2p relay client support. Default: true.
-    #[serde(default = "default_true")]
-    pub relay_enabled: bool,
-    /// Max P2P protocol message size in bytes. Default: 16 MiB.
-    #[serde(default = "default_max_msg_size")]
-    pub max_msg_size: u64,
-    /// Max P2P CAR file size in bytes. Default: 64 MiB.
-    #[serde(default = "default_max_car_size")]
-    pub max_car_size: u64,
-    /// P2P stream read timeout in seconds. Default: 30.
-    #[serde(default = "default_stream_timeout")]
-    pub stream_timeout: u64,
-    /// Max concurrent P2P stream handler tasks. Default: 64.
-    #[serde(default = "default_max_p2p_tasks")]
-    pub max_p2p_tasks: usize,
-    /// P2P established connection low watermark. Default: 100.
-    #[serde(default = "default_connection_manager_low_water")]
-    pub connection_manager_low_water: u32,
-    /// P2P established connection high watermark. Default: 400.
-    #[serde(default = "default_connection_manager_high_water")]
-    pub connection_manager_high_water: u32,
-    /// P2P connection manager grace period in milliseconds. Default: 20000.
-    #[serde(default = "default_connection_manager_grace_period_ms")]
-    pub connection_manager_grace_period_ms: u64,
-    /// Max established connections per peer. Default: 4.
-    #[serde(default = "default_max_connections_per_peer")]
-    pub max_connections_per_peer: u32,
-    /// libp2p's whole memory budget in MiB, in place of half of system
-    /// memory, which inside a container is the host's. Default: unset.
+    /// The IP address the pinc endpoint binds. Unset binds loopback
+    /// (127.0.0.1), as Go's default `net.p2paddresses` does, so a node
+    /// started with no P2P settings takes no connection from another host.
+    /// A wildcard (`0.0.0.0`, `::`) listens on every interface and lists
+    /// each interface's address, never loopback.
     #[serde(default)]
-    pub resource_memory_mib: Option<u64>,
-    /// libp2p's file descriptor budget, used with a memory budget; 512 when
-    /// unset.
+    pub pinc_bind_addr: Option<std::net::IpAddr>,
+    /// The UDP port the pinc endpoint binds. Unset lets the OS pick one.
     #[serde(default)]
-    pub resource_file_descriptors: Option<u64>,
-    /// Inbound streams one peer may run at once; a stream past it is reset.
-    /// Default: unset, no cap.
+    pub pinc_bind_port: Option<u16>,
+    /// Addresses peers reach the node at that are on none of its
+    /// interfaces, each `<ip>:<port>` (a public address in front of a NAT,
+    /// a forwarded port). The node lists them first.
     #[serde(default)]
-    pub max_streams_per_peer: Option<usize>,
-    #[serde(default)]
-    pub transport: TransportType,
-    /// Custom relay URL for iroh transport (overrides default N0 relay).
-    #[serde(default)]
-    pub iroh_relay_url: Option<String>,
-    /// Relay mode for iroh transport: "default", "disabled", or "custom".
-    #[serde(default)]
-    pub iroh_relay_mode: Option<String>,
-    /// Custom relay URLs for iroh transport.
-    #[serde(default)]
-    pub iroh_relay_urls: Vec<String>,
-    /// Enable DNS-based peer discovery for iroh transport (default: true).
-    #[serde(default = "default_true")]
-    pub iroh_discovery: bool,
-    /// Custom DNS origin domain for iroh discovery.
-    #[serde(default)]
-    pub iroh_discovery_origin_domain: Option<String>,
-    /// Custom pkarr relay URL for iroh discovery publishing.
-    #[serde(default)]
-    pub iroh_pkarr_relay_url: Option<String>,
-    /// Fixed UDP bind port for iroh transport. None = ephemeral (OS-assigned).
-    #[serde(default)]
-    pub iroh_bind_port: Option<u16>,
-    /// Bind iroh to a specific IP address. Prevents advertising unreachable
-    /// LAN addresses to peers on different networks. None = 0.0.0.0 (all interfaces).
-    #[serde(default)]
-    pub iroh_bind_addr: Option<std::net::IpAddr>,
-    /// Endpoint ids allowed to open an inbound iroh connection. Empty (the
-    /// default) accepts every peer, which is the behaviour this option was
-    /// added alongside and is fine on a private network. Listing any id
-    /// switches the transport to accepting only the ids listed, which is
-    /// what a node reachable over relays needs: a gossip topic is named by a
+    pub pinc_public_addrs: Vec<std::net::SocketAddr>,
+    /// Peer ids allowed to open an inbound connection. Empty (the default)
+    /// accepts every peer, which is fine on a private network. Listing any id
+    /// switches the node to accepting only the ids listed, which is what a
+    /// node reachable from the internet needs: a topic is named by a
     /// content-derived collection id, identical for anyone holding the same
-    /// schema, so an open endpoint hands its documents to any peer that can
-    /// name a collection.
+    /// schema, so an open node hands its documents to any peer that can name
+    /// a collection.
     #[serde(default)]
-    pub iroh_allowed_peers: Vec<String>,
+    pub pinc_allowed_peers: Vec<String>,
     /// The pinc hubs topics run through, as `<peer id>@<udp address>`, at
-    /// most four, with `net.transport: pinc`. Topic broadcasts and the KMS
-    /// key exchange reach peers only through a hub, so a node that names
-    /// none syncs only over direct requests.
+    /// most four. Topic broadcasts and the KMS key exchange reach peers only
+    /// through a hub, so a node that names none syncs only over direct
+    /// requests.
     #[serde(default)]
     pub pinc_hubs: Vec<String>,
-    /// Host an iroh relay server on this node. Unset hosts none.
-    #[serde(default)]
-    pub iroh_relay_server: Option<IrohRelayServerConfig>,
-    /// Maximum concurrent QUIC paths per iroh connection. None keeps iroh's
-    /// default; custom values must be at least 9.
-    #[serde(default)]
-    pub iroh_max_concurrent_multipath_paths: Option<u32>,
-    /// 32 bytes of hex shared by the nodes of one network. It blinds the
-    /// collection ids this node advertises in its service record, so only
-    /// nodes with the secret can tell which collections it holds. Unset
-    /// advertises only `iroh_public_collections`.
-    #[serde(default)]
-    pub iroh_network_secret: Option<NetworkSecretHex>,
-    /// Collections advertised by their plain id, readable by any node.
-    #[serde(default)]
-    pub iroh_public_collections: Vec<String>,
-    /// How this node holds the collections it advertises: `replica`
-    /// (the default), `archive` or `reader`.
-    #[serde(default)]
-    pub iroh_service_role: Option<String>,
-    /// Advertise that this node accepts replicators.
-    #[serde(default)]
-    pub iroh_replicator: bool,
-    /// Extra service names to advertise, for applications built on defra.
-    #[serde(default)]
-    pub iroh_custom_services: Vec<String>,
     /// Per-peer rate limit burst capacity (max tokens in bucket). Default: 500.
     #[serde(default = "default_rate_limit_burst")]
     pub p2p_rate_limit_burst: u32,
@@ -476,30 +387,6 @@ pub struct NetConfig {
     pub p2p_max_active_pushes_per_peer: usize,
 }
 
-fn default_max_msg_size() -> u64 {
-    16 * 1024 * 1024
-}
-fn default_max_car_size() -> u64 {
-    64 * 1024 * 1024
-}
-fn default_stream_timeout() -> u64 {
-    30
-}
-fn default_max_p2p_tasks() -> usize {
-    64
-}
-fn default_connection_manager_low_water() -> u32 {
-    100
-}
-fn default_connection_manager_high_water() -> u32 {
-    400
-}
-fn default_connection_manager_grace_period_ms() -> u64 {
-    20_000
-}
-fn default_max_connections_per_peer() -> u32 {
-    4
-}
 fn default_rate_limit_burst() -> u32 {
     500
 }
@@ -527,47 +414,16 @@ fn default_push_queue_byte_capacity() -> usize {
 fn default_max_active_pushes_per_peer() -> usize {
     p2p::sync::DEFAULT_MAX_ACTIVE_PUSHES_PER_PEER
 }
-fn default_true() -> bool {
-    true
-}
-
 impl Default for NetConfig {
     fn default() -> Self {
         Self {
             p2p_disabled: false,
-            p2p_addresses: vec!["/ip4/127.0.0.1/tcp/9171".to_string()],
             peers: Vec::new(),
-            pubsub_enabled: true,
-            relay_enabled: true,
-            max_msg_size: default_max_msg_size(),
-            max_car_size: default_max_car_size(),
-            stream_timeout: default_stream_timeout(),
-            max_p2p_tasks: default_max_p2p_tasks(),
-            connection_manager_low_water: default_connection_manager_low_water(),
-            connection_manager_high_water: default_connection_manager_high_water(),
-            connection_manager_grace_period_ms: default_connection_manager_grace_period_ms(),
-            max_connections_per_peer: default_max_connections_per_peer(),
-            resource_memory_mib: None,
-            resource_file_descriptors: None,
-            max_streams_per_peer: None,
-            transport: TransportType::default(),
-            iroh_relay_url: None,
-            iroh_relay_mode: None,
-            iroh_relay_urls: Vec::new(),
-            iroh_discovery: true,
-            iroh_discovery_origin_domain: None,
-            iroh_pkarr_relay_url: None,
-            iroh_bind_port: None,
-            iroh_bind_addr: None,
-            iroh_allowed_peers: Vec::new(),
+            pinc_bind_addr: None,
+            pinc_bind_port: None,
+            pinc_public_addrs: Vec::new(),
+            pinc_allowed_peers: Vec::new(),
             pinc_hubs: Vec::new(),
-            iroh_relay_server: None,
-            iroh_max_concurrent_multipath_paths: None,
-            iroh_network_secret: None,
-            iroh_public_collections: Vec::new(),
-            iroh_service_role: None,
-            iroh_replicator: false,
-            iroh_custom_services: Vec::new(),
             p2p_rate_limit_burst: default_rate_limit_burst(),
             p2p_rate_limit_rate: default_rate_limit_rate(),
             p2p_max_doc_sync_request_doc_ids: default_max_doc_sync_request_doc_ids(),
@@ -583,61 +439,25 @@ impl Default for NetConfig {
 }
 
 impl NetConfig {
+    /// The address the pinc endpoint binds: `pinc_bind_addr`, loopback when
+    /// unset, on `pinc_bind_port`, a port the OS picks when unset.
+    pub fn pinc_bind(&self) -> std::net::SocketAddr {
+        std::net::SocketAddr::new(
+            self.pinc_bind_addr
+                .unwrap_or(std::net::IpAddr::from([127, 0, 0, 1])),
+            self.pinc_bind_port.unwrap_or(0),
+        )
+    }
+
     /// Validate the network configuration
     pub fn validate(&self) -> Result<()> {
         if self.p2p_disabled {
             return Ok(());
         }
-
-        if let Some(relay_server) = &self.iroh_relay_server {
-            if self.transport != TransportType::Iroh {
-                return Err(Error::InvalidConfig(
-                    "net.iroh_relay_server requires net.transport: iroh".into(),
-                ));
-            }
-            if !cfg!(feature = "iroh-relay-server") {
-                return Err(Error::InvalidConfig(
-                    "net.iroh_relay_server requires a defra binary built with the iroh-relay-server feature"
-                        .into(),
-                ));
-            }
-            relay_server.validate()?;
+        for addr in self.peers.iter().chain(&self.pinc_hubs) {
+            defra_pinc::parse_public_peer_addr(addr)
+                .map_err(|e| Error::InvalidConfig(format!("invalid pinc address {addr}: {e}")))?;
         }
-
-        if let Some(secret) = &self.iroh_network_secret {
-            if secret.0.len() != 64 || !secret.0.bytes().all(|b| b.is_ascii_hexdigit()) {
-                return Err(Error::InvalidConfig(
-                    "net.iroh_network_secret must be 64 hex characters (32 bytes)".into(),
-                ));
-            }
-        }
-        if let Some(role) = &self.iroh_service_role {
-            if !matches!(role.as_str(), "replica" | "archive" | "reader") {
-                return Err(Error::InvalidConfig(format!(
-                    "net.iroh_service_role must be replica, archive or reader, not {role}"
-                )));
-            }
-        }
-        // Peers refuse a record carrying a longer name.
-        if let Some(name) = self
-            .iroh_custom_services
-            .iter()
-            .find(|name| name.len() > 128)
-        {
-            return Err(Error::InvalidConfig(format!(
-                "net.iroh_custom_services name over 128 bytes: {name}"
-            )));
-        }
-
-        // Multiaddr validation only applies to libp2p transport
-        if self.transport == TransportType::Libp2p {
-            for addr_str in &self.p2p_addresses {
-                addr_str
-                    .parse::<p2p::Multiaddr>()
-                    .map_err(|e| Error::InvalidMultiaddr(format!("{}: {}", addr_str, e)))?;
-            }
-        }
-
         Ok(())
     }
 }

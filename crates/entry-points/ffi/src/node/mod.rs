@@ -77,7 +77,7 @@ pub(crate) async fn build_node_state(
         StoreLocation::Memory => None,
         StoreLocation::Path(path) => Some(path),
     };
-    config.transport = with_derived_iroh_key_path(transport, &db_path);
+    config.transport = transport;
     config.edge = Some(edge);
     // Go's P2PPrivateKey is an option of one start: used as given, never
     // checked against or recorded in the store.
@@ -157,23 +157,6 @@ async fn shut_down(state: &NodeState) -> Result<(), String> {
         identity.release();
     }
     closed.map_err(|error| format!("failed to close database: {}", error))
-}
-
-fn with_derived_iroh_key_path(
-    transport: defra_node::TransportConfig,
-    _db_path: &Option<String>,
-) -> defra_node::TransportConfig {
-    #[cfg(feature = "iroh")]
-    if let defra_node::TransportConfig::Iroh(mut config) = transport {
-        if config.secret_key_path.is_none() {
-            if let Some(path) = _db_path {
-                config.secret_key_path = Some(std::path::PathBuf::from(format!("{path}.iroh.key")));
-            }
-        }
-        return defra_node::TransportConfig::Iroh(config);
-    }
-
-    transport
 }
 
 /// Closes the node and releases its handle, with every transaction and

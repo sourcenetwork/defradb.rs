@@ -1,9 +1,6 @@
-//! One pinc peer, assembled as the iroh peer is: endpoint, sync coordinator,
-//! replication, event dispatch, retry, restore, and the management adapter.
-//!
-//! A copy of `iroh_peer` over `p2p::pinc::PincTransport`, kept apart so the
-//! iroh assembly is untouched while pinc is evaluated. Native only: pinc has
-//! no browser host yet.
+//! One pinc peer: endpoint, sync coordinator, replication, event dispatch,
+//! retry, restore, and the management adapter. Native only: pinc has no
+//! browser host yet (#3412).
 
 mod config;
 mod events;

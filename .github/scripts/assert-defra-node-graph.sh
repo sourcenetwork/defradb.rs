@@ -6,7 +6,7 @@
 # or exit 0 with empty stdout (cargo prints `warning: nothing to print.` on
 # stderr for unused optional deps). Never treat the -i exit code as the
 # predicate. Never pass --workspace: workspace feature unification would pull
-# CLI's libp2p into every tree.
+# the CLI's pinc into every tree.
 set -euo pipefail
 
 # Always `-p defra-node`, `-p cli`, `-p db`, `-p ffi` or `-p vera-delegation`.
@@ -58,32 +58,17 @@ unique_crate_names() {
     | awk '{print $1}' | grep -v '^(*)' | sort -u | wc -l
 }
 
-# No libp2p / libp2p-* crates. Grep --prefix none; do not enumerate names.
-assert_no_libp2p() {
-  local crate=$1
-  shift
-  local stdout
-  stdout="$(cargo tree -p "$crate" -e normal --locked --prefix none "$@")"
-  if grep -q '^libp2p' <<<"$stdout"; then
-    echo "error: unexpected ^libp2p in ${crate}${*:+ $*} --prefix none tree" >&2
-    printf '%s\n' "$stdout" | grep '^libp2p' >&2
-    exit 1
-  fi
-  echo "ok: ${crate}${*:+ $*} --prefix none has no ^libp2p"
-}
-
 assert_present defra-node vera
 assert_present defra-node wasmtime
-assert_present cli libp2p
+# The CLI always runs P2P, over pinc.
+assert_present cli pinc
 
-# Default defra-node (no p2p feature) must not resolve libp2p / libp2p-*.
-assert_no_libp2p defra-node
+# Default defra-node (no p2p feature) and the isolated db native graph carry no
+# transport.
+assert_absent defra-node pinc
+assert_absent db pinc --no-default-features --features native
 
-# Isolated db native graph must not resolve the optional libp2p dep.
-# cargo tree -i libp2p often exits 0 with empty stdout — still absent.
-assert_absent db libp2p --no-default-features --features native
-
-# Lean local-ACP + native host. No Vera, no Wasmtime, no libp2p.
+# Lean local-ACP + native host. No Vera, no Wasmtime, no transport.
 assert_absent defra-node vera --no-default-features --features native
 assert_absent defra-node acp-light-client --no-default-features --features native
 assert_absent defra-node commonware-cryptography --no-default-features --features native
@@ -91,67 +76,24 @@ assert_absent defra-node aws-lc-rs --no-default-features --features native
 assert_absent defra-node cosmrs --no-default-features --features native
 assert_absent defra-node wasmtime --no-default-features --features native
 assert_absent defra-node cranelift-codegen --no-default-features --features native
+assert_absent defra-node pinc --no-default-features --features native
 
-# Lean Iroh P2P: Iroh present, no libp2p / libp2p-*, p2p crate not enabling
-# libp2p-transport. `p2p` implies native, so listing native is redundant but
-# matches the advertised combo.
-LEAN_IROH=(--no-default-features --features native,p2p)
-assert_no_libp2p defra-node "${LEAN_IROH[@]}"
-assert_present defra-node iroh "${LEAN_IROH[@]}"
+# Lean P2P: pinc present. `p2p` implies native, so listing native is redundant
+# but matches the advertised combo.
+assert_present defra-node pinc --no-default-features --features native,p2p
 
-# pinc is opt-in: absent from the default node, the iroh node and the CLI,
-# present only with the pinc feature.
-assert_absent defra-node pinc
-assert_absent defra-node pinc "${LEAN_IROH[@]}"
-assert_absent cli pinc
-assert_present defra-node pinc --no-default-features --features native,pinc
-
-# p2p crate feature line (the ^p2p v package, not p2p-*). Default cargo tree
-# omits features; --format '{p} {f}' prints them so this can fail.
-assert_p2p_crate_iroh_only() {
-  local stdout rc line
-  set +e
-  stdout="$(cargo tree -p defra-node -e normal --locked "${LEAN_IROH[@]}" -i p2p --format '{p} {f}')"
-  rc=$?
-  set -e
-  line="$(printf '%s\n' "$stdout" | grep '^p2p v' || true)"
-  if [ -z "$line" ]; then
-    echo "error: expected ^p2p v in lean Iroh tree (cargo tree -i exit ${rc})" >&2
-    if [ -n "$stdout" ]; then
-      printf '%s\n' "$stdout" >&2
-    fi
-    exit 1
-  fi
-  if ! grep -q 'iroh-transport' <<<"$line"; then
-    echo "error: p2p crate line missing iroh-transport" >&2
-    printf '%s\n' "$line" >&2
-    exit 1
-  fi
-  if grep -q 'libp2p-transport' <<<"$line"; then
-    echo "error: p2p crate line enables libp2p-transport" >&2
-    printf '%s\n' "$line" >&2
-    exit 1
-  fi
-  echo "ok: lean Iroh p2p crate line has iroh-transport and no libp2p-transport"
-}
-assert_p2p_crate_iroh_only
-
-# Lean-embedded ffi (#1345): libp2p in, iroh/wasmtime/vera out.
-LEAN_FFI=(--no-default-features --features native,libp2p)
-assert_present ffi libp2p "${LEAN_FFI[@]}"
-assert_absent  ffi iroh "${LEAN_FFI[@]}"
+# Lean-embedded ffi (#1345): pinc in, wasmtime/vera out.
+LEAN_FFI=(--no-default-features --features native,p2p)
+assert_present ffi pinc "${LEAN_FFI[@]}"
 assert_absent  ffi wasmtime "${LEAN_FFI[@]}"
 assert_absent  ffi vera "${LEAN_FFI[@]}"
 assert_absent  ffi cosmrs "${LEAN_FFI[@]}"
 
-# No-transport ffi (#1653): no libp2p / libp2p-* anywhere in the graph.
-NO_TRANSPORT_FFI=(--no-default-features --features native)
-assert_no_libp2p ffi "${NO_TRANSPORT_FFI[@]}"
-assert_absent ffi iroh "${NO_TRANSPORT_FFI[@]}"
-# Default ffi keeps libp2p.
-assert_present ffi libp2p
+# No-transport ffi (#1653): no pinc anywhere in the graph.
+assert_absent ffi pinc --no-default-features --features native
 
-# Default ffi still carries the full Go-interop capability set.
+# Default ffi carries the full capability set.
+assert_present ffi pinc
 assert_present ffi vera
 assert_present ffi wasmtime
 

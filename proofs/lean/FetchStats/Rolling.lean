@@ -15,7 +15,7 @@ What must never happen:
 * a total wraps around to a small number (`bump_never_overflows`, `bump_grows`).
 
 Rust anchors: `PeerCounters::record` and `roll` in
-`crates/database/p2p/src/iroh/fetch_stats.rs`. Ratios are held in parts per million, so
+`crates/database/pinc/src/fetch_stats.rs`. Ratios are held in parts per million, so
 a ratio of 1 is `scale`. Every value is a `u64`; `Nat` here never wraps, and the
 theorems show the Rust values never need to.
 -/

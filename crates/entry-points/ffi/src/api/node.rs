@@ -12,8 +12,8 @@ use crate::{node, txn, version};
 pub struct DefraTransactionOptions {
     /// A transaction that only reads (1=true, 0=false).
     pub read_only: c_int,
-    /// Reserved, so the struct has no padding: leave it zero. It never
-    /// becomes a field; new fields go after the struct's last one.
+    /// Reserved, so the struct has no padding: leave it zero. Short of a C API
+    /// break (`c-api:break`), it never becomes a field and new fields go last.
     pub _reserved0: u32,
 }
 

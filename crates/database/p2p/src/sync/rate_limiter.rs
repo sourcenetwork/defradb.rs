@@ -140,7 +140,7 @@ pub(crate) enum RateLimitDecision {
 /// Designed to be held behind an `Arc` and shared across event-handler
 /// invocations.
 ///
-/// Uses string-based peer IDs to support both libp2p and iroh transports.
+/// Uses string-based peer IDs.
 pub struct PeerRateLimiter {
     buckets: HopscotchMap<String, Arc<Bucket>, RandomState>,
     capacity: u32,

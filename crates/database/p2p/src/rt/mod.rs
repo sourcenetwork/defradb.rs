@@ -16,12 +16,6 @@ mod native {
     pub use nuclei::{select, spawn};
     pub use regolith::sync::Notify;
 
-    /// `future` inside the tokio context iroh's sockets and timers need. A task that drives iroh is
-    /// wrapped once, at its outermost future.
-    pub fn compat<F>(future: F) -> edge::Compat<F> {
-        edge::compat(future)
-    }
-
     /// The next finished task of `set`, `None` once it is empty.
     pub async fn join_next<T>(set: &mut JoinSet<T>) -> Option<Result<T, JoinError>> {
         set.join_next().await
@@ -32,11 +26,6 @@ mod native {
         pub use nuclei::time::{
             interval, sleep, sleep_until, timeout, Instant, Interval, MissedTickBehavior, Sleep,
         };
-
-        /// The clock iroh-gossip's protocol state machine takes: the type of
-        /// that library (n0-future's, tokio's `Instant` natively), not of the
-        /// runtime. Only the type is named; nothing runs on tokio.
-        pub use n0_future::time::Instant as GossipInstant;
     }
 }
 
@@ -56,9 +45,6 @@ mod wasm {
         pub use n0_future::time::{
             interval, sleep, sleep_until, timeout, Instant, Interval, MissedTickBehavior, Sleep,
         };
-
-        /// The clock iroh-gossip's protocol state machine takes.
-        pub use n0_future::time::Instant as GossipInstant;
     }
 
     /// A spawned task. Unlike nuclei's, dropping it leaves the task running

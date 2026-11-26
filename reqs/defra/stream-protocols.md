@@ -1,15 +1,15 @@
-# `defra.stream_protocols`: An embedder's own stream protocols over iroh
+# `defra.stream_protocols`: An embedder's own stream protocols over pinc
 
 - **Parents:** ["defra"]
 
-An application embedding a node registers stream protocols on `NodeBuilder::with_stream_protocol` and opens them with `Node::open_p2p_stream`. Their streams ride the iroh connection the node already shares with each peer, under the same inbound allowlist, revocations and per-priority budgets as Defra's own protocols. It is an embedder API with no HTTP, CLI or Go surface, so its scenarios run under the in-process client.
+An application embedding a node registers stream protocols on `NodeBuilder::with_stream_protocol` and opens them with `Node::open_p2p_stream`. Their streams ride the pinc connection the node already shares with each peer, under the same inbound allowlist, revocations and per-priority budgets as Defra's own protocols. It is an embedder API with no HTTP, CLI or Go surface, so its scenarios run under the in-process client.
 
 # `defra.stream_protocols.registration`: Only a protocol the node can serve is registered or opened
 
 - **Parents:** ["defra.stream_protocols"]
 - **Scenarios:** ["net::stream_protocols::a_node_refuses_a_protocol_it_cannot_serve", "net::stream_protocols::opening_a_protocol_the_opener_cannot_send_fails_before_the_network"]
 
-A node refuses to start on a protocol whose tag is empty or longer than 64 bytes (`a tag is 1 to 64 bytes`), starts with `/defra-iroh/` (`is in Defra's reserved /defra-iroh/ namespace`), or is given twice (`is registered twice`); whose request limit is above one peer's share of its priority's inbound budget (`one peer may hold at most <share> bytes`); or whose deadline is zero or longer than a day (`a deadline is more than zero and at most 86400s`). Each error starts `invalid configuration: stream protocol "<tag>"`, wrapped as `iroh peer failed to start: …`. A 64-byte tag, a limit of exactly the share and a deadline of exactly a day are accepted. A node with no iroh transport fails to build with `stream protocols require the iroh transport`. Opening a reserved tag fails before anything is sent, and so does a request larger than the protocol's limit, with its own error rather than a configuration one (`a request of <n> bytes is larger than stream protocol "<tag>" accepts (<max> bytes)`), and opening from a node without P2P fails with `P2P is not enabled for this node`.
+A node refuses to start on a protocol whose tag is empty or longer than 64 bytes (`a tag is 1 to 64 bytes`), starts with `/defra-pinc/` (`is in Defra's reserved /defra-pinc/ namespace`), or is given twice (`is registered twice`); whose request limit is above one peer's share of its priority's inbound budget (`one peer may hold at most <share> bytes`); or whose deadline is zero or longer than a day (`a deadline is more than zero and at most 86400s`). Each error starts `invalid configuration: stream protocol "<tag>"`, wrapped as `pinc peer failed to start: …`. A 64-byte tag, a limit of exactly the share and a deadline of exactly a day are accepted. A node with no P2P transport fails to build with `stream protocols require a P2P transport`. Opening a reserved tag fails before anything is sent, and so does a request larger than the protocol's limit, with its own error rather than a configuration one (`a request of <n> bytes is larger than stream protocol "<tag>" accepts (<max> bytes)`), and opening from a node without P2P fails with `P2P is not enabled for this node`.
 
 # `defra.stream_protocols.round_trip`: A request and its reply cross between two nodes
 
@@ -45,6 +45,27 @@ A request's room in the peer's share of its priority's inbound budget is held by
 - **Scenarios:** ["net::stream_protocols::a_handler_past_its_deadline_is_cut_with_code_7"]
 
 A handler still running at its protocol's deadline is dropped, and the opener's read fails with `stream reset by the peer with code 7`. A send half left unfinished, by the node or by a handler that returns, resets the stream the same way rather than finishing it.
+
+# `defra.stream_protocols.deadline.unread`: A handler blocked on an opener that does not read is cut too
+
+- **Parents:** ["defra.stream_protocols.deadline"]
+- **Scenarios:** ["net::stream_protocols::a_handler_flooding_an_opener_that_does_not_read_is_cut_at_its_deadline", "tests::protocol_streams::a_handler_blocked_writing_to_an_opener_that_does_not_read_is_reset_at_its_deadline"]
+
+A handler whose write is blocked because the opener stopped reading is dropped at its deadline like any other, and the write in flight is abandoned with it: the stream is reset with code 7 at once, not after the write completes. When the opener reads again it gets only what was in flight at the deadline (the stream's window and its receive queue), then `stream reset by the peer with code 7`.
+
+# `defra.stream_protocols.deadline.finish`: An opener's finish after a deadline cancel fails
+
+- **Parents:** ["defra.stream_protocols.deadline"]
+- **Scenarios:** ["net::stream_protocols::a_finish_after_the_handler_was_cut_at_its_deadline_fails", "net::stream_protocols::a_finish_after_the_handler_returned_holds", "tests::protocol_streams::a_finish_after_the_handler_was_cut_at_its_deadline_fails", "tests::protocol_streams::a_finish_after_the_handler_returned_holds"]
+
+A handler that returns before reading the opener's stream to its end stops it with code 8 (`STOP_HANDLED`), and an opener's finish that meets that stop succeeds: the handler took what it needed. A stream the node cancels at the handler's deadline is stopped with code 7, and an opener that finishes after that cancel fails with `stream reset by the peer with code 7`, so data the handler never took does not read as delivered. A write after a handler returned fails with `stream reset by the peer with code 8`.
+
+# `defra.stream_protocols.open_busy`: An open refused as busy sends no request
+
+- **Parents:** ["defra.stream_protocols"]
+- **Scenarios:** ["tests::protocol_streams::an_open_refused_busy_leaves_the_peer_no_request_to_serve"]
+
+An open that the opener's endpoint refuses for want of room for the stream's tasks fails with `busy` before anything is written: the serving peer gets no request and runs no handler for it, so a retried open runs its handler once.
 
 # `defra.stream_protocols.revocation`: Revoking a peer cuts its open protocol streams
 

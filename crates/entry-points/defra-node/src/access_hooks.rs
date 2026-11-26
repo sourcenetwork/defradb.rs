@@ -3,7 +3,7 @@ use std::sync::Arc;
 use db::merge::governance::{MergeGovernance, MergeValidator};
 use query::access_hooks::{ReadValidator, WriteValidator};
 
-/// An app's own access control for an iroh node.
+/// An app's own access control for a P2P node.
 ///
 /// The collections named in [`AccessHooks::new`] are governed by the app:
 /// replicated composites into them are judged by the merge validator, never

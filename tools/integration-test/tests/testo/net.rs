@@ -1,6 +1,10 @@
+mod cli_hub;
 mod disjoint_groups;
 mod gossip_admission;
-mod iroh_large_update;
+mod large_update;
+mod nac_bootstrap;
+mod pinc_bind;
+mod pinc_relay;
 mod sticky_disconnect;
 mod stream_protocols;
 mod info {

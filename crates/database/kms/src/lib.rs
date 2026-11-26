@@ -5,7 +5,7 @@
 //!
 //! - M1: `KmsService` trait, `DefraKms`, `MemoryKeyStore`, `NoopKms`,
 //!   `NacDacPolicy`, Go wire-compatible `FetchEncryptionKeyRequest`/`Reply`.
-//! - M2: Iroh transport adapter, multi-transport composition.
+//! - M2: pinc topic transport, multi-transport composition.
 //! - M3: `KeyringKeyStore` (FileKeyring + SystemKeyring), KEK lifecycle,
 //!   `WrappingHeader` on the `Encryption` block.
 //! - M4: `VeraAttestedPolicy`, `CombinedPolicy`, reply attestation.

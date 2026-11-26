@@ -35,7 +35,6 @@ case "${1:-}" in
     integration)
         poison_rootdir
         build DEFRA_RUST_BINARY defra
-        build DEFRA_IROH_BINARY defra-iroh --features iroh
         ;;
     vera)
         build DEFRA_VERA_BINARY defra-vera --features vera
@@ -43,7 +42,6 @@ case "${1:-}" in
     # Conformance would otherwise launch `target/debug/defradb`, which nextest never rebuilds.
     conformance)
         build DEFRA_CONFORMANCE_BINARY defra
-        build DEFRA_CONFORMANCE_IROH_BINARY defra-iroh --features iroh
         ;;
     *)
         echo "usage: $0 integration|vera|conformance" >&2

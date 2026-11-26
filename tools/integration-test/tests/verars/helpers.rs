@@ -40,12 +40,7 @@ pub async fn start_hub_cluster() -> vera_harness::cluster::TestCluster {
 }
 
 /// Configure document ACP through arguments retained by the harness on restart.
-pub fn vera_rs_builder(
-    hub_rpc_url: &str,
-    identity: &str,
-    n_nodes: usize,
-    p2p: bool,
-) -> TestClusterBuilder {
+pub fn vera_rs_builder(hub_rpc_url: &str, identity: &str, n_nodes: usize) -> TestClusterBuilder {
     let keys = vera_harness::cluster::KeySet::builder()
         .nodes(1)
         .seed(0)
@@ -69,9 +64,6 @@ pub fn vera_rs_builder(
     for index in 0..n_nodes {
         builder = builder.with_node_identity(index, identity.to_string());
     }
-    if p2p {
-        builder = builder.with_p2p();
-    }
     builder
 }
 
@@ -80,9 +72,8 @@ pub async fn build_defra_with_vera_rs(
     hub_rpc_url: &str,
     identity: &str,
     n_nodes: usize,
-    p2p: bool,
 ) -> TestCluster {
-    vera_rs_builder(hub_rpc_url, identity, n_nodes, p2p)
+    vera_rs_builder(hub_rpc_url, identity, n_nodes)
         .build()
         .await
         .expect("build defra cluster")

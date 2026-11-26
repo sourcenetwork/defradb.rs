@@ -3,8 +3,8 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use defra_pinc::PincTransport;
 use kovan_queue::seg_queue::SegQueue;
-use p2p::pinc::PincTransport;
 use p2p::P2PTransport;
 
 const TASK_STOP_TIMEOUT: Duration = Duration::from_secs(1);

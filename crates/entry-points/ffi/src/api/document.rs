@@ -26,8 +26,8 @@ pub struct DefraDocumentAddOptions {
     pub encrypted_fields: *const c_char,
     /// Block signing: 0 node default, 1 sign, -1 do not sign.
     pub signing: c_int,
-    /// Reserved, so the struct has no padding: leave it zero. It never
-    /// becomes a field; new fields go after the struct's last one.
+    /// Reserved, so the struct has no padding: leave it zero. Short of a C API
+    /// break (`c-api:break`), it never becomes a field and new fields go last.
     pub _reserved0: u32,
 }
 
@@ -64,8 +64,8 @@ pub struct DefraDocumentUpdateOptions {
     pub collection_id: *const c_char,
     /// Include inactive collection versions (1=true, 0=false).
     pub collection_get_inactive: c_int,
-    /// Reserved, so the struct has no padding: leave it zero. It never
-    /// becomes a field; new fields go after the struct's last one.
+    /// Reserved, so the struct has no padding: leave it zero. Short of a C API
+    /// break (`c-api:break`), it never becomes a field and new fields go last.
     pub _reserved0: u32,
     /// The document to update.
     pub doc_id: *const c_char,
@@ -73,8 +73,8 @@ pub struct DefraDocumentUpdateOptions {
     pub filter_json: *const c_char,
     /// Block signing: 0 node default, 1 sign, -1 do not sign.
     pub signing: c_int,
-    /// Reserved, so the struct has no padding: leave it zero. It never
-    /// becomes a field; new fields go after the struct's last one.
+    /// Reserved, so the struct has no padding: leave it zero. Short of a C API
+    /// break (`c-api:break`), it never becomes a field and new fields go last.
     pub _reserved1: u32,
 }
 
@@ -93,8 +93,8 @@ pub struct DefraDocumentDeleteOptions {
     pub collection_id: *const c_char,
     /// Include inactive collection versions (1=true, 0=false).
     pub collection_get_inactive: c_int,
-    /// Reserved, so the struct has no padding: leave it zero. It never
-    /// becomes a field; new fields go after the struct's last one.
+    /// Reserved, so the struct has no padding: leave it zero. Short of a C API
+    /// break (`c-api:break`), it never becomes a field and new fields go last.
     pub _reserved0: u32,
     /// The document to delete.
     pub doc_id: *const c_char,
@@ -102,8 +102,8 @@ pub struct DefraDocumentDeleteOptions {
     pub filter_json: *const c_char,
     /// Block signing: 0 node default, 1 sign, -1 do not sign.
     pub signing: c_int,
-    /// Reserved, so the struct has no padding: leave it zero. It never
-    /// becomes a field; new fields go after the struct's last one.
+    /// Reserved, so the struct has no padding: leave it zero. Short of a C API
+    /// break (`c-api:break`), it never becomes a field and new fields go last.
     pub _reserved1: u32,
 }
 
@@ -121,8 +121,8 @@ pub struct DefraDocumentPurgeOptions {
     pub collection_id: *const c_char,
     /// Include inactive collection versions (1=true, 0=false).
     pub collection_get_inactive: c_int,
-    /// Reserved, so the struct has no padding: leave it zero. It never
-    /// becomes a field; new fields go after the struct's last one.
+    /// Reserved, so the struct has no padding: leave it zero. Short of a C API
+    /// break (`c-api:break`), it never becomes a field and new fields go last.
     pub _reserved0: u32,
 }
 

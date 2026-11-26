@@ -2,8 +2,8 @@
 
 use std::sync::Arc;
 
-use p2p::pinc::PincTransport;
-use p2p::sync::{DispatchAdmission, PincSyncCoordinator};
+use defra_pinc::{PincSyncCoordinator, PincTransport};
+use p2p::sync::DispatchAdmission;
 use p2p::{P2PTransport, TransportEvent};
 use storage::corekv::Store;
 
@@ -25,7 +25,7 @@ pub(super) fn spawn_event_handler<S, B>(
     event_bus: Arc<dyn events::Bus>,
     transport: PincTransport,
     manage_hooks: ManageHooksCell,
-    #[cfg(not(target_arch = "wasm32"))] se_correlator: p2p::SeQueryCorrelator,
+    se_correlator: p2p::SeQueryCorrelator,
     edge: &edge::Edge,
 ) -> edge::Service
 where
@@ -42,7 +42,6 @@ where
                 let event_bus = Arc::clone(&event_bus);
                 let transport = transport.clone();
                 let manage_hooks = manage_hooks.clone();
-                #[cfg(not(target_arch = "wasm32"))]
                 let se_correlator = se_correlator.clone();
                 async move {
                     publish_peer_lifecycle(&event, event_bus.as_ref(), &retry_peers).await;
@@ -73,7 +72,6 @@ where
                             }
                             return;
                         }
-                        #[cfg(not(target_arch = "wasm32"))]
                         TransportEvent::SEQueryRequest {
  peer_id,
  request,
@@ -89,7 +87,6 @@ where
                             .await;
                             return;
                         }
-                        #[cfg(not(target_arch = "wasm32"))]
                         TransportEvent::SEQueryReply { reply, .. } => {
                             se_correlator.deliver(reply);
                             return;

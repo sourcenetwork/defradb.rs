@@ -9,7 +9,7 @@ use blockstore::DefraBlockstore;
 use cid::Cid;
 use storage::RegolithStore;
 
-use crate::bitswap::AccessMode;
+use crate::access::AccessMode;
 use crate::message::{
     BranchableSyncReply, BranchableSyncRequest, DocSyncReply, DocSyncRequest, PushLogBroadcast,
     PushLogReply, PushLogRequest, PushSEArtifactsRequest, QuerySEArtifactsReply,
@@ -159,10 +159,6 @@ impl P2PTransport for RecordingTransport {
         Ok(())
     }
 
-    async fn listen(&self, _addr: PeerAddr) -> crate::Result<()> {
-        Ok(())
-    }
-
     async fn connected_peers(&self) -> crate::Result<Vec<PeerId>> {
         Ok(Vec::new())
     }
@@ -250,26 +246,10 @@ impl P2PTransport for RecordingTransport {
         Ok(PushLogReply::success("ok"))
     }
 
-    async fn send_two_stream_response(
-        &self,
-        _peer_id: &PeerId,
-        _reply: PushLogReply,
-    ) -> crate::Result<()> {
-        Ok(())
-    }
-
     async fn send_doc_sync_request(
         &self,
         _peer_id: &PeerId,
         _req: DocSyncRequest,
-    ) -> crate::Result<()> {
-        Ok(())
-    }
-
-    async fn send_doc_sync_response(
-        &self,
-        _peer_id: &PeerId,
-        _reply: DocSyncReply,
     ) -> crate::Result<()> {
         Ok(())
     }
@@ -279,22 +259,6 @@ impl P2PTransport for RecordingTransport {
         _peer_id: &PeerId,
         _req: BranchableSyncRequest,
     ) -> crate::Result<()> {
-        Ok(())
-    }
-
-    async fn send_branchable_sync_response(
-        &self,
-        _peer_id: &PeerId,
-        _reply: BranchableSyncReply,
-    ) -> crate::Result<()> {
-        Ok(())
-    }
-
-    async fn send_car_request(&self, _peer_id: &PeerId, _root_cid: Cid) -> crate::Result<()> {
-        Ok(())
-    }
-
-    async fn send_car_response(&self, _peer_id: &PeerId, _car_data: Vec<u8>) -> crate::Result<()> {
         Ok(())
     }
 

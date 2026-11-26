@@ -11,7 +11,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 
-use crate::bitswap::{AccessMode, ReplicatorRegistry};
+use crate::access::{AccessMode, ReplicatorRegistry};
 use crate::sync::peer_state::PeerStateTracker;
 use crate::transport::{P2PTransport, PeerId};
 

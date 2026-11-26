@@ -14,6 +14,10 @@ pub struct Start {
     pub enable_signing: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub node_identity_seed: Option<u64>,
+    /// The running nodes whose addresses the node dials at start, as its
+    /// bootstrap peers (`net.peers`): a Rust node under every client.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub bootstrap: Vec<String>,
     #[serde(default, skip_serializing_if = "Value::is_null")]
     pub expected_data: Value,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -38,9 +42,14 @@ impl Op for Start {
     fn run_mut(&self, state: &mut State) -> Result<Value, Failure> {
         let owner = self.common.client_identity(Self::name())?;
         let (node_identity, signing) = (self.node_identity_seed, self.enable_signing);
+        let targets: Vec<&str> = self.bootstrap.iter().map(String::as_str).collect();
+        let bootstrap = crate::actions::peer::support::addresses_of(state, &targets)?;
         state.start_node_with_nac(self.common.node(), self.enable_nac, owner, |spec| {
             if let Some(seed) = node_identity {
                 spec.node_identity = Some(seed);
+            }
+            if !bootstrap.is_empty() {
+                spec.bootstrap_peers = bootstrap;
             }
             match signing {
                 Some(true) => spec.signing = Some(spec.signing.unwrap_or_default()),

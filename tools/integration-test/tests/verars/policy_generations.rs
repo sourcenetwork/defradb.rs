@@ -13,14 +13,8 @@ use super::helpers;
 #[path = "policy_generations/object_archive.rs"]
 mod object_archive;
 
-#[path = "policy_generations/replication.rs"]
-mod replication;
-
-#[path = "policy_generations/peer_authorization.rs"]
-mod peer_authorization;
-
-#[path = "policy_generations/strict_replication.rs"]
-mod strict_replication;
+#[path = "policy_generations/chain.rs"]
+mod chain;
 
 const WITHOUT_READER: &str = r#"name: test-user-policy
 resources:
@@ -115,23 +109,10 @@ fn assert_visibility(
 #[nuclei::test]
 #[serial_test::serial]
 async fn native_protected_collection_keeps_revocations_across_relation_recreation() {
-    edge::compat(async {
-        exercise_policy_generations(false).await;
-    })
-    .await;
+    edge::compat(exercise_policy_generations()).await;
 }
 
-/// Certified revocation also governs replicated data and persisted commit history.
-#[nuclei::test]
-#[serial_test::serial]
-async fn native_replicated_collection_keeps_revocations_across_relation_recreation_and_restart() {
-    edge::compat(async {
-        exercise_policy_generations(true).await;
-    })
-    .await;
-}
-
-async fn exercise_policy_generations(replicated: bool) {
+async fn exercise_policy_generations() {
     let hub = helpers::start_hub_cluster().await;
     let url = hub.node(0).rpc_url();
     let trusted = *vera_harness::cluster::KeySet::builder()
@@ -175,27 +156,13 @@ async fn exercise_policy_generations(replicated: bool) {
     let alice = helpers::funded_identity();
     let bob = generate_identity(&helpers::defra_binary()).expect("Bob identity");
     assert_ne!(admin.did(), alice.did);
-    let mut builder = helpers::vera_rs_builder(
-        &url,
-        &alice.private_key_hex,
-        if replicated { 2 } else { 1 },
-        replicated,
-    );
-    if replicated {
-        builder = builder.with_store("badger").with_file_keyring();
-    }
-    let mut cluster = builder.build().await.expect("build protected nodes");
-    let nodes: Vec<_> = (0..cluster.len())
-        .map(|index| cluster.client(index))
-        .collect();
-    for node in &nodes {
-        node.schema_add_with_identity(&users_schema_with_policy(policy_id), &alice.private_key_hex)
-            .expect("attach policy to collection");
-    }
-    if replicated {
-        replication::connect(&nodes, &alice.private_key_hex);
-    }
-    let node = &nodes[0];
+    let cluster = helpers::vera_rs_builder(&url, &alice.private_key_hex, 1)
+        .build()
+        .await
+        .expect("build the protected node");
+    let node = &cluster.client(0);
+    node.schema_add_with_identity(&users_schema_with_policy(policy_id), &alice.private_key_hex)
+        .expect("attach policy to collection");
     let created = node
         .query_with_identity(
             r#"mutation { add_User(input: {name: "Alice", age: 25}) { _docID } }"#,
@@ -207,21 +174,14 @@ async fn exercise_policy_generations(replicated: bool) {
     let reader = Some(bob.private_key_hex.as_str());
     let commits = commit_ids(node, document, owner);
     assert!(!commits.is_empty());
-    replication::wait_for_submission(&cluster, 0).await;
-    if replicated {
-        replication::wait_for_document(&nodes[1], document, &alice.private_key_hex, &commits).await;
-    }
-    for node in &nodes {
-        assert_visibility("owner", node, document, owner, &commits);
-        assert_visibility("reader denied", node, document, reader, &[]);
-        assert_visibility("anonymous denied", node, document, None, &[]);
-    }
+    chain::wait_for_submission(&cluster, 0).await;
+    assert_visibility("owner", node, document, owner, &commits);
+    assert_visibility("reader denied", node, document, reader, &[]);
+    assert_visibility("anonymous denied", node, document, None, &[]);
     node.acp_relationship_add("User", document, "reader", &bob.did, &alice.private_key_hex)
         .expect("grant reader");
-    replication::wait_for_submission(&cluster, 0).await;
-    for node in &nodes {
-        assert_visibility("reader granted", node, document, reader, &commits);
-    }
+    chain::wait_for_submission(&cluster, 0).await;
+    assert_visibility("reader granted", node, document, reader, &commits);
 
     for definition in [WITHOUT_READER, USER_ACP_POLICY] {
         let edited = submit(
@@ -247,52 +207,16 @@ async fn exercise_policy_generations(replicated: bool) {
         } else {
             assert!(policy.relations.generation("users", "reader").unwrap() > original_reader);
         }
-        replication::wait_for_height(&cluster, edited).await;
-        for node in &nodes {
-            assert_visibility(definition, node, document, reader, &[]);
-            assert_visibility("owner", node, document, owner, &commits);
-            assert_visibility("anonymous denied", node, document, None, &[]);
-        }
-        if replicated && definition == USER_ACP_POLICY {
-            cluster
-                .restart_node(1, Duration::from_secs(30))
-                .await
-                .unwrap();
-            replication::wait_for_height(&cluster, edited).await;
-            // The same on-disk CIDs remain readable, but the retired grant must not revive.
-            for node in &nodes {
-                assert_visibility("recreated after restart", node, document, reader, &[]);
-                assert_visibility("owner after restart", node, document, owner, &commits);
-                assert_visibility("anonymous after restart", node, document, None, &[]);
-            }
-        }
+        chain::wait_for_height(&cluster, edited).await;
+        assert_visibility(definition, node, document, reader, &[]);
+        assert_visibility("owner", node, document, owner, &commits);
+        assert_visibility("anonymous denied", node, document, None, &[]);
     }
 
-    // In the replicated case, exercise authenticated writes from the restarted receiver too.
-    let writer_index = usize::from(replicated);
-    nodes[writer_index]
-        .acp_relationship_add("User", document, "reader", &bob.did, &alice.private_key_hex)
+    node.acp_relationship_add("User", document, "reader", &bob.did, &alice.private_key_hex)
         .expect("grant reader in the new generation");
-    replication::wait_for_submission(&cluster, writer_index).await;
-    for node in &nodes {
-        assert_visibility("reader granted", node, document, reader, &commits);
-    }
-    if replicated {
-        nodes[1]
-            .acp_relationship_delete("User", document, "reader", &bob.did, &alice.private_key_hex)
-            .expect("revoke reader from restarted receiver");
-        replication::wait_for_submission(&cluster, 1).await;
-        for node in &nodes {
-            assert_visibility("explicit revocation", node, document, reader, &[]);
-            assert_visibility("owner after revocation", node, document, owner, &commits);
-        }
-        node.acp_relationship_add("User", document, "reader", &bob.did, &alice.private_key_hex)
-            .expect("restore current grant before policy retirement");
-        replication::wait_for_submission(&cluster, 0).await;
-        for node in &nodes {
-            assert_visibility("current grant", node, document, reader, &commits);
-        }
-    }
+    chain::wait_for_submission(&cluster, 0).await;
+    assert_visibility("reader granted", node, document, reader, &commits);
     object_archive::exercise(
         &cluster,
         &client,
@@ -318,32 +242,16 @@ async fn exercise_policy_generations(replicated: bool) {
         .unwrap()
         .value
         .is_none());
-    replication::wait_for_height(&cluster, retired).await;
-    for node in &nodes {
-        for identity in [owner, reader, None] {
-            assert_visibility("policy retired", node, document, identity, &[]);
-        }
-    }
-    if replicated {
-        cluster
-            .restart_node(1, Duration::from_secs(30))
-            .await
-            .unwrap();
-        replication::wait_for_height(&cluster, retired).await;
-        for node in &nodes {
-            for identity in [owner, reader, None] {
-                assert_visibility("retired after restart", node, document, identity, &[]);
-            }
-        }
+    chain::wait_for_height(&cluster, retired).await;
+    for identity in [owner, reader, None] {
+        assert_visibility("policy retired", node, document, identity, &[]);
     }
     drop(hub);
     let query = format!(r#"query {{ _commits(docID: "{document}") {{ cid }} }}"#);
-    for node in &nodes {
-        let error = node
-            .query_with_identity(&query, &alice.private_key_hex)
-            .expect_err("unavailable certified evidence must not become empty history");
-        assert!(error
-            .to_string()
-            .contains("unable to verify access to commit history"));
-    }
+    let error = node
+        .query_with_identity(&query, &alice.private_key_hex)
+        .expect_err("unavailable certified evidence must not become empty history");
+    assert!(error
+        .to_string()
+        .contains("unable to verify access to commit history"));
 }

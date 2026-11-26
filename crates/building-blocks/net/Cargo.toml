@@ -11,10 +11,6 @@ description = "HTTP, TLS and gRPC on nuclei sockets: the server loop, the HTTP c
 [lib]
 bench = false
 
-[features]
-# libp2p's TCP transport on nuclei sockets, and a swarm on it.
-libp2p = ["dep:libp2p", "dep:futures", "dep:rapidhash", "dep:socket2", "dep:if-addrs"]
-
 # Native only: nuclei has no wasm32 build.
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 # The network runtime every task here is spawned on.
@@ -49,13 +45,6 @@ futures-rustls = { version = "0.26", default-features = false, features = ["ring
 rustls-native-certs = "0.8"
 thiserror.workspace = true
 tracing.workspace = true
-libp2p = { workspace = true, optional = true }
-futures = { workspace = true, optional = true }
-rapidhash = { workspace = true, optional = true }
-# The TCP transport's sockets, set up as libp2p-tcp sets them up, and the
-# interface addresses a listener on an unspecified address reports.
-socket2 = { version = "0.6", optional = true }
-if-addrs = { version = "0.15", optional = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 edge = { path = "../../foundation/edge", features = ["testing"] }

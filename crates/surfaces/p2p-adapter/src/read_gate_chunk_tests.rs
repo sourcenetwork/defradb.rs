@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use document::{Document, NormalValue};
-use p2p::bitswap::{BlockClass, BlockClassifier};
+use p2p::access::{BlockClass, BlockClassifier};
 use storage::RegolithStore;
 
 use super::DbBlockClassifier;

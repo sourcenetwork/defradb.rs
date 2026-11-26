@@ -1,0 +1,49 @@
+[package]
+# `defra-pinc`, not `pinc`: the library it builds on is the crates.io `pinc`.
+name = "defra-pinc"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "DefraDB's P2P transport on PINC: dial, request services, CAR sync, peer exchange and topics through hubs"
+
+[lib]
+bench = false
+
+# Native only: the endpoint runs on a nuclei UDP socket.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+p2p = { path = "../../database/p2p" }
+defra-core = { path = "../../foundation/defra-core" }
+crypto = { path = "../../foundation/crypto" }
+identity = { path = "../../building-blocks/identity" }
+edge = { path = "../../foundation/edge" }
+workers = { path = "../../foundation/workers" }
+pinc = { workspace = true }
+nuclei = { workspace = true }
+kovan = { workspace = true }
+regolith = { workspace = true }
+async-trait = { workspace = true }
+futures = { workspace = true }
+serde = { workspace = true }
+bytes = { workspace = true }
+cid = { workspace = true }
+multihash-codetable = { workspace = true }
+rapidhash = { workspace = true }
+hex = { workspace = true }
+sha2 = { workspace = true }
+uuid = { workspace = true }
+tracing = { workspace = true }
+# The transport signs and verifies with the shared Ed25519 seed.
+ed25519-dalek = { workspace = true }
+zeroize = "1"
+# The host's interface addresses, which a node bound to a wildcard lists.
+if-addrs = "0.15"
+
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+edge = { path = "../../foundation/edge", features = ["testing"] }
+mantra-macros = "0.9"
+
+[lints]
+workspace = true

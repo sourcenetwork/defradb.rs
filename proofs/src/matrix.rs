@@ -50,7 +50,12 @@ mod tests {
         let root = crate::anchor::repository_root();
         let unbound: Vec<String> = PROPERTIES
             .iter()
-            .filter(|p| p.tiers.iter().any(|&t| t != Tier::Boundary) || !p.bound_by.is_empty())
+            .filter(|p| {
+                p.tiers
+                    .iter()
+                    .any(|&t| !matches!(t, Tier::Boundary | Tier::Pending(_)))
+                    || !p.bound_by.is_empty()
+            })
             .filter_map(|p| {
                 let problems = crate::anchor::problems(&root, p.bound_by);
                 if p.bound_by.is_empty() {
@@ -67,6 +72,29 @@ mod tests {
             "Contract or Behavioral properties whose tests are missing:\n{}",
             unbound.join("\n")
         );
+    }
+
+    /// A pending binding names an issue that ports it back, and stays a
+    /// placeholder: once its tests land it becomes Behavioral, not both.
+    #[test]
+    fn every_pending_tier_names_an_open_port_issue() {
+        let wrong: Vec<String> = PROPERTIES
+            .iter()
+            .flat_map(|p| {
+                p.tiers.iter().filter_map(move |&t| match t {
+                    Tier::Pending(issue)
+                        if !crate::registry::PENDING_PORT_ISSUES.contains(&issue) =>
+                    {
+                        Some(format!("{}: Pending(#{issue}) is not a port issue", p.name))
+                    }
+                    Tier::Pending(_) if p.tiers.contains(&Tier::Behavioral) => {
+                        Some(format!("{}: Pending and Behavioral at once", p.name))
+                    }
+                    _ => None,
+                })
+            })
+            .collect();
+        assert!(wrong.is_empty(), "{}", wrong.join("\n"));
     }
 
     #[test]

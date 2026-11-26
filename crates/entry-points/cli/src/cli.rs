@@ -3,8 +3,8 @@
 use clap::{Parser, Subcommand};
 
 use crate::commands::{
-    ClientArgs, IdentityArgs, KeyringArgs, SdlArgs, ServerDumpArgs, StartCommand, StorageArgs,
-    VersionArgs,
+    ClientArgs, HubArgs, IdentityArgs, KeyringArgs, SdlArgs, ServerDumpArgs, StartCommand,
+    StorageArgs, VersionArgs,
 };
 use crate::config::Config;
 use crate::error::Result;
@@ -232,6 +232,9 @@ pub enum Command {
     /// Start a DefraDB node
     Start(StartCommand),
 
+    /// Run a pinc hub, which nodes' topics and KMS key exchange run through
+    Hub(HubArgs),
+
     /// Display the version information of DefraDB and its components
     Version(VersionArgs),
 
@@ -259,6 +262,7 @@ impl Cli {
     pub async fn execute(self, config: Config, edge: edge::Edge) -> Result<()> {
         match self.command {
             Command::Start(args) => args.execute(config, edge).await,
+            Command::Hub(args) => args.execute(config, edge).await,
             Command::Version(args) => args.execute(),
             Command::Keyring(args) => args.execute(config),
             Command::Client(args) => args.execute(config, self.url, edge).await,

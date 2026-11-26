@@ -4,6 +4,5 @@ mod dac_access_matrix;
 mod document_acp;
 mod multi_doc_create;
 mod operations;
-mod p2p_management;
 mod policy_evolution;
 mod relation_admin;

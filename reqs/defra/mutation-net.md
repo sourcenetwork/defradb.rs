@@ -222,18 +222,18 @@ Disconnecting from one or several connected peers leaves the active peer list em
 
 - **Parents:** ["defra"]
 
-After `DisconnectPeers` names a peer, the node's discovery (Kademlia, peer exchange) never dials that peer again until `ConnectPeers` or `AddReplicator` names it, or, on pinc, `AllowPeer` admits it. This holds when the node had no connection to the peer, and for a discovery dial already on its way when the disconnect lands: it is refused once it lands. Other protocols (PushLog, requests) still dial it. A dropped connection or a restarted peer is not a disconnect: discovery reconnects it as before. Only the side that disconnected lifts its own disconnect: when the peer dials it back explicitly, the node still keeps its discovery away from that peer.
+After `DisconnectPeers` names a peer, the node's discovery (peer exchange) never dials that peer again until `ConnectPeers` or `AddReplicator` names it, or `AllowPeer` admits it. This holds when the node had no connection to the peer, and for a discovery dial already on its way when the disconnect lands: it is refused once it lands. Other protocols (PushLog, requests) still dial it. A dropped connection or a restarted peer is not a disconnect: discovery reconnects it as before. Only the side that disconnected lifts its own disconnect: when the peer dials it back explicitly, the node still keeps its discovery away from that peer.
 
 The node keeps its disconnects in memory, as Go's `Disconnect` clears only its in-memory peerstore: a restart of the node forgets them, and discovery may reach those peers again.
 
-On libp2p only the node that disconnected stays away. libp2p's close carries no reason, so the peer it disconnected may still discover and dial it back, and no libp2p scenario can show the node's own discovery staying away without racing the peer's. The libp2p half is checked by the unit tests `kademlia_never_dials_a_quiet_peer_but_an_explicit_dial_does` and `a_kademlia_dial_that_lands_after_a_disconnect_is_refused` (crates/database/p2p) and the TLA+ model `proofs/tla/StickyDisconnect.tla`. On pinc both sides stay away when the close arrives, and `defra.net.peers.disconnect_sticks.discovery` shows it with scenarios that do not race. A close that never arrives (the peer's link times out first) tells the peer nothing, so that peer may dial back, as after a drop.
+Both sides stay away when the close arrives, and `defra.net.peers.disconnect_sticks.discovery` shows it with scenarios that do not race. A close that never arrives (the peer's link times out first) tells the peer nothing, so that peer may dial back, as after a drop.
 
 # `defra.net.peers.disconnect_sticks.explicit_connect`: `ConnectPeers` undoes a disconnect
 
 - **Parents:** ["defra.net.peers.disconnect_sticks"]
 - **Scenarios:** ["net::sticky_disconnect::an_explicit_connect_undoes_a_disconnect"]
 
-`ConnectPeers` to a peer the node disconnected reaches it again: `ActivePeers` lists it next to the peers the node stayed connected to. It also lets the node's discovery reach the peer again, so a later drop of that connection is mended. On libp2p the disconnected peer rediscovers the node itself, so no scenario can tell that apart; the unit test `an_explicit_dial_lets_kademlia_dial_a_disconnected_peer_again` (crates/p2p) checks it.
+`ConnectPeers` to a peer the node disconnected reaches it again: `ActivePeers` lists it next to the peers the node stayed connected to. It also lets the node's discovery reach the peer again, so a later drop of that connection is mended.
 
 # `go.net.subscribe.collection_list`: Listing collection subscriptions
 
@@ -364,4 +364,4 @@ A replicator pushes a document to a stopped target without treating the offline 
 - **Parents:** ["defra.net.peers.disconnect_sticks"]
 - **Scenarios:** ["net::sticky_disconnect::a_disconnected_peer_is_not_dialed_back_by_discovery", "net::sticky_disconnect::a_fresh_list_does_not_redial_a_disconnected_peer"]
 
-On pinc, `DisconnectPeers` closes the connection with a code the peer reads as deliberate. Neither the node nor the peer it disconnected dials the other through peer exchange afterwards; either can still connect explicitly. libp2p's close carries no reason, so there only the node that disconnected stays quiet.
+`DisconnectPeers` closes the connection with a code the peer reads as deliberate. Neither the node nor the peer it disconnected dials the other through peer exchange afterwards; either can still connect explicitly.

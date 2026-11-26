@@ -257,26 +257,9 @@ async fn build_explicit_replay_capabilities(
 }
 
 fn extract_public_peer_id(addr: &str) -> Result<String> {
-    if let Ok(parsed) = p2p::parse_multiaddr_with_peer_id(addr) {
-        return Ok(parsed.peer_id.to_string());
-    }
-
-    #[cfg(feature = "iroh")]
-    {
-        p2p::iroh::parse_public_peer_addr(addr)
-            .map(|(peer_id, _)| peer_id.to_string())
-            .map_err(|e| Error::Server(e.to_string()))
-    }
-
-    #[cfg(not(feature = "iroh"))]
-    {
-        Err(Error::Server(
-            p2p::parse_multiaddr_with_peer_id(addr)
-                .err()
-                .map(|e| e.to_string())
-                .unwrap_or_else(|| "invalid peer address".to_string()),
-        ))
-    }
+    defra_pinc::parse_public_peer_addr(addr)
+        .map(|(peer_id, _)| peer_id.to_string())
+        .map_err(|e| Error::Server(e.to_string()))
 }
 
 impl P2pReplicatorDeleteArgs {
@@ -312,21 +295,9 @@ mod tests {
     use super::{extract_public_peer_id, P2pReplicatorAddArgs};
 
     #[test]
-    fn extract_public_peer_id_accepts_libp2p_multiaddr() {
-        // Use a real libp2p PeerID — the multiaddr parser validates the
-        // multihash component, so the placeholder string used previously
-        // ("12D3KooWM1111...") fails before reaching extract_public_peer_id.
-        let peer_id = libp2p::PeerId::random().to_string();
-        let addr = format!("/ip4/127.0.0.1/tcp/9000/p2p/{peer_id}");
-
-        assert_eq!(extract_public_peer_id(&addr).unwrap(), peer_id);
-    }
-
-    #[cfg(feature = "iroh")]
-    #[test]
-    fn extract_public_peer_id_accepts_iroh_public_addr() {
+    fn extract_public_peer_id_accepts_pinc_address() {
         let peer_id = "ae58ff8833241ac82d6ff7611046ed67b5072d142c588d0063e942d9a75502b6";
-        let addr = format!("127.0.0.1:9000/p2p/{peer_id}");
+        let addr = format!("{peer_id}@127.0.0.1:9000");
 
         assert_eq!(extract_public_peer_id(&addr).unwrap(), peer_id);
     }

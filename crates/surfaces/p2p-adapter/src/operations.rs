@@ -175,8 +175,7 @@ impl std::fmt::Display for TransportPeerId {
 ///
 /// Abstracts P2P host functionality to decouple HTTP handlers from the
 /// actual P2P implementation, enabling both dependency injection and testing.
-#[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
-#[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
+#[async_trait::async_trait]
 pub trait P2POperations: defra_core::thread_bounds::MaybeSendSync {
     bind_request!(P2POperations);
 
@@ -244,6 +243,15 @@ pub trait P2POperations: defra_core::thread_bounds::MaybeSendSync {
     /// Connect to a peer at the given address.
     async fn connect_peer(&self, addr: &str) -> P2PResult<()>;
 
+    /// Connect to a bootstrap peer the node's own configuration names
+    /// (`net.peers`, `PincConfig::bootstrap_peers`): the node dials as
+    /// itself, so node access control, which checks the caller of
+    /// [`connect_peer`](Self::connect_peer), does not refuse it. A transport
+    /// whose `connect_peer` checks no caller keeps this default.
+    async fn connect_bootstrap_peer(&self, addr: &str) -> P2PResult<()> {
+        self.connect_peer(addr).await
+    }
+
     /// Disconnect the live connection to the peer at the given address.
     async fn disconnect_peer(&self, addr: &str) -> P2PResult<()>;
 
@@ -294,7 +302,7 @@ pub trait P2POperations: defra_core::thread_bounds::MaybeSendSync {
 
     /// Notify the transport that local network conditions may have changed.
     ///
-    /// Some transports, such as iroh, use this to refresh relay/direct
+    /// pinc uses this to refresh relay/direct
     /// connectivity after interface changes. Transports that do not require
     /// explicit handling may treat this as a no-op.
     async fn notify_network_change(&self) -> P2PResult<()> {
@@ -547,8 +555,7 @@ pub const MANAGE_UNAUTHORIZED: &str = "unauthorized";
 /// port. To manage B, a caller hits this node's (A's) HTTP API; this node then
 /// sends a signed P2P management request to B, relaying the caller-minted actor
 /// token (a JWT with `aud` = B's peer-id).
-#[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
-#[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
+#[async_trait::async_trait]
 pub trait ManageRequester: defra_core::thread_bounds::MaybeSendSync {
     /// Relay a mutating management request to the peer at `target_addr`.
     ///

@@ -155,41 +155,6 @@ pub enum DatastoreType {
     Memory,
 }
 
-/// P2P transport backend options.
-#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "lowercase")]
-#[non_exhaustive]
-pub enum TransportType {
-    #[default]
-    Libp2p,
-    Iroh,
-    /// Needs a binary built with the `pinc` feature.
-    Pinc,
-}
-
-impl std::fmt::Display for TransportType {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            TransportType::Libp2p => write!(f, "libp2p"),
-            TransportType::Iroh => write!(f, "iroh"),
-            TransportType::Pinc => write!(f, "pinc"),
-        }
-    }
-}
-
-impl std::str::FromStr for TransportType {
-    type Err = Error;
-
-    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
-        match s.to_lowercase().as_str() {
-            "libp2p" => Ok(TransportType::Libp2p),
-            "iroh" => Ok(TransportType::Iroh),
-            "pinc" => Ok(TransportType::Pinc),
-            _ => Err(Error::InvalidTransport(s.to_string())),
-        }
-    }
-}
-
 /// Document ACP (Access Control Policy) type options.
 ///
 /// - `None`: No document-level access control (default)

@@ -30,14 +30,14 @@ blockstore = { path = "../../engine/blockstore" }
 crypto = { path = "../../foundation/crypto" }
 identity = { path = "../../building-blocks/identity" }
 kms = { path = "../../database/kms" }
-p2p = { path = "../../database/p2p", features = ["libp2p-transport"] }
-defra-p2p-adapter = { path = "../../surfaces/p2p-adapter", default-features = false, features = ["libp2p", "kms"] }
+p2p = { path = "../../database/p2p", features = ["kms"] }
+defra-pinc = { path = "../../database/pinc" }
+defra-p2p-adapter = { path = "../../surfaces/p2p-adapter", default-features = false, features = ["pinc"] }
 defra-http = { path = "../../surfaces/http" }
 edge = { path = "../../foundation/edge" }
 # The worker pool the node's data path runs on.
 workers = { path = "../../foundation/workers" }
 query = { path = "../../engine/query" }
-replication-filter = { path = "../../database/replication-filter" }
 db = { path = "../../database/db" }
 schema = { path = "../../foundation/schema" }
 events = { path = "../../foundation/events" }
@@ -94,9 +94,6 @@ base64 = { workspace = true }
 serde_ipld_dagcbor = { workspace = true }
 serde_bytes = { workspace = true }
 
-# libp2p (for P2P keypair types)
-libp2p = { workspace = true }
-
 # HTTP client for CLI client commands
 # HTTP on nuclei sockets.
 net = { path = "../../building-blocks/net" }
@@ -106,15 +103,6 @@ url = "2.5"
 
 # URL encoding for query parameters
 urlencoding = "2.1"
-
-[dependencies.iroh-net]
-package = "iroh"
-version = "1.0.0-rc.0"
-optional = true
-
-[dependencies.rand]
-version = "0.10"
-optional = true
 
 # The `defra` binary's process allocator (src/main.rs).
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
@@ -142,11 +130,6 @@ embedded-vera = ["vera", "dep:vera-embedded"]
 sourcehub = ["vera"]
 # Orbis ring threshold signing (`--signer-type orbis`).
 orbis = ["dep:orbis"]
-iroh = ["p2p/iroh-transport", "p2p/kms", "defra-p2p-adapter/iroh", "defra-p2p-adapter/kms", "dep:iroh-net", "dep:rand"]
-# Host an iroh relay server (`net.iroh_relay_server`) alongside the endpoint.
-iroh-relay-server = ["iroh", "p2p/iroh-relay-server"]
-# The pinc transport (`net.transport: pinc`): direct connections, and topics through pinc hubs.
-pinc = ["p2p/pinc-transport", "p2p/kms", "defra-p2p-adapter/pinc", "defra-p2p-adapter/kms"]
 profiling = ["dep:tracing-chrome"]
 # Log the P2P delivery trace events proofs/tla/Trace_P2PDelivery.tla replays.
 model-trace = ["p2p/model-trace"]
@@ -173,6 +156,7 @@ rcgen = "0.14"
 toml = "1.1"
 tempfile = "3.17"
 portpicker = "0.1"
+mantra-macros = "0.9"
 
 [lints]
 workspace = true

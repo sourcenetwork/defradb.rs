@@ -19,11 +19,11 @@ network missed.
 
 ## Pull: doc sync and DAG fetch
 
-- **Doc sync**: a request for specific documents' current heads and bodies over
-  pubsub-RPC (bounded: at most 1000 IDs per request by default), served by the peer's
-  read-gated fetch handlers.
+- **Doc sync**: a request for specific documents' current heads and bodies, sent to
+  each connected peer (bounded: at most 1000 IDs per request by default), served by the
+  peer's read-gated fetch handlers.
 - **DAG sync**: given a head, fetch the missing blocks: store what arrived, extract
-  links, ask for what is missing (bitswap on libp2p; iroh streams with the same shape).
+  links, ask for what is missing (over pinc streams).
   Pending, partial DAGs live in a persisted pending store; a DAG whose root cannot
   eventually be resolved is quarantined (deterministic forensics, the
   `PendingDagQuarantined` event).

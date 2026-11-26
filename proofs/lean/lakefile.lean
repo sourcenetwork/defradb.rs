@@ -106,9 +106,6 @@ lean_lib ClientSignedCreate where
 lean_lib HttpRouterComposition where
 
 @[default_target]
-lean_lib EndpointBind where
-
-@[default_target]
 lean_lib DocKeyScopes where
 
 @[default_target]
@@ -196,13 +193,7 @@ lean_lib FetchStats where
 lean_lib ProviderHealth where
 
 @[default_target]
-lean_lib GossipFrame where
-
-@[default_target]
 lean_lib OrphanMarker where
-
-@[default_target]
-lean_lib ServiceRecord where
 
 @[default_target]
 lean_lib StorageFailure where
@@ -446,9 +437,6 @@ lean_lib PendingKeyArrival where
 
 @[default_target]
 lean_lib MissingRelationFilter where
-
-@[default_target]
-lean_lib DnsResolverFallback where
 
 @[default_target]
 lean_lib FilterInputShape where

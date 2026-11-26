@@ -7,8 +7,8 @@ use super::peer::Peer;
 use super::wait::pause;
 
 impl Peer {
-    /// The address other peers dial this one at: an iroh ticket that names
-    /// a direct address, as relay and discovery are off.
+    /// The address other peers dial this one at: its pinc address, which
+    /// names a direct address.
     pub async fn p2p_addr(&self) -> String {
         let ops = self.node.p2p_system().expect("p2p").ops();
         let deadline = Instant::now() + Duration::from_secs(10);
@@ -16,15 +16,15 @@ impl Peer {
             if let Some(addr) = ops.shareable_address().await.expect("shareable address") {
                 return addr;
             }
-            assert!(Instant::now() < deadline, "no dialable iroh address");
+            assert!(Instant::now() < deadline, "no dialable pinc address");
             pause().await;
         }
     }
 
-    /// The UDP port this peer's iroh endpoint is bound to.
+    /// The UDP port this peer's pinc endpoint is bound to.
     pub async fn bound_port(&self) -> u16 {
         let addr = self.p2p_addr().await;
-        let (_, hints) = p2p::iroh::parse_public_peer_addr(&addr).expect("iroh address");
+        let (_, hints) = defra_pinc::parse_public_peer_addr(&addr).expect("pinc address");
         hints
             .iter()
             .find_map(|hint| hint.as_str().parse::<SocketAddr>().ok())

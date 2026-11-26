@@ -133,10 +133,6 @@ impl P2PTransport for TestTransport {
         Ok(())
     }
 
-    async fn listen(&self, _addr: PeerAddr) -> P2PResult<()> {
-        Ok(())
-    }
-
     async fn connected_peers(&self) -> P2PResult<Vec<PeerId>> {
         Ok(Vec::new())
     }
@@ -204,26 +200,10 @@ impl P2PTransport for TestTransport {
             .unwrap_or_else(|| PushLogReply::success("ok")))
     }
 
-    async fn send_two_stream_response(
-        &self,
-        _peer_id: &PeerId,
-        _reply: PushLogReply,
-    ) -> P2PResult<()> {
-        Ok(())
-    }
-
     async fn send_doc_sync_request(
         &self,
         _peer_id: &PeerId,
         _req: DocSyncRequest,
-    ) -> P2PResult<()> {
-        Ok(())
-    }
-
-    async fn send_doc_sync_response(
-        &self,
-        _peer_id: &PeerId,
-        _reply: DocSyncReply,
     ) -> P2PResult<()> {
         Ok(())
     }
@@ -233,22 +213,6 @@ impl P2PTransport for TestTransport {
         _peer_id: &PeerId,
         _req: BranchableSyncRequest,
     ) -> P2PResult<()> {
-        Ok(())
-    }
-
-    async fn send_branchable_sync_response(
-        &self,
-        _peer_id: &PeerId,
-        _reply: BranchableSyncReply,
-    ) -> P2PResult<()> {
-        Ok(())
-    }
-
-    async fn send_car_request(&self, _peer_id: &PeerId, _root_cid: Cid) -> P2PResult<()> {
-        Ok(())
-    }
-
-    async fn send_car_response(&self, _peer_id: &PeerId, _car_data: Vec<u8>) -> P2PResult<()> {
         Ok(())
     }
 
@@ -436,7 +400,7 @@ async fn head_hint_timeout_is_terminal_for_the_live_attempt() {
 #[nuclei::test]
 async fn fanout_registration_failure_is_peer_local() {
     use super::super::access_tests::NoopTransport;
-    use crate::bitswap::{AccessMode, ReplicatorRegistry};
+    use crate::access::{AccessMode, ReplicatorRegistry};
     use crate::replicator::EqOnlyFilterMatcher;
     use crate::sync::collection_store::MemoryCollectionStorage;
     use crate::sync::head_provider::DocumentHeadProvider;
@@ -582,7 +546,7 @@ async fn fanout_registration_failure_is_peer_local() {
 #[test]
 fn a_replicator_with_no_collections_gets_no_push_job() {
     use super::super::access_tests::NoopTransport;
-    use crate::bitswap::{AccessMode, ReplicatorRegistry};
+    use crate::access::{AccessMode, ReplicatorRegistry};
     use crate::replicator::EqOnlyFilterMatcher;
     use crate::sync::collection_store::MemoryCollectionStorage;
     use crate::sync::head_provider::DocumentHeadProvider;

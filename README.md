@@ -13,12 +13,12 @@ being held and not by the size of the data.
 
 ## Status
 
-Compatible with Go DefraDB v1.0.0-rc1. Full feature parity across CLI, HTTP API, GraphQL query engine, and P2P replication. Go and Rust nodes can connect and replicate data.
+Compatible with Go DefraDB v1.0.0-rc1. Full feature parity across CLI, HTTP API and GraphQL query engine. P2P replication runs on [pinc](https://github.com/sourcenetwork/pinc), which Go nodes do not speak.
 
 ## Features
 
 - **GraphQL query engine** — queries, mutations, subscriptions, aggregates, explain - full coverage of the defradb test suite
-- **P2P replication** — `libp2p` (primary, go compatable) and [`iroh`](https://github.com/n0-computer/iroh) (optional) transports
+- **P2P replication** — over [pinc](https://github.com/sourcenetwork/pinc): direct QUIC connections, and topics through hubs (`defradb hub`)
 - **Access control** — local Zanzibar engine, on-chain via [Vera](https://github.com/sourcenetwork/vera) (Cosmos/EVM) and [`vera.rs`](https://github.com/sourcenetwork/vera.rs) (Commonware/EVM)
 - **Full-text search** — (rust only) BM25 ranking with language-aware tokenization
 - **Schema migration** — non-destructive evolution via WASM transforms (Lens)
@@ -82,7 +82,7 @@ nix shell nixpkgs#temurin-bin nixpkgs#elan   # java for TLC, lake for Lean
 
 `just setup` includes browser setup. On macOS, missing Firefox produces a
 warning rather than blocking setup; install it in `/Applications` or
-`~/Applications` before running `just test-wasm` or `just test-browser-p2p`.
+`~/Applications` before running `just test-wasm`.
 Browsers already on `PATH` are also recognized. Run `just setup-browser` to
 retry browser setup separately.
 
@@ -99,12 +99,10 @@ just ci                # Reproduce the CI pipeline locally
 
 ### FFI release variants
 
-Every release ships three FFI families: **full** (`defra-ffi_*`), carrying the
-libp2p transport, Lens migrations, and Vera ACP; **iroh**
-(`defra-ffi-iroh_*`), an iOS XCFramework that adds the iroh transport on top of
-libp2p; and **lean** (`defra-ffi-lean_*`), libp2p-only with no Lens migrations
-and no Vera ACP. Iroh ships in that XCFramework alone, so no single
-artifact carries every capability. All of them expose the same `defra.h`
+Every release ships FFI families that differ in what they carry: **full**
+(`defra-ffi_*`), with P2P over pinc, Lens migrations, and Vera ACP; and
+**lean** (`defra-ffi-lean_*`), with P2P over pinc and no Lens migrations and
+no Vera ACP. All of them expose the same `defra.h`
 and the same mobile JSON schema, so the choice is a size tradeoff and not an API
 one: configuring a capability the build does not carry fails with an explicit
 error naming the missing feature. The per-release capability matrix is in the

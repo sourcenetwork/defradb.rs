@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use defra_node::{
     EmbeddedVeraActor, EmbeddedVeraConfig, EmbeddedVeraDeployment, EmbeddedVeraPolicy,
-    EmbeddedVeraTrust, Node, P2PConfig, PeerKeySource, ReplicaGrant, ReplicaOwnership,
+    EmbeddedVeraTrust, Node, PeerKeySource, PincConfig, ReplicaGrant, ReplicaOwnership,
     ReplicaRegistration, SigningKey, VeraRsActor, VeraRsConfig,
 };
 use identity::Did;
@@ -102,7 +102,7 @@ fn signer(spec: &PeerSpec) -> Arc<dyn DelegationSigner> {
     signer
 }
 
-/// The builder every peer starts from: its store, its key, iroh on the
+/// The builder every peer starts from: its store, its key, pinc on the
 /// peer's port (one the system chooses on its first start), and unsigned
 /// writes when asked for.
 fn builder(spec: &PeerSpec) -> defra_node::NodeBuilder {
@@ -110,12 +110,12 @@ fn builder(spec: &PeerSpec) -> defra_node::NodeBuilder {
         .data_path(spec.home.join("data"))
         .with_document_projector(Arc::new(Addressed))
         .with_signing_key(SigningKey::Ed25519(spec.owner.key.clone()))
-        .with_p2p(P2PConfig {
+        .with_pinc(PincConfig {
+            bind: std::net::SocketAddr::new(
+                IpAddr::V4(Ipv4Addr::LOCALHOST),
+                spec.port.unwrap_or(0),
+            ),
             peer_key: PeerKeySource::Store,
-            bind_addr: Some(IpAddr::V4(Ipv4Addr::LOCALHOST)),
-            port: spec.port,
-            relay_mode: p2p::iroh::IrohRelayModeConfig::Disabled,
-            discovery: p2p::iroh::IrohDiscoveryConfig::Disabled,
             ..Default::default()
         });
     match spec.blocks {

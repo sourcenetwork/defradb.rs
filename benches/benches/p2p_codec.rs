@@ -1,14 +1,11 @@
-//! The replication wire: what a pushed block costs to frame, sign and verify.
+//! The replication wire: what a pushed block costs to frame.
 //!
 //! ```text
 //! cargo bench -p benches --bench p2p_codec
 //! ```
 //!
 //! Every replicated document crosses this boundary twice, once serialized on
-//! the sender and once verified on the receiver, and none of it was measured.
-//! Signature verification in particular runs on every inbound message before
-//! any merge work begins, so it sets the floor on how fast a node can accept
-//! replication however fast the merge itself is.
+//! the sender and once decoded on the receiver.
 //!
 //! Swept by block size, because these are byte-rate operations and a figure
 //! quoted for a small block says nothing about a large one.
@@ -18,7 +15,6 @@ use std::hint::black_box;
 use bytes::Bytes;
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use p2p::message::{PushLogBroadcast, PushLogRequest};
-use p2p::{codec, sign_message, verify_message};
 
 mod common;
 
@@ -43,14 +39,17 @@ fn cbor(c: &mut Criterion) {
     let mut group = c.benchmark_group("p2p_cbor");
     for size in BLOCK_SIZES {
         let message = request(size);
-        let encoded = codec::encode(&message).expect("the message to encode");
+        let encoded = defra_core::cbor::to_vec(&message).expect("the message to encode");
         group.throughput(Throughput::Bytes(size as u64));
         group.bench_with_input(BenchmarkId::new("encode", size), &message, |b, message| {
-            b.iter(|| black_box(codec::encode(black_box(message)).expect("encode")))
+            b.iter(|| black_box(defra_core::cbor::to_vec(black_box(message)).expect("encode")))
         });
         group.bench_with_input(BenchmarkId::new("decode", size), &encoded, |b, encoded| {
             b.iter(|| {
-                black_box(codec::decode::<PushLogRequest>(black_box(encoded)).expect("decode"))
+                black_box(
+                    defra_core::cbor::from_slice::<PushLogRequest>(black_box(encoded))
+                        .expect("decode"),
+                )
             })
         });
     }
@@ -91,28 +90,5 @@ fn gossip(c: &mut Criterion) {
     group.finish();
 }
 
-/// What a node pays before it will look at an inbound block at all.
-fn authentication(c: &mut Criterion) {
-    let keypair = libp2p_identity::Keypair::generate_ed25519();
-    let mut group = c.benchmark_group("p2p_auth");
-    for size in BLOCK_SIZES {
-        let mut signed = request(size);
-        sign_message(&keypair, &mut signed).expect("the message to sign");
-
-        group.throughput(Throughput::Bytes(size as u64));
-        group.bench_with_input(BenchmarkId::new("sign", size), &size, |b, &size| {
-            b.iter_batched_ref(
-                || request(size),
-                |message| sign_message(&keypair, message).expect("sign"),
-                criterion::BatchSize::SmallInput,
-            )
-        });
-        group.bench_with_input(BenchmarkId::new("verify", size), &signed, |b, signed| {
-            b.iter(|| verify_message(black_box(signed)).expect("verify"))
-        });
-    }
-    group.finish();
-}
-
-criterion_group!(benches, cbor, gossip, authentication);
+criterion_group!(benches, cbor, gossip);
 criterion_main!(benches);

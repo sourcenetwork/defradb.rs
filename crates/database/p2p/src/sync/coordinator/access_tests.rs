@@ -21,7 +21,7 @@ use cid::Cid;
 use multihash_codetable::{Code, MultihashDigest};
 use storage::RegolithStore;
 
-use crate::bitswap::{
+use crate::access::{
     AccessMode, BlockAcpMeta, BlockClass, BlockClassifier, BlockReadGate, LateBoundServeAcp,
     ReplicatorRegistry, ServeAcp,
 };
@@ -414,14 +414,12 @@ fn create_test_coordinator_with_blockstore_and_head_provider<B: Blockstore + 'st
             head_provider,
         },
         authorizer,
-        classifier: Arc::new(crate::bitswap::DefaultBlockClassifier),
-        serve_acp: Arc::new(crate::bitswap::LateBoundServeAcp::new()),
+        classifier: Arc::new(crate::access::DefaultBlockClassifier),
+        serve_acp: Arc::new(crate::access::LateBoundServeAcp::new()),
         rooted_authorization: crate::sync::car_authorization::RootedAuthorizationProgress::new(),
         document_acp: regolith::sync::OnceCell::new(),
         #[cfg(feature = "kms")]
         kms_transport: regolith::sync::OnceCell::new(),
-        #[cfg(feature = "libp2p-transport")]
-        pubsub_services: None,
     };
 
     (coordinator, events)
@@ -682,10 +680,10 @@ pub(super) struct NoopTransport {
     car_responses: Arc<Atom<Vec<Vec<u8>>>>,
     pushlog_replies: Arc<Atom<Vec<crate::message::PushLogReply>>>,
     pushlog_response_tokens: Arc<Atom<Vec<usize>>>,
-    two_stream_replies: Arc<Atom<Vec<crate::message::PushLogReply>>>,
     two_stream_handler: Arc<AtomOption<TwoStreamHandler>>,
     branchable_replies: Arc<Atom<Vec<BranchableSyncReply>>>,
-    car_requests: Arc<Atom<Vec<Cid>>>,
+    /// The root of every block sync asked for.
+    synced_roots: Arc<Atom<Vec<Cid>>>,
     /// Whether `publish_raw` has a topic peer; without one it is refused with
     /// `InsufficientPeers`, as libp2p's gossipsub refuses it.
     pub(super) raw_topic_has_peer: Arc<AtomicBool>,
@@ -722,10 +720,9 @@ impl NoopTransport {
             car_responses: Arc::new(Atom::new(Vec::new())),
             pushlog_replies: Arc::new(Atom::new(Vec::new())),
             pushlog_response_tokens: Arc::new(Atom::new(Vec::new())),
-            two_stream_replies: Arc::new(Atom::new(Vec::new())),
             two_stream_handler: Arc::new(AtomOption::none()),
             branchable_replies: Arc::new(Atom::new(Vec::new())),
-            car_requests: Arc::new(Atom::new(Vec::new())),
+            synced_roots: Arc::new(Atom::new(Vec::new())),
             raw_topic_has_peer: Arc::new(AtomicBool::new(false)),
             raw_published: Arc::new(Atom::new(Vec::new())),
             raw_publish_attempted: Arc::new(regolith::sync::Notify::new()),
@@ -733,13 +730,6 @@ impl NoopTransport {
             publish_open: Arc::new(AtomicBool::new(true)),
             published: Arc::new(Atom::new(Vec::new())),
         }
-    }
-
-    /// A libp2p peer id, so the coordinator starts its pubsub_rpc services.
-    #[cfg(feature = "libp2p-transport")]
-    pub(super) fn with_libp2p_identity(mut self) -> Self {
-        self.peer_id = PeerId::new(libp2p::PeerId::random().to_string());
-        self
     }
 
     /// Open or close the topics to subscribers: a closed publish fails with
@@ -771,7 +761,7 @@ impl NoopTransport {
     }
 
     fn two_stream_replies(&self) -> Vec<crate::message::PushLogReply> {
-        self.two_stream_replies.load_clone()
+        self.pushlog_replies.load_clone()
     }
 
     fn set_two_stream_handler(&self, handler: TwoStreamHandler) {
@@ -788,8 +778,8 @@ impl NoopTransport {
         self.car_responses.load_clone()
     }
 
-    fn car_requests(&self) -> Vec<Cid> {
-        self.car_requests.load_clone()
+    fn synced_roots(&self) -> Vec<Cid> {
+        self.synced_roots.load_clone()
     }
 }
 
@@ -814,10 +804,6 @@ impl P2PTransport for NoopTransport {
     }
 
     async fn disconnect(&self, _peer_id: &PeerId) -> crate::Result<()> {
-        Ok(())
-    }
-
-    async fn listen(&self, _addr: PeerAddr) -> crate::Result<()> {
         Ok(())
     }
 
@@ -909,15 +895,6 @@ impl P2PTransport for NoopTransport {
         Ok(crate::message::PushLogReply::success("noop"))
     }
 
-    async fn send_two_stream_response(
-        &self,
-        _peer_id: &PeerId,
-        reply: crate::message::PushLogReply,
-    ) -> crate::Result<()> {
-        record(&self.two_stream_replies, reply);
-        Ok(())
-    }
-
     async fn send_doc_sync_request(
         &self,
         _peer_id: &PeerId,
@@ -926,39 +903,11 @@ impl P2PTransport for NoopTransport {
         Ok(())
     }
 
-    async fn send_doc_sync_response(
-        &self,
-        _peer_id: &PeerId,
-        reply: crate::message::DocSyncReply,
-    ) -> crate::Result<()> {
-        record(&self.doc_sync_replies, reply);
-        Ok(())
-    }
-
     async fn send_branchable_sync_request(
         &self,
         _peer_id: &PeerId,
         _req: BranchableSyncRequest,
     ) -> crate::Result<()> {
-        Ok(())
-    }
-
-    async fn send_branchable_sync_response(
-        &self,
-        _peer_id: &PeerId,
-        reply: crate::message::BranchableSyncReply,
-    ) -> crate::Result<()> {
-        record(&self.branchable_replies, reply);
-        Ok(())
-    }
-
-    async fn send_car_request(&self, _peer_id: &PeerId, root_cid: Cid) -> crate::Result<()> {
-        record(&self.car_requests, root_cid);
-        Ok(())
-    }
-
-    async fn send_car_response(&self, _peer_id: &PeerId, car_data: Vec<u8>) -> crate::Result<()> {
-        record(&self.car_responses, car_data);
         Ok(())
     }
 
@@ -999,10 +948,11 @@ impl P2PTransport for NoopTransport {
 
     async fn sync_blocks(
         &self,
-        _root: Cid,
+        root: Cid,
         _providers: Vec<PeerId>,
         _missing: Vec<Cid>,
     ) -> crate::Result<QueryId> {
+        record(&self.synced_roots, root);
         Ok(QueryId(1))
     }
 
@@ -1086,7 +1036,7 @@ fn doc_sync_event_with_ids(peer_id: PeerId, doc_ids: Vec<String>) -> TransportEv
     TransportEvent::DocSyncRequest {
         peer_id,
         request: DocSyncRequest::new(doc_ids),
-        token: None,
+        token: Some(0),
     }
 }
 
@@ -1094,7 +1044,7 @@ fn branchable_sync_event(peer_id: PeerId, collection_id: &str) -> TransportEvent
     TransportEvent::BranchableSyncRequest {
         peer_id,
         request: BranchableSyncRequest::new(collection_id.to_string()),
-        token: None,
+        token: Some(0),
     }
 }
 
@@ -1212,7 +1162,7 @@ fn car_fetch_event(peer_id: PeerId, root_cid: Cid) -> TransportEvent<usize> {
     TransportEvent::CarFetchRequest {
         peer_id,
         request: CarFetchRequest::full_dag(root_cid),
-        token: None,
+        token: Some(0),
     }
 }
 
@@ -1224,7 +1174,7 @@ fn selective_car_fetch_event(
     TransportEvent::CarFetchRequest {
         peer_id,
         request: CarFetchRequest::selective_blocks(root_cid, wanted_cids),
-        token: None,
+        token: Some(0),
     }
 }
 
@@ -1236,7 +1186,7 @@ fn selective_dag_car_fetch_event(
     TransportEvent::CarFetchRequest {
         peer_id,
         request: CarFetchRequest::selective_dag(root_cid, wanted_cids),
-        token: None,
+        token: Some(0),
     }
 }
 
@@ -1263,7 +1213,7 @@ fn two_stream_event(
     TransportEvent::TwoStreamRequest {
         peer_id,
         request: pushlog_request(collection_id),
-        token: None,
+        token: Some(0),
         is_explicit_replicator,
         explicit_replay_authorization: None,
     }
@@ -1582,12 +1532,12 @@ async fn duplicate_car_ingest_defers_without_waiting_for_root_owner() {
         .expect("first CAR response owns the root");
     let mut completion = coordinator
         .manager()
-        .rooted_car_completion_tracker()
-        .register(root_cid, peer.clone());
+        .block_sync_completion_tracker()
+        .register(QueryId(1));
 
     coordinator
         .handle_transport_event(TransportEvent::CarFetchResponse {
-            query_id: None,
+            query_id: Some(QueryId(1)),
             peer_id: peer.clone(),
             root_cid,
             car_data: car_data.clone(),
@@ -1617,11 +1567,11 @@ async fn duplicate_car_ingest_defers_without_waiting_for_root_owner() {
     drop(owner);
     let completion = coordinator
         .manager()
-        .rooted_car_completion_tracker()
-        .register(root_cid, peer.clone());
+        .block_sync_completion_tracker()
+        .register(QueryId(2));
     coordinator
         .handle_transport_event(TransportEvent::CarFetchResponse {
-            query_id: None,
+            query_id: Some(QueryId(2)),
             peer_id: peer,
             root_cid,
             car_data,
@@ -1667,17 +1617,17 @@ async fn car_put_many_conflict_is_reported_once_and_not_re_run() {
     let root_cid = Cid::new_v1(0x71, Code::Sha2_256.digest(block_data));
     let car_data =
         crate::sync::car::encode_car(&[root_cid], &[(&root_cid, block_data.as_slice())]).unwrap();
-    let respond = || {
+    let respond = |query: QueryId| {
         let completion = coordinator
             .manager()
-            .rooted_car_completion_tracker()
-            .register(root_cid, peer.clone());
+            .block_sync_completion_tracker()
+            .register(query);
         let coordinator = Arc::clone(&coordinator);
         let (peer, car_data) = (peer.clone(), car_data.clone());
         let ingest = crate::rt::spawn(async move {
             coordinator
                 .handle_transport_event(TransportEvent::CarFetchResponse {
-                    query_id: None,
+                    query_id: Some(query),
                     peer_id: peer,
                     root_cid,
                     car_data,
@@ -1690,7 +1640,7 @@ async fn car_put_many_conflict_is_reported_once_and_not_re_run() {
     // The blockstore settles its own conflicts in the engine; one it could
     // not settle reaches the event once, and the event handler does not run
     // the ingest again.
-    let (completion, ingest) = respond();
+    let (completion, ingest) = respond(QueryId(1));
     assert_eq!(
         timeout(Duration::from_secs(1), completion)
             .await
@@ -1704,7 +1654,7 @@ async fn car_put_many_conflict_is_reported_once_and_not_re_run() {
 
     // The fetch is asked again and its response lands: one success
     // completion, and the block stored.
-    let (completion, ingest) = respond();
+    let (completion, ingest) = respond(QueryId(2));
     assert_eq!(
         timeout(Duration::from_secs(1), completion)
             .await
@@ -4008,7 +3958,7 @@ async fn two_stream_at_pending_capacity_replies_at_capacity_nack() {
         .handle_transport_event(TransportEvent::TwoStreamRequest {
             peer_id: peer.clone(),
             request: pushlog_request_with_missing_link("collection1", "docA"),
-            token: None,
+            token: Some(0),
             is_explicit_replicator: false,
             explicit_replay_authorization: None,
         })
@@ -4024,7 +3974,7 @@ async fn two_stream_at_pending_capacity_replies_at_capacity_nack() {
         .handle_transport_event(TransportEvent::TwoStreamRequest {
             peer_id: peer.clone(),
             request: pushlog_request_with_missing_link("collection1", "docB"),
-            token: None,
+            token: Some(0),
             is_explicit_replicator: false,
             explicit_replay_authorization: None,
         })
@@ -4047,7 +3997,7 @@ async fn two_stream_at_pending_capacity_replies_at_capacity_nack() {
 }
 
 #[nuclei::test(threads = 0)]
-async fn two_stream_reply_with_response_token_does_not_reverse_dial() {
+async fn two_stream_reply_goes_on_the_request_stream() {
     let replicators = Arc::new(ReplicatorRegistry::new());
     let peer_state = Arc::new(PeerStateTracker::new());
     let (coordinator, _events) = create_test_coordinator(AccessMode::Open, replicators, peer_state);
@@ -4055,19 +4005,15 @@ async fn two_stream_reply_with_response_token_does_not_reverse_dial() {
     let peer = random_peer_id();
 
     coordinator
-        .send_two_stream_reply(&peer, PushLogReply::success("message-1"), Some(7), true)
+        .send_two_stream_reply(&peer, PushLogReply::success("message-1"), Some(7))
         .await;
 
     assert_eq!(transport.pushlog_response_tokens(), vec![7]);
     assert_eq!(transport.pushlog_replies().len(), 1);
-    assert!(
-        transport.two_stream_replies().is_empty(),
-        "a response token must avoid a fresh reverse-dial"
-    );
 }
 
 #[nuclei::test(threads = 0)]
-async fn two_stream_reply_without_response_token_falls_back_to_reverse_dial() {
+async fn two_stream_reply_without_a_stream_is_not_sent() {
     let replicators = Arc::new(ReplicatorRegistry::new());
     let peer_state = Arc::new(PeerStateTracker::new());
     let (coordinator, _events) = create_test_coordinator(AccessMode::Open, replicators, peer_state);
@@ -4075,29 +4021,11 @@ async fn two_stream_reply_without_response_token_falls_back_to_reverse_dial() {
     let peer = random_peer_id();
 
     coordinator
-        .send_two_stream_reply(&peer, PushLogReply::success("message-1"), None, true)
+        .send_two_stream_reply(&peer, PushLogReply::success("message-1"), None)
         .await;
 
     assert!(transport.pushlog_response_tokens().is_empty());
     assert!(transport.pushlog_replies().is_empty());
-    assert_eq!(transport.two_stream_replies().len(), 1);
-}
-
-#[nuclei::test(threads = 0)]
-async fn two_stream_reply_for_legacy_sender_falls_back_to_reverse_dial() {
-    let replicators = Arc::new(ReplicatorRegistry::new());
-    let peer_state = Arc::new(PeerStateTracker::new());
-    let (coordinator, _events) = create_test_coordinator(AccessMode::Open, replicators, peer_state);
-    let transport = coordinator.runtime.transport.clone();
-    let peer = random_peer_id();
-
-    coordinator
-        .send_two_stream_reply(&peer, PushLogReply::success("message-1"), Some(7), false)
-        .await;
-
-    assert!(transport.pushlog_response_tokens().is_empty());
-    assert!(transport.pushlog_replies().is_empty());
-    assert_eq!(transport.two_stream_replies().len(), 1);
 }
 
 #[nuclei::test(threads = 0)]
@@ -4146,7 +4074,7 @@ async fn negotiated_pushlog_rate_limit_carries_retry_after() {
             .handle_transport_event(TransportEvent::TwoStreamRequest {
                 peer_id: random_peer_id(),
                 request,
-                token: None,
+                token: Some(0),
                 is_explicit_replicator: true,
                 explicit_replay_authorization: None,
             })
@@ -4347,7 +4275,7 @@ async fn car_fetch_shed_at_capacity_replies_busy() {
 }
 
 #[nuclei::test(threads = 0)]
-async fn busy_replies_complete_rooted_and_block_sync_waiters_as_busy() {
+async fn busy_replies_complete_block_sync_waiters_as_busy() {
     use crate::sync::manager::FetchCompletion;
     let (coordinator, _events) = create_test_coordinator(
         AccessMode::Open,
@@ -4357,9 +4285,6 @@ async fn busy_replies_complete_rooted_and_block_sync_waiters_as_busy() {
     let root = cid_for(BLOCK_DATA);
     let hub = random_peer_id();
     let manager = coordinator.manager();
-    let rooted = manager
-        .rooted_car_completion_tracker()
-        .register(root, hub.clone());
     let query = QueryId(7);
     let block_sync = manager.block_sync_completion_tracker().register(query);
 
@@ -4381,7 +4306,6 @@ async fn busy_replies_complete_rooted_and_block_sync_waiters_as_busy() {
         coordinator.handle_transport_event(event).await.unwrap();
     }
 
-    assert_eq!(rooted.await.unwrap(), FetchCompletion::ProviderBusy);
     assert_eq!(block_sync.await.unwrap(), FetchCompletion::ProviderBusy);
     let snapshot = manager.diagnostics().snapshot();
     assert_eq!(snapshot.car_busy_responses, 1);
@@ -4421,7 +4345,7 @@ async fn fan_in_pushes_keep_pending_depth_bounded_and_account_every_reply() {
                         "collection1",
                         &format!("p{pusher}-d{doc}"),
                     ),
-                    token: None,
+                    token: Some(0),
                     is_explicit_replicator: false,
                     explicit_replay_authorization: None,
                 })
@@ -4525,7 +4449,7 @@ async fn doc_sync_reply_starts_independent_dag_roots_concurrently() {
         .unwrap();
 
     timeout(Duration::from_secs(1), async {
-        while transport_handle.car_requests().len() < 2 {
+        while transport_handle.synced_roots().len() < 2 {
             crate::rt::yield_now().await;
         }
     })
@@ -4533,7 +4457,7 @@ async fn doc_sync_reply_starts_independent_dag_roots_concurrently() {
     .expect("a stalled first root must not block the second root");
 
     let requested: rapidhash::RapidHashSet<_> =
-        transport_handle.car_requests().into_iter().collect();
+        transport_handle.synced_roots().into_iter().collect();
     assert_eq!(
         requested,
         rapidhash::RapidHashSet::from_iter([first_root, second_root])
@@ -4823,7 +4747,7 @@ async fn a_two_stream_push_the_gate_refuses_stores_nothing() {
         .handle_transport_event(TransportEvent::TwoStreamRequest {
             peer_id: random_peer_id(),
             request,
-            token: None,
+            token: Some(0),
             is_explicit_replicator: true,
             explicit_replay_authorization: None,
         })

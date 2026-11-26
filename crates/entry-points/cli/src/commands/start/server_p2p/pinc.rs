@@ -1,7 +1,8 @@
-//! `net.transport: pinc`: the pinc peer, with direct connections, and topics
-//! through the hubs `net.pinc_hubs` names. It reads the iroh bind and
-//! allowlist settings (`net.iroh_bind_addr`, `net.iroh_bind_port`,
-//! `net.iroh_allowed_peers`) until pinc has keys of its own.
+//! The pinc peer: direct connections on `net.pinc_bind_addr` (loopback
+//! unless set, as Go) and `net.pinc_bind_port`, the extra addresses
+//! `net.pinc_public_addrs` lists, inbound admission from
+//! `net.pinc_allowed_peers`, topics through the hubs `net.pinc_hubs` names,
+//! and a dial of each of `net.peers` at start.
 
 use std::sync::Arc;
 
@@ -19,28 +20,29 @@ impl Node {
         database: Arc<db::DB<storage::DynStore>>,
         event_bus: Arc<dyn events::Bus>,
         config: &Config,
-        peer_keypair: Option<p2p::Keypair>,
+        peer_seed: Option<zeroize::Zeroizing<[u8; 32]>>,
         node_identity: Option<Arc<identity::RawIdentity>>,
         se_key: Option<[u8; 32]>,
         document_acp: Arc<dyn acp::DocumentACP>,
         edge: &edge::Edge,
     ) -> Result<P2PSetup> {
         info!("Initializing P2P network (pinc)");
-        let bind = std::net::SocketAddr::new(
-            config
-                .net
-                .iroh_bind_addr
-                .unwrap_or(std::net::IpAddr::from([0, 0, 0, 0])),
-            config.net.iroh_bind_port.unwrap_or(0),
-        );
-        let mut endpoint =
-            p2p::pinc::PincEndpointConfig::new(Self::pinc_seed(peer_keypair.as_ref())?, bind);
+        let bind = config.net.pinc_bind();
+        if !bind.ip().is_loopback() && config.net.pinc_allowed_peers.is_empty() {
+            warn!(%bind, "the pinc endpoint is reachable from other hosts and net.pinc_allowed_peers is empty: any peer may connect");
+        }
+        let seed = match peer_seed {
+            Some(seed) => seed,
+            None => defra_pinc::generate_seed().map_err(Error::P2P)?,
+        };
+        let mut endpoint = defra_pinc::PincEndpointConfig::new(seed, bind);
+        endpoint.public_addrs = config.net.pinc_public_addrs.clone();
         endpoint.node_identity = node_identity;
-        endpoint.allowlist = if config.net.iroh_allowed_peers.is_empty() {
-            p2p::pinc::PincAllowlistConfig::AcceptAll
+        endpoint.allowlist = if config.net.pinc_allowed_peers.is_empty() {
+            defra_pinc::PincAllowlistConfig::AcceptAll
         } else {
-            p2p::pinc::PincAllowlistConfig::Explicit(
-                config.net.iroh_allowed_peers.iter().cloned().collect(),
+            defra_pinc::PincAllowlistConfig::Explicit(
+                config.net.pinc_allowed_peers.iter().cloned().collect(),
             )
         };
         endpoint.hubs = config.net.pinc_hubs.clone();
@@ -53,6 +55,7 @@ impl Node {
         peer_config.access_mode = Self::access_mode(config);
         peer_config.max_merge_depth = config.datastore.max_merge_depth;
         peer_config.retry_schedule = config.retry_schedule()?;
+        peer_config.rebroadcast_on_merge = config.net.p2p_rebroadcast_on_merge;
         let peer = defra_p2p_adapter::PincPeer::start(store, database, event_bus, peer_config)
             .await
             .map_err(Error::P2P)?;
@@ -79,10 +82,13 @@ impl Node {
         let se_transport =
             se_key.map(|key| peer.se_query_transport(db::merge::filled_se_key_handle(key, None)));
 
-        let merge_handler_for_kms = Arc::clone(&peer.replication.merge_handler_inner);
+        let connect_bootstrap = defra_p2p_adapter::bootstrap_dials(
+            Arc::clone(&peer.ops),
+            edge.clone(),
+            config.net.peers.clone(),
+        );
         Ok(P2PSetup {
-            host_handle: None,
-            p2p_tasks: Some(P2PTasks::Pinc {
+            p2p_tasks: Some(P2PTasks {
                 peer: peer.shutdown.clone(),
             }),
             mutator: peer.replication.broadcast_mutator.clone(),
@@ -91,7 +97,7 @@ impl Node {
             wire_merge_acp: None,
             wire_doc_pusher_acp: None,
             kms_transport: Some(peer.kms_transport.clone() as Arc<dyn kms::KeyTransport>),
-            wire_kms: Some(Box::new(move |kms| merge_handler_for_kms.set_kms(kms))),
+            wire_kms: Some(Box::new(peer.kms_binder())),
             local_peer_id: peer.local_peer_id.clone(),
             se_transport,
             manage_hooks: Some(peer.manage.hooks.clone()),
@@ -99,25 +105,7 @@ impl Node {
             manage_correlator: Some(peer.manage.correlator.clone()),
             manage_query_correlator: Some(peer.manage.query_correlator.clone()),
             manage_requester: Some(Arc::clone(&peer.manage.requester)),
+            connect_bootstrap: Some(connect_bootstrap),
         })
-    }
-
-    /// The peer key's Ed25519 seed, so the node keeps the id it has on libp2p
-    /// and iroh; a fresh one when the node has no peer key.
-    fn pinc_seed(peer_keypair: Option<&p2p::Keypair>) -> Result<zeroize::Zeroizing<[u8; 32]>> {
-        let Some(kp) = peer_keypair else {
-            let key = crypto::generate_ed25519()
-                .map_err(|e| Error::InvalidConfig(format!("pinc peer key: {e}")))?;
-            return Ok(zeroize::Zeroizing::new(key.underlying().to_bytes()));
-        };
-        let ed25519 = kp
-            .clone()
-            .try_into_ed25519()
-            .map_err(|_| Error::InvalidConfig("pinc transport requires an Ed25519 key".into()))?;
-        let seed: [u8; 32] =
-            ed25519.secret().as_ref().try_into().map_err(|_| {
-                Error::InvalidConfig("Ed25519 peer key seed must be 32 bytes".into())
-            })?;
-        Ok(zeroize::Zeroizing::new(seed))
     }
 }

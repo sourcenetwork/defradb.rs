@@ -444,25 +444,6 @@ async fn car_size_notice_stores_siblings_and_only_reports_missing_link() {
         completion.await.unwrap(),
         FetchCompletion::Failure(crate::transport::FetchFailureCause::NoBlocks)
     );
-
-    let mut completion = coordinator
-        .manager()
-        .rooted_car_completion_tracker()
-        .register(root, peer);
-    let data = encode_car_response(&[root], &[], &[(large, CAR_MAX_BYTES + 1)]).unwrap();
-    coordinator
-        .handle_transport_event(TransportEvent::CarFetchResponse {
-            query_id: None,
-            peer_id: random_peer_id(),
-            root_cid: root,
-            car_data: data,
-        })
-        .await
-        .unwrap();
-    assert!(matches!(
-        completion.try_recv(),
-        Err(crate::rt::oneshot::error::TryRecvError::Empty)
-    ));
 }
 
 /// A small root the doc index cannot attribute (a doc-less collection

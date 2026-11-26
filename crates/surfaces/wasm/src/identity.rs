@@ -68,11 +68,6 @@ impl ClientIdentity {
         &self.did
     }
 
-    /// The key as the identity a peer challenge proves.
-    pub(crate) fn raw(&self) -> Arc<RawIdentity> {
-        Arc::clone(&self.raw)
-    }
-
     pub(crate) fn signing_config(&self) -> SigningConfig {
         self.signing.clone()
     }

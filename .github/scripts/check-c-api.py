@@ -228,22 +228,32 @@ def breaks(old, new):
     return found
 
 
-def main():
+def main(argv=None):
     parser = argparse.ArgumentParser(description="Fail when a new defra.h breaks callers of an older one.")
     parser.add_argument("old", help="the header callers were built against")
     parser.add_argument("new", help="the header this change produces")
-    args = parser.parse_args()
+    parser.add_argument(
+        "--accept-break",
+        action="store_true",
+        help="the change breaks the C API on purpose (its pull request carries c-api:break): report each break and pass",
+    )
+    args = parser.parse_args(argv)
 
     found = breaks(api(args.old), api(args.new))
     if not found:
         print("The C API is compatible: nothing removed or changed.")
         return 0
+    level, title = ("warning", "C API break accepted by c-api:break") if args.accept_break else ("error", "C API break")
     for message in found:
         if os.environ.get("GITHUB_ACTIONS") == "true":
-            print(f"::error title=C API break::{message}")
+            print(f"::{level} title={title}::{message}")
         else:
-            print(f"error: {message}")
+            print(f"{level}: {message}")
+    if args.accept_break:
+        print(f"{len(found)} breaking C API change(s), accepted: the pull request carries c-api:break.")
+        return 0
     print(f"{len(found)} breaking C API change(s). Append fields to options structs and add new calls instead.")
+    print("A change that breaks the C API on purpose carries the c-api:break label.")
     return 1
 
 

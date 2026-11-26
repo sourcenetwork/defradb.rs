@@ -67,9 +67,6 @@ def apply {α : Type} : List (String × String) → Config α → Config α
 -- The table the loader runs (keys.rs KEYS, row for row).
 def table : List (String × String) := [
   ("net.p2pdisabled", "net.p2p_disabled"),
-  ("net.p2paddresses", "net.p2p_addresses"),
-  ("net.pubsubenabled", "net.pubsub_enabled"),
-  ("net.relay", "net.relay_enabled"),
   ("api.pubkeypath", "api.pubkey_path"),
   ("api.privkeypath", "api.privkey_path"),
   ("api.allowed-origins", "api.allowed_origins"),

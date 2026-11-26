@@ -9,7 +9,6 @@
 use std::sync::Arc;
 
 use crate::transport_doc_pusher::TransportDocPusher;
-#[cfg(not(target_arch = "wasm32"))]
 use {
     crate::{P2PError, P2PErrorExt as _, P2PResult},
     async_trait::async_trait,
@@ -25,28 +24,21 @@ pub fn pooled(
     inner: Arc<dyn TransportDocPusher>,
     pool: Option<&workers::Pool>,
 ) -> Arc<dyn TransportDocPusher> {
-    #[cfg(not(target_arch = "wasm32"))]
     if let Some(pool) = pool {
         return Arc::new(PooledDocPusher {
             inner,
             pool: pool.clone(),
         });
     }
-    // A browser's one worker is the page's thread: a call runs where it is
-    // made.
-    #[cfg(target_arch = "wasm32")]
-    let _ = pool;
     inner
 }
 
 /// `inner`'s storage calls, run on a pool's workers.
-#[cfg(not(target_arch = "wasm32"))]
 struct PooledDocPusher {
     inner: Arc<dyn TransportDocPusher>,
     pool: workers::Pool,
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 impl PooledDocPusher {
     /// Runs `call` on `inner` on the least-loaded worker.
     async fn on_pool<T, F, Fut>(&self, call: F) -> P2PResult<T>
@@ -64,7 +56,6 @@ impl PooledDocPusher {
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 #[async_trait]
 impl TransportDocPusher for PooledDocPusher {
     async fn prepare_replicator_install(
@@ -319,7 +310,7 @@ impl TransportDocPusher for PooledDocPusher {
     }
 }
 
-#[cfg(all(test, not(target_arch = "wasm32")))]
+#[cfg(test)]
 mod tests {
     use std::sync::atomic::{AtomicBool, Ordering};
 

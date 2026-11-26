@@ -3,23 +3,15 @@
 use std::sync::Arc;
 
 use super::node::{Node, P2PTasks};
-use crate::config::{AcpDocumentType, Config, TransportType};
-#[cfg(not(feature = "iroh"))]
-use crate::error::Error;
+use crate::config::{AcpDocumentType, Config};
 use crate::error::Result;
 
-#[cfg(feature = "iroh")]
-mod iroh;
-#[path = "libp2p.rs"]
-mod libp2p_setup;
-#[cfg(feature = "pinc")]
 mod pinc;
 
 type WireDocumentAcp = Option<Box<dyn FnOnce(Arc<dyn acp::DocumentACP>)>>;
 type WireKms = Option<Box<dyn FnOnce(Arc<dyn kms::KmsService>) + Send>>;
 
 pub(super) struct P2PSetup {
-    pub(super) host_handle: Option<p2p::P2PHostHandle>,
     pub(super) p2p_tasks: Option<P2PTasks>,
     pub(super) mutator: Arc<dyn query::mutator::DocMutator>,
     pub(super) http_adapter: Option<Arc<dyn defra_p2p_adapter::P2POperations>>,
@@ -39,9 +31,8 @@ pub(super) struct P2PSetup {
     /// This node's transport-level peer id (stringified). server.rs binds it
     /// into the KMS so served ECIES replies carry the correct AAD peer id.
     pub(super) local_peer_id: String,
-    /// SE remote query transport (owner-queries-replicator, #976). `Some` on the
-    /// libp2p path when an SE key is present; `None` for iroh (the SE-query
-    /// send path is libp2p-only) and the non-P2P fallback.
+    /// SE remote query transport (owner-queries-replicator, #976). `Some` when
+    /// an SE key is present; `None` without one and on the non-P2P fallback.
     pub(super) se_transport: Option<Arc<dyn query::SeQueryTransport>>,
     /// Inbound management-channel serve deps, read lazily by the event loop and
     /// populated by server.rs once the controller (`P2POperations`) and NAC
@@ -63,6 +54,9 @@ pub(super) struct P2PSetup {
     /// manage correlators. server.rs threads it into `AppState` via
     /// `with_manage`. `None` on the non-P2P fallback path.
     pub(super) manage_requester: Option<Arc<dyn defra_p2p_adapter::ManageRequester>>,
+    /// Dials `net.peers` in the background. Called once node access control
+    /// is wired, so no peer connects before it.
+    pub(super) connect_bootstrap: Option<Box<dyn FnOnce() + Send>>,
 }
 
 impl Node {
@@ -72,7 +66,7 @@ impl Node {
         database: Arc<db::DB<storage::DynStore>>,
         event_bus: Arc<dyn events::Bus>,
         config: &Config,
-        peer_keypair: Option<p2p::Keypair>,
+        peer_seed: Option<zeroize::Zeroizing<[u8; 32]>>,
         node_identity: Option<Arc<identity::RawIdentity>>,
         se_key: Option<[u8; 32]>,
         document_acp: Arc<dyn acp::DocumentACP>,
@@ -81,83 +75,15 @@ impl Node {
         if config.net.p2p_disabled {
             return Ok(Self::p2p_disabled(database));
         }
-
-        if config.net.transport == TransportType::Iroh {
-            #[cfg(feature = "iroh")]
-            {
-                return Self::setup_iroh_p2p(
-                    store,
-                    database,
-                    event_bus,
-                    config,
-                    peer_keypair,
-                    node_identity,
-                    se_key,
-                    document_acp,
-                    edge,
-                )
-                .await;
-            }
-            #[cfg(not(feature = "iroh"))]
-            {
-                let _ = (
-                    store,
-                    database,
-                    event_bus,
-                    peer_keypair,
-                    node_identity,
-                    se_key,
-                    document_acp,
-                    edge,
-                );
-                return Err(Error::InvalidTransport(
-                    "iroh transport not enabled. Rebuild with --features iroh".into(),
-                ));
-            }
-        }
-
-        if config.net.transport == TransportType::Pinc {
-            #[cfg(feature = "pinc")]
-            {
-                return Self::setup_pinc_p2p(
-                    store,
-                    database,
-                    event_bus,
-                    config,
-                    peer_keypair,
-                    node_identity,
-                    se_key,
-                    document_acp,
-                    edge,
-                )
-                .await;
-            }
-            #[cfg(not(feature = "pinc"))]
-            {
-                let _ = (
-                    store,
-                    database,
-                    event_bus,
-                    peer_keypair,
-                    node_identity,
-                    se_key,
-                    document_acp,
-                    edge,
-                );
-                return Err(crate::error::Error::InvalidTransport(
-                    "pinc transport not enabled. Rebuild with --features pinc".into(),
-                ));
-            }
-        }
-
-        Self::setup_libp2p_p2p(
+        Self::setup_pinc_p2p(
             store,
             database,
             event_bus,
             config,
-            peer_keypair,
+            peer_seed,
             node_identity,
             se_key,
+            document_acp,
             edge,
         )
         .await
@@ -165,7 +91,6 @@ impl Node {
 
     fn p2p_disabled(database: Arc<db::DB<storage::DynStore>>) -> P2PSetup {
         P2PSetup {
-            host_handle: None,
             p2p_tasks: None,
             mutator: Arc::new(db::AutoCommitMutator::new(database)),
             http_adapter: None,
@@ -181,14 +106,15 @@ impl Node {
             manage_correlator: None,
             manage_query_correlator: None,
             manage_requester: None,
+            connect_bootstrap: None,
         }
     }
 
-    fn access_mode(config: &Config) -> p2p::bitswap::AccessMode {
+    fn access_mode(config: &Config) -> p2p::access::AccessMode {
         if config.acp.document_type != AcpDocumentType::None {
-            p2p::bitswap::AccessMode::Controlled
+            p2p::access::AccessMode::Controlled
         } else {
-            p2p::bitswap::AccessMode::Open
+            p2p::access::AccessMode::Open
         }
     }
 

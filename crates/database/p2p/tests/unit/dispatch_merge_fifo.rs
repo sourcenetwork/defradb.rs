@@ -169,13 +169,7 @@ async fn acked_head_behind_full_channel() -> (
         true,
     ));
     let (head, head_data, leaf, leaf_data) = head_and_field();
-    let transport = TestTransport::new(
-        blockstore.clone(),
-        head,
-        head_data.clone(),
-        RapidHashMap::new(),
-        RapidHashMap::new(),
-    );
+    let transport = TestTransport::new(blockstore.clone(), RapidHashMap::new());
     let config = SyncConfig {
         event_buffer_size: 1,
         ..SyncConfig::default()
@@ -352,13 +346,7 @@ async fn redispatched_continuations_do_not_starve_queued_merge_work() {
         blockstore.put(&cid, &data).await.unwrap();
         roots.push(cid);
     }
-    let transport = TestTransport::new(
-        blockstore.clone(),
-        roots[0],
-        Vec::new(),
-        RapidHashMap::new(),
-        RapidHashMap::new(),
-    );
+    let transport = TestTransport::new(blockstore.clone(), RapidHashMap::new());
     let config = SyncConfig {
         event_buffer_size: 1,
         max_concurrent_dag_fetches: 2,
@@ -443,13 +431,7 @@ async fn sourceless_latched_completion_does_not_block_merge_loop() {
         )
         .await
         .unwrap();
-    let transport = TestTransport::new(
-        blockstore.clone(),
-        head,
-        head_data,
-        RapidHashMap::new(),
-        RapidHashMap::new(),
-    );
+    let transport = TestTransport::new(blockstore.clone(), RapidHashMap::new());
     transport.set_connected_peers(vec![PeerId::new("provider".to_string())]);
     let config = SyncConfig {
         event_buffer_size: 1,
@@ -526,9 +508,6 @@ async fn no_permit_held_in_emit_dag_ready() {
     blockstore.put(&root_cid, &root_data).await.unwrap();
     let transport = TestTransport::new(
         blockstore.clone(),
-        root_cid,
-        root_data,
-        RapidHashMap::new(),
         RapidHashMap::from_iter([(child_cid, child_data)]),
     );
 
@@ -609,13 +588,7 @@ async fn complete_sourceless_root_merges_without_block_sync() {
         )
         .await
         .unwrap();
-    let transport = TestTransport::new(
-        blockstore.clone(),
-        head,
-        head_data,
-        RapidHashMap::new(),
-        RapidHashMap::new(),
-    );
+    let transport = TestTransport::new(blockstore.clone(), RapidHashMap::new());
     transport.set_connected_peers(vec![PeerId::new("provider".to_string())]);
     let config = SyncConfig {
         event_buffer_size: 1,

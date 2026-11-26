@@ -76,16 +76,17 @@ pub(super) fn sanitized_node_options(
                 .map(u64::from)
                 .map(seconds_as_nanos)
                 .collect::<Vec<_>>(),
-            "P2PBlockSyncTimeout": seconds_as_nanos(config.net.stream_timeout),
             "LensRuntime": "wasmtime",
             "LensPoolSize": 0,
             "ChunkSize": Value::Null,
         },
         "P2P": {
-            "ListenAddresses": redacted_list(&config.net.p2p_addresses),
+            "BindAddress": redacted(
+                config.net.pinc_bind_addr.is_some() || config.net.pinc_bind_port.is_some()
+            ),
             "BootstrapPeers": redacted_list(&config.net.peers),
-            "EnablePubSub": config.net.pubsub_enabled,
-            "EnableRelay": config.net.relay_enabled,
+            "Hubs": redacted_list(&config.net.pinc_hubs),
+            "AllowedPeers": redacted_list(&config.net.pinc_allowed_peers),
             "EnableClearBackoffOnRetry": false,
             "PrivateKey": redacted(!config.net.p2p_disabled),
         },
@@ -124,8 +125,8 @@ mod tests {
         config.datastore.store = DatastoreType::Memory;
         config.datastore.path = "/private/data".into();
         config.datastore.valuelogfilesize = Some(1_048_576);
-        config.net.p2p_addresses = vec!["/ip4/127.0.0.1/tcp/9171".into()];
-        config.net.peers = vec!["/ip4/10.0.0.2/tcp/9171/p2p/example".into()];
+        config.net.pinc_bind_port = Some(9171);
+        config.net.peers = vec!["example@10.0.0.2:9171".into()];
         config.api.address = "127.0.0.1:9181".into();
         config.api.allowed_origins = vec!["https://private.example".into()];
         config.api.privkey_path = "/private/tls/key.pem".into();
@@ -138,7 +139,8 @@ mod tests {
         assert_eq!(options["Store"]["BadgerFileSize"], 1_048_576);
         assert_eq!(options["DB"]["Identity"], "<redacted>");
         assert_eq!(options["DB"]["EnableSigning"], true);
-        assert_eq!(options["P2P"]["ListenAddresses"][0], "<redacted>");
+        assert_eq!(options["P2P"]["BindAddress"], "<redacted>");
+        assert_eq!(options["P2P"]["BootstrapPeers"][0], "<redacted>");
         assert_eq!(options["HTTP"]["Address"], "<redacted>");
         assert_eq!(options["HTTP"]["AllowedOrigins"][0], "<redacted>");
         assert_eq!(options["HTTP"]["TLSKeyPath"], "<redacted>");
@@ -146,8 +148,8 @@ mod tests {
         let encoded = serde_json::to_string(&options).unwrap();
         for sensitive in [
             "/private/data",
-            "/ip4/127.0.0.1/tcp/9171",
-            "/ip4/10.0.0.2/tcp/9171/p2p/example",
+            "9171",
+            "example@10.0.0.2:9171",
             "127.0.0.1:9181",
             "https://private.example",
             "/private/tls/key.pem",

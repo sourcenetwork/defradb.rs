@@ -52,7 +52,7 @@
 \*     every Joined event already queued, so a queued confirmation of the old
 \*     join is never read as one of the new join.
 \*
-\* Correspondence with the Rust code (crates/database/p2p/src/pinc/topics.rs):
+\* Correspondence with the Rust code (crates/database/pinc/src/topics.rs):
 \*
 \*   | Model            | Rust                                                     |
 \*   |------------------|----------------------------------------------------------|

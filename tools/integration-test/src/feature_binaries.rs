@@ -159,8 +159,8 @@ mod tests {
     fn snapshot_paths_are_unique_within_a_process() {
         let directory = tempfile::tempdir().expect("temporary directory");
 
-        let first = temporary_snapshot_path(directory.path(), "defra-iroh");
-        let second = temporary_snapshot_path(directory.path(), "defra-iroh");
+        let first = temporary_snapshot_path(directory.path(), "defra-vera");
+        let second = temporary_snapshot_path(directory.path(), "defra-vera");
 
         assert_ne!(first, second);
     }
@@ -168,8 +168,8 @@ mod tests {
     #[test]
     fn publishes_snapshot_to_stable_destination() {
         let directory = tempfile::tempdir().expect("temporary directory");
-        let temporary = directory.path().join("defra-iroh-123");
-        let destination = directory.path().join("defra-iroh");
+        let temporary = directory.path().join("defra-vera-123");
+        let destination = directory.path().join("defra-vera");
         fs::write(&temporary, b"snapshot").expect("write snapshot");
 
         let published = publish_snapshot(temporary.clone(), destination.clone());
@@ -185,8 +185,8 @@ mod tests {
     #[test]
     fn retains_temporary_snapshot_when_destination_cannot_be_replaced() {
         let directory = tempfile::tempdir().expect("temporary directory");
-        let temporary = directory.path().join("defra-iroh-123");
-        let destination = directory.path().join("defra-iroh");
+        let temporary = directory.path().join("defra-vera-123");
+        let destination = directory.path().join("defra-vera");
         fs::write(&temporary, b"snapshot").expect("write snapshot");
         fs::create_dir(&destination).expect("create non-replaceable destination");
 

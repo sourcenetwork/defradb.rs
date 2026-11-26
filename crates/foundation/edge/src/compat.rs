@@ -1,5 +1,5 @@
 //! The one way into a library that needs a tokio runtime and lets us supply
-//! neither its sockets nor its executor: iroh, and the vera.rs clients.
+//! neither its sockets nor its executor: the vera.rs clients.
 //!
 //! The library's futures run where they are awaited, on nuclei, inside the
 //! context of a tokio runtime the edge owns, on the edge's cores: that
@@ -50,8 +50,9 @@ pub(crate) fn enter(runtime: &tokio::runtime::Handle) {
     std::mem::forget(runtime.enter());
 }
 
-/// Starts futures-timer's one thread, which runs libp2p's timers, unless it
-/// runs already: it takes the calling thread's CPUs.
+/// Starts futures-timer's one thread, which runs the timers of the libraries
+/// built on it (governor, jsonrpsee), unless it runs already: it takes the
+/// calling thread's CPUs.
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn start_timer() {
     drop(futures_timer::Delay::new(std::time::Duration::ZERO));

@@ -13,8 +13,7 @@ handed an `Edge` at construction. Nothing finds a runtime ambiently: no
   `OnPool` layer, document-named paths to the document's worker
   ([`crates/surfaces/http/src/pool_layer.rs`](https://github.com/sourcenetwork/defradb.rs/blob/main/crates/surfaces/http/src/pool_layer.rs)); transaction routes, SSE and subscriptions stay on
   the edge (they are streams, not database work).
-- **P2P**: the iroh endpoint task (all protocols muxed over one ALPN), or the libp2p
-  swarm where that transport is used.
+- **P2P**: the pinc endpoint task (all protocols muxed over one connection per peer).
 - **Remote input services**: the KMS pubsub transport, Vera clients, the embeddings
   client: single-flight, batching, byte-bounded caches.
 - **pg-compat** (the Postgres wire server) and telemetry export.

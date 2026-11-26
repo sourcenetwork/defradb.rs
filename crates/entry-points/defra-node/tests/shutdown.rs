@@ -10,12 +10,10 @@
 #[path = "support/outcome.rs"]
 mod outcome;
 
-#[cfg(feature = "libp2p")]
-use defra_node::Libp2pConfig;
 use defra_node::NodeBuilder;
 #[cfg(feature = "p2p")]
-use defra_node::P2PConfig;
-#[cfg(any(feature = "libp2p", feature = "p2p"))]
+use defra_node::PincConfig;
+#[cfg(feature = "p2p")]
 use defra_node::{NodeConfig, TransportConfig};
 use outcome::Result;
 use std::sync::Arc;
@@ -96,53 +94,22 @@ fn shutdown_concurrent_calls_are_safe() -> Result<()> {
         })
         .unwrap()
 }
-#[cfg(feature = "libp2p")]
-#[test]
-fn p2p_shutdown_releases_persistent_store() -> Result<()> {
-    edge::testing::edge()
-        .block_on(async {
-            let dir = tempfile::tempdir()?;
-            let path = dir.path().join("data.regolith");
-            let config = NodeConfig {
-                edge: Some(edge::testing::edge()),
-                transport: TransportConfig::Libp2p(Libp2pConfig {
-                    listen_addrs: vec!["/ip4/127.0.0.1/tcp/0".to_string()],
-                    ..Default::default()
-                }),
-                ..Default::default()
-            };
-            let node = NodeBuilder::default()
-                .with_config(config)
-                .data_path(&path)
-                .build()
-                .await?;
-
-            node.shutdown().await.unwrap();
-            drop(node);
-
-            let reopened = storage::RegolithStore::open(&path)?;
-            storage::Store::close(&reopened).await?;
-
-            Ok(())
-        })
-        .unwrap()
-}
 
 #[cfg(feature = "p2p")]
 #[test]
-fn iroh_shutdown_releases_persistent_store() -> Result<()> {
+fn pinc_shutdown_releases_persistent_store() -> Result<()> {
     edge::testing::edge()
         .block_on(async {
             let dir = tempfile::tempdir()?;
             let path = dir.path().join("data.regolith");
             let config = NodeConfig {
                 edge: Some(edge::testing::edge()),
-                transport: TransportConfig::Iroh(P2PConfig {
+                transport: TransportConfig::Pinc(PincConfig {
+                    bind: std::net::SocketAddr::new(
+                        std::net::IpAddr::from(std::net::Ipv4Addr::LOCALHOST),
+                        0,
+                    ),
                     peer_key: defra_node::PeerKeySource::Store,
-                    bind_addr: Some(std::net::Ipv4Addr::LOCALHOST.into()),
-                    port: Some(0),
-                    relay_mode: p2p::iroh::IrohRelayModeConfig::Disabled,
-                    discovery: p2p::iroh::IrohDiscoveryConfig::Disabled,
                     ..Default::default()
                 }),
                 ..Default::default()
@@ -155,79 +122,6 @@ fn iroh_shutdown_releases_persistent_store() -> Result<()> {
 
             node.shutdown().await.unwrap();
             drop(node);
-
-            let reopened = storage::RegolithStore::open(&path)?;
-            storage::Store::close(&reopened).await?;
-
-            Ok(())
-        })
-        .unwrap()
-}
-
-#[cfg(feature = "libp2p")]
-#[test]
-fn failed_p2p_setup_releases_persistent_store() -> Result<()> {
-    edge::testing::edge()
-        .block_on(async {
-            let dir = tempfile::tempdir()?;
-            let path = dir.path().join("data.regolith");
-            let listener = std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))?;
-            let port = listener.local_addr()?.port();
-            let config = NodeConfig {
-                edge: Some(edge::testing::edge()),
-                transport: TransportConfig::Libp2p(Libp2pConfig {
-                    listen_addrs: vec![format!("/ip4/127.0.0.1/tcp/{port}")],
-                    ..Default::default()
-                }),
-                ..Default::default()
-            };
-
-            let result = NodeBuilder::default()
-                .with_config(config)
-                .data_path(&path)
-                .build()
-                .await;
-            assert!(
-                result.is_err(),
-                "P2P setup should fail when the port is busy"
-            );
-
-            let reopened = storage::RegolithStore::open(&path)?;
-            storage::Store::close(&reopened).await?;
-
-            Ok(())
-        })
-        .unwrap()
-}
-
-/// NAC asked for by a node with no identity to own it is refused before the
-/// host starts (MC_NodeStartup_Red_LateNacCheck), so the store is free.
-#[cfg(feature = "libp2p")]
-#[test]
-fn unownable_node_acp_releases_persistent_store() -> Result<()> {
-    edge::testing::edge()
-        .block_on(async {
-            let dir = tempfile::tempdir()?;
-            let path = dir.path().join("data.regolith");
-            let config = NodeConfig {
-                edge: Some(edge::testing::edge()),
-                transport: TransportConfig::Libp2p(Libp2pConfig {
-                    listen_addrs: vec!["/ip4/127.0.0.1/tcp/0".to_string()],
-                    ..Default::default()
-                }),
-                node_acp_enabled: true,
-                ..Default::default()
-            };
-
-            let result = NodeBuilder::default()
-                .with_config(config)
-                .data_path(&path)
-                .build()
-                .await;
-            assert!(
-                matches!(result, Err(defra_node::Error::NodeAcpNeedsIdentity)),
-                "NAC without a node identity must be refused"
-            );
 
             let reopened = storage::RegolithStore::open(&path)?;
             storage::Store::close(&reopened).await?;

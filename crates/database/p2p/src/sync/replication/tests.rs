@@ -1,6 +1,6 @@
 use super::handlers::{handle_block_received, process_event, process_merge_batch};
 use super::*;
-use crate::bitswap::AccessMode;
+use crate::access::AccessMode;
 use crate::error::Result as P2PResult;
 use crate::message::{
     BranchableSyncReply, BranchableSyncRequest, DocSyncReply, DocSyncRequest, PushLogBroadcast,
@@ -178,8 +178,6 @@ struct PollFetchTransport {
     sync_served_blocks: Arc<AtomicUsize>,
     sync_served_bytes: Arc<AtomicUsize>,
     sync_completion: Arc<kovan::AtomOption<crate::sync::manager::BlockSyncCompletionTracker>>,
-    rooted_car_completion: Arc<kovan::AtomOption<crate::sync::manager::RootedCarCompletionTracker>>,
-    rooted_sync: Arc<AtomicBool>,
     bitswap_dead: Arc<AtomicBool>,
     disconnected_peers: Arc<kovan::Atom<Vec<String>>>,
 }
@@ -209,8 +207,6 @@ impl PollFetchTransport {
             sync_served_blocks: Arc::new(AtomicUsize::new(0)),
             sync_served_bytes: Arc::new(AtomicUsize::new(0)),
             sync_completion: Arc::new(kovan::AtomOption::none()),
-            rooted_car_completion: Arc::new(kovan::AtomOption::none()),
-            rooted_sync: Arc::new(AtomicBool::new(true)),
             bitswap_dead: Arc::new(AtomicBool::new(false)),
             disconnected_peers: Arc::new(kovan::Atom::new(Vec::new())),
         }
@@ -239,8 +235,6 @@ impl PollFetchTransport {
             sync_served_blocks: Arc::new(AtomicUsize::new(0)),
             sync_served_bytes: Arc::new(AtomicUsize::new(0)),
             sync_completion: Arc::new(kovan::AtomOption::none()),
-            rooted_car_completion: Arc::new(kovan::AtomOption::none()),
-            rooted_sync: Arc::new(AtomicBool::new(true)),
             bitswap_dead: Arc::new(AtomicBool::new(false)),
             disconnected_peers: Arc::new(kovan::Atom::new(Vec::new())),
         }
@@ -294,19 +288,6 @@ impl PollFetchTransport {
         self.sync_completion.store_some(completion);
     }
 
-    /// Model a healed libp2p partition: the CAR request and its response are
-    /// their own substreams and still round-trip, while the per-peer Bitswap
-    /// message queue stays dead until the connection itself is rebuilt.
-    fn partition_bitswap(&self, rooted_car: crate::sync::manager::RootedCarCompletionTracker) {
-        self.rooted_sync.store(false, Ordering::SeqCst);
-        self.bitswap_dead.store(true, Ordering::SeqCst);
-        self.rooted_car_completion.store_some(rooted_car);
-    }
-
-    fn disconnected_peers(&self) -> Vec<String> {
-        self.disconnected_peers.load_clone()
-    }
-
     fn signal_sync_complete(&self, query_id: QueryId) {
         let completion = self
             .sync_completion
@@ -327,10 +308,6 @@ impl PollFetchTransport {
 #[async_trait]
 impl P2PTransport for PollFetchTransport {
     type ResponseToken = ();
-
-    fn supports_cancellable_rooted_sync(&self) -> bool {
-        self.rooted_sync.load(Ordering::SeqCst)
-    }
 
     fn local_peer_id(&self) -> &PeerId {
         &self.peer_id
@@ -357,10 +334,6 @@ impl P2PTransport for PollFetchTransport {
         // The redial that follows builds a fresh connection, and a fresh
         // connection builds a fresh Bitswap message queue.
         self.bitswap_dead.store(false, Ordering::SeqCst);
-        Ok(())
-    }
-
-    async fn listen(&self, _addr: PeerAddr) -> P2PResult<()> {
         Ok(())
     }
 
@@ -414,26 +387,10 @@ impl P2PTransport for PollFetchTransport {
         Ok(PushLogReply::success("noop"))
     }
 
-    async fn send_two_stream_response(
-        &self,
-        _peer_id: &PeerId,
-        _reply: PushLogReply,
-    ) -> P2PResult<()> {
-        Ok(())
-    }
-
     async fn send_doc_sync_request(
         &self,
         _peer_id: &PeerId,
         _req: DocSyncRequest,
-    ) -> P2PResult<()> {
-        Ok(())
-    }
-
-    async fn send_doc_sync_response(
-        &self,
-        _peer_id: &PeerId,
-        _reply: DocSyncReply,
     ) -> P2PResult<()> {
         Ok(())
     }
@@ -443,64 +400,6 @@ impl P2PTransport for PollFetchTransport {
         _peer_id: &PeerId,
         _req: BranchableSyncRequest,
     ) -> P2PResult<()> {
-        Ok(())
-    }
-
-    async fn send_branchable_sync_response(
-        &self,
-        _peer_id: &PeerId,
-        _reply: BranchableSyncReply,
-    ) -> P2PResult<()> {
-        Ok(())
-    }
-
-    async fn send_car_request(&self, peer_id: &PeerId, root_cid: Cid) -> P2PResult<()> {
-        self.car_request_calls.fetch_add(1, Ordering::SeqCst);
-        self.car_requested_cids.fetch_add(1, Ordering::SeqCst);
-        let rooted_car = self.rooted_car_completion.load().map(|c| c.clone());
-        if self.bitswap_dead.load(Ordering::SeqCst) {
-            // The peer answers, with nothing in the CAR: the coordinator's
-            // ingest path completes the waiter either way.
-            if let Some(rooted_car) = rooted_car {
-                rooted_car.complete(root_cid, peer_id, false);
-            }
-            return Ok(());
-        }
-        if let Some(rooted_car) = rooted_car {
-            rooted_car.complete(root_cid, peer_id, true);
-        }
-        if let Some(source) = &self.source_blockstore {
-            let collected =
-                crate::sync::car::collect_dag_blocks_from_roots(source.as_ref(), &[root_cid])
-                    .await?;
-            let block_refs: Vec<_> = collected
-                .blocks
-                .iter()
-                .map(|(cid, data)| (cid, data.as_ref()))
-                .collect();
-            let car = crate::sync::car::encode_car(&[root_cid], &block_refs)?;
-            let (_roots, blocks) = crate::sync::car::decode_car(&car)?;
-            self.car_served_blocks
-                .fetch_add(blocks.len(), Ordering::SeqCst);
-            self.car_present_blocks
-                .fetch_add(blocks.len(), Ordering::SeqCst);
-            self.car_served_bytes.fetch_add(car.len(), Ordering::SeqCst);
-            for (cid, data) in blocks {
-                self.blockstore
-                    .put(&cid, &data)
-                    .await
-                    .map_err(|e| crate::error::Error::BlockstoreError(e.to_string()))?;
-            }
-            return Ok(());
-        }
-        self.blockstore
-            .put(&self.child_cid, &self.child_data)
-            .await
-            .map_err(|e| crate::error::Error::BlockstoreError(e.to_string()))?;
-        Ok(())
-    }
-
-    async fn send_car_response(&self, _peer_id: &PeerId, _car_data: Vec<u8>) -> P2PResult<()> {
         Ok(())
     }
 
@@ -552,7 +451,7 @@ impl P2PTransport for PollFetchTransport {
         }
         // A rooted transport answers a request naming the root with the
         // root's closure, as pinc and iroh do.
-        if missing.is_empty() || (self.rooted_sync.load(Ordering::SeqCst) && missing == [root]) {
+        if missing.is_empty() || missing == [root] {
             if let Some(source) = &self.source_blockstore {
                 let collected =
                     crate::sync::car::collect_dag_blocks_from_roots(source.as_ref(), &[root])
@@ -670,10 +569,6 @@ impl P2PTransport for NoopTransport {
         Ok(())
     }
 
-    async fn listen(&self, _addr: PeerAddr) -> P2PResult<()> {
-        Ok(())
-    }
-
     async fn connected_peers(&self) -> P2PResult<Vec<PeerId>> {
         Ok(Vec::new())
     }
@@ -724,26 +619,10 @@ impl P2PTransport for NoopTransport {
         Ok(PushLogReply::success("noop"))
     }
 
-    async fn send_two_stream_response(
-        &self,
-        _peer_id: &PeerId,
-        _reply: PushLogReply,
-    ) -> P2PResult<()> {
-        Ok(())
-    }
-
     async fn send_doc_sync_request(
         &self,
         _peer_id: &PeerId,
         _req: DocSyncRequest,
-    ) -> P2PResult<()> {
-        Ok(())
-    }
-
-    async fn send_doc_sync_response(
-        &self,
-        _peer_id: &PeerId,
-        _reply: DocSyncReply,
     ) -> P2PResult<()> {
         Ok(())
     }
@@ -753,22 +632,6 @@ impl P2PTransport for NoopTransport {
         _peer_id: &PeerId,
         _req: BranchableSyncRequest,
     ) -> P2PResult<()> {
-        Ok(())
-    }
-
-    async fn send_branchable_sync_response(
-        &self,
-        _peer_id: &PeerId,
-        _reply: BranchableSyncReply,
-    ) -> P2PResult<()> {
-        Ok(())
-    }
-
-    async fn send_car_request(&self, _peer_id: &PeerId, _root_cid: Cid) -> P2PResult<()> {
-        Ok(())
-    }
-
-    async fn send_car_response(&self, _peer_id: &PeerId, _car_data: Vec<u8>) -> P2PResult<()> {
         Ok(())
     }
 
@@ -2090,183 +1953,6 @@ async fn test_pushlog_dag_needs_fetch_uses_poll_fetcher_when_sender_known() {
         ReplicationResult::Merged { cid, .. } if cid == root_cid
     ));
     assert_eq!(coordinator.pending_dag_count(), 0);
-}
-
-/// A partition that heals without closing the socket leaves the publisher's
-/// per-peer Bitswap queue stopped: it answers CAR requests on its own
-/// substreams and serves no block. The receiver must repair that itself and
-/// then converge on the root it already holds -- the publisher never
-/// announces it a second time, so nothing else can drive the recovery.
-///
-/// The whole chain runs here: exhaustion -> disconnect -> redial ->
-/// `PeerConnected` redrive -> fetch -> `DagReady` -> merge.
-#[test]
-fn dead_bitswap_publisher_is_dropped_and_converges_on_redial() {
-    edge::testing::paused(|edge| async move {
-        use defra_core::{Block, CompositeDeltaPayload, CrdtDelta, DAGLink, LwwDeltaPayload};
-
-        let store = Arc::new(RegolithStore::in_memory().unwrap());
-        let blockstore = Arc::new(DefraBlockstore::new(store, true));
-
-        let child_block = Block::new(
-            CrdtDelta::Lww(LwwDeltaPayload {
-                field_name: "name".to_string(),
-                priority: 1,
-                collection_version_id: "schema1".to_string(),
-                data: b"value".to_vec(),
-            }),
-            vec![],
-            vec![],
-        );
-        let child_data = child_block.to_dag_cbor().unwrap();
-        let child_cid = child_block.generate_cid().unwrap();
-        let root_block = Block::new(
-            CrdtDelta::Composite(CompositeDeltaPayload {
-                collection_version_id: "schema1".to_string(),
-                priority: 1,
-                status: 1,
-            }),
-            vec![],
-            vec![DAGLink::new("name", child_cid)],
-        );
-        let root_data = root_block.to_dag_cbor().unwrap();
-        let root_cid = root_block.generate_cid().unwrap();
-        blockstore.put(&root_cid, &root_data).await.unwrap();
-
-        let transport = PollFetchTransport::new(blockstore.clone(), child_cid, child_data);
-        let transport_handle = transport.clone();
-        let (coordinator, mut events) =
-            crate::sync::coordinator::SyncCoordinator::with_access_control(
-                transport,
-                blockstore.clone(),
-                crate::network::Network::on(edge),
-                crate::sync::SyncConfig::default(),
-                AccessMode::Open,
-                Arc::new(crate::ReplicatorRegistry::new()),
-                Arc::new(crate::sync::collection_store::MemoryCollectionStorage::default()),
-                Arc::new(EqOnlyFilterMatcher),
-            )
-            .await
-            .unwrap();
-        transport_handle.set_sync_completion(coordinator.manager().block_sync_completion_tracker());
-        transport_handle.partition_bitswap(coordinator.manager().rooted_car_completion_tracker());
-
-        // The only announcement of this root, before the queue is ever used.
-        coordinator
-            .handle_transport_event(TransportEvent::TwoStreamRequest {
-                peer_id: PeerId::new("source-peer".to_string()),
-                request: PushLogRequest::new(
-                    "doc1".to_string(),
-                    bytes::Bytes::from(root_cid.to_bytes()),
-                    "col1".to_string(),
-                    "creator-1".to_string(),
-                    bytes::Bytes::from(root_data),
-                ),
-                token: None,
-                is_explicit_replicator: true,
-                explicit_replay_authorization: None,
-            })
-            .await
-            .unwrap();
-
-        // Each clock dispatch makes one attempt against the dead queue. Once the
-        // root has spent a fetch budget over those attempts, it hangs up.
-        let deadline = crate::rt::time::Instant::now() + Duration::from_secs(1200);
-        while transport_handle.disconnected_peers().is_empty()
-            && crate::rt::time::Instant::now() < deadline
-        {
-            if coordinator
-                .dispatch_due_pending_dag_fetches_for_test(crate::rt::time::Instant::now())
-                == 1
-            {
-                let needs_fetch = events.recv().await.expect("DagNeedsFetch");
-                let started = process_event(
-                    &coordinator,
-                    needs_fetch,
-                    &TestMergeHandler::new(true, false),
-                    &ReplicationConfig::default(),
-                )
-                .await;
-                assert!(matches!(
-                    started,
-                    ReplicationResult::DagFetchStarted { root_cid: cid } if cid == root_cid
-                ));
-            }
-            crate::rt::time::sleep(Duration::from_millis(100)).await;
-        }
-        assert_eq!(
-            transport_handle.disconnected_peers(),
-            vec!["source-peer".to_string()],
-            "an exhausted fetch against a publisher that answers but serves nothing must drop the connection"
-        );
-        assert!(
-            !blockstore.has(&child_cid).await.unwrap(),
-            "the dead queue must not have served the child block"
-        );
-
-        // The redial. No second pushlog: `PeerConnected` is the only new input.
-        coordinator
-            .handle_transport_event(TransportEvent::PeerConnected(PeerId::new(
-                "source-peer".to_string(),
-            )))
-            .await
-            .unwrap();
-
-        dispatch_one_pending_dag_fetch(&coordinator, &mut events, root_cid).await;
-
-        let ready = crate::rt::time::timeout(Duration::from_secs(30), events.recv())
-            .await
-            .expect("DagReady should arrive after the redial")
-            .expect("event should be present");
-        assert!(matches!(
-            &ready,
-            SyncEvent::DagReady { root_cid: cid, .. } if *cid == root_cid
-        ));
-        assert!(blockstore.has(&child_cid).await.unwrap());
-
-        let merged = process_event(
-            &coordinator,
-            ready,
-            &TestMergeHandler::new(true, false),
-            &ReplicationConfig::default(),
-        )
-        .await;
-        assert!(matches!(
-            merged,
-            ReplicationResult::Merged { cid, .. } if cid == root_cid
-        ));
-        assert_eq!(coordinator.pending_dag_count(), 0);
-    })
-}
-
-/// Let the retry clock dispatch the one due root and start its fetch.
-async fn dispatch_one_pending_dag_fetch(
-    coordinator: &crate::sync::coordinator::SyncCoordinator<
-        DefraBlockstore<RegolithStore>,
-        PollFetchTransport,
-    >,
-    events: &mut crate::sync::SyncEventReceiver,
-    root_cid: Cid,
-) {
-    assert_eq!(
-        coordinator.dispatch_due_pending_dag_fetches_for_test(crate::rt::time::Instant::now()),
-        1
-    );
-    let needs_fetch = crate::rt::time::timeout(Duration::from_secs(1), events.recv())
-        .await
-        .expect("DagNeedsFetch should arrive")
-        .expect("event should be present");
-    let started = process_event(
-        coordinator,
-        needs_fetch,
-        &TestMergeHandler::new(true, false),
-        &ReplicationConfig::default(),
-    )
-    .await;
-    assert!(matches!(
-        started,
-        ReplicationResult::DagFetchStarted { root_cid: cid } if cid == root_cid
-    ));
 }
 
 #[derive(Debug)]

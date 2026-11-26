@@ -31,8 +31,7 @@ Enforcement wiring (the gate guards encrypted replay before merge):
 `crates/database/p2p/src/sync/merge.rs:253–269` (`explicit_replay_authorizer_for`,
 `allows_explicit_replay_for`), invoked via `validate_authorization`
 (`merge.rs:333–339`, `merge.rs:360–378`). Call sites that mint/verify on the
-replicator path: `crates/entry-points/cli/src/p2p_adapter.rs:391–449`,
-`crates/surfaces/p2p-adapter/src/libp2p.rs:262–283`, re-exported in
+replicator path: `crates/surfaces/p2p-adapter/src/pinc.rs`, re-exported in
 `crates/database/p2p/src/lib.rs:93–99`.
 
 ## Grounding each spec symbol

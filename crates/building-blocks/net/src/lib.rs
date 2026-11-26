@@ -10,8 +10,6 @@
 //! - [`grpc`]: the HTTP/2 channel tonic's generated clients run on.
 //! - [`connect`]: a client connection for a protocol spoken over a socket
 //!   directly, such as a WebSocket.
-//! - `libp2p` (feature `libp2p`): libp2p's TCP transport on nuclei sockets,
-//!   and a swarm on it.
 //!
 //! Every connection is a nuclei socket. Tasks are spawned on the network
 //! edge (`edge::Edge`) each server, client and channel is given; nothing
@@ -22,8 +20,6 @@
 mod connect;
 pub mod grpc;
 pub mod http;
-#[cfg(feature = "libp2p")]
-pub mod libp2p;
 pub mod rt;
 pub mod server;
 mod stream;

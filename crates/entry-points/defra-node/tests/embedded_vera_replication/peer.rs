@@ -1,5 +1,5 @@
 //! DefraDB nodes that each run a Vera deployment of their own, or share
-//! another node's, and replicate to each other over iroh on localhost.
+//! another node's, and replicate to each other over pinc on localhost.
 
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};

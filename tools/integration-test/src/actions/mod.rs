@@ -5,6 +5,7 @@ mod dac;
 mod document;
 mod encrypted_index;
 mod expect;
+mod hub;
 mod index;
 mod lens;
 mod list_actions;
@@ -26,6 +27,7 @@ pub use collection::*;
 pub use dac::*;
 pub use document::*;
 pub use encrypted_index::*;
+pub use hub::{CliHub, HubSignal, StartCliHub, StopCliHub};
 pub use index::*;
 pub use lens::*;
 pub use list_actions::ListActions;
@@ -35,7 +37,7 @@ pub use parallel::Parallel;
 pub use peer::*;
 pub use query::*;
 pub use replicator::*;
-pub use stream::{AllowStreamPeer, DenyStreamPeer, NewIrohNode, OpenStream, ReadKeptStream};
+pub use stream::{AllowStreamPeer, DenyStreamPeer, NewStreamNode, OpenStream, ReadKeptStream};
 pub use txn::*;
 pub use view::*;
 pub use wait::Wait;
@@ -164,11 +166,13 @@ client_actions! {
         VerifyBlockSignature,
     ],
     shared: [
+        StartCliHub,
+        StopCliHub,
         Connect,
         Parallel,
         AllowStreamPeer,
         DenyStreamPeer,
-        NewIrohNode,
+        NewStreamNode,
         OpenStream,
         ReadKeptStream,
         Await,

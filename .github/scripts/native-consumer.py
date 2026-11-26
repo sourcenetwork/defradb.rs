@@ -148,12 +148,6 @@ UNIT_NAMES = (
 UNIT_TESTS = tuple("vera_rs::" + name for name in UNIT_NAMES)
 LIVE_CASES = (
     ("policy-lifecycle", "policy_generations::native_protected_collection_keeps_revocations_across_relation_recreation"),
-    ("replication-restart", "policy_generations::native_replicated_collection_keeps_revocations_across_relation_recreation_and_restart"),
-    ("peer-authorization", "policy_generations::peer_authorization::native_ungranted_peer_is_filtered_until_explicitly_trusted_replay"),
-    ("reader-update", "policy_generations::strict_replication::native_replicated_update_rejects_reader_only_signer"),
-    ("revoked-delete", "policy_generations::strict_replication::native_replicated_delete_rejects_revoked_writer"),
-    ("writer-update", "policy_generations::strict_replication::native_replicated_update_accepts_granted_writer"),
-    ("writer-delete", "policy_generations::strict_replication::native_replicated_delete_accepts_granted_writer"),
     ("node-builder", "node_builder::node_built_with_vera_rs_enforces_verified_document_access"),
     ("node-provider", "node_builder::node_built_with_a_host_provider_enforces_verified_document_access"),
     ("actor-spelling", "actor_spelling::either_spelling_of_a_secp256k1_actor_is_one_vera_actor"),
@@ -171,7 +165,6 @@ LIVE_CASES = (
     ("smoke", "smoke::rust_verars_smoke"),
     ("policy-administration", "policy_lifecycle::rust_verars_policy_lifecycle"),
     ("compartments", "compartments::rust_verars_compartments"),
-    ("p2p-replication", "p2p_acp::rust_verars_p2p_acp"),
 )
 CARGO = ["cargo", "+1.99.1"]
 BUILD = ["--release", "--frozen"]

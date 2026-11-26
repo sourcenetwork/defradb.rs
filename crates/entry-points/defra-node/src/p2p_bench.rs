@@ -1,8 +1,7 @@
 //! Two-node peer-to-peer replication benchmarks.
 //!
 //! These measure how long it takes a write on one [`Node`] to become readable on
-//! a second [`Node`] in the same process, connected over Iroh with relays and
-//! discovery disabled.
+//! a second [`Node`] in the same process, connected over pinc on loopback.
 //!
 //! They are written as `#[ignore]`d tests rather than as criterion benchmarks. Criterion
 //! is built around many short, repeatable iterations of a pure function, whereas a single
@@ -21,7 +20,7 @@
 use std::net::{IpAddr, Ipv4Addr};
 use std::time::{Duration, Instant};
 
-use super::{Node, P2PConfig, PeerKeySource, QueryResponse, SyncTuning};
+use super::{Node, PeerKeySource, PincConfig, QueryResponse, SyncTuning};
 
 /// Document-set sizes each benchmark is run against.
 const DOC_COUNTS: &[usize] = &[1, 50, 500];
@@ -58,19 +57,13 @@ const POLL_INTERVAL: Duration = Duration::from_millis(1);
 
 const BENCH_SDL: &str = "type User { name: String age: Int }";
 
-fn bench_p2p_config() -> P2PConfig {
-    P2PConfig {
-        port: Some(0),
-        bind_addr: Some(IpAddr::V4(Ipv4Addr::LOCALHOST)),
-        relay_mode: p2p::iroh::IrohRelayModeConfig::Disabled,
-        discovery: p2p::iroh::IrohDiscoveryConfig::Disabled,
-        allowlist: p2p::iroh::IrohAllowlistConfig::AcceptAll,
-        max_concurrent_multipath_paths: None,
-        secret_key_path: None,
+fn bench_p2p_config() -> PincConfig {
+    PincConfig {
+        bind: std::net::SocketAddr::from((IpAddr::V4(Ipv4Addr::LOCALHOST), 0)),
         load_persisted_collections: false,
         peer_key: PeerKeySource::File,
         sync: SyncTuning::default(),
-        rebroadcast_on_merge: false,
+        ..Default::default()
     }
 }
 
@@ -104,7 +97,7 @@ struct ReplicationSpans {
 /// Builds a node with peer-to-peer enabled and the benchmark schema installed.
 async fn build_bench_node() -> Node {
     let node = Node::builder()
-        .with_p2p(bench_p2p_config())
+        .with_pinc(bench_p2p_config())
         .build()
         .await
         .expect("build P2P node");
@@ -272,7 +265,7 @@ async fn await_user_count(node: &Node, expected: usize) {
 
 /// Stops both nodes before the next measurement builds more.
 ///
-/// Neither `Node` nor the `P2PLifecycle` it owns has a `Drop` impl, so the Iroh
+/// Neither `Node` nor the `P2PLifecycle` it owns has a `Drop` impl, so the pinc
 /// endpoint and its background tasks survive the nodes going out of scope. Without this,
 /// every size in a benchmark would run alongside the leftovers of all the earlier ones.
 async fn shutdown_nodes(sender: &Node, receiver: &Node) {
@@ -481,7 +474,7 @@ struct PullOutcome {
 
     /// Whether `sync_documents` returned `Ok`.
     ///
-    /// The Iroh implementation ends in an unconditional `Ok(())` after its timeouts
+    /// The pinc implementation ends in an unconditional `Ok(())` after its timeouts
     /// expire, so this is recorded separately from what actually arrived.
     returned_ok: bool,
 
@@ -562,7 +555,7 @@ async fn measure_pull(doc_count: usize) -> PullOutcome {
 /// never seen, across [`PULL_DOC_COUNTS`].
 ///
 /// The duration is only half the result. `sync_documents` returns `P2PResult<()>` but its
-/// Iroh implementation ends in an unconditional `Ok(())` once its timeouts expire, so the
+/// pinc implementation ends in an unconditional `Ok(())` once its timeouts expire, so the
 /// document count on the receiving node - not the return value - is what says whether the
 /// pull worked.
 #[test]
@@ -694,4 +687,263 @@ fn bench_pull_from_providers() {
             }
         })
         .unwrap()
+}
+
+/// Concurrent writers [`bench_concurrent_writers`] is run with.
+const WRITER_COUNTS: &[usize] = &[1, 4, 16, 64];
+
+/// Documents one [`bench_concurrent_writers`] run writes, split evenly across its
+/// writers.
+const WRITER_DOC_COUNTS: &[usize] = &[64, 512];
+
+/// How often [`bench_concurrent_writers`] reads the receiving node for new documents.
+///
+/// Coarser than [`POLL_INTERVAL`]: every read returns every document seen so far, so a
+/// 1 ms poll on 512 documents would load the receiver more than the writes do. A
+/// latency can overshoot the true one by up to this much.
+const WRITER_POLL_INTERVAL: Duration = Duration::from_millis(5);
+
+/// One [`bench_concurrent_writers`] run: the latency of each document from its create
+/// being issued on the sender to the receiver first returning it, and the CPU each
+/// thread of the process used meanwhile.
+struct WriterRun {
+    latencies: Vec<Duration>,
+    wall: Duration,
+    threads: Vec<(String, Duration)>,
+}
+
+/// `writers` writers create `doc_count` documents on the sender between them, each
+/// waiting for its create to return before issuing its next, while the receiver is
+/// read every [`WRITER_POLL_INTERVAL`] for the documents it holds.
+async fn measure_writers(writers: usize, doc_count: usize) -> WriterRun {
+    let sender = build_bench_node().await;
+    let receiver = build_bench_node().await;
+    connect_and_replicate(&sender, &receiver).await;
+
+    let before = thread_cpu();
+    let start = Instant::now();
+    let per_writer = doc_count / writers;
+    let write = futures::future::join_all((0..writers).map(|writer| {
+        let sender = &sender;
+        async move {
+            let mut issued = Vec::with_capacity(per_writer);
+            for i in 0..per_writer {
+                let at = Instant::now();
+                let response = sender
+                    .execute(&format!(
+                        r#"mutation {{ add_User(input: {{name: "W{writer}-{i}", age: {i}}}) {{ _docID }} }}"#
+                    ))
+                    .await;
+                assert!(
+                    response.errors.is_empty(),
+                    "create mutation returned errors: {:?}",
+                    response.errors
+                );
+                issued.push((created_doc_id(&response), at));
+            }
+            issued
+        }
+    }));
+    let watch = async {
+        let deadline = start + CONVERGENCE_TIMEOUT;
+        let mut seen = std::collections::BTreeMap::<String, Instant>::new();
+        while seen.len() < per_writer * writers {
+            assert!(
+                Instant::now() < deadline,
+                "receiving node reached only {} of {} documents within {CONVERGENCE_TIMEOUT:?}",
+                seen.len(),
+                per_writer * writers
+            );
+            let response = receiver.execute("query { User { _docID } }").await;
+            let now = Instant::now();
+            let users = response
+                .data
+                .as_ref()
+                .and_then(|data| data.get("User"))
+                .and_then(|users| users.as_array());
+            for id in users
+                .into_iter()
+                .flatten()
+                .filter_map(|user| user.get("_docID").and_then(|id| id.as_str()))
+            {
+                seen.entry(id.to_owned()).or_insert(now);
+            }
+            edge::testing::edge().sleep(WRITER_POLL_INTERVAL).await;
+        }
+        seen
+    };
+    let (issued, seen) = futures::future::join(write, watch).await;
+    let wall = start.elapsed();
+    let after = thread_cpu();
+
+    let mut latencies: Vec<Duration> = issued
+        .into_iter()
+        .flatten()
+        .map(|(id, at)| seen[&id].saturating_duration_since(at))
+        .collect();
+    latencies.sort();
+    let threads = after
+        .into_iter()
+        .filter_map(|(key, name, cpu)| {
+            let base = before
+                .iter()
+                .find(|(k, _, _)| *k == key)
+                .map_or(Duration::ZERO, |(_, _, cpu)| *cpu);
+            let used = cpu.saturating_sub(base);
+            (!used.is_zero()).then_some((name, used))
+        })
+        .collect();
+
+    shutdown_nodes(&sender, &receiver).await;
+    WriterRun {
+        latencies,
+        wall,
+        threads,
+    }
+}
+
+/// The latency at percentile `p` (0 to 100) of sorted `latencies`.
+fn percentile(latencies: &[Duration], p: usize) -> Duration {
+    let rank = (latencies.len() * p).div_ceil(100).max(1);
+    latencies[rank - 1]
+}
+
+/// A thread's name without its trailing `-<index>`, so a pool's threads group.
+fn thread_group(name: &str) -> &str {
+    match name.rsplit_once('-') {
+        Some((group, index)) if index.bytes().all(|b| b.is_ascii_digit()) => group,
+        _ => name,
+    }
+}
+
+/// Measures replication latency (p50/p99 per document) and where the CPU goes, at 1 to
+/// 64 concurrent writers, across [`WRITER_DOC_COUNTS`].
+///
+/// Each run prints the CPU each named thread group used during it, its busiest thread
+/// and that thread's share of the run's wall time. pinc runs each node's endpoint on one
+/// thread of that node's edge (`Edge::spawn_pinned`, a `defra-node-edge-<n>` thread).
+/// The edge's other threads carry other work too, so the busiest `defra-node-edge`
+/// thread bounds the endpoint's CPU from above rather than naming it.
+#[test]
+#[ignore = "benchmark: spins up two networked nodes per writer count and size"]
+fn bench_concurrent_writers() {
+    edge::testing::edge()
+        .block_on(async {
+            println!("concurrent writers (poll resolution {WRITER_POLL_INTERVAL:?})");
+            for &doc_count in WRITER_DOC_COUNTS {
+                for &writers in WRITER_COUNTS {
+                    let run = measure_writers(writers, doc_count).await;
+                    println!(
+                        "docs={doc_count:<4} writers={writers:<3} wall={:>9.2?} p50={:>9.2?} p99={:>9.2?}",
+                        run.wall,
+                        percentile(&run.latencies, 50),
+                        percentile(&run.latencies, 99),
+                    );
+                    let mut groups = std::collections::BTreeMap::<&str, (Duration, Duration)>::new();
+                    for (name, cpu) in &run.threads {
+                        let group = groups.entry(thread_group(name)).or_default();
+                        group.0 += *cpu;
+                        group.1 = group.1.max(*cpu);
+                    }
+                    for (group, (total, busiest)) in groups {
+                        if total * 100 < run.wall {
+                            continue;
+                        }
+                        println!(
+                            "    {group:<28} cpu={total:>9.2?} busiest={busiest:>9.2?} ({:.0}% of wall)",
+                            100.0 * busiest.as_secs_f64() / run.wall.as_secs_f64()
+                        );
+                    }
+                }
+            }
+        })
+        .unwrap()
+}
+
+/// Every thread of this process: a key that names it while it lives, its name and the
+/// CPU time (user plus system) it has used.
+#[cfg(target_os = "macos")]
+#[allow(deprecated)] // libc's mach bindings; mach2 is not a dependency
+fn thread_cpu() -> Vec<(u64, String, Duration)> {
+    extern "C" {
+        fn mach_port_deallocate(task: libc::mach_port_t, name: libc::mach_port_t) -> libc::c_int;
+    }
+    let mut out = Vec::new();
+    // SAFETY: task_threads hands back `count` thread ports in memory this function
+    // owns; each is read with thread_info into a buffer of the size it names, then
+    // released, and the array is deallocated once.
+    unsafe {
+        let task = libc::mach_task_self();
+        let mut threads: libc::thread_act_array_t = std::ptr::null_mut();
+        let mut count: libc::mach_msg_type_number_t = 0;
+        if libc::task_threads(task, &mut threads, &mut count) != libc::KERN_SUCCESS {
+            return out;
+        }
+        for i in 0..count as usize {
+            let port = *threads.add(i);
+            let mut info: libc::thread_basic_info = std::mem::zeroed();
+            let mut size = libc::THREAD_BASIC_INFO_COUNT;
+            let read = libc::thread_info(
+                port,
+                libc::THREAD_BASIC_INFO as libc::thread_flavor_t,
+                (&mut info as *mut libc::thread_basic_info).cast(),
+                &mut size,
+            );
+            if read == libc::KERN_SUCCESS {
+                let mut name = [0 as libc::c_char; 64];
+                let thread = libc::pthread_from_mach_thread_np(port);
+                if thread != 0 {
+                    libc::pthread_getname_np(thread, name.as_mut_ptr(), name.len());
+                }
+                let name = std::ffi::CStr::from_ptr(name.as_ptr())
+                    .to_string_lossy()
+                    .into_owned();
+                let time = |t: libc::time_value_t| {
+                    Duration::new(t.seconds as u64, t.microseconds as u32 * 1_000)
+                };
+                out.push((
+                    u64::from(port),
+                    name,
+                    time(info.user_time) + time(info.system_time),
+                ));
+            }
+            mach_port_deallocate(task, port);
+        }
+        libc::vm_deallocate(
+            task,
+            threads as libc::vm_address_t,
+            count as usize * std::mem::size_of::<libc::thread_act_t>(),
+        );
+    }
+    out
+}
+
+/// Every thread of this process, from `/proc/self/task`.
+#[cfg(target_os = "linux")]
+fn thread_cpu() -> Vec<(u64, String, Duration)> {
+    // SAFETY: sysconf only reads a constant of the system.
+    let ticks = unsafe { libc::sysconf(libc::_SC_CLK_TCK) }.max(1) as u64;
+    let Ok(tasks) = std::fs::read_dir("/proc/self/task") else {
+        return Vec::new();
+    };
+    tasks
+        .flatten()
+        .filter_map(|task| {
+            let tid = task.file_name().to_str()?.parse().ok()?;
+            let name = std::fs::read_to_string(task.path().join("comm")).ok()?;
+            let stat = std::fs::read_to_string(task.path().join("stat")).ok()?;
+            // The fields after the parenthesised name; utime and stime are the 12th and
+            // 13th of them.
+            let mut fields = stat.rsplit_once(')')?.1.split_whitespace().skip(11);
+            let utime: u64 = fields.next()?.parse().ok()?;
+            let stime: u64 = fields.next()?.parse().ok()?;
+            let cpu = Duration::from_millis((utime + stime) * 1_000 / ticks);
+            Some((tid, name.trim().to_owned(), cpu))
+        })
+        .collect()
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+fn thread_cpu() -> Vec<(u64, String, Duration)> {
+    Vec::new()
 }

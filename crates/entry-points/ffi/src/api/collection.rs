@@ -22,8 +22,8 @@ pub struct DefraCollectionDeleteOptions {
     pub identity: usize,
     /// Delete only the active versions (1=true, 0=false).
     pub active_only: c_int,
-    /// Reserved, so the struct has no padding: leave it zero. It never
-    /// becomes a field; new fields go after the struct's last one.
+    /// Reserved, so the struct has no padding: leave it zero. Short of a C API
+    /// break (`c-api:break`), it never becomes a field and new fields go last.
     pub _reserved0: u32,
 }
 
@@ -42,8 +42,8 @@ pub struct DefraCollectionDescribeOptions {
     pub collection_id: *const c_char,
     /// Include inactive collection versions (1=true, 0=false).
     pub collection_get_inactive: c_int,
-    /// Reserved, so the struct has no padding: leave it zero. It never
-    /// becomes a field; new fields go after the struct's last one.
+    /// Reserved, so the struct has no padding: leave it zero. Short of a C API
+    /// break (`c-api:break`), it never becomes a field and new fields go last.
     pub _reserved0: u32,
 }
 
@@ -80,8 +80,8 @@ pub struct DefraCollectionTruncateOptions {
     pub collection_id: *const c_char,
     /// Include inactive collection versions (1=true, 0=false).
     pub collection_get_inactive: c_int,
-    /// Reserved, so the struct has no padding: leave it zero. It never
-    /// becomes a field; new fields go after the struct's last one.
+    /// Reserved, so the struct has no padding: leave it zero. Short of a C API
+    /// break (`c-api:break`), it never becomes a field and new fields go last.
     pub _reserved0: u32,
     /// A GraphQL filter as a JSON object; null removes every document.
     pub filter_json: *const c_char,

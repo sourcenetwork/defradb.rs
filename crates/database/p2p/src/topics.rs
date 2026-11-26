@@ -7,9 +7,6 @@
 //! - `{collection_id}`: Collection-specific updates
 //! - `{doc_id}`: Document-specific updates
 
-#[cfg(feature = "libp2p-transport")]
-use libp2p::gossipsub::IdentTopic;
-
 /// Well-known topic for general document synchronization.
 pub const DOC_SYNC_TOPIC: &str = "doc-sync";
 
@@ -49,12 +46,6 @@ pub enum DefraTopic {
 }
 
 impl DefraTopic {
-    /// Convert to libp2p IdentTopic.
-    #[cfg(feature = "libp2p-transport")]
-    pub fn to_ident_topic(&self) -> IdentTopic {
-        IdentTopic::new(self.topic_string())
-    }
-
     /// Get the topic string representation.
     pub fn topic_string(&self) -> String {
         match self {

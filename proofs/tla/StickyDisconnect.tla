@@ -3,7 +3,7 @@
 \*
 \* Three nodes connect to each other. Whenever two of them connect, each
 \* hands the other a list of the peers it is connected to right then
-\* (pinc's peer exchange; a Kademlia answer names peers the same way). A
+\* (pinc's peer exchange). A
 \* list can take its time to arrive. A node that gets a list dials every peer
 \* on it that it has no link to: that is discovery.
 \*
@@ -17,8 +17,8 @@
 \* What must never happen:
 \*   1. a node dials, through discovery, a peer it hung up on, before
 \*      something explicit named that peer again - NoLocalRedial;
-\*   2. on a transport whose close says it was deliberate, the peer that was
-\*      hung up on dials the node back through discovery either -
+\*   2. the peer that was hung up on, whose close says it was deliberate,
+\*      dials the node back through discovery either -
 \*      NoRedialAfterDeliberateClose (both halves).
 \* What must still happen: after a real drop, discovery may reconnect the
 \* two (NoRedialAfterDrop is a witness that must FAIL).
@@ -27,50 +27,25 @@
 \* naming the peer that was just hung up on. Without a memory of the hang-up
 \* the reader dials it straight back (#2992).
 \*
-\* Correspondence with the Rust code (crates/database/p2p/src):
-\*
-\*   | Model             | Rust                                                     |
-\*   |-------------------|----------------------------------------------------------|
-\*   | quiet[x]          | quiet_peers.rs QuietPeers, held by                       |
-\*   |                   | behaviour/dual_kademlia.rs DefraKademlia::quiet          |
-\*   | Connect(x, y)     | host/p2p_host/mod.rs dial_peer: DualKademlia::unquiet    |
-\*   |                   | (RED Unquiet = FALSE skips it), then the dial            |
-\*   |                   | (ConnectPeers, a replicator)                             |
-\*   | Disconnect(x, y)  | host/command_handler/network.rs handle_disconnect:       |
-\*   |                   | DualKademlia::quiet (RED LocalQuiet = FALSE skips it)    |
-\*   | RequestDial(x, y) | a dial another protocol starts to a peer it has no       |
-\*   |                   | connection to (a request-response or PushLog request).   |
-\*   |                   | Its ConnectionId is not in DefraKademlia::dials, so      |
-\*   |                   | handle_pending_outbound_connection lets it through (RED  |
-\*   |                   | OnlyDiscoveryChecked = FALSE refuses it)                 |
-\*   | DeliverClose(m)   | the peer sees the connection close. libp2p carries no    |
-\*   |                   | reason, so RemoteQuiet = FALSE on libp2p                 |
-\*   | DeliverList(m)    | a Kademlia query dialing the peers an answer names:      |
-\*   |                   | DefraKademlia::poll records its dial, and                |
-\*   |                   | handle_pending_outbound_connection refuses it when the   |
-\*   |                   | peer is quiet; the dial stays in DefraKademlia::dials    |
-\*   | LandDial(p)       | handle_established_outbound_connection reads the quiet   |
-\*   |                   | again and refuses a dial quieted meanwhile (RED          |
-\*   |                   | RecheckQuiet = FALSE lets it land)                       |
-\*   | Drop(x, y)        | a connection error, or the peer restarting: nothing      |
-\*   |                   | quiets                                                   |
-\*   | LoseClose(m)      | the same on the side hung up on: it never sees a reason  |
-\*
-\* On pinc (crates/database/p2p/src/pinc), where both halves hold:
+\* Correspondence with the Rust code (crates/database/pinc/src, the quiet table
+\* crates/database/p2p/src/quiet_peers.rs QuietPeers):
 \*
 \*   | Model             | Rust                                                     |
 \*   |-------------------|----------------------------------------------------------|
 \*   | quiet[x]          | endpoint.rs Node::quiet, read by Node::is_quiet          |
-\*   | Connect(x, y)     | endpoint.rs Command::Dial and Node::allow lift it        |
+\*   | Connect(x, y)     | endpoint.rs Command::Dial and Node::allow lift it (RED   |
+\*   |                   | Unquiet = FALSE skips it)                                |
 \*   | RequestDial(x, y) | any other dial: only exchange.rs learn_peers reads       |
-\*   |                   | is_quiet, so nothing else is refused                     |
+\*   |                   | is_quiet, so nothing else is refused (RED                |
+\*   |                   | OnlyDiscoveryChecked = FALSE refuses it)                 |
 \*   | Disconnect(x, y)  | endpoint.rs Node::hang_up: quiets y, with a link or not, |
 \*   |                   | then closes each link with CLOSE_DISCONNECTED (RED       |
 \*   |                   | LocalQuiet = FALSE skips the quiet, RED QuietUnlinked =  |
 \*   |                   | FALSE skips it when no link is up)                       |
 \*   | DeliverClose(m)   | serve.rs serve_connection ends and hung_up_on reads the  |
-\*   |                   | code: quiets x. is_quiet also reads a closed link not    |
-\*   |                   | yet forgotten, so the close and its reason are one step  |
+\*   |                   | code: quiets x (RED RemoteQuiet = FALSE ignores it).     |
+\*   |                   | is_quiet also reads a closed link not yet forgotten, so  |
+\*   |                   | the close and its reason are one step                    |
 \*   | DeliverList(m)    | exchange.rs learn_peers: known_or_barred skips a quiet   |
 \*   |                   | peer, and spawns a dial of each other one                |
 \*   | LandDial(p)       | the spawned dial: is_quiet before the dial, and after it |
@@ -94,9 +69,6 @@
 \*   * Links are one truth value per side, not one per connection. An
 \*     explicit connect waits until any close between the two has arrived,
 \*     so an old close never lands on a new link.
-\*   * A Kademlia answer can name a routing-table peer that is no longer
-\*     connected. Every routing-table peer was connected once, so a list
-\*     taken while it was connected and delivered late stands in for it.
 \*   * To stay finite, a hang-up with no link up is only the first hang-up of
 \*     a run, and one lost close stands at a time. Each RED that needs one
 \*     still fails within that bound.
@@ -106,15 +78,6 @@
 \*   * The quiet table is bounded (MAX_QUIET_PEERS, oldest evicted first).
 \*     Three nodes never fill it; eviction is checked by the Rust test
 \*     a_full_table_forgets_its_oldest_peer_and_counts_it.
-\*   * libp2p's Kademlia bootstraps (the refresh Go's kad-dht runs when a
-\*     new peer joins a small routing table, DefraKademlia::refresh_if_low,
-\*     at most one at a time per table, and the periodic one) are more lists
-\*     a node hands itself: a bootstrap's answers name peers, and its dials
-\*     pass the same quiet check. How many run at once is load, not safety,
-\*     so the model leaves it out; ten_new_peers_start_one_bootstrap_per_table
-\*     checks it. On libp2p the peer hung up on can still bootstrap later (a
-\*     new routing-table peer, the periodic tick), which is the remoteRedial
-\*     that Red_Libp2pRemote shows.
 \*   * A node that restarts forgets its quiet table, its routing table and
 \*     every link at once: the table lives in memory, as Go's peerstore does
 \*     (reqs/defra/mutation-net.md says so). That is Init for that one node,
@@ -130,7 +93,7 @@ CONSTANTS
   Nodes,        \* the three nodes
   LocalQuiet,   \* TRUE as written: a hang-up quiets the peer for discovery
   QuietUnlinked, \* TRUE as written: it does so with no link up as well
-  RemoteQuiet,  \* TRUE when the close tells the peer it was deliberate
+  RemoteQuiet,  \* TRUE as written: the close tells the peer it was deliberate
   Unquiet,      \* TRUE as written: an explicit connect lifts the quiet
   OnlyDiscoveryChecked, \* TRUE as written: only discovery's dials are refused
   RecheckQuiet, \* TRUE as written: a discovery dial reads the quiet as it lands
@@ -276,7 +239,7 @@ DeliverClose(m) ==
   /\ up' = [up EXCEPT ![m.to][m.from] = FALSE]       \* y's view of the link ends
   /\ quiet' = IF RemoteQuiet                         \* the guard of half 2:
                 THEN [quiet EXCEPT ![m.to] = @ \cup {m.from}] \* y quiets x
-                ELSE quiet                           \* libp2p, or RED: y forgets
+                ELSE quiet                           \* RED: y forgets
   /\ msgs' = msgs \ {m}                              \* the close is read
   /\ UNCHANGED <<pending, hungUp, hungUpOn, dropped, lostClose, localRedial,
                  remoteRedial, dropRedial, lostRedial, requestRefused,

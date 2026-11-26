@@ -19,20 +19,6 @@ fn guard_slot() -> &'static SegQueue<FlushGuard> {
     PROFILING_GUARD.get_or_init_racy(SegQueue::new)
 }
 
-fn with_default_transport_noise_filters(filter: EnvFilter) -> EnvFilter {
-    filter
-        .add_directive(
-            "iroh_quinn_proto::connection=error"
-                .parse()
-                .expect("valid tracing directive"),
-        )
-        .add_directive(
-            "noq_proto::connection=error"
-                .parse()
-                .expect("valid tracing directive"),
-        )
-}
-
 fn install_chrome_layer(output_path: &str) -> Result<FlushGuard, String> {
     let file = File::create(output_path).map_err(|error| {
         format!(
@@ -41,9 +27,7 @@ fn install_chrome_layer(output_path: &str) -> Result<FlushGuard, String> {
         )
     })?;
 
-    let filter = with_default_transport_noise_filters(
-        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
-    );
+    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
     let (chrome_layer, flush_guard) = ChromeLayerBuilder::new()
         .writer(file)
         .include_args(true)

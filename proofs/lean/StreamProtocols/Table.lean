@@ -8,7 +8,7 @@ a table once, and from then on looks each incoming stream's tag up in it.
 
 What must never happen:
 * a protocol the node could not serve as declared gets into the table: a tag
-  outside 1 to 64 bytes, a tag under Defra's reserved `/defra-iroh/` prefix, a
+  outside 1 to 64 bytes, a tag under Defra's reserved `/defra-pinc/` prefix, a
   request limit above one peer's share, or a deadline of zero or past the cap
   (`register_all_valid`);
 * a protocol is accepted and then never served, because another one with the
@@ -18,7 +18,7 @@ What must never happen:
 * a tag nobody registered finds a protocol (`unregistered_tags_find_nothing`).
 
 Rust anchors: `StreamProtocol::validate` and `StreamProtocols::new` /
-`StreamProtocols::get` in `crates/database/p2p/src/iroh/stream_protocols.rs`. A tag is
+`StreamProtocols::get` in `crates/database/pinc/src/stream_protocols.rs`. A tag is
 modeled as its bytes; the per-priority share as one number, since each protocol
 names one priority.
 -/
@@ -37,8 +37,8 @@ structure Protocol where
   -- how long a handler may run, in any unit
   deadline : Nat
 
--- Defra's reserved prefix, `/defra-iroh/`, as bytes.
-def reserved : Tag := "/defra-iroh/".toList.map Char.toNat
+-- Defra's reserved prefix, `/defra-pinc/`, as bytes.
+def reserved : Tag := "/defra-pinc/".toList.map Char.toNat
 
 -- The longest tag a tag frame carries.
 def maxTagLen : Nat := 64

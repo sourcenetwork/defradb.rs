@@ -1,26 +1,23 @@
 # Providers, admission, budgets
 
-## Provider discovery: signed service records
+## Provider discovery: peer records and peer exchange
 
-How do peers find who has what? Nodes publish **service records**: a signed, expiring
-statement of what this node offers (collections with roles Replica/Archive/Reader,
-replicator service, searchable-encryption query service, KMS, relay, custom roles),
-published via pkarr, served on query streams, and announced on a discovery topic
-(`crates/database/p2p/src/iroh/records/`). Readers keep the newest valid record per node in a
-book and pick fetch candidates and gossip neighbours from it. Record freshness,
-fan-in of replies, and the alternate-slot rule for the best provider are modelled:
-the provider record family has TLA+ and Lean proofs (see
-[Verification](../proofs/index.md)).
+How do peers find each other? Each node signs a record of the addresses it can be
+dialed at and hands it to every peer it connects to, so a peer can later dial it by id;
+a connected node also hands each new peer the peers it holds (peer exchange,
+[`crates/database/pinc/src/exchange.rs`](https://github.com/sourcenetwork/defradb.rs/blob/main/crates/database/pinc/src/exchange.rs)).
+Fetch candidates for a DAG come from the peers that announced its heads and from the
+provider ranking in the sync engine.
 
 ## Admission: who may connect
 
-- **Allowlists** ([`crates/database/p2p/src/iroh/endpoint_config.rs`](https://github.com/sourcenetwork/defradb.rs/blob/main/crates/database/p2p/src/iroh/endpoint_config.rs)): `AcceptAll` (default) or an explicit
-  endpoint set, mutable at runtime. Removing from the allowlist stops *new* admissions;
+- **Allowlists** ([`crates/database/pinc/src/admission.rs`](https://github.com/sourcenetwork/defradb.rs/blob/main/crates/database/pinc/src/admission.rs)): `AcceptAll` (default) or an explicit
+  peer set, mutable at runtime. Removing from the allowlist stops *new* admissions;
   **`PeerAdmission::revoke`** is the operation that actually bars a peer, and the
   admission authority makes revoke -> re-admit a lockstep state machine so a revoked
   peer cannot slip back in through a stale allowlist update.
 - **Peer identity challenges** (optional): bind the Defra identity to the connection.
-- **Inbound budgets** ([`crates/database/p2p/src/iroh/inbound_budget.rs`](https://github.com/sourcenetwork/defradb.rs/blob/main/crates/database/p2p/src/iroh/inbound_budget.rs)): concurrent inbound streams are
+- **Inbound budgets** ([`crates/database/pinc/src/inbound_budget.rs`](https://github.com/sourcenetwork/defradb.rs/blob/main/crates/database/pinc/src/inbound_budget.rs)): concurrent inbound streams are
   bounded; excess is refused, not queued unboundedly.
 
 ## Trust and capability on the sync path

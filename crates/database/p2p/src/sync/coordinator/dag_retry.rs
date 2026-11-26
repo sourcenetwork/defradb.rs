@@ -60,8 +60,6 @@ pub(super) struct ProviderRotation {
     peers: Vec<PeerId>,
     cursor: usize,
     unservable: rapidhash::RapidHashMap<PeerId, cid::Cid>,
-    productive: rapidhash::RapidHashSet<PeerId>,
-    responsive: rapidhash::RapidHashSet<PeerId>,
     /// Per attempt: providers that shed a request, and whether any delivered.
     busy: rapidhash::RapidHashSet<PeerId>,
     attempt_progress: bool,
@@ -74,8 +72,6 @@ impl ProviderRotation {
             peers,
             cursor: 0,
             unservable: rapidhash::RapidHashMap::new(),
-            productive: rapidhash::RapidHashSet::new(),
-            responsive: rapidhash::RapidHashSet::new(),
             busy: rapidhash::RapidHashSet::new(),
             attempt_progress: false,
         }
@@ -88,7 +84,6 @@ impl ProviderRotation {
 
     /// The current provider delivered at least one block for this root.
     pub(super) fn record_progress(&mut self) {
-        self.productive.insert(self.current().clone());
         self.attempt_progress = true;
     }
 
@@ -116,23 +111,6 @@ impl ProviderRotation {
 
     pub(super) fn attempt_was_shed(&self) -> bool {
         !self.busy.is_empty() && !self.attempt_progress
-    }
-
-    /// The current provider answered a rooted CAR request during this fetch.
-    ///
-    /// The CAR request and its response are their own libp2p substreams, so a
-    /// reply is positive evidence that the peer is alive on this connection —
-    /// evidence block delivery cannot give, because a want that is
-    /// never transmitted and a want the peer cannot satisfy both arrive as
-    /// silence.
-    pub(super) fn record_responsive(&mut self) {
-        self.responsive.insert(self.current().clone());
-    }
-
-    /// The peer answered on a non-Bitswap substream yet delivered no block
-    /// across every window of this fetch.
-    pub(super) fn is_responsive_but_silent(&self, peer: &PeerId) -> bool {
-        self.responsive.contains(peer) && !self.productive.contains(peer)
     }
 
     pub(super) fn current(&self) -> &PeerId {

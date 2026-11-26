@@ -221,24 +221,6 @@ pub const CONSTANTS: &[Constant] = &[
         value: Count(16 * 1024 * 1024),
         models: &[],
     },
-    Constant {
-        file: "crates/database/p2p/src/iroh/fetch_stats.rs",
-        name: "SCALE",
-        value: Count(1_000_000),
-        models: &[Exact("proofs/lean/FetchStats/Rolling.lean", "scale")],
-    },
-    Constant {
-        file: "crates/database/p2p/src/iroh/fetch_stats.rs",
-        name: "WEIGHT",
-        value: Count(8),
-        models: &[Exact("proofs/lean/FetchStats/Rolling.lean", "weight")],
-    },
-    Constant {
-        file: "crates/database/p2p/src/iroh/protocols.rs",
-        name: "MAX_STREAM_TAG_LEN",
-        value: Count(64),
-        models: &[Exact("proofs/lean/GossipFrame/Framing.lean", "maxTagLen")],
-    },
 ];
 
 /// What an initializer or a model definition states.

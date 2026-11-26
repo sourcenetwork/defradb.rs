@@ -30,7 +30,7 @@
 \*   4. an entry stays in the table forever - LIVE_NoLeak;
 \*   5. a dropped token's stream, still open, is never reset - LIVE_DropResets.
 \*
-\* Correspondence with the Rust code (crates/database/p2p/src/pinc/):
+\* Correspondence with the Rust code (crates/database/pinc/src/):
 \*
 \*   | Model             | Rust                                                      |
 \*   |-------------------|-----------------------------------------------------------|

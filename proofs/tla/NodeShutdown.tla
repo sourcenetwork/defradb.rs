@@ -5,7 +5,7 @@
 \*   * the ACP redrive (acp::redrive_owed), which settles registrations a
 \*     previous run left owed. It runs on the worker pool and reads and
 \*     writes storage;
-\*   * a node service on the network edge (the libp2p host, its event
+\*   * a node service on the network edge (the pinc peer, its event
 \*     handler, the replication loop), which also reaches storage.
 \* Requests (signed queries, HTTP requests, an accepted connection's included)
 \* arrive while the node admits them. So do in-process writes: an unsigned

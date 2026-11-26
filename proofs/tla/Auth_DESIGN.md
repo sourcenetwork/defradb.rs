@@ -19,8 +19,8 @@ adversary model, entry-point assumptions, and TLC runs.
 | P2P replicator mutations | `crates/surfaces/http/src/handlers/p2p/replicators.rs`; `crates/surfaces/http/src/route_permissions.rs` | Add/delete replicators require `P2pReplicatorAdd` / `P2pReplicatorDelete` in route table and handler. The handler passes the authenticated authorizer DID, through `defra_p2p_adapter::peer::ReplicatorExtras`, into explicit replay capability checks where applicable; the node's `Client::add_replicator` passes its request identity the same way. |
 | DAC policy mutation | `crates/surfaces/http/src/handlers/acp.rs`; `crates/surfaces/http/src/route_permissions.rs` | `POST /api/v0/acp/policy` requires `DacPolicyAdd`; the handler also requires a non-empty authenticated creator DID. |
 | NAC grant/revoke mutation | `crates/surfaces/http/src/handlers/nac.rs`; `crates/surfaces/http/src/route_permissions.rs` | Relationship add/delete routes require `NacRelationAdd` / `NacRelationDelete`. Dynamic enable/disable/re-enable require authenticated DID and delegate admin checks to NAC itself. |
-| P2P sync ingress | `crates/database/p2p/src/iroh/endpoint_streams.rs`; `crates/database/p2p/src/sync/coordinator/authorizer.rs`; `crates/database/p2p/src/sync/coordinator/access.rs` | Iroh stream dispatch authenticates transport-level signed P2P messages for some protocols and authorizes sync by PeerID/replicator state. This is not an actor-DID management authorization gate. The green model treats these sync streams as non-mutating for node configuration; the red PeerID-only run flips a hypothetical management stream to mutating and demonstrates the failure. |
-| FFI / embedded P2P and DAC paths | `crates/entry-points/ffi/src/nac_check.rs`; `crates/entry-points/ffi/src/p2p/*.rs`; `crates/entry-points/ffi/src/acp/dac.rs`; `crates/surfaces/p2p-adapter/src/{libp2p,iroh}.rs` | FFI wrappers check NAC with a caller-supplied DID string before mutating. The adapters do no JWT auth, but every peer operation, the `get-p2p-peer-info` reads (`listen_addresses`, `shareable_address`, `sync_status`, `peer_details`) included, checks its node permission through `P2PAdapter::check_nac` / `IrohP2PAdapter::check_nac` for the identity their binding (`ManagedP2PSystem::ops_for`) names; unbound ops name no identity and are refused while node ACP is on. That check is `DB::check_node_access_as`, modeled in `NacOrder`. This model scopes the green proof to remote HTTP management paths. |
+| P2P sync ingress | `crates/database/pinc/src/serve.rs`; `crates/database/p2p/src/sync/coordinator/authorizer.rs`; `crates/database/p2p/src/sync/coordinator/access.rs` | pinc stream dispatch authenticates transport-level signed P2P messages for some protocols and authorizes sync by PeerID/replicator state. This is not an actor-DID management authorization gate. The green model treats these sync streams as non-mutating for node configuration; the red PeerID-only run flips a hypothetical management stream to mutating and demonstrates the failure. |
+| FFI / embedded P2P and DAC paths | `crates/entry-points/ffi/src/nac_check.rs`; `crates/entry-points/ffi/src/p2p/*.rs`; `crates/entry-points/ffi/src/acp/dac.rs`; `crates/surfaces/p2p-adapter/src/pinc.rs` | FFI wrappers check NAC with a caller-supplied DID string before mutating. The adapters do no JWT auth, but every peer operation, the `get-p2p-peer-info` reads (`listen_addresses`, `shareable_address`, `sync_status`, `peer_details`) included, checks its node permission through `PincP2PAdapter::check_nac` for the identity their binding (`ManagedP2PSystem::ops_for`) names; unbound ops name no identity and are refused while node ACP is on. That check is `DB::check_node_access_as`, modeled in `NacOrder`. This model scopes the green proof to remote HTTP management paths. |
 
 No `check_node_access` symbol exists in this worktree; the source-level
 primitive is represented by `require_permission` and `NodeAcpOperations::
@@ -79,7 +79,7 @@ retroactively make the earlier authorization unsafe.
 
 Red runs:
 
-- `MC_Auth_Red_PeerOnly`: a hypothetical Iroh management stream is marked as a
+- `MC_Auth_Red_PeerOnly`: a hypothetical pinc management stream is marked as a
   mutating entry point but is only PeerID-gated. TLC reaches `executed` from an
   absent actor token, violating `INV_NoMutationWithoutVerifiedActor`.
 - `MC_Auth_Red_Stale`: an actor verifies while valid, then the credential
@@ -95,7 +95,7 @@ Green run:
   relationship mutations are all `ActorGate` entry points in the static
   entry-point table. The dynamic requests include one valid authorized request,
   one absent-token request, and one wrong-scope request; credential expiry,
-  replay, and revocation can occur before authorization. Iroh sync streams and
+  replay, and revocation can occur before authorization. pinc sync streams and
   embedded-direct adapter calls are present as non-remote-management entries, so
   their PeerID/DID-only gates do not satisfy `INV_AllEntryPointsGated` unless
   they are kept out of the mutating remote-management surface. The strict gate
@@ -108,8 +108,8 @@ For remote node configuration management, keep the current HTTP route-table plus
 handler-level NAC gates: no node-config mutation should execute without a fresh,
 scope-correct, non-revoked actor-DID.
 
-The source review did not find a current Iroh stream that mutates node
-configuration. If one is added, `endpoint_streams.rs` must not rely on PeerID or
+The source review did not find a current pinc stream that mutates node
+configuration. If one is added, `serve.rs` must not rely on PeerID or
 transport signatures alone; it needs an actor-DID gate equivalent to the HTTP
 path. Likewise, any embedded or FFI surface that is exposed to untrusted callers
 must be wrapped by a gate equivalent to `ActorGate`, not only a raw adapter call.

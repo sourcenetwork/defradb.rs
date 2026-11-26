@@ -6,9 +6,9 @@
 
 #[path = "support/clock.rs"]
 mod clock;
-mod iroh_peers;
 #[path = "support/outcome.rs"]
 mod outcome;
+mod pinc_peers;
 
 use std::sync::Arc;
 
@@ -18,8 +18,8 @@ use clock::sleep;
 use db::merge::governance::{FieldValue, MergeCandidate, MergeValidator, MergeVerdict, MergeView};
 use defra_node::{AccessHooks, NodeBuilder};
 use document::NormalValue;
-use iroh_peers::{connect, create, doc_ids, iroh_config, replicate, wait_for_docs, Node};
 use outcome::Result;
+use pinc_peers::{connect, create, doc_ids, pinc_config, replicate, wait_for_docs, Node};
 use std::time::Duration;
 
 const SDL: &str = "type Grant { label: String } type Note { grant: String }";
@@ -57,7 +57,7 @@ impl MergeValidator for AwaitGrant {
 
 async fn plain_node() -> Result<Node> {
     let node = NodeBuilder::default()
-        .with_p2p(iroh_config())
+        .with_pinc(pinc_config())
         .build()
         .await?;
     node.add_collection(SDL).await?;
@@ -70,7 +70,7 @@ fn a_composite_merged_by_redrive_reaches_this_nodes_replicators() -> Result<()> 
         .block_on(async {
             let author = plain_node().await?;
             let middle = NodeBuilder::default()
-                .with_p2p(iroh_config())
+                .with_pinc(pinc_config())
                 .with_access_hooks(
                     AccessHooks::new(["Note"]).with_merge_validator(Arc::new(AwaitGrant)),
                 )

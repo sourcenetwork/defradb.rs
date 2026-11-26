@@ -5,10 +5,10 @@
 
 #[path = "support/clock.rs"]
 mod clock;
-#[path = "iroh_peers/mod.rs"]
-mod iroh_peers;
 #[path = "support/outcome.rs"]
 mod outcome;
+#[path = "pinc_peers/mod.rs"]
+mod pinc_peers;
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -16,8 +16,8 @@ use std::time::{Duration, Instant};
 use clock::sleep;
 use defra_core::RequestContext;
 use defra_node::{NodeBuilder, NodeConfig, QueryRequest, TransportConfig};
-use iroh_peers::{create, iroh_config, listen_addr};
 use outcome::Result;
+use pinc_peers::{create, listen_addr, pinc_config};
 use serde_json::Value as JsonValue;
 
 const NOTE_SDL: &str = "type Note { body: String }";
@@ -40,14 +40,14 @@ fn a_transaction_committed_during_shutdown_is_refused_or_keeps_its_head_marker()
             let sender = NodeBuilder::default()
                 .with_config(NodeConfig {
                     edge: Some(edge::testing::edge()),
-                    transport: TransportConfig::Iroh(iroh_config()),
+                    transport: TransportConfig::Pinc(pinc_config()),
                     ..Default::default()
                 })
                 .data_path(&path)
                 .build()
                 .await?;
             let receiver = NodeBuilder::default()
-                .with_p2p(iroh_config())
+                .with_pinc(pinc_config())
                 .build()
                 .await?;
             sender.add_collection(NOTE_SDL).await?;
@@ -152,7 +152,7 @@ fn a_transaction_left_open_by_a_refused_commit_does_not_stall_shutdown() -> Resu
             let node = NodeBuilder::default()
                 .with_config(NodeConfig {
                     edge: Some(edge::testing::edge()),
-                    transport: TransportConfig::Iroh(iroh_config()),
+                    transport: TransportConfig::Pinc(pinc_config()),
                     ..Default::default()
                 })
                 .data_path(dir.path().join("data.regolith"))

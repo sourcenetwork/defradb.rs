@@ -28,6 +28,5 @@ pub type ManageHooksCell = Arc<regolith::sync::OnceCell<ManageHooks>>;
 
 /// Create an empty, unpopulated hooks cell.
 pub fn new_manage_hooks_cell() -> ManageHooksCell {
-    #[cfg_attr(target_arch = "wasm32", allow(clippy::arc_with_non_send_sync))]
     Arc::new(regolith::sync::OnceCell::new())
 }

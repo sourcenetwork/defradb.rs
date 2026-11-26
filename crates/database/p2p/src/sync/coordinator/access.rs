@@ -13,7 +13,7 @@ use blockstore::Blockstore;
 
 use super::authorizer::AccessAuthorizer;
 use super::SyncCoordinator;
-use crate::bitswap::AccessMode;
+use crate::access::AccessMode;
 use crate::error::{Error, Result};
 use crate::transport::{P2PTransport, PeerId};
 
@@ -80,7 +80,7 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
     /// gate exists so that unauthorized peers never cause the receiver to
     /// spend resources validating their blocks in the first place.
     ///
-    /// Uses string-based registry lookup, supporting both libp2p and iroh peer IDs.
+    /// Uses string-based registry lookup.
     pub(super) async fn check_access_str(
         &self,
         peer_id_str: &str,

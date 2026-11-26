@@ -35,15 +35,13 @@ const GOSSIP_DECODE_FAILURE_SAMPLE_LIMIT: usize = 16;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GossipTransport {
-    Iroh,
-    Libp2p,
+    Pinc,
 }
 
 impl GossipTransport {
     fn as_str(self) -> &'static str {
         match self {
-            Self::Iroh => "iroh",
-            Self::Libp2p => "libp2p",
+            Self::Pinc => "pinc",
         }
     }
 }
@@ -72,23 +70,14 @@ pub struct GossipDecodeFailureSample {
 /// 1st/2nd/4th/8th… occurrence, debug otherwise) without maintaining their
 /// own atomic.
 ///
-/// Crate-internal: only the libp2p and iroh transport paths call this.
-/// Downstream consumers read the total via `SyncDiagnostics::snapshot()`
-/// rather than synthesizing failures.
-#[cfg_attr(
-    not(any(feature = "libp2p-transport", feature = "iroh-transport")),
-    allow(dead_code)
-)]
-pub(crate) fn record_gossip_decode_failure() -> u64 {
+/// Only a transport's gossip path calls this. Downstream consumers read the
+/// total via `SyncDiagnostics::snapshot()` rather than synthesizing failures.
+pub fn record_gossip_decode_failure() -> u64 {
     GOSSIP_DECODE_FAILURES.fetch_add(1, Ordering::Relaxed) + 1
 }
 
 /// Record a gossip payload decode failure and retain a deduplicated sample.
-#[cfg_attr(
-    not(any(feature = "libp2p-transport", feature = "iroh-transport")),
-    allow(dead_code)
-)]
-pub(crate) fn record_gossip_decode_failure_sample(sample: GossipDecodeFailureSample) -> u64 {
+pub fn record_gossip_decode_failure_sample(sample: GossipDecodeFailureSample) -> u64 {
     let total = record_gossip_decode_failure();
     RECENT_GOSSIP_DECODE_FAILURES.rcu(|current| {
         let mut recent = current.clone();
@@ -532,7 +521,7 @@ mod tests {
         let topic = format!("topic-{}", uuid::Uuid::new_v4());
         let prefix = format!("deadbeef-{}", uuid::Uuid::new_v4());
         let sample = GossipDecodeFailureSample {
-            transport: GossipTransport::Iroh,
+            transport: GossipTransport::Pinc,
             peer_id: "peer-123".to_string(),
             topic: topic.clone(),
             message_size: 128,
@@ -546,7 +535,7 @@ mod tests {
         let snapshot = SyncDiagnostics::default().snapshot();
         assert!(snapshot.gossip_decode_failures >= total);
         assert!(snapshot.recent_gossip_decode_failures.iter().any(|entry| {
-            entry.transport == GossipTransport::Iroh
+            entry.transport == GossipTransport::Pinc
                 && entry.topic == topic
                 && entry.payload_fingerprint == prefix
                 && entry.occurrences >= 1

@@ -42,8 +42,7 @@ async fn connect<T: P2PTransport>(
     Ok(peer_id)
 }
 
-#[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
-#[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
+#[async_trait::async_trait]
 impl<T: P2PTransport> ManageRequester for ManageClient<T> {
     async fn manage(
         &self,

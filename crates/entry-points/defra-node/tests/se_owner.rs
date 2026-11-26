@@ -12,7 +12,7 @@
 //! Topology (Go's owner-queries-replicator model): node A = OWNER (writes the
 //! doc, sets the replicator, runs the query); node B = REPLICATOR (serves
 //! docIDs from the artifacts A pushed). Both hold the same 32-byte SE key.
-#![cfg(any(feature = "libp2p", feature = "p2p"))]
+#![cfg(feature = "p2p")]
 
 #[path = "support/clock.rs"]
 mod clock;
@@ -34,112 +34,19 @@ const SHARED_SE_KEY: [u8; 32] = [
     0x10, 0x32, 0x54, 0x76, 0x98, 0xba, 0xdc, 0xfe, 0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef,
 ];
 
-#[cfg(feature = "libp2p")]
-#[test]
-fn embedded_libp2p_se_owner_queries_replicator() -> Result<()> {
-    edge::testing::edge()
-        .block_on(async {
-            let owner = NodeBuilder::default()
-                .with_libp2p("/ip4/127.0.0.1/tcp/0")
-                .build()
-                .await?;
-            let replicator = NodeBuilder::default()
-                .with_libp2p("/ip4/127.0.0.1/tcp/0")
-                .build()
-                .await?;
-
-            // Same schema + encrypted index on `name` on both nodes.
-            owner.add_collection(USER_SCHEMA).await?;
-            replicator.add_collection(USER_SCHEMA).await?;
-            owner.add_encrypted_index("User", "name").await?;
-            replicator.add_encrypted_index("User", "name").await?;
-
-            // Provision the SAME SE key at runtime on BOTH nodes (mirrors FFI
-            // set_se_encryption_key -> set_replicator_push_options).
-            set_se_key(&owner, SHARED_SE_KEY)?;
-            set_se_key(&replicator, SHARED_SE_KEY)?;
-
-            let p2p_owner = owner
-                .p2p_system()
-                .cloned()
-                .expect("owner missing p2p system");
-            let p2p_replicator = replicator
-                .p2p_system()
-                .cloned()
-                .expect("replicator missing p2p system");
-
-            let replicator_peer = p2p_replicator.ops().local_peer_id().await?;
-            let replicator_addr =
-                wait_for_shareable_addr(&p2p_replicator, &replicator_peer).await?;
-
-            // Owner connects to replicator and registers it as the User replicator.
-            p2p_owner.ops().connect_peer(&replicator_addr).await?;
-            wait_for_connected_peer(&p2p_owner, &replicator_peer).await?;
-
-            p2p_owner
-                .ops()
-                .add_collections(vec!["User".to_string()])
-                .await?;
-            p2p_replicator
-                .ops()
-                .add_collections(vec!["User".to_string()])
-                .await?;
-            p2p_owner
-                .ops()
-                .add_replicator(
-                    vec!["User".to_string()],
-                    Some(&replicator_addr),
-                    Default::default(),
-                    Vec::new(),
-                    None,
-                )
-                .await?;
-
-            // Owner writes the encrypted-indexed doc; this pushes the SE artifact to B.
-            let created = owner
-        .execute(r#"mutation { add_User(input: {name: "John", age: 21, city: "NYC"}) { _docID } }"#)
-        .await;
-            if created.has_errors() {
-                panic!("add_User returned errors: {:?}", created.errors);
-            }
-            let doc_id = created
-                .data
-                .as_ref()
-                .and_then(|d| d.get("add_User"))
-                .and_then(|v| v.as_array())
-                .and_then(|items| items.first())
-                .and_then(|item| item.get("_docID"))
-                .and_then(|v| v.as_str())
-                .map(str::to_string)
-                .expect("add_User response missing _docID");
-
-            // Query runs on the OWNER (node A); A fans the tag out to replicator B.
-            wait_for_se_query(&owner, "User", r#"{name: {_eq: "John"}}"#, &doc_id).await?;
-
-            owner.shutdown().await.unwrap();
-            replicator.shutdown().await.unwrap();
-            Ok(())
-        })
-        .unwrap()
-}
-
 #[cfg(feature = "p2p")]
 #[test]
-fn embedded_iroh_se_owner_queries_replicator() -> Result<()> {
+fn embedded_pinc_se_owner_queries_replicator() -> Result<()> {
     edge::testing::edge()
         .block_on(async {
             use std::net::{IpAddr, Ipv4Addr};
 
-            use defra_node::P2PConfig;
+            use defra_node::PincConfig;
 
-            fn iroh_config() -> P2PConfig {
-                P2PConfig {
+            fn pinc_config() -> PincConfig {
+                PincConfig {
+                    bind: std::net::SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0),
                     peer_key: defra_node::PeerKeySource::Store,
-                    bind_addr: Some(IpAddr::V4(Ipv4Addr::LOCALHOST)),
-                    port: Some(0),
-                    relay_mode: p2p::iroh::IrohRelayModeConfig::Disabled,
-                    discovery: p2p::iroh::IrohDiscoveryConfig::Disabled,
-                    max_concurrent_multipath_paths: None,
                     secret_key_path: None,
                     allowlist: Default::default(),
                     ..Default::default()
@@ -147,11 +54,11 @@ fn embedded_iroh_se_owner_queries_replicator() -> Result<()> {
             }
 
             let owner = NodeBuilder::default()
-                .with_p2p(iroh_config())
+                .with_pinc(pinc_config())
                 .build()
                 .await?;
             let replicator = NodeBuilder::default()
-                .with_p2p(iroh_config())
+                .with_pinc(pinc_config())
                 .build()
                 .await?;
 
@@ -173,7 +80,7 @@ fn embedded_iroh_se_owner_queries_replicator() -> Result<()> {
                 .expect("replicator missing p2p system");
 
             let replicator_peer = p2p_replicator.ops().local_peer_id().await?;
-            let replicator_addr = wait_for_iroh_addr(&p2p_replicator).await?;
+            let replicator_addr = wait_for_pinc_addr(&p2p_replicator).await?;
 
             p2p_owner.ops().connect_peer(&replicator_addr).await?;
             wait_for_connected_peer(&p2p_owner, &replicator_peer).await?;
@@ -224,18 +131,15 @@ fn embedded_iroh_se_owner_queries_replicator() -> Result<()> {
 }
 
 #[cfg(feature = "p2p")]
-async fn wait_for_iroh_addr(system: &defra_node::ManagedP2PSystem) -> Result<String> {
+async fn wait_for_pinc_addr(system: &defra_node::ManagedP2PSystem) -> Result<String> {
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
         let addrs = system.ops().listen_addresses().await?;
-        if let Some(addr) = addrs
-            .into_iter()
-            .find(|addr| addr.contains("/p2p/") || addr.starts_with("endpoint"))
-        {
+        if let Some(addr) = addrs.into_iter().find(|addr| addr.contains("@127.0.0.1:")) {
             return Ok(addr);
         }
         if Instant::now() >= deadline {
-            panic!("timed out waiting for direct iroh listen address");
+            panic!("timed out waiting for direct pinc listen address");
         }
         sleep(Duration::from_millis(100)).await;
     }
@@ -248,34 +152,6 @@ fn set_se_key(node: &Node, key: [u8; 32]) -> Result<()> {
         se_identity_pubkey: None,
     })
     .map_err(Into::into)
-}
-
-#[cfg(feature = "libp2p")]
-async fn wait_for_shareable_addr(
-    system: &defra_node::ManagedP2PSystem,
-    peer_id: &str,
-) -> Result<String> {
-    let deadline = Instant::now() + Duration::from_secs(10);
-    loop {
-        if let Some(addr) = system.ops().shareable_address().await? {
-            return Ok(addr);
-        }
-        // libp2p listen addresses lack the /p2p/<peer_id> suffix; append it
-        // (mirrors the HTTP /p2p/info handler). Skip the unspecified 0.0.0.0
-        // bind addr in favour of a concrete loopback address.
-        let addrs = system.ops().listen_addresses().await?;
-        if let Some(addr) = addrs
-            .into_iter()
-            .filter(|a| a.starts_with('/') && !a.contains("/0.0.0.0/"))
-            .max_by_key(|a| a.contains("127.0.0.1"))
-        {
-            return Ok(format!("{addr}/p2p/{peer_id}"));
-        }
-        if Instant::now() >= deadline {
-            panic!("timed out waiting for a shareable libp2p address");
-        }
-        sleep(Duration::from_millis(100)).await;
-    }
 }
 
 async fn wait_for_connected_peer(

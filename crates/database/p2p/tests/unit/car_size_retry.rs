@@ -1,5 +1,5 @@
 use super::*;
-use rapidhash::{HashMapExt, RapidHashMap};
+use rapidhash::RapidHashMap;
 
 #[nuclei::test(start_paused = true)]
 async fn unservable_batch_does_not_hide_later_servable_blocks() {
@@ -23,9 +23,6 @@ async fn unservable_batch_does_not_hide_later_servable_blocks() {
     let last = *missing.last().unwrap();
     let transport = TestTransport::new(
         blockstore.clone(),
-        root,
-        root_data,
-        RapidHashMap::new(),
         RapidHashMap::from_iter([(last, blocks[&last].clone())]),
     );
     let completions = crate::sync::manager::BlockSyncCompletionTracker::default();
@@ -70,9 +67,6 @@ async fn size_limited_provider_is_not_retried_but_alternate_can_finish() {
         blockstore.put(&root, &root_data).await.unwrap();
         let transport = TestTransport::new(
             blockstore.clone(),
-            root,
-            root_data,
-            RapidHashMap::new(),
             RapidHashMap::from_iter([(child, child_data)]),
         );
         let completions = crate::sync::manager::BlockSyncCompletionTracker::default();

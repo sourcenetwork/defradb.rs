@@ -3,9 +3,6 @@
 
 use std::sync::Arc;
 
-#[cfg(feature = "libp2p")]
-use kovan_queue::seg_queue::SegQueue;
-
 use defra_p2p_adapter::{ReplicatorPushOptions, ReplicatorPushOptionsState};
 
 type ReplicatorPushOptionsCallback =
@@ -21,11 +18,7 @@ type RetryReplicatorsCallback =
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum TransportKind {
-    #[cfg(feature = "libp2p")]
-    Libp2p,
     #[cfg(feature = "p2p")]
-    Iroh,
-    #[cfg(feature = "pinc")]
     Pinc,
 }
 
@@ -40,10 +33,10 @@ pub struct ManagedP2PSystem {
     /// P2P-only peers on behalf of an HTTP caller. Set once during P2P setup
     /// (after the system is built), consumed when wiring `AppState`.
     manage_requester: regolith::sync::OnceCell<Arc<dyn defra_p2p_adapter::ManageRequester>>,
-    /// The iroh transport, for opening embedder stream protocols. Set once
-    /// during iroh setup.
+    /// The pinc transport, for opening embedder stream protocols. Set once
+    /// during P2P setup.
     #[cfg(feature = "p2p")]
-    iroh_transport: regolith::sync::OnceCell<p2p::iroh::IrohTransport>,
+    pinc_transport: regolith::sync::OnceCell<defra_pinc::PincTransport>,
     shutdown: ShutdownHandle,
 }
 
@@ -91,19 +84,19 @@ impl ManagedP2PSystem {
             retry_replicators: regolith::sync::OnceCell::new(),
             manage_requester: regolith::sync::OnceCell::new(),
             #[cfg(feature = "p2p")]
-            iroh_transport: regolith::sync::OnceCell::new(),
+            pinc_transport: regolith::sync::OnceCell::new(),
             shutdown,
         }
     }
 
     #[cfg(feature = "p2p")]
-    pub(crate) fn set_iroh_transport(&self, transport: p2p::iroh::IrohTransport) {
-        let _ = self.iroh_transport.set(transport);
+    pub(crate) fn set_pinc_transport(&self, transport: defra_pinc::PincTransport) {
+        let _ = self.pinc_transport.set(transport);
     }
 
     #[cfg(feature = "p2p")]
-    pub(crate) fn iroh_transport(&self) -> Option<&p2p::iroh::IrohTransport> {
-        self.iroh_transport.get()
+    pub(crate) fn pinc_transport(&self) -> Option<&defra_pinc::PincTransport> {
+        self.pinc_transport.get()
     }
 
     /// Install the outbound management requester. Set once during P2P setup.
@@ -180,59 +173,18 @@ pub struct ShutdownHandle {
 }
 
 enum ShutdownKind {
-    #[cfg(feature = "libp2p")]
-    Libp2p {
-        handle: Box<p2p::P2PHostHandle>,
-        coordinator: p2p::sync::SyncShutdownHandle,
-        tasks: Box<SegQueue<edge::Service>>,
-        /// The retry sweep, on the network edge.
-        retry_loop: Box<SegQueue<edge::Task<()>>>,
-        /// The push failure recorder, on the worker pool.
-        recorder: Box<SegQueue<workers::Background>>,
-    },
     #[cfg(feature = "p2p")]
-    Iroh {
-        peer: defra_p2p_adapter::IrohPeerShutdown,
+    Pinc {
+        peer: defra_p2p_adapter::PincPeerShutdown,
         /// The peer's own scope of the network edge, drained after the peer
         /// stops: stopping it spawns the drain of its tasks, which the node's
         /// closed scope would refuse.
         scope: edge::Scope,
     },
-    #[cfg(feature = "pinc")]
-    Pinc {
-        peer: defra_p2p_adapter::PincPeerShutdown,
-        scope: edge::Scope,
-    },
 }
 
 impl ShutdownHandle {
-    #[cfg(feature = "libp2p")]
-    pub(crate) fn libp2p(
-        handle: p2p::P2PHostHandle,
-        coordinator: p2p::sync::SyncShutdownHandle,
-        tasks: Vec<edge::Service>,
-        retry_loop: edge::Task<()>,
-        recorder: workers::Background,
-    ) -> Self {
-        Self {
-            inner: ShutdownKind::Libp2p {
-                handle: Box::new(handle),
-                coordinator,
-                tasks: queued(tasks),
-                retry_loop: queued([retry_loop]),
-                recorder: queued([recorder]),
-            },
-        }
-    }
-
     #[cfg(feature = "p2p")]
-    pub(crate) fn iroh(peer: defra_p2p_adapter::IrohPeerShutdown, scope: edge::Scope) -> Self {
-        Self {
-            inner: ShutdownKind::Iroh { peer, scope },
-        }
-    }
-
-    #[cfg(feature = "pinc")]
     pub(crate) fn pinc(peer: defra_p2p_adapter::PincPeerShutdown, scope: edge::Scope) -> Self {
         Self {
             inner: ShutdownKind::Pinc { peer, scope },
@@ -241,34 +193,10 @@ impl ShutdownHandle {
 
     /// Stops the transport and the tasks around it.
     pub async fn stop(&self) {
-        #[cfg(not(any(feature = "libp2p", feature = "p2p")))]
+        #[cfg(not(feature = "p2p"))]
         match self.inner {}
-        #[cfg(any(feature = "libp2p", feature = "p2p"))]
+        #[cfg(feature = "p2p")]
         match &self.inner {
-            #[cfg(feature = "libp2p")]
-            ShutdownKind::Libp2p {
-                handle,
-                coordinator,
-                tasks,
-                retry_loop,
-                recorder,
-            } => {
-                coordinator.shutdown().await;
-                abort_and_join(retry_loop, edge::Task::abort).await;
-                abort_and_join(recorder, workers::Background::abort).await;
-                stop_services(tasks).await;
-                let _ = handle.shutdown().await;
-            }
-            #[cfg(feature = "p2p")]
-            ShutdownKind::Iroh { peer, scope } => {
-                peer.shutdown().await;
-                crate::network::drain(
-                    scope,
-                    "timed out draining the node's network work during shutdown",
-                )
-                .await;
-            }
-            #[cfg(feature = "pinc")]
             ShutdownKind::Pinc { peer, scope } => {
                 peer.shutdown().await;
                 crate::network::drain(
@@ -278,44 +206,5 @@ impl ShutdownHandle {
                 .await;
             }
         }
-    }
-}
-
-/// `tasks` in a queue a shutdown through `&self` can take them from.
-#[cfg(feature = "libp2p")]
-fn queued<T>(tasks: impl IntoIterator<Item = T>) -> Box<SegQueue<T>>
-where
-    T: 'static,
-{
-    let pending = SegQueue::new();
-    tasks.into_iter().for_each(|task| pending.push(task));
-    Box::new(pending)
-}
-
-#[cfg(feature = "libp2p")]
-async fn stop_services(services: &SegQueue<edge::Service>) {
-    let mut stopping = Vec::with_capacity(services.len());
-    while let Some(service) = services.pop() {
-        service.stop();
-        stopping.push(service);
-    }
-    for service in stopping {
-        service.stopped().await;
-    }
-}
-
-#[cfg(feature = "libp2p")]
-async fn abort_and_join<T, A>(tasks: &SegQueue<T>, abort: A)
-where
-    T: std::future::Future + 'static,
-    A: Fn(&T),
-{
-    let mut aborted = Vec::with_capacity(tasks.len());
-    while let Some(task) = tasks.pop() {
-        abort(&task);
-        aborted.push(task);
-    }
-    for task in aborted {
-        let _ = task.await;
     }
 }

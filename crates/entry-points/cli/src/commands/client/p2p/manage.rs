@@ -53,8 +53,8 @@ impl P2pManageArgs {
 /// Common arguments identifying the target peer and the caller's identity.
 #[derive(Args, Debug)]
 pub struct ManageTarget {
-    /// Multiaddr of the target P2P-only peer (must contain `/p2p/<peer-id>`)
-    #[arg(long, value_name = "multiaddr")]
+    /// Address of the target P2P-only peer, `<peer id>@<udp address>`
+    #[arg(long, value_name = "address")]
     pub target: String,
 
     /// Caller's identity private key (hex). This single identity drives BOTH
@@ -122,28 +122,11 @@ impl ManageTarget {
     }
 }
 
-/// Extract the peer-id substring from a target multiaddr.
+/// Extract the peer id from a target's pinc address.
 fn extract_peer_id(addr: &str) -> Result<String> {
-    if let Ok(parsed) = p2p::parse_multiaddr_with_peer_id(addr) {
-        return Ok(parsed.peer_id.to_string());
-    }
-
-    #[cfg(feature = "iroh")]
-    {
-        p2p::iroh::parse_public_peer_addr(addr)
-            .map(|(peer_id, _)| peer_id.to_string())
-            .map_err(|e| Error::Server(e.to_string()))
-    }
-
-    #[cfg(not(feature = "iroh"))]
-    {
-        Err(Error::Server(
-            p2p::parse_multiaddr_with_peer_id(addr)
-                .err()
-                .map(|e| e.to_string())
-                .unwrap_or_else(|| "invalid target multiaddr".to_string()),
-        ))
-    }
+    defra_pinc::parse_public_peer_addr(addr)
+        .map(|(peer_id, _)| peer_id.to_string())
+        .map_err(|e| Error::Server(e.to_string()))
 }
 
 fn client(ctx: &ClientContext, bearer: Option<String>) -> Result<HttpClient> {
@@ -269,8 +252,8 @@ pub struct ManageReplicatorMutateArgs {
     #[command(flatten)]
     pub target: ManageTarget,
 
-    /// Replicator peer address (multiaddr). At most one is permitted.
-    #[arg(long, value_name = "multiaddr")]
+    /// Replicator peer address. At most one is permitted.
+    #[arg(long, value_name = "address")]
     pub address: String,
 
     /// Collection ID(s) to replicate
@@ -471,7 +454,7 @@ pub struct ManagePeerConnectArgs {
     pub target: ManageTarget,
 
     /// Address of the peer the target should connect to
-    #[arg(long, value_name = "multiaddr")]
+    #[arg(long, value_name = "address")]
     pub address: String,
 }
 
@@ -481,7 +464,7 @@ pub struct ManagePeerDisconnectArgs {
     pub target: ManageTarget,
 
     /// Address of the peer the target should disconnect from
-    #[arg(long, value_name = "multiaddr")]
+    #[arg(long, value_name = "address")]
     pub address: String,
 }
 
@@ -530,15 +513,13 @@ mod tests {
     use crate::commands::client::ClientContext;
 
     #[test]
-    fn extract_peer_id_from_libp2p_multiaddr() {
-        let peer_id = libp2p::PeerId::random().to_string();
-        let addr = format!("/ip4/127.0.0.1/tcp/9000/p2p/{peer_id}");
-        assert_eq!(extract_peer_id(&addr).unwrap(), peer_id);
+    fn extract_peer_id_from_pinc_address() {
+        assert_eq!(extract_peer_id(&random_target()).unwrap(), PEER_ID);
     }
 
     #[test]
     fn extract_peer_id_rejects_address_without_peer_id() {
-        assert!(extract_peer_id("/ip4/127.0.0.1/tcp/9000").is_err());
+        assert!(extract_peer_id("127.0.0.1:9000").is_err());
     }
 
     fn ctx(authorized_account: Option<&str>) -> ClientContext {
@@ -554,9 +535,10 @@ mod tests {
         }
     }
 
+    const PEER_ID: &str = "ae58ff8833241ac82d6ff7611046ed67b5072d142c588d0063e942d9a75502b6";
+
     fn random_target() -> String {
-        let peer_id = libp2p::PeerId::random().to_string();
-        format!("/ip4/127.0.0.1/tcp/9000/p2p/{peer_id}")
+        format!("{PEER_ID}@127.0.0.1:9000")
     }
 
     /// A local `--identity` must authenticate the controller request too: with

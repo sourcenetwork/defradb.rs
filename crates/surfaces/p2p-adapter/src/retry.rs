@@ -51,14 +51,8 @@ fn is_peer_level_failure(error: &str) -> bool {
     error.starts_with(p2p::error::TRANSPORT_UNAVAILABLE_PREFIX)
 }
 
-/// The running failure recorder: background work of the worker pool, or in
-/// a browser a task of the page's event loop.
-#[cfg(not(target_arch = "wasm32"))]
+/// The running failure recorder: background work of the worker pool.
 pub type FailureRecorder = workers::Background;
-/// The running failure recorder: background work of the worker pool, or in
-/// a browser a task of the page's event loop.
-#[cfg(target_arch = "wasm32")]
-pub type FailureRecorder = n0_future::task::JoinHandle<()>;
 
 /// Record head announcements and compare-delete only the exact durable marker
 /// generation returned to the sender before its PushLog attempt. Every write
@@ -69,19 +63,13 @@ pub fn spawn_failure_recorder<S: storage::corekv::Store + 'static>(
     peerstore: storage::stores::Peerstore<S>,
     mut failures: p2p::sync::PushFailureReceiver,
 ) -> FailureRecorder {
-    #[cfg(not(target_arch = "wasm32"))]
     let pool = peerstore.pool().cloned();
     let record = async move {
         while let Some(failure) = failures.recv().await {
             record_failure(&peerstore, failure).await;
         }
     };
-    #[cfg(not(target_arch = "wasm32"))]
-    return workers::spawn_background(pool.as_ref(), "push failure recorder", move || record);
-    // The page's thread is a browser's only one, and its event loop the
-    // only runtime.
-    #[cfg(target_arch = "wasm32")]
-    n0_future::task::spawn(record)
+    workers::spawn_background(pool.as_ref(), "push failure recorder", move || record)
 }
 
 /// Records one push failure on the peerstore: its marker, the generation its
@@ -784,11 +772,11 @@ where
 #[path = "retry_sweep_tests.rs"]
 mod sweep_tests;
 
-#[cfg(all(test, not(target_arch = "wasm32")))]
+#[cfg(test)]
 #[path = "retry_sweep_reads_tests.rs"]
 mod sweep_reads_tests;
 
-#[cfg(all(test, not(target_arch = "wasm32")))]
+#[cfg(test)]
 #[path = "retry_pool_tests.rs"]
 mod pool_tests;
 
@@ -796,7 +784,7 @@ mod pool_tests;
 #[path = "../tests/unit/retry_hints.rs"]
 mod hint_tests;
 
-#[cfg(all(test, not(target_arch = "wasm32")))]
+#[cfg(test)]
 #[path = "../tests/unit/selected_push_cancel.rs"]
 mod selected_push_cancel_tests;
 
@@ -914,10 +902,6 @@ pub(crate) mod tests {
             Ok(())
         }
 
-        async fn listen(&self, _addr: PeerAddr) -> P2PResult<()> {
-            Ok(())
-        }
-
         async fn connected_peers(&self) -> P2PResult<Vec<PeerId>> {
             if let Some((started, gate)) = &self.connected_gate {
                 started.notify_one();
@@ -989,26 +973,10 @@ pub(crate) mod tests {
                 .unwrap_or_else(|| PushLogReply::success("noop")))
         }
 
-        async fn send_two_stream_response(
-            &self,
-            _peer_id: &PeerId,
-            _reply: PushLogReply,
-        ) -> P2PResult<()> {
-            Ok(())
-        }
-
         async fn send_doc_sync_request(
             &self,
             _peer_id: &PeerId,
             _req: DocSyncRequest,
-        ) -> P2PResult<()> {
-            Ok(())
-        }
-
-        async fn send_doc_sync_response(
-            &self,
-            _peer_id: &PeerId,
-            _reply: DocSyncReply,
         ) -> P2PResult<()> {
             Ok(())
         }
@@ -1018,22 +986,6 @@ pub(crate) mod tests {
             _peer_id: &PeerId,
             _req: BranchableSyncRequest,
         ) -> P2PResult<()> {
-            Ok(())
-        }
-
-        async fn send_branchable_sync_response(
-            &self,
-            _peer_id: &PeerId,
-            _reply: BranchableSyncReply,
-        ) -> P2PResult<()> {
-            Ok(())
-        }
-
-        async fn send_car_request(&self, _peer_id: &PeerId, _root_cid: Cid) -> P2PResult<()> {
-            Ok(())
-        }
-
-        async fn send_car_response(&self, _peer_id: &PeerId, _car_data: Vec<u8>) -> P2PResult<()> {
             Ok(())
         }
 
@@ -1277,85 +1229,6 @@ pub(crate) mod tests {
         run_reconnect_pass(&peerstore, &connected, &mut probes).await;
         assert!(connected.dialled().is_empty());
         assert!(probes.is_empty());
-    }
-
-    #[cfg(feature = "iroh")]
-    mod iroh_probe {
-        use std::net::{IpAddr, Ipv4Addr};
-
-        use p2p::iroh::{
-            load_or_generate_secret_key, spawn_endpoint, IrohDiscoveryConfig, IrohEndpointConfig,
-            IrohRelayModeConfig, IrohTransport,
-        };
-
-        use super::*;
-
-        #[nuclei::test]
-        async fn a_stopped_iroh_endpoint_reads_as_observation_failure() {
-            let peerstore = in_memory_peerstore();
-            for index in 0..4 {
-                seed_retry_peer(&peerstore, &format!("peer-{index}"), "addr").await;
-            }
-            let key = load_or_generate_secret_key(None).await.expect("key");
-            let (command_tx, command_rx) = nuclei::sync::mpsc::channel(4);
-            let (running, stopped) = nuclei::sync::oneshot::channel::<()>();
-            // A dropped receiver is what a stopped endpoint task looks like
-            // from the transport: every command fails.
-            drop((command_rx, running));
-            let transport =
-                IrohTransport::new((command_tx, futures::FutureExt::shared(stopped)), key);
-
-            let mut probes = RapidHashMap::new();
-            run_reconnect_pass(&peerstore, &transport, &mut probes).await;
-
-            assert!(
-                probes.is_empty(),
-                "a stopped iroh endpoint is not a disconnected fleet"
-            );
-        }
-
-        #[nuclei::test]
-        async fn an_unreachable_iroh_peer_is_probed_off_the_replay_ladder() {
-            let peerstore = in_memory_peerstore();
-            let key = load_or_generate_secret_key(None).await.expect("local key");
-            let remote = load_or_generate_secret_key(None).await.expect("remote key");
-            let remote_id = remote.public().to_string();
-            // Port 1 on loopback: parses as an iroh dial address, answers
-            // nothing.
-            seed_retry_peer(&peerstore, &remote_id, &format!("{remote_id}@127.0.0.1:1")).await;
-            let before = next_retry_unix(&peerstore, &remote_id).await;
-
-            let (command_tx, _events, _replicators, _task) = spawn_endpoint(
-                IrohEndpointConfig {
-                    secret_key: key.clone(),
-                    node_identity: None,
-                    relay_mode: IrohRelayModeConfig::Disabled,
-                    discovery: IrohDiscoveryConfig::Disabled,
-                    bind_port: None,
-                    bind_addr: Some(IpAddr::V4(Ipv4Addr::LOCALHOST)),
-                    max_concurrent_multipath_paths: None,
-                    allowlist: Default::default(),
-                },
-                edge::testing::edge(),
-            )
-            .await
-            .expect("endpoint");
-            let transport = IrohTransport::new(command_tx, key);
-
-            let mut probes = RapidHashMap::new();
-            run_reconnect_pass(&peerstore, &transport, &mut probes).await;
-
-            assert_eq!(
-                probes[remote_id.as_str()].backoff,
-                RECONNECT_BACKOFF_MIN * 2,
-                "the probe fired and charged its own backoff"
-            );
-            assert_eq!(
-                next_retry_unix(&peerstore, &remote_id).await,
-                before,
-                "the iroh probe must not rewrite the configured replay deadline"
-            );
-        }
     }
 
     #[test]

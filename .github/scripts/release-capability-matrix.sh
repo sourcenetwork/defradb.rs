@@ -22,10 +22,8 @@ rows() {
   for manifest in "${manifests[@]}"; do
     IFS='|' read -r artifact platform features < "$manifest"
 
-    local transports=""
-    has_feature "$features" libp2p && transports="libp2p"
-    has_feature "$features" iroh && transports="${transports:+$transports + }iroh"
-    transports="${transports:-none}"
+    local transports="none"
+    has_feature "$features" p2p && transports="pinc"
 
     local lens="no"
     has_feature "$features" wasmtime-runtime && lens="yes"

@@ -10,10 +10,21 @@ use crate::test_case::State;
 
 /// Reads a kept stream to its end. Fails with `stream ended: <why>` when the
 /// serving side cut it, and answers `{"rest": <text>}` when it finished.
+///
+/// With `finish`, the read only waits for the end, and the opener then
+/// finishes its own half, as an upload-only opener does: the action answers
+/// `{"finished": true}`, or fails with `finish failed: <why>`.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ReadKeptStream {
     pub stream: String,
+    /// The most bytes read before the read fails as too long; 1 MiB when
+    /// unset.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limit: Option<usize>,
+    /// Finish the opener's half once the read ends.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub finish: bool,
     #[serde(default, skip_serializing_if = "Value::is_null")]
     pub expected_data: Value,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -42,10 +53,20 @@ impl Op for ReadKeptStream {
         let read = state
             .block_on(workers::timeout(
                 Duration::from_secs(10),
-                kept.recv.read_to_end(1 << 20),
+                kept.recv.read_to_end(self.limit.unwrap_or(1 << 20)),
             ))
-            .map_err(|_| Failure::operation("the stream is still open".into()))?
-            .map_err(|e| Failure::operation(format!("stream ended: {e}")))?;
+            .map_err(|_| Failure::operation("the stream is still open".into()))?;
+        if self.finish {
+            return state
+                .block_on(workers::timeout(
+                    Duration::from_secs(10),
+                    kept.send.finish(),
+                ))
+                .map_err(|_| Failure::operation("the finish never returned".into()))?
+                .map(|()| json!({ "finished": true }))
+                .map_err(|e| Failure::operation(format!("finish failed: {e}")));
+        }
+        let read = read.map_err(|e| Failure::operation(format!("stream ended: {e}")))?;
         Ok(json!({ "rest": String::from_utf8_lossy(&read) }))
     }
 }

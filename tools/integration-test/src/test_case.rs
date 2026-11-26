@@ -29,6 +29,9 @@ pub struct State {
     pub subscriptions: crate::actions::Subscriptions,
     /// Stream-protocol streams the test keeps open across actions.
     pub streams: crate::actions::stream::KeptStreams,
+    /// `defradb hub` processes by name, with the rootdir each keeps across
+    /// a stop.
+    pub cli_hubs: RapidHashMap<String, Arc<crate::actions::CliHub>>,
     /// How many nodes the test has started, Go's next node index.
     pub go_nodes_started: u64,
 }
@@ -159,6 +162,26 @@ impl State {
         self.nodes.0.insert(name.to_owned(), slot);
     }
 
+    /// Under go-http a node with a Rust node's options runs as a Rust node
+    /// and every other node as a Go one. A Rust node speaks pinc and a Go node
+    /// libp2p, so a scenario networking both kinds is a Rust-only scenario.
+    pub fn check_p2p_peers(&self, name: &str, spec: &NodeSpec) -> Result<(), Failure> {
+        if self.client_type() != ClientType::GoHttp || !spec.network {
+            return Ok(());
+        }
+        let rust = spec.needs_rust_node();
+        let mixed = self.nodes.0.iter().any(|(other, slot)| {
+            other != name && slot.spec.network && slot.spec.needs_rust_node() != rust
+        });
+        match mixed {
+            true => Err(Failure::unsupported(format!(
+                "node {name} under go-http: a Rust node's options next to a Go node, and pinc \
+                 and libp2p do not reach each other"
+            ))),
+            false => Ok(()),
+        }
+    }
+
     /// Start stopped node `name` again with NAC options, as Go's `Start`:
     /// `enable_nac` turns NAC on, owned by `owner` when it was never set up.
     /// A start the node refuses leaves it stopped, with the refusal.
@@ -179,6 +202,7 @@ impl State {
         spec.enable_nac = enable_nac;
         spec.nac_owner = owner;
         configure(&mut spec);
+        self.check_p2p_peers(name, &spec)?;
         self.stop_node(name, true);
         let node =
             TestNode::try_start(self.client_type(), spec.clone()).map_err(Failure::operation)?;
@@ -190,11 +214,11 @@ impl State {
         Ok(())
     }
 
-    /// Start the in-process iroh node `name` as `spec` says, failing with the
-    /// builder's error, closing any node of that name first.
-    pub fn start_iroh_node(&mut self, name: &str, spec: NodeSpec) -> Result<(), String> {
+    /// Start the in-process stream node `name` as `spec` says, failing with
+    /// the builder's error, closing any node of that name first.
+    pub fn start_stream_node(&mut self, name: &str, spec: NodeSpec) -> Result<(), String> {
         self.stop_node(name, false);
-        let node = Arc::new(TestNode::start_iroh(spec.clone())?);
+        let node = Arc::new(TestNode::start_stream(spec.clone())?);
         let slot = Slot {
             spec,
             node: Some(node),

@@ -8,42 +8,15 @@ use tracing::{info, warn};
 use crate::config::{Config, DatastoreType};
 use crate::error::Result;
 
-/// Tracks spawned P2P background tasks for graceful shutdown.
-pub(super) enum P2PTasks {
-    Libp2p(Box<Libp2pTasks>),
-    #[cfg(feature = "iroh")]
-    Iroh {
-        peer: defra_p2p_adapter::IrohPeerShutdown,
-        /// Relay server hosted next to the iroh endpoint
-        #[cfg(feature = "iroh-relay-server")]
-        relay_server: Option<p2p::iroh::IrohRelayServer>,
-    },
-    #[cfg(feature = "pinc")]
-    Pinc {
-        peer: defra_p2p_adapter::PincPeerShutdown,
-    },
-}
-
-pub(super) struct Libp2pTasks {
-    /// Coordinator-owned background replication shutdown.
-    pub(super) coordinator: p2p::sync::SyncShutdownHandle,
-    /// P2P host event loop task.
-    pub(super) host_task: edge::Service,
-    /// Replication loop task (processes incoming blocks).
-    pub(super) replication_task: edge::Service,
-    /// Host event handler task (processes P2P events through coordinator).
-    pub(super) event_handler_task: Option<edge::Service>,
-    /// Records push failures for retry, on the worker pool.
-    pub(super) failure_recorder_task: workers::Background,
-    /// Periodically retries failed doc pushes with exponential backoff, on the network edge.
-    pub(super) retry_loop_task: edge::Task<()>,
+/// Tracks the P2P peer for graceful shutdown.
+pub(super) struct P2PTasks {
+    pub(super) peer: defra_p2p_adapter::PincPeerShutdown,
 }
 
 /// Servers and background tasks produced by store/server initialization.
 pub(super) struct ServerSetup {
     /// Closed last: it stops the worker pool, then closes the store.
     pub database: Arc<db::DB<storage::DynStore>>,
-    pub p2p_handle: Option<p2p::P2PHostHandle>,
     pub p2p_tasks: Option<P2PTasks>,
     pub downsample_task: Option<workers::Background>,
     pub vector_rebuild_task: Option<workers::Background>,
@@ -67,7 +40,6 @@ pub struct Node {
     pub(super) config: Config,
     /// The database, whose close stops the worker pool and then the store.
     pub(super) database: Arc<db::DB<storage::DynStore>>,
-    pub(super) p2p_handle: Option<p2p::P2PHostHandle>,
     pub(super) p2p_tasks: Option<P2PTasks>,
     pub(super) downsample_task: Option<workers::Background>,
     pub(super) vector_rebuild_task: Option<workers::Background>,
@@ -236,7 +208,7 @@ impl Node {
     async fn init_persistent_store_and_server(
         store: Arc<storage::DynStore>,
         config: &Config,
-        peer_keypair: Option<p2p::Keypair>,
+        peer_seed: Option<zeroize::Zeroizing<[u8; 32]>>,
         user_identity: Option<std::sync::Arc<identity::RawIdentity>>,
         node_identity: Option<Arc<identity::RawIdentity>>,
         se_key: Option<[u8; 32]>,
@@ -251,7 +223,7 @@ impl Node {
         Self::init_store_and_server(
             store,
             config,
-            peer_keypair,
+            peer_seed,
             user_identity,
             acp_store,
             zanzibar_store,
@@ -314,7 +286,7 @@ impl Node {
         info!("Data directory: {}", config.data_path().display());
 
         let node_identity = super::node_identity::resolve(&config, user_identity.clone())?;
-        let peer_keypair = if !config.net.p2p_disabled && !config.keyring.disabled {
+        let peer_seed = if !config.net.p2p_disabled && !config.keyring.disabled {
             Some(Self::init_peer_key(&config)?)
         } else {
             None
@@ -359,7 +331,7 @@ impl Node {
                 Self::init_store_and_server(
                     store,
                     &config,
-                    peer_keypair,
+                    peer_seed,
                     user_identity.clone(),
                     acp_store,
                     zanzibar_store,
@@ -387,7 +359,7 @@ impl Node {
                 Self::init_persistent_store_and_server(
                     Arc::new(store),
                     &config,
-                    peer_keypair,
+                    peer_seed,
                     user_identity.clone(),
                     node_identity.clone(),
                     se_key,
@@ -407,7 +379,6 @@ impl Node {
         Ok(Self {
             config,
             database: servers.database,
-            p2p_handle: servers.p2p_handle,
             p2p_tasks: servers.p2p_tasks,
             downsample_task: servers.downsample_task,
             vector_rebuild_task: servers.vector_rebuild_task,

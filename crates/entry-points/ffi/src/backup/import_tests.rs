@@ -112,8 +112,8 @@ fn node_access_control_refuses_an_import_to_a_stranger() {
     defra_identity_free(stranger);
 }
 
-#[cfg(feature = "libp2p")]
-mod libp2p {
+#[cfg(feature = "p2p")]
+mod pinc {
     use std::time::Duration;
 
     use serde_json::{json, Value};
@@ -126,24 +126,25 @@ mod libp2p {
     };
     use crate::types::NodeInitOptions;
 
-    /// A node listening for libp2p on a free local port.
+    /// A pinc node on a free loopback port.
     fn p2p_node() -> usize {
-        let listen = cstr("/ip4/127.0.0.1/tcp/0");
+        let listen = cstr("127.0.0.1:0");
         node_with(NodeInitOptions {
             disable_p2p: 0,
             listening_addresses: listen.as_ptr(),
-            enable_pub_sub: 1,
             ..local_options()
         })
     }
 
-    /// The first address other peers reach `node` at.
+    /// The loopback address other peers reach `node` at.
     fn address(node: usize) -> String {
         wait_for(Duration::from_secs(10), || {
             let info = ok_json(defra_p2p_info(node, 0));
             info.as_array()
-                .and_then(|a| a.first())
-                .and_then(Value::as_str)
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_str)
+                .find(|addr| addr.contains("@127.0.0.1:"))
                 .map(str::to_string)
                 .ok_or_else(|| format!("the node never listened: {info}"))
         })

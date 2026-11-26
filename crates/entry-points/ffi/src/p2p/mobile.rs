@@ -58,8 +58,8 @@ pub unsafe fn defra_mobile_peer_details(
 }
 
 /// Tells the node its network may have changed (Wi-Fi to cellular, a new
-/// address, waking up), so the iroh transport looks for new paths to its
-/// peers at once instead of waiting to notice. With libp2p it does nothing.
+/// address, waking up), so the pinc endpoint probes its paths to its peers
+/// at once instead of waiting to notice.
 pub fn defra_mobile_notify_network_change(node_ptr: usize, identity_ptr: usize) -> DefraResult {
     ffi_entry! {
         ok(run(node_ptr, identity_ptr, NodePermission::P2pPeerConnect, None, |ops| async move {

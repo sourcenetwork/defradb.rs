@@ -10,8 +10,8 @@ use rapidhash::{HashSetExt, RapidHashSet};
 /// document topics, returning the document ids that were resubscribed.
 pub async fn restore_pinc_p2p_state<S, B>(
     store: Arc<S>,
-    transport: &p2p::pinc::PincTransport,
-    coordinator: &Arc<p2p::sync::PincSyncCoordinator<B>>,
+    transport: &defra_pinc::PincTransport,
+    coordinator: &Arc<defra_pinc::PincSyncCoordinator<B>>,
 ) -> RapidHashSet<String>
 where
     S: storage::corekv::Store + 'static,

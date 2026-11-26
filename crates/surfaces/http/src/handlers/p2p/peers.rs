@@ -16,9 +16,7 @@ use crate::router::{peer, AppState, NodePermission};
 
 /// Response for P2P node info.
 ///
-/// For libp2p this returns multiaddrs with the peer id embedded.
-/// For iroh this returns already-connectable peer address strings such as
-/// endpoint tickets, raw endpoint ids, or `<endpoint-id>@<host>:<port>`.
+/// The node's pinc addresses, each `<peer id>@<ip>:<port>`.
 pub type P2pInfoResponse = Vec<String>;
 
 /// Response for the single best shareable P2P address.

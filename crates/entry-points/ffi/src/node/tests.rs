@@ -60,24 +60,6 @@ fn unset_options_report_the_defaults_the_node_runs_with() {
     close(node);
 }
 
-#[cfg(feature = "libp2p")]
-#[test]
-fn an_unset_block_sync_timeout_reports_the_default() {
-    let listen = cstr("/ip4/127.0.0.1/tcp/0");
-    let node = node_with(NodeInitOptions {
-        disable_p2p: 0,
-        listening_addresses: listen.as_ptr(),
-        ..local_options()
-    });
-    let options = ok_json(defra_node_options(node));
-    assert_eq!(
-        options["DB"]["P2PBlockSyncTimeout"],
-        p2p::P2PHostConfig::default().stream_timeout * 1_000_000_000,
-        "{options}"
-    );
-    close(node);
-}
-
 #[test]
 fn an_option_not_supported_yet_fails_the_node_instead_of_being_ignored() {
     let address = cstr("127.0.0.1:9181");
@@ -95,6 +77,39 @@ fn an_option_not_supported_yet_fails_the_node_instead_of_being_ignored() {
         ..local_options()
     });
     assert!(error.contains("lens_pool_size"), "{error}");
+}
+
+#[cfg(feature = "p2p")]
+#[test]
+fn a_negative_block_sync_timeout_fails_the_node() {
+    let error = refused(NodeInitOptions {
+        disable_p2p: 0,
+        p2p_block_sync_timeout_ms: -1,
+        ..local_options()
+    });
+    assert!(error.contains("p2p_block_sync_timeout_ms"), "{error}");
+}
+
+/// The report shows the block sync timeout and relay switch the caller
+/// set, not a fixed value.
+#[cfg(feature = "p2p")]
+#[test]
+fn options_report_the_block_sync_timeout_and_relay_switch_the_caller_set() {
+    let listen = cstr("127.0.0.1:0");
+    let node = node_with(NodeInitOptions {
+        disable_p2p: 0,
+        listening_addresses: listen.as_ptr(),
+        p2p_block_sync_timeout_ms: 5_000,
+        enable_relay: 0,
+        ..local_options()
+    });
+    let options = ok_json(defra_node_options(node));
+    assert_eq!(
+        options["DB"]["P2PBlockSyncTimeout"], 5_000_000_000u64,
+        "{options}"
+    );
+    assert_eq!(options["P2P"]["EnableRelay"], false, "{options}");
+    close(node);
 }
 
 #[test]

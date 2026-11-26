@@ -6,7 +6,7 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "P2P networking for DefraDB using libp2p"
+description = "Transport-agnostic P2P sync for DefraDB: messages, the sync coordinator and the transport trait PINC implements"
 
 [lib]
 bench = false
@@ -36,21 +36,10 @@ kovan-channel = { workspace = true }
 # regolith::sync: waits that are part of the meaning, never a lock.
 regolith = { workspace = true }
 
-# libp2p transport
-libp2p = { workspace = true, features = ["tcp", "noise", "yamux", "identify", "request-response", "macros", "tokio", "gossipsub", "kad", "relay", "dns", "quic", "websocket", "memory-connection-limits"], optional = true }
-bitswap = { path = "../../building-blocks/bitswap", optional = true }
-libp2p-stream = { workspace = true, optional = true }
-# libp2p's TCP transport on nuclei sockets.
-net = { path = "../../building-blocks/net", features = ["libp2p"], optional = true }
-# The host resolver configuration the DNS layers read, with a fallback when
-# it lists no nameservers; the same version and features libp2p-dns uses.
-hickory-resolver = { version = "0.25.2", default-features = false, features = ["system-config"], optional = true }
-
 # Async
 async-trait = { workspace = true }
 futures = { workspace = true }
-# Tasks and timers on the browser's event loop, and natively the clock type
-# iroh-gossip's state machine takes (only the type: nothing runs on tokio).
+# Tasks and timers on the browser's event loop.
 n0-future.workspace = true
 futures-lite.workspace = true
 # std::time::Instant and SystemTime panic in a browser. This is std verbatim
@@ -80,8 +69,6 @@ serde_ipld_dagcbor = { workspace = true }
 # Errors
 thiserror = { workspace = true }
 tracing = { workspace = true }
-rlimit = { version = "0.11", optional = true }
-sysinfo = { version = "0.39", optional = true }
 
 # Bytes
 bytes = { workspace = true }
@@ -92,76 +79,30 @@ rapidhash = { workspace = true }
 # Varint encoding for CARv1 format
 unsigned-varint = "0.8"
 
-lru = { workspace = true, optional = true }
-
-# Iroh transport (optional)
-iroh = { workspace = true, optional = true }
-iroh-gossip = { workspace = true, optional = true }
-iroh-tickets = { workspace = true, optional = true }
-iroh-relay = { workspace = true, optional = true }
-rustls = { workspace = true, features = ["ring", "std"], optional = true }
-rand = { version = "0.10.1", optional = true }
-blake3 = { version = "1", optional = true }
-# The pinc transport signs and verifies with the shared Ed25519 seed.
-ed25519-dalek = { workspace = true, optional = true }
-zeroize = { version = "1", optional = true }
-
 [features]
 default = []
 # Log abstract delivery events for trace validation against
 # proofs/tla/P2PDelivery.tla (`model_trace`). Off in every shipped build.
 model-trace = []
-test-utils = ["libp2p-transport"]
-libp2p-transport = [
-    "dep:bitswap",
-    "kms",
-    "dep:libp2p",
-    "dep:libp2p-stream",
-    "dep:rlimit",
-    "dep:sysinfo",
-    "dep:net",
-    "dep:hickory-resolver",
-]
 # The KMS pubsub-RPC layer (crate::kms + crate::pubsub_rpc + the coordinator's
-# KMS transport slot). Transport-generic; implied by libp2p-transport and
-# opt-in for iroh-only builds.
+# KMS transport slot). Transport-generic.
 kms = ["dep:kms"]
-iroh-transport = ["dep:iroh", "dep:iroh-gossip", "dep:iroh-tickets", "dep:noq", "dep:rand", "dep:blake3", "dep:lru"]
-# Host an iroh relay server next to the endpoint. Pulls in the relay's HTTP,
-# WebSocket, and TLS stack, so it stays out of plain iroh builds.
-iroh-relay-server = ["iroh-transport", "dep:iroh-relay", "dep:rustls"]
-# The pinc transport, native only: direct connections, every request service,
-# CAR sync, and gossip and raw topics through pinc hubs.
-pinc-transport = ["dep:pinc", "dep:ed25519-dalek", "dep:zeroize"]
-
-# iroh links noq only off-wasm, so the feature pin preserving its bloom token
-# log and ring provider belongs here, not in the shared dependency list.
-[target.'cfg(not(all(target_family = "wasm", target_os = "unknown")))'.dependencies]
-noq = { version = "1.1", features = ["bloom", "rustls-ring"], optional = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 nuclei = { workspace = true }
-pinc = { version = "0.1.0", optional = true }
-
-# rand reaches getrandom 0.3, which refuses to build for the browser without an
-# explicit backend. The matching --cfg lives in .cargo/config.toml.
-[target.'cfg(all(target_family = "wasm", target_os = "unknown"))'.dependencies]
-getrandom = { version = "0.3", features = ["wasm_js"] }
 
 [target.'cfg(not(target_env = "msvc"))'.dependencies]
 sha2 = { workspace = true, features = ["asm"] }
 
 [dev-dependencies]
 edge = { path = "../../foundation/edge", features = ["testing"] }
-# Test swarms on nuclei sockets.
-net = { path = "../../building-blocks/net", features = ["libp2p"] }
 mantra-macros = "0.9"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 tempfile = "3"
 
 [package.metadata.cargo-machete]
-ignored = ["getrandom", "noq"]
+ignored = []
 
 [lints]
 workspace = true

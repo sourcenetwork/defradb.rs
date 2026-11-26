@@ -16,16 +16,14 @@ bench = false
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [features]
-default = ["native", "wasmtime-runtime", "vera", "libp2p"]
+default = ["native", "wasmtime-runtime", "vera", "p2p"]
 native = ["db/native", "defra-node/native"]
-iroh = ["defra-node/p2p", "p2p/iroh-transport"]
-libp2p = ["db/p2p", "p2p/libp2p-transport", "defra-node/libp2p"]
+# P2P replication over pinc.
+p2p = ["defra-node/p2p", "dep:defra-pinc"]
 vera = ["defra-node/vera"]
 sourcehub = ["vera"]
 wasmtime-runtime = [
     "db/wasmtime-runtime",
-    
-    
     "defra-node/wasmtime-runtime",
     "lens/wasmtime-runtime",
 ]
@@ -84,6 +82,7 @@ identity = { path = "../../building-blocks/identity" }
 acp = { path = "../../engine/acp" }
 lens = { path = "../../foundation/lens", default-features = false }
 p2p = { path = "../../database/p2p" }
+defra-pinc = { path = "../../database/pinc", optional = true }
 blockstore = { path = "../../engine/blockstore" }
 defra-node = { path = "../../entry-points/defra-node", default-features = false, features = ["managed-p2p"] }
 

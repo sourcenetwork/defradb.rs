@@ -149,9 +149,6 @@ fn every_go_key_sets_its_rust_key() {
     let root = tempfile::tempdir().unwrap();
     let config = load_yaml(root.path(), GO_NON_DEFAULTS);
     assert!(config.net.p2p_disabled);
-    assert_eq!(config.net.p2p_addresses, ["/ip4/0.0.0.0/tcp/9999"]);
-    assert!(!config.net.pubsub_enabled);
-    assert!(!config.net.relay_enabled);
     let in_root = |path: &str| root.path().join(path).display().to_string();
     assert_eq!(config.api.pubkey_path, in_root("certs/server.crt"));
     assert_eq!(config.api.privkey_path, in_root("certs/server.key"));
@@ -172,11 +169,11 @@ fn a_rust_key_wins_over_its_go_spelling() {
     let root = tempfile::tempdir().unwrap();
     let config = load_yaml(
         root.path(),
-        "net:\n  p2p_disabled: false\n  p2pdisabled: true\n  relay_enabled: true\n  relay: false\n\
+        "net:\n  p2p_disabled: false\n  p2pdisabled: true\ndatastore:\n  no_signing: false\n  nosigning: true\n\
          secret_file: rust.env\nsecretfile: go.env\ntelemetry_disabled: false\ntelemetry:\n  disabled: true\n",
     );
     assert!(!config.net.p2p_disabled);
-    assert!(config.net.relay_enabled);
+    assert!(!config.datastore.no_signing);
     assert_eq!(config.secret_file, "rust.env");
     assert!(!config.telemetry_disabled);
 }
@@ -186,11 +183,11 @@ fn go_sections_and_keys_match_in_any_case() {
     let root = tempfile::tempdir().unwrap();
     let config = load_yaml(
         root.path(),
-        "Net:\n  P2PDisabled: true\n  PubSubEnabled: false\nDataStore:\n  MaxTxnRetries: 3\n\
+        "Net:\n  P2PDisabled: true\nDataStore:\n  MaxTxnRetries: 3\n  NoSigning: true\n\
          SecretFile: mixed.env\nTelemetry:\n  Disabled: true\n",
     );
     assert!(config.net.p2p_disabled);
-    assert!(!config.net.pubsub_enabled);
+    assert!(config.datastore.no_signing);
     assert_eq!(config.datastore.max_txn_retries, 3);
     assert_eq!(config.secret_file, "mixed.env");
     assert!(config.telemetry_disabled);
@@ -203,6 +200,7 @@ fn go_only_keys_and_badger_are_ignored() {
     let config = load_yaml(
         root.path(),
         "\"\": ./root\napi:\n  audience: someone\nlog:\n  caller: true\nnet:\n  p2pblocksynctimeout: 5\n\
+         \x20 p2paddresses: [/ip4/0.0.0.0/tcp/9999]\n  pubsubenabled: false\n  relay: true\n\
          datastore:\n  badger:\n    valuelogfilesize: 1073741824\n",
     );
     assert_eq!(
@@ -222,7 +220,7 @@ fn a_rust_written_config_loads_unchanged() {
     fresh.create_if_missing().unwrap();
     let mut written = fresh.clone();
     written.net.p2p_disabled = true;
-    written.net.relay_enabled = false;
+    written.net.pinc_bind_port = Some(9171);
     written.secret_file = "rust.env".into();
     written.telemetry_disabled = true;
     let loaded = load_dir(root.path(), &[]);
@@ -237,7 +235,7 @@ fn a_rust_written_config_loads_unchanged() {
     .unwrap();
     let loaded = load_dir(root.path(), &[]);
     assert!(loaded.net.p2p_disabled);
-    assert!(!loaded.net.relay_enabled);
+    assert_eq!(loaded.net.pinc_bind_port, Some(9171));
     assert_eq!(loaded.secret_file, "rust.env");
     assert!(loaded.telemetry_disabled);
 }
@@ -282,6 +280,7 @@ fn the_binary_warns_about_each_ignored_go_key() {
     std::fs::write(
         root.path().join("config.yaml"),
         "api:\n  audience: someone\nlog:\n  caller: true\nnet:\n  p2pblocksynctimeout: 5\n\
+         \x20 p2paddresses: [/ip4/0.0.0.0/tcp/9999]\n  pubsubenabled: false\n  relay: true\n\
          acp:\n  document:\n    remote:\n      keyname: signer\n",
     )
     .unwrap();
@@ -315,19 +314,15 @@ fn the_binary_says_nothing_about_go_only_keys_at_go_defaults() {
     );
 }
 
-/// `defradb start` on a Go-written config listens for P2P where its
-/// `net.p2paddresses` says, and logs the Go-only key it ignores.
+/// `defradb start` on a Go-written config runs P2P on pinc, and logs each
+/// Go-only key it ignores: Go's libp2p listen addresses among them.
 #[nuclei::test]
 async fn start_runs_a_go_config() {
     let root = tempfile::tempdir().unwrap();
-    let port = portpicker::pick_unused_port().expect("free p2p port");
-    let address = format!("/ip4/127.0.0.1/tcp/{port}");
     std::fs::write(
         root.path().join("config.yaml"),
-        format!(
-            "keyring:\n    disabled: true\nnet:\n    p2paddresses:\n        - {address}\n    \
-             p2pdisabled: false\n    p2pblocksynctimeout: 5\n    relay: false\n"
-        ),
+        "keyring:\n    disabled: true\nnet:\n    p2paddresses:\n        - /ip4/127.0.0.1/tcp/9999\n    \
+         p2pdisabled: false\n    p2pblocksynctimeout: 5\n    relay: false\n",
     )
     .unwrap();
     let (log, output) = common::NodeLog::create(root.path().join("node.log"));
@@ -363,15 +358,17 @@ async fn start_runs_a_go_config() {
         .unwrap();
     let listed = info.to_string();
     assert!(
-        listed.contains(&format!("{address}/p2p/")),
-        "peer info {listed} does not list {address}"
+        listed.contains('@') && !listed.contains("9999"),
+        "peer info {listed} lists no pinc address"
     );
     let text = log.text();
-    assert_eq!(
-        text.matches("net.p2pblocksynctimeout is ignored").count(),
-        1,
-        "one warning for net.p2pblocksynctimeout in:\n{text}"
-    );
+    for key in ["net.p2pblocksynctimeout", "net.p2paddresses"] {
+        assert_eq!(
+            text.matches(&format!("{key} is ignored")).count(),
+            1,
+            "one warning for {key} in:\n{text}"
+        );
+    }
 }
 
 /// Kills the child when the test ends, whether it passed or panicked.

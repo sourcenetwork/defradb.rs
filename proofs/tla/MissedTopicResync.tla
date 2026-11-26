@@ -17,7 +17,7 @@
 \*     stop and every missed report is handled;
 \*   - a receiver pulls for a topic it does not follow.
 \*
-\* Rust: crates/database/p2p/src/pinc/topics.rs topic_events (Event::Missed becomes
+\* Rust: crates/database/pinc/src/topics.rs topic_events (Event::Missed becomes
 \* TransportEvent::TopicMissed); crates/database/p2p/src/sync/coordinator/
 \* event_handler/topic_missed.rs handle_topic_missed (the topic check, and
 \* DocSync for a followed document, BranchableSync for a subscribed

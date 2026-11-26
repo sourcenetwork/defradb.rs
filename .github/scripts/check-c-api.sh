@@ -2,7 +2,8 @@
 # Checks the C API this working tree generates against the one BASE generates:
 # the new header compiles with no struct padding (`just check-ffi-header`), and
 # check-c-api.py finds nothing removed or changed that callers of the old one
-# depend on.
+# depend on. With C_API_ACCEPT_BREAK=true (the pull request carries the
+# c-api:break label) every break is still reported, as a warning, and passes.
 #
 # Usage: check-c-api.sh BASE
 set -euo pipefail
@@ -28,4 +29,8 @@ generate "$work/base" "$work/old.h"
 generate "$root" "$work/new.h"
 
 just --justfile "$root/justfile" check-ffi-header "$work/new.h"
-python3 "$root/.github/scripts/check-c-api.py" "$work/old.h" "$work/new.h"
+accept=()
+if [ "${C_API_ACCEPT_BREAK:-false}" = true ]; then
+    accept=(--accept-break)
+fi
+python3 "$root/.github/scripts/check-c-api.py" "$work/old.h" "$work/new.h" "${accept[@]}"

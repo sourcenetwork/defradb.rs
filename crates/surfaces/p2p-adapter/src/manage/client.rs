@@ -3,7 +3,7 @@
 //! Mirrors the SE query requester (`db::merge::DbMergeSeQueryTransport`): build +
 //! sign the request (the signature also mints the UUID `message_id` used as the
 //! correlation key), register a correlator slot, send, then await the reply with
-//! a timeout. Generic over the concrete [`P2PTransport`] (libp2p or iroh).
+//! a timeout. Generic over the concrete [`P2PTransport`].
 
 use std::time::Duration;
 

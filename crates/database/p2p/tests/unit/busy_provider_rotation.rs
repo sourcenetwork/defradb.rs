@@ -1,12 +1,11 @@
 use super::*;
-use crate::sync::manager::{BlockSyncCompletionTracker, RootedCarCompletionTracker};
+use crate::sync::manager::BlockSyncCompletionTracker;
 
 struct Fixture {
     blockstore: Arc<DefraBlockstore<RegolithStore>>,
     root: Cid,
     child: Cid,
     completions: BlockSyncCompletionTracker,
-    rooted_car: RootedCarCompletionTracker,
     transport: TestTransport,
     diagnostics: Arc<SyncDiagnostics>,
 }
@@ -21,9 +20,6 @@ impl Fixture {
         }
         let transport = TestTransport::new(
             blockstore.clone(),
-            root,
-            root_data.clone(),
-            RapidHashMap::new(),
             RapidHashMap::from_iter([(root, root_data), (child, child_data)]),
         );
         let completions = BlockSyncCompletionTracker::default();
@@ -37,7 +33,6 @@ impl Fixture {
             root,
             child,
             completions,
-            rooted_car: RootedCarCompletionTracker::default(),
             transport,
             diagnostics: diagnostics(),
         }
@@ -51,11 +46,6 @@ impl Fixture {
             PeerId::new("remote-peer".to_string()),
         )
         .with_block_sync_completions(self.completions.clone())
-    }
-
-    fn rooted_context(&self) -> DagFetchContext {
-        self.lone_context()
-            .with_rooted_car_completions(self.rooted_car.clone())
     }
 
     fn alt_context(&self) -> DagFetchContext {
@@ -109,7 +99,8 @@ async fn a_busy_provider_is_rotated_past_without_spending_stall_budget() {
     let f = Fixture::new(&["remote-peer"], true).await;
     let context = f.alt_context();
     let mut providers = ProviderRotation::new(context.providers());
-    let mut state = ProviderFetchState::new(&mut providers, None, f.diagnostics.as_ref());
+    let health = crate::sync::coordinator::provider_health::ProviderHealth::default();
+    let mut state = ProviderFetchState::new(&mut providers, &health, f.diagnostics.as_ref());
     state.stall_budget = 1;
 
     let outcome = poll_fetch_blocks_rotating(
@@ -202,85 +193,6 @@ async fn empty_providers_without_a_busy_reply_still_exhaust() {
 }
 
 #[nuclei::test(start_paused = true)]
-async fn a_lone_busy_publisher_is_asked_once_per_pass_and_kept_connected() {
-    let f = Fixture::new(&["remote-peer"], false).await;
-    f.transport.set_busy_car_answer(f.rooted_car.clone());
-    f.transport
-        .set_connected_peers(vec![PeerId::new("remote-peer".to_string())]);
-    let context = f.rooted_context();
-
-    assert!(f.fetch_dag(context).await.is_none());
-
-    assert_eq!(
-        f.transport.car_request_count(),
-        2,
-        "one rooted CAR per pass"
-    );
-    assert!(
-        f.transport.sync_batches().is_empty(),
-        "the root-block batch skips the publisher that just shed"
-    );
-    let snapshot = f.diagnostics.snapshot();
-    assert_eq!(snapshot.pending_dag_fetch_deferred_busy, 1);
-    assert_eq!(snapshot.pending_dag_fetch_exhausted, 0);
-    assert_eq!(snapshot.provider_busy_rotations, 2);
-    assert!(f.transport.disconnected_peers().is_empty());
-}
-
-/// A busy answer must not mark the publisher answered: that is the liveness
-/// evidence the dead-Bitswap hang-up needs.
-#[nuclei::test(start_paused = true)]
-async fn a_busy_rooted_car_answer_is_busy_and_not_an_answer() {
-    let f = Fixture::new(&[], false).await;
-    f.transport.set_busy_car_answer(f.rooted_car.clone());
-    let context = f.rooted_context();
-    let mut answered = false;
-    let started = crate::rt::time::Instant::now();
-
-    let outcome = poll_fetch_rooted_car(
-        &f.root,
-        std::slice::from_ref(&f.root),
-        &f.transport,
-        &f.blockstore,
-        &PeerId::new("remote-peer".to_string()),
-        &context,
-        &mut answered,
-    )
-    .await;
-
-    assert_eq!(outcome, ProviderWindowOutcome::Busy);
-    assert!(!answered, "a busy publisher is alive, not silent");
-    assert!(
-        crate::rt::time::Instant::now() - started < Duration::from_secs(1),
-        "a busy answer does not wait out the 10 s rooted deadline"
-    );
-}
-
-#[nuclei::test(start_paused = true)]
-async fn a_busy_rooted_window_rotates_to_the_alternate() {
-    let f = Fixture::new(&[], false).await;
-    f.transport.set_busy_car_answer(f.rooted_car.clone());
-    let context = f
-        .alt_context()
-        .with_rooted_car_completions(f.rooted_car.clone());
-
-    assert!(matches!(
-        f.fetch_dag(context).await,
-        Some(SyncEvent::DagReady { .. })
-    ));
-
-    assert_eq!(f.transport.car_request_count(), 1);
-    assert_eq!(
-        f.transport.sync_providers(),
-        peers(&["alt-peer", "alt-peer"]),
-        "the shed publisher is skipped for the root block and the walk"
-    );
-    let snapshot = f.diagnostics.snapshot();
-    assert_eq!(snapshot.provider_busy_rotations, 1);
-    assert_eq!(snapshot.pending_dag_fetch_deferred_busy, 0);
-}
-
-#[nuclei::test(start_paused = true)]
 async fn a_momentary_all_busy_moment_retries_within_the_dispatch() {
     let f = Fixture::new(&["remote-peer"], true).await;
     f.transport
@@ -291,7 +203,7 @@ async fn a_momentary_all_busy_moment_retries_within_the_dispatch() {
         busy.remove("remote-peer");
     })
     .detach();
-    let context = f.rooted_context();
+    let context = f.lone_context();
 
     assert!(matches!(
         f.fetch_dag(context).await,
@@ -304,15 +216,18 @@ async fn a_momentary_all_busy_moment_retries_within_the_dispatch() {
     assert_eq!(snapshot.pending_dag_fetch_exhausted, 0);
 }
 
-/// An attempt whose rooted CAR delivered the root and whose descendants are
-/// then shed ends `ProviderBusy`, yet it advanced the root: its sample says so.
+/// An attempt whose rooted request delivered the root and whose descendants
+/// are then shed ends `ProviderBusy`, yet it advanced the root: its sample
+/// says so.
 #[nuclei::test(start_paused = true)]
 async fn a_shed_attempt_that_delivered_first_still_counts_its_progress() {
     let f = Fixture::new(&[], false).await;
-    f.transport.set_busy_from_batch(0, f.completions.clone());
+    f.transport.set_root_only_replies();
+    f.transport.set_busy_from_batch(1, f.completions.clone());
     let context = f.lone_context();
     let mut providers = ProviderRotation::new(context.providers());
-    let mut state = ProviderFetchState::new(&mut providers, None, f.diagnostics.as_ref());
+    let health = crate::sync::coordinator::provider_health::ProviderHealth::default();
+    let mut state = ProviderFetchState::new(&mut providers, &health, f.diagnostics.as_ref());
     let started = Instant::now();
 
     let outcome =

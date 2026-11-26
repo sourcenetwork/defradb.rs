@@ -14,18 +14,18 @@ use crate::{
     ReplicatorPushOptionsState, TransportPeerId,
 };
 
-use p2p::pinc::{
+use defra_pinc::PincSyncCoordinator;
+use defra_pinc::{
     best_shareable_public_addr, canonical_peer_id, format_public_listen_addrs,
     parse_canonical_peer_id, parse_public_peer_addr, PincTransport,
 };
-use p2p::sync::PincSyncCoordinator;
 use p2p::topics::DefraTopic;
 use p2p::P2PTransport;
 
 const DOC_SYNC_DISPATCH_PARALLELISM: usize = 16;
 
 /// Wait for `collection_id`'s merges until none came for `idle_timeout`, or
-/// `overall_timeout` from `start` passed. A copy of libp2p's wait.
+/// `overall_timeout` from `start` passed.
 async fn wait_for_branchable_merges(
     sub: &mut events::Subscription,
     collection_id: &str,
@@ -81,6 +81,50 @@ impl<B: Blockstore + 'static> PincP2PAdapter<B> {
                 .await
                 .map_err(crate::map_nac_error)?;
         }
+        Ok(())
+    }
+
+    /// Dial `addr` on the node's own behalf, as for its bootstrap peers: no
+    /// caller's access is checked.
+    async fn dial_as_node(&self, addr: &str) -> P2PResult<()> {
+        let (peer_id, direct_addrs) = parse_public_peer_addr(addr)
+            .map_err(|error| P2PError::invalid_input(error.to_string()))?;
+        // Connecting to an already-connected peer is a no-op (matching Go
+        // DefraDB, where libp2p `Connect` returns immediately when connected):
+        // a redundant dial is not just wasted work — on Linux it can time out
+        // against a healthy connection and fail the caller. Refresh the
+        // address book and return.
+        if self.is_transport_connected(&peer_id).await {
+            self.peer_addresses
+                .insert(peer_id.to_string(), addr.to_string());
+            return Ok(());
+        }
+
+        let dial_timeout = if direct_addrs.is_empty() {
+            std::time::Duration::from_secs(10)
+        } else {
+            std::time::Duration::from_secs(5)
+        };
+
+        p2p::rt::time::timeout(dial_timeout, self.transport.dial(&peer_id, direct_addrs))
+            .await
+            .map_err(|_| {
+                P2PError::transport(format!("failed to connect: timeout dialing {peer_id}"))
+            })?
+            .map_err(|error| match error {
+                p2p::error::Error::Unauthorized(message) => P2PError::unauthorized(message),
+                // The endpoint's own connect bound is as long as this one, so
+                // whichever fires first is the same timeout.
+                p2p::error::Error::ConnectionTimeout(_) => {
+                    P2PError::transport(format!("failed to connect: timeout dialing {peer_id}"))
+                }
+                error => P2PError::transport(format!("failed to connect: {error}")),
+            })?;
+
+        self.peer_addresses
+            .insert(peer_id.to_string(), addr.to_string());
+        self.resubscribe_tracked_document_topics().await;
+
         Ok(())
     }
 
@@ -278,8 +322,7 @@ impl<B: Blockstore + 'static> PincP2PAdapter<B> {
     }
 }
 
-#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
-#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[async_trait]
 impl<B: Blockstore + 'static> P2POperations for PincP2PAdapter<B> {
     fn bind_request(&self, context: &defra_core::RequestContext) -> Option<Arc<dyn P2POperations>> {
         Some(Arc::new(Self {
@@ -449,41 +492,11 @@ impl<B: Blockstore + 'static> P2POperations for PincP2PAdapter<B> {
     async fn connect_peer(&self, addr: &str) -> P2PResult<()> {
         self.check_nac(acp::nac::NodePermission::P2pPeerConnect)
             .await?;
+        self.dial_as_node(addr).await
+    }
 
-        let (peer_id, direct_addrs) = parse_public_peer_addr(addr)
-            .map_err(|error| P2PError::invalid_input(error.to_string()))?;
-        // Connecting to an already-connected peer is a no-op (matching Go
-        // DefraDB, where libp2p `Connect` returns immediately when connected):
-        // a redundant dial is not just wasted work — on Linux it can time out
-        // against a healthy connection and fail the caller. Refresh the
-        // address book and return.
-        if self.is_transport_connected(&peer_id).await {
-            self.peer_addresses
-                .insert(peer_id.to_string(), addr.to_string());
-            return Ok(());
-        }
-
-        let dial_timeout = if direct_addrs.is_empty() {
-            std::time::Duration::from_secs(10)
-        } else {
-            std::time::Duration::from_secs(5)
-        };
-
-        p2p::rt::time::timeout(dial_timeout, self.transport.dial(&peer_id, direct_addrs))
-            .await
-            .map_err(|_| {
-                P2PError::transport(format!("failed to connect: timeout dialing {peer_id}"))
-            })?
-            .map_err(|error| match error {
-                p2p::error::Error::Unauthorized(message) => P2PError::unauthorized(message),
-                error => P2PError::transport(format!("failed to connect: {error}")),
-            })?;
-
-        self.peer_addresses
-            .insert(peer_id.to_string(), addr.to_string());
-        self.resubscribe_tracked_document_topics().await;
-
-        Ok(())
+    async fn connect_bootstrap_peer(&self, addr: &str) -> P2PResult<()> {
+        self.dial_as_node(addr).await
     }
 
     async fn disconnect_peer(&self, addr: &str) -> P2PResult<()> {
@@ -527,7 +540,7 @@ impl<B: Blockstore + 'static> P2POperations for PincP2PAdapter<B> {
         self.transport
             .allow_peer(
                 &peer_id,
-                p2p::pinc::AdmissionAuthority::new(true, may_revoke),
+                defra_pinc::AdmissionAuthority::new(true, may_revoke),
             )
             .await
             .map_err(|error| P2PError::transport(error.to_string()))
@@ -1109,7 +1122,7 @@ impl<B: Blockstore + 'static> P2POperations for PincP2PAdapter<B> {
             P2PError::internal(format!("failed to sign BranchableSync request: {error}"))
         })?;
 
-        // As on libp2p, the call returns once the merges the replies started
+        // The call returns once the merges the replies started
         // have gone quiet, so a read right after it sees the synced documents.
         let mut merges = self.event_bus.as_ref().map(|bus| {
             (
@@ -1118,7 +1131,7 @@ impl<B: Blockstore + 'static> P2POperations for PincP2PAdapter<B> {
             )
         });
         let start = web_time::Instant::now();
-        // Each request runs on its own, as on libp2p, so a silent peer cannot
+        // Each request runs on its own, so a silent peer cannot
         // hold the others back or use up the merge window before they are asked.
         for peer in connected_peers {
             let transport = self.transport.clone();
@@ -1165,7 +1178,7 @@ impl<B: Blockstore + 'static> P2POperations for PincP2PAdapter<B> {
             .version_syncer
             .as_ref()
             .ok_or_else(|| P2PError::unsupported("version syncer required"))?;
-        // The call returns once the versions are synced, as libp2p's and Go's do.
+        // The call returns once the versions are synced, as Go's does.
         syncer.sync_versions(version_ids, connected_peers).await
     }
 

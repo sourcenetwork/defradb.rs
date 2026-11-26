@@ -3,7 +3,7 @@
 
 use std::time::Duration;
 
-use integration_test::{extract_p2p_addr, poll_until, DefraClient, TestCluster, P2P_TIMEOUT};
+use integration_test::{DefraClient, TestCluster};
 use serde_json::Value;
 
 const SDL: &str = "type Tally {
@@ -232,67 +232,6 @@ async fn crdt_fields_keep_their_values_and_kinds_across_restart() {
 
         update_gql(&node, &id, r#"{name: "third", hits: 1, balance: 2.5}"#);
         assert_tally(&tally(&node), "third", 6, 0.0);
-    })
-    .await;
-}
-
-#[nuclei::test]
-async fn concurrent_updates_on_two_nodes_converge() {
-    edge::compat(async move {
-        let cluster = TestCluster::builder()
-            .rust_nodes(2)
-            .with_iroh_transport()
-            .build()
-            .await
-            .unwrap();
-        for index in 0..2 {
-            cluster
-                .wait_for_log(index, "p2p_listening", P2P_TIMEOUT)
-                .await
-                .expect("P2P listener did not start");
-        }
-        let node0 = cluster.client(0);
-        let node1 = cluster.client(1);
-        let addr0 = extract_p2p_addr(&cluster, 0);
-        let addr1 = extract_p2p_addr(&cluster, 1);
-
-        // The same content gives the same docID, so both nodes start from one
-        // document and edit it with no link between them.
-        for node in [&node0, &node1] {
-            node.schema_add(SDL).expect("schema add");
-            node.p2p_collection_add(&["Tally"]).expect("collection add");
-            node.query(
-                r#"mutation { add_Tally(input: {name: "first", hits: 2, balance: 1.5}) { _docID } }"#,
-            )
-            .expect("add_Tally");
-        }
-        let id = doc_id(&node0);
-        assert_eq!(id, doc_id(&node1), "same content, same docID");
-        update_gql(&node0, &id, r#"{name: "zero", hits: 3, balance: -4}"#);
-        update_gql(&node1, &id, r#"{name: "one", hits: 10, balance: 0.5}"#);
-
-        node0.p2p_connect(&[&addr1]).expect("connect");
-        node0
-            .p2p_replicator_set(&["Tally"], &addr1)
-            .expect("replicator 0 to 1");
-        node1
-            .p2p_replicator_set(&["Tally"], &addr0)
-            .expect("replicator 1 to 0");
-
-        poll_until(
-            || match (try_tally(&node0), try_tally(&node1)) {
-                (Some(a), Some(b)) => a == b && a["hits"].as_i64() == Some(15),
-                _ => false,
-            },
-            P2P_TIMEOUT,
-            Duration::from_millis(200),
-            "nodes did not converge",
-        )
-        .await;
-        // Equal heights: the greater CBOR bytes win, and "zero" (0x64 header)
-        // beats "one" (0x63).
-        assert_tally(&tally(&node0), "zero", 15, -2.0);
-        assert_tally(&tally(&node1), "zero", 15, -2.0);
     })
     .await;
 }

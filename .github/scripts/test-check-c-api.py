@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """check-c-api.py against small headers; needs clang, nothing else."""
+import contextlib
 import importlib.util
+import io
 from pathlib import Path
 import re
 import sys
@@ -182,6 +184,18 @@ class CheckCApi(unittest.TestCase):
             ["enum constant DEFRA_KIND_B changed from `4` to `3`", "enum constant DEFRA_KIND_C changed from `5` to `4`"],
         )
         self.assertEqual(self.changed("#define DEFRA_SIGN_RETRYABLE 2", "#define DEFRA_SIGN_RETRYABLE 3"), ["macro DEFRA_SIGN_RETRYABLE changed from `2` to `3`"])
+
+    def test_an_accepted_break_passes_and_still_names_each_break(self):
+        old = Path(self.dir.name) / "old.h"
+        new = Path(self.dir.name) / "new.h"
+        old.write_text(BASE, encoding="utf-8")
+        new.write_text(BASE.replace("  int flag;\n  uint32_t _reserved0;\n} DefraThingOptions;", "  int flag;\n} DefraThingOptions;"), encoding="utf-8")
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            refused = checker.main([str(old), str(new)])
+            accepted = checker.main([str(old), str(new), "--accept-break"])
+        self.assertEqual((refused, accepted), (1, 0))
+        self.assertEqual(out.getvalue().count("lost field 2 `uint32_t _reserved0`"), 2)
 
 
 if __name__ == "__main__":

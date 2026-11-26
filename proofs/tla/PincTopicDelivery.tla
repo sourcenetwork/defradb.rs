@@ -6,8 +6,7 @@
 \* to every node that joined it, and tells each joined node who else joined.
 \* Nodes also hold peer sessions with one another (they dial each other).
 \*
-\* A gossip mesh, which libp2p and iroh run, only carries a message over peer
-\* connections. The hub carries it to every member, connected or not. So the
+\* A gossip mesh only carries a message over peer connections. The hub carries it to every member, connected or not. So the
 \* endpoint hands the engine a message only while it holds a peer session:
 \* a node with no peer is on no mesh, and takes nothing.
 \*
@@ -49,7 +48,7 @@
 \*   6. a node holds a topic it is not on (so it would miss who joins)
 \*      - INV_HeldIsJoined.
 \*
-\* Correspondence with the Rust code (crates/database/p2p/src/pinc/):
+\* Correspondence with the Rust code (crates/database/pinc/src/):
 \*
 \*   | Model              | Rust                                                     |
 \*   |--------------------|----------------------------------------------------------|

@@ -4,9 +4,7 @@ use std::sync::Arc;
 
 use cid::Cid;
 use kovan::Atom;
-use kovan_map::HopscotchMap;
 use kovan_queue::seg_queue::SegQueue;
-use rapidhash::fast::RandomState;
 use rapidhash::HashMapExt;
 
 use blockstore::{verify_block_cid, Blockstore};
@@ -43,16 +41,6 @@ pub(crate) enum FetchCompletion {
     Deferred,
     ProviderBusy,
     SizeLimit(Cid),
-}
-
-impl FetchCompletion {
-    fn from_success(success: bool) -> Self {
-        if success {
-            Self::Success
-        } else {
-            Self::Failure(FetchFailureCause::Error)
-        }
-    }
 }
 
 /// Completion signal for poll-owned exact-CID queries. Transport completion
@@ -131,100 +119,6 @@ impl BlockSyncCompletionState {
     }
 }
 
-/// Completion signal for libp2p's two-stream rooted CAR protocol.  Request
-/// dispatch and response arrival are separate streams, so blockstore polling
-/// alone adds avoidable ownership latency at small admission capacities.
-#[derive(Clone)]
-pub(crate) struct RootedCarCompletionTracker {
-    waiters: Arc<HopscotchMap<Cid, Arc<RootedCarWaiter>, RandomState>>,
-}
-
-impl Default for RootedCarCompletionTracker {
-    fn default() -> Self {
-        Self {
-            waiters: Arc::new(HopscotchMap::with_hasher(RandomState::default())),
-        }
-    }
-}
-
-impl std::fmt::Debug for RootedCarCompletionTracker {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("RootedCarCompletionTracker")
-            .field("waiters", &self.waiters.len())
-            .finish()
-    }
-}
-
-struct RootedCarWaiter {
-    peer: crate::transport::PeerId,
-    completion: SegQueue<crate::rt::oneshot::Sender<FetchCompletion>>,
-}
-
-impl RootedCarCompletionTracker {
-    pub(crate) fn register(
-        &self,
-        root_cid: Cid,
-        peer_id: crate::transport::PeerId,
-    ) -> crate::rt::oneshot::Receiver<FetchCompletion> {
-        let (tx, rx) = crate::rt::oneshot::channel();
-        let completion = SegQueue::new();
-        completion.push(tx);
-        self.waiters.insert(
-            root_cid,
-            Arc::new(RootedCarWaiter {
-                peer: peer_id,
-                completion,
-            }),
-        );
-        rx
-    }
-
-    pub(crate) fn complete(
-        &self,
-        root_cid: Cid,
-        peer_id: &crate::transport::PeerId,
-        success: bool,
-    ) -> bool {
-        self.complete_with(root_cid, peer_id, FetchCompletion::from_success(success))
-    }
-
-    pub(crate) fn defer(&self, root_cid: Cid, peer_id: &crate::transport::PeerId) -> bool {
-        self.complete_with(root_cid, peer_id, FetchCompletion::Deferred)
-    }
-
-    pub(crate) fn complete_with(
-        &self,
-        root_cid: Cid,
-        peer_id: &crate::transport::PeerId,
-        completion: FetchCompletion,
-    ) -> bool {
-        let Some(expected) = self
-            .waiters
-            .get(&root_cid)
-            .filter(|waiter| &waiter.peer == peer_id)
-        else {
-            return false;
-        };
-        let Some(waiter) = self.waiters.remove(&root_cid) else {
-            return false;
-        };
-        if !Arc::ptr_eq(&waiter, &expected) {
-            self.waiters.insert_if_absent(root_cid, waiter);
-            return false;
-        }
-        if let Some(sender) = waiter.completion.pop() {
-            let _ = sender.send(completion);
-        }
-        true
-    }
-
-    pub(crate) fn cancel(&self, root_cid: Cid) {
-        if let Some(waiter) = self.waiters.remove(&root_cid) {
-            drop(waiter.completion.pop());
-        }
-    }
-}
-
 impl BlockSyncCompletionTracker {
     pub(crate) fn with_capacity(capacity: usize) -> Self {
         Self {
@@ -268,7 +162,12 @@ impl BlockSyncCompletionTracker {
 
     #[cfg(test)]
     pub(crate) fn complete(&self, query_id: QueryId, success: bool) -> bool {
-        self.complete_with(query_id, FetchCompletion::from_success(success))
+        let completion = if success {
+            FetchCompletion::Success
+        } else {
+            FetchCompletion::Failure(FetchFailureCause::Error)
+        };
+        self.complete_with(query_id, completion)
     }
 
     pub(crate) fn defer(&self, query_id: QueryId) -> bool {
@@ -329,9 +228,6 @@ impl<B: Blockstore + 'static> SyncManager<B> {
         self.block_sync_completions.clone()
     }
 
-    pub(crate) fn rooted_car_completion_tracker(&self) -> RootedCarCompletionTracker {
-        self.rooted_car_completions.clone()
-    }
     /// Register a block-sync query for tracking.
     ///
     /// This maps the QueryId to the root CID so we can identify

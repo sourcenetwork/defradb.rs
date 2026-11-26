@@ -23,6 +23,12 @@ testo index::query_with_relation_tie_order::ties_follow_the_second_condition_wit
 # With `_in` on an indexed field Go ignores `order` on that field and returns the rows as the filter lists them; Rust applies it.
 testo index::composite_in_order::in_on_descending_first_field_ordered_ascending_follows_the_order
 testo index::composite_in_order::in_on_descending_first_field_ordered_descending_follows_the_order
+# Go's develop builds an index range from one bound of a two-sided filter, picked by map order, so it fetches past the other
+# bound (6 to 8 fetches for 4 rows, 2 or 3 for an empty range); Rust fetches only the range. Go fixed it on shinzo-develop in
+# sourcenetwork/defradb#5341, not yet on develop (#2527).
+testo index::range_filter::a_closed_range_limits_index_fetches
+testo index::range_filter::an_open_descending_range_limits_index_fetches
+testo index::range_filter::an_empty_range_limits_index_fetches
 # Rust re-runs an encrypted index change that loses a race, so concurrent changes on different fields all land; Go answers
 # the loser with "transaction conflict. Please retry".
 testo txn::new_encrypted_index_concurrent::a_concurrent_encrypted_index_delete_and_adds_all_land
