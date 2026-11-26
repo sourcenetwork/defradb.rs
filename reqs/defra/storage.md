@@ -393,6 +393,13 @@ Gossip has no reply and no retry, so a gossip head a node refuses for its per-pe
 
 Over iroh, a create or an update whose head block is larger than one gossip broadcast holds (4,023 bytes of payload) reaches the same peers a small one would, every subscriber of the collection connected to the writer: a document of a 160-field collection, created with every field set or updated in every field on one node, is queried with the same values on the other. Such an update goes to every connected peer as a direct PushLog request instead of a broadcast; a peer that does not subscribe declines it, and the write's broadcast reports any subscriber that did not take it.
 
+# `defra.p2p.replicator.go_wire`: A replicator push to a Go node carries only Go's fields
+
+- **Parents:** ["defra"]
+- **Scenarios:** ["p2p::two_stream::handler::pushlog::tests::retry_after_protocol_negotiates_and_falls_back_to_legacy", "acp_replay_outage_cross_runtime::c_rust_to_go_outage_replay"]
+
+A replicator added with an identity (`client p2p replicator add --identity`) attaches an explicit replay capability to its pushes of the documents that identity owns. Over libp2p a push first offers Rust's request protocol (`/defradb/rep_retry_req/0.0.1`), and only a peer that accepts it receives the capability. A peer that speaks only Go's protocol (`/defradb/rep_req/0.0.1`) receives the request with Go's fields alone, signed over those fields, so a Go replicator verifies and answers it. Documents a Rust node writes while its Go replicator is down, the identity's own and public ones alike, are queryable on the Go node after it restarts.
+
 # `defra.commits`: Commit history queries beyond Go
 
 - **Parents:** ["defra"]

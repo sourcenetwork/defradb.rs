@@ -10,6 +10,7 @@ use crate::message::{PushLogBroadcast, PushLogReply, PushLogRequest};
 use crate::replicator::ReplicatorInfo;
 use crate::signing::sign_message;
 use crate::topics::DefraTopic;
+use crate::two_stream::PushLogOffer;
 use crate::QueryId;
 
 use super::command::HostCommand;
@@ -608,13 +609,13 @@ impl P2PHostHandle {
         mut request: PushLogRequest,
     ) -> Result<PushLogReply> {
         self.attach_explicit_replay_capability(&peer_id, &mut request);
-        sign_message(self.keypair(), &mut request)?;
+        let offer = Box::new(PushLogOffer::sign(self.keypair(), request)?);
 
         let (response_tx, response_rx) = oneshot::channel();
         self.command_tx
             .send(HostCommand::SendTwoStreamRequest {
                 peer_id,
-                request,
+                offer,
                 response: response_tx,
             })
             .await

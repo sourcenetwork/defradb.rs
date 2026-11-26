@@ -15,9 +15,8 @@
 //!
 //! `SUBSCRIBE` controls whether the nodes also `p2p collection add`. Off, the
 //! replicator is the only delivery path — 124's repro subscribed both nodes,
-//! which its verifier flagged as a second path. It defaults on because a Rust →
-//! Go live push hangs without it (see the report); set
-//! `DEFRA_L2_NO_SUBSCRIBE=1` to turn it off.
+//! which its verifier flagged as a second path. It defaults on, as 124's repro
+//! ran; set `DEFRA_L2_NO_SUBSCRIBE=1` to turn it off.
 
 use std::time::{Duration, Instant};
 
@@ -313,6 +312,7 @@ async fn b_go_to_rust_outage_replay() {
 /// C: Rust writer, Go replicator. 124's repro with a Go receiver: the public
 /// document is expected to be refused on the Rust side before it is sent.
 #[nuclei::test]
+#[mantra_macros::req_test("defra.p2p.replicator.go_wire")]
 async fn c_rust_to_go_outage_replay() {
     edge::compat(async {
         let mut cluster = TestCluster::builder()

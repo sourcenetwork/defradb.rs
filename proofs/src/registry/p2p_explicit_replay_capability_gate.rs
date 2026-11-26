@@ -30,4 +30,25 @@ pub(super) const PROPERTIES: &[Property] = &[
         tiers: &[Boundary],
         bound_by: "",
     },
+    Property {
+        // The capability is a field Go does not know, and Go verifies a
+        // PushLog over the fields it knows: it travels only on Rust's
+        // negotiated request protocol, never on Go's.
+        family: "P2P explicit-replay capability gate",
+        name: "INV_GoGetsOnlyGoFields / INV_NoPushDropped / INV_RustKeepsCapability",
+        axis: Tla,
+        anchor: "crates/database/p2p/src/two_stream/push_offer.rs PushLogOffer::sign, PushLogOffer::for_protocol; crates/database/p2p/src/two_stream/handler/pushlog.rs start_request",
+        model_ref: "MC_PushLogGoWire_{Green,Red_AttachEverywhere,Red_StripEverywhere}.cfg",
+        tiers: &[Contract],
+        bound_by: "crates/database/p2p/src/two_stream/handler/pushlog.rs retry_after_protocol_negotiates_and_falls_back_to_legacy",
+    },
+    Property {
+        family: "P2P explicit-replay capability gate",
+        name: "PushLogOffer.go_verifies_go_protocol / go_protocol_has_no_capability / rust_protocol_keeps_capability / rust_verifies_either / same_message_id",
+        axis: Lean,
+        anchor: "crates/database/p2p/src/two_stream/push_offer.rs PushLogOffer::sign, PushLogOffer::for_protocol",
+        model_ref: "PushLogOffer.lean",
+        tiers: &[Contract],
+        bound_by: "crates/database/p2p/src/two_stream/handler/pushlog.rs retry_after_protocol_negotiates_and_falls_back_to_legacy",
+    },
 ];

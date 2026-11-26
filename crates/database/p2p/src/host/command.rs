@@ -196,7 +196,7 @@ pub enum HostCommand {
     /// Send a PushLog request via two-stream protocol (Go compatibility).
     SendTwoStreamRequest {
         peer_id: PeerId,
-        request: crate::message::PushLogRequest,
+        offer: Box<crate::two_stream::PushLogOffer>,
         response: oneshot::Sender<Result<crate::message::PushLogReply>>,
     },
 
