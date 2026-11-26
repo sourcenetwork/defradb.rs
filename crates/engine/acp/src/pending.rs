@@ -42,6 +42,14 @@ fn is_zero(attempts: &u32) -> bool {
     *attempts == 0
 }
 
+/// How [`Error::CreateNotAuthorized`] begins, as a record keeps its reason.
+const CREATE_REFUSAL: &str = "not authorized to create document ";
+
+/// Whether `reason`, kept with a refused record, is a create refusal.
+fn is_create_refusal(reason: &str) -> bool {
+    reason.starts_with(CREATE_REFUSAL)
+}
+
 /// Start of every owed-registration key in the ACP namespace.
 pub(crate) const PENDING_PREFIX: &[u8] = b"/acp-pending/";
 
@@ -52,8 +60,17 @@ pub struct PendingRegistration {
     pub policy_id: String,
     pub resource_name: String,
     pub doc_id: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub parent: Option<crate::RegistrationParent>,
+    /// What the document carries through its `@policy(relation:)` fields,
+    /// sent with the registration so the provider checks the collection's
+    /// `create` over them and stores them with the owner. Written only when
+    /// there are some, so a record of an ungated create keeps its bytes.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub relationships: Vec<crate::DerivedRelationship>,
+    /// Whether the document's collection gates creates: until the provider
+    /// holds the registration the document is hidden from everyone, its
+    /// creator included.
+    #[serde(default, skip_serializing_if = "is_plain")]
+    pub gated: bool,
     /// What lets the node send the registration as `creator`: its own key
     /// for that DID, or the delegation the create carried, as presented.
     /// `None` when the create carried nothing the provider takes: the
@@ -96,7 +113,8 @@ impl PendingRegistration {
             policy_id: policy_id.to_string(),
             resource_name: resource_name.to_string(),
             doc_id: doc_id.to_string(),
-            parent: None,
+            relationships: Vec::new(),
+            gated: false,
             authority: None,
             request_bound: false,
             txn: None,
@@ -108,46 +126,58 @@ impl PendingRegistration {
         }
     }
 
+    /// The command this registration is sent as.
     pub fn command(&self) -> crate::ProviderCommand<'_> {
-        match &self.parent {
-            Some(parent) => crate::ProviderCommand::RegisterUnderParent {
-                policy_id: &self.policy_id,
-                resource: &self.resource_name,
-                object: &self.doc_id,
-                parent,
-            },
-            None => crate::ProviderCommand::RegisterObject {
-                policy_id: &self.policy_id,
-                resource: &self.resource_name,
-                object: &self.doc_id,
-            },
+        crate::ProviderCommand::RegisterObject {
+            policy_id: &self.policy_id,
+            resource: &self.resource_name,
+            object: &self.doc_id,
+            relationships: &self.relationships,
         }
     }
 
+    /// Send this registration through `provider` as its creator.
     pub(crate) async fn submit(&self, provider: &dyn crate::DocumentACP) -> Result<()> {
-        match &self.parent {
-            Some(parent) => {
-                provider
-                    .register_under_parent(
-                        &self.creator,
-                        &self.policy_id,
-                        &self.resource_name,
-                        &self.doc_id,
-                        parent,
-                    )
-                    .await
-            }
-            None => {
-                provider
-                    .register_doc_object(
-                        &self.creator,
-                        &self.policy_id,
-                        &self.resource_name,
-                        &self.doc_id,
-                    )
-                    .await
-            }
-        }
+        provider
+            .register_doc_object(
+                &self.creator,
+                &self.policy_id,
+                &self.resource_name,
+                &self.doc_id,
+                &self.relationships,
+            )
+            .await
+    }
+
+    /// This registration sent with `relationships`, what the document
+    /// carries through its `@policy(relation:)` fields.
+    #[must_use]
+    pub fn with_relationships(mut self, relationships: Vec<crate::DerivedRelationship>) -> Self {
+        self.relationships = relationships;
+        self
+    }
+
+    /// This registration of a document in a collection whose policy gates
+    /// creates (`gated`): the document is not valid until the provider
+    /// holds the registration.
+    #[must_use]
+    pub fn gated(mut self, gated: bool) -> Self {
+        self.gated = gated;
+        self
+    }
+
+    /// Whether the provider refused this registration because its creator
+    /// may not create the document in its collection: such a document stays
+    /// unregistered and is hidden from every reader, its creator included.
+    pub fn create_refused(&self) -> bool {
+        matches!(&self.state, OwedState::Refused { reason } if is_create_refusal(reason))
+    }
+
+    /// Whether the document is hidden from every reader, its creator
+    /// included: its collection gates creates and the provider does not hold
+    /// its registration yet, or refused it as a create.
+    pub fn hidden(&self) -> bool {
+        self.gated || self.create_refused()
     }
 
     /// This registration made by the receiving node for a replicated
@@ -209,6 +239,7 @@ impl PendingRegistration {
             && self.policy_id == other.policy_id
             && self.resource_name == other.resource_name
             && self.doc_id == other.doc_id
+            && self.relationships == other.relationships
             && self.txn == other.txn
             && self.epoch == other.epoch
     }
@@ -340,16 +371,19 @@ mod tests {
     }
 
     #[test]
-    fn redrive_rebuilds_the_same_parent_bound_command() {
-        let mut owed =
-            PendingRegistration::new(Did::new("did:key:creator").unwrap(), "policy", "jobs", "j");
-        owed.parent = Some(crate::RegistrationParent {
-            resource: "nodes".into(),
-            object_id: "n".into(),
-        });
+    fn redrive_rebuilds_the_same_command_with_its_relationships() {
+        let owed =
+            PendingRegistration::new(Did::new("did:key:creator").unwrap(), "policy", "jobs", "j")
+                .with_relationships(vec![crate::DerivedRelationship {
+                    relation: "node".into(),
+                    target_resource: "nodes".into(),
+                    target_doc_id: "n".into(),
+                }])
+                .gated(true);
         let restored = PendingRegistration::decode(&owed.encode().unwrap()).unwrap();
+        assert!(restored.gated && restored.hidden());
         assert!(
-            matches!(restored.command(), crate::ProviderCommand::RegisterUnderParent { resource: "jobs", object: "j", parent, .. } if parent.resource == "nodes" && parent.object_id == "n")
+            matches!(restored.command(), crate::ProviderCommand::RegisterObject { resource: "jobs", object: "j", relationships, .. } if relationships.len() == 1 && relationships[0].target_doc_id == "n")
         );
         assert_eq!(owed.command(), restored.command());
     }
@@ -408,6 +442,45 @@ mod tests {
         );
         assert!(parked.same_create(&recorded.clone().in_transaction(None)));
         assert!(!parked.same_create(&recorded));
+    }
+
+    #[test]
+    fn a_record_keeps_its_relationships_and_tells_a_create_refusal() {
+        let mut pending = PendingRegistration::new(
+            Did::new("did:key:creator").unwrap(),
+            "policy",
+            "books",
+            "bae-1",
+        )
+        .with_relationships(vec![crate::DerivedRelationship {
+            relation: "author".into(),
+            target_resource: "authors".into(),
+            target_doc_id: "bae-2".into(),
+        }]);
+        let decoded = PendingRegistration::decode(&pending.encode().unwrap()).unwrap();
+        assert_eq!(decoded, pending);
+        assert!(!pending.same_create(&pending.clone().with_relationships(Vec::new())));
+        assert!(!pending.create_refused());
+
+        let refusal = Error::CreateNotAuthorized {
+            doc_id: "bae-1".into(),
+            reason: "did:key:creator may not create books/bae-1 in its collection".into(),
+        }
+        .to_string();
+        pending.park(
+            OwedState::Refused {
+                reason: "not a manager".into(),
+            },
+            "not a manager".into(),
+        );
+        assert!(!pending.create_refused(), "another refusal is not final");
+        pending.park(
+            OwedState::Refused {
+                reason: refusal.clone(),
+            },
+            refusal,
+        );
+        assert!(pending.create_refused());
     }
 
     #[test]

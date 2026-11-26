@@ -19,6 +19,7 @@ mod field;
 mod field_kind;
 mod index;
 mod policy;
+mod policy_binding;
 mod relation;
 mod selector;
 mod source;
@@ -60,6 +61,7 @@ pub use index::{
     VectorIndexDescription,
 };
 pub use policy::PolicyDescription;
+pub use policy_binding::{check_policy_bindings, related_collection, BoundRelation, PolicyBinding};
 pub use selector::CollectionSelector;
 pub use source::{
     query_select_json_bytes, CollectionSetDescription, CollectionSource, QuerySource,

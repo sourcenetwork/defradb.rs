@@ -115,7 +115,7 @@ impl<S: storage::corekv::Store + 'static> DbSchemaOps<S> {
                 continue;
             };
             self.database
-                .validate_collection_policy(policy)
+                .validate_resource_interface(&policy.id, &policy.resource_name)
                 .await
                 .map_err(|error| match error {
                     db::DacPolicyError::ResourceInterface(message) => {

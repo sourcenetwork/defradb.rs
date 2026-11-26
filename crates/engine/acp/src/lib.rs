@@ -30,6 +30,7 @@ mod commit_registrations;
 mod dac;
 mod delegation_audience;
 mod delegation_window;
+mod derived_relationship;
 pub mod error;
 mod external;
 mod identity;
@@ -66,6 +67,7 @@ pub use dac::{
 };
 pub use delegation_audience::DelegationAudience;
 pub use delegation_window::{DelegationWindow, WindowRefusal, CLOCK_SKEW_ALLOWANCE};
+pub use derived_relationship::DerivedRelationship;
 pub use error::{Error, Result};
 pub use external::{
     ExternalDocumentAcp, OweAgain, OwedScope, OwedSettlement, RedriveReport, VoidedEffect,
@@ -73,7 +75,7 @@ pub use external::{
 };
 pub use identity::Identity;
 pub use local::{LocalDocumentACP, MemoryAcpStore};
-pub use object_registration::{AcpObject, RegistrationFailure, RegistrationParent};
+pub use object_registration::{AcpObject, RegistrationFailure};
 pub use outbox::{
     InFlight, NewOwedChange, OwedAuthority, OwedAuthorityKind, OwedChange, OwedChanges, OwedDenial,
     OwedDenials, OwedEntry, OwedFilter, OwedHold, OwedJournal, OwedOp, OwedOutcome, OwedRef,
@@ -101,7 +103,9 @@ pub use relation::{
 pub use replica::{ReplicaGrant, ReplicaGroup, ReplicaOwed, ReplicaUnit};
 pub use store::AcpStore;
 pub use target_subject::parse_target_subject;
-pub use validation::{validate_resource_interface, REQUIRED_DOCUMENT_PERMISSIONS};
+pub use validation::{
+    validate_relation_binding, validate_resource_interface, REQUIRED_DOCUMENT_PERMISSIONS,
+};
 
 // Re-export key zanzibar engine types from the standalone zanzibar crate
 pub use zanzibar::PersistentZanzibarStore;

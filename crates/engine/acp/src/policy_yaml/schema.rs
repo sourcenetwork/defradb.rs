@@ -43,68 +43,22 @@ pub(super) fn validate(policy: &ParsedPolicy) -> Result<()> {
                 )));
             }
         }
+        if resource
+            .collection_create()
+            .is_some_and(|create| create.trim().is_empty())
+        {
+            return Err(invalid(format!(
+                "collection create of resource '{}' must not be empty: omit it or write \"*\" to let anyone create",
+                resource.name
+            )));
+        }
         names.insert(resource.name.as_str(), relations);
     }
     names.insert("actor", relation_names(&policy.actor.relations, false)?);
     for resource in &policy.resources {
         validate_references(&resource.relations, &names)?;
     }
-    validate_references(&policy.actor.relations, &names)?;
-    validate_create_rules(policy, &names)
-}
-
-fn validate_create_rules(
-    policy: &ParsedPolicy,
-    names: &RapidHashMap<&str, RapidHashSet<&str>>,
-) -> Result<()> {
-    let mut parents = RapidHashMap::new();
-    for resource in &policy.resources {
-        let Some(rule) = &resource.create else {
-            continue;
-        };
-        let relation = resource
-            .relations
-            .iter()
-            .find(|relation| relation.name == rule.parent)
-            .ok_or_else(|| {
-                invalid(format!(
-                    "unknown parent relation '{}.{}'",
-                    resource.name, rule.parent
-                ))
-            })?;
-        let [parent] = relation.types.as_slice() else {
-            return Err(invalid(
-                "a create rule requires exactly one parent object type",
-            ));
-        };
-        let parent = parent.trim();
-        if parent == "actor" || !names.contains_key(parent) {
-            return Err(invalid(format!("invalid parent object type '{parent}'")));
-        }
-        if !names[parent].contains(rule.requires.as_str()) {
-            return Err(invalid(format!(
-                "unknown parent permission '{parent}.{}'",
-                rule.requires
-            )));
-        }
-        parents.insert(resource.name.as_str(), parent);
-    }
-    let mut complete = RapidHashSet::new();
-    for resource in &policy.resources {
-        let mut path = RapidHashSet::new();
-        let mut current = resource.name.as_str();
-        while let Some(&parent) = parents.get(current) {
-            if complete.contains(current) {
-                break;
-            }
-            if !path.insert(current) {
-                return Err(invalid(format!("cycle in create rules at '{current}'")));
-            }
-            current = parent;
-        }
-        complete.extend(path);
-    }
-    Ok(())
+    validate_references(&policy.actor.relations, &names)
 }
 
 fn relation_names(relations: &[PolicyRelation], with_owner: bool) -> Result<RapidHashSet<&str>> {

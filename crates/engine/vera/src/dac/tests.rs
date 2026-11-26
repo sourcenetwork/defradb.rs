@@ -114,6 +114,7 @@ impl VeraProvider for MockProvider {
         _policy_id: &str,
         _resource: &str,
         _object_id: &str,
+        _relationships: &[acp::DerivedRelationship],
     ) -> std::result::Result<(), ProviderError> {
         Ok(())
     }
@@ -543,6 +544,7 @@ impl VeraProvider for NoSubjectProvider {
         _policy_id: &str,
         _resource: &str,
         _object_id: &str,
+        _relationships: &[acp::DerivedRelationship],
     ) -> std::result::Result<(), ProviderError> {
         unreachable!()
     }

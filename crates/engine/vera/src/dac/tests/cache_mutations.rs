@@ -89,7 +89,7 @@ async fn mutations_invalidate_inherited_grants_but_not_other_policies() {
                 .unwrap();
             }
             Mutation::Register => {
-                acp.register_doc_object(&requestor(), "changed", "folders", "parent")
+                acp.register_doc_object(&requestor(), "changed", "folders", "parent", &[])
                     .await
                     .unwrap();
             }

@@ -43,6 +43,8 @@ pub enum VoidedEffect {
         policy_id: String,
         resource: String,
         object: String,
+        /// The relationships it was registered with.
+        relationships: Vec<crate::DerivedRelationship>,
         /// What the registration was sent under.
         authority: OwedAuthority,
         /// Whether that delegation was bound to this one registration.
@@ -93,6 +95,7 @@ where
                     policy_id,
                     resource,
                     object,
+                    relationships,
                     authority,
                     request_bound,
                 } => {
@@ -105,6 +108,7 @@ where
                     }
                     let pending =
                         PendingRegistration::new(creator.clone(), policy_id, resource, object)
+                            .with_relationships(relationships.clone())
                             .with_authority(Ok(authority.clone()), *request_bound);
                     registrations.record(&pending).await?;
                 }

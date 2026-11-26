@@ -452,7 +452,7 @@ mod tests {
         let node =
             identity::Did::new("did:key:z6MkfXG2FkNy3u7Eg3jm8e2YQpGz7Z1JqWgHDAP1hLk9r2bR").unwrap();
         let acp = Arc::new(LocalDocumentACP::new(Arc::new(MemoryAcpStore::new())));
-        acp.register_doc_object(&owner, "policy1", "users", "doc1")
+        acp.register_doc_object(&owner, "policy1", "users", "doc1", &[])
             .await
             .unwrap();
         let gate = DbBlockReadGate::new(acp);
@@ -518,7 +518,7 @@ mod tests {
         let article = db.get_collection("Article").unwrap().unwrap();
         let acp = Arc::new(LocalDocumentACP::new(Arc::new(MemoryAcpStore::new())));
         let owner = identity::Did::new(OWNER).unwrap();
-        acp.register_doc_object(&owner, "policy1", "users", &parent)
+        acp.register_doc_object(&owner, "policy1", "users", &parent, &[])
             .await
             .unwrap();
         let gate = DbBlockReadGate::new(acp);

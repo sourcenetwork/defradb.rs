@@ -111,6 +111,9 @@ impl Walk {
                         policy_id: fact.policy_id.clone(),
                         resource: fact.resource_name.clone(),
                         object: fact.object_id.clone(),
+                        // The record keeps no derived relationships: a gated
+                        // document restored here is refused by its `create`.
+                        relationships: Vec::new(),
                         authority: OwedAuthority::NodeKey,
                         request_bound: false,
                     });

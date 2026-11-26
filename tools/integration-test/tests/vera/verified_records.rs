@@ -62,7 +62,7 @@ pub(super) async fn archived_owner_record(provider: Arc<VeraRsProvider>) {
         .await
         .expect("delegation");
     provider
-        .register_object(&token, &policy, "users", "archived-document")
+        .register_object(&token, &policy, "users", "archived-document", &[])
         .await
         .expect("register object");
     assert!(provider
@@ -333,7 +333,7 @@ resources:
         .unwrap();
     let bearer = provider.create_bearer_token(&owner_did).await.unwrap();
     provider
-        .register_object(&bearer, &policy, "file", "report")
+        .register_object(&bearer, &policy, "file", "report", &[])
         .await
         .unwrap();
     let reader = READER;
@@ -350,7 +350,7 @@ resources:
         "a reader relation alone does not satisfy the policy"
     );
     provider
-        .register_object(&bearer, &policy, "group", "editors")
+        .register_object(&bearer, &policy, "group", "editors", &[])
         .await
         .unwrap();
     provider
@@ -395,7 +395,7 @@ resources:
         .await
         .unwrap();
     provider
-        .register_object(&bearer, &policy, "file", "suspensions")
+        .register_object(&bearer, &policy, "file", "suspensions", &[])
         .await
         .unwrap();
     assert_eq!(
@@ -514,11 +514,11 @@ resources:
     assert_eq!(compiled.attributes["purpose"], "consumer conformance");
     assert!(compiled.get_relation("actor", "editor").is_some());
     assert!(provider
-        .register_object(&bearer, &spec_policy, "actor", reader)
+        .register_object(&bearer, &spec_policy, "actor", reader, &[])
         .await
         .is_err());
     provider
-        .register_object(&bearer, &spec_policy, "file", "report")
+        .register_object(&bearer, &spec_policy, "file", "report", &[])
         .await
         .unwrap();
     provider

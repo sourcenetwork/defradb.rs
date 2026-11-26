@@ -31,7 +31,14 @@ impl Recording {
 
 #[async_trait]
 impl DocumentACP for Recording {
-    async fn register_doc_object(&self, actor: &Did, _: &str, _: &str, doc: &str) -> Result<()> {
+    async fn register_doc_object(
+        &self,
+        actor: &Did,
+        _: &str,
+        _: &str,
+        doc: &str,
+        _: &[crate::DerivedRelationship],
+    ) -> Result<()> {
         self.writes.push(format!("register {doc} as {actor}"));
         self.registered
             .store(true, std::sync::atomic::Ordering::Relaxed);
@@ -115,6 +122,7 @@ fn change(doc: &str, op: OwedOp) -> VoidedEffect {
 
 fn registration(doc: &str) -> VoidedEffect {
     VoidedEffect::Registration {
+        relationships: Vec::new(),
         creator: did(OWNER),
         policy_id: "policy".into(),
         resource: "users".into(),

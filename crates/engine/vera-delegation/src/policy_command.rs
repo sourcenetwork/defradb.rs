@@ -21,10 +21,12 @@ pub struct PolicyCommand<'a> {
 pub enum PolicyAction<'a> {
     /// Register the object with the token's actor as its owner.
     RegisterObject,
-    /// Register the object and attach it to the parent authorizing creation.
-    RegisterUnderParent {
-        resource: &'a str,
-        object_id: &'a str,
+    /// Register the object with the token's actor as its owner, together
+    /// with the relationships it carries through its `@policy(relation:)`
+    /// fields: vera.rs checks the collection's `create` over them and stores
+    /// them with the owner. Never empty: see [`PolicyAction::register`].
+    RegisterObjectWithRelationships {
+        relationships: &'a [acp::DerivedRelationship],
     },
     /// Add one relationship.
     SetRelationship {
@@ -39,6 +41,18 @@ pub enum PolicyAction<'a> {
     /// Archive the object: every relationship on it goes and its owner no
     /// longer counts. Only its owner may.
     ArchiveObject,
+}
+
+impl<'a> PolicyAction<'a> {
+    /// The registration of an object carrying `relationships`: a plain
+    /// [`PolicyAction::RegisterObject`] when it carries none.
+    pub fn register(relationships: &'a [acp::DerivedRelationship]) -> Self {
+        if relationships.is_empty() {
+            Self::RegisterObject
+        } else {
+            Self::RegisterObjectWithRelationships { relationships }
+        }
+    }
 }
 
 /// The subject of a relationship command, in the two forms a provider is

@@ -21,14 +21,6 @@ pub struct PolicyDescription {
     /// Name of the corresponding resource within the policy.
     #[serde(rename = "ResourceName", default)]
     pub resource_name: String,
-
-    /// Document field containing the parent object ID for gated registration.
-    #[serde(
-        rename = "ParentField",
-        default,
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub parent_field: Option<String>,
 }
 
 impl PolicyDescription {
@@ -37,7 +29,6 @@ impl PolicyDescription {
         Self {
             id: id.into(),
             resource_name: resource_name.into(),
-            parent_field: None,
         }
     }
 
@@ -54,18 +45,6 @@ impl PolicyDescription {
     pub fn validate(&self) -> Result<()> {
         Self::validate_field(&self.id, "policy id")?;
         Self::validate_field(&self.resource_name, "policy resource_name")?;
-        if let Some(field) = &self.parent_field {
-            let mut bytes = field.bytes();
-            if !bytes
-                .next()
-                .is_some_and(|c| c == b'_' || c.is_ascii_alphabetic())
-                || !bytes.all(|c| c == b'_' || c.is_ascii_alphanumeric())
-            {
-                return Err(SchemaError::InvalidPolicy(format!(
-                    "invalid parent field '{field}'"
-                )));
-            }
-        }
         Ok(())
     }
 
@@ -106,32 +85,6 @@ impl PolicyDescription {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn parent_field_roundtrips_and_changes_the_policy_commitment() {
-        let plain = PolicyDescription::new("id", "jobs");
-        let legacy = serde_json::json!({"ID": "id", "ResourceName": "jobs"});
-        assert_eq!(serde_json::to_value(&plain).unwrap(), legacy);
-        assert_eq!(
-            serde_json::from_value::<PolicyDescription>(legacy).unwrap(),
-            plain
-        );
-        let mut gated = plain.clone();
-        gated.parent_field = Some("agent_id".into());
-        gated.validate().unwrap();
-        let encoded = serde_json::to_value(&gated).unwrap();
-        assert_eq!(encoded["ParentField"], "agent_id");
-        assert_eq!(
-            serde_json::from_value::<PolicyDescription>(encoded).unwrap(),
-            gated
-        );
-        assert_ne!(
-            crate::generate_policy_cid(&plain).unwrap(),
-            crate::generate_policy_cid(&gated).unwrap()
-        );
-        gated.parent_field = Some("agent.id".into());
-        assert!(gated.validate().is_err());
-    }
 
     #[test]
     fn test_policy_serialization() {

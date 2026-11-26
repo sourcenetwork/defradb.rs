@@ -83,6 +83,7 @@ fn the_term_checked_what_is_owed_and_a_closure_are_kept() {
     let directory = tempfile::tempdir().unwrap();
     let mut journal = Journal::open(directory.path(), 0).unwrap();
     let owed = vec![Lost::Registration {
+        relationships: Vec::new(),
         policy_id: "p".into(),
         resource: "users".into(),
         object: "bae-1".into(),
@@ -111,6 +112,7 @@ fn an_uncovered_journal_is_reopened_after_its_own_state_rebuilds_it() {
     let directory = tempfile::tempdir().unwrap();
     let mut journal = Journal::open(directory.path(), 0).unwrap();
     let owed = vec![Lost::Registration {
+        relationships: Vec::new(),
         policy_id: "p".into(),
         resource: "users".into(),
         object: "bae-1".into(),
@@ -144,6 +146,7 @@ fn a_failed_write_leaves_what_the_journal_reports_as_it_was() {
     let directory = tempfile::tempdir().unwrap();
     let mut journal = Journal::open(directory.path(), 0).unwrap();
     let owed = vec![Lost::Registration {
+        relationships: Vec::new(),
         policy_id: "p".into(),
         resource: "users".into(),
         object: "bae-1".into(),

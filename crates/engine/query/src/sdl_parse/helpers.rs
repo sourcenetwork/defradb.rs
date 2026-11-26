@@ -181,7 +181,42 @@ pub(super) fn parse_governed_directive(directive: &Directive<'_, String>) -> Res
     Ok(root.clone())
 }
 
+/// The policy relation from a field's `@policy(relation:)`, `None` when the
+/// directive has no `relation` argument. `owner` is `Type.field`, for errors.
+pub(super) fn parse_field_policy_directive(
+    directive: &Directive<'_, String>,
+    owner: &str,
+) -> Result<Option<String>> {
+    let Some(value) = get_directive_arg(directive, "relation") else {
+        return Ok(None);
+    };
+    let graphql_parser::schema::Value::String(relation) = value else {
+        return Err(QueryError::parse(format!(
+            "Argument \"relation\" has invalid value {}",
+            format_graphql_value(value)
+        )));
+    };
+    if relation.trim().is_empty() {
+        return Err(QueryError::parse(format!(
+            "@policy relation must not be empty. Field: {owner}"
+        )));
+    }
+    if get_directive_arg(directive, "id").is_some()
+        || get_directive_arg(directive, "resource").is_some()
+    {
+        return Err(QueryError::parse(format!(
+            "@policy on a field takes only the relation argument; the policy is the collection's. Field: {owner}"
+        )));
+    }
+    Ok(Some(relation.clone()))
+}
+
 pub(super) fn parse_policy_directive(directive: &Directive<'_, String>) -> Result<PolicyConfig> {
+    if get_directive_arg(directive, "relation").is_some() {
+        return Err(QueryError::parse(
+            "@policy(relation:) binds a field and is not allowed on a type",
+        ));
+    }
     let id_raw = get_directive_arg(directive, "id");
     let resource_raw = get_directive_arg(directive, "resource");
 
@@ -228,18 +263,7 @@ pub(super) fn parse_policy_directive(directive: &Directive<'_, String>) -> Resul
         return Err(QueryError::parse("resource name must not be empty"));
     }
 
-    let parent_field = match get_directive_arg(directive, "parentField") {
-        Some(graphql_parser::schema::Value::String(field)) => Some(field.clone()),
-        Some(value) => {
-            return Err(QueryError::parse(format!(
-                "Argument \"parentField\" has invalid value {}",
-                format_graphql_value(value)
-            )))
-        }
-        None => None,
-    };
     Ok(PolicyConfig {
-        parent_field,
         id: id.unwrap(),
         resource: resource.unwrap(),
     })

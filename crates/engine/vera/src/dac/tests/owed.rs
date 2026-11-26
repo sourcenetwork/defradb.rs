@@ -180,6 +180,7 @@ impl VeraProvider for OwedProvider {
         _policy_id: &str,
         _resource: &str,
         _object_id: &str,
+        _relationships: &[acp::DerivedRelationship],
     ) -> std::result::Result<(), ProviderError> {
         Ok(())
     }
@@ -311,10 +312,9 @@ fn named(command: &crate::PolicyCommand<'_>) -> String {
     let object = command.object_id;
     match &command.action {
         PolicyAction::RegisterObject => format!("register {object}"),
-        PolicyAction::RegisterUnderParent {
-            resource,
-            object_id,
-        } => format!("register {object} under {resource}:{object_id}"),
+        PolicyAction::RegisterObjectWithRelationships { relationships } => {
+            format!("register {object} with {}", relationships.len())
+        }
         PolicyAction::SetRelationship {
             relation,
             subject: on,
@@ -654,6 +654,7 @@ fn a_delegation_bound_to_one_request_counts_for_the_command_it_names_only() {
     let provider = OwedProvider::new(true);
     let acp = VeraDocumentACP::without_access_cache(provider.clone());
     let registration = |object| acp::ProviderCommand::RegisterObject {
+        relationships: &[],
         policy_id: "policy-1",
         resource: "users",
         object,
@@ -762,7 +763,7 @@ async fn a_command_is_not_sent_with_a_delegation_bound_to_another() {
     ));
     assert!(matches!(
         bound
-            .register_doc_object(&did(REMOTE), "policy-1", "users", "doc-1")
+            .register_doc_object(&did(REMOTE), "policy-1", "users", "doc-1", &[])
             .await,
         Err(acp::Error::OwedAuthorityUnavailable { .. })
     ));
@@ -852,7 +853,7 @@ async fn a_plain_delegation_is_checked_again_as_its_command_is_sent() {
     assert!(refused(grant(stale.clone()).await));
     assert!(matches!(
         stale
-            .register_doc_object(&did(REMOTE), "policy-1", "users", "doc-1")
+            .register_doc_object(&did(REMOTE), "policy-1", "users", "doc-1", &[])
             .await,
         Err(acp::Error::OwedAuthorityUnavailable { .. })
     ));
@@ -892,6 +893,7 @@ fn a_verified_write_takes_no_delegation_the_node_cannot_verify() {
         verified.command_authority(
             &did(REMOTE),
             acp::ProviderCommand::RegisterObject {
+                relationships: &[],
                 policy_id: "policy-1",
                 resource: "users",
                 object: "doc-1",

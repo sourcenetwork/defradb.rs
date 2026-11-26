@@ -364,7 +364,7 @@ resources:
             let viewer = did("did:key:z6MkfXG2FkNy3u7Eg3jm8e2YQpGz7Z1JqWgHDAP1hLk9r2bR");
 
             document_acp
-                .register_doc_object(&owner, &policy.id, "users", "doc1")
+                .register_doc_object(&owner, &policy.id, "users", "doc1", &[])
                 .await
                 .unwrap();
             document_acp

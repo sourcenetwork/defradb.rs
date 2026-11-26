@@ -491,8 +491,19 @@ impl<'a> SdlParser<'a> {
             if let Some(size) = parsed_field.directives.size_constraint {
                 field = field.with_size(size);
             }
-            if parsed_field.directives.immutable {
+            // A single-object relation's `@immutable` and `@policy(relation:)`
+            // apply to the document ID it stores, so they go to its `_xID`
+            // field below. Anywhere else, `@immutable` stays on the field and
+            // field validation decides whether it may be there.
+            let single_relation = creates_fk_field;
+            if parsed_field.directives.immutable && !single_relation {
                 field = field.as_immutable();
+            }
+            if parsed_field.directives.policy_relation.is_some() && !single_relation {
+                return Err(QueryError::parse(format!(
+                    "@policy(relation:) requires a single-object relation field. Field: {}.{}",
+                    type_def.name, parsed_field.name
+                )));
             }
 
             // Set relation name - use explicit @relation(name:) if provided, otherwise auto-generate
@@ -537,6 +548,8 @@ impl<'a> SdlParser<'a> {
                         id_field_crdt,
                     )
                     .with_relation_name(relation_name.clone());
+                    id_field.immutable = parsed_field.directives.immutable;
+                    id_field.policy_relation = parsed_field.directives.policy_relation.clone();
                     if is_primary {
                         id_field = id_field.as_primary();
 
@@ -791,10 +804,7 @@ impl<'a> SdlParser<'a> {
         // An ungoverned collection commits to no policy at all, and keeps the
         // version ID it has today.
         let policy = type_def.directives.policy.as_ref().map(|policy_config| {
-            let mut policy =
-                schema::PolicyDescription::new(&policy_config.id, &policy_config.resource);
-            policy.parent_field.clone_from(&policy_config.parent_field);
-            policy
+            schema::PolicyDescription::new(&policy_config.id, &policy_config.resource)
         });
         let policy_commitment = commitments
             .is_governed()

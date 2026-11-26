@@ -43,7 +43,7 @@ fn hook_with_acp(strict: bool, acp: Arc<LocalDocumentACP>) -> AcpCompositeMergeH
 
 async fn registered_acp() -> Arc<LocalDocumentACP> {
     let acp = Arc::new(LocalDocumentACP::new(Arc::new(MemoryAcpStore::new())));
-    acp.register_doc_object(&Did::new(OWNER).unwrap(), "policy-1", "users", "doc1")
+    acp.register_doc_object(&Did::new(OWNER).unwrap(), "policy-1", "users", "doc1", &[])
         .await
         .unwrap();
     acp
@@ -287,7 +287,7 @@ fn strict_acp_registers_owner_only_for_a_did_creator() {
         false,
     );
     assert!(hook
-        .post_commit_action("doc1", &collection, &peer_id)
+        .post_commit_action("doc1", &collection, &peer_id, Vec::new())
         .is_none());
 
     let did = BlockMetadata::normal(
@@ -297,7 +297,9 @@ fn strict_acp_registers_owner_only_for_a_did_creator() {
         Some("peer"),
         false,
     );
-    assert!(hook.post_commit_action("doc1", &collection, &did).is_some());
+    assert!(hook
+        .post_commit_action("doc1", &collection, &did, Vec::new())
+        .is_some());
 }
 
 // These tests exercise strict merge semantics without a running Vera:
@@ -404,6 +406,102 @@ fn strict_acp_writer_permission_does_not_replace_receiver_read_permission() {
             Some(MergeOutcome::retryable_skip(
                 "replicated protected document is not yet readable by local node"
             ))
+        );
+    })
+    .unwrap()
+}
+
+/// A provider that keeps the relationships each registration carries.
+#[derive(Default)]
+struct Recording {
+    registered: std::sync::Mutex<Vec<(String, Vec<acp::DerivedRelationship>)>>,
+}
+
+#[async_trait::async_trait]
+impl DocumentACP for Recording {
+    async fn register_doc_object(
+        &self,
+        identity: &Did,
+        _: &str,
+        _: &str,
+        _: &str,
+        relationships: &[acp::DerivedRelationship],
+    ) -> acp::Result<()> {
+        self.registered
+            .lock()
+            .unwrap()
+            .push((identity.to_string(), relationships.to_vec()));
+        Ok(())
+    }
+
+    async fn is_doc_registered(&self, _: &str, _: &str, _: &str) -> acp::Result<bool> {
+        Ok(false)
+    }
+
+    async fn check_doc_access(
+        &self,
+        _: &Identity,
+        _: acp::DocumentPermission,
+        _: &str,
+        _: &str,
+        _: &str,
+    ) -> acp::Result<bool> {
+        Ok(false)
+    }
+
+    async fn add_actor_relationship(
+        &self,
+        _: &Did,
+        _: &Did,
+        _: &str,
+        _: &str,
+        _: &str,
+        _: &str,
+        _: &[String],
+    ) -> acp::Result<bool> {
+        Ok(false)
+    }
+
+    async fn delete_actor_relationship(
+        &self,
+        _: &Did,
+        _: &Did,
+        _: &str,
+        _: &str,
+        _: &str,
+        _: &str,
+        _: &[String],
+    ) -> acp::Result<bool> {
+        Ok(false)
+    }
+
+    async fn unregister_doc_object(&self, _: &str, _: &str, _: &str) -> acp::Result<()> {
+        Ok(())
+    }
+}
+
+#[test]
+fn strict_acp_registers_a_replicated_document_with_its_derived_relationships() {
+    workers::block_on(async {
+        let acp = Arc::new(Recording::default());
+        let hook =
+            AcpCompositeMergeHook::new(Some(Identity::Authenticated(Did::new(NODE).unwrap())));
+        hook.set_document_acp(acp.clone());
+        hook.set_strict_replicated_doc_access(true);
+        let derived = vec![acp::DerivedRelationship {
+            relation: "author".into(),
+            target_resource: "author".into(),
+            target_doc_id: "bae-mike".into(),
+        }];
+        let creator = BlockMetadata::normal("doc1", "col1", OWNER, Some("peer"), false);
+        hook.post_commit_action("doc1", &protected_collection(), &creator, derived.clone())
+            .expect("a registration")
+            .run()
+            .await
+            .expect("registered");
+        assert_eq!(
+            *acp.registered.lock().unwrap(),
+            vec![(OWNER.to_owned(), derived)]
         );
     })
     .unwrap()

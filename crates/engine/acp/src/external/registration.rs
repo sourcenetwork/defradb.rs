@@ -45,6 +45,9 @@ where
         owed: &PendingRegistration,
         also: Option<&str>,
     ) -> Result<()> {
+        if owed.create_refused() {
+            return Err(owed_create_refusal(owed));
+        }
         let settled = self.register_and_clear(owed, also).await;
         if let Err(error) = &settled {
             self.note_failure(owed, error).await?;
@@ -244,6 +247,15 @@ where
                 (Some(OwedState::AwaitingAuthority), false)
             }
             Error::ProviderUnavailable(_) => (None, false),
+            // Final for a create: the same relationships get the same
+            // answer. A replica's registration is made as this node, and
+            // the creator's own may still land, so it stays owed.
+            Error::CreateNotAuthorized { .. } if owed.replica_of.is_none() => (
+                Some(OwedState::Refused {
+                    reason: reason.clone(),
+                }),
+                true,
+            ),
             Error::NotOwner { .. }
             | Error::NotManager { .. }
             | Error::PermissionDenied(_)
@@ -356,6 +368,12 @@ where
         }
     }
 
+    /// Whether the provider refused `owed` for good as a create its creator
+    /// may not make: nothing is sent for it again.
+    pub(super) fn refused_create(owed: &PendingRegistration) -> Option<Error> {
+        owed.create_refused().then(|| owed_create_refusal(owed))
+    }
+
     pub(super) async fn settle_if_owed(
         &self,
         policy_id: &str,
@@ -366,6 +384,19 @@ where
             Some(owed) => self.settle(&owed).await,
             None => Ok(()),
         }
+    }
+}
+
+/// The refusal a record refused as a create stands for.
+fn owed_create_refusal(owed: &PendingRegistration) -> Error {
+    let kept = owed.last_error.as_deref().unwrap_or_default();
+    let prefix = format!(
+        "not authorized to create document {} in its collection: ",
+        owed.doc_id
+    );
+    Error::CreateNotAuthorized {
+        doc_id: owed.doc_id.clone(),
+        reason: kept.strip_prefix(&prefix).unwrap_or(kept).to_owned(),
     }
 }
 
@@ -383,7 +414,14 @@ mod tests {
 
     #[async_trait]
     impl DocumentACP for Unreached {
-        async fn register_doc_object(&self, _: &Did, _: &str, _: &str, _: &str) -> Result<()> {
+        async fn register_doc_object(
+            &self,
+            _: &Did,
+            _: &str,
+            _: &str,
+            _: &str,
+            _: &[crate::DerivedRelationship],
+        ) -> Result<()> {
             Ok(())
         }
 
@@ -440,26 +478,30 @@ mod tests {
     }
 
     #[test]
-    fn an_owed_parent_registration_confers_no_ownership_or_access() {
+    fn an_owed_gated_registration_confers_no_ownership_or_access() {
         workers::block_on(async {
             let gate = ExternalDocumentAcp::new(
                 Arc::new(Unreached),
                 Arc::new(RegolithStore::in_memory().unwrap()),
             );
             let creator = Did::new("did:key:creator").unwrap();
-            let mut owed = PendingRegistration::new(creator.clone(), "policy", "jobs", "child");
-            owed.parent = Some(crate::RegistrationParent {
-                resource: "nodes".into(),
-                object_id: "parent".into(),
-            });
+            let owed = PendingRegistration::new(creator.clone(), "policy", "jobs", "child")
+                .with_relationships(vec![crate::DerivedRelationship {
+                    relation: "node".into(),
+                    target_resource: "nodes".into(),
+                    target_doc_id: "parent".into(),
+                }])
+                .gated(true);
             let mut txn = gate.store.new_txn(false).await.unwrap();
             txn.set(&owed.key(), &owed.encode().unwrap()).await.unwrap();
             txn.commit().await.unwrap();
 
-            assert!(matches!(
-                gate.is_doc_registered("policy", "jobs", "child").await,
-                Err(Error::ProviderUnavailable(_))
-            ));
+            // Registered for the gate, so never read as public; owned and
+            // readable by nobody until the provider holds it.
+            assert!(gate
+                .is_doc_registered("policy", "jobs", "child")
+                .await
+                .unwrap());
             assert_eq!(
                 gate.get_doc_owner("policy", "jobs", "child").await.unwrap(),
                 None
@@ -534,6 +576,189 @@ mod tests {
                 .unwrap();
             assert_eq!(parked.state, OwedState::AwaitingAuthority);
             assert_eq!(parked.authority, delegation("fresh"));
+        })
+        .unwrap()
+    }
+
+    /// A provider that refuses every registration as a create its creator
+    /// may not make, and keeps what it was sent.
+    #[derive(Default)]
+    struct Gating {
+        sent: std::sync::Mutex<Vec<Vec<crate::DerivedRelationship>>>,
+    }
+
+    #[async_trait]
+    impl DocumentACP for Gating {
+        fn owed_authority(&self, _: &Did) -> Result<OwedAuthority> {
+            Ok(OwedAuthority::NodeKey)
+        }
+
+        async fn register_doc_object(
+            &self,
+            _: &Did,
+            _: &str,
+            _: &str,
+            doc_id: &str,
+            relationships: &[crate::DerivedRelationship],
+        ) -> Result<()> {
+            self.sent.lock().unwrap().push(relationships.to_vec());
+            Err(Error::CreateNotAuthorized {
+                doc_id: doc_id.into(),
+                reason: "did:key:creator may not create users/bae-1 in its collection".into(),
+            })
+        }
+
+        async fn is_doc_registered(&self, _: &str, _: &str, _: &str) -> Result<bool> {
+            Ok(false)
+        }
+
+        async fn check_doc_access(
+            &self,
+            _: &Identity,
+            _: DocumentPermission,
+            _: &str,
+            _: &str,
+            _: &str,
+        ) -> Result<bool> {
+            Ok(true)
+        }
+
+        async fn add_actor_relationship(
+            &self,
+            _: &Did,
+            _: &Did,
+            _: &str,
+            _: &str,
+            _: &str,
+            _: &str,
+            _: &[String],
+        ) -> Result<bool> {
+            Ok(false)
+        }
+
+        async fn delete_actor_relationship(
+            &self,
+            _: &Did,
+            _: &Did,
+            _: &str,
+            _: &str,
+            _: &str,
+            _: &str,
+            _: &[String],
+        ) -> Result<bool> {
+            Ok(false)
+        }
+
+        async fn unregister_doc_object(&self, _: &str, _: &str, _: &str) -> Result<()> {
+            Ok(())
+        }
+    }
+
+    fn derived() -> Vec<crate::DerivedRelationship> {
+        vec![crate::DerivedRelationship {
+            relation: "author".into(),
+            target_resource: "authors".into(),
+            target_doc_id: "bae-2".into(),
+        }]
+    }
+
+    async fn record(gate: &ExternalDocumentAcp<RegolithStore>, owed: &PendingRegistration) {
+        let mut txn = gate.store.new_txn(false).await.unwrap();
+        txn.set(&owed.key(), &owed.encode().unwrap()).await.unwrap();
+        txn.commit().await.unwrap();
+    }
+
+    #[test]
+    fn a_create_refusal_is_final_and_hides_the_document_from_its_creator() {
+        workers::block_on(async {
+            let provider = Arc::new(Gating::default());
+            let gate = ExternalDocumentAcp::new(
+                provider.clone(),
+                Arc::new(RegolithStore::in_memory().unwrap()),
+            );
+            let creator = Did::new("did:key:creator").unwrap();
+            let owed = PendingRegistration::new(creator.clone(), "policy", "users", "bae-1")
+                .with_relationships(derived())
+                .with_authority(Ok(OwedAuthority::NodeKey), false);
+            record(&gate, &owed).await;
+            let creator_identity = Identity::Authenticated(creator.clone());
+            let reads = || {
+                gate.check_doc_access(
+                    &creator_identity,
+                    DocumentPermission::Read,
+                    "policy",
+                    "users",
+                    "bae-1",
+                )
+            };
+            assert!(reads().await.unwrap(), "the creator reads while it is owed");
+
+            let refused = gate.settle_if_owed("policy", "users", "bae-1").await;
+            assert!(
+                matches!(refused, Err(Error::CreateNotAuthorized { .. })),
+                "{refused:?}"
+            );
+            assert_eq!(*provider.sent.lock().unwrap(), vec![derived()]);
+            let kept = gate
+                .owed("policy", "users", "bae-1")
+                .await
+                .unwrap()
+                .unwrap();
+            assert!(kept.create_refused(), "{kept:?}");
+            assert!(!reads().await.unwrap(), "nobody reads a refused create");
+
+            // Sent again it would be refused again: nothing is sent.
+            let again = gate.settle_if_owed("policy", "users", "bae-1").await;
+            assert!(
+                matches!(again, Err(Error::CreateNotAuthorized { .. })),
+                "{again:?}"
+            );
+            let listed = gate
+                .settle_all_if_owed(&[crate::AcpObject::new("policy", "users", "bae-1")])
+                .await;
+            assert!(matches!(
+                listed[..],
+                [Err(Error::CreateNotAuthorized { .. })]
+            ));
+            assert_eq!(provider.sent.lock().unwrap().len(), 1);
+            assert_eq!(
+                gate.owed("policy", "users", "bae-1").await.unwrap(),
+                Some(kept)
+            );
+        })
+        .unwrap()
+    }
+
+    #[test]
+    fn a_replica_refused_as_a_create_stays_owed() {
+        workers::block_on(async {
+            let provider = Arc::new(Gating::default());
+            let gate = ExternalDocumentAcp::new(
+                provider.clone(),
+                Arc::new(RegolithStore::in_memory().unwrap()),
+            );
+            let node = Did::new("did:key:node").unwrap();
+            let owed = PendingRegistration::new(node, "policy", "users", "bae-1")
+                .with_relationships(derived())
+                .with_authority(Ok(OwedAuthority::NodeKey), false)
+                .for_replica_of(Did::new("did:key:creator").unwrap());
+            record(&gate, &owed).await;
+            assert!(gate
+                .settle_if_owed("policy", "users", "bae-1")
+                .await
+                .is_err());
+            let kept = gate
+                .owed("policy", "users", "bae-1")
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(kept.state, OwedState::Staged);
+            assert!(!kept.create_refused());
+            assert!(gate
+                .settle_if_owed("policy", "users", "bae-1")
+                .await
+                .is_err());
+            assert_eq!(provider.sent.lock().unwrap().len(), 2);
         })
         .unwrap()
     }

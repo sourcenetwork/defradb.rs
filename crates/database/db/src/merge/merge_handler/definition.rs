@@ -440,8 +440,10 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
         });
 
         let mut field = FieldDescription::new(field_id.to_string(), name, kind, crdt_type);
-        // Immutability is in the field's own identity, so it round-trips.
+        // Immutability and a policy relation binding are in the field's own
+        // identity, so they round-trip.
         field.immutable = payload.immutable;
+        field.policy_relation = payload.policy_relation.clone();
         Ok(field)
     }
 }

@@ -507,28 +507,20 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
         collection_lookup: Option<Collection>,
         replica: ReplicaStep,
     ) -> std::result::Result<MergeOutcome, MergeError> {
-        let mut handler = self.with_merge_keys(block, Some(metadata)).await;
-        loop {
-            match handler
-                .process_composite_delta_keyed(
-                    cid,
-                    block,
-                    payload,
-                    metadata,
-                    from_collection,
-                    is_root,
-                    doc_id_str,
-                    collection_lookup.clone(),
-                    replica.clone(),
-                )
-                .await
-            {
-                Err(MergeError::NeedsRegistration(lookup)) => {
-                    handler.resolve_registration(*lookup).await?
-                }
-                result => return result,
-            }
-        }
+        self.with_merge_keys(block, Some(metadata))
+            .await
+            .process_composite_delta_keyed(
+                cid,
+                block,
+                payload,
+                metadata,
+                from_collection,
+                is_root,
+                doc_id_str,
+                collection_lookup,
+                replica,
+            )
+            .await
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -754,9 +746,15 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                         .filter(|collection| !self.is_governed(collection.schema())),
                     self.composite_merge_hook(),
                 ) {
-                    if let Some(action) =
-                        hook.post_commit_action(doc_id_str, collection.schema(), metadata)
-                    {
+                    let relationships = self
+                        .merged_relationships(collection.schema(), &state.field_values)
+                        .await;
+                    if let Some(action) = hook.post_commit_action(
+                        doc_id_str,
+                        collection.schema(),
+                        metadata,
+                        relationships,
+                    ) {
                         if let Err(e) = action.run().await {
                             tracing::warn!(
                                 cid = %cid,
@@ -1150,9 +1148,15 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                         .filter(|collection| !self.is_governed(collection.schema())),
                     self.composite_merge_hook(),
                 ) {
-                    if let Some(action) =
-                        hook.post_commit_action(doc_id_str, collection.schema(), metadata)
-                    {
+                    let relationships = self
+                        .merged_relationships(collection.schema(), &state.field_values)
+                        .await;
+                    if let Some(action) = hook.post_commit_action(
+                        doc_id_str,
+                        collection.schema(),
+                        metadata,
+                        relationships,
+                    ) {
                         pending_post_commit_actions.push(PendingPostCommitAction { action });
                     }
                 }
