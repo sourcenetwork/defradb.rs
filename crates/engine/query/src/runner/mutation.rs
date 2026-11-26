@@ -414,7 +414,9 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry + 'static> QueryRunner<F, R
         let mapping = self.build_mutation_mapping(mutation)?;
 
         // Resolve filter to doc_ids if filter is provided without doc_ids
-        let resolved_doc_ids = self.resolve_filter_to_doc_ids(mutation, fetcher).await?;
+        let resolved_doc_ids = self
+            .resolve_filter_to_doc_ids(mutation, caller_identity.clone(), fetcher)
+            .await?;
 
         // Get doc_ids for permission checking (UPDATE/DELETE need this)
         let doc_ids_for_check = resolved_doc_ids

@@ -8,6 +8,7 @@ use crate::error::{QueryError, Result};
 use crate::mapper::{Field, Filter, Mutation, Requestable, Select};
 use crate::plan::{AddInput, UpdateInput, UpsertInput};
 use crate::txn::TransactionRegistry;
+use identity::Did;
 
 use super::{DocFetcher, QueryRunner};
 
@@ -25,19 +26,21 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
             filter,
             Some(limit),
             show_deleted,
+            None,
             self.fetcher.as_ref(),
         )
         .await
     }
 
     /// The document IDs a full select with `filter` returns through
-    /// `fetcher`, joins included.
+    /// `fetcher` for `caller_identity`, joins included.
     async fn selected_doc_ids(
         &self,
         collection_name: &str,
         filter: Filter,
         limit: Option<usize>,
         show_deleted: bool,
+        caller_identity: Option<Did>,
         fetcher: &dyn crate::fetcher::DocFetcher,
     ) -> Result<Vec<String>> {
         let mut mapping = DocumentMapping::new();
@@ -55,7 +58,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
 
         let mut warnings = Vec::new();
         let result = self
-            .execute_select_internal(&select, fetcher, None, &mut warnings)
+            .execute_select_internal(&select, fetcher, caller_identity, &mut warnings)
             .await?;
         let items = result.as_array().ok_or_else(|| {
             crate::error::QueryError::internal("filtered document selection returned a non-list")
@@ -104,6 +107,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
     pub(crate) async fn resolve_filter_to_doc_ids(
         &self,
         mutation: &Mutation,
+        caller_identity: Option<Did>,
         fetcher: &dyn crate::fetcher::DocFetcher,
     ) -> Result<Option<Vec<String>>> {
         // Only resolve if there's a filter but no explicit doc_ids
@@ -113,7 +117,8 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
         };
 
         // A condition on a related document needs the join a select runs;
-        // the stored document alone cannot satisfy it.
+        // the stored document alone cannot satisfy it. The select reads as the
+        // caller, so it sees only the related documents the caller may read.
         if filter.has_relation_filters() || filter.has_alias_filter() {
             // The write decides on every document these scans read, related
             // ones included, so a concurrent change to any of them aborts it.
@@ -124,6 +129,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
                     filter.clone(),
                     None,
                     false,
+                    caller_identity,
                     fetcher,
                 )
                 .await;

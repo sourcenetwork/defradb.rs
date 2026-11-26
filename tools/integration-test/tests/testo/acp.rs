@@ -80,6 +80,7 @@ mod dac {
     mod register_and_delete;
     mod register_and_read;
     mod register_and_update;
+    mod relation_filters;
     mod relation_objects;
     mod relationship {
         mod doc_actor {

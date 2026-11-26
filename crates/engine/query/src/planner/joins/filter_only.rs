@@ -134,6 +134,9 @@ impl Planner {
                 }
                 Box::new(child_scan)
             };
+            // The filter may match only the related documents a selection of
+            // the relation would show the reader.
+            let child_plan = self.maybe_wrap_with_acp_filter(child_plan, &target_collection);
 
             // Get field indices
             let relation_field_index =
