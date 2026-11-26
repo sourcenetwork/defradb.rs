@@ -15,7 +15,7 @@ use axum::{
 };
 use defra_core::RequestContext;
 use defra_http::request_scope::{bound, CallerContext};
-use defra_http::router::{AppState, AppStateBuilder, CollectionOperations};
+use defra_http::router::{AppState, AppStateBuilder, CollectionOperations, CollectionRefusal};
 use defra_http::MockQueryExecutor;
 use identity::{new_token, Identity, RawIdentity};
 use schema::CollectionVersion;
@@ -30,8 +30,15 @@ impl CollectionOperations for BoundCollectionOperations {
         Some(Arc::new(Self(context.identity().map(str::to_owned))))
     }
 
-    async fn add_collection(&self, _sdl: &str) -> Result<Vec<CollectionVersion>, String> {
-        Err(self.0.clone().unwrap_or_else(|| "anonymous".to_string()))
+    async fn add_collection(
+        &self,
+        _sdl: &str,
+    ) -> Result<Vec<CollectionVersion>, CollectionRefusal> {
+        Err(self
+            .0
+            .clone()
+            .unwrap_or_else(|| "anonymous".to_string())
+            .into())
     }
 }
 
@@ -40,7 +47,11 @@ async fn observe(
     CallerContext(context): CallerContext,
 ) -> Json<Vec<Option<String>>> {
     let schema = state.schema.clone().expect("schema operations");
-    let bound_identity = bound(&schema, &context).add_collection("").await.err();
+    let bound_identity = bound(&schema, &context)
+        .add_collection("")
+        .await
+        .err()
+        .map(|refusal| refusal.message);
     Json(vec![context.identity().map(str::to_owned), bound_identity])
 }
 

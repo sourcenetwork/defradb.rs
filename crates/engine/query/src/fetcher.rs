@@ -407,13 +407,16 @@ pub trait DocFetcher: MaybeSendSync {
         value: &str,
     ) -> Result<Vec<Document>>;
 
-    /// Read committed arrivals in local commit order. A transaction's own
-    /// creates acquire cursors only at commit and are absent from this result.
+    /// Read committed arrivals in local commit order, as `reader` may see
+    /// them, through the same gate as [`DocFetcher::get_document_updates`].
+    /// A transaction's own creates acquire cursors only at commit and are
+    /// absent from this result.
     async fn get_document_arrivals(
         &self,
         options: &DocumentArrivalOptions,
+        reader: &DocumentReader<'_>,
     ) -> Result<DocumentArrivalPage> {
-        let _ = options;
+        let _ = (options, reader);
         Err(crate::error::QueryError::execution(
             "document arrival queries are unsupported",
         ))

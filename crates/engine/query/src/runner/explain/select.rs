@@ -42,6 +42,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
             .get_collection(&select.collection_name)
             .await?
             .ok_or_else(|| QueryError::collection_not_found(&select.collection_name))?;
+        plan::validate_root_select(select, &collection)?;
 
         // Check if this query has nested selections (relations)
         let has_nested = select

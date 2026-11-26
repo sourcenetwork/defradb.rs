@@ -3,9 +3,10 @@
 use std::path::PathBuf;
 
 use clap::Args;
+use serde::Serialize;
 use serde_json::Value as JsonValue;
 
-use super::http_client::HttpClient;
+use super::http_client::{GraphQLError, GraphQLResponse, HttpClient};
 use super::ClientContext;
 use crate::error::{Error, Result};
 
@@ -40,20 +41,11 @@ impl QueryArgs {
             .with_verbose(ctx.verbose);
         let response = client.graphql(&query, variables, ctx.tx_id.clone()).await?;
 
-        if response.has_errors() {
-            return Err(Error::Server(response.error_message()));
+        println!("{}", printed(&response)?);
+        match response.has_errors() {
+            true => Err(Error::Server(response.error_message())),
+            false => Ok(()),
         }
-
-        let data = response.data.unwrap_or(serde_json::Value::Null);
-        let mut wrapped = serde_json::json!({ "data": data });
-        // Warnings, such as an unused vector index, travel in the extensions.
-        if let Some(extensions) = response.extensions.filter(|value| !value.is_null()) {
-            wrapped["extensions"] = extensions;
-        }
-        let output = serde_json::to_string_pretty(&wrapped)?;
-        println!("{output}");
-
-        Ok(())
     }
 
     fn get_query(&self) -> Result<String> {
@@ -82,6 +74,29 @@ impl QueryArgs {
             None => Ok(None),
         }
     }
+}
+
+/// A GraphQL response as `client query` prints it: its errors, its data, and
+/// its extensions when it has some, in the key order Go's `client query`
+/// prints. Each error keeps the server's `extensions`, so `extensions.code`
+/// reaches the user; Go prints an error's message only, so the error
+/// `extensions` are ours.
+#[derive(Serialize)]
+struct Printed<'a> {
+    #[serde(skip_serializing_if = "<[GraphQLError]>::is_empty")]
+    errors: &'a [GraphQLError],
+    data: &'a JsonValue,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    extensions: Option<&'a JsonValue>,
+}
+
+fn printed(response: &GraphQLResponse) -> Result<String> {
+    let printed = Printed {
+        errors: &response.errors,
+        data: response.data.as_ref().unwrap_or(&JsonValue::Null),
+        extensions: response.extensions.as_ref(),
+    };
+    Ok(serde_json::to_string_pretty(&printed)?)
 }
 
 #[cfg(test)]
@@ -120,6 +135,63 @@ mod tests {
             variables: None,
         };
         assert!(args.get_query().is_err());
+    }
+
+    #[test]
+    fn an_error_prints_with_its_code_before_null_data() {
+        let response: GraphQLResponse = serde_json::from_value(serde_json::json!({
+            "data": null,
+            "errors": [{
+                "message": "refused",
+                "extensions": {"code": "PERMISSION_DENIED"},
+            }],
+        }))
+        .unwrap();
+        let printed = printed(&response).unwrap();
+        assert_eq!(
+            printed,
+            "{\n  \"errors\": [\n    {\n      \"message\": \"refused\",\n      \"extensions\": {\n        \"code\": \"PERMISSION_DENIED\"\n      }\n    }\n  ],\n  \"data\": null\n}"
+        );
+    }
+
+    #[test]
+    fn an_error_keeps_every_extension_the_server_sent() {
+        let response: GraphQLResponse = serde_json::from_value(serde_json::json!({
+            "data": null,
+            "errors": [
+                {"message": "plain"},
+                {
+                    "message": "outside",
+                    "extensions": {"code": "DELEGATION_OUTSIDE_WINDOW", "providerTime": 7},
+                },
+            ],
+        }))
+        .unwrap();
+        let printed: JsonValue = serde_json::from_str(&printed(&response).unwrap()).unwrap();
+        assert_eq!(
+            printed["errors"],
+            serde_json::json!([
+                {"message": "plain"},
+                {
+                    "message": "outside",
+                    "extensions": {"code": "DELEGATION_OUTSIDE_WINDOW", "providerTime": 7},
+                },
+            ])
+        );
+    }
+
+    #[test]
+    fn a_result_prints_its_data_and_extensions_only() {
+        let response: GraphQLResponse = serde_json::from_value(serde_json::json!({
+            "data": {"User": []},
+            "extensions": {"warnings": []},
+        }))
+        .unwrap();
+        let printed: JsonValue = serde_json::from_str(&printed(&response).unwrap()).unwrap();
+        assert_eq!(
+            printed,
+            serde_json::json!({"data": {"User": []}, "extensions": {"warnings": []}})
+        );
     }
 
     #[test]

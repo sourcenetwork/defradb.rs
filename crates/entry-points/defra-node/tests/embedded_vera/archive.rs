@@ -3,8 +3,6 @@
 use super::*;
 
 const WRITER: &str = "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK";
-const NOT_OWNER: &str =
-    "UNAUTHORIZED: not document owner, cannot archive the deleted document's object";
 
 fn delete_user(doc: &str, actor: &identity::Did) -> QueryRequest {
     QueryRequest::new("mutation($id:ID!) { delete_Users(docIDs:[$id]) {_docID} }")
@@ -12,13 +10,15 @@ fn delete_user(doc: &str, actor: &identity::Did) -> QueryRequest {
         .with_identity(Some(actor.clone()))
 }
 
-/// A writer the policy lets delete may not archive, so its delete is
-/// refused and nothing is deleted. The owner's delete archives the object
-/// with it: the deployment then names no owner and holds no relationship,
-/// and a former reader's permission proof fails.
+/// A reader the policy does not let delete is refused before anything
+/// commits. A writer the policy lets delete, who does not own the document,
+/// deletes it: the document is denied at once to its owner, the writer and
+/// the reader, and the archive is sent as the owner, whose key the node
+/// holds. The deployment then names no owner and holds no relationship, and
+/// a former reader's permission proof fails.
 #[test]
 #[mantra_macros::req_test("defra.acp.vera_delete_archive")]
-fn a_deleted_document_is_archived_on_the_deployment_and_only_its_owner_may_delete_it() {
+fn a_writers_delete_archives_the_object_as_its_owner_and_a_reader_may_not_delete() {
     workers::block_on(async {
         let directory = tempfile::tempdir().unwrap();
         let node = node(directory.path()).await;
@@ -30,7 +30,7 @@ fn a_deleted_document_is_archived_on_the_deployment_and_only_its_owner_may_delet
             .add_policy(owner.as_str(), POLICY, None)
             .await
             .expect("policy");
-        node.add_collection(&users(&policy))
+        node.add_collection(&defra_core::RequestContext::ambient(), &users(&policy))
             .await
             .expect("collection");
         let doc = created(node.execute_request(create_user("doomed", &owner)).await);
@@ -47,14 +47,11 @@ fn a_deleted_document_is_archived_on_the_deployment_and_only_its_owner_may_delet
         }
         assert!(chain_reads(&node, &reader, &policy, &doc).await);
 
-        let refused = node.execute_request(delete_user(&doc, &writer)).await;
+        let refused = node.execute_request(delete_user(&doc, &reader)).await;
         assert!(
-            refused
-                .errors
-                .iter()
-                .any(|error| error.message.contains(NOT_OWNER)),
-            "a writer may delete but not archive: {:?}",
-            refused.errors
+            refused.has_errors(),
+            "a reader may not delete: {:?}",
+            refused.data
         );
         assert_eq!(
             names(node.execute_request(read_users(&reader)).await),
@@ -62,8 +59,24 @@ fn a_deleted_document_is_archived_on_the_deployment_and_only_its_owner_may_delet
         );
         assert!(chain_reads(&node, &reader, &policy, &doc).await);
 
-        let deleted = node.execute_request(delete_user(&doc, &owner)).await;
+        let deleted = node.execute_request(delete_user(&doc, &writer)).await;
         assert!(!deleted.has_errors(), "{:?}", deleted.errors);
+        for actor in [&owner, &writer, &reader] {
+            assert!(
+                names(node.execute_request(read_users(actor)).await).is_empty(),
+                "{actor} still reads the deleted document"
+            );
+            assert!(!reads_doc(&node, actor, &policy, &doc).await);
+        }
+        let owed_by_writer = node
+            .document_acp()
+            .owed_entries(acp::OwedFilter::Actor(&writer))
+            .await
+            .expect("owed entries");
+        assert!(
+            owed_by_writer.is_empty(),
+            "the archive is the owner's: {owed_by_writer:?}"
+        );
         // The archive settles behind the commit; until it does, it denies.
         let deadline = std::time::Instant::now() + Duration::from_secs(60);
         while vera

@@ -2,6 +2,8 @@
 
 use async_trait::async_trait;
 
+#[cfg(feature = "iroh-transport")]
+use crate::iroh::IrohPeerIdentityCache;
 use crate::transport::PeerId;
 
 #[cfg(feature = "iroh-transport")]
@@ -51,13 +53,6 @@ pub struct IrohPeerIdentityResolver {
 }
 
 #[cfg(feature = "iroh-transport")]
-#[derive(Clone)]
-struct CachedIrohPeerIdentity {
-    did: identity::Did,
-    verified_at: web_time::Instant,
-}
-
-#[cfg(feature = "iroh-transport")]
 type IrohIdentityFlight = std::sync::Arc<regolith::sync::OnceCell<Option<identity::Did>>>;
 
 #[cfg(feature = "iroh-transport")]
@@ -65,19 +60,12 @@ type IrohIdentityFlights = std::sync::Arc<
     kovan_map::HopscotchMap<PeerId, IrohIdentityFlight, rapidhash::fast::RandomState>,
 >;
 
-/// Bounded positive cache matching the established libp2p peer-identity
-/// behavior without retaining stale endpoint-to-DID bindings indefinitely.
-#[cfg(feature = "iroh-transport")]
-#[derive(Clone)]
-struct IrohPeerIdentityCache {
-    entries: lru::LruCache<PeerId, CachedIrohPeerIdentity>,
-    ttl: std::time::Duration,
-}
-
 #[cfg(feature = "iroh-transport")]
 #[derive(Clone)]
 struct IrohPeerIdentityState {
-    cache: std::sync::Arc<kovan::Atom<IrohPeerIdentityCache>>,
+    /// Bounded positive cache matching the established libp2p peer-identity
+    /// behavior without retaining stale endpoint-to-DID bindings indefinitely.
+    cache: std::sync::Arc<IrohPeerIdentityCache>,
     in_flight: IrohIdentityFlights,
 }
 
@@ -85,10 +73,10 @@ struct IrohPeerIdentityState {
 impl IrohPeerIdentityState {
     fn new() -> Self {
         Self {
-            cache: std::sync::Arc::new(kovan::Atom::new(IrohPeerIdentityCache::new(
+            cache: std::sync::Arc::new(IrohPeerIdentityCache::new(
                 IROH_IDENTITY_CACHE_TTL,
                 IROH_IDENTITY_CACHE_CAPACITY,
-            ))),
+            )),
             in_flight: std::sync::Arc::new(kovan_map::HopscotchMap::with_hasher(
                 rapidhash::fast::RandomState::default(),
             )),
@@ -101,7 +89,7 @@ impl IrohPeerIdentityState {
         Fut: std::future::Future<Output = Option<identity::Did>>,
     {
         let now = web_time::Instant::now();
-        if let Some(did) = self.cache.peek(|cache| cache.get(peer_id, now)) {
+        if let Some(did) = self.cache.get(peer_id, now) {
             tracing::trace!(%peer_id, "using cached authenticated Iroh peer identity");
             return Some(did);
         }
@@ -131,44 +119,13 @@ impl IrohPeerIdentityState {
             .await
             .clone();
         if let Some(did) = result.as_ref() {
-            let verified_at = web_time::Instant::now();
-            self.cache.rcu(|cache| {
-                let mut cache = cache.clone();
-                cache.insert(peer_id.clone(), did.clone(), verified_at);
-                cache
-            });
+            self.cache
+                .insert(peer_id.clone(), did.clone(), web_time::Instant::now());
         }
         if resolved_here {
             self.in_flight.remove(peer_id);
         }
         result
-    }
-}
-
-#[cfg(feature = "iroh-transport")]
-impl IrohPeerIdentityCache {
-    fn new(ttl: std::time::Duration, capacity: usize) -> Self {
-        Self {
-            entries: lru::LruCache::new(
-                std::num::NonZeroUsize::new(capacity).expect("identity cache capacity is non-zero"),
-            ),
-            ttl,
-        }
-    }
-
-    fn get(&self, peer_id: &PeerId, now: web_time::Instant) -> Option<identity::Did> {
-        let entry = self.entries.peek(peer_id)?;
-        (now.duration_since(entry.verified_at) < self.ttl).then(|| entry.did.clone())
-    }
-
-    fn insert(&mut self, peer_id: PeerId, did: identity::Did, now: web_time::Instant) {
-        self.entries.put(
-            peer_id,
-            CachedIrohPeerIdentity {
-                did,
-                verified_at: now,
-            },
-        );
     }
 }
 
@@ -224,7 +181,7 @@ mod tests {
     fn iroh_identity_cache_is_positive_bounded_and_expiring() {
         let start = web_time::Instant::now();
         let ttl = std::time::Duration::from_secs(10);
-        let mut cache = IrohPeerIdentityCache::new(ttl, 2);
+        let cache = IrohPeerIdentityCache::new(ttl, 2);
         let peer_a = PeerId::new("peer-a".to_string());
         let peer_b = PeerId::new("peer-b".to_string());
         let peer_c = PeerId::new("peer-c".to_string());

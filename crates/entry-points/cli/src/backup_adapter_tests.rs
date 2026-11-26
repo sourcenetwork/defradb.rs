@@ -9,27 +9,11 @@ use db::DB;
 use defra_core::thread_bounds::MaybeBoxFuture;
 use query::mutator::DocMutator;
 use query::{QueryExecutor, QueryRequest, QueryResponse, QueryRunner};
-use schema::{CollectionVersion, FieldDescription, FieldKind};
 use storage::RegolithStore;
 
 use crate::backup_adapter::BackupAdapter;
 
-fn users() -> CollectionVersion {
-    CollectionVersion::new(
-        "User",
-        "bafkbackupadapter",
-        "backup-adapter",
-        vec![
-            FieldDescription::new(
-                "1",
-                "_docID",
-                FieldKind::doc_id(),
-                schema::CType::LwwRegister,
-            ),
-            FieldDescription::new("2", "name", FieldKind::string(), schema::CType::LwwRegister),
-        ],
-    )
-}
+const USERS_SDL: &str = "type User { name: String }";
 
 /// A host that counts what it is sent and runs it on `inner`.
 struct Counting {
@@ -54,12 +38,15 @@ impl ImportHost for Counting {
 async fn every_write_of_an_import_goes_through_the_given_host() {
     let store = Arc::new(RegolithStore::in_memory().unwrap());
     let database = Arc::new(DB::open_from_arc(store).await.unwrap());
-    database.create_collection(users()).await.unwrap();
+    let users = database
+        .add_collection(&defra_core::RequestContext::ambient(), USERS_SDL)
+        .await
+        .unwrap();
     let mutator = Arc::new(db::write::autocommit::AutoCommitMutator::new(
         database.clone(),
     ));
     let runner: Arc<dyn QueryExecutor> = Arc::new(
-        QueryRunner::new(db::AutoCommitFetcher::new(database.clone()), vec![users()])
+        QueryRunner::new(db::AutoCommitFetcher::new(database.clone()), users)
             .with_mutator(mutator as Arc<dyn DocMutator>),
     );
     // The adapter's own runner writes nowhere: only the host reaches the store.
@@ -136,12 +123,15 @@ impl ImportHost for ClaimingAfterSave {
 async fn an_id_taken_after_its_check_leaves_every_other_saved_document_its_id() {
     let store = Arc::new(RegolithStore::in_memory().unwrap());
     let database = Arc::new(DB::open_from_arc(store).await.unwrap());
-    database.create_collection(users()).await.unwrap();
+    let users = database
+        .add_collection(&defra_core::RequestContext::ambient(), USERS_SDL)
+        .await
+        .unwrap();
     let mutator = Arc::new(db::write::autocommit::AutoCommitMutator::new(
         database.clone(),
     ));
     let runner: Arc<dyn QueryExecutor> = Arc::new(
-        QueryRunner::new(db::AutoCommitFetcher::new(database.clone()), vec![users()])
+        QueryRunner::new(db::AutoCommitFetcher::new(database.clone()), users)
             .with_mutator(mutator as Arc<dyn DocMutator>),
     );
     let host = ClaimingAfterSave {

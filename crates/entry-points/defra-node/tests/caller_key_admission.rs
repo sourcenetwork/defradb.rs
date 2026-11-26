@@ -53,9 +53,12 @@ async fn node() -> (Node, String) {
         .build()
         .await
         .unwrap();
-    node.add_collection("type Fact { value: String }")
-        .await
-        .unwrap();
+    node.add_collection(
+        &defra_core::RequestContext::ambient(),
+        "type Fact { value: String }",
+    )
+    .await
+    .unwrap();
     (node, node_did)
 }
 
@@ -257,7 +260,7 @@ fn every_writing_entry_refuses_a_key_of_another_actor() {
             (
                 "add_collection_as",
                 text(
-                    node.add_collection_as(&context, "type Other { value: String }")
+                    node.add_collection(&context, "type Other { value: String }")
                         .await
                         .map(drop),
                 ),

@@ -23,6 +23,9 @@ where
         let collections =
             query::parse_sdl_with_known_types(sdl, known_types).map_err(|e| match e {
                 query::QueryError::Parse(message) => AddCollectionError::Parse(message),
+                query::QueryError::UnsupportedFieldType(refusals) => {
+                    AddCollectionError::UnsupportedFieldType(refusals)
+                }
                 other => AddCollectionError::Parse(other.to_string()),
             })?;
         schema::definition_validation::validate_new_collections(&collections)

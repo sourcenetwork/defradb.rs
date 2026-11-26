@@ -21,6 +21,7 @@ mod embed_search;
 mod embed_support;
 mod embed_transaction;
 mod embed_writes;
+mod journal_visibility;
 mod protect_admin_ops;
 mod protect_api_writes;
 mod protect_chunk_documents;

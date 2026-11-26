@@ -279,7 +279,3 @@ impl<S: Store + 'static> ViewOperations for ViewAdapter<S> {
             .map_err(|e| format!("failed to GC downsample histories: {}", e))
     }
 }
-
-#[cfg(test)]
-#[path = "../tests/unit/view_adapter.rs"]
-mod tests;

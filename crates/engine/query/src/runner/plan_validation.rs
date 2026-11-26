@@ -7,6 +7,18 @@ use crate::mapper::{Filter, Requestable, Select};
 
 use super::plan_formatting::format_graphql_conditions;
 
+/// The checks a root-level select passes before it runs or is explained:
+/// the collection is root-queryable and [`validate_select`] accepts it.
+pub(crate) fn validate_root_select(select: &Select, collection: &CollectionVersion) -> Result<()> {
+    if collection.is_embedded_only {
+        return Err(QueryError::parse(format!(
+            "Cannot query field \"{}\" on type \"Query\".",
+            select.collection_name
+        )));
+    }
+    validate_select(select, collection)
+}
+
 /// Validate that the select doesn't use unsupported features.
 pub(crate) fn validate_select(select: &Select, collection: &CollectionVersion) -> Result<()> {
     // Note: CID-based queries are now handled by execute_cid_query() before this validation
@@ -53,6 +65,28 @@ pub(crate) fn validate_select(select: &Select, collection: &CollectionVersion) -
                         &field.name,
                         field.kind.graphql_type_name(),
                     ));
+                }
+            }
+        }
+    }
+
+    // Go's schema gives an aggregate one argument per list field of the type,
+    // so an argument naming no field of it fails GraphQL validation. A relation
+    // name declared only on the other side (`@relation(name: ...)`) is not a field.
+    for requestable in &select.fields {
+        if let Requestable::Aggregate(agg) = requestable {
+            for target in &agg.targets {
+                let names_host = target.host_name.is_empty()
+                    || target.host_name == "GROUP"
+                    || target.host_name == select.collection_name
+                    || collection.field_by_name(&target.host_name).is_some();
+                if !names_host {
+                    return Err(QueryError::invalid_argument(format!(
+                        "Unknown argument \"{}\" on field \"{}\" of type \"{}\".",
+                        target.host_name,
+                        agg.aggregate_type.as_str(),
+                        select.collection_name
+                    )));
                 }
             }
         }

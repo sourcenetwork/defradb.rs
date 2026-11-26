@@ -115,16 +115,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
         // Get collection schema on-demand from provider
         let collection = self.get_collection(&select.collection_name).await?;
 
-        // Embedded-only types (interface types from view SDL) are not root-queryable
-        if collection.is_embedded_only {
-            return Err(QueryError::parse(format!(
-                "Cannot query field \"{}\" on type \"Query\".",
-                select.collection_name
-            )));
-        }
-
-        // Validate unsupported features and field references
-        plan::validate_select(select, &collection)?;
+        plan::validate_root_select(select, &collection)?;
 
         // Check if this query has nested selections (relations)
         let has_nested = select

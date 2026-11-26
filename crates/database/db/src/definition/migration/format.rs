@@ -15,8 +15,9 @@ use crate::DB;
 /// single-varint DateTime encoding; version 2 splits seconds from nanos;
 /// version 3 gives each deferred index entry its position record, which the
 /// check at every open does for the deferred indexes alone; version 4 tags the
-/// index keyspace so collection short IDs cannot collide with another family.
-pub const CURRENT_INDEX_FORMAT: u32 = 4;
+/// index keyspace so collection short IDs cannot collide with another family;
+/// version 5 moves descending JSON paths back into ascending order.
+pub const CURRENT_INDEX_FORMAT: u32 = 5;
 
 /// Systemstore key holding the format the indexes on disk were written with.
 pub use storage::keys::systemstore::INDEX_FORMAT_KEY;
