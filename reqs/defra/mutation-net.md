@@ -218,6 +218,13 @@ Setting `_authorID` or `author` on a `Book` links it, visible as `Author { publi
 
 Disconnecting from one or several connected peers leaves the active peer list empty; disconnecting an empty list fails with `addresses cannot be empty`.
 
+# `defra.net.peers.connection_manager_settles`: A trim's pruned peers stay disconnected
+
+- **Parents:** ["go.net.peers"]
+- **Scenarios:** ["net::connection_manager::net_connection_manager_pruned_peers_stay_disconnected", "p2p::connection_manager::rust_connection_manager_pruned_peers_stay_disconnected"]
+
+A node started with `--connection-manager-low-water`, `--connection-manager-high-water` and `--connection-manager-grace-period-ms` that gets more connections than its high-water mark closes its oldest peers outside the grace period until it is back at low water. For the 10 seconds after that trim (go-libp2p connmgr's silence period) the node runs no other trim. For the 10 seconds after any peer's last connection closes, by a trim, a restart, a network blip or `client p2p disconnect`, neither end's Kademlia dials the other: the far end of a trim sees only a remote close, so it holds on every close. With nothing else asking for a connection, the pruned peers stay out of `client p2p active-peers` and the peers it kept stay in it, so a node at high water settles instead of pruning and reconnecting. Only Kademlia's dials are held: an explicit `client p2p connect`, a replicator push or a Bitswap fetch that needs a pruned peer still reconnects to it, and a Kademlia dial that finds such a dial already in flight waits for it.
+
 # `go.net.subscribe.collection_list`: Listing collection subscriptions
 
 - **Parents:** ["go.net.subscribe"]
