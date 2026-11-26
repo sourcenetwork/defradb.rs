@@ -388,6 +388,13 @@ impl NodeBuilder {
         self
     }
 
+    /// Enable P2P replication over pinc: direct connections, no gossip.
+    #[cfg(feature = "pinc")]
+    pub fn with_pinc(mut self, config: crate::PincConfig) -> Self {
+        self.config.transport = TransportConfig::Pinc(config);
+        self
+    }
+
     /// Hand a pre-built telemetry handle to the node so it owns shutdown.
     ///
     /// The caller is responsible for calling [`telemetry::init`] and
