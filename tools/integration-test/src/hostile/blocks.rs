@@ -1,5 +1,5 @@
-//! Every hostile or honest commit the adversarial tests push, built outside
-//! any node from the production block types.
+//! Every hostile or honest commit the adversarial tests and the `PushCommit`
+//! action push, built outside any node from the production block types.
 //!
 //! This is the only place that builds, signs, encodes or tampers blocks. Tests
 //! ask for a scenario and push the `Fragment` they get back.
@@ -48,21 +48,27 @@ pub enum Signing {
 const ACTIVE: u8 = 1;
 const DELETED: u8 = 2;
 
-pub struct Fields(Vec<(&'static str, NormalValue)>);
+pub struct Fields(Vec<(String, NormalValue)>);
+
+impl Fields {
+    pub fn new(fields: Vec<(String, NormalValue)>) -> Self {
+        Self(fields)
+    }
+}
 
 pub fn user(name: &str, age: i64) -> Fields {
     Fields(vec![
-        ("name", NormalValue::String(name.into())),
-        ("age", NormalValue::Int(age)),
+        ("name".into(), NormalValue::String(name.into())),
+        ("age".into(), NormalValue::Int(age)),
     ])
 }
 
 pub fn named(name: &str) -> Fields {
-    Fields(vec![("name", NormalValue::String(name.into()))])
+    Fields(vec![("name".into(), NormalValue::String(name.into()))])
 }
 
 pub fn aged(age: i64) -> Fields {
-    Fields(vec![("age", NormalValue::Int(age))])
+    Fields(vec![("age".into(), NormalValue::Int(age))])
 }
 
 /// One commit as it goes on the wire: the blocks, children before the root,
@@ -227,12 +233,12 @@ fn commit(
 
     for (name, value) in &fields.0 {
         let heads = parent
-            .and_then(|parent| parent.fields.get(*name))
+            .and_then(|parent| parent.fields.get(name))
             .map(|head| vec![*head])
             .unwrap_or_default();
         let mut field = Block::new(
             CrdtDelta::Lww(LwwDeltaPayload {
-                field_name: (*name).to_string(),
+                field_name: name.clone(),
                 priority,
                 collection_version_id: version_id.to_string(),
                 data: cbor(value),
@@ -246,7 +252,7 @@ fn commit(
             field.signature = Some(sig_cid);
         }
         let (cid, bytes) = encode(&field);
-        links.push(DAGLink::new(*name, cid));
+        links.push(DAGLink::new(name.clone(), cid));
         blocks.push((cid, bytes));
     }
 
