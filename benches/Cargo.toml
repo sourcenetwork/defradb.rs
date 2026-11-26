@@ -196,6 +196,10 @@ name = "lens_index"
 harness = false
 
 [[bench]]
+name = "deferred_overlay"
+harness = false
+
+[[bench]]
 name = "planner"
 harness = false
 
