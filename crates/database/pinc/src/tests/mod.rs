@@ -8,6 +8,7 @@ mod allowlist;
 mod bench;
 mod block_sync;
 mod bridge;
+mod direct_push;
 mod exchange;
 mod identity;
 mod inbound_admission;

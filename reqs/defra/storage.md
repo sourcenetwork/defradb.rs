@@ -373,7 +373,7 @@ Gossip has no reply and no retry, so a gossip head a node refuses for its per-pe
 - **Parents:** ["defra"]
 - **Scenarios:** ["net::large_update::a_document_too_large_for_gossip_replicates", "net::large_update::an_update_too_large_for_gossip_replicates"]
 
-A create or an update whose head block is larger than one gossip broadcast holds reaches the same peers a small one would, every subscriber of the collection connected to the writer: a document of a 160-field collection, created with every field set or updated in every field on one node, is queried with the same values on the other. Such an update goes to every connected peer as a direct PushLog request instead of a broadcast; a peer that does not subscribe declines it, and the write's broadcast reports any subscriber that did not take it.
+A create or an update whose head block is larger than one pinc topic message holds (64 KiB) reaches the same peers a small one would, every subscriber of the collection connected to the writer: a document of a 160-field collection whose long field names make its head about 75 KB, created with every field set or updated in every field on one node, is queried with the same values on the other. Such an update goes to every connected peer as a signed direct PushLog request instead of a topic message; a peer that does not subscribe declines it, and the write's broadcast reports any subscriber that did not take it.
 
 # `defra.commits`: Commit history queries beyond Go
 

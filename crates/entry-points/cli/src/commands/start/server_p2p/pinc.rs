@@ -82,23 +82,11 @@ impl Node {
         let se_transport =
             se_key.map(|key| peer.se_query_transport(db::merge::filled_se_key_handle(key, None)));
 
-        // The bootstrap peers are dialed in the background, so one that does
-        // not answer does not hold up the start.
-        let bootstrap_peers = config.net.peers.clone();
-        let bootstrap_ops = Arc::clone(&peer.ops);
-        let bootstrap_edge = edge.clone();
-        let connect_bootstrap: Box<dyn FnOnce() + Send> = Box::new(move || {
-            for addr in bootstrap_peers {
-                let ops = Arc::clone(&bootstrap_ops);
-                bootstrap_edge
-                    .spawn_service(async move {
-                        if let Err(error) = ops.connect_peer(&addr).await {
-                            warn!(peer = %addr, %error, "bootstrap peer did not connect");
-                        }
-                    })
-                    .detach();
-            }
-        });
+        let connect_bootstrap = defra_p2p_adapter::bootstrap_dials(
+            Arc::clone(&peer.ops),
+            edge.clone(),
+            config.net.peers.clone(),
+        );
         Ok(P2PSetup {
             p2p_tasks: Some(P2PTasks {
                 peer: peer.shutdown.clone(),

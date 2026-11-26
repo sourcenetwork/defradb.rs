@@ -324,7 +324,7 @@ impl<H: Hosted + 'static> Node<H> {
             }
         });
         let _ = reply.send(match spawned {
-            Some(_) => Ok(MessageId::new(uuid::Uuid::new_v4().to_string())),
+            Some(_) => Ok(self.next_message_id()),
             None => Err(Error::Transport("the pinc endpoint is busy".to_owned())),
         });
     }
@@ -475,7 +475,7 @@ impl<H: Hosted + 'static> Node<H> {
             return None;
         }
         let origin_id = node_to_peer_id(&origin);
-        let message_id = MessageId::new(uuid::Uuid::new_v4().to_string());
+        let message_id = self.next_message_id();
         if self.raw_topics.borrow().contains(&topic) {
             return Some(TransportEvent::GossipRawMessage {
                 propagation_source: node_to_peer_id(hop),

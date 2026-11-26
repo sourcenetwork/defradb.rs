@@ -164,8 +164,11 @@ fn a_head_hint_with_a_block_over_4_kib_reaches_a_connected_subscriber() {
     });
 }
 
+/// A head hint over the topic message limit never goes to the hub: its
+/// document topic's publish sends nothing, since the collection topic's
+/// pushes it to every connected peer (`direct_push`).
 #[test]
-fn a_head_hint_over_the_topic_message_limit_is_refused() {
+fn a_head_hint_over_the_topic_message_limit_is_not_sent_on_its_topic() {
     run(async {
         let hub = hub().await;
         let a = node_on(&hub).await;
@@ -173,7 +176,8 @@ fn a_head_hint_over_the_topic_message_limit_is_refused() {
             .transport
             .publish(DefraTopic::document("doc-1"), broadcast(vec![7; 65 * 1024]))
             .await;
-        assert!(result.is_err(), "{result:?}");
+        assert!(result.is_ok(), "{result:?}");
+        assert_eq!(a.transport.publish_stats().oversized, 0);
         a.shutdown().await;
     });
 }

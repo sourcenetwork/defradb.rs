@@ -1,5 +1,5 @@
-//! A write whose head block is too large for one gossip broadcast still
-//! replicates to a subscribed peer (#2820).
+//! A write whose head block is too large for one pinc topic message (64 KiB)
+//! still replicates to a subscribed peer, pushed directly (#2820).
 
 use integration_test::actions::shared::{EventType, Topic};
 use integration_test::actions::{
@@ -14,12 +14,16 @@ const RECEIVER: &str = "db0";
 const SENDER: &str = "db1";
 
 /// Fields in the collection. A write to every one links all of them from its
-/// composite block, the block gossip carries, which then holds well over
-/// one broadcast's budget.
+/// composite block, the block gossip carries: each link holds the field's
+/// name and its block's CID.
 const FIELDS: usize = 160;
 
+/// Characters that lengthen each field's name, so the composite block's 160
+/// links come to about 75 KB, past one topic message's 64 KiB.
+const NAME_PAD: usize = 400;
+
 fn field(i: usize) -> String {
-    format!("field_number_{i:03}")
+    format!("field_number_{i:03}_{}", "x".repeat(NAME_PAD))
 }
 
 fn sdl() -> String {

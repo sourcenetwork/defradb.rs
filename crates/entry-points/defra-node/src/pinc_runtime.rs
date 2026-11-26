@@ -81,23 +81,11 @@ where
         peer.coordinator.shutdown_handle(),
     ));
 
-    // A bootstrap peer is dialed in the background, so one that does not
-    // answer does not hold up the start.
-    let bootstrap_peers = config.bootstrap_peers.clone();
-    let bootstrap_ops = Arc::clone(&peer.ops);
-    let bootstrap_edge = scope.edge().clone();
-    let connect_bootstrap: Box<dyn FnOnce() + Send> = Box::new(move || {
-        for addr in bootstrap_peers {
-            let ops = Arc::clone(&bootstrap_ops);
-            bootstrap_edge
-                .spawn_service(async move {
-                    if let Err(error) = ops.connect_peer(&addr).await {
-                        tracing::warn!(target: "defra_node", peer = %addr, %error, "bootstrap peer did not connect");
-                    }
-                })
-                .detach();
-        }
-    });
+    let connect_bootstrap = defra_p2p_adapter::bootstrap_dials(
+        Arc::clone(&peer.ops),
+        scope.edge().clone(),
+        config.bootstrap_peers.clone(),
+    );
 
     let se_key_handle = db::merge::empty_se_key_handle();
     let se_transport = Some(peer.se_query_transport(se_key_handle.clone()));

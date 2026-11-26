@@ -3612,6 +3612,15 @@ pub const PROPERTIES: &[Property] = &[
         bound_by: "",
     },
     Property {
+        family: "Peer fetch stats",
+        name: "roll_ratio_stays_a_ratio / rolling_over_samples / bump_never_overflows",
+        axis: Lean,
+        anchor: "crates/database/pinc/src/fetch_stats.rs PeerCounters::record, roll",
+        model_ref: "FetchStats (lake build)",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
         family: "DAG fetch provider ranking",
         name: "rank_perm / rank_keeps_healthy_source_first / rank_all_healthy / next_delay_in_range / stale_starts_over / forget_keeps_fresh / forget_drops_stale",
         axis: Lean,

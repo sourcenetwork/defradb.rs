@@ -56,6 +56,9 @@ pub struct NodeSpec {
     /// The node names `RELAY_HUB` in place of `PINC_HUB`: a Rust node
     /// under every client.
     pub relay_hub: bool,
+    /// The pinc addresses the node dials at start, its `bootstrap_peers`
+    /// (`net.peers`): a Rust node under every client.
+    pub bootstrap_peers: Vec<String>,
     /// The node's own identity, Go's `NodeIdentity(seed)`; the node signs as it.
     pub node_identity: Option<u64>,
     /// The node takes `node_identity` from the process's signing registry,
@@ -137,7 +140,8 @@ impl TestNode {
                 if spec.admission.is_some()
                     || spec.go_config
                     || spec.relay_hub
-                    || spec.pinc_bind.is_some() =>
+                    || spec.pinc_bind.is_some()
+                    || !spec.bootstrap_peers.is_empty() =>
             {
                 ClientType::RustHttp
             }
@@ -428,6 +432,7 @@ fn pinc_transport(
         peer_key: defra_node::PeerKeySource::Store,
         max_connections: 16,
         hubs: vec![hub],
+        bootstrap_peers: spec.bootstrap_peers.clone(),
         ..Default::default()
     };
     if let Some(limits) = &spec.admission {

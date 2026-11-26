@@ -307,9 +307,11 @@ impl Default for DatastoreConfig {
     }
 }
 
-/// Network configuration
+/// Network configuration. An unknown key fails the load, naming it: a stale
+/// `net.iroh_allowed_peers` or a misspelt `net.pinc_allowed_peers` would
+/// otherwise leave the node accepting every peer without a word.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct NetConfig {
     pub p2p_disabled: bool,
     /// Peers dialed at start, each `<peer id>@<udp address>`.

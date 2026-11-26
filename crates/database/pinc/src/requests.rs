@@ -16,6 +16,7 @@ use p2p::QueryId;
 use super::addr::node_id;
 use super::command::{Outbound, Reply};
 use super::endpoint::Node;
+use super::fetch_stats::{FetchOutcome, FetchTimer};
 use super::services::{self, MAX_CAR_SIZE};
 use super::wire::{self, pinc_error};
 
@@ -61,6 +62,17 @@ impl CarOutcome {
             Self::Empty | Self::Busy => FetchFailureCause::Refused,
             Self::HeaderOnly => FetchFailureCause::NoBlocks,
             Self::Success | Self::SizeLimited | Self::Failed => FetchFailureCause::Error,
+        }
+    }
+
+    /// What the provider's fetch stats count this as.
+    fn fetch_outcome(self) -> FetchOutcome {
+        match self {
+            Self::Success => FetchOutcome::Success,
+            Self::SizeLimited => FetchOutcome::Partial,
+            Self::TimedOut => FetchOutcome::TimedOut,
+            Self::Busy => FetchOutcome::Busy,
+            Self::Empty | Self::HeaderOnly | Self::Failed => FetchOutcome::Failed,
         }
     }
 }
@@ -182,21 +194,52 @@ impl<H: Hosted + 'static> Node<H> {
         Ok(())
     }
 
+    /// Fetch `request` from `peer_id`, measured in its fetch stats. A fetch
+    /// dropped before it ends, as the losers of a block sync are, only
+    /// leaves flight.
     async fn fetch_car(
         self: &Rc<Self>,
         peer_id: &PeerId,
         request: &CarFetchRequest,
     ) -> Result<Vec<u8>> {
+        let mut timer = self.fetch_stats.start(peer_id);
+        let fetched = self.fetch_car_timed(peer_id, request, &mut timer).await;
+        let outcome = match &fetched {
+            Ok(car) => {
+                let outcome = CarOutcome::of(car);
+                if matches!(outcome, CarOutcome::Success | CarOutcome::SizeLimited)
+                    && p2p::sync::car::car_has_any_block(car)
+                {
+                    timer.carried_blocks();
+                }
+                outcome
+            }
+            Err(Error::ResponseTimeout) => CarOutcome::TimedOut,
+            Err(_) => CarOutcome::Failed,
+        };
+        timer.finish(outcome.fetch_outcome());
+        fetched
+    }
+
+    async fn fetch_car_timed(
+        self: &Rc<Self>,
+        peer_id: &PeerId,
+        request: &CarFetchRequest,
+        timer: &mut FetchTimer,
+    ) -> Result<Vec<u8>> {
         let (connection, _send, mut recv) = self
             .open_request(peer_id, services::STREAM_CAR, &wire::encode(request)?)
             .await?;
-        let read = wire::read_to_end_observed(&mut recv, MAX_CAR_SIZE, |_| {});
-        futures::select_biased! {
+        let read = wire::read_to_end_observed(&mut recv, MAX_CAR_SIZE, |len| timer.received(len));
+        let car = futures::select_biased! {
             car = p2p::rt::time::timeout(self.block_sync_timeout, read).fuse() => {
                 car.map_err(|_| Error::ResponseTimeout)?
             }
             reason = connection.closed().fuse() => Err(pinc_error("CAR fetch", reason)),
-        }
+        };
+        let rtt = connection.stats().await.ok().map(|stats| stats.rtt);
+        timer.saw_rtt(rtt.filter(|rtt| !rtt.is_zero()));
+        car
     }
 
     /// Fetch `request` from every provider at once. The first reply that

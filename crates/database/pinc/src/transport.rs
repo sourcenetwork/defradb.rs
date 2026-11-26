@@ -30,6 +30,7 @@ use p2p::QueryId;
 
 use super::admission::AdmissionAuthority;
 use super::command::{Command, CommandSender, EndpointStopped, Outbound, ReplyBody};
+use super::fetch_stats::FetchStats;
 use super::hub::MAX_TOPIC_MESSAGE;
 use super::protocol_stream::{ProtocolRecvStream, ProtocolSendStream};
 use super::services;
@@ -50,6 +51,7 @@ pub struct PincTransport {
     replicators: Arc<ReplicatorRegistry>,
     explicit_replay_capabilities: ExplicitReplayCapabilityCache,
     publishes: Arc<PublishCounters>,
+    fetch_stats: Arc<FetchStats>,
 }
 
 impl PincTransport {
@@ -58,6 +60,7 @@ impl PincTransport {
         seed: &[u8; 32],
         replicators: Arc<ReplicatorRegistry>,
         publishes: Arc<PublishCounters>,
+        fetch_stats: Arc<FetchStats>,
     ) -> Self {
         let (commands, stopped) = commands;
         let signing_key = ed25519_dalek::SigningKey::from_bytes(seed);
@@ -71,6 +74,7 @@ impl PincTransport {
             replicators,
             explicit_replay_capabilities: ExplicitReplayCapabilityCache::default(),
             publishes,
+            fetch_stats,
         }
     }
 
@@ -111,7 +115,7 @@ impl PincTransport {
         rx.await.map_err(|_| Error::ChannelReceive)?
     }
 
-    async fn request(
+    pub(super) async fn request(
         &self,
         peer_id: &PeerId,
         tag: &'static [u8],
@@ -318,6 +322,12 @@ impl P2PTransport for PincTransport {
             .await
     }
 
+    /// How each peer answered this node's CAR fetches, from the outcome each
+    /// fetch's reply was classified as.
+    async fn fetch_stats(&self) -> Result<Vec<p2p::transport::PeerFetchStats>> {
+        Ok(self.fetch_stats.snapshot())
+    }
+
     async fn peer_connection(
         &self,
         peer_id: &PeerId,
@@ -369,10 +379,15 @@ impl P2PTransport for PincTransport {
         .await
     }
 
+    /// A broadcast larger than one topic message no hub carries: it goes to
+    /// every connected peer as a direct PushLog request instead.
     async fn publish(&self, topic: DefraTopic, msg: PushLogBroadcast) -> Result<MessageId> {
         let payload = msg
             .encode_gossip_payload()
             .map_err(|error| Error::CborSerialization(error.to_string()))?;
+        if payload.len() > MAX_TOPIC_MESSAGE {
+            return self.push_too_large(&topic, &msg, payload.len()).await;
+        }
         self.send_command(|reply| Command::Publish {
             topic: topic.to_string(),
             payload,

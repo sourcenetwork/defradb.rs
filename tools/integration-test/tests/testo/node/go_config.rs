@@ -166,3 +166,28 @@ fn a_go_config_disables_p2p() {
     }
     .execute();
 }
+
+/// A `net` key the node has no setting for fails the load, naming the key:
+/// a stale `iroh_allowed_peers` or a misspelt allowlist would otherwise
+/// leave the node accepting every peer.
+#[test]
+#[mantra_macros::req_test("defra.cli.config.unknown_net_key")]
+fn an_unknown_net_key_fails_the_load() {
+    for key in ["iroh_allowed_peers", "pinc_allowed_peer"] {
+        let config = go_config("/ip4/127.0.0.1/tcp/9171", false).replace(
+            "    relay: false\n",
+            &format!("    relay: false\n    {key}:\n        - abc\n"),
+        );
+        TestCase {
+            id: integration_test::scenario_id!(),
+            actions: vec![NewNode {
+                go_config: Some(config),
+                expected_error: Some(format!("unknown field `{key}`, expected one of")),
+                ..Default::default()
+            }
+            .into()],
+            ..Default::default()
+        }
+        .execute();
+    }
+}

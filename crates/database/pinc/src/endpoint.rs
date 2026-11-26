@@ -22,13 +22,14 @@ use p2p::bitswap::ReplicatorRegistry;
 use p2p::error::{Error, Result};
 use p2p::rt::{mpsc, oneshot};
 use p2p::sync::DispatchSender;
-use p2p::transport::{PeerAddr, PeerConnectionInfo, PeerId, TransportEvent};
+use p2p::transport::{MessageId, PeerAddr, PeerConnectionInfo, PeerId, TransportEvent};
 
 use super::addr::{advertised, node_id, node_to_peer_id, socket_addrs};
 use super::admission::Allowlist;
 use super::command::{Command, Reply};
 use super::config::PincEndpointConfig;
 use super::directory::PeerDirectory;
+use super::fetch_stats::FetchStats;
 use super::hub::{hubs, limits};
 use super::inbound_budget::InboundBudget;
 use super::reply_table::ReplyTable;
@@ -99,14 +100,17 @@ pub async fn spawn_endpoint(
     let (ready_tx, ready_rx) = oneshot::channel::<Result<SocketAddr>>();
     let replicators = Arc::new(ReplicatorRegistry::new());
     let publishes = Arc::new(PublishCounters::default());
+    let fetch_stats = Arc::new(FetchStats::default());
     let seed = *config.seed;
     let task_edge = edge.clone();
     let commands = command_tx.clone();
     let counters = Arc::clone(&publishes);
+    let stats = Arc::clone(&fetch_stats);
     let task = edge
         .spawn_pinned(move || {
             run(
                 config, task_edge, command_rx, commands, event_tx, running, ready_tx, counters,
+                stats,
             )
         })
         .within(Duration::MAX);
@@ -124,6 +128,7 @@ pub async fn spawn_endpoint(
         &seed,
         Arc::clone(&replicators),
         publishes,
+        fetch_stats,
     );
     Ok((transport, event_rx, replicators, task))
 }
@@ -165,6 +170,7 @@ async fn run(
     running: oneshot::Sender<()>,
     ready: oneshot::Sender<Result<SocketAddr>>,
     publishes: Arc<PublishCounters>,
+    fetch_stats: Arc<FetchStats>,
 ) {
     let built = async {
         let stream_protocols = StreamProtocols::new(config.stream_protocols.clone())?;
@@ -241,12 +247,14 @@ async fn run(
         confirmed: RefCell::new(RapidHashSet::new()),
         next_query: Cell::new(1),
         next_connection: Cell::new(1),
+        next_message: Cell::new(1),
         quiet: RefCell::new(QuietPeers::default()),
         stream_protocols,
         advertised,
         max_tasks: config.max_tasks,
         block_sync_timeout: config.block_sync_timeout,
         publishes,
+        fetch_stats,
     });
     let _ = ready.send(Ok(node.ep.local_addr()));
     let reply = node.serve(command_rx, running).await;
@@ -296,6 +304,9 @@ pub(super) struct Node<H: Hosted + 'static> {
     pub(super) confirmed: RefCell<RapidHashSet<String>>,
     pub(super) next_query: Cell<u64>,
     next_connection: Cell<u64>,
+    /// The id of the next message this node names itself: a waiting publish
+    /// answered before it is sent, or a topic message received.
+    next_message: Cell<u64>,
     /// The peers a `DisconnectPeers` closed, on either side: peer exchange
     /// never dials them, and only an explicit dial or allow lifts it (#2992).
     pub(super) quiet: RefCell<QuietPeers<NodeId>>,
@@ -307,9 +318,19 @@ pub(super) struct Node<H: Hosted + 'static> {
     pub(super) block_sync_timeout: Duration,
     /// The publishes that failed where no caller hears it.
     pub(super) publishes: Arc<PublishCounters>,
+    /// How each peer answered this node's CAR fetches.
+    pub(super) fetch_stats: Arc<FetchStats>,
 }
 
 impl<H: Hosted + 'static> Node<H> {
+    /// An id for a message pinc gives none to yet: a counter, unique on this
+    /// node, rather than a random UUID per message.
+    pub(super) fn next_message_id(&self) -> MessageId {
+        let n = self.next_message.get();
+        self.next_message.set(n.wrapping_add(1));
+        MessageId::new(format!("{n:x}"))
+    }
+
     /// Run `future` on this thread, owned by the endpoint: it is cancelled
     /// when the endpoint stops. `None` when too many tasks run already.
     pub(super) fn spawn<F>(&self, future: F) -> Option<nuclei::task::AbortHandle>

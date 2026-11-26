@@ -243,6 +243,15 @@ pub trait P2POperations: defra_core::thread_bounds::MaybeSendSync {
     /// Connect to a peer at the given address.
     async fn connect_peer(&self, addr: &str) -> P2PResult<()>;
 
+    /// Connect to a bootstrap peer the node's own configuration names
+    /// (`net.peers`, `PincConfig::bootstrap_peers`): the node dials as
+    /// itself, so node access control, which checks the caller of
+    /// [`connect_peer`](Self::connect_peer), does not refuse it. A transport
+    /// whose `connect_peer` checks no caller keeps this default.
+    async fn connect_bootstrap_peer(&self, addr: &str) -> P2PResult<()> {
+        self.connect_peer(addr).await
+    }
+
     /// Disconnect the live connection to the peer at the given address.
     async fn disconnect_peer(&self, addr: &str) -> P2PResult<()>;
 

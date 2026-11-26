@@ -187,6 +187,9 @@ lean_lib ByteBudget where
 lean_lib StreamProtocols where
 
 @[default_target]
+lean_lib FetchStats where
+
+@[default_target]
 lean_lib ProviderHealth where
 
 @[default_target]

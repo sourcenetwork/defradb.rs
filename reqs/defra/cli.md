@@ -9,6 +9,13 @@ A node started from a Go config with `net.p2pdisabled: false` runs P2P on pinc a
 
 A Rust key that is present in the same section wins over its Go spelling. Keys only Go has (`api.audience`, `log.caller`, `net.p2pblocksynctimeout`, and libp2p's `net.p2paddresses`, `net.pubsubenabled` and `net.relay`) are ignored, with one warning each when the value is not Go's default (`""`, `false`, `30`, `[/ip4/127.0.0.1/tcp/9171]`, `true`, `false`). `datastore.badger.valuelogfilesize` and viper's `""` rootdir key are dropped without a warning. `log.format: csv` still fails to load, with a parse error naming `csv`: defradb.rs has no CSV log format.
 
+# `defra.cli.config.unknown_net_key`: An unknown `net` key fails the load
+
+- **Parents:** ["defra.cli.config.go_layout"]
+- **Scenarios:** ["node::go_config::an_unknown_net_key_fails_the_load"]
+
+A `config.yaml` whose `net` section holds a key the node has no setting for (once Go's own keys are read or ignored as above) fails to load with `failed to parse config file <path>: unknown field `<key>`, expected one of …`, naming the key and every key the section takes. A stale `net.iroh_allowed_peers` or a misspelt `net.pinc_allowed_peers` therefore stops the start rather than leave the node accepting every peer.
+
 # `defra.cli.pinc`: A CLI node's pinc settings
 
 - **Parents:** ["defra"]
@@ -31,6 +38,13 @@ A `defra-node` embedder whose `PincConfig` keeps its default `bind`, and an FFI 
 - **Scenarios:** ["node::go_config::a_configured_public_address_is_listed_first", "addr::tests::a_wildcard_bind_lists_every_interface_but_loopback_and_public_first"]
 
 The addresses in `net.pinc_public_addrs` (`--pinc-public-addrs`, each `<ip>:<port>`: a public address in front of a NAT, a forwarded port) come first in the node's peer info, ahead of the addresses it binds. A node bound on a wildcard address lists the address of each of its interfaces, and never a loopback or IPv6 link-local one; only a node bound on loopback lists loopback. Its shareable address is never loopback unless it bound loopback.
+
+# `defra.cli.pinc.bootstrap_nac`: A node dials its bootstrap peers as itself
+
+- **Parents:** ["defra.cli.pinc"]
+- **Scenarios:** ["net::nac_bootstrap::a_node_with_access_control_dials_its_bootstrap_peers"]
+
+The bootstrap peers a node's configuration names (`net.peers`, `--peers`; `PincConfig::bootstrap_peers` for a `defra-node` embedder) are dialed by the node on its own behalf once it has started. Node access control gates a caller's `connect`, not these dials: a node started with node access control enabled and a bootstrap peer connects to that peer, which its `ActivePeers` (asked by its NAC owner) then lists.
 
 # `defra.cli.hub`: `defradb hub` runs a pinc hub
 

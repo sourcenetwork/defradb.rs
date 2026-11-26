@@ -119,6 +119,12 @@ pub use db::{CommitGate, CommitWait};
 pub use defra_p2p_adapter::{
     ReplicationFilter, ReplicationFilters, ReplicatorPushOptions, ReplicatorPushOptionsState,
 };
+/// The pinc transport crate whose types `PincConfig` and the stream
+/// protocol API name (`PincAllowlistConfig`, `StreamProtocol`,
+/// `StreamHandler`, `parse_public_peer_addr`, ...), so an embedder needs no
+/// dependency of its own pinned to the same revision.
+#[cfg(feature = "p2p")]
+pub use defra_pinc;
 /// Runs a pinc hub, which pinc topics travel through, and with
 /// [`PincHubConfig::relay`] the sessions of members that cannot reach each
 /// other directly.

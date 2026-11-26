@@ -84,6 +84,45 @@ impl<B: Blockstore + 'static> PincP2PAdapter<B> {
         Ok(())
     }
 
+    /// Dial `addr` on the node's own behalf, as for its bootstrap peers: no
+    /// caller's access is checked.
+    async fn dial_as_node(&self, addr: &str) -> P2PResult<()> {
+        let (peer_id, direct_addrs) = parse_public_peer_addr(addr)
+            .map_err(|error| P2PError::invalid_input(error.to_string()))?;
+        // Connecting to an already-connected peer is a no-op (matching Go
+        // DefraDB, where libp2p `Connect` returns immediately when connected):
+        // a redundant dial is not just wasted work — on Linux it can time out
+        // against a healthy connection and fail the caller. Refresh the
+        // address book and return.
+        if self.is_transport_connected(&peer_id).await {
+            self.peer_addresses
+                .insert(peer_id.to_string(), addr.to_string());
+            return Ok(());
+        }
+
+        let dial_timeout = if direct_addrs.is_empty() {
+            std::time::Duration::from_secs(10)
+        } else {
+            std::time::Duration::from_secs(5)
+        };
+
+        p2p::rt::time::timeout(dial_timeout, self.transport.dial(&peer_id, direct_addrs))
+            .await
+            .map_err(|_| {
+                P2PError::transport(format!("failed to connect: timeout dialing {peer_id}"))
+            })?
+            .map_err(|error| match error {
+                p2p::error::Error::Unauthorized(message) => P2PError::unauthorized(message),
+                error => P2PError::transport(format!("failed to connect: {error}")),
+            })?;
+
+        self.peer_addresses
+            .insert(peer_id.to_string(), addr.to_string());
+        self.resubscribe_tracked_document_topics().await;
+
+        Ok(())
+    }
+
     /// Whether the caller holds `permission`, as a plain answer rather than an
     /// error.
     ///
@@ -448,41 +487,11 @@ impl<B: Blockstore + 'static> P2POperations for PincP2PAdapter<B> {
     async fn connect_peer(&self, addr: &str) -> P2PResult<()> {
         self.check_nac(acp::nac::NodePermission::P2pPeerConnect)
             .await?;
+        self.dial_as_node(addr).await
+    }
 
-        let (peer_id, direct_addrs) = parse_public_peer_addr(addr)
-            .map_err(|error| P2PError::invalid_input(error.to_string()))?;
-        // Connecting to an already-connected peer is a no-op (matching Go
-        // DefraDB, where libp2p `Connect` returns immediately when connected):
-        // a redundant dial is not just wasted work — on Linux it can time out
-        // against a healthy connection and fail the caller. Refresh the
-        // address book and return.
-        if self.is_transport_connected(&peer_id).await {
-            self.peer_addresses
-                .insert(peer_id.to_string(), addr.to_string());
-            return Ok(());
-        }
-
-        let dial_timeout = if direct_addrs.is_empty() {
-            std::time::Duration::from_secs(10)
-        } else {
-            std::time::Duration::from_secs(5)
-        };
-
-        p2p::rt::time::timeout(dial_timeout, self.transport.dial(&peer_id, direct_addrs))
-            .await
-            .map_err(|_| {
-                P2PError::transport(format!("failed to connect: timeout dialing {peer_id}"))
-            })?
-            .map_err(|error| match error {
-                p2p::error::Error::Unauthorized(message) => P2PError::unauthorized(message),
-                error => P2PError::transport(format!("failed to connect: {error}")),
-            })?;
-
-        self.peer_addresses
-            .insert(peer_id.to_string(), addr.to_string());
-        self.resubscribe_tracked_document_topics().await;
-
-        Ok(())
+    async fn connect_bootstrap_peer(&self, addr: &str) -> P2PResult<()> {
+        self.dial_as_node(addr).await
     }
 
     async fn disconnect_peer(&self, addr: &str) -> P2PResult<()> {

@@ -18,6 +18,8 @@ use rapidhash::RapidHashMap;
 use rapidhash::RapidHashSet;
 use zeroize::Zeroizing;
 
+#[cfg(feature = "pinc")]
+mod bootstrap;
 mod doc_sync;
 pub mod manage;
 mod operations;
@@ -41,6 +43,8 @@ mod schema_history;
 mod transport_doc_pusher;
 mod transport_version_syncer;
 
+#[cfg(feature = "pinc")]
+pub use bootstrap::bootstrap_dials;
 pub use peer_details::PeerPushRetries;
 #[cfg(feature = "pinc")]
 pub use pinc::PincP2PAdapter;

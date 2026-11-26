@@ -83,7 +83,7 @@ const _: () = assert!(TIE_BUCKET.as_millis() >= 1);
 const _: () = assert!(TIE_BUCKET.as_millis() <= BACKOFF_FLOOR.as_millis());
 
 /// Milliseconds from `epoch` to `now`; zero if `now` is earlier.
-pub(crate) fn millis_since(epoch: Instant, now: Instant) -> u64 {
+pub fn millis_since(epoch: Instant, now: Instant) -> u64 {
     u64::try_from(now.saturating_duration_since(epoch).as_millis()).unwrap_or(u64::MAX)
 }
 
