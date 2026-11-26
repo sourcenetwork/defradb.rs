@@ -14,7 +14,7 @@ pub(super) const PROPERTIES: &[Property] = &[
         name: "INV_JudgedWhereValidating / INV_ValidatorNeverHoldsRooted / INV_NoSplitAmongValidating / INV_NoValidatorAsBefore / INV_UngovernedUntouched",
         axis: Tla,
         anchor: "crates/database/db/src/merge/governance/validator.rs MergeGovernance::governs; crates/database/db/src/merge/governance/judge.rs DbMergeHandler::is_governed, DbMergeHandler::judge_governed",
-        model_ref: "MC_GovernedByRoot_{Green,Red_DropRootArm,Red_DropRootArmSplit,Red_DropNameArm,Red_RootWithoutValidator,Red_ValidatorOnlyForNamed,Red_ClaimAll}.cfg",
+        model_ref: "MC_GovernedByRoot_{Green,Red_DropRootArm,Red_DropRootArmSplit,Red_DropNameArm,Red_RootWithoutValidator,Red_ValidatorOnlyForNamed,Red_ValidatorWithoutInstall,Red_ClaimAll}.cfg",
         tiers: &[Boundary],
         bound_by: "crates/database/db/tests/merge/governance/rooted.rs a_rooted_collection_defined_after_start_is_judged_with_no_claim, a_rooted_collection_merges_what_the_validator_accepts, a_rooted_collection_on_a_node_with_no_validator_merges_as_before, a_rooted_collection_on_a_node_without_governance_merges_as_before, a_claimed_rooted_collection_with_no_validator_is_held_as_before, a_collection_with_no_root_and_no_claim_merges_unjudged; tools/integration-test/tests/testo/net/governed.rs a_node_with_no_merge_validator_merges_a_governed_collection_as_before, a_merge_validator_judges_a_governed_collection_defined_after_it_started",
     },

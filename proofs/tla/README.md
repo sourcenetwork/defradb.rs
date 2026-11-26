@@ -378,3 +378,19 @@ with the levers as they are; turn `AbsenceReject` on to see what breaking the
 purity contract costs. Soundness of *your* deferral, that re-drive and a single
 judge agree, is assumed by this model and must be checked in one where your
 verdict is real; the design note says how.
+
+**Which collections are governed.** `GovernedByRoot.tla` is the rule in
+`MergeGovernance::governs`: a collection is governed where its name was claimed,
+or where a validator is installed and its definition declares a governance
+root. Three nodes (a validator with names, a validator with none, no validator
+with one name) and three collections (rooted, claimed but rootless, neither).
+One GREEN run and seven RED, one for each arm and guard of the rule:
+
+```bash
+# GREEN: a validating node judges every rooted or claimed collection; a node with no validator is as before.
+./tools/tlc -metadir states/gbr_g -config MC_GovernedByRoot_Green.cfg                       GovernedByRoot.tla
+# RED: the rule before this model — only claimed names are governed, so a collection defined after start merges unjudged.
+./tools/tlc -metadir states/gbr_r -config MC_GovernedByRoot_Red_DropRootArm.cfg             GovernedByRoot.tla
+# RED: a validator found on a node that installed none merges what that node used to hold.
+./tools/tlc -metadir states/gbr_v -config MC_GovernedByRoot_Red_ValidatorWithoutInstall.cfg GovernedByRoot.tla
+```

@@ -40,9 +40,10 @@
 \* DropNameArm forgets the name arm: only rooted collections are governed.
 \* RootWithoutValidator lets the root govern on a node with no validator.
 \* ValidatorOnlyForNamed finds the validator only for a claimed collection.
+\* ValidatorWithoutInstall finds a validator on a node that installed none.
 \* ClaimAll treats every collection as governed.
 CONSTANTS DropRootArm, DropNameArm, RootWithoutValidator,
-          ValidatorOnlyForNamed, ClaimAll
+          ValidatorOnlyForNamed, ValidatorWithoutInstall, ClaimAll
 
 \* The three nodes.
 Nodes == {"named", "late", "plain"}
@@ -92,8 +93,9 @@ Governed(n, c) == ClaimAll \/ NameArm(n, c) \/ RootArm(n, c)
 
 \* Whether the node finds a validator for a governed collection: it does
 \* when it has one installed. ValidatorOnlyForNamed finds it only for a
-\* collection whose name was claimed.
-HasValidator(n, c) == /\ n \in Validating
+\* collection whose name was claimed. ValidatorWithoutInstall drops the
+\* condition that the node installed one.
+HasValidator(n, c) == /\ (n \in Validating \/ ValidatorWithoutInstall)
                       /\ (c \in Named(n) \/ ~ValidatorOnlyForNamed)
 
 \* A composite the node has not dealt with yet.

@@ -17,8 +17,10 @@ pub struct RejectValue {
 
 #[async_trait]
 impl MergeValidator for RejectValue {
-    /// The candidate is the composite being merged, so its fields are held
-    /// here; failing to read them is a local failure, never a verdict.
+    /// The candidate is the composite being merged, so its field list is
+    /// readable here; failing to read it is a local failure, never a verdict.
+    /// A block of the judged field that is not held yet is a missing input:
+    /// the verdict waits for it.
     async fn validate(
         &self,
         candidate: &MergeCandidate<'_>,
@@ -29,12 +31,22 @@ impl MergeValidator for RejectValue {
             .await?
             .ok_or_else(|| format!("the fields of {} could not be read", candidate.cid))?;
         let refused = FieldValue::Value(NormalValue::String(self.value.clone()));
-        let sets_it = fields
-            .iter()
-            .any(|(name, value)| *name == self.field && *value == refused);
-        Ok(match sets_it {
-            true => MergeVerdict::reject(format!("{} may not be {}", self.field, self.value)),
-            false => MergeVerdict::Accept,
+        let mut not_held = Vec::new();
+        for (_, value) in fields.iter().filter(|(name, _)| *name == self.field) {
+            match value {
+                value if *value == refused => {
+                    return Ok(MergeVerdict::reject(format!(
+                        "{} may not be {}",
+                        self.field, self.value
+                    )));
+                }
+                FieldValue::NotHeld(cid) => not_held.push(*cid),
+                _ => {}
+            }
+        }
+        Ok(match not_held.is_empty() {
+            true => MergeVerdict::Accept,
+            false => MergeVerdict::defer(format!("{} is not held yet", self.field), not_held),
         })
     }
 }
