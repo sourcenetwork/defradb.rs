@@ -12516,6 +12516,7 @@ dependencies = [
  "hex",
  "identity",
  "k256 0.14.0",
+ "mantra-macros",
  "nuclei",
  "p256 0.14.0",
  "regolith",

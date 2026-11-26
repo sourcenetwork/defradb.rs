@@ -195,7 +195,7 @@ fn base64url_encode(data: &[u8]) -> String {
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum BearerError {
-    #[error("issuer DID does not match the signing key")]
+    #[error("issuer DID is not a spelling vera.rs takes for the signing key")]
     Issuer,
 
     #[error("system time error: {0}")]
@@ -225,6 +225,8 @@ pub enum BearerError {
     Size { bytes: usize },
 }
 
+#[cfg(test)]
+mod issuer_spellings;
 #[cfg(test)]
 mod key_types;
 mod request;
