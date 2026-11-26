@@ -20,7 +20,7 @@ use super::blocks::Fragment;
 pub struct HostilePeer {
     transport: IrohTransport,
     target: PeerId,
-    drain: nuclei::Task<()>,
+    _drain: edge::Service,
 }
 
 impl HostilePeer {
@@ -33,17 +33,17 @@ impl HostilePeer {
             bind_addr: Some(IpAddr::V4(Ipv4Addr::LOCALHOST)),
             ..Default::default()
         };
-        let (commands, mut events, _replicators, endpoint) =
-            spawn_endpoint(config, edge::testing::edge())
-                .await
-                .expect("endpoint spawns");
+        let edge = edge::testing::edge();
+        let (commands, mut events, _replicators, endpoint) = spawn_endpoint(config, edge.clone())
+            .await
+            .expect("endpoint spawns");
         // The endpoint loop ends on its own once the transport drops its command sender.
         drop(endpoint);
         let transport = IrohTransport::new(commands, secret_key);
 
         // The node asks the pusher for blocks it is missing. Never answering
         // is deliberate, but the queue must keep moving or the endpoint stalls.
-        let drain = nuclei::spawn(async move { while events.recv().await.is_some() {} });
+        let drain = edge.spawn_service(async move { while events.recv().await.is_some() {} });
 
         let mut target = None;
         let mut addrs = Vec::new();
@@ -80,7 +80,7 @@ impl HostilePeer {
         Self {
             transport,
             target,
-            drain,
+            _drain: drain,
         }
     }
 
@@ -104,11 +104,5 @@ impl HostilePeer {
             replies.push((*cid, reply));
         }
         replies
-    }
-}
-
-impl Drop for HostilePeer {
-    fn drop(&mut self) {
-        self.drain.abort();
     }
 }

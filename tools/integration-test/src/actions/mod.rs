@@ -177,6 +177,7 @@ client_actions! {
         DenyStreamPeer,
         NewIrohNode,
         OpenStream,
+        PushCommit,
         ReadKeptStream,
         Await,
         Benchmark,

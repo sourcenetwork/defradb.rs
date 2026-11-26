@@ -73,6 +73,7 @@ impl<S: Store + 'static> IndexOperations for IndexAdapter<S> {
         name: Option<&str>,
         unique: bool,
         vector: Option<schema::VectorIndexDescription>,
+        build_in_background: bool,
     ) -> Result<IndexInfo, String> {
         self.check_access(true, acp::nac::NodePermission::IndexCreate)
             .await?;
@@ -86,11 +87,16 @@ impl<S: Store + 'static> IndexOperations for IndexAdapter<S> {
             .collect();
         let kind = IndexManager::requested_kind(&indexed_fields, unique, vector)
             .map_err(|e| format!("{}", e))?;
-        let index_desc = self
-            .database
-            .create_index(collection, name, indexed_fields, kind)
-            .await
-            .map_err(|e| format!("{}", e))?;
+        let index_desc = if build_in_background {
+            self.database
+                .start_index(collection, name, indexed_fields, kind)
+                .await
+        } else {
+            self.database
+                .create_index(collection, name, indexed_fields, kind)
+                .await
+        }
+        .map_err(|e| format!("{}", e))?;
         let collection_id = self
             .database
             .require_collection(collection)

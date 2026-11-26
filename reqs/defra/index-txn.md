@@ -271,6 +271,13 @@ Inside a transaction, `UpdateDoc`, update-with-filter and `DeleteDoc` operate on
 
 A collection patch that adds, removes or modifies a secondary index, or changes a vector index's metric, fails with `collection indexes cannot be mutated`.
 
+# `defra.txn.docs.unique-filter-read`: A query through a unique index does not fail its transaction's commit
+
+- **Parents:** ["go.txn.docs"]
+- **Scenarios:** ["txn::unique_filter_read::a_unique_eq_filter_read_does_not_fail_the_commit", "txn::unique_filter_read::a_unique_in_filter_read_does_not_fail_the_commit", "txn::unique_filter_read::a_nil_writers_unique_filter_read_does_not_fail_the_commit", "txn::unique_filter_read::a_writer_of_the_filtered_value_still_loses_the_commit", "mutation::add::field_kinds::one_to_one_to_one::with_txn::transactional_creation_and_linking_of_relational_documents_forward"]
+
+With `type User { name: String @index(unique: true) age: Int }`, an explicit transaction runs `User(filter: {name: {_eq: "alice"}}) { name }` (or `{_in: ["alice"]}`) and gets `[]`, then adds `{name: "bob", age: 3}` or a document with no name, `{age: 3}`. An autocommit `add_User(input: {name: "alice", age: 1})` then succeeds, and committing the transaction succeeds too: a query read decides nothing, so it is not checked at commit, exactly as a filter on a field without an index. `User { name age }` then returns alice and the transaction's document. A transaction that adds `{name: "alice", age: 2}` instead still fails its commit with `transaction conflict. Please retry`, and only the autocommit alice is stored. The same holds for the unique index behind a one-to-one relation: with `Book { publisher: Publisher @primary }` and `Publisher { published: Book }`, two explicit transactions each add a book for a different publisher and run `Publisher { name published { name } }`, and both commit, leaving both books stored. Go checks these reads and fails the second commit in both cases; that is a deliberate divergence.
+
 # `go.txn.definitions.same-txn-visibility`: Definition reads see only their own transaction
 
 - **Parents:** ["go.txn.definitions"]
@@ -291,6 +298,13 @@ A collection patch that adds, removes or modifies a secondary index, or changes 
 - **Scenarios:** ["txn::list_all_encrypted_indexes::txn_list_all_encrypted_indexes_sees_its_own_changes_until_commit"]
 
 `ListAllEncryptedIndexes` given a transaction (the embedded node's request context, the HTTP `x-defradb-tx` header on `GET /api/v0/encrypted-indexes`, the CLI's `encrypted-index list --tx` without `--collection`) lists every collection's encrypted indexes as that transaction sees them, as Go's `ensureContextTxn` does: an index added in the transaction is listed and one deleted in it is gone, while a listing outside the transaction still returns the committed indexes until it commits. The answer is Go's: an object keyed by collection name, each a list of `{FieldName, Type: "equality"}`, with collections that have no encrypted index left out. NAC checks `list-all-encrypted-index` in the transaction; a caller without it gets `not authorized to perform operation. Permission: list-all-encrypted-index`.
+
+# `defra.index.backfill.http-build-mode`: `BuildInBackground` on the HTTP create-index request
+
+- **Parents:** ["go.index.backfill"]
+- **Scenarios:** ["index::build_in_background::an_index_created_in_the_background_lists_as_building_until_its_backfill_ends"]
+
+`POST /api/v0/collections/{name}/indexes` takes an optional boolean `BuildInBackground`, a field Go's request does not have. Left out or `false`, the response is sent once the backfill over the collection's existing documents has ended, so a listing straight after it never shows the index building. With `true`, the response is sent once the index definition has committed, with the same body (`Name`, `ID`, `Fields`, `Unique`, `Kind`), and the backfill goes on by itself: `ListIndexes` reports the index with `Execution` `Status: 1, Action: 3` (building) and filtered queries full-scan until the backfill ends, then `Status: 3, Action: 0` (ready) and queries use the index. The field decides only when the response is sent, never what is built: a `Vector` configuration sent with it creates a vector index, and without one the index is an ordered one. Under `x-defradb-tx` the field changes nothing, because that backfill runs when the transaction commits.
 
 # `defra.txn.indexes.concurrent-encrypted-changes`: Concurrent encrypted index changes outside a transaction
 
