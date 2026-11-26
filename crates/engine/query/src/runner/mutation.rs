@@ -452,8 +452,8 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry + 'static> QueryRunner<F, R
                 update_input: &update_input,
                 update_ops: &update_ops,
             };
-            if strict_attempt {
-                let prepared_request = crate::access_hooks::write::WriteValidationInput {
+            let prepared_request = || {
+                crate::access_hooks::write::WriteValidationInput {
                     validator: Arc::as_ptr(validator) as *const () as usize,
                     identity: caller_identity.as_ref().map(ToString::to_string),
                     collection: (*collection).clone(),
@@ -464,7 +464,10 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry + 'static> QueryRunner<F, R
                     update_ops: update_ops.clone(),
                 }
                 .prepared_request()
-                .map_err(|error| QueryError::execution(error.to_string()))?;
+                .map_err(|error| QueryError::execution(error.to_string()))
+            };
+            if strict_attempt {
+                let prepared_request = prepared_request()?;
                 let inputs = prepared_inputs.ok_or_else(|| {
                     QueryError::execution("write validation attempt has no request memo")
                 })?;
@@ -476,6 +479,10 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry + 'static> QueryRunner<F, R
                     .validate_write(&request)
                     .await
                     .map_err(QueryError::execution)?;
+                // The attempts look the approval up under this exact request.
+                if let Some(inputs) = prepared_inputs {
+                    inputs.insert(prepared_request()?, Arc::<[u8]>::from(b"ok".as_slice()));
+                }
             }
         }
 
