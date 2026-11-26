@@ -49,6 +49,18 @@ pub(super) struct OwedReindex {
     /// not. A page that resumes the reindex walks the way it was recorded.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub(super) persists_migrations: bool,
+    /// Why the last rebuild of this reindex stopped, when a migration gave
+    /// two documents one value of a unique index. A reindex owed again
+    /// starts without one, and the record goes when the rebuild finishes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    failure: Option<OwedFailure>,
+}
+
+/// The unique index a stopped rebuild could not fill, and why.
+#[derive(Serialize, Deserialize)]
+struct OwedFailure {
+    index: u32,
+    reason: String,
 }
 
 fn owed_key(collection_id: &str) -> Vec<u8> {
@@ -79,6 +91,43 @@ pub(crate) async fn reindex_owed(systemstore: &NamespaceView, collection_id: &st
         .map_err(Error::Storage)
 }
 
+/// The unique index the last rebuild of the reindex owed to `collection_id`
+/// could not fill, and why. It is shown and never decided on, so the read is
+/// not validated.
+pub(crate) async fn owed_failure(
+    systemstore: &NamespaceView,
+    collection_id: &str,
+) -> Result<Option<(u32, String)>> {
+    let Some(bytes) = systemstore
+        .get_parts(&owed_key(collection_id), &[])
+        .await
+        .map_err(Error::Storage)?
+    else {
+        return Ok(None);
+    };
+    let owed: OwedReindex = serde_json::from_slice(&bytes)
+        .map_err(|error| Error::Other(format!("invalid owed reindex record: {error}")))?;
+    Ok(owed.failure.map(|failure| (failure.index, failure.reason)))
+}
+
+/// Records, in the transaction of `systemstore`, on the reindex owed to
+/// `collection_id` under `token`, that its rebuild stopped at unique index
+/// `index` for `reason`. A reindex owed again since keeps no record of it.
+pub(super) async fn record_failure(
+    systemstore: &NamespaceView,
+    collections: &Arc<EpochedCollections>,
+    collection_id: &str,
+    token: u64,
+    index: u32,
+    reason: String,
+) -> Result<()> {
+    let Some(mut owed) = owed_under(systemstore, collection_id, token).await? else {
+        return Ok(());
+    };
+    owed.failure = Some(OwedFailure { index, reason });
+    write_owed(systemstore, collections, collection_id, &owed).await
+}
+
 /// Records, in the transaction of `systemstore`, the reindex a schema change
 /// owes `collection_id`.
 pub(crate) async fn owe_reindex(
@@ -96,6 +145,7 @@ pub(crate) async fn owe_reindex(
             migration_destination: migration_destination.map(str::to_owned),
             indexes: None,
             persists_migrations: false,
+            failure: None,
         },
     )
     .await
@@ -122,6 +172,7 @@ pub(super) async fn owe_full_reindex(
             migration_destination: None,
             indexes,
             persists_migrations,
+            failure: None,
         },
     )
     .await

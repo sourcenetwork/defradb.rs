@@ -218,4 +218,30 @@ pub(super) const PROPERTIES: &[Property] = &[
         tiers: &[Contract],
         bound_by: "tools/integration-test/tests/testo/issues/t_2916.rs an_old_version_counter_update_merges_through_a_lens_once, an_old_version_counter_update_merges_through_a_forward_only_lens, an_old_version_counter_update_adds_to_a_counter_a_forward_only_lens_wrote, an_old_version_counter_update_keeps_the_fields_the_lens_wrote, an_old_version_counter_update_lands_on_a_document_stored_at_the_source_version",
     },
+    Property {
+        // #2802: a rebuild a migration's unique clash stops writes its
+        // failure onto the owed record of its own token; owing again starts
+        // without one, and finishing removes it with the record. The index
+        // listing shows that failure as an errored backfill.
+        family: "Schema-evolution operations in the core",
+        name: "INV_FailureIsCurrent / INV_SettledNotFailed",
+        axis: Tla,
+        anchor: "crates/database/db/src/definition/migration/reindex/owed.rs owe_reindex, owe_full_reindex, record_failure, owed_failure, clear_owed_reindex; crates/database/db/src/definition/migration/reindex/mod.rs DB::reindex_in_pages; crates/database/db/src/definition/migration/reindex/failure.rs DB::record_failure; crates/database/db/src/database/action.rs index_listing_executions",
+        model_ref: "MC_ReindexFailureListing_{Green,Red_NoTokenCheck,Red_KeepFailureOnOwe,Red_FailureBeside}.cfg",
+        tiers: &[Boundary],
+        bound_by: "tools/integration-test/tests/testo/collection_version/migrations/query/with_unique_index.rs migration_giving_two_documents_one_unique_value_fails_the_index, switching_back_after_a_unique_clash_rebuilds_the_index",
+    },
+    Property {
+        // #2802: the owed record's failure operations: owing lists nothing, a
+        // failure under the record's token lists, one under another token
+        // changes nothing, clearing lists nothing, and a listed failure
+        // always sits on an owed record.
+        family: "Schema-evolution operations in the core",
+        name: "ReindexFailureListing.owe_lists_nothing / record_own_token_lists / record_other_token_unchanged / clear_own_token_lists_nothing / listed_needs_record",
+        axis: Lean,
+        anchor: "crates/database/db/src/definition/migration/reindex/owed.rs record_failure, owed_failure, clear_owed_reindex",
+        model_ref: "ReindexFailureListing (lake build)",
+        tiers: &[Boundary],
+        bound_by: "tools/integration-test/tests/testo/collection_version/migrations/query/with_unique_index.rs migration_giving_two_documents_one_unique_value_fails_the_index",
+    },
 ];
