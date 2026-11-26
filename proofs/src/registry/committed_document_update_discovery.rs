@@ -22,4 +22,22 @@ pub(super) const PROPERTIES: &[Property] = &[
         tiers: &[Contract],
         bound_by: "crates/database/db/tests/read/update_transactions.rs identities_are_unambiguous_and_payloads_round_trip, commit_order_rollback_and_replayed_updates, a_scan_returns_the_rows_of_its_collection_and_range_only; crates/database/db/tests/read/arrivals.rs graphql_updates_page_each_committed_version_of_one_document, hidden_updates_advance_page_without_disclosing_identity_or_cid; crates/database/db/tests/read/update_visibility.rs a_deleted_private_documents_updates_are_shown_to_nobody, a_delete_during_the_page_hides_the_row_from_a_provider_outside_its_transaction; crates/database/db/tests/merge/update_journal.rs a_merge_that_loses_to_the_stored_value_adds_no_row",
     },
+    Property {
+        family: "Committed document update discovery",
+        name: "INV_Prefix / INV_NoCorrupt / INV_NoSilentGap / INV_ToldOnlyDropped — a truncate of the whole collection drops rows in slices that each start at the oldest kept row, so concurrent truncates and a crash between slices leave the dropped rows one run from cursor 1; the head never moves back, so no cursor is handed out twice; a reader whose next row was dropped is told the cursor is no longer available and the cursor to read after, and loses only dropped rows",
+        axis: Tla,
+        anchor: "crates/database/db/src/event/update_retention.rs drop_rows/oldest_row/missing_row; crates/database/db/src/event/updates.rs read/rows/scanned; crates/database/db/src/collection/ops/truncate/all.rs truncate_documents",
+        model_ref: "MC_UpdateJournalRetention_{Green,Green_Wide}.cfg / MC_UpdateJournalRetention_Red_{Anywhere,Skip,Reset}.cfg",
+        tiers: &[Behavioral],
+        bound_by: "crates/database/db/tests/read/update_retention.rs a_full_drop_leaves_a_cursor_before_it_unavailable, slices_of_a_long_journal_drop_every_row, a_hole_below_kept_rows_is_a_missing_row; tools/integration-test/tests/testo/subscription/delivery/retention.rs a_cursor_before_a_full_truncate_is_no_longer_available, a_filtered_truncate_drops_no_row",
+    },
+    Property {
+        family: "Committed document update discovery",
+        name: "slice_keeps_one_run / slice_keeps_head / rows_are_kept / rows_skip_nothing / unavailable_iff_next_dropped / oldest_is_readable / unavailable_loses_only_dropped / seek_test_matches",
+        axis: Lean,
+        anchor: "crates/database/db/src/event/update_retention.rs drop_rows/oldest_row/missing_row; crates/database/db/src/event/updates.rs read/rows/scanned",
+        model_ref: "UpdateJournalRetention (lake build)",
+        tiers: &[Contract],
+        bound_by: "crates/database/db/tests/read/update_retention.rs a_full_drop_leaves_a_cursor_before_it_unavailable, a_hole_below_kept_rows_is_a_missing_row; tools/integration-test/tests/testo/subscription/delivery/retention.rs a_cursor_before_a_full_truncate_is_no_longer_available",
+    },
 ];

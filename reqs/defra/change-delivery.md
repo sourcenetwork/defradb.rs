@@ -38,6 +38,20 @@ An update a replicator delivers to another node adds exactly one row to that nod
 
 `after` greater than the collection's `head` fails with `update cursor is beyond this node's collection head`, through the in-process client, the HTTP client and the CLI alike; it is never answered with an empty page. With one document and no update (`head` "0"), `after: "1"`, the first cursor past the head, fails this way.
 
+# `defra.events.delivery.retention`: A row stays until its collection is truncated in full
+
+- **Parents:** ["defra.events.delivery"]
+- **Scenarios:** ["subscription::delivery::retention::a_cursor_before_a_full_truncate_is_no_longer_available", "subscription::delivery::retention::a_filtered_truncate_drops_no_row"]
+
+The journal keeps every row until its collection is truncated without a filter: no age or row count drops a row, and a filtered truncate, a delete or a purge drops none. With updates to Ann and Bob, a truncate filtered to Ann leaves `after: "0"` returning cursors "1" for Ann and "2" for Bob. A truncate without a filter drops every row up to the head it reads, the rows of the collection's `@chunk` collections included, and `head` keeps counting from where it was, so a cursor is never handed out twice: after it, updates to Ann and Bob that were cursors "1" and "2" are gone, `after: "2"` returns no entries with `head` and `next` "2", and the next update, to Cy, is cursor "3".
+
+# `defra.events.delivery.unavailable`: A cursor whose rows were dropped is refused
+
+- **Parents:** ["defra.events.delivery"]
+- **Scenarios:** ["subscription::delivery::retention::a_cursor_before_a_full_truncate_is_no_longer_available"]
+
+`after` below the oldest cursor a read can still start from fails with `update cursor is no longer available on this node: resync the collection and read after cursor <oldest>`, where `<oldest>` is the cursor just before the oldest row still kept, or `head` when no row is kept; reading after `<oldest>` then returns every row kept, with no gap. It is never answered with the rows that are left, which would skip the dropped ones silently. Through the in-process client, the HTTP client and the CLI alike: once a truncate without a filter dropped cursors "1" and "2", `after: "0"` and `after: "1"` fail with `read after cursor 2`, also after the next update adds cursor "3".
+
 # `defra.events.delivery.visibility`: A row the reader may not see is passed, not shown
 
 - **Parents:** ["defra.events.delivery"]
