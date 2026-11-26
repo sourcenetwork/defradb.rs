@@ -137,6 +137,8 @@ where
         TransportConfig::Libp2p(libp2p) => drop(libp2p.sync.retry_schedule()?),
         #[cfg(feature = "p2p")]
         TransportConfig::Iroh(iroh) => drop(iroh.sync.retry_schedule()?),
+        #[cfg(feature = "pinc")]
+        TransportConfig::Pinc(pinc) => drop(pinc.sync.retry_schedule()?),
         TransportConfig::None => {}
     }
 
@@ -336,6 +338,21 @@ where
                 start_peer_key.as_ref(),
                 network.sibling(),
                 extras.stream_protocols,
+            )
+            .await
+            .map(Some),
+            #[cfg(feature = "pinc")]
+            (TransportConfig::Pinc(pinc), Some(network)) => crate::pinc_runtime::setup_pinc(
+                store.clone(),
+                database.clone(),
+                event_bus.clone(),
+                pinc,
+                node_p2p_identity.clone(),
+                document_acp.clone(),
+                strict_replicated_doc_access,
+                peer_keyring.as_ref(),
+                start_peer_key.as_ref(),
+                network.sibling(),
             )
             .await
             .map(Some),

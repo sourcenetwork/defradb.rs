@@ -295,6 +295,10 @@ impl Node {
                         }
                     }
                 }
+                #[cfg(feature = "pinc")]
+                super::node::P2PTasks::Pinc { peer } => {
+                    peer.shutdown().await;
+                }
             }
 
             info!("P2P background tasks stopped");

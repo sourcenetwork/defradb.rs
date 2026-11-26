@@ -31,4 +31,13 @@ pub(super) const PROPERTIES: &[Property] = &[
         tiers: &[Boundary],
         bound_by: "",
     },
+    Property {
+        family: "Have-set DAG fetch",
+        name: "INV_HeldNotResent / INV_OneRequest / INV_BranchCut / INV_Converges for the rooted request",
+        axis: Tla,
+        anchor: "crates/database/p2p/src/sync/coordinator/rooted_request.rs rooted_request; crates/database/p2p/src/sync/coordinator/dag_fetcher.rs poll_fetch_blocks, poll_fetch_rooted_provider; crates/database/p2p/src/sync/coordinator/closure_depth.rs ClosureDepth::whole; crates/database/p2p/src/sync/car/region.rs collect_missing_region; crates/database/p2p/src/sync/coordinator/event_handler/car.rs drop_held_blocks",
+        model_ref: "MC_RootNamedFetch_{Green,Red_*}.cfg",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
 ];
