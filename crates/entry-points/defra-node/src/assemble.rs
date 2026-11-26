@@ -10,7 +10,7 @@ use crate::background_tasks::BackgroundTasks;
 use crate::config::{NodeConfig, TransportConfig};
 use crate::network::NodeEdge;
 use crate::{acp_ops, db_impls, node_acp, node_identity, timeout_secs};
-use crate::{BlockOps, Error, Node, Result, SchemaOps};
+use crate::{Error, Node, Result};
 
 #[cfg(feature = "p2p")]
 use crate::access_hooks::AccessHooks;
@@ -572,12 +572,12 @@ where
     #[cfg(feature = "embedded-vera")]
     let embedded_vera = crate::single_slot(acp_setup.embedded_vera);
     database.set_dac_policies(acp_setup.dac_policies);
-    let schema_ops: Arc<dyn SchemaOps> = Arc::new(db_impls::DbSchemaOps::new(
+    let schema_ops = db_impls::DbSchemaOps::new(
         database.clone(),
         query_limits,
         document_acp.clone(),
         registry.clone(),
-    ));
+    );
     let acp_ops: Arc<dyn acp_ops::AcpOps> = Arc::new(acp_ops::DbAcpOps::new(
         database.clone(),
         registry.clone(),
@@ -617,12 +617,12 @@ where
             registry.start_stale_transaction_cleanup(cleanup.max_idle_age, cleanup.sweep_interval),
         );
     }
-    let block_ops: Arc<dyn BlockOps> = Arc::new(db_impls::DbBlockOps::new(
+    let block_ops = db_impls::DbBlockOps::new(
         database.clone(),
         document_acp.clone(),
         registry.clone(),
         node_query_identity.clone(),
-    ));
+    );
 
     // Started once nothing else can fail, as the background tasks are: a
     // resumed build holds the database until it stops.

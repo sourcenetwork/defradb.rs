@@ -669,7 +669,7 @@ impl NodeBuilder {
             .with_pool(node.pool.clone())
             .with_dev_mode(http_cfg.dev_mode)
             .with_schema_arc(Arc::new(crate::HttpSchemaOps {
-                schema_ops: Arc::clone(&node.schema_ops),
+                schema_ops: node.schema_ops.clone(),
                 context: None,
             }));
             let ops = crate::ops::HttpNodeOps::new(node.ops());
