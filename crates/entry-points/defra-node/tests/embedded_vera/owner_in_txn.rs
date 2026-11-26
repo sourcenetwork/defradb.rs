@@ -60,7 +60,7 @@ impl Home {
             .add_policy(did(&owner).as_str(), POLICY, None)
             .await
             .expect("policy");
-        node.add_collection(&users(&policy))
+        node.add_collection(&defra_core::RequestContext::ambient(), &users(&policy))
             .await
             .expect("collection");
         Self {

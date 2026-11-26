@@ -5,7 +5,7 @@
 //! whose pull loop returns early on `?` skips it, and the deferred lens
 //! migration write-backs go with it.
 
-use crate::common::schema::users_schema;
+use crate::common::schema::{users_schema, USERS_SDL};
 use async_trait::async_trait;
 use db::AutoCommitMutator;
 use db::LensedAutoCommitFetcher;
@@ -135,7 +135,9 @@ impl DocFetcher for FailingFetcher {
 
 async fn seeded_db() -> Arc<DB<RegolithStore>> {
     let db = Arc::new(DB::new(RegolithStore::in_memory().unwrap()).unwrap());
-    db.create_collection(users_schema()).await.unwrap();
+    db.add_collection(&defra_core::RequestContext::ambient(), USERS_SDL)
+        .await
+        .unwrap();
 
     let docs = (0..COLLECTION_SIZE)
         .map(|i| {

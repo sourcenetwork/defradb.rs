@@ -50,8 +50,8 @@ fn a_transaction_committed_during_shutdown_is_refused_or_keeps_its_head_marker()
                 .with_p2p(iroh_config())
                 .build()
                 .await?;
-            sender.add_collection(NOTE_SDL).await?;
-            receiver.add_collection(NOTE_SDL).await?;
+            sender.add_collection(&defra_core::RequestContext::ambient(), NOTE_SDL).await?;
+            receiver.add_collection(&defra_core::RequestContext::ambient(), NOTE_SDL).await?;
             let receiver_peer = receiver
                 .p2p_system()
                 .expect("p2p")
@@ -158,7 +158,7 @@ fn a_transaction_left_open_by_a_refused_commit_does_not_stall_shutdown() -> Resu
                 .data_path(dir.path().join("data.regolith"))
                 .build()
                 .await?;
-            node.add_collection(NOTE_SDL).await?;
+            node.add_collection(&defra_core::RequestContext::ambient(), NOTE_SDL).await?;
             let txn = node
                 .begin_transaction(false)
                 .await

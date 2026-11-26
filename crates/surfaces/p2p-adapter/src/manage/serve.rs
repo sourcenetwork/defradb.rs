@@ -253,11 +253,9 @@ pub async fn build_manage_query_reply(
 /// Convert the HTTP-facing replicator info into the P2P wire type expected by
 /// `ManageQueryResult::Replicators`.
 ///
-/// The HTTP type carries a single best `address` and an `Option<u8>` status,
+/// The HTTP type carries the full address list and an `Option<u8>` status,
 /// whereas the wire type carries an `addresses` list and a typed
-/// `ReplicatorStatus`. An unknown status byte falls back to the default. The
-/// single `address` is lossy at the HTTP boundary (multi-address replicators
-/// collapse to one); that loss is upstream of this conversion.
+/// `ReplicatorStatus`. An unknown status byte falls back to the default.
 ///
 /// The HTTP `last_status_change` is an RFC3339 string produced by
 /// `last_status_change_go_string()`; we parse it back into the wire type's
@@ -267,7 +265,7 @@ fn to_p2p_replicator_info(info: crate::ReplicatorInfo) -> p2p::ReplicatorInfo {
     let mut out = p2p::ReplicatorInfo::from_raw(
         info.id.unwrap_or_default(),
         info.collections,
-        info.address.into_iter().collect(),
+        info.addresses,
     );
     out.filters = info
         .filters
@@ -525,7 +523,7 @@ mod tests {
         let http = ReplicatorInfo {
             id: Some("12D3KooW-PEER".into()),
             collections: vec!["c1".into()],
-            address: Some("/ip4/1.2.3.4/tcp/9000".into()),
+            addresses: vec!["/ip4/1.2.3.4/tcp/9000".into()],
             status: Some(1),
             last_status_change: Some("2024-03-14T15:09:26.535Z".into()),
             filters: Default::default(),
@@ -555,7 +553,7 @@ mod tests {
         let http = ReplicatorInfo {
             id: Some("12D3KooW-PEER".into()),
             collections: vec!["User".into()],
-            address: Some("/ip4/1.2.3.4/tcp/9000".into()),
+            addresses: vec!["/ip4/1.2.3.4/tcp/9000".into()],
             status: Some(0),
             last_status_change: None,
             filters,

@@ -8,7 +8,7 @@ cargo test -p integration-test --test legacy -- p2p::
 
 | File | Tests | What it covers |
 |------|-------|----------------|
-| `connection_manager.rs` | 1 | Connection manager pruning behavior |
+| `connection_manager.rs` | 2 | Connection manager pruning, and pruned peers staying away (#3357) |
 | `document.rs` | 2 | Document replication across runtimes |
 | `idempotent_replay.rs` | 3 | Idempotent reconnect/replay behavior |
 | `management.rs` | 3 | P2P collection/replicator management |
@@ -22,7 +22,7 @@ cargo test -p integration-test --test legacy -- p2p::
 | `resilience.rs` | 9 | P2P stress tests (ignored by default) |
 | `write_contention.rs` | 9 | Concurrent write behavior across P2P topologies |
 
-**53 total tests: 42 active, 11 ignored.**
+**54 total tests: 43 active, 11 ignored.**
 
 ### Ignored
 

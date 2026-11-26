@@ -70,7 +70,7 @@ async fn creates_in_one_transaction(count: usize) -> Measured {
         .add_policy(owner.as_str(), POLICY, None)
         .await
         .expect("policy");
-    node.add_collection(&users(&policy))
+    node.add_collection(&defra_core::RequestContext::ambient(), &users(&policy))
         .await
         .expect("collection");
 
@@ -169,7 +169,7 @@ fn a_created_document_registers_under_its_selected_parent() {
         let definition = format!("{POLICY}{child_resource}");
         let policy = vera.add_policy(owner.as_str(), &definition, None).await.unwrap();
         let children = format!(r#"type Job @policy(id: "{policy}", resource: "jobs", parentField: "parentId") {{ parentId: String! }}"#);
-        node.add_collection(&format!("{}\n{children}", users(&policy))).await.unwrap();
+        node.add_collection(&defra_core::RequestContext::ambient(), &format!("{}\n{children}", users(&policy))).await.unwrap();
         let parent = created(node.execute_request(create_user("parent", &owner)).await);
         let mutation = format!(r#"mutation {{ add_Job(input: {{parentId: "{parent}"}}) {{ _docID }} }}"#);
         let request = defra_node::QueryRequest::new(mutation).with_identity(Some(owner.clone()));
