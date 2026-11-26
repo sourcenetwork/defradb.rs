@@ -445,9 +445,9 @@ An article about rivers, edited to be about music, keeps its old rivers chunk st
 # `defra.chunk.rank.access`: A reader ranks only the articles they may read
 
 - **Parents:** ["defra.chunk.rank"]
-- **Scenarios:** ["chunk::rank_access::a_reader_ranks_only_the_articles_they_may_read_through_a_grant_and_a_delete"]
+- **Scenarios:** ["chunk::rank_access::a_reader_ranks_only_the_articles_they_may_read_through_a_grant_and_a_delete", "chunk::rank_access::a_revoked_reader_stops_ranking_the_article"]
 
-Under a local policy, with Alice's article about rivers and a public article about engines created with no identity, `limit: 2` returns both to Alice, hers first with similarity 1. `limit: 1` returns the public article, with similarity 0, to Bob and to a request with no identity, though Alice's article is nearer. Once Alice makes Bob a reader, `limit: 1` returns her article to Bob, and still the public one to a request with no identity. Once she deletes it, `limit: 1` returns the public article to Bob and to Alice.
+Under a local policy, with Alice's article about rivers and a public article about engines created with no identity, `limit: 2` returns both to Alice, hers first with similarity 1. `limit: 1` returns the public article, with similarity 0, to Bob and to a request with no identity, though Alice's article is nearer. Once Alice makes Bob a reader, `limit: 1` returns her article to Bob, and still the public one to a request with no identity. Once she deletes it, `limit: 1` returns the public article to Bob and to Alice. Once she removes Bob as a reader instead, `limit: 1` returns the public article to Bob again, and still hers to her.
 
 # `defra.chunk.rank.own_app`: A chunk its own app check refuses never scores its article
 

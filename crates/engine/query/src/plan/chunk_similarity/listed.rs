@@ -204,3 +204,7 @@ pub(super) async fn drain(
     closed?;
     Ok(docs)
 }
+
+#[cfg(test)]
+#[path = "listed_tests.rs"]
+mod tests;
