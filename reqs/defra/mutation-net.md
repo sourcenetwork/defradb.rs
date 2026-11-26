@@ -330,6 +330,14 @@ Two nodes share 20 updates of a document, then lose touch. One makes 40 more upd
 
 A node that holds none of a document with 31 updates, told of its next head, fetches the whole DAG and converges on it. It is sent no block it holds besides the head it asked for (`car_received_already_held` zero), however many of the writer's heads gossip delivered before the fetch.
 
+# `defra.net.replicator.list_shape`: Replicator list response shape
+
+- **Parents:** ["defra.net"]
+- **Scenarios:** ["net::simple::replicator::list_shape::a_replicator_list_reports_go_shape"]
+
+Listing replicators returns each entry as `{ID, Addresses, CollectionIDs, Status, LastStatusChange}`, with `Addresses` as an array and `Status` as Go's numeric status.
+Adding a new replicator records the current time as `LastStatusChange`; updating its collections retains its existing status and timestamp.
+
 # `defra.net.sync.fetch_slots`: A node's P2P status reports what holds its fetch slots
 
 - **Parents:** ["defra"]
