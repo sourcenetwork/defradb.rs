@@ -1,4 +1,5 @@
 import OrderEncoding.Bytes
+import OrderEncoding.Markers
 
 /-!
 # OrderEncoding.JsonPath — JSON path layout and descending range sentinels
@@ -91,5 +92,46 @@ theorem descending_json_sentinels_bracket_values
 theorem utf8_lead_is_not_array_marker (byte : Nat)
     (h : byte ≤ 127 ∨ (194 ≤ byte ∧ byte ≤ 244)) : byte ≠ 136 := by
   omega
+
+/-! ## Where an empty array entry sits
+
+An empty array inside a JSON value is stored at its path with the value
+`EMPTY_ARRAY` (17) in an ascending index and `EMPTY_ARRAY_DESC` (18) in a
+descending one. A range scan of the path runs between the path's two
+sentinels, so it passes over these entries and skips them; the `_all` scan
+looks them up by their exact key. What must never happen: an empty array entry
+lands outside its path's sentinels, where a scan of a neighbouring path would
+read it as one of its own values.
+
+Rust anchors: `encode_scalar_ascending`, `encode_scalar_descending` in
+`crates/engine/storage/src/encoding/json.rs`, and
+`an_empty_array_round_trips_between_its_path_sentinels` in
+`crates/engine/storage/src/encoding/json_array_path_tests.rs`.
+-/
+
+/-- A descending empty array entry sits between the two sentinels of its path. -/
+theorem descending_empty_array_bracketed (path : Bytes) :
+    -- above `PathMax` and below `PathMin`
+    pathMax path <ₗ entry path [mEmptyArrayDesc] ∧
+      entry path [mEmptyArrayDesc] <ₗ pathMin path :=
+  -- the value is one byte, so it is not empty and the general bracket applies
+  descending_json_sentinels_bracket_values path [mEmptyArrayDesc] (by simp)
+
+/-- An ascending empty array entry sits between the two ascending sentinels:
+    above `PathMin`, which ends with the null byte 0, and below `PathMax`, which
+    writes the next separator byte, the same bytes `pathMin` names above. -/
+theorem ascending_empty_array_bracketed (path : Bytes) :
+    -- above the ascending `PathMin`, whose value byte is the null 0
+    entry path [mNull] <ₗ entry path [mEmptyArray] ∧
+      -- and below the ascending `PathMax`
+      entry path [mEmptyArray] <ₗ pathMin path := by
+  -- both parts
+  constructor
+  · -- the shared path drops out; then the separator and terminator match, and
+    -- the value byte decides: 0 < 17
+    exact (append_lex_iff path _ _).mp
+      (Lex.cons (Lex.cons (Lex.head (by decide))))
+  · -- the general fact that every entry is below the next separator byte
+    exact path_min_above_value path [mEmptyArray]
 
 end OrderEncoding.JsonPath

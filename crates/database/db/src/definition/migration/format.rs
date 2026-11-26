@@ -16,8 +16,9 @@ use crate::DB;
 /// version 3 gives each deferred index entry its position record, which the
 /// check at every open does for the deferred indexes alone; version 4 tags the
 /// index keyspace so collection short IDs cannot collide with another family;
-/// version 5 moves descending JSON paths back into ascending order.
-pub const CURRENT_INDEX_FORMAT: u32 = 5;
+/// version 5 moves descending JSON paths back into ascending order; version 6
+/// gives each empty array in a JSON value an entry of its own at its path.
+pub const CURRENT_INDEX_FORMAT: u32 = 6;
 
 /// Systemstore key holding the format the indexes on disk were written with.
 pub use storage::keys::systemstore::INDEX_FORMAT_KEY;

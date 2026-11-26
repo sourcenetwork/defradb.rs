@@ -164,6 +164,9 @@ pub struct FieldCondition {
     /// JSON path for JSON field conditions
     /// e.g., for `custom: {height: {_gt: 170}}`, this would be Some(["height"])
     pub json_path: Option<JsonPath>,
+    /// Which field filter of an `_and` the condition came from. Two `_any`
+    /// clauses on one path may match different elements.
+    pub clause: usize,
 }
 
 /// Value in a filter condition.
@@ -260,6 +263,7 @@ impl FieldCondition {
                     value: condition_value,
                     array_op,
                     json_path: json_path.clone(),
+                    clause: 0,
                 });
             } else {
                 // Not an operator - this is a JSON path property

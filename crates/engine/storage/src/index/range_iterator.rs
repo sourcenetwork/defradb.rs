@@ -45,6 +45,9 @@ pub struct RangeIterator {
     exhausted: bool,
     /// Whether iterating in reverse
     reverse: bool,
+    /// The field a range bounds. Its empty array entries match no range, so
+    /// they are skipped and not counted.
+    range_field: Option<usize>,
 }
 
 impl RangeIterator {
@@ -77,6 +80,7 @@ impl RangeIterator {
             upper_inclusive: true,
             exhausted: false,
             reverse,
+            range_field: None,
         })
     }
 
@@ -118,6 +122,7 @@ impl RangeIterator {
             upper_inclusive: true,
             exhausted: false,
             reverse,
+            range_field: None,
         })
     }
 
@@ -223,6 +228,7 @@ impl RangeIterator {
             upper_inclusive,
             exhausted,
             reverse,
+            range_field: Some(range_field_idx),
         })
     }
 
@@ -284,7 +290,7 @@ impl RangeIterator {
         let (values, doc_suffix) = self.decode_field_values(key)?;
 
         // Determine if this is a NULL entry (doc short ID in key suffix)
-        let has_nil = values.iter().any(|v| v.is_nil());
+        let has_nil = super::skips_uniqueness(&values);
 
         let doc_short_id = if self.is_unique && !has_nil && !value.is_empty() {
             // Unique index with non-NULL value: doc short ID is in the value
@@ -405,6 +411,32 @@ impl RangeIterator {
     }
 }
 
+impl RangeIterator {
+    /// Seeks past the block of empty array entries `key` opens, so a range
+    /// reads one of them, not each. `false` when nothing is left past it.
+    async fn skip_empty_arrays(&mut self, key: &[u8], values: &[NormalValue]) -> Result<bool> {
+        let mut block = key[..self.index_prefix_len].to_vec();
+        for (i, value) in values.iter().enumerate() {
+            let descending = self.desc.fields.get(i).is_some_and(|f| f.descending);
+            block = encode_field_value(block, value, descending)?;
+        }
+        if !key.starts_with(&block) {
+            return Ok(true);
+        }
+        if self.reverse {
+            self.inner.seek(&block).await?;
+            return Ok(true);
+        }
+        match prefix_successor(&block) {
+            Some(after) => {
+                self.inner.seek(&after).await?;
+                Ok(true)
+            }
+            None => Ok(false),
+        }
+    }
+}
+
 /// First key after every key beginning with `prefix`.
 fn prefix_successor(prefix: &[u8]) -> Option<Vec<u8>> {
     let mut successor = prefix.to_vec();
@@ -467,6 +499,21 @@ impl IndexIterator for RangeIterator {
                     }
 
                     let entry = self.extract_entry(&kv.key, &kv.value)?;
+                    if let Some(field) = self.range_field.filter(|field| {
+                        entry
+                            .values
+                            .get(*field)
+                            .is_some_and(NormalValue::is_empty_array_entry)
+                    }) {
+                        if !self
+                            .skip_empty_arrays(&kv.key, &entry.values[..=field])
+                            .await?
+                        {
+                            self.exhausted = true;
+                            return Ok(None);
+                        }
+                        continue;
+                    }
                     return Ok(Some(entry));
                 }
                 None => {

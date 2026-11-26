@@ -168,8 +168,31 @@ fn test_json_leaves_empty_object() {
 #[test]
 fn test_json_leaves_empty_array() {
     let json = NormalValue::Json(serde_json::json!([]));
-    let leaves = json.json_leaves();
-    assert!(leaves.is_empty());
+    assert_eq!(
+        json.json_leaves(),
+        vec![NormalValue::JsonLeaf(JsonLeafValue::new(
+            JsonPath::new(),
+            JsonScalarValue::EmptyArray
+        ))]
+    );
+}
+
+#[test]
+fn test_json_leaves_nested_empty_array() {
+    let json = NormalValue::Json(serde_json::json!({ "a": [], "b": [[]], "c": {} }));
+    assert_eq!(
+        json.json_leaves(),
+        vec![
+            NormalValue::JsonLeaf(JsonLeafValue::new(
+                JsonPath::new().append_property("a"),
+                JsonScalarValue::EmptyArray
+            )),
+            NormalValue::JsonLeaf(JsonLeafValue::new(
+                JsonPath::new().append_property("b").append_index(),
+                JsonScalarValue::EmptyArray
+            )),
+        ]
+    );
 }
 
 #[test]

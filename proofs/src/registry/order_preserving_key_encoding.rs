@@ -49,4 +49,16 @@ pub(super) const PROPERTIES: &[Property] = &[
         tiers: &[Boundary],
         bound_by: "",
     },
+    Property {
+        // The marker constants are `pub(crate)`; the storage unit tests check
+        // they differ from null and from each other, and that an empty array
+        // round-trips between its path's sentinels. Boundary.
+        family: "Order-preserving key encoding",
+        name: "markers_empty_array_band / markers_empty_array_fresh / cross_type_empty_array / empty_array_desc_not_flipped / descending_empty_array_bracketed / ascending_empty_array_bracketed: the empty array markers are free bytes below the integers, the descending one not the flipped ascending one, and a JSON empty array entry sits between its path's sentinels",
+        axis: Lean,
+        anchor: "crates/engine/storage/src/encoding/mod.rs EMPTY_ARRAY, EMPTY_ARRAY_DESC; crates/engine/storage/src/encoding/empty_array.rs encode_empty_array_ascending, encode_empty_array_descending; crates/engine/storage/src/encoding/json.rs encode_scalar_ascending, encode_scalar_descending",
+        model_ref: "OrderEncoding.Markers / OrderEncoding.CrossType / OrderEncoding.JsonPath (lake build)",
+        tiers: &[Boundary],
+        bound_by: "crates/engine/storage/src/encoding/empty_array.rs empty_array_is_not_null; crates/engine/storage/src/encoding/json_array_path_tests.rs an_empty_array_round_trips_between_its_path_sentinels",
+    },
 ];

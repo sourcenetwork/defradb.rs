@@ -21,6 +21,8 @@ pub enum JsonScalarValue {
     Number(f64),
     /// JSON string
     String(String),
+    /// An empty array. It has no elements to index, yet `_all` matches it.
+    EmptyArray,
     /// Sentinel value for path lower bound (comes before all values for a path)
     /// Used for constraining range scans to a specific JSON path.
     PathMin,

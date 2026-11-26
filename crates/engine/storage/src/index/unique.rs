@@ -89,7 +89,7 @@ impl UniqueIndex {
     /// the uniqueness constraint is bypassed, allowing multiple documents
     /// with the same partial values.
     fn has_nil_field(values: &[NormalValue]) -> bool {
-        values.iter().any(|v| v.is_nil())
+        super::skips_uniqueness(values)
     }
 
     /// Build the index key for given field values.

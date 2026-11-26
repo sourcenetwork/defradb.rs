@@ -124,7 +124,14 @@ fn extract_conditions_recursive(
 
         // Field condition
         if let Some(ops) = value.as_object() {
-            conditions.extend(FieldCondition::parse(key, ops));
+            let clause = conditions
+                .last()
+                .map_or(0, |c: &FieldCondition| c.clause + 1);
+            conditions.extend(
+                FieldCondition::parse(key, ops)
+                    .into_iter()
+                    .map(|cond| FieldCondition { clause, ..cond }),
+            );
         }
     }
 }

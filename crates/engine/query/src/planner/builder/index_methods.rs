@@ -90,11 +90,12 @@ impl super::Planner {
                     limit,
                     offset,
                 ) {
-                    let provides_ordering = select
-                        .order_by
-                        .as_ref()
-                        .map(|o| can_be_ordered_by_filtered_index(o, best_index, filter).0)
-                        .unwrap_or(false);
+                    let provides_ordering = !is_merged(&params)
+                        && select
+                            .order_by
+                            .as_ref()
+                            .map(|o| can_be_ordered_by_filtered_index(o, best_index, filter).0)
+                            .unwrap_or(false);
                     return Some((params, provides_ordering));
                 }
             }
@@ -157,9 +158,12 @@ impl super::Planner {
                     limit,
                     offset,
                 ) {
-                    let provides_ordering = order_by
-                        .map(|order| can_be_ordered_by_filtered_index(order, best_index, filter).0)
-                        .unwrap_or(false);
+                    let provides_ordering = !is_merged(&params)
+                        && order_by
+                            .map(|order| {
+                                can_be_ordered_by_filtered_index(order, best_index, filter).0
+                            })
+                            .unwrap_or(false);
                     return Some((params, provides_ordering));
                 }
             }
@@ -178,6 +182,11 @@ impl super::Planner {
         }
         None
     }
+}
+
+/// A merge of scans, as `_all` adds its empty arrays, is in no index order.
+fn is_merged(params: &IndexScanParams) -> bool {
+    matches!(params.scan_type, IndexScanType::OrScan { .. })
 }
 
 fn order_index_scan_params(

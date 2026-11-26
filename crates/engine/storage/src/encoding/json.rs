@@ -10,10 +10,11 @@
 use document::{JsonLeafValue, JsonPath, JsonPathPart, JsonScalarValue};
 
 use super::{
-    decode_bool_ascending, decode_bytes_ascending, decode_float64_ascending, decode_if_null,
-    decode_uvarint_ascending, encode_bool_ascending, encode_bytes_ascending,
-    encode_float64_ascending, encode_null_ascending, encode_uvarint_ascending, peek_type,
-    EncodedType, ESCAPED_TERM, INT_ZERO, JSON_MARKER,
+    decode_bool_ascending, decode_bytes_ascending, decode_float64_ascending, decode_if_empty_array,
+    decode_if_null, decode_uvarint_ascending, encode_bool_ascending, encode_bytes_ascending,
+    encode_empty_array_ascending, encode_empty_array_descending, encode_float64_ascending,
+    encode_null_ascending, encode_uvarint_ascending, peek_type, EncodedType, EMPTY_ARRAY_DESC,
+    ESCAPED_TERM, INT_ZERO, JSON_MARKER,
 };
 use crate::corekv::{Error, Result};
 
@@ -141,6 +142,7 @@ fn encode_scalar_ascending(buf: Vec<u8>, value: &JsonScalarValue) -> Vec<u8> {
         JsonScalarValue::Bool(b) => encode_bool_ascending(buf, *b),
         JsonScalarValue::Number(n) => encode_float64_ascending(buf, *n),
         JsonScalarValue::String(s) => encode_bytes_ascending(buf, s.as_bytes()),
+        JsonScalarValue::EmptyArray => encode_empty_array_ascending(buf),
         // PathMin/PathMax are handled specially in encode_json_ascending
         JsonScalarValue::PathMin | JsonScalarValue::PathMax | _ => buf,
     }
@@ -153,6 +155,7 @@ fn encode_scalar_descending(buf: Vec<u8>, value: &JsonScalarValue) -> Vec<u8> {
         JsonScalarValue::Bool(value) => super::encode_bool_descending(buf, *value),
         JsonScalarValue::Number(value) => super::encode_float64_descending(buf, *value),
         JsonScalarValue::String(value) => super::encode_bytes_descending(buf, value.as_bytes()),
+        JsonScalarValue::EmptyArray => encode_empty_array_descending(buf),
         JsonScalarValue::PathMin | JsonScalarValue::PathMax | _ => buf,
     }
 }
@@ -325,6 +328,10 @@ fn decode_scalar_ascending(buf: &[u8]) -> Result<(&[u8], JsonScalarValue)> {
                 .map_err(|e| Error::Other(format!("invalid utf-8 in JSON string: {}", e)))?;
             Ok((rest, JsonScalarValue::String(s)))
         }
+        EncodedType::EmptyArray => {
+            let (rest, _) = decode_if_empty_array(buf);
+            Ok((rest, JsonScalarValue::EmptyArray))
+        }
         _ => Err(Error::Other(format!(
             "cannot decode JSON scalar: unknown type {:?} (marker 0x{:02x})",
             typ,
@@ -353,6 +360,7 @@ fn decode_scalar_descending(buf: &[u8]) -> Result<(&[u8], JsonScalarValue)> {
                 .map_err(|error| Error::Other(format!("invalid utf-8 in JSON string: {error}")))?;
             Ok((rest, JsonScalarValue::String(value)))
         }
+        EMPTY_ARRAY_DESC => Ok((&buf[1..], JsonScalarValue::EmptyArray)),
         marker => Err(Error::Other(format!(
             "cannot decode descending JSON scalar: marker 0x{marker:02x}"
         ))),

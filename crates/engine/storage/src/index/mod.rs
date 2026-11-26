@@ -18,8 +18,8 @@
 //!
 //! For SimpleIndex, the doc short ID is appended to the key (empty value).
 //! For UniqueIndex, the encoded doc short ID is stored as the value; a key
-//! collision is a uniqueness violation. Entries with a nil field fall back
-//! to the short-ID-in-key layout so multiple NULLs can coexist.
+//! collision is a uniqueness violation. Entries with a nil field or an empty
+//! array fall back to the short-ID-in-key layout so several can coexist.
 //!
 //! Iterators yield node-local doc short IDs; callers resolve them to public
 //! DocIDs through the systemstore mapping at the db layer.
@@ -61,6 +61,15 @@ pub use traits::CollectionIndex;
 pub use unique::UniqueIndex;
 
 use crate::corekv::Result;
+use document::NormalValue;
+
+/// Whether a unique index lets these values repeat: a nil or an empty array
+/// is not a value two documents can share.
+pub fn skips_uniqueness(values: &[NormalValue]) -> bool {
+    values
+        .iter()
+        .any(|value| value.is_nil() || value.is_empty_array_entry())
+}
 
 /// Validate that a doc short ID is valid for use in index entries.
 ///

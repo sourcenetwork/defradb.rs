@@ -279,6 +279,11 @@ impl NormalValue {
         self.classification().is_nil
     }
 
+    /// Whether this is the index entry of an empty array at a JSON path.
+    pub fn is_empty_array_entry(&self) -> bool {
+        matches!(self, NormalValue::JsonLeaf(leaf) if leaf.value == JsonScalarValue::EmptyArray)
+    }
+
     /// Returns true if this value type can be nil.
     pub fn is_nillable(&self) -> bool {
         self.classification().is_nillable
@@ -403,16 +408,8 @@ impl NormalValue {
 
     /// Extract all indexable leaf values from a JSON value.
     ///
-    /// JSON values are traversed to find all leaf scalars (null, bool, number, string).
-    /// Each leaf is returned as a JsonLeaf variant with its path through the JSON structure.
-    ///
-    /// # Behavior
-    ///
-    /// - Scalar JSON (null, bool, number, string): Returns single JsonLeaf with empty path
-    /// - Nested objects: Returns JsonLeaf for each leaf with path through properties
-    /// - Arrays: Returns JsonLeaf for each element with Index marker in path
-    /// - Empty objects/arrays: Returns empty vec (no index entries)
-    /// - Null JSON field: Returns single Null entry
+    /// Each scalar and each empty array becomes a JsonLeaf with its path. An
+    /// empty object yields nothing, and a null JSON field a single Null.
     pub fn json_leaves(&self) -> Vec<NormalValue> {
         match self {
             NormalValue::Json(json) => {
@@ -429,12 +426,21 @@ impl NormalValue {
 /// Extract all leaf values from a JSON value for indexing.
 fn extract_json_leaves(json: &serde_json::Value) -> Vec<NormalValue> {
     let mut leaves = Vec::new();
-    let options = index_traverse_options();
+    let options = crate::json_traverse::TraverseOptions {
+        only_leaves: false,
+        ..index_traverse_options()
+    };
 
     let _ = traverse_json(
         json,
         |path, value| {
-            if let Some(scalar) = JsonScalarValue::from_json_value(value) {
+            let scalar = match value {
+                serde_json::Value::Array(arr) if arr.is_empty() => {
+                    Some(JsonScalarValue::EmptyArray)
+                }
+                _ => JsonScalarValue::from_json_value(value),
+            };
+            if let Some(scalar) = scalar {
                 leaves.push(NormalValue::JsonLeaf(JsonLeafValue::new(
                     path.clone(),
                     scalar,

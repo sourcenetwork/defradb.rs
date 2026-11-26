@@ -452,3 +452,158 @@ fn exclusive_range_bounds_survive_reverse_and_reset() {
     })
     .unwrap()
 }
+
+/// Counts the entries each iterator it opens hands out.
+struct CountingReader<'a, R>
+where
+    R: ?Sized,
+{
+    inner: &'a R,
+    reads: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+}
+
+struct CountingIterator {
+    inner: Box<dyn Iterator>,
+    reads: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+}
+
+impl crate::corekv::private::Sealed for CountingIterator {}
+
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+impl Iterator for CountingIterator {
+    async fn next(&mut self) -> Result<Option<crate::corekv::KvPair>> {
+        let pair = self.inner.next().await?;
+        if pair.is_some() {
+            self.reads
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        }
+        Ok(pair)
+    }
+
+    async fn close(&mut self) -> Result<()> {
+        self.inner.close().await
+    }
+
+    async fn seek(&mut self, key: &[u8]) -> Result<bool> {
+        self.inner.seek(key).await
+    }
+
+    async fn reset(&mut self) -> Result<()> {
+        self.inner.reset().await
+    }
+}
+
+impl<R> crate::corekv::private::Sealed for CountingReader<'_, R> where R: ?Sized {}
+
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+impl<R> Reader for CountingReader<'_, R>
+where
+    R: Reader + ?Sized,
+{
+    async fn get(&self, key: &[u8]) -> Result<Option<bytes::Bytes>> {
+        self.inner.get(key).await
+    }
+
+    async fn has(&self, key: &[u8]) -> Result<bool> {
+        self.inner.has(key).await
+    }
+
+    async fn get_size(&self, key: &[u8]) -> Result<Option<usize>> {
+        self.inner.get_size(key).await
+    }
+
+    async fn iterator(&self, opts: IterOptions) -> Result<Box<dyn Iterator>> {
+        Ok(Box::new(CountingIterator {
+            inner: self.inner.iterator(opts).await?,
+            reads: self.reads.clone(),
+        }))
+    }
+}
+
+#[test]
+fn a_range_reads_one_empty_array_entry_not_each() {
+    use document::{JsonLeafValue, JsonPath, JsonScalarValue};
+
+    let at = |value| {
+        NormalValue::JsonLeaf(JsonLeafValue::new(
+            JsonPath::new().append_property("tags"),
+            value,
+        ))
+    };
+    workers::block_on(async {
+        for descending in [false, true] {
+            let store = RegolithStore::in_memory().unwrap();
+            let mut txn = store.new_txn(false).await.unwrap();
+            let mut desc = test_index_description();
+            desc.fields[0].descending = descending;
+            let index = SimpleIndex::new(1, desc.clone());
+            for id in 1..=20 {
+                index
+                    .save(&mut txn, id, &[at(JsonScalarValue::EmptyArray)])
+                    .await
+                    .unwrap();
+            }
+            for (id, name) in [(21, "a"), (22, "n"), (23, "z")] {
+                index
+                    .save(&mut txn, id, &[at(JsonScalarValue::String(name.into()))])
+                    .await
+                    .unwrap();
+            }
+            txn.commit().await.unwrap();
+            let txn = store.new_txn(true).await.unwrap();
+            let m = Bound::Exclusive(at(JsonScalarValue::String("m".into())));
+            // The empty arrays sort after the strings ascending and before the
+            // nulls descending, so each range runs through them.
+            let (lower, upper, expected) = if descending {
+                (m, Bound::Inclusive(at(JsonScalarValue::PathMin)), vec![21])
+            } else {
+                (
+                    m,
+                    Bound::Exclusive(at(JsonScalarValue::PathMax)),
+                    vec![22, 23],
+                )
+            };
+            for reverse in [false, true] {
+                let reads = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+                let reader = CountingReader {
+                    inner: txn.as_ref(),
+                    reads: reads.clone(),
+                };
+                let mut iter = RangeIterator::new_range(
+                    &reader,
+                    1,
+                    &desc,
+                    false,
+                    &[],
+                    lower.clone(),
+                    upper.clone(),
+                    reverse,
+                )
+                .await
+                .unwrap();
+                let mut ids: Vec<u64> = iter
+                    .collect_all()
+                    .await
+                    .unwrap()
+                    .iter()
+                    .map(|entry| entry.doc_short_id)
+                    .collect();
+                ids.sort_unstable();
+                assert_eq!(ids, expected, "descending {descending} reverse {reverse}");
+                assert!(
+                    reads.load(std::sync::atomic::Ordering::Relaxed) <= 4,
+                    "descending {descending} reverse {reverse}: {} reads",
+                    reads.load(std::sync::atomic::Ordering::Relaxed)
+                );
+            }
+            let mut empty = index
+                .scan_prefix(&txn, &[at(JsonScalarValue::EmptyArray)], false)
+                .await
+                .unwrap();
+            assert_eq!(empty.collect_all().await.unwrap().len(), 20);
+        }
+    })
+    .unwrap()
+}

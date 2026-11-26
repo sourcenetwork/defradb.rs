@@ -78,7 +78,7 @@ impl ExactMatchIterator {
             IndexDataStoreKey::new(collection_short_id, desc.id, fields).try_bytes()?;
 
         // Check if any value is nil - if so, use prefix scan like SimpleIndex
-        let has_nil = values.iter().any(|v| v.is_nil());
+        let has_nil = super::skips_uniqueness(values);
 
         if has_nil {
             // NULL values: use prefix scan (multiple documents can have NULL)

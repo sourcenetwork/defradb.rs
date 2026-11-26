@@ -19,7 +19,7 @@ impl IndexManager {
                 continue;
             }
             for values in self.extract_index_values(doc, index.description(), schema)? {
-                if !values.iter().any(NormalValue::is_nil) {
+                if !storage::index::skips_uniqueness(&values) {
                     keys.insert(self.encode_index_key(index.description(), &values)?);
                 }
             }

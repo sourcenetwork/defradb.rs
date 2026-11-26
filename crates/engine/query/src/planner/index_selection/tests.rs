@@ -688,6 +688,23 @@ fn test_filter_to_scan_json_path_in() {
     }
 }
 
+#[test]
+fn test_filter_to_scan_json_like_value_filter_follows_the_scan_path() {
+    let index = single_field_index("custom");
+    for (custom, keeps) in [
+        (json!({"a": {"_gt": 10}, "b": {"_like": "x%"}}), false),
+        (json!({"a": {"_like": "x%"}, "b": {"_gt": 10}}), false),
+        (json!({"a": {"_eq": 15}, "b": {"_like": "x%"}}), false),
+        (json!({"a": {"_in": [15]}, "b": {"_like": "x%"}}), false),
+        (json!({"a": {"_gt": "xa", "_like": "x%"}}), true),
+        (json!({"a": {"_like": "x%"}, "b": {"_ne": 25}}), true),
+    ] {
+        let filter = make_filter(map([("custom".to_string(), custom.clone())]));
+        let params = filter_to_index_scan(&filter, &index, None, &[], None, 0).unwrap();
+        assert_eq!(params.value_filter.is_some(), keeps, "{custom}");
+    }
+}
+
 fn estimates(entries: &[(&str, u64)]) -> IndexEstimates {
     entries
         .iter()

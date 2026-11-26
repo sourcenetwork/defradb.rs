@@ -8,6 +8,7 @@
 
 mod bool;
 mod bytes;
+mod empty_array;
 mod fixed;
 mod float;
 pub mod json;
@@ -17,6 +18,7 @@ mod varint;
 
 pub use self::bool::*;
 pub use bytes::*;
+pub use empty_array::*;
 pub use fixed::*;
 pub use float::*;
 pub use null::*;
@@ -41,6 +43,10 @@ pub(crate) const FLOAT32_NEG: u8 = 13;
 pub(crate) const FLOAT32_ZERO: u8 = 14;
 pub(crate) const FLOAT32_POS: u8 = 15;
 pub(crate) const FLOAT32_NAN_DESC: u8 = 16;
+// Node-local markers Go does not write. The descending one is its own byte, not
+// the complement of the ascending one, which would land in the integer band.
+pub(crate) const EMPTY_ARRAY: u8 = 17;
+pub(crate) const EMPTY_ARRAY_DESC: u8 = 18;
 
 // Integer encoding constants
 pub(crate) const INT_MIN: u8 = 0x80; // 128
@@ -69,6 +75,7 @@ pub enum EncodedType {
     BytesDesc,
     Time,
     Json,
+    EmptyArray,
 }
 
 /// Peek at the type of the encoded value at the start of the buffer
@@ -87,6 +94,7 @@ pub fn peek_type(buf: &[u8]) -> EncodedType {
         TIME_MARKER => EncodedType::Time,
         FALSE_MARKER | TRUE_MARKER => EncodedType::Bool,
         JSON_MARKER => EncodedType::Json,
+        EMPTY_ARRAY | EMPTY_ARRAY_DESC => EncodedType::EmptyArray,
         _ => EncodedType::Unknown,
     }
 }
@@ -121,6 +129,14 @@ mod tests {
         assert_eq!(
             peek_type(&encode_time_ascending(vec![], 12345, 0)),
             EncodedType::Time
+        );
+        assert_eq!(
+            peek_type(&encode_empty_array_ascending(vec![])),
+            EncodedType::EmptyArray
+        );
+        assert_eq!(
+            peek_type(&encode_empty_array_descending(vec![])),
+            EncodedType::EmptyArray
         );
         assert_eq!(peek_type(&[]), EncodedType::Unknown);
     }
