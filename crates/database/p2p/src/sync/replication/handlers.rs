@@ -477,10 +477,23 @@ where
                     )
                     .await
                 {
-                    Ok(crate::sync::BroadcastResult::Success) => {
-                        // Both topics succeeded - nothing to report
+                    Ok(
+                        crate::sync::BroadcastResult::Success
+                        | crate::sync::BroadcastResult::NoSubscribers,
+                    ) => {
+                        // Both topics succeeded, or had no one to reach - nothing to report
                     }
-                    Ok(crate::sync::BroadcastResult::PartialDocumentOnly { collection_error }) => {
+                    Ok(crate::sync::BroadcastResult::PartialDocumentOnly {
+                        collection_error_is_no_topic_peer: true,
+                        ..
+                    }) => {
+                        // The collection topic had no peer to reach, which Go
+                        // publishes to no one without an error.
+                    }
+                    Ok(crate::sync::BroadcastResult::PartialDocumentOnly {
+                        collection_error,
+                        ..
+                    }) => {
                         // Partial success - return distinct result so callers know
                         return ReplicationResult::MergedButBroadcastFailed {
                             cid,
@@ -492,7 +505,17 @@ where
                             ),
                         };
                     }
-                    Ok(crate::sync::BroadcastResult::PartialCollectionOnly { document_error }) => {
+                    Ok(crate::sync::BroadcastResult::PartialCollectionOnly {
+                        document_error_is_no_topic_peer: true,
+                        ..
+                    }) => {
+                        // The document topic had no peer to reach, which Go
+                        // publishes to no one without an error.
+                    }
+                    Ok(crate::sync::BroadcastResult::PartialCollectionOnly {
+                        document_error,
+                        ..
+                    }) => {
                         // Partial success - return distinct result so callers know
                         return ReplicationResult::MergedButBroadcastFailed {
                             cid,
@@ -994,8 +1017,17 @@ where
                 )
                 .await
             {
-                Ok(crate::sync::BroadcastResult::Success) => {}
-                Ok(crate::sync::BroadcastResult::PartialDocumentOnly { collection_error }) => {
+                Ok(
+                    crate::sync::BroadcastResult::Success
+                    | crate::sync::BroadcastResult::NoSubscribers,
+                ) => {}
+                Ok(crate::sync::BroadcastResult::PartialDocumentOnly {
+                    collection_error_is_no_topic_peer: true,
+                    ..
+                }) => {}
+                Ok(crate::sync::BroadcastResult::PartialDocumentOnly {
+                    collection_error, ..
+                }) => {
                     results[result_index] = ReplicationResult::MergedButBroadcastFailed {
                         cid: block.cid,
                         doc_id: block.doc_id.clone(),
@@ -1006,7 +1038,13 @@ where
                         ),
                     };
                 }
-                Ok(crate::sync::BroadcastResult::PartialCollectionOnly { document_error }) => {
+                Ok(crate::sync::BroadcastResult::PartialCollectionOnly {
+                    document_error_is_no_topic_peer: true,
+                    ..
+                }) => {}
+                Ok(crate::sync::BroadcastResult::PartialCollectionOnly {
+                    document_error, ..
+                }) => {
                     results[result_index] = ReplicationResult::MergedButBroadcastFailed {
                         cid: block.cid,
                         doc_id: block.doc_id.clone(),
