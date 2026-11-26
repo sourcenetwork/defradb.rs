@@ -3,3 +3,4 @@ mod identity;
 mod identity_only;
 mod openapi_document;
 mod resolver;
+mod version;

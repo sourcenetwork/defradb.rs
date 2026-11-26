@@ -31,3 +31,26 @@ A Rust key that is present in the same section wins over its Go spelling. Keys o
 ```
 
 The in-process node and the Rust HTTP client report the same code on the same error. Go reports no code. As before this requirement, the command still exits non-zero and prints `Error: server returned error: <the messages, joined by "; ">` to stderr when the response has errors; Go exits zero.
+
+# `defra.cli.version`: `defradb version` names the build in Go DefraDB's shape
+
+- **Parents:** ["go.node"]
+- **Scenarios:** ["node::version::version_names_the_build_in_go_shape"]
+
+`defradb version` prints one line on stdout, Go DefraDB's line with Rust in place of Go: `defradb <release> (<commit> <commit date>) built with Rust <rustc version> <os>/<arch>`, for example `defradb 0.5.0 (e152b5ca 2026-10-31) built with Rust 1.100.0 macos/aarch64`. `<commit>` is the first 8 characters of the commit the binary was built from, as Go truncates it, and `<commit date>` that commit's date as `YYYY-MM-DD`; a build outside a git checkout prints `unknown` for both. The command prints nothing on stderr, no log line included. Go prints the same line on stderr.
+
+`defradb version --full` prints Go's lines, then defradb.rs's own:
+
+```
+defradb <release> (<commit> <commit date>)
+* HTTP API: v1
+* P2P multicodec: /defra/0.0.1
+* DocID versions: 1
+* Rust: <rustc version> <os>/<arch>
+* Commit: <the full commit hash>
+* Go compat: <GO_COMPAT_COMMIT> (<GO_COMPAT_BRANCH>, <GO_COMPAT_TAG>)
+```
+
+where Go prints `* Go: <go version> <os>/<arch>` in place of the `* Rust:` line and stops there. `, <GO_COMPAT_TAG>` is left out when the tag is empty.
+
+`defradb version --format json` prints, and `GET /api/v1/version` answers, every key Go's `version --format json` prints except `go`, with Go's values for the ones Go fixes and in Go's order: `release`, `commit` (the full hash), `commitDate`, `httpAPI` (`v1`), `docIDVersions` (`1`) and `netProtocol` (`/defra/0.0.1`). After them come defradb.rs's own keys: `version` and `docIdVersions` (the same values as `release` and `docIDVersions`, under the names defradb.rs printed before), `rust` (the `* Rust:` value) and `goCompat` (`{commit, branch, tag}`).
