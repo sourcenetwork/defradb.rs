@@ -24,6 +24,17 @@ pub struct AdmissionSpec {
     pub deferral_peer_bytes: Option<u64>,
 }
 
+/// A Rust node's connection manager: it trims to `low_water` once it holds
+/// more than `high_water` connections, sparing those younger than
+/// `grace_period_ms`.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConnectionManagerSpec {
+    pub low_water: u32,
+    pub high_water: u32,
+    pub grace_period_ms: u64,
+}
+
 /// Starts a node. Without options it is a plain in-process node; every option below is one of the corpus's ways to start one.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -81,6 +92,9 @@ pub struct NewNode {
     /// A Rust node with the given admission limits.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub admission: Option<AdmissionSpec>,
+    /// A Rust node with this connection manager.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub connection_manager: Option<ConnectionManagerSpec>,
     /// A Rust node whose network is iroh rather than libp2p.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub iroh: bool,
@@ -133,6 +147,7 @@ impl Op for NewNode {
         probe.network = false;
         probe.database_dir = None;
         probe.admission = None;
+        probe.connection_manager = None;
         probe.resolv_conf = None;
         probe.iroh = false;
         probe.registered_identity = false;
@@ -199,6 +214,7 @@ impl Op for NewNode {
             listen,
             go_config: self.go_config.is_some(),
             admission: self.admission.clone(),
+            connection_manager: self.connection_manager.clone(),
             resolv_conf: self.resolv_conf(state.client_type())?,
             iroh_network: self.iroh,
             node_identity,

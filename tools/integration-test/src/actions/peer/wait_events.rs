@@ -23,6 +23,9 @@ pub struct WaitForPeersEvents {
     pub topics: Option<Vec<Topic>>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub start: bool,
+    /// Wait for each of these nodes to lose its last connection to this one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub disconnected: Option<Vec<String>>,
     /// Wait for this many gossip heads dropped past a deferral budget, and
     /// return how many were dropped and from how many peers.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -65,6 +68,19 @@ impl Op for WaitForPeersEvents {
             let roots: RapidHashSet<String> =
                 dropped.iter().map(|event| event.cid.to_string()).collect();
             return Ok(json!({ "dropped": roots.len(), "peers": peers.len() }));
+        }
+        if let Some(peers) = &self.disconnected {
+            let mut wanted = RapidHashSet::with_capacity(peers.len());
+            for peer in peers {
+                let addresses = addresses_of(state, &[peer.as_str()])?;
+                let id = addresses.first().map(|a| peer_id(a)).unwrap_or_default();
+                wanted.insert(id.to_owned());
+            }
+            let events = node.events().map_err(Failure::operation)?;
+            state
+                .block_on(events.disconnected(wanted, deadline))
+                .map_err(Failure::operation)?;
+            return Ok(json!({}));
         }
         let mut wanted = RapidHashSet::new();
         for topic in self.topics.iter().flatten() {

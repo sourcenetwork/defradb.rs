@@ -43,6 +43,8 @@ pub struct NodeSpec {
     pub nac_owner: Option<u64>,
     /// The node's admission limits, if not the defaults.
     pub admission: Option<crate::actions::AdmissionSpec>,
+    /// The node's connection manager, if not the default.
+    pub connection_manager: Option<crate::actions::ConnectionManagerSpec>,
     /// The `resolv.conf` text the node's libp2p DNS layers read in place of
     /// the host's file.
     pub resolv_conf: Option<String>,
@@ -132,12 +134,13 @@ impl TestNode {
             Some(address) => address.clone(),
             None => "/ip4/127.0.0.1/tcp/0".to_owned(),
         };
-        // Admission limits, iroh, a resolv.conf and a loaded Go config are a
-        // Rust node's options: under go-http the node is a Rust node reached
-        // over HTTP, as rust-http does.
+        // Admission limits, a connection manager, iroh, a resolv.conf and a
+        // loaded Go config are a Rust node's options: under go-http the node
+        // is a Rust node reached over HTTP, as rust-http does.
         let client_type = match client_type {
             ClientType::GoHttp
                 if spec.admission.is_some()
+                    || spec.connection_manager.is_some()
                     || spec.iroh_network
                     || spec.resolv_conf.is_some()
                     || spec.go_config =>
@@ -263,7 +266,8 @@ impl TestNode {
         }
     }
 
-    /// Start recording the node's update, merge and topic events.
+    /// Start recording the node's update, merge, topic and peer
+    /// disconnection events.
     pub fn watch(&self) -> Result<(), String> {
         let node = self
             .embedded
@@ -273,6 +277,7 @@ impl TestNode {
             EventName::Update,
             EventName::MergeComplete,
             EventName::TopicPeerEvent,
+            EventName::PeerConnection,
             EventName::P2PGossipHeadDropped,
             EventName::SEArtifactReceived,
         ]);
@@ -392,23 +397,28 @@ fn build(spec: &NodeSpec, listen: &str, http: Option<HttpConfig>) -> Result<Node
     } else if spec.network {
         builder = builder.with_libp2p(listen);
     }
-    if let (true, false, Some(limits)) = (spec.network, spec.iroh_network, &spec.admission) {
-        let mut sync = defra_node::SyncTuning {
-            max_pending_dags: limits.max_pending_dags,
-            rate_limit_burst: limits.rate_limit_burst,
-            rate_limit_rate: limits.rate_limit_rate,
+    if spec.network
+        && !spec.iroh_network
+        && (spec.admission.is_some() || spec.connection_manager.is_some())
+    {
+        let mut libp2p = defra_node::Libp2pConfig {
+            listen_addrs: vec![listen.to_owned()],
             ..Default::default()
         };
-        if let Some(bytes) = limits.deferral_peer_bytes {
-            sync.gossip_deferral_peer_bytes = bytes;
+        if let Some(limits) = &spec.admission {
+            libp2p.sync.max_pending_dags = limits.max_pending_dags;
+            libp2p.sync.rate_limit_burst = limits.rate_limit_burst;
+            libp2p.sync.rate_limit_rate = limits.rate_limit_rate;
+            if let Some(bytes) = limits.deferral_peer_bytes {
+                libp2p.sync.gossip_deferral_peer_bytes = bytes;
+            }
         }
-        builder = builder.with_transport(defra_node::TransportConfig::Libp2p(
-            defra_node::Libp2pConfig {
-                listen_addrs: vec![listen.to_owned()],
-                sync,
-                ..Default::default()
-            },
-        ));
+        if let Some(manager) = &spec.connection_manager {
+            libp2p.connection_manager_low_water = manager.low_water;
+            libp2p.connection_manager_high_water = manager.high_water;
+            libp2p.connection_manager_grace_period = Duration::from_millis(manager.grace_period_ms);
+        }
+        builder = builder.with_transport(defra_node::TransportConfig::Libp2p(libp2p));
     }
     #[cfg(unix)]
     if let Some(text) = &spec.resolv_conf {
@@ -568,6 +578,8 @@ struct EventLog {
     heads: RapidHashMap<String, String>,
     /// Topic events not yet awaited: (topic, peer, JOINED or LEFT).
     topics: VecDeque<(String, String, String)>,
+    /// Peers whose last connection closed, not yet awaited, oldest first.
+    disconnected: VecDeque<String>,
     /// Gossip heads the node dropped past a deferral budget, not yet awaited.
     gossip_dropped: VecDeque<events::P2PGossipHeadDroppedData>,
     /// Every document a searchable-encryption artifact arrived for.
@@ -637,6 +649,9 @@ impl Events {
                     log.topics
                         .push_back((event.topic, event.peer_id, event.event_type))
                 });
+            }
+            MessageData::PeerConnection(event) if !event.connected => {
+                self.update(|log| log.disconnected.push_back(event.peer_id))
             }
             MessageData::P2PGossipHeadDropped(event) => {
                 self.update(|log| log.gossip_dropped.push_back(event))
@@ -741,6 +756,30 @@ impl Events {
             })?;
         }
         Ok(dropped)
+    }
+
+    /// Wait until every peer in `wanted` has lost its last connection to the
+    /// node, consuming the disconnection events before it.
+    pub async fn disconnected(
+        &self,
+        mut wanted: RapidHashSet<String>,
+        deadline: Duration,
+    ) -> Result<(), String> {
+        let end = std::time::Instant::now() + deadline;
+        loop {
+            let mut log = self.log.load_clone();
+            while let Some(peer) = log.disconnected.pop_front() {
+                wanted.remove(&peer);
+            }
+            self.log.store(log);
+            if wanted.is_empty() {
+                return Ok(());
+            }
+            let left = end.saturating_duration_since(std::time::Instant::now());
+            self.receive(left)
+                .await
+                .map_err(|reason| format!("missing disconnections {wanted:?}: {reason}"))?;
+        }
     }
 
     /// Wait until every (topic, peer) in `wanted` has an event of `kind`,

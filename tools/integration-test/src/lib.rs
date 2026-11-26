@@ -40,7 +40,7 @@ pub fn go_compat_binary() -> PathBuf {
     )
 }
 
-fn cached_go_compat_binary(home: &std::path::Path, tag: &str, commit: &str) -> PathBuf {
+pub(crate) fn cached_go_compat_binary(home: &std::path::Path, tag: &str, commit: &str) -> PathBuf {
     let pin = if tag.is_empty() { commit } else { tag };
     home.join(".cache/defra-harness").join(pin).join("defradb")
 }

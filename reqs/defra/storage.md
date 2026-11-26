@@ -43,6 +43,15 @@ A counter field can be indexed. After local increments, or after two nodes incre
 
 An ordered query over an indexed field with `limit: 3, offset: 2` reads `limit + offset` index entries, returns exactly the page after skipping two, and leaves the query offset to the limit node so it is not applied twice. The same paging is correct when the ordered field is not indexed.
 
+# `defra.index.partial_lens_read`: A partial lens read is indexed but not stamped
+
+- **Parents:** ["defra.index"]
+- **Scenarios:** ["issues::t_3044::indexed_collection_query_after_two_lenses_returns_migrated_fields"]
+
+When any transition from a stored version to the active version runs no transform, a read applies the registered transforms, indexes the migrated result, and does not stamp it as the active version. Registering another transform later still applies it, and a query over an indexed field after two migrations returns the migrated fields.
+
+A transition without a lens may be given one later, so the same rule applies to an intended identity transition. Until the path is complete, reads may rerun the earlier lenses. Explicit identity materialization is a separate operation.
+
 # `defra.index.descending_json_path`: Descending JSON paths filter with unambiguous sentinels
 
 - **Parents:** ["defra.index"]

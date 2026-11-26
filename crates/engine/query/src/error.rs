@@ -41,6 +41,11 @@ pub enum TransactionError {
     #[error("{0}")]
     Operation(String),
 
+    /// A field type declaration inside the transaction was refused, in Go's
+    /// words, with the code it reaches a client with.
+    #[error(transparent)]
+    UnsupportedFieldType(crate::sdl_parse::FieldTypeRefusals),
+
     /// The transaction registry lock is poisoned (indicates a panic elsewhere).
     #[error("lock poisoned: {0}")]
     LockPoisoned(String),
@@ -98,7 +103,8 @@ impl TransactionError {
     /// - `AlreadyFinalized`: Not retryable - the transaction was already committed
     ///   or rolled back.
     /// - `NotSupported`: Not retryable - transactions aren't available in this config.
-    /// - `Operation`: Not retryable - the operation itself was refused.
+    /// - `Operation`, `UnsupportedFieldType`: Not retryable - the operation
+    ///   itself was refused.
     /// - `Execution`: Retryable - transient storage errors that may succeed on retry
     ///   with a new transaction.
     /// - `Storage`: Uses the storage owner's classification; a full disk or
@@ -113,7 +119,7 @@ impl TransactionError {
             Self::NotFound(_) => false,
             Self::AlreadyFinalized(_) => false,
             Self::NotSupported(_) => false,
-            Self::Operation(_) => false,
+            Self::Operation(_) | Self::UnsupportedFieldType(_) => false,
             Self::Execution(_) => true,
             Self::Storage(source) => source.is_retriable(),
             Self::Conflict(_) => true,
@@ -135,6 +141,10 @@ pub enum QueryError {
     /// in Go's collection words.
     #[error("parse error: {0}")]
     UnknownMutationCollection(String),
+
+    /// A field type declaration the SDL may not make, in Go's words.
+    #[error(transparent)]
+    UnsupportedFieldType(#[from] crate::sdl_parse::FieldTypeRefusals),
 
     /// Invalid filter condition
     #[error("invalid filter: {0}")]
@@ -300,6 +310,7 @@ impl QueryError {
         match self {
             Self::Parse(_)
             | Self::UnknownMutationCollection(_)
+            | Self::UnsupportedFieldType(_)
             | Self::InvalidFilter(_)
             | Self::FilterFieldNotSelected { .. }
             | Self::UnknownField(_)

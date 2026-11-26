@@ -3,7 +3,7 @@
 use defra_p2p_adapter::{
     ExplicitReplayCapabilityInput, RemoteManageOp, RemoteManageQueryOp, ReplicationFilters,
 };
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 
 use super::HttpClient;
 use crate::error::Result;
@@ -34,30 +34,37 @@ struct ManageQueryRequestBody<'a> {
 #[derive(Debug, Deserialize, Serialize)]
 pub struct P2pReplicatorInfo {
     /// Peer ID
-    #[serde(rename = "id", alias = "ID", default)]
+    #[serde(rename = "ID", alias = "id", default)]
     pub id: Option<String>,
 
     /// Collections being replicated
     #[serde(
-        rename = "collections",
+        rename = "CollectionIDs",
+        alias = "collections",
         alias = "Collections",
-        alias = "CollectionIDs",
         default
     )]
     pub collections: Vec<String>,
 
-    /// Peer address
-    #[serde(rename = "address", alias = "Address", default)]
-    pub address: Option<String>,
+    /// Peer addresses. Older Rust responses use a singular string or null.
+    #[serde(
+        rename = "Addresses",
+        alias = "address",
+        alias = "Address",
+        default,
+        deserialize_with = "deserialize_addresses"
+    )]
+    pub addresses: Vec<String>,
 
     /// Active=0, Inactive=1.
-    #[serde(rename = "status", alias = "Status", default)]
+    #[serde(rename = "Status", alias = "status", default)]
     pub status: Option<u8>,
 
     /// Last time the replicator status changed.
     #[serde(
-        rename = "lastStatusChange",
+        rename = "LastStatusChange",
         alias = "LastStatusChange",
+        alias = "lastStatusChange",
         alias = "last_status_change",
         default
     )]
@@ -71,6 +78,25 @@ pub struct P2pReplicatorInfo {
         skip_serializing_if = "ReplicationFilters::is_empty"
     )]
     pub filters: ReplicationFilters,
+}
+
+/// Accept the current address array and the older singular string or null.
+fn deserialize_addresses<'de, D>(deserializer: D) -> std::result::Result<Vec<String>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = serde_json::Value::deserialize(deserializer)?;
+    match value {
+        serde_json::Value::Null => Ok(Vec::new()),
+        serde_json::Value::String(address) => Ok(vec![address]),
+        serde_json::Value::Array(_) => {
+            serde_json::from_value(value).map_err(serde::de::Error::custom)
+        }
+        _ => Err(serde::de::Error::invalid_type(
+            serde::de::Unexpected::Other("address value"),
+            &"an address array, string or null",
+        )),
+    }
 }
 
 /// P2P replicator request (Go-compatible format).
@@ -240,16 +266,25 @@ mod tests {
     }
 
     #[test]
-    fn replicator_info_accepts_snake_case_last_status_change() {
-        // The manage-query (ReplicatorList) path embeds the raw http
-        // `ReplicatorInfo`, which serializes `last_status_change` as snake_case.
-        let json = r#"{"id":"peer-1","collections":["Users"],"status":0,"last_status_change":"2026-04-26T10:00:00Z"}"#;
+    fn replicator_info_accepts_manage_query_go_fields() {
+        let json = r#"{"ID":"peer-1","CollectionIDs":["Users"],"Addresses":["/ip4/127.0.0.1/tcp/9000"],"Status":0,"LastStatusChange":"2026-04-26T10:00:00Z"}"#;
         let info: P2pReplicatorInfo = serde_json::from_str(json).unwrap();
 
         assert_eq!(
             info.last_status_change.as_deref(),
             Some("2026-04-26T10:00:00Z")
         );
+    }
+
+    #[test]
+    fn replicator_info_accepts_singular_and_null_addresses() {
+        let singular = r#"{"id":"peer-1","collections":["Users"],"address":"/ip4/127.0.0.1/tcp/9000","status":0}"#;
+        let info: P2pReplicatorInfo = serde_json::from_str(singular).unwrap();
+        assert_eq!(info.addresses, vec!["/ip4/127.0.0.1/tcp/9000".to_string()]);
+
+        let null = r#"{"id":"peer-1","collections":["Users"],"address":null,"status":0}"#;
+        let info: P2pReplicatorInfo = serde_json::from_str(null).unwrap();
+        assert!(info.addresses.is_empty());
     }
 
     #[test]

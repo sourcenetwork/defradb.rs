@@ -81,7 +81,10 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
                     // are returned as top-level GQL errors, not wrapped in executionErrors.
                     if matches!(
                         &e,
-                        QueryError::Parse(_) | QueryError::UnknownMutationCollection(_)
+                        QueryError::Parse(_)
+                            | QueryError::UnknownMutationCollection(_)
+                            | QueryError::UnknownField(_)
+                            | QueryError::SubSelectionOnLeaf { .. }
                     ) {
                         return Err(e);
                     }
@@ -167,13 +170,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
             .await?
             .ok_or_else(|| QueryError::collection_not_found(&select.collection_name))?;
 
-        // Embedded-only types (interface types from view SDL) are not root-queryable
-        if collection.is_embedded_only {
-            return Err(QueryError::parse(format!(
-                "Cannot query field \"{}\" on type \"Query\".",
-                select.collection_name
-            )));
-        }
+        plan::validate_root_select(select, &collection)?;
 
         let fetcher = self.fetcher.as_ref();
 
@@ -461,9 +458,8 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
                     let field_fetches = (field_count * doc_fetches) as u64;
                     scan_obj.insert("fieldFetches".to_string(), serde_json::json!(field_fetches));
 
-                    // indexFetches is set by IndexScanNode::explain_inner() with
-                    // the actual index key lookup count. For regular scans without an
-                    // index, default to 0 (Go always includes this property).
+                    // Go always includes this property; a scan that already
+                    // counted its index lookups keeps that count.
                     if !scan_obj.contains_key("indexFetches") {
                         scan_obj.insert("indexFetches".to_string(), serde_json::json!(0u64));
                     }

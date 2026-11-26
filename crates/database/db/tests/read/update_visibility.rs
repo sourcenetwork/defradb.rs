@@ -2,6 +2,7 @@
 //! a policy-backed collection is shown to nobody, and access is decided in
 //! the transaction that read the page.
 
+mod arrivals;
 mod decisions;
 mod transaction_fetcher;
 

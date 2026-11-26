@@ -1,5 +1,5 @@
-//! Which rows of an update page its reader may be shown, decided once per
-//! document.
+//! Which rows of a journal page (arrivals or updates) its reader may be
+//! shown, decided once per document.
 
 use crate::collection::Collection;
 use crate::error::{Error, Result};
@@ -91,7 +91,7 @@ impl<'page> Gate<'page> {
             None => page.later().await?.ok_or_else(|| {
                 Error::Acp(
                     "no database began this transaction, so what a document access provider \
-                     outside it admitted cannot be confirmed: read `_documentUpdates` in a \
+                     outside it admitted cannot be confirmed: read the journal in a \
                      transaction from `DB::new_txn`"
                         .into(),
                 )

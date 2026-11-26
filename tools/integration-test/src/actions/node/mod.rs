@@ -10,6 +10,6 @@ pub use close::Close;
 pub use connect::Connect;
 pub use get_identity::GetNodeIdentity;
 pub use kill::Kill;
-pub use new::{AdmissionSpec, NewNode};
+pub use new::{AdmissionSpec, ConnectionManagerSpec, NewNode};
 pub use restart::Restart;
 pub use start_nac::Start;

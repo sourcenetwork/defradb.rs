@@ -53,9 +53,13 @@ protoc_sha256_osx_aarch64   := "193289af0470c6a1aada357d4fba0bbf8d78bfaac8b5e42c
 # rustup is installed with --no-modify-path, so cargo's bin directory is only
 # on PATH if the user already had it. Without this, every recipe after
 # setup-rust fails to find cargo on a fresh machine.
+# The Go defradb the go_* and go-http suites run, under its pin in the
+# harness cache: GO_COMPAT_TAG when set, else GO_COMPAT_COMMIT, as CI lays it out.
+go_defradb_pin := `f=crates/foundation/defra-version/src/lib.rs; tag=$(sed -n 's/^pub const GO_COMPAT_TAG: &str = "\(.*\)";$/\1/p' "$f"); commit=$(sed -n 's/^pub const GO_COMPAT_COMMIT: &str = "\(.*\)";$/\1/p' "$f"); echo "${tag:-$commit}"`
+go_defradb_dir := home_directory() / ".cache/defra-harness" / go_defradb_pin
 cargo_bin := env('CARGO_HOME', home_directory() / ".cargo") / "bin"
 elan_bin  := env('ELAN_HOME', home_directory() / ".elan") / "bin"
-export PATH := tooling_bin + ":" + go_root + "/bin" + ":" + cargo_bin + ":" + elan_bin + ":" + env('PATH')
+export PATH := tooling_bin + ":" + go_root + "/bin" + ":" + go_defradb_dir + ":" + cargo_bin + ":" + elan_bin + ":" + env('PATH')
 
 # Integration areas: the top-level modules of the testo and legacy test binaries
 # in tools/integration-test. An area in both runs in both.
@@ -86,7 +90,7 @@ _sha256 file:
 # Install core development tools. Browser tools install best-effort: the
 # browser suites name what they need when it is missing.
 [group('setup')]
-setup: setup-rust setup-jq setup-cargo-tools setup-protoc setup-go setup-jdk setup-lean setup-tla setup-browser
+setup: setup-rust setup-jq setup-cargo-tools setup-protoc setup-go setup-go-defradb setup-jdk setup-lean setup-tla setup-browser
     @echo
     @just doctor
 
@@ -360,6 +364,65 @@ setup-go:
     tar -C "{{ tooling }}" -xzf "$tmp/go.tar.gz"
     echo "go: $({{ go_root }}/bin/go version)"
 
+# The Go defradb at the pinned baseline, the way ci.yml's go-defradb job gets
+# it: the release binary when GO_COMPAT_TAG is set, else a build of
+# GO_COMPAT_COMMIT on GO_COMPAT_BRANCH. A host with no release asset builds the
+# tag instead. DEFRADB_GO_REPO, when set, is the source checkout to build from.
+[doc("The Go defradb at the pinned baseline, for the go_* and go-http suites.")]
+[group('setup')]
+setup-go-defradb:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    lib=crates/foundation/defra-version/src/lib.rs
+    pin_of() { sed -n "s/^pub const $1: &str = \"\(.*\)\";$/\1/p" "$lib"; }
+    commit="$(pin_of GO_COMPAT_COMMIT)"
+    branch="$(pin_of GO_COMPAT_BRANCH)"
+    tag="$(pin_of GO_COMPAT_TAG)"
+    dir="{{ go_defradb_dir }}"
+    bin="$dir/defradb"
+    if [ -x "$bin" ]; then
+        echo "go defradb: ${tag:-$commit} already at $bin"; exit 0
+    fi
+    mkdir -p "$dir"
+    tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
+    asset=""
+    if [ -n "$tag" ]; then
+        case "$(uname -s)-$(uname -m)" in
+            Linux-x86_64|Linux-amd64)  asset="defradb_${tag#v}_linux_x86_64" ;;
+            Darwin-arm64|Darwin-aarch64) asset="defradb_${tag#v}_darwin_arm64" ;;
+        esac
+    fi
+    if [ -n "$asset" ]; then
+        base="https://github.com/sourcenetwork/defradb/releases/download/${tag}"
+        echo "fetching go defradb ${tag} (${asset})"
+        curl -fsSL -o "$tmp/defradb" "$base/$asset"
+        curl -fsSL -o "$tmp/checksums.txt" "$base/defradb_${tag#v}_checksums.txt"
+        want="$(awk -v f="$asset" '$2==f {print $1}' "$tmp/checksums.txt")"
+        [ -n "$want" ] || { echo "error: no published checksum for $asset" >&2; exit 1; }
+        got="$(just _sha256 "$tmp/defradb")"
+        [ "$got" = "$want" ] || { echo "error: go defradb checksum mismatch" >&2; echo "  expected $want" >&2; echo "  got      $got" >&2; exit 1; }
+    else
+        ref="${tag:-$commit}"
+        [ -n "$ref" ] && [ -n "$branch" ] || { echo "error: no Go pin in $lib" >&2; exit 1; }
+        command -v go >/dev/null 2>&1 || { echo "error: go is required to build $ref; run 'just setup-go'" >&2; exit 1; }
+        src="$tmp/defradb-src"
+        if [ -n "${DEFRADB_GO_REPO:-}" ]; then
+            git -C "$DEFRADB_GO_REPO" rev-parse --verify --quiet "${ref}^{commit}" >/dev/null \
+                || { echo "error: $ref is not in $DEFRADB_GO_REPO; fetch origin there first" >&2; exit 1; }
+            git -C "$DEFRADB_GO_REPO" worktree add --detach "$src" "$ref"
+            trap 'git -C "$DEFRADB_GO_REPO" worktree remove --force "$src"; rm -rf "$tmp"' EXIT
+        else
+            git clone --filter=blob:none --branch "$branch" https://github.com/sourcenetwork/defradb "$src"
+            git -C "$src" checkout "$ref"
+        fi
+        echo "building go defradb $ref with $(go version)"
+        make -C "$src" build path="$tmp/defradb"
+    fi
+    chmod +x "$tmp/defradb"
+    mv "$tmp/defradb" "$bin"
+    "$bin" version --format json
+    echo "go defradb: $bin"
+
 # A JDK, required by TLC. proofs/README.md asks for Java 11+; Temurin 21 is LTS.
 [doc("A Temurin JDK, required by TLC.")]
 [group('setup')]
@@ -518,6 +581,13 @@ check-ffi-header header:
 [group('build')]
 check-c-api base="origin/main":
     bash .github/scripts/check-c-api.sh {{base}}
+
+# Check the Go OpenAPI snapshot the HTTP crate merges is Go's document at
+# GO_COMPAT_COMMIT, as CI's OpenAPI snapshot job does. Reads it from
+# DEFRADB_GO_REPO when that is set, from GitHub otherwise.
+[group('build')]
+check-openapi-snapshot:
+    bash .github/scripts/check-openapi-snapshot.sh
 
 # Apple .xcframework plus the Swift import smoke test.
 [group('build')]

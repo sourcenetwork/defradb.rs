@@ -70,6 +70,11 @@ pub(super) struct Remote {
     pub(super) hold_owner_read: AtomicBool,
     pub(super) owner_read_waiting: regolith::sync::Event,
     pub(super) owner_reads_released: regolith::sync::Event,
+    /// A registration the provider admits does not take effect until
+    /// `registrations_released`: what keeps the node's drainer from
+    /// settling one while a test looks at it.
+    pub(super) hold_registrations: AtomicBool,
+    registrations_released: regolith::sync::Event,
     /// Objects whose access checks fail as unavailable while every other
     /// call answers.
     pub(super) unchecked: Map<String, ()>,
@@ -131,8 +136,15 @@ impl Remote {
             hold_owner_read: AtomicBool::new(false),
             owner_read_waiting: regolith::sync::Event::new(),
             owner_reads_released: regolith::sync::Event::new(),
+            hold_registrations: AtomicBool::new(false),
+            registrations_released: regolith::sync::Event::new(),
             unchecked: map(),
         })
+    }
+
+    /// Let every registration held by `hold_registrations` take effect.
+    pub(super) fn release_registrations(&self) {
+        self.registrations_released.set();
     }
 
     /// Fail every relationship write on `object` as unreachable, or take
@@ -371,6 +383,9 @@ impl VeraProvider for Remote {
                 action: PolicyAction::RegisterObject,
             },
         )?;
+        if self.hold_registrations.load(Ordering::SeqCst) {
+            self.registrations_released.wait().await;
+        }
         self.owners
             .insert(object_id.to_string(), Self::actor(bearer_token).to_string());
         Ok(())

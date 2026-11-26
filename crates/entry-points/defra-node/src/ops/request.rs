@@ -196,11 +196,14 @@ fn handle(id: TxnId) -> TransactionHandle {
 }
 
 /// A transaction failure with Go's words: only a missing transaction has its
-/// own text.
+/// own text, and a refused field type keeps its code.
 pub(crate) fn transaction_error(error: TransactionError) -> Error {
     match error {
         TransactionError::NotFound(_) => Error::TransactionNotFound,
         TransactionError::Conflict(_) => Error::TransactionConflict,
+        TransactionError::UnsupportedFieldType(refusals) => {
+            Error::AddCollection(db::AddCollectionError::UnsupportedFieldType(refusals))
+        }
         other => Error::Transaction(other),
     }
 }
