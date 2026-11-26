@@ -202,7 +202,7 @@ fn owner() -> Did {
 }
 
 fn acp_of(provider: &Arc<Lists>) -> VeraDocumentACP {
-    VeraDocumentACP::without_access_cache(provider.clone())
+    VeraDocumentACP::new(provider.clone())
 }
 
 #[nuclei::test]

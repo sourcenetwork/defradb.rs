@@ -69,7 +69,7 @@ pub(super) async fn archived_owner_record(provider: Arc<VeraRsProvider>) {
         .verify_access(&policy, "users", "archived-document", "owner", &owner_did)
         .await
         .expect("owner proof"));
-    let document_acp = VeraDocumentACP::without_access_cache(provider.clone());
+    let document_acp = VeraDocumentACP::new(provider.clone());
     assert_eq!(
         document_acp
             .get_doc_owner(&policy, "users", "archived-document")
@@ -427,7 +427,7 @@ resources:
         .verify_access(&policy, "file", "report", "read", &owner_did)
         .await
         .unwrap());
-    let document_acp = VeraDocumentACP::without_access_cache(provider.clone());
+    let document_acp = VeraDocumentACP::new(provider.clone());
     let identity = Identity::authenticated(identity::Did::new(reader).unwrap());
     assert!(!document_acp
         .check_doc_access(

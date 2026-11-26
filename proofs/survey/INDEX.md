@@ -13,10 +13,9 @@ map onto. This is a sanity cross-check that the surveys agree with what is built
 
 ### Acp slice (Zanzibar soundness + stale-revocation cache)
 - **acp** — Zanzibar check soundness / no-escalation (Lean)
-- **acp** — Tuple revocation + stale positive cache (TLA+)
+- **acp** — Tuple revocation reaches every replicated tuple view (TLA+)
 - **acp** — NAC management-channel auth gate (TLA+)
 - **db-nac** — NAC lifecycle auth gate, live-vs-persisted admin asymmetry (TLA+)
-- **vera** — Access-decision cache stale-revocation (TLA+) — `MC_Acp_StaleCache_Red`
 - **zanzibar** — Check soundness / no-escalation (Lean) — `Acp/Soundness.lean`
 - **zanzibar** — Cycle-detection safety (Lean)
 

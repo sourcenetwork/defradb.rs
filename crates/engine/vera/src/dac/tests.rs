@@ -5,9 +5,6 @@ use kovan_queue::seg_queue::SegQueue;
 
 use super::*;
 
-mod cache_mutations;
-#[path = "../../tests/unit/access_cache_race.rs"]
-mod cache_race;
 mod owed;
 mod registration_batch;
 
@@ -264,7 +261,7 @@ async fn local_tombstone_preserves_shared_authorization_state() {
     let mut provider = MockProvider::new(vec![true]);
     provider.archive_on_document_delete = false;
     let provider = Arc::new(provider);
-    let acp = VeraDocumentACP::without_access_cache(provider.clone());
+    let acp = VeraDocumentACP::new(provider.clone());
 
     acp.unregister_doc_object("policy-1", "users", "doc-1")
         .await
@@ -291,7 +288,7 @@ async fn configured_shared_archive_still_runs_and_surfaces_provider_errors() {
     let mut provider = MockProvider::new(vec![]);
     provider.archive_error = true;
     let provider = Arc::new(provider);
-    let acp = VeraDocumentACP::without_access_cache(provider.clone());
+    let acp = VeraDocumentACP::new(provider.clone());
 
     let error = acp
         .unregister_doc_object("policy-1", "users", "doc-1")
@@ -306,40 +303,7 @@ async fn configured_shared_archive_still_runs_and_surfaces_provider_errors() {
 #[nuclei::test]
 async fn check_doc_access_does_not_cache_remote_denials() {
     let provider = Arc::new(MockProvider::new(vec![false, true]));
-    let acp = VeraDocumentACP::without_access_cache(provider.clone());
-    let did = Did::new("did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK").unwrap();
-    let identity = Identity::from(did);
-
-    let denied = acp
-        .check_doc_access(
-            &identity,
-            DocumentPermission::Read,
-            "policy-1",
-            "users",
-            "doc-1",
-        )
-        .await
-        .expect("initial denial");
-    assert!(!denied);
-
-    let allowed = acp
-        .check_doc_access(
-            &identity,
-            DocumentPermission::Read,
-            "policy-1",
-            "users",
-            "doc-1",
-        )
-        .await
-        .expect("fresh remote decision");
-    assert!(allowed);
-    assert_eq!(provider.verify_calls(), 2);
-}
-
-#[nuclei::test]
-async fn check_doc_access_does_not_cache_denials_when_enabled() {
-    let provider = Arc::new(MockProvider::new(vec![false, true]));
-    let acp = VeraDocumentACP::new(provider.clone(), Duration::from_secs(300));
+    let acp = VeraDocumentACP::new(provider.clone());
     let did = Did::new("did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK").unwrap();
     let identity = Identity::from(did);
 
@@ -372,7 +336,7 @@ async fn check_doc_access_does_not_cache_denials_when_enabled() {
 #[nuclei::test]
 async fn create_access_decision_delegates_to_provider() {
     let provider = Arc::new(MockProvider::new(vec![]));
-    let acp = VeraDocumentACP::without_access_cache(provider.clone());
+    let acp = VeraDocumentACP::new(provider.clone());
     let did = Did::new("did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK").unwrap();
     let identity = Identity::from(did.clone());
 
@@ -392,7 +356,7 @@ fn requestor() -> Did {
 #[nuclei::test]
 async fn add_relationship_routes_actor_to_set_relationship() {
     let provider = Arc::new(MockProvider::new(vec![]));
-    let acp = VeraDocumentACP::without_access_cache(provider.clone());
+    let acp = VeraDocumentACP::new(provider.clone());
     let target = Subject::Entity(zanzibar::Did::new_unchecked(
         "did:key:zActorTarget".to_string(),
     ));
@@ -424,7 +388,7 @@ async fn add_relationship_routes_actor_to_set_relationship() {
 #[nuclei::test]
 async fn add_relationship_routes_object_edge_to_subject_kind_2() {
     let provider = Arc::new(MockProvider::new(vec![]));
-    let acp = VeraDocumentACP::without_access_cache(provider.clone());
+    let acp = VeraDocumentACP::new(provider.clone());
     let target = Subject::entity_set("directory", "d1", "");
 
     let result = acp
@@ -454,7 +418,7 @@ async fn add_relationship_routes_object_edge_to_subject_kind_2() {
 #[nuclei::test]
 async fn add_relationship_routes_userset_to_subject_kind_3() {
     let provider = Arc::new(MockProvider::new(vec![]));
-    let acp = VeraDocumentACP::without_access_cache(provider.clone());
+    let acp = VeraDocumentACP::new(provider.clone());
     let target = Subject::entity_set("directory", "d1", "member");
 
     acp.add_relationship(
@@ -488,7 +452,7 @@ async fn add_relationship_routes_userset_to_subject_kind_3() {
 #[nuclei::test]
 async fn delete_relationship_routes_object_edge_to_subject_kind_2() {
     let provider = Arc::new(MockProvider::new(vec![]));
-    let acp = VeraDocumentACP::without_access_cache(provider.clone());
+    let acp = VeraDocumentACP::new(provider.clone());
     let target = Subject::entity_set("directory", "d1", "");
 
     acp.delete_relationship(
@@ -606,7 +570,7 @@ impl VeraProvider for NoSubjectProvider {
 #[nuclei::test]
 async fn add_relationship_subject_default_is_unsupported() {
     let provider = Arc::new(NoSubjectProvider);
-    let acp = VeraDocumentACP::without_access_cache(provider);
+    let acp = VeraDocumentACP::new(provider);
     let target = Subject::entity_set("directory", "d1", "");
 
     let err = acp
@@ -635,7 +599,7 @@ async fn unregistered_read_rules_follow_provider_and_preserve_proof_errors() {
         let mut provider = MockProvider::new(vec![]);
         provider.public_unregistered = public;
         provider.registered = false;
-        let acp = VeraDocumentACP::without_access_cache(Arc::new(provider));
+        let acp = VeraDocumentACP::new(Arc::new(provider));
         assert_eq!(acp.unregistered_documents_are_public(), public);
         let checker = DirectChecker {
             acp: &acp,
@@ -656,7 +620,7 @@ async fn unregistered_read_rules_follow_provider_and_preserve_proof_errors() {
     }
     let mut provider = MockProvider::new(vec![]);
     provider.owner_error = true;
-    let acp = VeraDocumentACP::without_access_cache(Arc::new(provider));
+    let acp = VeraDocumentACP::new(Arc::new(provider));
     let checker = DirectChecker {
         acp: &acp,
         identity: &Identity::Anonymous,
