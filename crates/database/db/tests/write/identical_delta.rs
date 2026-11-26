@@ -6,6 +6,7 @@
 //! is refused for a conflict. This pins the same thing at the layer that
 //! produces the writes, where the conflicting key is visible.
 
+use crate::common::schema::parsed;
 use db::AutoCommitMutator;
 use db::DbDocMutator;
 use db::DB;
@@ -14,44 +15,20 @@ use document::NormalValue;
 use query::mutator::DocMutator;
 use rapidhash::RapidHashSet;
 use schema::CollectionVersion;
-use schema::FieldDescription;
-use schema::FieldKind;
 use std::sync::Arc;
 use storage::RegolithStore;
 
+const SNAP_SDL: &str = "type Snap { status: String content: String }";
+
 fn snap_collection() -> CollectionVersion {
-    CollectionVersion::new(
-        "Snap",
-        "v1",
-        "col-snap",
-        vec![
-            FieldDescription::new(
-                "1",
-                "_docID",
-                FieldKind::doc_id(),
-                schema::CType::LwwRegister,
-            ),
-            FieldDescription::new(
-                "2",
-                "status",
-                FieldKind::string(),
-                schema::CType::LwwRegister,
-            ),
-            FieldDescription::new(
-                "3",
-                "content",
-                FieldKind::string(),
-                schema::CType::LwwRegister,
-            ),
-        ],
-    )
+    parsed(SNAP_SDL)
 }
 
 #[test]
 fn identical_field_writes_to_distinct_documents_do_not_conflict() {
     workers::block_on(async {
         let db = Arc::new(DB::new(RegolithStore::in_memory().unwrap()).expect("create db"));
-        db.create_collection(snap_collection())
+        db.add_collection(&defra_core::RequestContext::ambient(), SNAP_SDL)
             .await
             .expect("create collection");
 

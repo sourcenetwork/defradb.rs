@@ -119,7 +119,7 @@ impl Deployed {
         let vera = node.vera_acp().expect("vera.rs document ACP").clone();
         let admin = vera.self_did().expect("actor DID");
         let policy = vera.add_policy(&admin, POLICY, None).await.expect("policy");
-        node.add_collection(&users(&policy))
+        node.add_collection(&defra_core::RequestContext::ambient(), &users(&policy))
             .await
             .expect("collection");
         let audience = vera

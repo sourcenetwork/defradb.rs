@@ -178,7 +178,8 @@ async fn pair() -> Result<(Node, Node)> {
         .build()
         .await?;
     for node in [&sender, &receiver] {
-        node.add_collection(SDL).await?;
+        node.add_collection(&defra_core::RequestContext::ambient(), SDL)
+            .await?;
     }
     let p2p_sender = sender.p2p_system().cloned().expect("sender p2p");
     let p2p_receiver = receiver.p2p_system().cloned().expect("receiver p2p");

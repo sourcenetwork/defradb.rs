@@ -126,10 +126,13 @@ impl Peer {
             .expect("policy read")
             .expect("seeded policy");
         if node.get_collection("Users").expect("collections").is_none() {
-            node.add_collection(&format!(
-                "type Users @policy(id: \"{policy}\", resource: \"users\") {{ \
+            node.add_collection(
+                &defra_core::RequestContext::ambient(),
+                &format!(
+                    "type Users @policy(id: \"{policy}\", resource: \"users\") {{ \
                  name: String points: Int @crdt(type: pcounter) }}"
-            ))
+                ),
+            )
             .await
             .expect("collection");
         }

@@ -296,7 +296,7 @@ pub(crate) async fn register_created_doc(
                     .record(
                         &owed
                             .with_authority(authority, context.bearer_names_request())
-                            .in_transaction(context.txn().map(|txn| txn.0)),
+                            .in_transaction(context.txn().map(|txn| txn.route)),
                     )
                     .await
                     .map_err(|e| query::error::QueryError::execution(e.to_string()))?;
@@ -686,7 +686,7 @@ pub(crate) async fn archive_deleted_doc(
     };
     outbox
         .stage_archive(acp::StageArchive {
-            txn: context.txn().map(|txn| txn.0),
+            txn: context.txn().map(|txn| txn.route),
             actor: &actor,
             policy_id: &policy.id,
             resource: &policy.resource_name,

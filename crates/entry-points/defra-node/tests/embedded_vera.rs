@@ -526,7 +526,7 @@ fn a_caller_that_keeps_its_key_writes_through_its_own_delegation() {
         let vera = node.vera_acp().expect("vera.rs document ACP").clone();
         let owner = vera.self_did().expect("actor DID");
         let policy = vera.add_policy(&owner, POLICY, None).await.expect("policy");
-        node.add_collection(&format!(
+        node.add_collection(&defra_core::RequestContext::ambient(), &format!(
             "type Users @policy(id: \"{policy}\", resource: \"users\") {{ name: String }}"
         ))
         .await
@@ -773,7 +773,7 @@ fn a_grant_staged_beside_its_document_lets_the_grantee_read_after_the_commit() {
             .add_policy(owner.as_str(), POLICY, None)
             .await
             .expect("policy");
-        node.add_collection(&users(&policy))
+        node.add_collection(&defra_core::RequestContext::ambient(), &users(&policy))
             .await
             .expect("collection");
         let acting = defra_core::RequestContext::default().with_identity(Some(owner.to_string()));
@@ -898,7 +898,7 @@ fn an_observation_under_writes_is_asked_again_when_a_block_overtakes_it() {
             .add_policy(owner.as_str(), POLICY, None)
             .await
             .expect("policy");
-        node.add_collection(&users(&policy))
+        node.add_collection(&defra_core::RequestContext::ambient(), &users(&policy))
             .await
             .expect("collection");
         let doc = created(node.execute_request(create_user("observed", &owner)).await);
@@ -957,7 +957,7 @@ fn the_grants_one_transaction_stages_land_together() {
             .add_policy(owner.as_str(), POLICY, None)
             .await
             .expect("policy");
-        node.add_collection(&users(&policy))
+        node.add_collection(&defra_core::RequestContext::ambient(), &users(&policy))
             .await
             .expect("collection");
         let acting = defra_core::RequestContext::default().with_identity(Some(owner.to_string()));
@@ -1012,7 +1012,7 @@ fn a_revocation_staged_in_a_transaction_denies_at_the_commit_and_the_chain_follo
             .await
             .expect("policy");
         drop(vera);
-        node.add_collection(&users(&policy))
+        node.add_collection(&defra_core::RequestContext::ambient(), &users(&policy))
             .await
             .expect("collection");
         let acting = defra_core::RequestContext::default().with_identity(Some(owner.to_string()));
@@ -1134,7 +1134,7 @@ fn a_restart_settles_a_change_the_chain_could_not_take() {
             .expect("hosted genesis");
         let node = consumer(trust.clone(), genesis_id, rpc).await;
         let policy = seeded_policy(&node, chain_owner.as_str()).await;
-        node.add_collection(&users(&policy))
+        node.add_collection(&defra_core::RequestContext::ambient(), &users(&policy))
             .await
             .expect("collection");
         first_chain.shutdown().await.expect("shutdown");
@@ -1246,7 +1246,7 @@ fn an_idle_node_settles_a_staged_grant_once_its_deployment_is_back() {
             .await
             .expect("consumer node");
         let policy = seeded_policy(&node, chain_owner.as_str()).await;
-        node.add_collection(&users(&policy))
+        node.add_collection(&defra_core::RequestContext::ambient(), &users(&policy))
             .await
             .expect("collection");
         first_chain.shutdown().await.expect("shutdown");
@@ -1386,7 +1386,7 @@ impl Grouped {
             .await
             .expect("policy");
         drop(vera);
-        node.add_collection(&users(&policy))
+        node.add_collection(&defra_core::RequestContext::ambient(), &users(&policy))
             .await
             .expect("collection");
         let owner = registered_identity();
@@ -1617,7 +1617,7 @@ fn a_key_registered_under_another_spelling_signs_its_staged_changes() {
             .await
             .expect("policy");
         drop(vera);
-        node.add_collection(&users(&policy))
+        node.add_collection(&defra_core::RequestContext::ambient(), &users(&policy))
             .await
             .expect("collection");
         let owner = registered_under_the_compressed_spelling();

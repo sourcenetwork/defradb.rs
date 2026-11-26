@@ -429,13 +429,17 @@ const STRANGER: &str = "did:key:z6MkjchhfUsD6mmvni8mCdXHw216Xrm9bQe2mBH1P5RDjVJG
 fn document_relationship_listing_is_owner_or_manager_only() {
     workers::block_on(async {
         let node = Node::builder().build().await.unwrap();
+        let owner_context = context(DOC_OWNER);
         let policy = node
-            .add_dac_policy_as(&context(DOC_OWNER), LISTING_POLICY)
+            .add_dac_policy_as(&owner_context, LISTING_POLICY)
             .await
             .unwrap();
-        node.add_collection(&format!(
-            "type Users @policy(id: \"{policy}\", resource: \"users\") {{ name: String }}"
-        ))
+        node.add_collection(
+            &owner_context,
+            &format!(
+                "type Users @policy(id: \"{policy}\", resource: \"users\") {{ name: String }}"
+            ),
+        )
         .await
         .unwrap();
         let created = node
@@ -660,11 +664,12 @@ fn http_inspection_routes_apply_the_embedded_gates() {
                     .await
                     .unwrap();
             }
+            let owner_context = context(&owner_did);
             let policy = node
-                .add_dac_policy_as(&context(&owner_did), LISTING_POLICY)
+                .add_dac_policy_as(&owner_context, LISTING_POLICY)
                 .await
                 .unwrap();
-            node.add_collection(&format!(
+            node.add_collection(&owner_context, &format!(
                 "type Users @policy(id: \"{policy}\", resource: \"users\") {{ name: String }}"
             ))
             .await

@@ -152,7 +152,7 @@ fn related_projection_grants_only_what_the_requester_could_grant_directly() {
                 .unwrap();
         }
         let policy = node.add_dac_policy_as(&admin_context, "name: Related projection\nresources:\n  - name: records\n    relations:\n      - name: reader\n        types: [actor]\n    permissions:\n      - name: read\n        expr: reader\n      - name: update\n      - name: delete\n").await.unwrap();
-        node.add_collection_as(
+        node.add_collection(
             &admin_context,
             &format!("type Related @policy(id: \"{policy}\", resource: \"records\") {{ name: String }}"),
         )

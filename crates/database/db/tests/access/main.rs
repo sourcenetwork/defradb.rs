@@ -5,7 +5,6 @@ mod common;
 mod context_enforcement;
 mod coverage;
 mod dac_policy;
-mod enforcement;
 mod external_archive;
 mod external_counts;
 mod external_drainer;

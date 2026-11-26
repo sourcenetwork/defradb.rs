@@ -2,6 +2,7 @@
 //! a policy-backed collection is shown to nobody, and access is decided in
 //! the transaction that read the page.
 
+mod arrivals;
 mod decisions;
 mod transaction_fetcher;
 
@@ -14,12 +15,13 @@ use db::{
 };
 use identity::Did;
 use query::{QueryExecutor, QueryRequest, QueryRunner};
-use schema::PolicyDescription;
 use serde_json::Value;
 use storage::RegolithStore;
 
 const POLICY: &str = "update-policy";
 const RESOURCE: &str = "users";
+const POLICY_USERS_SDL: &str =
+    r#"type Users @policy(id: "update-policy", resource: "users") { name: String }"#;
 const UPDATES: &str =
     r#"{ _documentUpdates(collection: "Users") { head next entries { cursor docID cid } } }"#;
 
@@ -50,12 +52,14 @@ impl Node {
     async fn new(policy: bool) -> Self {
         let store = Arc::new(RegolithStore::in_memory().unwrap());
         let db = Arc::new(DB::from_arc(store.clone()).unwrap());
-        for mut schema in query::parse_sdl("type Users { name: String }").unwrap() {
-            if policy {
-                schema.policy = Some(PolicyDescription::new(POLICY, RESOURCE));
-            }
-            db.create_collection(schema).await.unwrap();
-        }
+        let sdl = if policy {
+            POLICY_USERS_SDL
+        } else {
+            "type Users { name: String }"
+        };
+        db.add_collection(&defra_core::RequestContext::ambient(), sdl)
+            .await
+            .unwrap();
         let acp: Arc<dyn DocumentACP> = Arc::new(acp::ZanzibarDocumentACP::new(Arc::new(
             acp::PersistentZanzibarStore::from_store(store),
         )));
@@ -69,10 +73,9 @@ impl Node {
     async fn outside() -> Self {
         let store = Arc::new(RegolithStore::in_memory().unwrap());
         let db = Arc::new(DB::from_arc(store).unwrap());
-        for mut schema in query::parse_sdl("type Users { name: String }").unwrap() {
-            schema.policy = Some(PolicyDescription::new(POLICY, RESOURCE));
-            db.create_collection(schema).await.unwrap();
-        }
+        db.add_collection(&defra_core::RequestContext::ambient(), POLICY_USERS_SDL)
+            .await
+            .unwrap();
         Self {
             db,
             acp: Arc::new(acp::LocalDocumentACP::new(Arc::new(
@@ -422,10 +425,9 @@ fn a_transaction_fetcher_pages_for_a_provider_outside_its_transaction() {
     workers::block_on(async {
         let store = Arc::new(RegolithStore::in_memory().unwrap());
         let db = Arc::new(DB::from_arc(store).unwrap());
-        for mut schema in query::parse_sdl("type Users { name: String }").unwrap() {
-            schema.policy = Some(PolicyDescription::new(POLICY, RESOURCE));
-            db.create_collection(schema).await.unwrap();
-        }
+        db.add_collection(&defra_core::RequestContext::ambient(), POLICY_USERS_SDL)
+            .await
+            .unwrap();
         let node = Node {
             db: db.clone(),
             acp: Arc::new(acp::LocalDocumentACP::new(Arc::new(

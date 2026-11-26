@@ -10,10 +10,7 @@ use db::{AutoCommitMutator, DbOptions, DB};
 use document::{DocID, Document, FieldOp, NormalValue};
 use query::DocMutator;
 use rapidhash::RapidHashSet;
-use schema::{
-    CType, CollectionVersion, FieldDescription, FieldKind, IndexKind, IndexedFieldDescription,
-    OrderedIndexDescription,
-};
+use schema::{IndexKind, IndexedFieldDescription, OrderedIndexDescription};
 use storage::corekv::{IterOptions, Iterator as _};
 use storage::keys::{index_pending_log, IndexDataStoreKey, IndexedField};
 use storage::RegolithStore;
@@ -23,16 +20,9 @@ const BUSY: &str = "Busy";
 const WAIT: Duration = Duration::from_secs(10);
 const NO_SWEEP: Duration = Duration::from_secs(3600);
 
-fn collection(name: &str) -> CollectionVersion {
-    CollectionVersion::new(
-        name,
-        format!("{name}-v1"),
-        format!("col-deferred-task-{name}"),
-        vec![
-            FieldDescription::new("1", "_docID", FieldKind::doc_id(), CType::LwwRegister),
-            FieldDescription::new("2", "count", FieldKind::int(), CType::PCounter),
-            FieldDescription::new("3", "other", FieldKind::int(), CType::PCounter),
-        ],
+fn collection_sdl(name: &str) -> String {
+    format!(
+        r#"type {name} {{ count: Int @crdt(type: "pcounter") other: Int @crdt(type: "pcounter") }}"#
     )
 }
 
@@ -70,8 +60,18 @@ impl Node {
             .with_pool(crate::common::worker_io::pool().clone())
             .with_deferred_index_sweep(sweep);
         let db = Arc::new(DB::with_options(RegolithStore::in_memory().unwrap(), options).unwrap());
-        db.create_collection(collection(COLLECTION)).await.unwrap();
-        db.create_collection(collection(BUSY)).await.unwrap();
+        db.add_collection(
+            &defra_core::RequestContext::ambient(),
+            &collection_sdl(COLLECTION),
+        )
+        .await
+        .unwrap();
+        db.add_collection(
+            &defra_core::RequestContext::ambient(),
+            &collection_sdl(BUSY),
+        )
+        .await
+        .unwrap();
         let mut ids = Vec::new();
         for (name, field) in [
             (COLLECTION, "count"),

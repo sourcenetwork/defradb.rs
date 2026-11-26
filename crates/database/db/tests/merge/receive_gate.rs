@@ -13,7 +13,11 @@ use document::{Document, NormalValue};
 use p2p::sync::receive_gate::{CarBlocks, ReceiveGate};
 use storage::RegolithStore;
 
-use super::replicated::logs;
+const LOG_SDL: &str = "type Log { address: String blockNumber: Int }";
+
+fn logs() -> schema::CollectionVersion {
+    crate::common::schema::parsed(LOG_SDL)
+}
 
 /// Refuses a document whose `blockNumber` is at or below the cutoff.
 struct Cutoff(i64);
@@ -41,7 +45,9 @@ async fn gate(
 ) {
     let store = Arc::new(RegolithStore::in_memory().unwrap());
     let db = Arc::new(DB::from_arc_with_options(store.clone(), options).unwrap());
-    db.create_collection(logs("col-log")).await.unwrap();
+    db.add_collection(&defra_core::RequestContext::ambient(), LOG_SDL)
+        .await
+        .unwrap();
     let blocks = Arc::new(DefraBlockstore::new(store, false));
     (DbReceiveGate::new(db).expect("a gate"), blocks)
 }
@@ -51,14 +57,14 @@ async fn pushed(
     blocks: &Arc<DefraBlockstore<RegolithStore>>,
     height: i64,
 ) -> (String, Vec<u8>, Vec<(cid::Cid, Bytes)>) {
-    let mut doc = Document::new(logs("col-log"));
+    let mut doc = Document::new(logs());
     doc.set("address", NormalValue::String("0xabc".into()))
         .unwrap();
     doc.set("blockNumber", NormalValue::Int(height)).unwrap();
     let built = db::block::builder::build_blocks_from_document(
         &storage::Crdts::default(),
         &doc,
-        &logs("col-log"),
+        &logs(),
         blocks,
     )
     .await
@@ -78,8 +84,13 @@ async fn allows(
     head: &[u8],
     linked: Vec<(cid::Cid, Bytes)>,
 ) -> bool {
-    gate.allows("col-log", doc_id, head, &CarBlocks::new(linked, None))
-        .await
+    gate.allows(
+        &logs().collection_id,
+        doc_id,
+        head,
+        &CarBlocks::new(linked, None),
+    )
+    .await
 }
 
 #[test]
