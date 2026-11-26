@@ -32,6 +32,7 @@ mod vector_filtered_search;
 mod vector_flat_algorithm;
 mod vector_kv_built_state;
 mod vector_kv_cost;
+mod vector_kv_read_count;
 mod vector_kv_store;
 mod vector_recall_baseline;
 mod vector_recall_gate;

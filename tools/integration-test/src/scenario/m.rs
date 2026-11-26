@@ -53,6 +53,12 @@ pub fn positive() -> Value {
     json!({"$match": "positive"})
 }
 
+/// Matches any number of at least `floor`, for a count whose exact size
+/// depends on the data's shape (the entries a vector search reads).
+pub fn at_least(floor: u64) -> Value {
+    json!({"$match": "atLeast", "value": floor})
+}
+
 pub fn nonempty_string() -> Value {
     json!({"$match": "nonemptyString"})
 }

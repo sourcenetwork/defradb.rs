@@ -135,6 +135,16 @@ impl IndexScanResult {
     }
 }
 
+/// What a vector index search answered.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct VectorCandidates {
+    /// The nearest documents' short ids, nearest first.
+    pub short_ids: Vec<u64>,
+    /// Index entries the search read from storage, which an execute explain
+    /// reports as `indexFetches`.
+    pub index_reads: u64,
+}
+
 /// Storage abstraction for fetching documents.
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
@@ -522,7 +532,8 @@ pub trait DocFetcher: MaybeSendSync {
 
     /// Nearest documents to `query_vector` under a vector index, nearest first.
     ///
-    /// Returns document short ids, which is what a scan can be narrowed by.
+    /// Returns document short ids, which is what a scan can be narrowed by,
+    /// and how many index entries the search read.
     /// Returns candidates without applying query filters or access checks.
     /// The scan applies those checks, widens the candidate request as needed,
     /// and falls back to a full scan if the index cannot fill the result page.
@@ -538,7 +549,7 @@ pub trait DocFetcher: MaybeSendSync {
         query_vector: &[f64],
         k: usize,
         effort: Option<usize>,
-    ) -> Result<Vec<u64>> {
+    ) -> Result<VectorCandidates> {
         let _ = (collection_name, index_id, query_vector, k, effort);
         Err(crate::error::QueryError::execution(
             "Vector search is not supported by this fetcher".to_string(),

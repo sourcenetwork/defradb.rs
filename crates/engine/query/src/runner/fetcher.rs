@@ -119,7 +119,7 @@ impl DocFetcher for FetcherWrapper {
         query_vector: &[f64],
         k: usize,
         effort: Option<usize>,
-    ) -> Result<Vec<u64>> {
+    ) -> Result<crate::fetcher::VectorCandidates> {
         self.get_fetcher()
             .vector_search(collection_name, index_id, query_vector, k, effort)
             .await

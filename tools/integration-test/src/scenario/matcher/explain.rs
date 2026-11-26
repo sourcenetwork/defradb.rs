@@ -68,9 +68,21 @@ pub fn valid_explain_scan(map: &Map<String, Value>) -> bool {
         None => map.len() == 2,
     };
     path_ok
-        && metrics
-            .iter()
-            .all(|(key, value)| SCAN_METRICS.contains(&key.as_str()) && value.as_u64().is_some())
+        && metrics.iter().all(|(key, value)| {
+            SCAN_METRICS.contains(&key.as_str())
+                && (value.as_u64().is_some() || metric_floor(value).is_some())
+        })
+}
+
+/// The least count a metric matcher accepts: `positive` is at least one,
+/// `atLeast` names its floor. `None` when `expected` is a plain count.
+fn metric_floor(expected: &Value) -> Option<u64> {
+    let matcher = expected.as_object()?;
+    match (matcher.get("$match")?.as_str()?, matcher.len()) {
+        ("positive", 1) => Some(1),
+        ("atLeast", 2) => matcher.get("value")?.as_u64(),
+        _ => None,
+    }
 }
 
 pub fn valid_explain_graph(map: &Map<String, Value>) -> bool {
@@ -299,7 +311,11 @@ pub fn match_explain_scan(want: &Map<String, Value>, actual: &Value) -> bool {
             },
             _ => scan.get(key),
         };
-        if as_int(value) as u64 != as_int(Some(expected)) as u64 {
+        let matches = match metric_floor(expected) {
+            Some(floor) => as_int(value) as u64 >= floor,
+            None => as_int(value) as u64 == as_int(Some(expected)) as u64,
+        };
+        if !matches {
             return false;
         }
     }

@@ -157,8 +157,8 @@ impl ScanNode {
         self
     }
 
-    /// Marks the restriction as coming from a vector index, which explain
-    /// reports as one index fetch.
+    /// Marks the restriction as coming from a vector index searched
+    /// elsewhere, which explain reports as one index fetch.
     pub fn as_vector_indexed(mut self) -> Self {
         self.vector_indexed = true;
         self
@@ -216,10 +216,14 @@ impl ScanNode {
             )
             .await?;
 
-        self.vector_exhausted = candidates.len() < next_k;
+        // Every pass's reads count, including one that finds nothing new: the
+        // index was read either way.
+        self.exec_info.indexes_fetched += candidates.index_reads;
+        self.vector_exhausted = candidates.short_ids.len() < next_k;
         self.vector_k = next_k;
 
         let fresh: Vec<u64> = candidates
+            .short_ids
             .into_iter()
             .filter(|id| self.vector_seen.insert(*id))
             .collect();
@@ -256,7 +260,6 @@ impl ScanNode {
         // Only once a stream is actually open, so an explain never names an
         // index for a scan that fell through to reading the whole collection.
         self.vector_indexed = true;
-        self.exec_info.indexes_fetched += 1;
         Ok(true)
     }
 
@@ -711,9 +714,9 @@ impl PlanNode for ScanNode {
             "fieldFetches".to_string(),
             serde_json::json!(self.exec_info.fields_fetched),
         );
-        // A vector-index hit counts as one fetch. Unlike a scalar index, which
-        // counts each entry read, this does not reflect the graph search's real
-        // node reads; matching the reference, which tracks the same gap.
+        // A routed search already counted every index entry it read. A scan
+        // narrowed by a search run elsewhere did not see those reads, so it
+        // reports the search as one fetch.
         let index_fetches = self.exec_info.indexes_fetched
             + u64::from(self.vector_indexed && self.vector_route.is_none());
         obj.insert("indexFetches".to_string(), serde_json::json!(index_fetches));
