@@ -179,10 +179,11 @@ impl ScanNode {
     /// Ask the index for the next, larger batch of candidates and stream the
     /// ones not already seen.
     ///
-    /// A filter is applied to documents, not to the graph walk, so the nearest
-    /// `k` overall can contain fewer than `k` matches. Asking for a wider `k`
-    /// and continuing is what makes a filtered similarity query return a full
-    /// page instead of whatever survived filtering the first `k`. Widening
+    /// A routed query carries no filter conditions, but the scan still drops
+    /// some candidates (a deleted document, one outside a `docID` argument or
+    /// a join's parent scope), so the nearest `k` overall can hold fewer than
+    /// `k` rows. Asking for a wider `k` and continuing is what returns a full
+    /// page instead of whatever survived the first `k`. Widening
     /// stops at a fixed candidate budget, or when the index has nothing new.
     /// A short page then falls back to one exhaustive scan. This bounds graph
     /// search effort and deduplication state independently of collection size.

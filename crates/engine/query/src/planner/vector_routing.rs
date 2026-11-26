@@ -1,14 +1,12 @@
 //! Deciding whether a query can be answered by a vector index.
 //!
-//! Ported from Go's `tryRouteSimilarityToVectorIndex`, with one deliberate
-//! difference: Go refuses a query that carries a filter, because its graph
-//! would have to over-fetch and backfill (its issue 5071). This engine does the
-//! over-fetch instead of refusing: the filter is applied to documents, and
-//! `ScanNode` asks the index for a wider `k` whenever the filter leaves the page
-//! short, so a filtered query routes like any other and still returns a full
-//! page. That matters because the hybrid retrieval path in `db-search` folds
-//! `exclude_doc_ids` into a filter on essentially every call, and under Go's
-//! rule it could never be routed at all.
+//! Ported from Go's `tryRouteSimilarityToVectorIndex`. Like Go, a query whose
+//! filter has conditions is not routed: the planner checks that before calling
+//! [`route`], so the filter never reaches this decision. Such a query reads its
+//! candidates through a secondary index when one serves the filter, or the whole
+//! collection otherwise, scores every match exactly, then sorts and applies the
+//! limit, and the planner attaches the `VECTOR_INDEX_UNUSED` warning with reason
+//! `filter`. An empty filter selects every row and still routes.
 
 use crate::executor::{GqlWarning, WARNING_CODE_VECTOR_INDEX_UNUSED};
 use crate::mapper::{OrderDirection, Requestable, Select};
