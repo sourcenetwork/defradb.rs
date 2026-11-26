@@ -69,6 +69,8 @@ identity = { path = "../../crates/building-blocks/identity" }
 
 [features]
 generator = ["serde_json/preserve_order"]
+# Run the network scenarios over pinc with DEFRA_TRANSPORT=pinc.
+pinc = ["defra-node/pinc"]
 
 [[bin]]
 name = "gen_scenarios"

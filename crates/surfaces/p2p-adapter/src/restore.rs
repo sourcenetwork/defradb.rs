@@ -1,21 +1,28 @@
-//! Bringing an iroh node's persisted replicators and document subscriptions
-//! back after a restart.
+//! Bringing a node's persisted replicators and document subscriptions back
+//! after a restart, whichever transport the node speaks.
 
 use std::sync::Arc;
 
+use blockstore::Blockstore;
+use p2p::sync::SyncCoordinator;
 use p2p::P2PTransport;
 use rapidhash::{HashSetExt, RapidHashSet};
 
 /// Restore persisted replicators into the coordinator and resubscribe persisted
 /// document topics, returning the document ids that were resubscribed.
-pub async fn restore_iroh_p2p_state<S, B>(
+///
+/// One body for every transport: the peerstore's records and the document
+/// subscriptions are the transport's only difference, and both arrive through
+/// `P2PTransport::subscribe`.
+pub async fn restore_p2p_state<S, B, T>(
     store: Arc<S>,
-    transport: &p2p::iroh::IrohTransport,
-    coordinator: &Arc<p2p::sync::IrohSyncCoordinator<B>>,
+    transport: &T,
+    coordinator: &Arc<SyncCoordinator<B, T>>,
 ) -> RapidHashSet<String>
 where
     S: storage::corekv::Store + 'static,
-    B: blockstore::Blockstore + 'static,
+    B: Blockstore + 'static,
+    T: P2PTransport,
 {
     let peerstore = storage::stores::Peerstore::new(store);
 
@@ -35,16 +42,17 @@ where
                 };
                 let peer_id = p2p::transport::PeerId::new(replicator.peer_id_str().to_string());
                 // Restore the complete durable record. Reconstructing it from
-                // collection IDs silently discarded filters and addresses,
-                // so an idempotent post-restart AddReplicator looked like a
-                // filter change and launched a full existing-document replay.
-                // This matches Go's loadAndPublishReplicators behavior: the
+                // collection IDs silently discarded filters and addresses, so
+                // an idempotent post-restart AddReplicator looked like a filter
+                // change and launched a full existing-document replay. This
+                // matches Go's loadAndPublishReplicators behavior: the
                 // persisted replicator is the startup source of truth.
                 if let Err(error) = coordinator
                     .create_replicator_info(&peer_id, replicator, false)
                     .await
                 {
-                    tracing::warn!(                        peer_id = %peer_id,
+                    tracing::warn!(
+                        peer_id = %peer_id,
                         error = %error,
                         "failed to restore persisted P2P replicator"
                     );
@@ -66,7 +74,8 @@ where
                     .subscribe(p2p::topics::DefraTopic::document(&doc_id))
                     .await
                 {
-                    tracing::warn!(                        doc_id = %doc_id,
+                    tracing::warn!(
+                        doc_id = %doc_id,
                         error = %error,
                         "failed to restore P2P document subscription"
                     );

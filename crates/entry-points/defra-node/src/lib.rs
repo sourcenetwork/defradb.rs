@@ -73,6 +73,8 @@ mod p2p_runtime;
 #[cfg(any(feature = "p2p", feature = "libp2p"))]
 mod peer_key;
 mod peer_keyring;
+#[cfg(feature = "pinc")]
+mod pinc_runtime;
 mod request_path;
 mod signed_query;
 mod signer_credential;
@@ -108,6 +110,8 @@ pub use coding_search::{
 pub use config::HttpConfig;
 #[cfg(feature = "libp2p")]
 pub use config::Libp2pConfig;
+#[cfg(feature = "pinc")]
+pub use config::PincConfig;
 #[cfg(any(feature = "p2p", feature = "libp2p"))]
 pub use config::SyncTuning;
 pub use config::{
@@ -139,6 +143,9 @@ pub use lens::{LensConfig, LensModule, TransformId};
 #[cfg(feature = "managed-p2p")]
 pub use managed_p2p::{ManagedP2PSystem, ShutdownHandle, TransportKind};
 pub use node_builder::{NodeBuilder, StorageBackend, StoreProfile};
+/// Runs a pinc hub, which pinc topics travel through.
+#[cfg(feature = "pinc")]
+pub use p2p::pinc::spawn_hub as spawn_pinc_hub;
 pub use peer_keyring::PeerKeyring;
 pub use query::owners::{DocumentAccessDecision, DocumentAccessMode};
 pub use query::QueryLimits;
