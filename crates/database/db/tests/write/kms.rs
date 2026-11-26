@@ -1,3 +1,4 @@
+use crate::common::schema::parsed;
 use async_trait::async_trait;
 use crypto::PrivateKey;
 use db::{AutoCommitMutator, DbDocMutator, DB};
@@ -6,7 +7,7 @@ use document::Document;
 use query::error::QueryError;
 use query::mutator::{DocMutator, MutationBatchController, MutationBatchOperation};
 use query::DocFetcher;
-use schema::{CollectionVersion, FieldDescription, FieldKind};
+use schema::CollectionVersion;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use storage::RegolithStore;
@@ -78,40 +79,19 @@ impl Drop for Fixture {
     }
 }
 
+pub(super) const SECRETS_SDL: &str = "type Secrets { left: String right: String public: String }";
+
 pub(super) fn secrets_collection() -> CollectionVersion {
-    CollectionVersion::new(
-        "Secrets",
-        "secrets-v1",
-        "col-secrets",
-        vec![
-            FieldDescription::new(
-                "1",
-                "_docID",
-                FieldKind::doc_id(),
-                schema::CType::LwwRegister,
-            ),
-            FieldDescription::new("2", "left", FieldKind::string(), schema::CType::LwwRegister),
-            FieldDescription::new(
-                "3",
-                "right",
-                FieldKind::string(),
-                schema::CType::LwwRegister,
-            ),
-            FieldDescription::new(
-                "4",
-                "public",
-                FieldKind::string(),
-                schema::CType::LwwRegister,
-            ),
-        ],
-    )
+    parsed(SECRETS_SDL)
 }
 
 pub(super) async fn fixture() -> Fixture {
     let db = Arc::new(DB::new(RegolithStore::in_memory().unwrap()).unwrap());
     let kms = Arc::new(CountingKms::default());
     db.set_kms(kms.clone());
-    db.create_collection(secrets_collection()).await.unwrap();
+    db.add_collection(&defra_core::RequestContext::ambient(), SECRETS_SDL)
+        .await
+        .unwrap();
     Fixture { db, kms }
 }
 
@@ -410,24 +390,11 @@ fn batch_inherits_whole_document_encryption_for_a_new_field() {
 fn signed_encrypted_counter_update_preserves_prepared_randomness() {
     workers::block_on(async {
         let fixture = fixture().await;
-        let counters = CollectionVersion::new(
-            "Counters",
-            "cv1",
-            "counters",
-            vec![
-                FieldDescription::new(
-                    "1",
-                    "_docID",
-                    FieldKind::doc_id(),
-                    schema::CType::LwwRegister,
-                ),
-                FieldDescription::new("2", "count", FieldKind::int(), schema::CType::LwwRegister)
-                    .with_crdt_type(schema::CType::PnCounter),
-            ],
-        );
+        let counters_sdl = r#"type Counters { count: Int @crdt(type: "pncounter") }"#;
+        let counters = parsed(counters_sdl);
         fixture
             .db
-            .create_collection(counters.clone())
+            .add_collection(&defra_core::RequestContext::ambient(), counters_sdl)
             .await
             .unwrap();
         let mutator = AutoCommitMutator::new(fixture.db.clone());
@@ -484,26 +451,11 @@ fn signed_encrypted_counter_update_preserves_prepared_randomness() {
 fn signed_document_encryption_without_kms_reuses_local_keys() {
     workers::block_on(async {
         let db = Arc::new(DB::new(RegolithStore::in_memory().unwrap()).unwrap());
-        let local = CollectionVersion::new(
-            "Local",
-            "local-v1",
-            "local-root",
-            vec![
-                FieldDescription::new(
-                    "1",
-                    "_docID",
-                    FieldKind::doc_id(),
-                    schema::CType::LwwRegister,
-                ),
-                FieldDescription::new(
-                    "2",
-                    "value",
-                    FieldKind::string(),
-                    schema::CType::LwwRegister,
-                ),
-            ],
-        );
-        db.create_collection(local.clone()).await.unwrap();
+        let local_sdl = "type Local { value: String }";
+        let local = parsed(local_sdl);
+        db.add_collection(&defra_core::RequestContext::ambient(), local_sdl)
+            .await
+            .unwrap();
         set_encryption_config(Some(EncryptionConfig {
             encrypt_doc: true,
             encrypt_fields: vec![],

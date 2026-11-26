@@ -10,35 +10,21 @@ use query::txn::txn_job;
 use query::txn::TransactionHandle;
 use query::txn::TransactionRegistry;
 use schema::CollectionVersion;
-use schema::FieldDescription;
-use schema::FieldKind;
 use std::sync::Arc;
 use storage::RegolithStore;
 
+const USERS_SDL: &str = "type Users { name: String age: Int }";
+
 fn test_schema() -> Vec<CollectionVersion> {
-    vec![CollectionVersion::new(
-        "Users",
-        "v1",
-        "col-users",
-        vec![
-            FieldDescription::new(
-                "1",
-                "_docID",
-                FieldKind::doc_id(),
-                schema::CType::LwwRegister,
-            ),
-            FieldDescription::new("2", "name", FieldKind::string(), schema::CType::LwwRegister),
-            FieldDescription::new("3", "age", FieldKind::int(), schema::CType::LwwRegister),
-        ],
-    )]
+    query::parse_sdl(USERS_SDL).unwrap()
 }
 
 /// Create a test DB with collections pre-registered.
 async fn test_db_with_collections() -> Arc<DB<RegolithStore>> {
     let db = Arc::new(DB::new(RegolithStore::in_memory().unwrap()).unwrap());
-    for schema in test_schema() {
-        db.create_collection(schema).await.unwrap();
-    }
+    db.add_collection(&defra_core::RequestContext::ambient(), USERS_SDL)
+        .await
+        .unwrap();
     db
 }
 
@@ -142,39 +128,6 @@ fn test_begin_readwrite_transaction() {
                 ctx.is_readonly()
             }))
             .await
-        );
-    })
-    .unwrap()
-}
-
-#[test]
-fn add_collection_in_txn_rejects_an_unpaired_relation() {
-    workers::block_on(async {
-        let db = Arc::new(DB::new(RegolithStore::in_memory().unwrap()).unwrap());
-        let registry = DbTransactionRegistry::new(db);
-        let txn_id = registry.begin(false).await.unwrap();
-
-        let error = registry
-            .add_collection_in_txn(
-                txn_id.as_str(),
-                r#"
-                type User {
-                    posts: [Post] @relation(name: "user_posts")
-                }
-
-                type Post {
-                    title: String
-                }
-            "#,
-            )
-            .await
-            .unwrap_err();
-
-        assert!(
-            error
-                .to_string()
-                .contains("relation missing field. Object: Post, RelationName: user_posts"),
-            "unexpected error: {error}"
         );
     })
     .unwrap()
@@ -1108,17 +1061,10 @@ fn test_new_transaction_sees_recently_created_collection() {
         let registry = DbTransactionRegistry::new(db.clone());
 
         // Create collection after registry is created
-        db.create_collection(CollectionVersion::new(
-            "NewCollection",
-            "v1",
-            "col-new",
-            vec![FieldDescription::new(
-                "1",
-                "_docID",
-                FieldKind::doc_id(),
-                schema::CType::LwwRegister,
-            )],
-        ))
+        db.add_collection(
+            &defra_core::RequestContext::ambient(),
+            "type NewCollection { name: String }",
+        )
         .await
         .unwrap();
 
@@ -1214,17 +1160,10 @@ fn test_collections_snapshot_is_isolated_from_modifications() {
         // wraps an Arc and doesn't expose mutable methods)
 
         // Adding a new collection should not affect existing snapshots
-        db.create_collection(CollectionVersion::new(
-            "Posts",
-            "v1",
-            "col-posts",
-            vec![FieldDescription::new(
-                "1",
-                "_docID",
-                FieldKind::doc_id(),
-                schema::CType::LwwRegister,
-            )],
-        ))
+        db.add_collection(
+            &defra_core::RequestContext::ambient(),
+            "type Posts { name: String }",
+        )
         .await
         .unwrap();
 

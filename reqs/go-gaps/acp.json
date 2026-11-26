@@ -223,7 +223,7 @@
     "verdict": "missing",
     "rust_tests": [],
     "evidence": "",
-    "note": "Searched acp/, nac/, query/, verars/ and crates/*/tests for _commits without docID/cid filters under a policy; every ACP _commits test filters by docID, cid or fieldName. No test asserts the 3/6 commit counts across public and private docs or across two private collections."
+    "note": "Searched acp/, nac/, query/, vera/ and crates/*/tests for _commits without docID/cid filters under a policy; every ACP _commits test filters by docID, cid or fieldName. No test asserts the 3/6 commit counts across public and private docs or across two private collections."
   },
   {
     "id": "go.acp.dac.commits.filtered",
@@ -240,9 +240,9 @@
     "id": "go.acp.dac.commits.version-and-grants",
     "verdict": "partial",
     "rust_tests": [
-      "tools/integration-test/tests/verars/p2p_acp.rs::rust_verars_p2p_acp"
+      "tools/integration-test/tests/vera/p2p_acp.rs::rust_vera_p2p_acp"
     ],
-    "evidence": "verars/p2p_acp.rs:105 _commits(docID:) empty for an ungranted identity; :120 after a reader grant the identity's _commits equal the owner's",
+    "evidence": "vera/p2p_acp.rs:105 _commits(docID:) empty for an ungranted identity; :120 after a reader grant the identity's _commits equal the owner's",
     "note": "The _version sub-select is not tested under ACP (no test pairs _version with an identity). Grant coverage runs on vera.rs, not Local DAC."
   },
   {
@@ -380,23 +380,23 @@
     "id": "go.acp.dac.p2p.remote-dac",
     "verdict": "partial",
     "rust_tests": [
-      "tools/integration-test/tests/legacy/p2p_iroh/acp/dac.rs::create_private_docs_different_nodes",
-      "tools/integration-test/tests/legacy/p2p_iroh/acp/dac.rs::update_private_docs_different_nodes",
-      "tools/integration-test/tests/legacy/p2p_iroh/acp/dac.rs::delete_private_docs_different_nodes",
-      "tools/integration-test/tests/verars/p2p_acp.rs::rust_verars_p2p_acp"
+      "tools/integration-test/tests/vera/iroh_dac.rs::create_private_docs_different_nodes",
+      "tools/integration-test/tests/vera/iroh_dac.rs::update_private_docs_different_nodes",
+      "tools/integration-test/tests/vera/iroh_dac.rs::delete_private_docs_different_nodes",
+      "tools/integration-test/tests/vera/p2p_acp.rs::rust_vera_p2p_acp"
     ],
-    "evidence": "verars/p2p_acp.rs:99-105 the replicated doc is readable by the owner on both nodes and hidden from anonymous and an ungranted identity; p2p_iroh/acp/dac.rs:584 anonymous cannot see the replicated update; deletion replication is polled at dac.rs:638-664",
-    "note": "Not asserted: a subscribing node whose identity lacks access receiving nothing, then syncing after its node identity gets `reader`. The p2p_iroh Vera tests return early with only an eprintln when verad is missing (dac.rs:79-81)."
+    "evidence": "vera/p2p_acp.rs:99-105 the replicated doc is readable by the owner on both nodes and hidden from anonymous and an ungranted identity; vera/iroh_dac.rs update_private_docs_different_nodes: anonymous cannot see the replicated update; deletion replication is polled in delete_private_docs_different_nodes",
+    "note": "Not asserted: a subscribing node whose identity lacks access receiving nothing, then syncing after its node identity gets `reader`."
   },
   {
     "id": "go.acp.dac.p2p.relationship-sync",
     "verdict": "partial",
     "rust_tests": [
-      "tools/integration-test/tests/verars/p2p_acp.rs::rust_verars_p2p_acp",
-      "tools/integration-test/tests/legacy/p2p_iroh/acp/dac.rs::replicator_with_doc_actor_relationship"
+      "tools/integration-test/tests/vera/p2p_acp.rs::rust_vera_p2p_acp",
+      "tools/integration-test/tests/vera/iroh_dac.rs::replicator_with_doc_actor_relationship"
     ],
-    "evidence": "verars/p2p_acp.rs:120 after a grant on node0 the grantee reads the doc and its commits on both nodes; p2p_iroh/acp/dac.rs:878-886 the grantee sees the doc on both nodes",
-    "note": "Not asserted: re-adding on the other node reporting existence (dac.rs:860 discards the result), deleting again reporting not found, and the multi-block non-creator case."
+    "evidence": "vera/p2p_acp.rs:120 after a grant on node0 the grantee reads the doc and its commits on both nodes; vera/iroh_dac.rs replicator_with_doc_actor_relationship: the grantee sees the doc on both nodes",
+    "note": "Not asserted: re-adding on the other node reporting existence (iroh_dac.rs replicator_with_doc_actor_relationship discards the result), deleting again reporting not found, and the multi-block non-creator case."
   },
   {
     "id": "go.acp.dac.p2p.local-dac",
@@ -420,7 +420,7 @@
     "verdict": "missing",
     "rust_tests": [],
     "evidence": "",
-    "note": "Searched for a non-creator updater editing a replicated doc on the receiving node, and for 'corrupted index'. p2p_iroh/acp/dac/strict_updates.rs covers the owner editing through a relay, not a non-creator grantee, and has no indexed field."
+    "note": "Searched for a non-creator updater editing a replicated doc on the receiving node, and for 'corrupted index'. vera/iroh_dac/strict_updates.rs covers the owner editing through a relay, not a non-creator grantee, and has no indexed field."
   },
   {
     "id": "go.acp.nac.lifecycle.start",
@@ -490,13 +490,19 @@
     "id": "go.acp.nac.gates.collection-schema",
     "verdict": "partial",
     "rust_tests": [
-      "crates/database/db/tests/access/enforcement.rs::create_collection_denied_for_non_owner",
-      "crates/database/db/tests/access/enforcement.rs::delete_collection_gated_by_nac",
-      "crates/database/db/tests/access/enforcement.rs::set_active_collection_version_denied_for_non_owner",
-      "tools/integration-test/tests/legacy/nac/core_operations.rs::nac_core_operations_gate_test"
+      "tools/integration-test/tests/legacy/nac/core_operations.rs::nac_core_operations_gate_test",
+      "tools/integration-test/tests/testo/acp/nac/delete_collection.rs::nac_gates_delete_collection_authorized_identity_allow_access",
+      "tools/integration-test/tests/testo/acp/nac/delete_collection.rs::nac_gates_delete_collection_no_identity_not_authorized_error",
+      "tools/integration-test/tests/testo/acp/nac/delete_collection.rs::nac_gates_delete_collection_wrong_identity_not_authorized_error",
+      "tools/integration-test/tests/testo/acp/nac/set_active_collection_version.rs::nac_gates_set_active_collection_version_authorized_identity_allow_access",
+      "tools/integration-test/tests/testo/acp/nac/set_active_collection_version.rs::nac_gates_set_active_collection_version_no_identity_not_authorized_error",
+      "tools/integration-test/tests/testo/acp/nac/set_active_collection_version.rs::nac_gates_set_active_collection_version_wrong_identity_not_authorized_error",
+      "tools/integration-test/tests/testo/acp/nac/truncate_collection.rs::nac_gates_truncate_collection_authorized_identity_allow_access",
+      "tools/integration-test/tests/testo/acp/nac/truncate_collection.rs::nac_gates_truncate_collection_no_identity_not_authorized_error",
+      "tools/integration-test/tests/testo/acp/nac/truncate_collection.rs::nac_gates_truncate_collection_wrong_identity_not_authorized_error"
     ],
-    "evidence": "enforcement.rs:174-177 create_collection denied with NotAuthorized for a non-owner and not persisted; delete_collection denied then allowed for the owner; set_active_collection_version denied; core_operations.rs:75-83 truncate denied for anonymous and outsider",
-    "note": "Collection patch is not gated in any test. Owner add/delete is checked only at db level. Rust tests assert only is_err for anonymous/outsider; the 'not authorized to perform operation. Permission: <perm>' text is never asserted. The HTTP NAC guard (crates/surfaces/http/src/nac_guard.rs:61,74) returns 'not authorized to perform operation' with no permission suffix. Rust maps truncate to truncate-collection, not Go's get-collection (crates/surfaces/http/tests/route_permissions.rs::all_registered_routes_return_expected_permission)."
+    "evidence": "testo acp/nac/delete_collection.rs and set_active_collection_version.rs (ported from Go's delete_collection_test.go and set_active_collection_version_test.go): with NAC started by identity 1, delete-collection and set-active-collection-version succeed for identity 1 and fail without an identity or for identity 2 with 'not authorized to perform operation. Permission: patch-collection', on the in-process, rust-http, cli and go-http clients; testo acp/nac/truncate_collection.rs: truncate fails for both with 'not authorized to perform operation. Permission: get-collection'; core_operations.rs:75-83 truncate denied for anonymous and outsider",
+    "note": "Go's add_collection_test.go::TestNAC_GatesAddCollection_AllowIfAuthorizedElseError and patch_collection_test.go are not ported, so no test tagged with this requirement checks add-collection or patch-collection denial; a non-owner's add-collection is refused with 'Permission: patch-collection' only under go.acp.nac.admin.collections (testo acp/nac/relation_admin/add_collection.rs). crates/surfaces/http/tests/route_permissions.rs registers the truncate route as CollectionTruncate, while the testo truncate scenarios see Go's get-collection text on the in-process, rust-http and cli clients."
   },
   {
     "id": "go.acp.nac.gates.collection-read",

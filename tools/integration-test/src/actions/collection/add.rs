@@ -21,6 +21,9 @@ pub struct AddCollection {
     pub expected_results: Value,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expected_error: Option<String>,
+    /// The stable code the refusal must carry; only a Rust node sends one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected_error_code: Option<String>,
     /// Index every field once the SDL's captures are resolved, for the
     /// secondary-index multiplier.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
@@ -46,6 +49,10 @@ impl Op for AddCollection {
         self.expected_error.as_deref()
     }
 
+    fn expected_error_code(&self) -> Option<&str> {
+        self.expected_error_code.as_deref()
+    }
+
     fn resolved(self) -> Self {
         match self.index_every_field {
             true => crate::multiplier::secondary_index::with_indexes(&self),
@@ -59,10 +66,10 @@ impl Op for AddCollection {
             .block_on(
                 state
                     .node_on(self.common.node())?
-                    .add_collection_as(&state.context_as(self.txn, identity), self.sdl.as_str()),
+                    .add_collection(&state.context_as(self.txn, identity), self.sdl.as_str()),
             )
             .map(|collections| json!({ "collections": collections }))
-            .map_err(|e| Failure::operation(e.to_string()))
+            .map_err(|e| Failure::operation(e.to_string()).with_code(e.code()))
     }
 }
 
@@ -110,7 +117,7 @@ impl HttpRun for AddCollection {
                 .http_as(action.common.node(), identity, |client| async move {
                     client.schema_add(&sdl, txn.as_deref()).await
                 })?
-                .map_err(|e| Failure::operation(e.to_string()))
+                .map_err(|e| Failure::operation(e.to_string()).with_code(e.code()))
                 .and_then(|output| action.printed(output))
         });
     }

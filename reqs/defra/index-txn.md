@@ -201,6 +201,13 @@ An index on `[Int]`, `[Float]`, `[Boolean]`, `[String]` and their nillable-eleme
 
 `_any` and `_all` filters on an indexed array (with `_eq`, `_in`, `_nin`) use the index and return the matching documents; `_none` returns correct results without using the index.
 
+# `defra.index.array.all-empty`: `_all` on an indexed array finds empty arrays
+
+- **Parents:** ["go.index.array.operators"]
+- **Scenarios:** ["index::all_empty_array::all_on_an_indexed_array_finds_an_empty_array", "index::all_empty_array::all_on_an_indexed_composite_array_finds_an_empty_array", "index::all_empty_array::all_with_a_range_on_a_descending_indexed_array_finds_an_empty_array", "index::all_empty_array::all_with_a_range_on_an_indexed_array_finds_an_empty_array"]
+
+`_all` over an empty array is true, so `_all` (with `_eq`, `_in` or a range) on an indexed scalar array returns the documents whose array is empty, exactly as the same query on an unindexed array does, while still using the index; a null array and an array holding only failing elements are not returned. This holds for an ascending or a descending index, and when the array is the first field of a composite index. Go misses these documents (its index writes no entry for an empty array), so these scenarios are listed as Go divergences.
+
 # `go.index.array.nil-elements`: Null elements in indexed arrays
 
 - **Parents:** ["go.index.array"]
@@ -319,3 +326,12 @@ A node that has an identity but does not sign (Go's `NodeIdentity` with `EnableS
 - **Scenarios:** ["node::identity_only::an_identity_only_node_checks_an_anonymous_write_in_its_transaction_under_nac"]
 
 With node access control enabled and owned by identity 1, an identity-only node gives no anonymous call the node's access, inside a transaction it began as outside one: adding a `Users` document without an identity in that transaction fails with `not authorized to perform operation. Permission: get-collection`, as the same write outside a transaction does, and nothing is written. A refused write in a transaction never answers with empty data. Identity 1 adds and reads documents as usual.
+
+# `defra.txn.outcome-query`: HTTP transaction outcome after a lost commit answer
+
+- **Parents:** ["go.txn"]
+- **Scenarios:** ["txn::outcome::an_outcome_is_visible_to_its_owner_and_malformed_ids_are_refused"]
+
+`GET /api/v0/tx/{id}` returns `{"outcome":"open"}` while its owner's transaction has no commit queued, `{"outcome":"committing"}` from the moment a commit is queued until its final result is known, `{"outcome":"committed"}` after a successful commit, and `{"outcome":"aborted"}` after a discard, an idle expiry, an abandon, or a failed commit. The request belongs to the identity that began the transaction; every other caller, including no identity, gets `{"outcome":"unknown"}` with HTTP 200, exactly as an ID that names nothing does. A malformed ID is refused with HTTP 400 and the error `invalid transaction id`. A final result is retained for at least the transaction idle age; after that it is `unknown`. Each worker retains at most 4096 outcomes: past that the oldest final results are dropped early and read `unknown`, while the outcome of a transaction that is still open or committing is never dropped. An ID carries a token for the server start that issued it, so an ID from an earlier start is `unknown` and never names a new transaction.
+
+The wire ID is Go-compatible numeric `u64`. For compatibility, a bare numeric route whose high bits are zero is still accepted; it names the reserved legacy start `0`, which no new transaction uses. Every new ID is below 2^53, so a client that reads it as a JSON number, as JavaScript does, gets the same ID back.

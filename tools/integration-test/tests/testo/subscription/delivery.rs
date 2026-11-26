@@ -1,7 +1,10 @@
 //! The update journal's delivery contract (`defra.events.delivery`): what a
 //! reader of `_documentUpdates` can rely on across a reopen, a P2P merge and
-//! a cursor it should not hold. Rust-only: Go has no `_documentUpdates`.
+//! a cursor it should not hold, and which arrivals a reader of
+//! `_documentArrivals` is shown (`defra.events.arrivals`). Rust-only: Go has
+//! neither journal.
 
+mod arrivals;
 mod beyond_head;
 mod merge_once;
 mod resume;

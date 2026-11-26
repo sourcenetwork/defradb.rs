@@ -75,7 +75,7 @@ pub enum ProviderError {
     #[error("config error: {0}")]
     Config(String),
 
-    /// Vera is temporarily unreachable (circuit breaker open or timeout).
+    /// Vera is temporarily unreachable (a timeout or a failed connection).
     /// All access decisions must fail-closed when this is returned.
     #[error("Vera unavailable: {0}")]
     Unavailable(String),
@@ -159,8 +159,8 @@ pub trait VeraProvider: MaybeSendSync {
     }
 
     /// Whether a document's delete archives its object on this provider as
-    /// an owed change staged in the delete's transaction, refused before
-    /// commit unless the caller owns the object
+    /// an owed change staged in the delete's transaction and made as the
+    /// object's owner, whoever deletes
     /// (`acp::TransactionOutbox::stage_archive`). Such a provider archives
     /// nothing after the commit ([`Self::archive_object_on_document_delete`]
     /// is `false` for it).

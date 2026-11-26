@@ -19,10 +19,13 @@ use defra_core::block::{
 };
 use defra_core::merge::{BlockMetadata, MergeBlock, MergeHandler, MergeOutcome};
 use document::NormalValue;
-use schema::{CollectionVersion, FieldDescription, FieldKind};
 use storage::RegolithStore;
 
-const COLLECTION_ID: &str = "col-ledger";
+fn collection_id() -> String {
+    crate::common::schema::parsed(LEDGER_SDL).collection_id
+}
+
+const LEDGER_SDL: &str = "type Ledger @branchable { body: String }";
 
 type Handler = DbMergeHandler<RegolithStore, DefraBlockstore<RegolithStore>>;
 
@@ -33,25 +36,9 @@ async fn node() -> (
 ) {
     let store = Arc::new(RegolithStore::in_memory().unwrap());
     let db = Arc::new(DB::from_arc(store.clone()).unwrap());
-    db.create_collection(
-        CollectionVersion::new(
-            "Ledger",
-            COLLECTION_ID,
-            COLLECTION_ID,
-            vec![
-                FieldDescription::new(
-                    "1",
-                    "_docID",
-                    FieldKind::doc_id(),
-                    schema::CType::LwwRegister,
-                ),
-                FieldDescription::new("2", "body", FieldKind::string(), schema::CType::LwwRegister),
-            ],
-        )
-        .as_branchable(),
-    )
-    .await
-    .unwrap();
+    db.add_collection(&defra_core::RequestContext::ambient(), LEDGER_SDL)
+        .await
+        .unwrap();
     let blockstore = Arc::new(DefraBlockstore::new(store, false));
     let handler = DbMergeHandler::new(db.clone(), blockstore.clone());
     (db, handler, blockstore)
@@ -63,7 +50,7 @@ fn document(value: &str) -> (Cid, Vec<(Cid, Vec<u8>)>) {
         CrdtDelta::Lww(LwwDeltaPayload {
             field_name: "body".to_string(),
             priority: 1,
-            collection_version_id: COLLECTION_ID.to_string(),
+            collection_version_id: crate::common::schema::parsed(LEDGER_SDL).version_id,
             data: db::block::builder::encode_value_as_cbor(&NormalValue::String(value.to_string()))
                 .unwrap(),
         }),
@@ -73,7 +60,7 @@ fn document(value: &str) -> (Cid, Vec<(Cid, Vec<u8>)>) {
     let field_cid = field.generate_cid().unwrap();
     let composite = Block::new(
         CrdtDelta::Composite(CompositeDeltaPayload {
-            collection_version_id: COLLECTION_ID.to_string(),
+            collection_version_id: crate::common::schema::parsed(LEDGER_SDL).version_id,
             priority: 1,
             status: 1,
         }),
@@ -99,7 +86,7 @@ fn collection_block(documents: &[Cid]) -> (Cid, Vec<u8>) {
 fn collection_block_over(documents: &[Cid], heads: &[Cid]) -> (Cid, Vec<u8>) {
     let block = Block::new(
         CrdtDelta::Collection(CollectionDeltaPayload {
-            collection_version_id: COLLECTION_ID.to_string(),
+            collection_version_id: crate::common::schema::parsed(LEDGER_SDL).version_id,
             priority: if heads.is_empty() { 1 } else { 2 },
         }),
         heads.to_vec(),
@@ -117,7 +104,7 @@ async fn merge(handler: &Handler, cid: &Cid, bytes: &[u8]) -> MergeOutcome {
         .handle_block(
             cid,
             bytes,
-            BlockMetadata::normal("", COLLECTION_ID, "peer-did", Some("peer"), false),
+            BlockMetadata::normal("", &collection_id(), "peer-did", Some("peer"), false),
         )
         .await
         .unwrap()
@@ -345,7 +332,7 @@ async fn merge_batch(handler: &Handler, cid: &Cid, bytes: &[u8]) -> MergeOutcome
             cid: *cid,
             block_data: bytes.to_vec().into(),
             doc_id: String::new(),
-            collection_id: COLLECTION_ID.to_string(),
+            collection_id: collection_id(),
             creator: "peer-did".to_string(),
             sender_peer: Some("peer".to_string()),
             is_explicit_replicator: false,

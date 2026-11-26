@@ -1,8 +1,14 @@
 //! The view's document lookups read what they need, not the collection.
 
-use schema::{IndexKind, IndexedFieldDescription};
-
 use super::*;
+
+const LOOKUP_GRANTS_SDL: &str =
+    "type Grants { writer: String @immutable twin: String @immutable holder: String }";
+
+/// `Grants` as the lookup node defines it.
+fn lookup_grants() -> Target {
+    target(LOOKUP_GRANTS_SDL)
+}
 
 impl Node {
     /// Overwrite a document's stored blob so that any read of it fails, which
@@ -36,9 +42,9 @@ fn immutable_fields_reads_one_document_not_the_collection() {
         });
         let node = Node::with_immutable_grants(validator.clone()).await;
         let writer = signer();
-        let grant = genesis("col-grants", "writer", &writer.did, &writer);
+        let grant = genesis(&immutable_grants(), "writer", &writer.did, &writer);
         assert_eq!(grant.merge(&node, &writer.did).await, MergeOutcome::Merged);
-        let bystander = genesis("col-grants", "writer", "someone else", &writer);
+        let bystander = genesis(&immutable_grants(), "writer", "someone else", &writer);
         assert_eq!(
             bystander.merge(&node, &writer.did).await,
             MergeOutcome::Merged
@@ -50,7 +56,7 @@ fn immutable_fields_reads_one_document_not_the_collection() {
             .is_err());
 
         validator.doc_id.store(grant.doc_id.clone());
-        let note = genesis("col-notes", "grant", "anything", &writer);
+        let note = genesis(&notes(), "grant", "anything", &writer);
         assert_eq!(note.merge(&node, &writer.did).await, MergeOutcome::Merged);
         assert_eq!(
             validator.read.load_clone().unwrap(),
@@ -90,7 +96,7 @@ impl Probe {
             .store(values.iter().map(|value| value.to_string()).collect());
         self.found.store(Vec::new());
         let writer = signer();
-        let note = genesis("col-notes", "grant", &values.join(","), &writer);
+        let note = genesis(&notes(), "grant", &values.join(","), &writer);
         assert_eq!(note.merge(node, &writer.did).await, MergeOutcome::Merged);
         self.found.load_clone()
     }
@@ -143,64 +149,19 @@ impl Node {
                 .await
                 .unwrap(),
         );
-        let immutable = |id: &str, name: &str| {
-            let mut field =
-                FieldDescription::new(id, name, FieldKind::string(), schema::CType::LwwRegister);
-            field.immutable = true;
-            field
-        };
-        db.create_collection(CollectionVersion::new(
-            "Grants",
-            "col-grants",
-            "col-grants",
-            vec![
-                FieldDescription::new(
-                    "1",
-                    "_docID",
-                    FieldKind::doc_id(),
-                    schema::CType::LwwRegister,
-                ),
-                immutable("2", "writer"),
-                immutable("3", "twin"),
-                FieldDescription::new(
-                    "4",
-                    "holder",
-                    FieldKind::string(),
-                    schema::CType::LwwRegister,
-                ),
-            ],
-        ))
-        .await
-        .unwrap();
-        db.create_collection(CollectionVersion::new(
-            "Notes",
-            "col-notes",
-            "col-notes",
-            vec![
-                FieldDescription::new(
-                    "1",
-                    "_docID",
-                    FieldKind::doc_id(),
-                    schema::CType::LwwRegister,
-                ),
-                FieldDescription::new(
-                    "2",
-                    "grant",
-                    FieldKind::string(),
-                    schema::CType::LwwRegister,
-                ),
-            ],
-        ))
-        .await
-        .unwrap();
+        for sdl in [LOOKUP_GRANTS_SDL, NOTES_SDL] {
+            db.add_collection(&defra_core::RequestContext::ambient(), sdl)
+                .await
+                .unwrap();
+        }
         db.create_index(
             "Grants",
             None,
-            vec![IndexedFieldDescription {
+            vec![schema::IndexedFieldDescription {
                 name: "writer".to_string(),
                 descending: false,
             }],
-            IndexKind::default(),
+            schema::IndexKind::default(),
         )
         .await
         .unwrap();
@@ -213,7 +174,7 @@ impl Node {
 
 fn grant(value: &str, holder: &str, by: &Signer) -> Genesis {
     authored_fields(
-        "col-grants",
+        &lookup_grants(),
         None,
         &[("writer", value), ("twin", value), ("holder", holder)],
         by,
@@ -387,7 +348,7 @@ impl JoinedProbe {
         self.values
             .store(values.iter().map(|value| value.to_string()).collect());
         let writer = signer();
-        let note = genesis("col-notes", "grant", &values.join(","), &writer);
+        let note = genesis(&notes(), "grant", &values.join(","), &writer);
         assert_eq!(note.merge(node, &writer.did).await, MergeOutcome::Merged);
         self.found.load_clone()
     }

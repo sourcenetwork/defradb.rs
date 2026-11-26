@@ -13,11 +13,6 @@ use document::NormalValue;
 use query::DocMutator;
 use query::QueryExecutor;
 use query::QueryRequest;
-use schema::CollectionVersion;
-use schema::FieldDescription;
-use schema::FieldKind;
-use schema::IndexDescription;
-use schema::IndexedFieldDescription;
 use std::sync::Arc;
 use storage::RegolithStore;
 
@@ -27,67 +22,19 @@ const STAMPS: [&str; 3] = [
     "2026-09-30T12:00:00Z",
 ];
 
-fn index(id: u32, field: &str) -> IndexDescription {
-    IndexDescription {
-        name: format!("Stamps_{field}_ASC"),
-        id,
-        fields: vec![IndexedFieldDescription {
-            name: field.to_string(),
-            descending: false,
-        }],
-        unique: false,
-        kind: None,
-        auto_generated: false,
-    }
-}
-
 async fn seeded_db() -> Arc<DB<RegolithStore>> {
-    let mut version = CollectionVersion::new(
-        "Stamps",
-        "stamps-v1",
-        "stamps-collection",
-        vec![
-            FieldDescription::new(
-                "1",
-                "_docID",
-                FieldKind::doc_id(),
-                schema::CType::LwwRegister,
-            ),
-            FieldDescription::new(
-                "2",
-                "owner",
-                FieldKind::string(),
-                schema::CType::LwwRegister,
-            ),
-            FieldDescription::new(
-                "3",
-                "created_at",
-                FieldKind::string(),
-                schema::CType::LwwRegister,
-            ),
-            FieldDescription::new(
-                "4",
-                "observed_at",
-                FieldKind::datetime(),
-                schema::CType::LwwRegister,
-            ),
-            FieldDescription::new(
-                "5",
-                "seen_at",
-                FieldKind::datetime_array(),
-                schema::CType::LwwRegister,
-            ),
-        ],
-    );
-    version.is_materialized = true;
-    version.indexes = vec![
-        index(1, "owner"),
-        index(2, "created_at"),
-        index(3, "observed_at"),
-        index(4, "seen_at"),
-    ];
+    let sdl = r#"type Stamps {
+        owner: String @index(name: "Stamps_owner_ASC")
+        created_at: String @index(name: "Stamps_created_at_ASC")
+        observed_at: DateTime @index(name: "Stamps_observed_at_ASC")
+        seen_at: [DateTime!] @index(name: "Stamps_seen_at_ASC")
+    }"#;
     let db = Arc::new(DB::new(RegolithStore::in_memory().unwrap()).unwrap());
-    db.create_collection(version.clone()).await.unwrap();
+    let version = db
+        .add_collection(&defra_core::RequestContext::ambient(), sdl)
+        .await
+        .unwrap()
+        .remove(0);
     let docs = STAMPS
         .iter()
         .map(|stamp| {
