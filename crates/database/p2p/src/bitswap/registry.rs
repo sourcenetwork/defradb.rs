@@ -78,15 +78,20 @@ impl ReplicatorRegistry {
         });
     }
 
-    /// Replace the full metadata record for a peer. A record with no
-    /// collections is kept and listed; it does not remove the peer.
+    /// Replace a peer's metadata while preserving its existing status and
+    /// status-change time. An empty collection list does not remove the peer.
     pub fn set_replicator_info(&self, info: ReplicatorInfo) {
         if info.peer_id_str().is_empty() {
             return;
         }
         self.replicators.rcu(|current| {
+            let mut info = info.clone();
+            if let Some(existing) = current.get(info.peer_id_str()) {
+                info.status = existing.status;
+                info.last_status_change = existing.last_status_change;
+            }
             let mut replicators = current.clone();
-            store_info(&mut replicators, info.clone());
+            store_info(&mut replicators, info);
             replicators
         });
     }
@@ -231,6 +236,25 @@ mod tests {
     fn random_peer_id() -> String {
         static NEXT_PEER_ID: AtomicU64 = AtomicU64::new(0);
         format!("test-peer-{}", NEXT_PEER_ID.fetch_add(1, Ordering::Relaxed))
+    }
+
+    #[test]
+    fn replacing_replicator_keeps_status_timestamp() {
+        let registry = ReplicatorRegistry::new();
+        let peer = random_peer_id();
+        let mut first = ReplicatorInfo::from_raw(peer.clone(), vec!["users".into()], vec![]);
+        first.status = crate::replicator::ReplicatorStatus::Inactive;
+        first.last_status_change = chrono::DateTime::from_timestamp(1_700_000_000, 0).unwrap();
+        registry.set_replicator_info(first.clone());
+
+        let mut update = ReplicatorInfo::from_raw(peer.clone(), vec!["posts".into()], vec![]);
+        update.last_status_change = chrono::DateTime::from_timestamp(1_800_000_000, 0).unwrap();
+        registry.set_replicator_info(update);
+
+        let stored = registry.get_replicator_info(&peer).unwrap();
+        assert_eq!(stored.collections, ["posts"]);
+        assert_eq!(stored.last_status_change, first.last_status_change);
+        assert_eq!(stored.status, first.status);
     }
 
     #[test]

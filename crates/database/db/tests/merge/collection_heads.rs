@@ -5,33 +5,22 @@
 //! its collection heads — otherwise every sync response is empty and a peer
 //! can never pull the collection.
 
+use crate::common::schema::parsed;
 use db::merge::head_provider::DbHeadProvider;
 use db::AutoCommitMutator;
 use db::DB;
 use document::Document;
 use p2p::sync::DocumentHeadProvider;
 use query::mutator::DocMutator;
-use schema::{CollectionVersion, FieldDescription, FieldKind};
+use schema::CollectionVersion;
 use std::sync::Arc;
 use storage::corekv::{IterOptions, Store};
 use storage::RegolithStore;
 
+const BRANCHABLE_SDL: &str = "type Transcript @branchable { body: String }";
+
 fn branchable_schema() -> CollectionVersion {
-    CollectionVersion::new(
-        "Transcript",
-        "v1",
-        "col-transcript",
-        vec![
-            FieldDescription::new(
-                "1",
-                "_docID",
-                FieldKind::doc_id(),
-                schema::CType::LwwRegister,
-            ),
-            FieldDescription::new("2", "body", FieldKind::string(), schema::CType::LwwRegister),
-        ],
-    )
-    .as_branchable()
+    parsed(BRANCHABLE_SDL)
 }
 
 /// Every raw store key that textually contains a collection-head segment, so
@@ -54,7 +43,9 @@ fn branchable_collection_writes_expose_collection_heads() {
     workers::block_on(async {
         let store = Arc::new(RegolithStore::in_memory().unwrap());
         let db = Arc::new(DB::from_arc(store.clone()).unwrap());
-        db.create_collection(branchable_schema()).await.unwrap();
+        db.add_collection(&defra_core::RequestContext::ambient(), BRANCHABLE_SDL)
+            .await
+            .unwrap();
 
         let mutator = AutoCommitMutator::new(db.clone());
         let transcript = db
@@ -69,7 +60,7 @@ fn branchable_collection_writes_expose_collection_heads() {
         let raw = raw_collection_head_keys(&store).await;
         let provider = DbHeadProvider::new(db);
         let heads = provider
-            .get_collection_heads("col-transcript")
+            .get_collection_heads(&branchable_schema().collection_id)
             .await
             .unwrap();
         assert!(

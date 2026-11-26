@@ -15,9 +15,12 @@ fn a_node_persists_collections_at_boundary_short_ids() {
                 .await
                 .expect("build node");
             for number in 1..=118 {
-                node.add_collection(&format!("type Tally{number} {{ count: Int @index }}"))
-                    .await
-                    .expect("create boundary collection");
+                node.add_collection(
+                    &defra_core::RequestContext::ambient(),
+                    &format!("type Tally{number} {{ count: Int @index }}"),
+                )
+                .await
+                .expect("create boundary collection");
             }
             node.execute("mutation { add_Tally100(input: {count: 100}) { _docID } }")
                 .await

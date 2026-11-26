@@ -27,12 +27,26 @@ use defra_core::merge::MergeOutcome;
 use document::Document;
 use document::NormalValue;
 use identity::Did;
-use schema::CollectionVersion;
-use schema::FieldDescription;
-use schema::FieldKind;
-use schema::PolicyDescription;
 use std::sync::Arc;
 use storage::RegolithStore;
+
+const USERS_SDL: &str = r#"type Users @policy(id: "policy-1", resource: "users") { name: String }"#;
+
+fn users_collection() -> schema::CollectionVersion {
+    crate::common::schema::parsed(USERS_SDL)
+}
+
+fn users_version_id() -> &'static str {
+    static ID: regolith::sync::Lazy<String> =
+        regolith::sync::Lazy::new(|| users_collection().version_id);
+    &ID
+}
+
+fn users_collection_id() -> &'static str {
+    static ID: regolith::sync::Lazy<String> =
+        regolith::sync::Lazy::new(|| users_collection().collection_id);
+    &ID
+}
 
 type Blocks = DefraBlockstore<RegolithStore>;
 
@@ -60,30 +74,9 @@ impl Fixture {
     async fn new(owner: &Signer, strict: bool) -> Self {
         let store = Arc::new(RegolithStore::in_memory().unwrap());
         let db = Arc::new(DB::from_arc(store.clone()).unwrap());
-        db.create_collection(
-            CollectionVersion::new(
-                "Users",
-                "v1",
-                "col-users",
-                vec![
-                    FieldDescription::new(
-                        "1",
-                        "_docID",
-                        FieldKind::doc_id(),
-                        schema::CType::LwwRegister,
-                    ),
-                    FieldDescription::new(
-                        "2",
-                        "name",
-                        FieldKind::string(),
-                        schema::CType::LwwRegister,
-                    ),
-                ],
-            )
-            .with_policy(PolicyDescription::new("policy-1", "users")),
-        )
-        .await
-        .unwrap();
+        db.add_collection(&defra_core::RequestContext::ambient(), USERS_SDL)
+            .await
+            .unwrap();
         let users = db.get_collection("Users").unwrap().unwrap().schema_arc();
         let blockstore = Arc::new(DefraBlockstore::new(store, false));
         let acp = Arc::new(LocalDocumentACP::new(Arc::new(MemoryAcpStore::new())));
@@ -96,7 +89,7 @@ impl Fixture {
         let genesis = db::block::builder::build_blocks_from_document(
             &storage::Crdts::default(),
             &doc,
-            &crate::common::schema::version("v1"),
+            &users_collection(),
             &blockstore,
         )
         .await
@@ -115,7 +108,13 @@ impl Fixture {
             .handle_block(
                 &genesis.cid,
                 &genesis.block,
-                BlockMetadata::normal(&genesis.doc_id, "col-users", &owner.did, None, false),
+                BlockMetadata::normal(
+                    &genesis.doc_id,
+                    users_collection_id(),
+                    &owner.did,
+                    None,
+                    false,
+                ),
             )
             .await
             .unwrap();
@@ -144,7 +143,7 @@ impl Fixture {
     ) -> (Cid, Vec<u8>) {
         let mut block = Block::new(
             CrdtDelta::Composite(CompositeDeltaPayload {
-                collection_version_id: "v1".to_string(),
+                collection_version_id: users_version_id().to_string(),
                 priority,
                 status,
             }),
@@ -181,7 +180,13 @@ impl Fixture {
             .handle_block(
                 cid,
                 bytes,
-                BlockMetadata::normal(&self.doc_id, "col-users", creator, Some("peer"), explicit),
+                BlockMetadata::normal(
+                    &self.doc_id,
+                    users_collection_id(),
+                    creator,
+                    Some("peer"),
+                    explicit,
+                ),
             )
             .await
             .unwrap()
@@ -259,7 +264,7 @@ fn composite_linked_from_collection_block_is_judged_by_its_own_signer() {
 
             let (hijack, _) = fixture.update(vec![fixture.genesis], 2, &attacker).await;
             let payload = CollectionDeltaPayload {
-                collection_version_id: "v1".to_string(),
+                collection_version_id: users_version_id().to_string(),
                 priority: 1,
             };
             let carrier = Block::new(
@@ -270,7 +275,7 @@ fn composite_linked_from_collection_block_is_judged_by_its_own_signer() {
             let carrier_cid = carrier.generate_cid().unwrap();
             let mut metadata = BlockMetadata::normal(
                 &fixture.doc_id,
-                "col-users",
+                users_collection_id(),
                 &owner.did,
                 Some("peer"),
                 false,
@@ -306,7 +311,7 @@ fn batch_ancestor_is_judged_by_its_own_signer() {
                     cid,
                     block_data: bytes::Bytes::from(bytes),
                     doc_id: fixture.doc_id.clone(),
-                    collection_id: "col-users".to_string(),
+                    collection_id: users_collection_id().to_string(),
                     creator: owner.did.clone(),
                     sender_peer: Some("peer".to_string()),
                     is_explicit_replicator: false,
@@ -333,7 +338,7 @@ fn strict_unsigned_update_and_delete_are_refused() {
             let fixture = Fixture::new(&owner, true).await;
             let block = Block::new(
                 CrdtDelta::Composite(CompositeDeltaPayload {
-                    collection_version_id: "v1".into(),
+                    collection_version_id: users_version_id().to_string(),
                     priority: 2,
                     status,
                 }),

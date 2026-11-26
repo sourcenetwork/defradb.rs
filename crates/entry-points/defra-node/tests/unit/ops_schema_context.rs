@@ -11,7 +11,7 @@ fn schema_operations_use_the_supplied_actor() {
             .unwrap();
         let owner = RequestContext::default().with_identity(Some("did:key:owner".into()));
         let actor = RequestContext::default().with_identity(Some("did:key:actor".into()));
-        node.add_collection_as(&owner, "type Item { name: String }")
+        node.add_collection(&owner, "type Item { name: String }")
             .await
             .unwrap();
         assert!(node

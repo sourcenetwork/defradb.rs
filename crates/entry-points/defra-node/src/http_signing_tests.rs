@@ -19,9 +19,12 @@ fn http_write_signs_as_a_generated_node_identity() {
                 .build()
                 .await
                 .unwrap();
-            node.add_collection("type User { name: String }")
-                .await
-                .unwrap();
+            node.add_collection(
+                &defra_core::RequestContext::ambient(),
+                "type User { name: String }",
+            )
+            .await
+            .unwrap();
             let client = net::http::Client::builder(edge::testing::edge())
                 .no_proxy()
                 .timeout(Duration::from_secs(5))
@@ -61,7 +64,7 @@ fn http_client_signs_the_complete_agent_create_graph() {
         let node = Node::builder().enable_signing()
             .with_http(HttpConfig::with_listener(listener).unwrap())
             .build().await.unwrap();
-        node.add_collection("type Agent { agent_did: String @immutable, creation_nonce: String @immutable, node_did: String @immutable, display_name: String, tags: [String!] }").await.unwrap();
+        node.add_collection(&defra_core::RequestContext::ambient(), "type Agent { agent_did: String @immutable, creation_nonce: String @immutable, node_did: String @immutable, display_name: String, tags: [String!] }").await.unwrap();
         let schema = node.get_collection("Agent").unwrap().unwrap();
         let private = crypto::generate_ed25519().unwrap();
         let public = private.public_key();
@@ -222,13 +225,18 @@ resources:
             let node_did = node.node_identity_did().unwrap().to_owned();
             let context = defra_core::RequestContext::default().with_identity(Some(owner.clone()));
             let policy = node.add_dac_policy_as(&context, POLICY).await.unwrap();
-            node.add_collection(&format!(
+            node.add_collection(
+                &context,
+                &format!(
                 "type Node @policy(id: \"{policy}\", resource: \"nodes\") {{ node_did: String }}"
-            ))
+            ),
+            )
             .await
             .unwrap();
-            node.add_collection(&format!(
-                r#"type Agent @policy(id: "{policy}", resource: "agents") {{
+            node.add_collection(
+                &context,
+                &format!(
+                    r#"type Agent @policy(id: "{policy}", resource: "agents") {{
             agent_did: String @index(unique: true) @immutable
             creation_nonce: String @immutable
             node_did: String @index @immutable
@@ -241,7 +249,8 @@ resources:
             created_at: String
             updated_at: DateTime @index(direction: DESC)
         }}"#
-            ))
+                ),
+            )
             .await
             .unwrap();
             let parent = node
@@ -393,7 +402,7 @@ fn http_client_signs_a_single_document_update() {
         let node = Node::builder().enable_signing()
             .with_http(HttpConfig::with_listener(listener).unwrap())
             .build().await.unwrap();
-        node.add_collection("type Settings { name: String, tags: [String!], host: JSON, extra: String }").await.unwrap();
+        node.add_collection(&defra_core::RequestContext::ambient(), "type Settings { name: String, tags: [String!], host: JSON, extra: String }").await.unwrap();
         let schema = node.get_collection("Settings").unwrap().unwrap();
         let private = crypto::generate_ed25519().unwrap();
         let public = private.public_key();
@@ -606,7 +615,7 @@ resources:
             .with_http(HttpConfig::with_listener(listener).unwrap()).build().await.unwrap();
         let owner_context = defra_core::RequestContext::default().with_identity(Some(owner_did.clone()));
         let policy = node.add_dac_policy_as(&owner_context, POLICY).await.unwrap();
-        node.add_collection(&format!("type ProtectedSettings @policy(id: \"{policy}\", resource: \"settings\") {{ name: String }}")).await.unwrap();
+        node.add_collection(&owner_context, &format!("type ProtectedSettings @policy(id: \"{policy}\", resource: \"settings\") {{ name: String }}")).await.unwrap();
         let schema = node.get_collection("ProtectedSettings").unwrap().unwrap();
         for permission in [acp::nac::NodePermission::DocumentRead, acp::nac::NodePermission::DocumentUpdate, acp::nac::NodePermission::CollectionGet] {
             node.add_nac_actor_relationship_as(&owner_context, permission.as_str(), &editor_did).await.unwrap();
@@ -747,7 +756,7 @@ resources:
             .with_http(HttpConfig::with_listener(listener).unwrap()).build().await.unwrap();
         let context = defra_core::RequestContext::default().with_identity(Some(owner_did.clone()));
         let policy = node.add_dac_policy_as(&context, POLICY).await.unwrap();
-        node.add_collection(&format!("type DeleteRecord @policy(id: \"{policy}\", resource: \"records\") {{ name: String }}")).await.unwrap();
+        node.add_collection(&context, &format!("type DeleteRecord @policy(id: \"{policy}\", resource: \"records\") {{ name: String }}")).await.unwrap();
         let schema = node.get_collection("DeleteRecord").unwrap().unwrap();
         for permission in [acp::nac::NodePermission::DocumentRead, acp::nac::NodePermission::DocumentDelete, acp::nac::NodePermission::CollectionGet] {
             node.add_nac_actor_relationship_as(&context, permission.as_str(), &other_did).await.unwrap();
@@ -853,7 +862,7 @@ fn http_client_signs_large_document_in_an_explicit_transaction() {
         let node = Node::builder().enable_signing()
             .with_http(HttpConfig::with_listener(listener).unwrap())
             .build().await.unwrap();
-        node.add_collection("type LargeRecord { contents: String }").await.unwrap();
+        node.add_collection(&defra_core::RequestContext::ambient(), "type LargeRecord { contents: String }").await.unwrap();
         let schema = node.get_collection("LargeRecord").unwrap().unwrap();
         let private = crypto::generate_ed25519().unwrap();
         let public = private.public_key();
@@ -914,7 +923,7 @@ fn incomplete_fragmented_signing_request_can_be_discarded_without_a_write() {
         let address = listener.local_addr().unwrap();
         let node = Node::builder().enable_signing()
             .with_http(HttpConfig::with_listener(listener).unwrap()).build().await.unwrap();
-        node.add_collection("type LargeRecord { contents: String }").await.unwrap();
+        node.add_collection(&defra_core::RequestContext::ambient(), "type LargeRecord { contents: String }").await.unwrap();
         let private = crypto::generate_ed25519().unwrap();
         let public_key_hex = hex::encode(private.public_key().raw());
         let identity = identity::RawIdentity::from_private_key(private).unwrap();

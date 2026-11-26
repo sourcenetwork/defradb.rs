@@ -88,7 +88,9 @@ impl<'a> LiveDocs<'a> {
         let migrated = migrate_to_active(&doc, self.collection, &history, lens_store).await;
         self.history = Some(history);
         Ok(Some(match migrated.map_err(other)? {
-            ToActive::Migrated(migrated) => migrated,
+            ToActive::Migrated {
+                document: migrated, ..
+            } => migrated,
             ToActive::Current | ToActive::Identity => doc,
         }))
     }

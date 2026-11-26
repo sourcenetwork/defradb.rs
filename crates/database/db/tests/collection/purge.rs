@@ -1,6 +1,7 @@
 //! Purge by DocID (`defra.purge`): what the purge leaves in the block
 //! store and the ownership records, which the scenario suite cannot see.
 
+use crate::common::schema::parsed;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
@@ -11,7 +12,7 @@ use document::{DocID, Document, NormalValue};
 use query::txn::TransactionRegistry;
 use query::DocMutator;
 use rapidhash::RapidHashSet;
-use schema::{CollectionVersion, FieldDescription, FieldKind};
+use schema::CollectionVersion;
 use storage::corekv::{
     private::Sealed, Result as KvResult, RetryAttempt, RetryAttemptError, RetryAttemptFn,
     RetryAttemptFuture, RetryAttemptValue, RetryOptions, RetryTxn, Store, Txn,
@@ -20,22 +21,10 @@ use storage::keys::doc_id_index::BlockCIDToDocIDKey;
 use storage::namespace::Namespace;
 use storage::RegolithStore;
 
+const USERS_SDL: &str = "type Users { name: String age: Int }";
+
 fn users_schema() -> CollectionVersion {
-    CollectionVersion::new(
-        "Users",
-        "users-v1",
-        "users-collection",
-        vec![
-            FieldDescription::new(
-                "1",
-                "_docID",
-                FieldKind::doc_id(),
-                schema::CType::LwwRegister,
-            ),
-            FieldDescription::new("2", "name", FieldKind::string(), schema::CType::LwwRegister),
-            FieldDescription::new("3", "age", FieldKind::int(), schema::CType::LwwRegister),
-        ],
-    )
+    parsed(USERS_SDL)
 }
 
 async fn create<S>(db: &Arc<DB<S>>, name: &str, age: i64) -> DocID
@@ -128,7 +117,9 @@ where
 
 async fn users() -> Arc<DB<RegolithStore>> {
     let db = Arc::new(DB::new(RegolithStore::in_memory().unwrap()).unwrap());
-    db.create_collection(users_schema()).await.unwrap();
+    db.add_collection(&defra_core::RequestContext::ambient(), USERS_SDL)
+        .await
+        .unwrap();
     db
 }
 
@@ -358,7 +349,9 @@ async fn competing() -> (Arc<DB<CompetingStore>>, CompetingStore) {
         attempts: Arc::clone(&control.attempts),
     };
     let db = Arc::new(DB::new(store).unwrap());
-    db.create_collection(users_schema()).await.unwrap();
+    db.add_collection(&defra_core::RequestContext::ambient(), USERS_SDL)
+        .await
+        .unwrap();
     (db, control)
 }
 
@@ -443,9 +436,12 @@ fn a_block_a_merge_adopts_during_the_purge_is_kept() {
 
 async fn branchable_users() -> Arc<DB<RegolithStore>> {
     let db = Arc::new(DB::new(RegolithStore::in_memory().unwrap()).unwrap());
-    db.create_collection(users_schema().as_branchable())
-        .await
-        .unwrap();
+    db.add_collection(
+        &defra_core::RequestContext::ambient(),
+        "type Users @branchable { name: String age: Int }",
+    )
+    .await
+    .unwrap();
     db
 }
 

@@ -33,8 +33,14 @@ async fn assert_replicator_acknowledges_current_heads(schema: &str, collection: 
         .build()
         .await
         .expect("build node1");
-    node0.add_collection(schema).await.expect("schema on node0");
-    node1.add_collection(schema).await.expect("schema on node1");
+    node0
+        .add_collection(&defra_core::RequestContext::ambient(), schema)
+        .await
+        .expect("schema on node0");
+    node1
+        .add_collection(&defra_core::RequestContext::ambient(), schema)
+        .await
+        .expect("schema on node1");
     install_one_way_replicator(&node0, &node1, &[collection]).await;
     let peer1 = node1
         .p2p()
@@ -127,8 +133,8 @@ fn filtered_replicator_acknowledges_branchable_document_heads() {
                 .build()
                 .await
                 .expect("build node1");
-            node0.add_collection(schema).await.expect("schema on node0");
-            node1.add_collection(schema).await.expect("schema on node1");
+            node0.add_collection(&defra_core::RequestContext::ambient(), schema).await.expect("schema on node0");
+            node1.add_collection(&defra_core::RequestContext::ambient(), schema).await.expect("schema on node1");
             install_filtered_one_way_replicator(
                 &node0,
                 &node1,
@@ -208,6 +214,7 @@ fn explicit_replay_acknowledges_only_selected_document_heads() {
                 .unwrap();
             for node in [&node0, &node1] {
                 node.add_collection(
+                    &defra_core::RequestContext::ambient(),
                     "type Control { value: String } type Note @branchable { body: String }",
                 )
                 .await

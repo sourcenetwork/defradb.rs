@@ -11,6 +11,7 @@ use super::conditions::{
     can_be_ordered_by_filtered_index, can_use_index, extract_field_conditions,
     filtered_index_order_prefix, should_fallback_to_full_scan,
 };
+use super::empty_array::with_empty_arrays;
 use super::json_empty_array::with_json_empty_arrays;
 use super::types::{ConditionValue, IndexScanParams, IndexScanType, ScanValueFilter};
 use super::values::{
@@ -483,12 +484,14 @@ pub fn filter_to_index_scan(
     } else {
         return None;
     };
-
-    // Only pass limit/offset if the index provides ordering
-    // (otherwise the limit needs to be applied after sorting)
-    let index_provides_ordering = order_by
-        .map(|o| can_be_ordered_by_filtered_index(o, index, filter).0)
-        .unwrap_or(false);
+    let scan_type = with_empty_arrays(
+        scan_type,
+        &first_field_conditions,
+        first_field,
+        first_field_kind,
+        first_field_descending,
+        is_composite,
+    );
     let scan_type = if first_field_is_json {
         with_json_empty_arrays(
             scan_type,
@@ -499,6 +502,12 @@ pub fn filter_to_index_scan(
     } else {
         scan_type
     };
+
+    // Only pass limit/offset if the index provides ordering
+    // (otherwise the limit needs to be applied after sorting)
+    let index_provides_ordering = order_by
+        .map(|o| can_be_ordered_by_filtered_index(o, index, filter).0)
+        .unwrap_or(false);
 
     Some(IndexScanParams {
         index_name: index.name.clone(),

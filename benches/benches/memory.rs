@@ -26,7 +26,7 @@ use defra_perf::measure::peak_rss_bytes;
 use document::{Document, NormalValue};
 use query::mutator::DocMutator;
 use query::DocFetcher;
-use schema::{CollectionVersion, FieldDescription, FieldKind};
+use schema::CollectionVersion;
 use storage::{RegolithStore, RegolithStoreOptions};
 use tempfile::TempDir;
 
@@ -35,6 +35,7 @@ mod common;
 const CASE_VAR: &str = "DEFRA_MEMORY_CASE";
 const MARKER: &str = "DEFRA_PEAK_RSS_BYTES ";
 const COLLECTION: &str = "Users";
+const COLLECTION_SDL: &str = "type Users { name: String note: String }";
 const DOCS: usize = 1_000;
 
 const PROFILES: [&str; 3] = ["server", "embedded", "memory"];
@@ -50,21 +51,9 @@ fn options(profile: &str) -> RegolithStoreOptions {
 }
 
 fn collection_version() -> CollectionVersion {
-    CollectionVersion::new(
-        COLLECTION,
-        "bafkmemory",
-        "memory",
-        vec![
-            FieldDescription::new(
-                "1",
-                "_docID",
-                FieldKind::doc_id(),
-                schema::CType::LwwRegister,
-            ),
-            FieldDescription::new("2", "name", FieldKind::string(), schema::CType::LwwRegister),
-            FieldDescription::new("3", "note", FieldKind::string(), schema::CType::LwwRegister),
-        ],
-    )
+    query::parse_sdl(COLLECTION_SDL)
+        .expect("the benchmark schema to parse")
+        .remove(0)
 }
 
 async fn run_case(profile: &str, workload: &str) {
@@ -84,12 +73,13 @@ async fn run_case(profile: &str, workload: &str) {
         return;
     }
 
-    db.create_collection(collection_version())
+    db.add_collection(&defra_core::RequestContext::ambient(), COLLECTION_SDL)
         .await
         .expect("the collection to register");
     let mutator = db::write::autocommit::AutoCommitMutator::new(db.clone());
+    let version = collection_version();
     for seq in 0..DOCS {
-        let mut doc = Document::new(collection_version());
+        let mut doc = Document::new(version.clone());
         doc.set("name", NormalValue::String(format!("name-{seq}")))
             .unwrap();
         doc.set("note", NormalValue::String(format!("note-{seq}")))

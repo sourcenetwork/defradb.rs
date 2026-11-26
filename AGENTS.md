@@ -572,7 +572,16 @@ The rustffi client `ffi-test` runs is the commit `GO_FFI_CLIENT_COMMIT` in
 `crates/foundation/defra-version/src/lib.rs` names on `origin`.
 
 `DEFRADB_GO_REPO` covers the shell commands above and `ffi-test`, which also
-accepts `--go-path <PATH>` to override it. The WASM lens modules the
+accepts `--go-path <PATH>` to override it.
+
+`just setup-go-defradb` (part of `just setup`) puts the Go `defradb` at the
+pinned baseline in `~/.cache/defra-harness/<tag or commit>/defradb`, the way
+CI does: the release binary when `GO_COMPAT_TAG` is set, else a build of
+`GO_COMPAT_COMMIT` (from `DEFRADB_GO_REPO` when set). The justfile puts that
+directory on PATH and the go-http client looks there, so the `go_*` legacy
+tests and `DEFRA_CLIENT=go-http` run locally.
+
+The WASM lens modules the
 integration tests load live in `tools/lenses`; `just build-lenses` builds them
 (`just integration` and `just integration-suite` do so first).
 
@@ -627,6 +636,11 @@ open PR ──▶ lean CI ──▶ review ────▶ "Merge when ready" �
   this head. It is neutral when part of the queue could not be checked. It
   covers only PRs based on main, and a fork PR gets no result from its own
   pushes: it is checked again only when the queue changes.
+- **`human review`** asks a person, not an agent, to look at the PR. Whoever
+  adds it (a person or an agent) leaves a comment saying what needs a human eye.
+  An agent that opens, reviews, edits, batches or lists a PR carrying the label
+  tells its operator in its reply: the PR number, its title, and the reason from
+  that comment. `gh pr list --label "human review"` finds them all.
 
 ### In the queue
 

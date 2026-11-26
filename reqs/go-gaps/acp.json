@@ -490,13 +490,19 @@
     "id": "go.acp.nac.gates.collection-schema",
     "verdict": "partial",
     "rust_tests": [
-      "crates/database/db/tests/access/enforcement.rs::create_collection_denied_for_non_owner",
-      "crates/database/db/tests/access/enforcement.rs::delete_collection_gated_by_nac",
-      "crates/database/db/tests/access/enforcement.rs::set_active_collection_version_denied_for_non_owner",
-      "tools/integration-test/tests/legacy/nac/core_operations.rs::nac_core_operations_gate_test"
+      "tools/integration-test/tests/legacy/nac/core_operations.rs::nac_core_operations_gate_test",
+      "tools/integration-test/tests/testo/acp/nac/delete_collection.rs::nac_gates_delete_collection_authorized_identity_allow_access",
+      "tools/integration-test/tests/testo/acp/nac/delete_collection.rs::nac_gates_delete_collection_no_identity_not_authorized_error",
+      "tools/integration-test/tests/testo/acp/nac/delete_collection.rs::nac_gates_delete_collection_wrong_identity_not_authorized_error",
+      "tools/integration-test/tests/testo/acp/nac/set_active_collection_version.rs::nac_gates_set_active_collection_version_authorized_identity_allow_access",
+      "tools/integration-test/tests/testo/acp/nac/set_active_collection_version.rs::nac_gates_set_active_collection_version_no_identity_not_authorized_error",
+      "tools/integration-test/tests/testo/acp/nac/set_active_collection_version.rs::nac_gates_set_active_collection_version_wrong_identity_not_authorized_error",
+      "tools/integration-test/tests/testo/acp/nac/truncate_collection.rs::nac_gates_truncate_collection_authorized_identity_allow_access",
+      "tools/integration-test/tests/testo/acp/nac/truncate_collection.rs::nac_gates_truncate_collection_no_identity_not_authorized_error",
+      "tools/integration-test/tests/testo/acp/nac/truncate_collection.rs::nac_gates_truncate_collection_wrong_identity_not_authorized_error"
     ],
-    "evidence": "enforcement.rs:174-177 create_collection denied with NotAuthorized for a non-owner and not persisted; delete_collection denied then allowed for the owner; set_active_collection_version denied; core_operations.rs:75-83 truncate denied for anonymous and outsider",
-    "note": "Collection patch is not gated in any test. Owner add/delete is checked only at db level. Rust tests assert only is_err for anonymous/outsider; the 'not authorized to perform operation. Permission: <perm>' text is never asserted. The HTTP NAC guard (crates/surfaces/http/src/nac_guard.rs:61,74) returns 'not authorized to perform operation' with no permission suffix. Rust maps truncate to truncate-collection, not Go's get-collection (crates/surfaces/http/tests/route_permissions.rs::all_registered_routes_return_expected_permission)."
+    "evidence": "testo acp/nac/delete_collection.rs and set_active_collection_version.rs (ported from Go's delete_collection_test.go and set_active_collection_version_test.go): with NAC started by identity 1, delete-collection and set-active-collection-version succeed for identity 1 and fail without an identity or for identity 2 with 'not authorized to perform operation. Permission: patch-collection', on the in-process, rust-http, cli and go-http clients; testo acp/nac/truncate_collection.rs: truncate fails for both with 'not authorized to perform operation. Permission: get-collection'; core_operations.rs:75-83 truncate denied for anonymous and outsider",
+    "note": "Go's add_collection_test.go::TestNAC_GatesAddCollection_AllowIfAuthorizedElseError and patch_collection_test.go are not ported, so no test tagged with this requirement checks add-collection or patch-collection denial; a non-owner's add-collection is refused with 'Permission: patch-collection' only under go.acp.nac.admin.collections (testo acp/nac/relation_admin/add_collection.rs). crates/surfaces/http/tests/route_permissions.rs registers the truncate route as CollectionTruncate, while the testo truncate scenarios see Go's get-collection text on the in-process, rust-http and cli clients."
   },
   {
     "id": "go.acp.nac.gates.collection-read",

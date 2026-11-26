@@ -23,14 +23,17 @@ fn graphql_errors(value: &Value) -> Vec<&str> {
         .collect()
 }
 
-/// Whether a GraphQL error whose message contains `wanted` carries
-/// `extensions.code` `code`.
+/// Whether the error containing `wanted` carries `code`: the failure's own
+/// code, or a GraphQL error's `extensions.code`.
 fn carries_code<A>(outcome: &Result<Value, Failure>, wanted: &str, code: &str) -> bool
 where
     A: Op,
 {
-    let Ok(value) = outcome else {
-        return false;
+    let value = match outcome {
+        Err(failure) => {
+            return failure.message.contains(wanted) && failure.code.as_deref() == Some(code)
+        }
+        Ok(value) => value,
     };
     A::GRAPHQL
         && value
@@ -251,7 +254,10 @@ where
 fn describe(outcome: &Result<Value, Failure>) -> String {
     match outcome {
         Ok(value) => format!("response {value}"),
-        Err(failure) => format!("error {:?}", failure.message),
+        Err(failure) => match &failure.code {
+            Some(code) => format!("error {:?} with code {code:?}", failure.message),
+            None => format!("error {:?}", failure.message),
+        },
     }
 }
 

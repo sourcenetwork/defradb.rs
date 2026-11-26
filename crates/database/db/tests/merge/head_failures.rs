@@ -1,3 +1,4 @@
+use super::merge_handler_tests::{users_collection_id, users_version_id};
 use async_trait::async_trait;
 use blockstore::{Blockstore as _, DefraBlockstore};
 use cid::Cid;
@@ -220,12 +221,12 @@ async fn fixture() -> Fixture {
         })
         .unwrap(),
     );
-    for schema in query::parse_sdl("type Users { name: String age: Int }").unwrap() {
-        let mut schema = schema;
-        schema.version_id = "v1".to_string();
-        schema.collection_id = "col-users".to_string();
-        db.create_collection(schema).await.unwrap();
-    }
+    db.add_collection(
+        &defra_core::RequestContext::ambient(),
+        super::merge_handler_tests::USERS_SDL,
+    )
+    .await
+    .unwrap();
     let blocks = Arc::new(DefraBlockstore::new(inner, false));
     let handler = DbMergeHandler::new(db, blocks.clone());
     Fixture {
@@ -297,7 +298,7 @@ async fn update_of(blocks: &DefraBlockstore<RegolithStore>, genesis: &MergeBlock
         CrdtDelta::Lww(LwwDeltaPayload {
             field_name: "name".to_string(),
             priority: 2,
-            collection_version_id: "v1".to_string(),
+            collection_version_id: users_version_id().to_string(),
             data: db::block::builder::encode_value_as_cbor(&document::NormalValue::String(
                 "Bob".to_string(),
             ))
@@ -312,7 +313,7 @@ async fn update_of(blocks: &DefraBlockstore<RegolithStore>, genesis: &MergeBlock
     blocks.put(&name, &field).await.unwrap();
     let composite = Block::new(
         CrdtDelta::Composite(CompositeDeltaPayload {
-            collection_version_id: "v1".to_string(),
+            collection_version_id: users_version_id().to_string(),
             priority: 2,
             status: 1,
         }),

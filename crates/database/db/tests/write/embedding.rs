@@ -6,7 +6,7 @@ use db::{
 use document::{Document, NormalValue};
 use query::mutator::DocMutator;
 use query::{QueryExecutor, QueryRequest};
-use schema::{CollectionVersion, FieldDescription, FieldKind, VectorEmbeddingDescription};
+use schema::CollectionVersion;
 use serde_json::json;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -47,37 +47,18 @@ async fn fixture() -> Fixture {
         json!({"data": [{"embedding": vector}]})
     });
     let db = Arc::new(DB::new(RegolithStore::in_memory().unwrap()).unwrap());
-    let mut collection = CollectionVersion::new(
-        "Texts",
-        "texts-v1",
-        "col-texts",
-        vec![
-            FieldDescription::new(
-                "1",
-                "_docID",
-                FieldKind::doc_id(),
-                schema::CType::LwwRegister,
-            ),
-            FieldDescription::new("2", "text", FieldKind::string(), schema::CType::LwwRegister),
-            FieldDescription::new(
-                "3",
-                "vector",
-                FieldKind::float64_array(),
-                schema::CType::LwwRegister,
-            ),
-        ],
+    let sdl = format!(
+        r#"type Texts {{
+            text: String
+            vector: [Float32!] @embedding(fields: ["text"], provider: "openai", model: "test-model", url: "{}")
+        }}"#,
+        server.url()
     );
-    collection
-        .vector_embeddings
-        .push(VectorEmbeddingDescription {
-            field_name: "vector".to_string(),
-            fields: vec!["text".to_string()],
-            model: "test-model".to_string(),
-            provider: "openai".to_string(),
-            template: String::new(),
-            url: server.url(),
-        });
-    db.create_collection(collection.clone()).await.unwrap();
+    let collection = db
+        .add_collection(&defra_core::RequestContext::ambient(), &sdl)
+        .await
+        .unwrap()
+        .remove(0);
     Fixture {
         db,
         calls,
@@ -86,8 +67,19 @@ async fn fixture() -> Fixture {
     }
 }
 
+/// The embedding `doc` holds, whatever float width carries it: a document
+/// just embedded holds the provider's f64 values, and one read back from the
+/// store holds its `[Float32!]` field's f32 values.
+fn vector(doc: &Document) -> Option<Vec<f64>> {
+    match doc.get("vector")? {
+        NormalValue::Float64Array(values) => Some(values.clone()),
+        NormalValue::Float32Array(values) => Some(values.iter().copied().map(f64::from).collect()),
+        _ => None,
+    }
+}
+
 fn assert_vector(doc: &Document, values: Vec<f64>) {
-    assert_eq!(doc.get("vector"), Some(&NormalValue::Float64Array(values)));
+    assert_eq!(vector(doc), Some(values));
 }
 
 #[test]
