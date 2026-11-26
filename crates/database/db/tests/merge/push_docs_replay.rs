@@ -491,6 +491,14 @@ fn a_newer_marker_on_one_failed_document_does_not_stop_the_rest() {
 /// old one must register no marker and send nothing for the removed
 /// collection after that, so the new install's retry sweep has nothing of it
 /// to send.
+fn body_sdl(name: &str) -> String {
+    format!("type {name} {{ body: String }}")
+}
+
+fn collection_id_of(name: &str) -> String {
+    crate::common::schema::parsed(&body_sdl(name)).collection_id
+}
+
 #[test]
 fn a_replay_outlived_by_a_collection_removal_registers_nothing_for_it() {
     workers::block_on(async {
@@ -499,28 +507,10 @@ fn a_replay_outlived_by_a_collection_removal_registers_nothing_for_it() {
         );
         db.set_network(edge::testing::edge());
         let mut removed_docs = Vec::new();
-        for (name, id) in [("Kept", "col-kept"), ("Removed", "col-removed")] {
-            db.create_collection(schema::CollectionVersion::new(
-                name,
-                format!("{id}-v1"),
-                id,
-                vec![
-                    schema::FieldDescription::new(
-                        "1",
-                        "_docID",
-                        schema::FieldKind::doc_id(),
-                        schema::CType::LwwRegister,
-                    ),
-                    schema::FieldDescription::new(
-                        "2",
-                        "body",
-                        schema::FieldKind::string(),
-                        schema::CType::LwwRegister,
-                    ),
-                ],
-            ))
-            .await
-            .unwrap();
+        for name in ["Kept", "Removed"] {
+            db.add_collection(&defra_core::RequestContext::ambient(), &body_sdl(name))
+                .await
+                .unwrap();
             let schema = db.get_collection(name).unwrap().unwrap().schema_arc();
             let mutator = db::AutoCommitMutator::new(db.clone());
             for index in 0..3 {
@@ -538,7 +528,7 @@ fn a_replay_outlived_by_a_collection_removal_registers_nothing_for_it() {
         let peerstore = Arc::new(db.peerstore());
         let installed = p2p::ReplicatorInfo::from_raw(
             peer.to_string(),
-            vec!["col-kept".into(), "col-removed".into()],
+            vec![collection_id_of("Kept"), collection_id_of("Removed")],
             Vec::new(),
         );
         peerstore
@@ -563,7 +553,7 @@ fn a_replay_outlived_by_a_collection_removal_registers_nothing_for_it() {
                     if !removed.swap(true, Ordering::SeqCst) {
                         let kept = p2p::ReplicatorInfo::from_raw(
                             peer.to_string(),
-                            vec!["col-kept".into()],
+                            vec![collection_id_of("Kept")],
                             Vec::new(),
                         );
                         peerstore
@@ -619,7 +609,8 @@ fn a_replay_outlived_by_a_collection_removal_registers_nothing_for_it() {
         let markers = peerstore.get_retry_documents(peer.as_str()).await.unwrap();
         for marker in &markers {
             assert!(
-                !removed_docs.contains(&marker.doc_id) && marker.collection_id != "col-removed",
+                !removed_docs.contains(&marker.doc_id)
+                    && marker.collection_id != collection_id_of("Removed"),
                 "the outlived replay left a retry marker for the removed collection: {}",
                 marker.doc_id
             );

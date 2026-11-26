@@ -49,7 +49,7 @@ pub use collection::{
 };
 pub use crdt_name::CrdtName;
 pub use ctype::CType;
-pub use embedding::VectorEmbeddingDescription;
+pub use embedding::{template_reads, VectorEmbeddingDescription};
 pub use error::{Result, SchemaError};
 pub use field::FieldDescription;
 pub use field_kind::{FieldKind, ScalarArrayKind, ScalarKind};

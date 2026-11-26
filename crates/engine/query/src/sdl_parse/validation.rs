@@ -19,18 +19,6 @@ impl<'a> SdlParser<'a> {
 
         for type_def in self.type_defs.values() {
             for field in &type_def.fields {
-                // NonNull list element types are not supported for relation types (e.g., [Dogs!])
-                // Scalar array types like [Float32!], [Int!], [String!] are allowed
-                if field.field_type.is_list
-                    && field.field_type.element_non_null
-                    && all_type_names.contains(&field.field_type.base_type)
-                {
-                    return Err(QueryError::parse(format!(
-                        "NonNull variants for type are not supported. Type: {}",
-                        field.field_type.base_type
-                    )));
-                }
-
                 // Default value validation
                 if let Some(ref _default_val) = field.directives.default_value {
                     let base_type = &field.field_type.base_type;

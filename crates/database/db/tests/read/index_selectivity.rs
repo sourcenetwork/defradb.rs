@@ -8,6 +8,7 @@
 //! document assembly shows up.
 
 use crate::common::counting_store::CountingStore;
+use crate::common::schema::parsed;
 use db::AutoCommitMutator;
 use db::LensedAutoCommitFetcher;
 use db::DB;
@@ -17,10 +18,6 @@ use query::DocMutator;
 use query::QueryExecutor;
 use query::QueryRequest;
 use schema::CollectionVersion;
-use schema::FieldDescription;
-use schema::FieldKind;
-use schema::IndexDescription;
-use schema::IndexedFieldDescription;
 use std::sync::Arc;
 use storage::RegolithStore;
 
@@ -28,54 +25,28 @@ const COLLECTION_SIZE: usize = 2000;
 const HOURS: usize = 200;
 const PER_HOUR: usize = COLLECTION_SIZE / HOURS;
 
-fn single_field_index(id: u32, field: &str) -> IndexDescription {
-    IndexDescription {
-        name: format!("Events_{field}_ASC"),
-        id,
-        fields: vec![IndexedFieldDescription {
-            name: field.to_string(),
-            descending: false,
-        }],
-        unique: false,
-        kind: None,
-        auto_generated: false,
-    }
+/// Events, indexed on `market` then `hour`: on a shape-score tie, declaration
+/// order decides. `fields` are added after `seq`.
+fn events_sdl(fields: &str) -> String {
+    format!(
+        r#"type Events {{
+            market: String @index(name: "Events_market_ASC")
+            hour: String @index(name: "Events_hour_ASC")
+            seq: Int
+            {fields}
+        }}"#
+    )
 }
 
 fn schema() -> CollectionVersion {
-    let mut version = CollectionVersion::new(
-        "Events",
-        "events-v1",
-        "events-collection",
-        vec![
-            FieldDescription::new(
-                "1",
-                "_docID",
-                FieldKind::doc_id(),
-                schema::CType::LwwRegister,
-            ),
-            FieldDescription::new(
-                "2",
-                "market",
-                FieldKind::string(),
-                schema::CType::LwwRegister,
-            ),
-            FieldDescription::new("3", "hour", FieldKind::string(), schema::CType::LwwRegister),
-            FieldDescription::new("4", "seq", FieldKind::int(), schema::CType::LwwRegister),
-        ],
-    );
-    version.is_materialized = true;
-    // `market` first: on a shape-score tie, declaration order decides.
-    version.indexes = vec![
-        single_field_index(1, "market"),
-        single_field_index(2, "hour"),
-    ];
-    version
+    parsed(&events_sdl(""))
 }
 
 async fn seeded_db() -> Arc<DB<CountingStore<RegolithStore>>> {
     let db = Arc::new(DB::new(CountingStore::new(RegolithStore::in_memory().unwrap())).unwrap());
-    db.create_collection(schema()).await.unwrap();
+    db.add_collection(&defra_core::RequestContext::ambient(), &events_sdl(""))
+        .await
+        .unwrap();
     let docs = (0..COLLECTION_SIZE)
         .map(|i| {
             let mut doc = Document::new(schema());
@@ -191,16 +162,10 @@ fn exclusive_range_estimate_skips_duplicate_boundary_keys() {
 fn estimation_skips_vector_indexes() {
     workers::block_on(async {
         let db = Arc::new(DB::new(RegolithStore::in_memory().unwrap()).unwrap());
-        let mut version = schema();
-        version.fields.push(FieldDescription::new(
-            "5",
-            "embedding",
-            FieldKind::float64_array(),
-            schema::CType::LwwRegister,
-        ));
-        let mut vector = single_field_index(3, "embedding");
-        vector.kind = Some(crate::common::schema::vector_kind());
-        version.indexes.push(vector);
+        let sdl = events_sdl(
+            r#"embedding: [Float!] @index(name: "Events_embedding_ASC", vector: {dimensions: 4, hnsw: {metric: COSINE}})"#,
+        );
+        let version = parsed(&sdl);
         let selects = query::query_parse::parse_query(
         r#"{ Events(filter: {market: {_eq: "zcat"}, embedding: {_any: {_gt: 0.0}}}) { market } }"#,
     )
@@ -211,7 +176,9 @@ fn estimation_skips_vector_indexes() {
         )
         .unwrap();
         assert_eq!(selected.name, "Events_market_ASC");
-        db.create_collection(version).await.unwrap();
+        db.add_collection(&defra_core::RequestContext::ambient(), &sdl)
+            .await
+            .unwrap();
         let runner = query::QueryRunner::with_provider(
             LensedAutoCommitFetcher::new(db.clone()),
             db::DbCollectionProvider::new_arc(db.clone()),
@@ -291,11 +258,14 @@ fn empty_in_probes_share_the_estimation_budget() {
         use query::DocFetcher;
         let db =
             Arc::new(DB::new(CountingStore::new(RegolithStore::in_memory().unwrap())).unwrap());
-        let mut collection = schema();
-        let mut index = single_field_index(3, "seq");
-        index.unique = true;
-        collection.indexes.push(index);
-        db.create_collection(collection).await.unwrap();
+        let sdl = r#"type Events {
+            market: String @index(name: "Events_market_ASC")
+            hour: String @index(name: "Events_hour_ASC")
+            seq: Int @index(name: "Events_seq_ASC", unique: true)
+        }"#;
+        db.add_collection(&defra_core::RequestContext::ambient(), sdl)
+            .await
+            .unwrap();
         let fetcher = LensedAutoCommitFetcher::new(db.clone());
         let mut params = IndexScanParams {
             index_name: "Events_seq_ASC".into(),
@@ -346,22 +316,16 @@ fn ordered_composite_page_streams_only_matching_documents() {
     workers::block_on(async {
         let db =
             Arc::new(DB::new(CountingStore::new(RegolithStore::in_memory().unwrap())).unwrap());
-        let mut version = schema();
-        version.indexes = vec![IndexDescription {
-            name: "Events_scope_seq".into(),
-            id: 1,
-            fields: ["market", "hour", "seq"]
-                .into_iter()
-                .map(|name| IndexedFieldDescription {
-                    name: name.into(),
-                    descending: false,
-                })
-                .collect(),
-            unique: true,
-            kind: None,
-            auto_generated: false,
-        }];
-        db.create_collection(version).await.unwrap();
+        db.add_collection(
+            &defra_core::RequestContext::ambient(),
+            r#"type Events @index(name: "Events_scope_seq", unique: true, includes: [{field: "market"}, {field: "hour"}, {field: "seq"}]) {
+                market: String
+                hour: String
+                seq: Int
+            }"#,
+        )
+        .await
+        .unwrap();
         let docs = (0..COLLECTION_SIZE)
             .map(|seq| {
                 let mut doc = Document::new(schema());

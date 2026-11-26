@@ -5,9 +5,12 @@ use serde_json::json;
 
 async fn users() -> Node {
     let node = Node::builder().build().await.unwrap();
-    node.add_collection("type Users { name: String }")
-        .await
-        .unwrap();
+    node.add_collection(
+        &defra_core::RequestContext::ambient(),
+        "type Users { name: String }",
+    )
+    .await
+    .unwrap();
     node
 }
 

@@ -50,6 +50,9 @@ pub struct TxBeginResponse {
 #[derive(Debug, Deserialize)]
 pub struct ErrorResponse {
     pub error: String,
+    /// The refusal's stable code, which only a Rust node sends.
+    #[serde(default)]
+    pub code: Option<String>,
 }
 
 impl GraphQLResponse {

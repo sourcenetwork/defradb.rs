@@ -178,7 +178,7 @@ where
         .into_iter()
         .map(|replicator| Replicator {
             id: replicator.id.unwrap_or_default(),
-            addresses: replicator.address.into_iter().collect(),
+            addresses: replicator.addresses,
             collection_ids: replicator.collections,
             status: replicator.status.unwrap_or(0),
             last_status_change: replicator

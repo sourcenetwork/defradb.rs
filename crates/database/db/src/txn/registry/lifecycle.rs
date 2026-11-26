@@ -426,7 +426,7 @@ impl<S: Store + 'static> TransactionRegistry for DbTransactionRegistry<S> {
         sdl: &str,
     ) -> std::result::Result<Vec<schema::CollectionVersion>, TransactionError> {
         let id = context_txn(context)?;
-        self.add_collection_in_txn_as(context, &id, sdl)
+        self.add_collection(context, &id, sdl)
             .await
             .map_err(operation_error)
     }
@@ -939,6 +939,9 @@ fn nac_error(error: crate::NodeAcpError) -> TransactionError {
 fn operation_error(error: crate::error::Error) -> TransactionError {
     match error {
         crate::error::Error::TransactionNotFound(message) => TransactionError::not_found(message),
+        crate::error::Error::AddCollection(crate::AddCollectionError::UnsupportedFieldType(
+            refusals,
+        )) => TransactionError::UnsupportedFieldType(refusals),
         other => TransactionError::operation(other.to_string()),
     }
 }

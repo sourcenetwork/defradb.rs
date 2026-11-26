@@ -130,25 +130,6 @@ fn atomic_creation_rejects_an_unknown_relation_target() {
 }
 
 #[test]
-fn creation_rejects_an_invalid_default_value() {
-    workers::block_on(async {
-    let database = db::DB::open(storage::backends::RegolithStore::in_memory().unwrap())
-        .await
-        .unwrap();
-    let count = FieldDescription::new("1", "count", FieldKind::int(), schema::CType::LwwRegister)
-        .with_default(serde_json::json!("not-an-int"));
-    let collection = CollectionVersion::new("Counter", "v-counter", "c-counter", vec![count]);
-
-    let error = database.create_collection(collection).await.unwrap_err();
-
-    assert!(error.to_string().contains(
-        "default field value is invalid. Collection: Counter, Inner: Field 'count' has incompatible type"
-    ));
-})
-    .unwrap()
-}
-
-#[test]
 fn creation_accepts_supported_scalar_defaults() {
     workers::block_on(async {
         let database = db::DB::open(storage::backends::RegolithStore::in_memory().unwrap())

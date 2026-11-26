@@ -225,3 +225,132 @@ fn malformed_v015_store_rolls_back_the_entire_migration() -> Result<()> {
     })
     .unwrap()
 }
+
+/// Each fixture document as `(task_id, v0.15 DocID, genesis DocID)`. v0.15
+/// keyed documents by an ID that is not their genesis block's, so every one is
+/// re-keyed by the upgrade.
+const REKEYED_TASKS: [(&str, &str, &str); 3] = [
+    (
+        "task-1",
+        OLD_TASK_1_ID,
+        "bae-cfe4febb-cee3-541d-afe7-86d76da576b5",
+    ),
+    (
+        "task-2",
+        LAST_LEGACY_TASK_ID,
+        "bae-7f630507-5c0f-511d-a448-df2927da12e0",
+    ),
+    (
+        "task-3",
+        "bae-a66ff29b-3c83-5dc0-bd69-535f9044b076",
+        "bae-6f2358f8-d095-55a1-b572-35fe6864ac4a",
+    ),
+];
+
+fn legacy_doc_key(old_doc_id: &str) -> Vec<u8> {
+    format!("/d/{TASK_COLLECTION_ID}/{old_doc_id}").into_bytes()
+}
+
+/// The ID derived from the document's one genesis composite block.
+async fn genesis_doc_id(node: &Node, doc_id: &str) -> Result<String> {
+    let commits = execute_ok(
+        node,
+        &format!(r#"query {{ _commits(docID: "{doc_id}") {{ cid height fieldName }} }}"#),
+    )
+    .await?;
+    let genesis = commits["_commits"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|commit| commit["fieldName"] == "_C" && commit["height"] == 1)
+        .map(|commit| commit["cid"].as_str().expect("commit CID is a string"))
+        .collect::<Vec<_>>();
+    assert_eq!(genesis.len(), 1, "{doc_id} has one genesis: {commits}");
+    Ok(document::DocID::new_v0(genesis[0].parse::<Cid>()?).to_string())
+}
+
+#[test]
+fn rekeys_legacy_doc_ids_to_their_genesis_id_with_an_alias() -> Result<()> {
+    workers::block_on(async {
+        let directory = tempfile::tempdir()?;
+        let path = materialize_fixture(directory.path())?;
+        let store = Arc::new(storage::RegolithStore::open(
+            path.to_str().expect("fixture path contains non-UTF-8"),
+        )?);
+
+        {
+            let database = db::DB::from_arc(Arc::clone(&store))?;
+            let txn = database.new_txn(true).await?;
+            {
+                let datastore = txn.datastore()?;
+                for (task_id, old_doc_id, canonical_doc_id) in REKEYED_TASKS {
+                    assert_ne!(old_doc_id, canonical_doc_id, "{task_id} needs no re-key");
+                    assert!(
+                        datastore.has(&legacy_doc_key(old_doc_id)).await?,
+                        "fixture does not store {task_id} under its v0.15 ID {old_doc_id}"
+                    );
+                }
+            }
+            txn.discard()?;
+        }
+
+        let database = db::DB::open_from_arc(Arc::clone(&store)).await?;
+        let txn = database.new_txn(true).await?;
+        {
+            let datastore = txn.datastore()?;
+            let systemstore = txn.systemstore()?;
+            for (task_id, old_doc_id, canonical_doc_id) in REKEYED_TASKS {
+                let canonical_ref =
+                    db::docid::map::get_doc_ref(&systemstore, canonical_doc_id).await?;
+                let Some(canonical_ref) = canonical_ref else {
+                    panic!("{task_id}: genesis ID {canonical_doc_id} has no identity");
+                };
+                assert_eq!(
+                    db::docid::map::get_doc_ref(&systemstore, old_doc_id).await?,
+                    Some(canonical_ref),
+                    "{task_id}: v0.15 ID {old_doc_id} is not an alias of {canonical_doc_id}"
+                );
+                assert_eq!(
+                    db::docid::map::get_doc_id(&systemstore, canonical_ref.doc_short_id)
+                        .await?
+                        .as_deref(),
+                    Some(canonical_doc_id),
+                    "{task_id}: the primary ID is not the genesis ID"
+                );
+                assert!(
+                    !datastore.has(&legacy_doc_key(old_doc_id)).await?,
+                    "{task_id}: the v0.15 document key survived the upgrade"
+                );
+            }
+        }
+        txn.discard()?;
+        database.close().await?;
+        drop(database);
+        drop(store);
+
+        let node = NodeBuilder::default().data_path(&path).build().await?;
+        for (task_id, old_doc_id, canonical_doc_id) in REKEYED_TASKS {
+            assert_eq!(
+                genesis_doc_id(&node, canonical_doc_id).await?,
+                canonical_doc_id,
+                "{task_id}: the primary ID is not derived from its genesis block"
+            );
+            for requested in [old_doc_id, canonical_doc_id] {
+                let found = execute_ok(
+                    &node,
+                    &format!(r#"query {{ Task(docID: "{requested}") {{ _docID task_id }} }}"#),
+                )
+                .await?;
+                assert_eq!(
+                    found,
+                    json!({ "Task": [{ "_docID": canonical_doc_id, "task_id": task_id }] }),
+                    "{task_id}: lookup by {requested}"
+                );
+            }
+        }
+        node.shutdown().await.unwrap();
+
+        Ok(())
+    })
+    .unwrap()
+}

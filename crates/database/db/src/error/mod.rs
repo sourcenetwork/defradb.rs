@@ -157,6 +157,10 @@ pub enum Error {
     #[error("{0}")]
     Other(String),
 
+    /// Adding collections was refused.
+    #[error(transparent)]
+    AddCollection(crate::AddCollectionError),
+
     /// An admin change to a chunk collection, which follows its parent.
     #[error(
         "{collection} holds the chunks of {parent}.{field} and is changed only through {parent}"

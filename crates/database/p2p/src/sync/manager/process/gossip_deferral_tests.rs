@@ -261,3 +261,31 @@ fn a_head_the_dispatcher_dropped_is_reported() {
     })
     .unwrap();
 }
+
+/// A refused gossip head whose bytes do not match its CID is not kept: the
+/// deferral fails with the CID error, and neither the block nor a durable
+/// record of it is stored (#3292).
+#[test]
+#[mantra_macros::req_test("defra.p2p.cid_check")]
+fn a_deferred_gossip_head_not_matching_its_cid_is_refused() {
+    workers::block_on(async {
+        let (manager, _events) = manager_with(with_pending_dags(4)).await;
+        let (cid, mut msg) = head_with_missing_link(0);
+        let mut head = Block::from_dag_cbor(&msg.block).unwrap();
+        if let CrdtDelta::Composite(payload) = &mut head.delta {
+            payload.priority += 1;
+        }
+        msg.block = bytes::Bytes::from(head.to_dag_cbor().unwrap());
+
+        let result = manager.defer_gossip_head(&msg, PEER).await;
+
+        assert!(
+            matches!(result, Err(Error::BlockCidMismatch { .. })),
+            "{result:?}"
+        );
+        assert!(!manager.blockstore.has(&cid).await.unwrap());
+        assert!(!manager.persisted.contains(&cid));
+        assert_eq!(manager.persisted_pending_count(), 0);
+    })
+    .unwrap();
+}

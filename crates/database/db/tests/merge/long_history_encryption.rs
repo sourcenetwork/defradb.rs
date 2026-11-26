@@ -1,3 +1,4 @@
+use super::merge_handler_tests::{users_collection_id, users_version_id};
 use blockstore::{Blockstore as _, DefraBlockstore};
 use cid::Cid;
 use db::merge::merge_handler::DbMergeHandler;
@@ -23,7 +24,7 @@ async fn stored_document(
 ) -> Document {
     let collection = handler
         .db()
-        .find_collection_by_id("col-users")
+        .find_collection_by_id(users_collection_id())
         .unwrap()
         .unwrap();
     let txn = handler.db().new_txn(true).await.unwrap();
@@ -54,7 +55,7 @@ fn incomplete_encrypted_ancestor_retries_then_preserves_all_fields() {
         initial.set("age", NormalValue::Int(20)).unwrap();
         let collection = handler
             .db()
-            .find_collection_by_id("col-users")
+            .find_collection_by_id(users_collection_id())
             .unwrap()
             .unwrap();
         let genesis = db::block::builder::build_blocks_from_document(
@@ -65,7 +66,8 @@ fn incomplete_encrypted_ancestor_retries_then_preserves_all_fields() {
         )
         .await
         .unwrap();
-        let metadata = BlockMetadata::normal(&genesis.doc_id, "col-users", "peer", None, false);
+        let metadata =
+            BlockMetadata::normal(&genesis.doc_id, users_collection_id(), "peer", None, false);
         assert_eq!(
             handler
                 .handle_block(&genesis.cid, &genesis.block, metadata.clone())
@@ -84,7 +86,7 @@ fn incomplete_encrypted_ancestor_retries_then_preserves_all_fields() {
         let mut encrypted = Block::new(
             CrdtDelta::Lww(LwwDeltaPayload {
                 field_name: "name".into(),
-                collection_version_id: "v1".into(),
+                collection_version_id: users_version_id().to_string(),
                 priority: 2,
                 data: ciphertext,
             }),
@@ -98,7 +100,7 @@ fn incomplete_encrypted_ancestor_retries_then_preserves_all_fields() {
         let clear = Block::new(
             CrdtDelta::Lww(LwwDeltaPayload {
                 field_name: "age".into(),
-                collection_version_id: "v1".into(),
+                collection_version_id: users_version_id().to_string(),
                 priority: 2,
                 data: age,
             }),
@@ -121,7 +123,7 @@ fn incomplete_encrypted_ancestor_retries_then_preserves_all_fields() {
                 &blockstore,
                 &Block::new(
                     CrdtDelta::Composite(CompositeDeltaPayload {
-                        collection_version_id: "v1".into(),
+                        collection_version_id: users_version_id().to_string(),
                         priority,
                         status: 1,
                     }),
