@@ -10,6 +10,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use testo::prelude::*;
 
+/// Go's `indexBackfillBatchSize`. A watermark gate holds the build after its
+/// first batch, so the corpus sizes its collections against this batch.
+const GO_BACKFILL_BATCH_DOCS: usize = 100;
+
 /// A Rust receiver's admission limits: its pending-DAG map and its per-peer
 /// rate bucket (tokens, and tokens refilled per second).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -217,6 +221,8 @@ impl Op for NewNode {
             txn_ttl,
             se_key: self.searchable_encryption_key()?,
             index_gate,
+            backfill_batch_docs: (self.index_gate == Some(IndexGate::Watermark))
+                .then_some(GO_BACKFILL_BATCH_DOCS),
             commit_gate: self
                 .commit_gate
                 .then(crate::commit_gate::TestCommitGate::default)
