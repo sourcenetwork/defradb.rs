@@ -28,7 +28,17 @@ pub enum Tier {
     /// substrate): surfaced, never asserted, so a green matrix never reads as
     /// "this was proven against the artifact."
     Boundary,
+    /// Bound by behavioral tests deleted with the transport they ran on
+    /// (libp2p and iroh, #3415); the issue ports them to pinc testo tests.
+    /// Surfaced like a Boundary until then, and
+    /// `matrix::every_pending_tier_names_an_open_port_issue` holds it to an
+    /// issue in [`PENDING_PORT_ISSUES`].
+    Pending(u32),
 }
+
+/// The issues that port deleted behavioral bindings back, each a
+/// [`Tier::Pending`] may name.
+pub const PENDING_PORT_ISSUES: &[u32] = &[3411];
 
 pub struct Property {
     /// Family name — must match a row in `proofs/README.md`'s Modeled families table.
@@ -50,7 +60,7 @@ pub struct Property {
 }
 
 use Axis::{Lean, Tla};
-use Tier::{Behavioral, Boundary, Contract};
+use Tier::{Behavioral, Boundary, Contract, Pending};
 
 pub const PROPERTIES: &[Property] = &[
     Property {
@@ -1599,8 +1609,8 @@ pub const PROPERTIES: &[Property] = &[
         axis: Tla,
         anchor: "crates/database/p2p filtered replication; crates/database/db (merge)",
         model_ref: "MC_S4_ModelB.cfg / M1Convergence.cfg",
-        tiers: &[Boundary],
-        bound_by: "",
+        tiers: &[Behavioral],
+        bound_by: "tools/integration-test/tests/testo/net/simple/replicator/with_filter.rs an_in_filter_pushes_only_the_listed_values, a_filter_on_two_fields_pushes_documents_matching_both",
     },
     Property {
         // Head rediscovery is embedder-owned. Only sender retry markers and
@@ -1616,7 +1626,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/database/db (merge) merge handler; crates/engine/blockstore; crates/database/p2p/src/sync/coordinator/event_handler/mod.rs handle_peer_connected; crates/surfaces/p2p-adapter/src/retry.rs run_retry_pass",
         model_ref: "MC_Conv_{Eventual,RestartEviction,NoHeadRediscovery}.cfg",
         tiers: &[Boundary],
-        bound_by: "",
+        bound_by: "tools/integration-test/tests/testo/net/simple/replicator/with_add.rs p2_p_one_to_one_replicator; tools/integration-test/tests/testo/net/simple/peer/crdt/lww.rs p2_p_update_with_lww_concurrent_same_field_converges_to_same_value",
     },
     Property {
         // Only sender retry markers and receiver durable pending records
@@ -1643,14 +1653,15 @@ pub const PROPERTIES: &[Property] = &[
         // exactly once, the algebraic root of the #4935 double-apply. Counter, LWW,
         // and the mixed Counter×LWW product fully instantiate the core (counterCM /
         // lwwCM / mixedCM). PNCounter is the same signed-delta algebra with
-        // decrement enabled, covered by singleStore_pncounter_converges and exact
-        // live/restart/storm behavioral tests. The mixed product's cross-field
+        // decrement enabled, covered by singleStore_pncounter_converges. The
+        // mixed live/restart/storm legs ran on the multi-node harness #3415
+        // deleted; #3411 ports them. The mixed product's cross-field
         // materialization hazard is checked by MixedFieldMaterialization.
         name: "CrdtField: comm+assoc => order-independent; PNCounter refines to signed Counter; mixed Counter×LWW inherits dedup",
         axis: Lean,
         anchor: "crates/building-blocks/crdt/src/field/lww.rs LwwField::merge; crates/building-blocks/crdt/src/field/counter.rs CounterField::merge; crates/building-blocks/crdt/src/stored.rs StoredDocument::apply componentwise field merge",
         model_ref: "DefraConvergence.MixedField (lake build); MC_MixedFieldMaterialization_Green.cfg",
-        tiers: &[Contract, Boundary],
+        tiers: &[Contract, Pending(3411)],
         bound_by: "proofs/tests/lean_conformance.rs lean_merge_result_vocab_matches_rust",
     },
     Property {
@@ -1663,7 +1674,8 @@ pub const PROPERTIES: &[Property] = &[
         bound_by: "crates/building-blocks/crdt/tests/field_contract.rs only_the_positive_counter_refuses_a_negative_value",
     },
     Property {
-        // Two behavioral legs: backfill (a write that pre-dates the replicator is
+        // Two behavioral legs, on the multi-node harness #3415 deleted and
+        // #3411 ports to pinc: backfill (a write that pre-dates the replicator is
         // delivered) and full resume across a real disconnect (node1 restarted —
         // its state survives on disk and a post-disconnect write arrives after
         // reconnect). The resume leg needs an actual partition: config-level
@@ -1675,7 +1687,7 @@ pub const PROPERTIES: &[Property] = &[
         axis: Tla,
         anchor: "crates/database/p2p/src/replicator.rs; crates/database/db/src/merge/push_docs.rs push_existing_docs, retry_doc",
         model_ref: "MC_Replicator_Resumable_Green.cfg",
-        tiers: &[Boundary],
+        tiers: &[Pending(3411)],
         bound_by: "",
     },
     Property {
@@ -2038,10 +2050,10 @@ pub const PROPERTIES: &[Property] = &[
         bound_by: "",
     },
     Property {
-        // The unauthorized-denied leg is now observable: a serve-side
+        // The unauthorized-denied leg is observable: a serve-side
         // `tracing::warn!("DEK release DENIED")` at the KMS policy check makes the
-        // previously-silent denial loggable, and the behavioral test reads node0's
-        // log to confirm node0 denies the DEK to an unauthorized node1's fetch.
+        // previously-silent denial loggable, and the testo test shows an
+        // ungranted node gets the blocks but never the key.
         // ECIES secrecy of a released envelope remains a crypto Boundary (proven
         // by crates/database/kms ecies_envelope unit tests).
         family: "KMS key distribution",
@@ -2049,8 +2061,8 @@ pub const PROPERTIES: &[Property] = &[
         axis: Tla,
         anchor: "crates/database/kms/src/defra_kms.rs serve_request; crates/database/kms/src/nac_dac_policy.rs",
         model_ref: "MC_Kms_Green.cfg",
-        tiers: &[Boundary],
-        bound_by: "",
+        tiers: &[Behavioral, Boundary],
+        bound_by: "tools/integration-test/tests/testo/encryption/peer_node_identity_grant.rs an_ungranted_peer_receives_the_blocks_but_not_the_key",
     },
     Property {
         family: "KMS key distribution",
@@ -2100,15 +2112,15 @@ pub const PROPERTIES: &[Property] = &[
     Property {
         // Encryption reuses PriorityReconcile.lwwCM unchanged: ciphertext and
         // key timing affect when a value can materialize, not which value wins.
-        // The behavioral legs preserve encrypted fields selected for filtered
-        // replication and receive both encrypted siblings after a real restart,
-        // proving identical DAGs and the decrypted winner.
+        // The behavioral legs (encrypted fields selected for filtered
+        // replication, both encrypted siblings after a real restart) ran on
+        // the multi-node harness #3415 deleted; #3411 ports them.
         family: "Encrypted LWW restart/replay",
         name: "INV_NoFilteredLoss / INV_LwwWinner — encrypted delivery remains complete and LWW-convergent",
         axis: Tla,
         anchor: "crates/database/db/src/merge/push_docs.rs; crates/database/p2p/src/sync/coordinator/selective_car_access.rs; crates/building-blocks/crdt/src/field/lww.rs",
         model_ref: "MC_EncryptedLwwReplay_Green.cfg",
-        tiers: &[Boundary],
+        tiers: &[Pending(3411)],
         bound_by: "",
     },
     Property {
@@ -2718,13 +2730,12 @@ pub const PROPERTIES: &[Property] = &[
         bound_by: "crates/engine/acp/tests/nac_tests.rs enabling_a_disabled_nac_is_refused; crates/database/db/tests/nac/tests.rs a_disabled_nac_stays_disabled_when_restarted_with_the_enable_option, enabling_a_disabled_nac_is_refused; crates/entry-points/defra-node/tests/unit/http_acp.rs a_stranger_cannot_enable_a_disabled_nac_over_http",
     },
     Property {
-        // No-loss / no-double-apply under concurrent same-document mutation is now
-        // BEHAVIORAL: `partition::convergence_concurrent_same_doc_merge_storm`
-        // storms one PCounter doc from a 3-node mesh and asserts the exact sum
-        // (below => a delta dropped, above => double-applied). Mixed-field legs
-        // assert the product state (LWW name + counter views) after live, restart,
-        // and 3-node full-mesh replay; `MC_MixedFieldMaterialization` proves the
-        // stale whole-document commit hazard RED/GREEN.
+        // No-loss / no-double-apply under concurrent same-document mutation is
+        // BEHAVIORAL: the PN-counter convergence tests update one doc from
+        // several nodes at once and assert every node holds the exact sum
+        // (below => a delta dropped, above => double-applied), and concurrent
+        // LWW writes to one field converge. `MC_MixedFieldMaterialization`
+        // proves the stale whole-document commit hazard RED/GREEN.
         // The process-local document queue and counter-finalize gate are gone.
         // Ordinary application markers validate exactly-once decisions; counter
         // operands fold in the engine. Materialized mirrors retain validated
@@ -2736,8 +2747,8 @@ pub const PROPERTIES: &[Property] = &[
         axis: Tla,
         anchor: "crates/database/db/src/merge/merge_handler/field_ops.rs apply_field_op_once; crates/database/db/src/write/doc.rs; crates/database/db/tests/merge/merge_handler_tests.rs; crates/database/db txn registry",
         model_ref: "MC_TxnRegistry_Green.cfg / MC_TwoStoreCounter_Green.cfg / MC_MixedFieldMaterialization_Green.cfg",
-        tiers: &[Boundary],
-        bound_by: "",
+        tiers: &[Behavioral, Boundary],
+        bound_by: "tools/integration-test/tests/testo/net/simple/peer/crdt/pncounter_convergence.rs p2_p_update_with_pn_counter_five_nodes_repeated_updates_all_converge, p2_p_update_with_pn_counter_repeated_simultaneous_updates_converges; tools/integration-test/tests/testo/net/simple/peer/crdt/lww.rs p2_p_update_with_lww_concurrent_same_field_converges_to_same_value",
     },
     Property {
         // A counter block that arrives on its own before its document has a
@@ -3055,10 +3066,10 @@ pub const PROPERTIES: &[Property] = &[
         bound_by: "",
     },
     Property {
-        // `partition::convergence_delete_update_race_preserves_tombstone`
-        // partitions a replicated doc, deletes on one side, updates a mutable field
-        // on the other, then heals and asserts the merged materialized view stays
-        // tombstoned on both replicas. The TLA red leg captures the bad policy:
+        // `net::simple::peer::with_delete::p2_p_with_single_document_concurrent_delete_and_update`
+        // deletes a replicated doc on one node and updates it on the other,
+        // then asserts both replicas converge on the tombstone. The TLA red leg
+        // captures the bad policy:
         // committing an active update from a stale whole-document snapshot clears
         // the delete marker.
         family: "Document materialization status convergence",
@@ -3066,8 +3077,8 @@ pub const PROPERTIES: &[Property] = &[
         axis: Tla,
         anchor: "crates/database/db/src/merge/merge_handler/composite_persist.rs handle_deletion / persist_merged_document; crates/foundation/defra-core/src/block_delta.rs CompositeDeltaPayload status",
         model_ref: "MC_DocumentMaterialization_Green.cfg; DefraConvergence.DocumentMaterialization.delete_active_age_converge",
-        tiers: &[Boundary],
-        bound_by: "",
+        tiers: &[Behavioral],
+        bound_by: "tools/integration-test/tests/testo/net/simple/peer/with_delete.rs p2_p_with_single_document_concurrent_delete_and_update",
     },
     Property {
         // The DID-binding half (a distinct identity cannot impersonate another)
@@ -3235,7 +3246,8 @@ pub const PROPERTIES: &[Property] = &[
         bound_by: "crates/database/db/tests/read/index_composite_in_order.rs partial_in_over_a_composite_index_keeps_secondary_field_order; tools/integration-test/tests/testo/encryption/peer_sec_index.rs doc_encryption_peer_if_encrypted_doc_has_indexed_field_should_index_after_decryption",
     },
     Property {
-        // `index::index_reconciles_lww_merge_after_restart` drives a restart
+        // The deleted `index::index_reconciles_lww_merge_after_restart` (#3411
+        // ports it to pinc) drove a restart
         // partition where two replicas write different values for the same indexed
         // LWW field. Once the DAG converges, indexed filters must expose exactly
         // the winning value and no stale seed/loser keys.
@@ -3244,7 +3256,7 @@ pub const PROPERTIES: &[Property] = &[
         axis: Tla,
         anchor: "crates/database/db (merge) LWW materialization; crates/database/db (index) on_document_update",
         model_ref: "MC_IndexReconciliation_Green.cfg",
-        tiers: &[Boundary],
+        tiers: &[Pending(3411)],
         bound_by: "",
     },
     Property {

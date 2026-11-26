@@ -133,7 +133,8 @@ caps, coalescing, explicit rejection, parks, `unreachable_peers_share_one_peer_c
 (`slow_peer_does_not_starve_healthy_peers`,
 `two_stalled_replicators_do_not_starve_healthy_peer` and
 `transient_transport_failure_keeps_queued_jobs_live` on the default pool and send
-timeout under paused time), and the fan-out integration test
+timeout under paused time). The fan-out integration test
 `tools/integration-test/tests/legacy/p2p_backlog.rs`
-(`outbound_backlog_bounded_under_fanout_with_dead_peer`), which asserts bounded
-residency and healthy-peer progress while one peer is SIGSTOPped.
+(`outbound_backlog_bounded_under_fanout_with_dead_peer`, bounded residency and
+healthy-peer progress while one peer is SIGSTOPped) ran on libp2p and was deleted
+in #3415; #3411 ports it to pinc.

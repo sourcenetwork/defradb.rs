@@ -44,16 +44,16 @@ against a newer local write.
 
 ## Conformance fence
 
-`proofs/tests/behavioral/partition.rs::convergence_encrypted_lww_restart_merge`
-drives two encrypted siblings across a restart-induced partition, first proves
-identical commit DAGs, then asserts both nodes decrypt and materialize the LWW
-winner. Because those siblings are created after the restart, this binds
-`INV_LwwWinner`; it does not schedule a restart after ciphertext acknowledgement
-while the DEK is unavailable. `INV_AckBacked` therefore remains a conformance
-boundary.
-`tools/integration-test/tests/legacy/p2p/filtered_replication.rs` asserts matching
-encrypted documents backfill and decrypt on the filtered peer, proving their
-composite DAGs retain the linked ciphertext and trigger DEK resolution, binding
-`INV_NoFilteredLoss`. The
+Pending #3411. The deleted `proofs/tests/behavioral/partition.rs::convergence_encrypted_lww_restart_merge`
+(it ran on libp2p, removed in #3415) drove two encrypted siblings across a
+restart-induced partition, first proved identical commit DAGs, then asserted both
+nodes decrypt and materialize the LWW winner. Because those siblings are created
+after the restart, it bound `INV_LwwWinner`; it did not schedule a restart after
+ciphertext acknowledgement while the DEK is unavailable. `INV_AckBacked`
+therefore remains a conformance boundary.
+The deleted `tools/integration-test/tests/legacy/p2p/filtered_replication.rs`
+asserted matching encrypted documents backfill and decrypt on the filtered peer,
+proving their composite DAGs retain the linked ciphertext and trigger DEK
+resolution, binding `INV_NoFilteredLoss`. #3411 ports both to testo on pinc. The
 merge/KMS unit tests exercise the deterministic timeout-to-retry classification
 that is hard to schedule reliably through the external harness.

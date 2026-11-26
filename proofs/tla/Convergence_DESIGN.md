@@ -62,8 +62,10 @@ Safety invariant:
 
 ## Conformance
 
-Boundary. `replication.rs` converges under a configured replicator; `partition.rs`
-converges after an explicit replicator re-set. A head nobody owes (a gossip drop, a
+Boundary. testo `net::simple::replicator::with_add::p2_p_one_to_one_replicator`
+converges under a configured replicator and `net::simple::peer::crdt::lww`
+converges concurrent writes to one field; the partition and re-set legs ran in
+`partition.rs`, deleted with libp2p in #3415, and return with #3411. A head nobody owes (a gossip drop, a
 publish while offline) returns only through an explicit `sync_documents`,
 BranchableSync or a replicator re-set, which the embedder owns.
 

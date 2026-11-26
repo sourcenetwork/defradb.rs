@@ -63,11 +63,13 @@ what the ack promised.
 
 ## Conformance fence
 
-The Rust-side fence for the same invariant is the restart integration test
-`tools/integration-test/tests/legacy/p2p_admission_restart.rs`
-(`hub_restart_recovers_success_acked_pending_dags`) — kill and restart the hub after it
-success-acks a missing-links push, then assert the doc still merges — plus the
+The Rust-side fence for the same invariant is the
 `crates/database/p2p` unit tests around pending-DAG persistence
+(`sync_manager_tests.rs::pending_persistence`). The restart integration test
+`tools/integration-test/tests/legacy/p2p_admission_restart.rs`
+(`hub_restart_recovers_success_acked_pending_dags`: kill and restart the hub after it
+success-acks a missing-links push, then assert the doc still merges) ran on libp2p
+and was deleted in #3415; #3411 ports it to pinc. Note the record-lifetime
 (`sync_manager_tests.rs::pending_persistence`). Note the record-lifetime
 refinement the model's atomic `Resolve` glosses over: in Rust the durable
 record is deleted only when the root is **successfully marked merged** —

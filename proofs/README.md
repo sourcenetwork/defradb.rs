@@ -234,34 +234,38 @@ table disagree.
 
 ### Realized status — all 21 families bound
 
-**19 behavioral tests** (driven against fresh `target/debug/defradb`, each break-tested
-for non-vacuity), **2 Lean-axis contract bindings**, **7 honest Boundaries** (one,
-Transaction & merge-queue concurrency, is now both — a Behavioral no-loss/no-double-apply
-storm leg plus a Boundary internal-serialization leg). One
-of these (`partition::convergence_concurrent_same_doc_writes_merge`) found a real
+The multi-node behavioral tests of this harness (`partition.rs`,
+`replication.rs`, `replicator_lifecycle.rs`, `kms.rs`, `parity.rs`,
+`delivery.rs`, the multi-node leg of `index.rs`) ran their clusters through
+`defra-harness` on libp2p and were deleted with that transport in #3415. Where a
+testo test on pinc binds the same property, the row names it; the rest are
+`Pending(3411)` in the registry (surfaced like a Boundary, and
+`matrix::every_pending_tier_names_an_open_port_issue` holds each to #3411) until
+#3411 ports them. One of the deleted tests
+(`partition::convergence_concurrent_same_doc_writes_merge`) found a real
 Rust-specific CRDT convergence bug — divergent materialization on identical DAGs
-after a restart — which is now **fixed** in `crates/database/db (merge)/.../field_state.rs`
+after a restart — which is **fixed** in `crates/database/db (merge)/.../field_state.rs`
 (`reseed_from_document` re-seeds the datastore LWW from the authoritative
-headstore); go↔go vs rust↔rust parity (`parity.rs`) localized it to Rust.
+headstore).
 
 | Family | Binding | Where |
 |---|---|---|
-| B3 filtered replication | Behavioral | `replication.rs` |
-| DAG convergence | Boundary | `replication.rs` (live-forward under a configured replicator) + `partition.rs` (converges after an explicit replicator re-set; concurrent same-doc merge — the bug it found+fixed). Head rediscovery is embedder-owned |
-| Replicator lifecycle | Behavioral | `replicator_lifecycle.rs` (backfill no-loss + resume across node restart) |
+| B3 filtered replication | Behavioral | testo `net::simple::replicator::with_filter` |
+| DAG convergence | Boundary | testo `net::simple::replicator::with_add::p2_p_one_to_one_replicator` (live-forward under a configured replicator) and `net::simple::peer::crdt::lww` (concurrent same-field writes converge). Head rediscovery is embedder-owned |
+| Replicator lifecycle | Pending(3411) | backfill no-loss + resume across node restart; the deleted `replicator_lifecycle.rs` |
 | Sync ownership transfer | Boundary + external integration | deterministic full-DAG/head-hint A/B fence; `p2p_admission_restart`; `p2p_backlog` (outbound push backlog with a SIGSTOPped replicator); marker migration/storage tests; mixed Go/Rust PushLog fixture. These run in repository CI, not this conformance binary's `tests/behavioral/` harness. |
 | ACP soundness + revocation + commits | Behavioral + Contract | `acp.rs`; `RelationExpression` vocab |
 | Storage transaction validation | Behavioral | `ssi.rs` (real `409 Conflict` on write-skew) |
 | Management-channel auth (NAC gate) | Behavioral | `nac.rs` |
 | NAC lifecycle priv-escalation | Behavioral | `nac_lifecycle.rs` |
-| Transaction & merge-queue concurrency | Behavioral + Boundary | `partition::{convergence_concurrent_pncounter_signed_deltas_sum,convergence_restart_pncounter_signed_deltas_sum,convergence_concurrent_pncounter_same_doc_merge_storm}` (PNCounter exact signed sum across live, restart, and storm); `partition::convergence_concurrent_same_doc_merge_storm` (no-loss/no-double-apply exact-sum oracle); `partition::{convergence_concurrent_mixed_lww_and_counter_fields_merge,convergence_restart_mixed_lww_and_counter_fields_merge,convergence_mixed_lww_and_counter_3node_full_mesh}` (mixed Counter×LWW exact-state); `MC_MixedFieldMaterialization_{Red_WholeDoc,Green}`; engine OCC and the txn-registry sweep stay Boundary |
-| Document materialization status convergence | Behavioral | `partition::convergence_delete_update_race_preserves_tombstone`; `MC_DocumentMaterialization_{Red_Overwrite,Green}`; `DefraConvergence.DocumentMaterialization` |
+| Transaction & merge-queue concurrency | Behavioral + Boundary | testo `net::simple::peer::crdt::pncounter_convergence` (PNCounter exact sum across nodes updating one doc at once) and `net::simple::peer::crdt::lww`; `MC_MixedFieldMaterialization_{Red_WholeDoc,Green}`; the mixed Counter×LWW legs are Pending(3411); engine OCC and the txn-registry sweep stay Boundary |
+| Document materialization status convergence | Behavioral | testo `net::simple::peer::with_delete::p2_p_with_single_document_concurrent_delete_and_update`; `MC_DocumentMaterialization_{Red_Overwrite,Green}`; `DefraConvergence.DocumentMaterialization` |
 | Deferred-ACP overlay | Behavioral | `deferred_acp.rs` (txn-local gating) |
 | CID determinism | Behavioral | `cid.rs` |
-| Index-maintenance | Behavioral | `index.rs` (single-node create/update/delete + indexed LWW restart/merge reconciliation); `MC_IndexReconciliation_{Red_SaveOnly,Green}` |
-| KMS key distribution | Behavioral | `kms.rs` (node0 denies the DEK to unauthorized node1) |
-| Encrypted LWW restart/replay | Behavioral + Boundary | `partition::convergence_encrypted_lww_restart_merge` binds the decrypted LWW winner after a restart-induced partition; filtered replication binds encrypted-field preservation. Durable acknowledgement-backed retry through a receiver restart remains Boundary; `MC_EncryptedLwwReplay_{Green,Red_*}`; reuses `PriorityReconcile.lwwCM` |
-| CRDT merge laws | Contract | `MergeResult` vocab; `DefraConvergence.MixedField` product proof; `MixedFieldMaterialization.tla` |
+| Index-maintenance | Behavioral + Pending(3411) | `index.rs` (single-node create/update/delete); the indexed LWW restart/merge reconciliation leg is Pending(3411); `MC_IndexReconciliation_{Red_SaveOnly,Green}` |
+| KMS key distribution | Behavioral + Boundary | testo `encryption::peer_node_identity_grant::an_ungranted_peer_receives_the_blocks_but_not_the_key` |
+| Encrypted LWW restart/replay | Pending(3411) + Boundary | the decrypted LWW winner after a restart and encrypted-field preservation under filtered replication ran in the deleted `partition.rs`; durable acknowledgement-backed retry through a receiver restart remains Boundary; `MC_EncryptedLwwReplay_{Green,Red_*}`; reuses `PriorityReconcile.lwwCM` |
+| CRDT merge laws | Contract + Pending(3411) | `MergeResult` vocab; `DefraConvergence.MixedField` product proof; `MixedFieldMaterialization.tla`; the mixed live/restart/storm legs are Pending(3411) |
 | Multi-instance claim | Boundary | gents substrate, not this binary |
 | Block integrity / signatures | Boundary | needs adversarial peer; Rust verify mandatory |
 | P2P capability replay gate | Boundary | P2P-wire internal |
@@ -273,7 +277,7 @@ headstore); go↔go vs rust↔rust parity (`parity.rs`) localized it to Rust.
 | vera.rs embedded transport | Boundary | over the outcome of a call and the moment its answer comes; that the node's method table answers as its network server does is vera.rs's property; unit tests in `crates/engine/vera-embedded/src`, in-process node tests in `crates/engine/vera-embedded/tests/embedded_node.rs` |
 | vera.rs deployment terms | Boundary | over the heights of the journaled confirmations and a takeover's cut, and over the report an embedder receives once per checked term, with the place each replay holds in it (`VeraTakeoverReport`); that a confirmation's height never goes down with its sequence is the worker's one request at a time; unit tests in `crates/engine/vera/src/vera_rs/follow`, the takeover between two embedded devices in `crates/engine/vera-embedded/tests/term_takeover.rs`; the temporal side is `FollowDeployment.tla` and `TakeoverReport.tla` |
 | DiskANN resident code table | Boundary | in-memory search cache, not observable on the wire; `DiskAnnCodes`; unit tests in `crates/database/db/tests/vector/diskann_resident.rs` |
-| P2P delivery liveness | Behavioral (trace) + Boundary | `model_trace.rs` replays recorded runs through `Trace_P2PDelivery.tla`; eventual connectivity, the bounded instance and the restart scenarios stay Boundary |
+| P2P delivery liveness | Boundary | the recorded replays `MC_P2PDelivery_Trace_*` run through `Trace_P2PDelivery.tla` in `run-all.sh`; the test that recorded runs from a live cluster returns with #3411; eventual connectivity, the bounded instance and the restart scenarios stay Boundary |
 | Cursor tokens | Boundary | `CursorToken`; tokens pinned by `crates/foundation/cursor/tests/go_fixtures.rs` |
 | Per-operation signing choice | Boundary | `SigningOverride`; unit tests on each edge and `signature::per_op_signing` (testo) |
 | Backup import write path | Boundary | `BackupImportWritePath.tla`, `BackupImportSigner`; unit tests on each edge and `backup::signed_import`, `backup::import_creator`, `backup::duplicate_alias`, `backup::failed_import` (testo); the drain's deadline is not modelled |
@@ -315,9 +319,10 @@ per replay guard) also run in `tla/run-all.sh`, so the replay is checked
 without a binary. Their rows say where the replay must end: `TRACE:<n>` walks
 `n` states (events + 1) with no error, `DEADLOCK:<l>` stops at event `l`.
 
-To add a trace for a new scenario:
+To add a trace for a new scenario (once #3411 brings back a cluster test that
+starts pinc nodes):
 
-1. Write a test in `tests/behavioral/model_trace.rs` that builds its cluster
+1. Write a test that builds its cluster
    with `cluster(n)`, connects the nodes and sets every replicator before the
    first write (the model's edges exist from the start), writes one document
    and waits until every node the edges lead to has each write.
