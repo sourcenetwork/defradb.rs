@@ -156,3 +156,23 @@ fn simple_explain_update_with_unknown_filter_field_returns_error() {
         "Argument \"filter\" has invalid value {author: {_eq: \"x\"}}.\nIn field \"author\": Unknown field.",
     );
 }
+
+#[test]
+#[mantra_macros::req_test("go.explain.errors")]
+fn simple_explain_with_unknown_aggregate_argument_returns_error() {
+    explain_fails(
+        integration_test::scenario_id!(),
+        r#"query @explain(type: simple) { Publisher { name COUNT(missing: {}) } }"#,
+        "Unknown argument \"missing\" on field \"COUNT\" of type \"Publisher\".",
+    );
+}
+
+#[test]
+#[mantra_macros::req_test("go.explain.errors")]
+fn execute_explain_with_unknown_aggregate_argument_returns_error() {
+    explain_fails(
+        integration_test::scenario_id!(),
+        r#"query @explain(type: execute) { Publisher { name COUNT(missing: {}) } }"#,
+        "Unknown argument \"missing\" on field \"COUNT\" of type \"Publisher\".",
+    );
+}
