@@ -34,15 +34,8 @@ async fn a_fetch_naming_its_haves_is_served_only_the_missing_blocks() {
             receiver.put(cid, data).await.unwrap();
         }
         let haves = haves_from_heads(receiver.as_ref(), ours.heads()).await;
-        let (head, head_data) = missing.last().unwrap().clone();
-        let transport = TestTransport::new(
-            receiver.clone(),
-            head,
-            head_data,
-            RapidHashMap::new(),
-            RapidHashMap::new(),
-        );
-        transport.set_force_rooted_sync();
+        let (head, _) = missing.last().unwrap().clone();
+        let transport = TestTransport::new(receiver.clone(), RapidHashMap::new());
         transport.set_closure_provider(provider);
         let (event_tx, mut event_rx) = mpsc::channel(1);
 

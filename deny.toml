@@ -50,8 +50,8 @@ ignore = [
     # ------------------------------------------------------------------
 
     # crypto-bigint 0.5.5 has no patched release in its 0.5 line. It is
-    # required by elliptic-curve 0.13 through k256, libp2p-identity,
-    # alloy and cosmrs. The 0.7 dependency is patched in Cargo.lock.
+    # required by elliptic-curve 0.13 through k256, alloy and cosmrs. The
+    # 0.7 dependency is patched in Cargo.lock.
     # Remove when these upstream consumers move to patched RustCrypto
     # releases; the remaining timing side-channel exposure is tracked in #2261.
     { id = "RUSTSEC-2026-0387", reason = "Unpatched crypto-bigint 0.5 dependency through elliptic-curve 0.13; upstream migration tracked in #2261" },
@@ -118,6 +118,9 @@ allow = []
 deny = [
     { name = "dashmap", wrappers = ["commonware-parallel", "governor"] },
     { name = "async-compat", wrappers = ["edge"] },
+    # pinc is the only P2P transport; neither stack may come back.
+    { name = "libp2p" },
+    { name = "iroh" },
     { name = "tokio", wrappers = [
         # Third-party crates that are themselves network or runtime code.
         "acp-light-client", "async-compat", "axum", "commonware-macros",
@@ -181,10 +184,8 @@ skip = [
     { crate = "unsigned-varint@0.2.3", reason = "multicodec 0.1 under defra-core — removed by #1330" },
 
     # sysinfo 0.37 — commonware-runtime, i.e. vera/backbone builds
-    # only. crates/database/p2p was moved 0.29 -> 0.33 in #1333 to unify with
-    # libp2p-memory-connection-limits 0.5, which is present in every
-    # Go-interop variant; 0.37 would have unified with commonware
-    # instead and left the default CLI on two versions.
+    # only. crates/database/p2p stays on 0.33; 0.37 would have unified with
+    # commonware instead and left the default CLI on two versions.
     { crate = "sysinfo@0.37.2", reason = "commonware-runtime; vera/backbone builds only" },
 
     # thiserror 1 — graphql-parser 0.4, josekit 0.8, lark-kv,

@@ -1,4 +1,4 @@
-//! Shared serve-boundary read gate primitives for Bitswap and CAR.
+//! Serve-boundary read gate primitives for the CAR serve path.
 
 use std::sync::Arc;
 

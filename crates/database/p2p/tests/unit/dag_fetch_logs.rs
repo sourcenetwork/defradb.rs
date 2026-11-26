@@ -9,7 +9,7 @@ use tracing::field::{Field, Visit};
 use tracing::span::{Attributes, Id, Record};
 use tracing::{Event, Level, Metadata, Subscriber};
 
-/// iroh's `REQUEST_RESPONSE_TIMEOUT`, which fires before the fetcher's watchdog.
+/// pinc's `REQUEST_RESPONSE_TIMEOUT`, which fires before the fetcher's watchdog.
 const TRANSPORT_RESPONSE_DEADLINE: Duration = Duration::from_secs(30);
 const EXHAUSTED: &str = "DAG fetch failed after exhausting retries";
 const RETRY: &str = "DAG fetch incomplete, retrying after backoff";
@@ -150,12 +150,9 @@ struct Fetch {
 fn fetch(answer: Option<(FetchFailureCause, Duration)>) -> Fetch {
     let store = Arc::new(RegolithStore::in_memory().unwrap());
     let blockstore = Arc::new(DefraBlockstore::new(store, true));
-    let (root_cid, root_data, child_cid, child_data) = single_child_dag();
+    let (root_cid, _, child_cid, child_data) = single_child_dag();
     let transport = TestTransport::new(
         blockstore.clone(),
-        root_cid,
-        root_data,
-        RapidHashMap::new(),
         RapidHashMap::from_iter([(child_cid, child_data)]),
     );
     let completion = crate::sync::manager::BlockSyncCompletionTracker::default();
@@ -267,7 +264,8 @@ async fn refusing_providers_rotate_and_are_reported_as_refused() {
     let mut providers = ProviderRotation::new(peers(&["hub", "spoke"]));
     let diagnostics = diagnostics();
     let started = crate::rt::time::Instant::now();
-    let mut state = ProviderFetchState::new(&mut providers, None, diagnostics.as_ref());
+    let health = crate::sync::coordinator::provider_health::ProviderHealth::default();
+    let mut state = ProviderFetchState::new(&mut providers, &health, diagnostics.as_ref());
 
     let outcome = poll_fetch_blocks_rotating(
         &fetch.root_cid,
@@ -424,15 +422,15 @@ fn a_demoted_lone_exhaustion_is_summarized_for_its_provider_set() {
 
 /// A fetch the per-root clock dispatched makes one attempt, so a stalled
 /// root comes back to the fetcher once per attempt. Terminal exhaustion (the
-/// counter, the ERROR line, the summary and the dead-Bitswap hang-up) still
-/// happens once per `MAX_FETCH_ATTEMPTS` incomplete attempts of the root.
+/// counter, the ERROR line and the summary) still happens once per
+/// `MAX_FETCH_ATTEMPTS` incomplete attempts of the root.
 #[nuclei::test(start_paused = true)]
 async fn clock_dispatches_report_exhaustion_once_per_attempt_budget() {
     use crate::sync::pending_store::{PendingDagStorage, PendingDagStore, PersistedPendingDag};
 
     let store = Arc::new(RegolithStore::in_memory().unwrap());
     let blockstore = Arc::new(DefraBlockstore::new(store, true));
-    let (transport, root_cid, context) = dead_bitswap_publisher_fetch(&blockstore).await;
+    let (transport, root_cid, context) = silent_publisher_fetch(&blockstore).await;
     let (manager, _events) = crate::sync::manager::SyncManager::new(
         blockstore.clone(),
         Arc::new(crate::sync::peer_state::PeerStateTracker::new()),
@@ -482,9 +480,8 @@ async fn clock_dispatches_report_exhaustion_once_per_attempt_budget() {
         );
     }
 
-    assert_eq!(
-        transport.disconnected_peers(),
-        vec!["dead-peer".to_string(); 2],
-        "the publisher is hung up on once per exhausted budget"
+    assert!(
+        transport.disconnected_peers().is_empty(),
+        "exhaustion leaves the publisher connected"
     );
 }

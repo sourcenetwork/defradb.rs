@@ -313,10 +313,7 @@ impl<T: P2PTransport> PubsubKeyTransport<T> {
         };
         // The caller's `_response` sub-topic, from its peer id.
         let reply_topic = format!("{ENCRYPTION_TOPIC}/{from}/_response");
-        if let Err(e) = self
-            .publish_with_graft_retry(reply_topic.clone(), bytes)
-            .await
-        {
+        if let Err(e) = self.publish(reply_topic.clone(), bytes).await {
             warn!(
                 topic = %reply_topic,
                 error = %e,
@@ -378,34 +375,14 @@ impl<T: P2PTransport> PubsubKeyTransport<T> {
         .await
     }
 
-    /// Publish on `topic`, retrying on `InsufficientPeers` once a peer
-    /// subscribes or the mesh's next graft (a gossip heartbeat) may have
-    /// added one, within the same bounded window.
-    ///
-    /// Even after a subscriber is known, the very first publish can still race
-    /// the mesh graft (gossipsub heartbeat). Retry within the same bounded
-    /// window rather than failing outright.
-    async fn publish_with_graft_retry(&self, topic: String, payload: Vec<u8>) -> KmsResult<()> {
-        let mut deadline = std::pin::pin!(crate::rt::time::sleep(SUBSCRIBER_WAIT_TIMEOUT));
-        loop {
-            let subscribed = self.subscribed.notified();
-            match self
-                .transport
-                .publish_raw(topic.clone(), payload.clone())
-                .await
-            {
-                Ok(_) => return Ok(()),
-                Err(ref e @ crate::error::Error::GossipSubPublish(ref message))
-                    if message == "InsufficientPeers" =>
-                {
-                    debug!(topic = %topic, error = %e, "publish not yet ready; retrying");
-                    if !Self::next_chance(subscribed, deadline.as_mut()).await {
-                        return Err(kms::Error::Internal(format!("publish KMS message: {e}")));
-                    }
-                }
-                Err(e) => return Err(kms::Error::Internal(format!("publish KMS message: {e}"))),
-            }
-        }
+    /// Publish on `topic`. pinc delivers to the topic's current subscribers
+    /// and has no mesh to wait for, so there is nothing to retry.
+    async fn publish(&self, topic: String, payload: Vec<u8>) -> KmsResult<()> {
+        self.transport
+            .publish_raw(topic, payload)
+            .await
+            .map(drop)
+            .map_err(|e| kms::Error::Internal(format!("publish KMS message: {e}")))
     }
 }
 
@@ -441,7 +418,7 @@ impl<T: P2PTransport> KeyTransport for PubsubKeyTransport<T> {
 
         self.wait_for_subscriber().await;
         if let Err(e) = self
-            .publish_with_graft_retry(ENCRYPTION_TOPIC.to_string(), prep.data.clone())
+            .publish(ENCRYPTION_TOPIC.to_string(), prep.data.clone())
             .await
         {
             // Drop the correlation slot before returning so it doesn't linger.
@@ -665,9 +642,7 @@ mod tests {
         async fn disconnect(&self, _p: &PeerId) -> Result<()> {
             Ok(())
         }
-        async fn listen(&self, _a: PeerAddr) -> Result<()> {
-            Ok(())
-        }
+
         async fn connected_peers(&self) -> Result<Vec<PeerId>> {
             Ok(vec![self.peer.clone()])
         }
@@ -732,15 +707,11 @@ mod tests {
         ) -> Result<PushLogReply> {
             Err(Error::Transport("n/a".to_string()))
         }
-        async fn send_two_stream_response(&self, _p: &PeerId, _r: PushLogReply) -> Result<()> {
-            Ok(())
-        }
+
         async fn send_doc_sync_request(&self, _p: &PeerId, _r: DocSyncRequest) -> Result<()> {
             Ok(())
         }
-        async fn send_doc_sync_response(&self, _p: &PeerId, _r: DocSyncReply) -> Result<()> {
-            Ok(())
-        }
+
         async fn send_branchable_sync_request(
             &self,
             _p: &PeerId,
@@ -748,19 +719,7 @@ mod tests {
         ) -> Result<()> {
             Ok(())
         }
-        async fn send_branchable_sync_response(
-            &self,
-            _p: &PeerId,
-            _r: BranchableSyncReply,
-        ) -> Result<()> {
-            Ok(())
-        }
-        async fn send_car_request(&self, _p: &PeerId, _c: cid::Cid) -> Result<()> {
-            Ok(())
-        }
-        async fn send_car_response(&self, _p: &PeerId, _c: Vec<u8>) -> Result<()> {
-            Ok(())
-        }
+
         async fn send_car_response_token(&self, _t: (), _c: Vec<u8>) -> Result<()> {
             Ok(())
         }

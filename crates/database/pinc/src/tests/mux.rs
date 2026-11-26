@@ -92,7 +92,12 @@ fn a_car_fetch_rides_the_same_connection_at_bulk_urgency() {
 
         let transport = a.transport.clone();
         let target = b.id.clone();
-        let fetch = p2p::rt::spawn(async move { transport.send_car_request(&target, root).await });
+        let fetch = p2p::rt::spawn(async move {
+            transport
+                .sync_blocks(root, vec![target], Vec::new())
+                .await
+                .map(drop)
+        });
         let token = b
             .next(|event| match event {
                 TransportEvent::CarFetchRequest {

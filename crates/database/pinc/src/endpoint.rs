@@ -18,7 +18,7 @@ use pinc::{Connection, Hosted, NodeAddr, NodeId};
 use rapidhash::{HashMapExt, HashSetExt, RapidHashMap, RapidHashSet};
 use tracing::{debug, warn};
 
-use p2p::bitswap::ReplicatorRegistry;
+use p2p::access::ReplicatorRegistry;
 use p2p::error::{Error, Result};
 use p2p::rt::{mpsc, oneshot};
 use p2p::sync::DispatchSender;
@@ -775,17 +775,6 @@ impl<H: Hosted + 'static> Node<H> {
                 if let Some(mut stream) = self.replies.take(id) {
                     self.spawn(async move { stream.reset(super::serve::RESET_DROPPED).await });
                 }
-            }
-            Command::SendCarRequest {
-                peer_id,
-                root_cid,
-                haves,
-                reply,
-            } => {
-                let requester = Rc::clone(&self);
-                self.run_or_busy(reply, async move {
-                    requester.car_request(&peer_id, root_cid, haves).await
-                });
             }
             Command::SyncBlocks {
                 request,

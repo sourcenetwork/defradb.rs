@@ -49,10 +49,6 @@ pub enum Error {
     #[error("transport error: {0}")]
     Transport(String),
 
-    /// Failed to dial a peer.
-    #[error("dial error: {0}")]
-    Dial(String),
-
     /// Connection to peer was closed.
     #[error("connection closed")]
     ConnectionClosed,
@@ -74,10 +70,6 @@ pub enum Error {
         max: usize,
     },
 
-    /// Protocol negotiation failed.
-    #[error("protocol negotiation failed: {0}")]
-    ProtocolNegotiation(String),
-
     /// Message encoding/decoding error.
     #[error("codec error: {0}")]
     Codec(String),
@@ -89,14 +81,6 @@ pub enum Error {
     /// Public key does not match peer ID.
     #[error("public key does not match peer ID")]
     PubkeyPeerIdMismatch,
-
-    /// Failed to generate message ID.
-    #[error("failed to generate message ID")]
-    MessageIdGeneration,
-
-    /// Failed to encode public key.
-    #[error("failed to encode public key: {0}")]
-    PublicKeyEncode(String),
 
     /// Failed to decode public key.
     #[error("failed to decode public key: {0}")]
@@ -113,22 +97,6 @@ pub enum Error {
     /// Response timeout.
     #[error("response timeout")]
     ResponseTimeout,
-
-    /// Unexpected response type.
-    #[error("unexpected response type: expected {expected}, got {actual}")]
-    UnexpectedResponseType { expected: String, actual: String },
-
-    /// Peer not found.
-    #[error("peer not found: {0}")]
-    PeerNotFound(String),
-
-    /// Invalid multiaddress.
-    #[error("invalid multiaddress: {0}")]
-    InvalidMultiaddr(String),
-
-    /// Swarm error.
-    #[error("swarm error: {0}")]
-    Swarm(String),
 
     /// I/O error.
     #[error("io error: {0}")]
@@ -150,22 +118,6 @@ pub enum Error {
     #[error("failed to encode replicator status: {0}")]
     ReplicatorEncode(#[source] serde_json::Error),
 
-    /// Noise protocol error.
-    #[error("noise protocol error: {0}")]
-    Noise(String),
-
-    /// Behaviour error.
-    #[error("behaviour error: {0}")]
-    Behaviour(String),
-
-    /// Already listening on address.
-    #[error("already listening on {0}")]
-    AlreadyListening(String),
-
-    /// Not listening.
-    #[error("not listening")]
-    NotListening,
-
     /// Invalid peer ID.
     #[error("invalid peer ID: {0}")]
     InvalidPeerId(String),
@@ -177,10 +129,6 @@ pub enum Error {
     /// Channel receive error.
     #[error("channel receive error")]
     ChannelReceive,
-
-    /// GossipSub subscription error.
-    #[error("gossipsub subscription error: {0}")]
-    GossipSubSubscription(String),
 
     /// A broadcast too large for gossip: the protocol would drop it.
     #[error("gossip broadcast of {size} bytes is over the {limit} byte limit")]
@@ -194,14 +142,6 @@ pub enum Error {
     /// GossipSub publish error.
     #[error("gossipsub publish error: {0}")]
     GossipSubPublish(String),
-
-    /// GossipSub unsubscribe error.
-    #[error("gossipsub unsubscribe error: {0}")]
-    GossipSubUnsubscribe(String),
-
-    /// Invalid topic.
-    #[error("invalid topic: {0}")]
-    InvalidTopic(String),
 
     /// Invalid CID.
     #[error("invalid CID: {0}")]
@@ -327,10 +267,6 @@ pub enum Error {
     #[error("storage error: {0}")]
     Storage(String),
 
-    /// A block is not held by the local store.
-    #[error("block not found: {0}")]
-    BlockNotFound(String),
-
     /// The peer secret key could not be read, written or parsed.
     #[error("{0}")]
     SecretKey(String),
@@ -342,26 +278,6 @@ pub enum Error {
         protocol: String,
         reason: String,
     },
-
-    /// Failed to write to a P2P stream.
-    #[error("failed to write to {protocol} stream: {reason}")]
-    StreamWrite { protocol: String, reason: String },
-
-    /// Failed to read from a P2P stream.
-    #[error("stream read timed out from peer {peer_id}")]
-    StreamReadTimeout { peer_id: String },
-
-    /// Multiaddr does not contain a peer ID component.
-    #[error("multiaddr does not contain peer ID: {addr}")]
-    MissingPeerIdInMultiaddr { addr: String },
-
-    /// Replicator has no collections specified.
-    #[error("replicator collections cannot be empty")]
-    EmptyReplicatorCollections,
-
-    /// GossipSub configuration error.
-    #[error("gossipsub config error: {0}")]
-    GossipSubConfig(String),
 
     /// Explicit replay capability validation failed.
     #[error("explicit replay capability error: {0}")]
@@ -429,17 +345,11 @@ impl Error {
             | Error::ChannelReceive
             | Error::ResponseTimeout
             | Error::ConnectionTimeout(_) => true,
-            Error::Dial(msg)
-            | Error::Transport(msg)
-            | Error::Codec(msg)
-            | Error::ProtocolNegotiation(msg)
-            | Error::Noise(msg)
-            | Error::Swarm(msg)
-            | Error::ResponseSend(msg) => Self::is_connection_loss_reason(msg),
-            Error::Io(err) => Self::is_connection_loss_reason(&err.to_string()),
-            Error::StreamOpen { reason, .. } | Error::StreamWrite { reason, .. } => {
-                Self::is_connection_loss_reason(reason)
+            Error::Transport(msg) | Error::Codec(msg) | Error::ResponseSend(msg) => {
+                Self::is_connection_loss_reason(msg)
             }
+            Error::Io(err) => Self::is_connection_loss_reason(&err.to_string()),
+            Error::StreamOpen { reason, .. } => Self::is_connection_loss_reason(reason),
             _ => false,
         }
     }
@@ -673,7 +583,7 @@ mod tests {
     fn connection_like_detection_matches_common_transport_failures() {
         assert!(Error::ChannelSend.is_connection_like());
         assert!(Error::ChannelReceive.is_connection_like());
-        assert!(Error::Dial("closed".into()).is_connection_like());
+        assert!(Error::Transport("closed".into()).is_connection_like());
         assert!(Error::Codec("failed to read length: connection lost".into()).is_connection_like());
         assert!(Error::Transport("peer closed stream".into()).is_connection_like());
         assert!(Error::ResponseSend("broken pipe".into()).is_connection_like());

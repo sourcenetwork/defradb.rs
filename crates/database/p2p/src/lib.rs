@@ -14,8 +14,8 @@
 //! - [`topics`] - Topic definitions
 //! - [`error`] - Error types
 
+pub mod access;
 pub mod ack_scope;
-pub mod bitswap;
 pub mod error;
 mod explicit_replay;
 #[cfg(feature = "kms")]
@@ -57,14 +57,7 @@ pub use explicit_replay::{
 };
 pub use message::{Message, MetaData, PushLogBroadcast, PushLogReply, PushLogRequest};
 pub use peer_identity::{AnonymousResolver, PeerIdentityResolver};
-pub use protocol::{
-    BASE_PROTOCOL_ID, CODE, MESSAGE_VERSION, NAME, PROTOCOL_BASE, REP_REQUEST_PROTOCOL,
-    REP_RESPONSE_PROTOCOL, VERSION,
-};
-
-// Re-export deprecated aliases for backwards compatibility
-#[allow(deprecated)]
-pub use protocol::{PUSHLOG_REQUEST_PROTOCOL, PUSHLOG_RESPONSE_PROTOCOL};
+pub use protocol::MESSAGE_VERSION;
 
 // Re-export signing functions
 pub use signing::sign_with_transport;
@@ -87,7 +80,7 @@ pub use sync::{
     BLOCK_SYNC_COMPLETION_WATCHDOG, CLOCK_ATTEMPT_QUANTUM, PENDING_RECOVERY_WORST_CASE_SECS,
 };
 
-pub use bitswap::{AccessMode, ReplicatorRegistry};
+pub use access::{AccessMode, ReplicatorRegistry};
 
 /// Query ID for tracking block sync operations.
 /// This is a simple wrapper that allows correlating sync requests with completions.

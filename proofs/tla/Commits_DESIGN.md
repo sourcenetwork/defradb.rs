@@ -42,9 +42,9 @@ property about the missing gate, not about CRDT merge details.
   `DocumentPermission::Read` before merge.
 - Embedded setup wires that strict merge-side mode for Vera-backed ACP in
   `crates/entry-points/defra-node/src/assemble.rs`.
-- P2P egress also installs a Bitswap peer-block request filter in
-  `crates/database/p2p/src/behaviour.rs:287`, implemented in
-  `crates/database/p2p/src/bitswap/filter.rs:45`.
+- P2P egress passes every served block through the read gate
+  (`BlockReadGate` in `crates/database/p2p/src/access/read_gate.rs`), which
+  the CAR serve path consults before it hands a block to a peer.
 
 ## Model
 

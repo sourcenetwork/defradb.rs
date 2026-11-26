@@ -9,7 +9,7 @@
 \* replicator that does not replicate its collection.
 \* Removing a replicator's last collection deletes it, as Go's
 \* deleteReplicator does, so that is not a loss.
-\* Rust: crates/database/p2p/src/bitswap/registry.rs store_info (the insert),
+\* Rust: crates/database/p2p/src/access/registry.rs store_info (the insert),
 \* ReplicatorRegistry::load_from_infos (the restore), remove_peer_collections;
 \* crates/database/p2p/src/sync/coordinator/broadcast.rs
 \* replicator_in_collection (the push selection).

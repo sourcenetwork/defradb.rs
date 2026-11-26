@@ -12,7 +12,7 @@ use cid::Cid;
 use ed25519_dalek::Signer as _;
 use futures::FutureExt;
 
-use p2p::bitswap::ReplicatorRegistry;
+use p2p::access::ReplicatorRegistry;
 use p2p::error::{Error, Result};
 use p2p::message::{
     BranchableSyncReply, BranchableSyncRequest, CarFetchRequest, DocSyncReply, DocSyncRequest,
@@ -307,11 +307,6 @@ impl P2PTransport for PincTransport {
         super::addr::parse_public_peer_addr(addr)
     }
 
-    async fn listen(&self, _addr: PeerAddr) -> Result<()> {
-        // The endpoint listens on the address it was bound to.
-        Ok(())
-    }
-
     async fn connected_peers(&self) -> Result<Vec<PeerId>> {
         self.send_command(|reply| Command::ConnectedPeers { reply })
             .await
@@ -467,14 +462,6 @@ impl P2PTransport for PincTransport {
         wire::decode(bytes)
     }
 
-    async fn send_two_stream_response(
-        &self,
-        _peer_id: &PeerId,
-        _reply: PushLogReply,
-    ) -> Result<()> {
-        Err(no_reply_stream("two-stream"))
-    }
-
     async fn send_doc_sync_request(&self, peer_id: &PeerId, req: DocSyncRequest) -> Result<()> {
         self.request(
             peer_id,
@@ -492,10 +479,6 @@ impl P2PTransport for PincTransport {
         )
         .await
         .map(drop)
-    }
-
-    async fn send_doc_sync_response(&self, _peer_id: &PeerId, _reply: DocSyncReply) -> Result<()> {
-        Err(no_reply_stream("doc sync"))
     }
 
     async fn send_branchable_sync_request(
@@ -519,38 +502,6 @@ impl P2PTransport for PincTransport {
         )
         .await
         .map(drop)
-    }
-
-    async fn send_branchable_sync_response(
-        &self,
-        _peer_id: &PeerId,
-        _reply: BranchableSyncReply,
-    ) -> Result<()> {
-        Err(no_reply_stream("branchable sync"))
-    }
-
-    async fn send_car_request(&self, peer_id: &PeerId, root_cid: Cid) -> Result<()> {
-        self.send_car_request_with_haves(peer_id, root_cid, Vec::new())
-            .await
-    }
-
-    async fn send_car_request_with_haves(
-        &self,
-        peer_id: &PeerId,
-        root_cid: Cid,
-        haves: Vec<Cid>,
-    ) -> Result<()> {
-        self.send_command(|reply| Command::SendCarRequest {
-            peer_id: peer_id.clone(),
-            root_cid,
-            haves,
-            reply,
-        })
-        .await
-    }
-
-    async fn send_car_response(&self, _peer_id: &PeerId, _car_data: Vec<u8>) -> Result<()> {
-        Err(no_reply_stream("CAR"))
     }
 
     async fn send_car_response_token(
@@ -623,7 +574,9 @@ impl P2PTransport for PincTransport {
     ) -> Result<()> {
         match token {
             Some(token) => self.reply_message(token, &reply).await,
-            None => Err(no_reply_stream("searchable-encryption query")),
+            None => Err(p2p::transport::no_reply_stream(
+                "searchable-encryption query",
+            )),
         }
     }
 
@@ -653,7 +606,7 @@ impl P2PTransport for PincTransport {
     ) -> Result<()> {
         match token {
             Some(token) => self.reply_message(token, &reply).await,
-            None => Err(no_reply_stream("management")),
+            None => Err(p2p::transport::no_reply_stream("management")),
         }
     }
 
@@ -687,7 +640,7 @@ impl P2PTransport for PincTransport {
     ) -> Result<()> {
         match token {
             Some(token) => self.reply_message(token, &reply).await,
-            None => Err(no_reply_stream("management query")),
+            None => Err(p2p::transport::no_reply_stream("management query")),
         }
     }
 
@@ -714,10 +667,6 @@ impl P2PTransport for PincTransport {
             providers,
         )
         .await
-    }
-
-    fn supports_cancellable_rooted_sync(&self) -> bool {
-        true
     }
 
     async fn cancel_sync(&self, query_id: QueryId) -> Result<bool> {
@@ -806,14 +755,6 @@ fn car_request(
         }
         .with_haves(haves)
     }
-}
-
-/// Every reply goes on its request's stream, which every request carries; a
-/// reply without one has nowhere to go.
-fn no_reply_stream(kind: &str) -> Error {
-    Error::Transport(format!(
-        "a pinc {kind} reply goes on its request's stream, and this one has none"
-    ))
 }
 
 /// Resolves a peer's DID by the identity challenge, over the connection pinc

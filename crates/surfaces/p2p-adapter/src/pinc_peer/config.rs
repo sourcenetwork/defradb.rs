@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use defra_pinc::PincEndpointConfig;
 use edge::Edge;
-use p2p::bitswap::AccessMode;
+use p2p::access::AccessMode;
 use p2p::sync::SyncConfig;
 use storage::stores::RetrySchedule;
 

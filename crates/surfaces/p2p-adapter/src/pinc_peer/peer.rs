@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use defra_pinc::PincTransport;
-use p2p::bitswap::{LateBoundServeAcp, ServeAcp};
+use p2p::access::{LateBoundServeAcp, ServeAcp};
 use p2p::P2PTransport;
 use storage::corekv::Store;
 

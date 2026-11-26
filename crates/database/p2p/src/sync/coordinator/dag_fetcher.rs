@@ -153,20 +153,11 @@ pub async fn poll_fetch_dag<B: Blockstore + 'static, T: P2PTransport>(
     limiter: DagFetchLimiter,
     diagnostics: Arc<SyncDiagnostics>,
 ) -> (FetchTaskEnd, AttemptSample) {
-    // libp2p keeps the context's order: its rooted CAR goes to the announcing
-    // publisher, whose reply is what lets the dead-block-sync repair fire.
-    let health = transport
-        .supports_cancellable_rooted_sync()
-        .then(|| limiter.provider_health());
-    let mut providers = match health {
-        Some(health) => {
-            let stats = transport.fetch_stats().await.unwrap_or_default();
-            let ranking = health.rank(context.providers(), &stats, Instant::now());
-            diagnostics.record_provider_ranking(ranking.demoted, ranking.cooling);
-            ProviderRotation::new(ranking.peers)
-        }
-        None => ProviderRotation::new(context.providers()),
-    };
+    let health = limiter.provider_health();
+    let stats = transport.fetch_stats().await.unwrap_or_default();
+    let ranking = health.rank(context.providers(), &stats, Instant::now());
+    diagnostics.record_provider_ranking(ranking.demoted, ranking.cooling);
+    let mut providers = ProviderRotation::new(ranking.peers);
     debug!(
         root_cid = %root_cid,
         doc_id = %context.doc_id,
@@ -377,7 +368,6 @@ pub async fn poll_fetch_dag<B: Blockstore + 'static, T: P2PTransport>(
         &last_failures,
         diagnostics.dag_fetch_logs(),
     );
-    drop_dead_bitswap_connection(&transport, &providers, &context, &root_cid).await;
     (FetchTaskEnd::Settled, sample)
 }
 
@@ -423,57 +413,6 @@ fn trace_stall(context: &DagFetchContext, root_cid: Cid) {
             head: root_cid.to_string(),
             end: crate::model_trace::StallEnd::Backoff,
         });
-    }
-}
-
-/// Hang up on a connection whose Bitswap stream is dead while the connection lives.
-///
-/// A partition that never closes the socket can leave a peer's Bitswap
-/// queue dead on the outbound substream timeout, so every later want is
-/// dropped before it is transmitted and the per-root clock would refetch over
-/// the same dead connection forever. The bitswap crate keeps no long-lived
-/// per-peer queue (each send stands alone), but Go peers do.
-///
-/// This is defence in depth for those Go peers, and for send failures on
-/// transports that keep their own queues, so it is deliberately narrow. Every gate must hold:
-///
-/// - **libp2p only.** Iroh has no Bitswap message queue and retires its own
-///   unresponsive connections (#1751).
-/// - **The announcing publisher only.** It advertised this root, so it holds
-///   the DAG; an alternate provider is any connected peer and serves nothing
-///   simply because it has nothing to serve.
-/// - **Positive transport-level liveness.** The peer answered a rooted CAR
-///   request on its own substreams during this fetch. Bitswap silence alone
-///   is not evidence: a want that never left and a want the peer cannot
-///   satisfy are indistinguishable from here.
-/// - **Still connected**, so the hang-up is the repair and not a race with a
-///   connection that is already going away.
-async fn drop_dead_bitswap_connection<T: P2PTransport>(
-    transport: &T,
-    providers: &ProviderRotation,
-    context: &DagFetchContext,
-    root_cid: &Cid,
-) {
-    if transport.supports_cancellable_rooted_sync() {
-        return;
-    }
-    let provider = &context.source_peer;
-    if !providers.is_responsive_but_silent(provider) {
-        return;
-    }
-    let Ok(connected) = transport.connected_peers().await else {
-        return;
-    };
-    if !connected.contains(provider) {
-        return;
-    }
-    warn!(
-        root_cid = %root_cid,
-        provider = %provider,
-        "Publisher answered on its own substreams but served no block for the root it announced; dropping the connection so Bitswap is rebuilt"
-    );
-    if let Err(error) = transport.disconnect(provider).await {
-        debug!(root_cid = %root_cid, provider = %provider, error = %error, "Failed to drop the dead Bitswap connection");
     }
 }
 
@@ -604,18 +543,13 @@ async fn fetch_dag_attempt<B: Blockstore + 'static, T: P2PTransport>(
     let rooted_wants = car_missing_watch
         .as_deref()
         .unwrap_or(std::slice::from_ref(&root_cid));
-    let mut car_answered = false;
     // A missing root is usually a new head over held history, which a
-    // whole-DAG CAR would re-send; on a rooted transport the rotating fetch
-    // below asks for it with the receiver's haves.
-    let rooted_asked = !state.providers.cannot_serve(rooted_wants)
-        && match car_missing_watch {
-            Some(_) => context.needs_rooted_provider_discovery(),
-            None => !transport.supports_cancellable_rooted_sync(),
-        };
-    let rooted_outcome = if !rooted_asked {
-        ProviderWindowOutcome::SendFailed
-    } else if car_missing_watch.is_some() && transport.supports_cancellable_rooted_sync() {
+    // whole-DAG CAR would re-send; the rotating fetch below asks for it with
+    // the receiver's haves.
+    let rooted_asked = car_missing_watch.is_some()
+        && !state.providers.cannot_serve(rooted_wants)
+        && context.needs_rooted_provider_discovery();
+    let rooted_outcome = if rooted_asked {
         poll_fetch_rooted_provider(
             &root_cid,
             rooted_wants,
@@ -627,20 +561,8 @@ async fn fetch_dag_attempt<B: Blockstore + 'static, T: P2PTransport>(
         )
         .await
     } else {
-        poll_fetch_rooted_car(
-            &root_cid,
-            rooted_wants,
-            transport,
-            blockstore,
-            state.providers.current(),
-            context,
-            &mut car_answered,
-        )
-        .await
+        ProviderWindowOutcome::SendFailed
     };
-    if car_answered {
-        state.providers.record_responsive();
-    }
     if rooted_asked {
         record_health(
             state.health,
@@ -650,10 +572,7 @@ async fn fetch_dag_attempt<B: Blockstore + 'static, T: P2PTransport>(
         );
     }
     if let ProviderWindowOutcome::SizeLimit(cid) = rooted_outcome {
-        // libp2p can fall back to Bitswap, whose limits are independent of CAR.
-        if transport.supports_cancellable_rooted_sync() {
-            state.providers.record_size_limit(cid);
-        }
+        state.providers.record_size_limit(cid);
     }
     if rooted_outcome == ProviderWindowOutcome::Deferred {
         return FetchAttemptOutcome::Deferred;
@@ -889,117 +808,6 @@ async fn emit_dag_ready(
     }
 }
 
-/// Exercise the established libp2p CAR request protocol when the transport's
-/// block-sync primitive cannot express a recursive root request.  Sending the
-/// request and receiving its CAR response are separate streams on libp2p, so
-/// completion is established from the bounded rooted frontier in blockstore.
-///
-/// `answered` is set when the peer's CAR response reaches this node, with or
-/// without blocks in it. That round trip is the only transport-level liveness
-/// evidence this fetch collects.
-async fn poll_fetch_rooted_car<B: Blockstore, T: P2PTransport>(
-    root_cid: &Cid,
-    watch_cids: &[Cid],
-    transport: &T,
-    blockstore: &Arc<B>,
-    source_peer: &PeerId,
-    context: &DagFetchContext,
-    answered: &mut bool,
-) -> ProviderWindowOutcome {
-    let mut initially_missing = 0usize;
-    for cid in watch_cids {
-        if !matches!(blockstore.has(cid).await, Ok(true)) {
-            initially_missing += 1;
-        }
-    }
-    if initially_missing == 0 {
-        return ProviderWindowOutcome::Complete;
-    }
-
-    let mut completion = context.track_rooted_car(*root_cid, source_peer);
-
-    match crate::rt::time::timeout(
-        Duration::from_secs(10),
-        transport.send_car_request_with_haves(source_peer, *root_cid, context.haves().to_vec()),
-    )
-    .await
-    {
-        Ok(Ok(())) => {}
-        Ok(Err(error)) => {
-            context.cancel_rooted_car_tracking(*root_cid);
-            debug!(root_cid = %root_cid, source_peer = %source_peer, error = %error, "Rooted CAR request failed before dispatch");
-            return ProviderWindowOutcome::SendFailed;
-        }
-        Err(_) => {
-            context.cancel_rooted_car_tracking(*root_cid);
-            return ProviderWindowOutcome::Stalled;
-        }
-    }
-
-    let observe = |remaining: usize| {
-        if remaining == 0 {
-            ProviderWindowOutcome::Complete
-        } else if remaining < initially_missing {
-            ProviderWindowOutcome::Partial
-        } else {
-            ProviderWindowOutcome::Stalled
-        }
-    };
-    let remaining_now = count_missing(blockstore, watch_cids).await;
-    if remaining_now < initially_missing && completion.is_none() {
-        context.cancel_rooted_car_tracking(*root_cid);
-        return observe(remaining_now);
-    }
-
-    if let Some(receiver) = completion.as_mut() {
-        let deadline = crate::rt::time::Instant::now() + Duration::from_secs(10);
-        loop {
-            if !context.is_current() {
-                context.cancel_rooted_car_tracking(*root_cid);
-                return ProviderWindowOutcome::Superseded;
-            }
-            futures::select! {
-                result = (&mut *receiver).fuse() => {
-                    // Busy is alive, not the silent publisher of a dead Bitswap link.
-                    let busy = matches!(result, Ok(FetchCompletion::ProviderBusy));
-                    *answered = result.is_ok() && !busy;
-                    if matches!(result, Ok(FetchCompletion::Deferred)) {
-                        context.cancel_rooted_car_tracking(*root_cid);
-                        return ProviderWindowOutcome::Deferred;
-                    }
-                    if busy {
-                        context.cancel_rooted_car_tracking(*root_cid);
-                        return match observe(count_missing(blockstore, watch_cids).await) {
-                            ProviderWindowOutcome::Stalled => ProviderWindowOutcome::Busy,
-                            progressed => progressed,
-                        };
-                    }
-                    if let Ok(FetchCompletion::SizeLimit(cid)) = result {
-                        return ProviderWindowOutcome::SizeLimit(cid);
-                    }
-                    break;
-                },
-                _ = crate::rt::time::sleep_until(deadline).fuse() => break,
-                _ = crate::rt::time::sleep(Duration::from_millis(100)).fuse() => {}
-            }
-            if crate::rt::time::Instant::now() >= deadline {
-                break;
-            }
-        }
-    } else {
-        let start = Instant::now();
-        while start.elapsed() < Duration::from_secs(10) && context.is_current() {
-            let remaining = count_missing(blockstore, watch_cids).await;
-            if remaining < initially_missing {
-                return observe(remaining);
-            }
-            crate::rt::time::sleep(Duration::from_millis(100)).await;
-        }
-    }
-    context.cancel_rooted_car_tracking(*root_cid);
-    observe(count_missing(blockstore, watch_cids).await)
-}
-
 async fn count_missing<B: Blockstore>(blockstore: &Arc<B>, cids: &[Cid]) -> usize {
     let mut remaining = 0usize;
     for cid in cids {
@@ -1141,7 +949,7 @@ struct ProviderFetchState<'a> {
     providers: &'a mut ProviderRotation,
     stall_budget: usize,
     free_refusals: usize,
-    health: Option<&'a ProviderHealth>,
+    health: &'a ProviderHealth,
     diagnostics: &'a SyncDiagnostics,
     depth: ClosureDepth,
     /// When a clock-dispatched attempt that keeps making progress gives its
@@ -1157,7 +965,7 @@ impl<'a> ProviderFetchState<'a> {
     /// attempt regardless of how many batches the missing frontier spans.
     fn new(
         providers: &'a mut ProviderRotation,
-        health: Option<&'a ProviderHealth>,
+        health: &'a ProviderHealth,
         diagnostics: &'a SyncDiagnostics,
     ) -> Self {
         Self {
@@ -1188,12 +996,11 @@ impl<'a> ProviderFetchState<'a> {
 /// reads as load; an alternate may not hold a just-published root yet. A busy
 /// reply is explicit load from any provider, so it cools whoever sent it.
 fn record_health(
-    health: Option<&ProviderHealth>,
+    health: &ProviderHealth,
     context: &DagFetchContext,
     provider: &PeerId,
     outcome: ProviderWindowOutcome,
 ) {
-    let Some(health) = health else { return };
     match outcome {
         ProviderWindowOutcome::Complete | ProviderWindowOutcome::Partial => {
             health.record_productive(provider);
@@ -1366,11 +1173,8 @@ async fn poll_fetch_blocks<B: Blockstore, T: P2PTransport>(
         return ProviderWindowOutcome::Complete;
     }
 
-    let (wants, depth) = if transport.supports_cancellable_rooted_sync() {
-        rooted_request(blockstore.as_ref(), root_cid, &missing, context, depth).await
-    } else {
-        (missing.clone(), depth)
-    };
+    let (wants, depth) =
+        rooted_request(blockstore.as_ref(), root_cid, &missing, context, depth).await;
     let query_id = match transport
         .sync_blocks_within(
             *root_cid,

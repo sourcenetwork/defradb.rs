@@ -38,7 +38,6 @@ pub(crate) struct DagFetchContext {
     pending_lease: Option<crate::sync::manager::PendingDagLease>,
     peer_permit: crate::sync::DagFetchPeerPermit,
     block_sync_completions: Option<crate::sync::manager::BlockSyncCompletionTracker>,
-    rooted_car_completions: Option<crate::sync::manager::RootedCarCompletionTracker>,
     rooted_provider_discovery: bool,
     /// Merged blocks of this document held here, named to providers so
     /// they leave out history this node already holds.
@@ -64,7 +63,6 @@ impl DagFetchContext {
             pending_lease: None,
             peer_permit: Default::default(),
             block_sync_completions: None,
-            rooted_car_completions: None,
             rooted_provider_discovery: false,
             haves: Vec::new(),
         }
@@ -180,14 +178,6 @@ impl DagFetchContext {
         self
     }
 
-    pub(crate) fn with_rooted_car_completions(
-        mut self,
-        tracker: crate::sync::manager::RootedCarCompletionTracker,
-    ) -> Self {
-        self.rooted_car_completions = Some(tracker);
-        self
-    }
-
     pub(crate) fn with_rooted_provider_discovery(mut self) -> Self {
         self.rooted_provider_discovery = true;
         self
@@ -209,22 +199,6 @@ impl DagFetchContext {
     pub(crate) fn cancel_block_sync_tracking(&self, query_id: crate::QueryId) {
         if let Some(tracker) = &self.block_sync_completions {
             tracker.cancel(query_id);
-        }
-    }
-
-    pub(crate) fn track_rooted_car(
-        &self,
-        root_cid: Cid,
-        peer_id: &PeerId,
-    ) -> Option<crate::rt::oneshot::Receiver<crate::sync::manager::FetchCompletion>> {
-        self.rooted_car_completions
-            .as_ref()
-            .map(|tracker| tracker.register(root_cid, peer_id.clone()))
-    }
-
-    pub(crate) fn cancel_rooted_car_tracking(&self, root_cid: Cid) {
-        if let Some(tracker) = &self.rooted_car_completions {
-            tracker.cancel(root_cid);
         }
     }
 

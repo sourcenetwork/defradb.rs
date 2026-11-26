@@ -19,9 +19,7 @@ mod join;
 mod pending_dag;
 mod pushlog;
 
-pub(crate) use block_sync::{
-    BlockSyncCompletionTracker, FetchCompletion, RootedCarCompletionTracker,
-};
+pub(crate) use block_sync::{BlockSyncCompletionTracker, FetchCompletion};
 pub(crate) use pending_dag::PendingDagLease;
 
 use crate::rt::mpsc;
@@ -105,9 +103,6 @@ pub struct SyncManager<B: Blockstore> {
 
     /// Completion waiters for poll-owned exact-CID queries.
     pub(super) block_sync_completions: BlockSyncCompletionTracker,
-
-    /// Completion waiters for libp2p's separately streamed rooted CAR replies.
-    pub(super) rooted_car_completions: RootedCarCompletionTracker,
 
     /// Observability counters (see `SyncDiagnostics`).
     pub(crate) diagnostics: Arc<SyncDiagnostics>,
@@ -227,7 +222,6 @@ impl<B: Blockstore + 'static> SyncManager<B> {
             block_sync_completions: BlockSyncCompletionTracker::with_capacity(
                 config.max_pending_dags.max(1),
             ),
-            rooted_car_completions: RootedCarCompletionTracker::default(),
             diagnostics: Arc::new(SyncDiagnostics::default()),
             receive_gate: regolith::sync::OnceCell::new(),
             // A zero cap would reject every missing-link push forever

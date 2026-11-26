@@ -11,7 +11,7 @@ use super::authorizer::RuntimeAuthorizer;
 use super::{
     DagFetchLimiter, SyncAccessState, SyncCoordinator, SyncRuntime, SyncSubscriptionState,
 };
-use crate::bitswap::{
+use crate::access::{
     AccessMode, BlockClassifier, DefaultBlockClassifier, LateBoundServeAcp, ReplicatorRegistry,
 };
 use crate::error::Result;

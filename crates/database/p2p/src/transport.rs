@@ -20,6 +20,14 @@ use crate::replicator::ReplicatorInfo;
 use crate::topics::DefraTopic;
 use crate::QueryId;
 
+/// Every reply goes on its request's stream, which every request carries; a
+/// reply without one has nowhere to go.
+pub fn no_reply_stream(kind: &str) -> crate::error::Error {
+    crate::error::Error::Transport(format!(
+        "a pinc {kind} reply goes on its request's stream, and this one has none"
+    ))
+}
+
 /// Transport-agnostic peer identifier.
 ///
 /// Wraps a string representation of a peer ID, allowing conversion from
@@ -385,8 +393,6 @@ pub trait P2PTransport: Clone + Send + Sync + 'static {
         ))
     }
 
-    async fn listen(&self, addr: PeerAddr) -> Result<()>;
-
     async fn connected_peers(&self) -> Result<Vec<PeerId>>;
 
     /// Peers that say they hold `collection_id`, connected or not, best
@@ -486,39 +492,13 @@ pub trait P2PTransport: Clone + Send + Sync + 'static {
         req: PushLogRequest,
     ) -> Result<PushLogReply>;
 
-    async fn send_two_stream_response(&self, peer_id: &PeerId, reply: PushLogReply) -> Result<()>;
-
     async fn send_doc_sync_request(&self, peer_id: &PeerId, req: DocSyncRequest) -> Result<()>;
-
-    async fn send_doc_sync_response(&self, peer_id: &PeerId, reply: DocSyncReply) -> Result<()>;
 
     async fn send_branchable_sync_request(
         &self,
         peer_id: &PeerId,
         req: BranchableSyncRequest,
     ) -> Result<()>;
-
-    async fn send_branchable_sync_response(
-        &self,
-        peer_id: &PeerId,
-        reply: BranchableSyncReply,
-    ) -> Result<()>;
-
-    async fn send_car_request(&self, peer_id: &PeerId, root_cid: Cid) -> Result<()>;
-
-    /// [`send_car_request`](Self::send_car_request) naming merged blocks held
-    /// here, so the provider leaves their closures out. Transports that cannot
-    /// carry them keep the default and ask for the whole DAG.
-    async fn send_car_request_with_haves(
-        &self,
-        peer_id: &PeerId,
-        root_cid: Cid,
-        _haves: Vec<Cid>,
-    ) -> Result<()> {
-        self.send_car_request(peer_id, root_cid).await
-    }
-
-    async fn send_car_response(&self, peer_id: &PeerId, car_data: Vec<u8>) -> Result<()>;
 
     async fn send_car_response_token(
         &self,
@@ -627,13 +607,6 @@ pub trait P2PTransport: Clone + Send + Sync + 'static {
         _haves: Vec<Cid>,
     ) -> Result<QueryId> {
         self.sync_blocks(root, providers, missing).await
-    }
-
-    /// Whether `sync_blocks(root, providers, [])` is a cancellable recursive
-    /// CAR request.  The iroh transport provides that contract; libp2p's
-    /// implementation is exact-CID Bitswap, where an empty set is a no-op.
-    fn supports_cancellable_rooted_sync(&self) -> bool {
-        false
     }
 
     async fn cancel_sync(&self, query_id: QueryId) -> Result<bool>;

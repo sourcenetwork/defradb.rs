@@ -35,15 +35,8 @@ async fn depth_cut_fetch_serves_only_the_cut_below_the_frontier() {
             }
             blocks.push((cid, data));
         }
-        let (head, head_data) = blocks.last().unwrap().clone();
-        let transport = TestTransport::new(
-            receiver.clone(),
-            head,
-            head_data,
-            RapidHashMap::new(),
-            RapidHashMap::new(),
-        );
-        transport.set_force_rooted_sync();
+        let (head, _) = blocks.last().unwrap().clone();
+        let transport = TestTransport::new(receiver.clone(), RapidHashMap::new());
         transport.set_closure_provider(provider);
         let (event_tx, mut event_rx) = mpsc::channel(1);
 
@@ -70,7 +63,6 @@ async fn depth_cut_fetch_serves_only_the_cut_below_the_frontier() {
         for (cid, _) in &blocks {
             assert!(receiver.has(cid).await.unwrap());
         }
-        assert_eq!(transport.car_request_count(), 0);
         assert_eq!(transport.closure_rounds(), rounds, "held {held}");
         if held == 99 {
             assert_eq!(transport.sync_batches(), vec![vec![head]]);

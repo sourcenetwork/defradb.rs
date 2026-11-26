@@ -37,9 +37,8 @@ struct Fixture {
 
 impl Fixture {
     /// A root with `children` links, of which only the selective path serves
-    /// the first `served`. `cancellable` picks iroh's rooted sync (ranked) or
-    /// libp2p's (not).
-    async fn new(children: usize, served: usize, cancellable: bool) -> Self {
+    /// the first `served`.
+    async fn new(children: usize, served: usize) -> Self {
         let store = Arc::new(RegolithStore::in_memory().unwrap());
         let blockstore = Arc::new(DefraBlockstore::new(store, true));
         let blocks: Vec<(Cid, Vec<u8>)> = (0..children)
@@ -55,14 +54,8 @@ impl Fixture {
         blockstore.put(&root_cid, &root_data).await.unwrap();
         let transport = TestTransport::new(
             blockstore.clone(),
-            root_cid,
-            root_data,
-            RapidHashMap::new(),
             RapidHashMap::from_iter(blocks.into_iter().take(served)),
         );
-        if cancellable {
-            transport.set_force_rooted_sync();
-        }
         Self {
             transport,
             blockstore,
@@ -109,7 +102,7 @@ async fn a_failing_source_is_asked_after_a_healthy_alternate() {
     for (source_ppm, dead, asked, demotions) in
         [(20_897, true, ALT, 1), (1_000_000, false, SOURCE, 0)]
     {
-        let fixture = Fixture::new(1, 1, true).await;
+        let fixture = Fixture::new(1, 1).await;
         if dead {
             fixture.transport.mark_provider_dead(SOURCE);
         }
@@ -133,26 +126,23 @@ async fn a_failing_source_is_asked_after_a_healthy_alternate() {
 }
 
 /// Only the announcing peer's fast refusal cools it for the next root: an
-/// alternate may just not hold a root published moments ago, and on libp2p the
-/// source keeps the rooted CAR slot the dead-Bitswap repair depends on.
+/// alternate may just not hold a root published moments ago.
 #[nuclei::test(start_paused = true)]
-async fn a_fast_refusal_cools_only_the_announcing_peer_on_cancellable_transports() {
+async fn a_fast_refusal_cools_only_the_announcing_peer() {
     let cases = [
-        (SOURCE, true, vec![], [&[SOURCE, ALT][..], &[ALT]], 1),
+        (SOURCE, vec![], [&[SOURCE, ALT][..], &[ALT]], 1),
         (
             ALT,
-            true,
             vec![measured(SOURCE, 82_928, 20_897)],
             [&[ALT, SOURCE], &[ALT, SOURCE]],
             0,
         ),
-        (SOURCE, false, vec![], [&[SOURCE, ALT], &[SOURCE, ALT]], 0),
     ];
-    for (refusing, cancellable, stats, expected, cooldown_skips) in cases {
+    for (refusing, stats, expected, cooldown_skips) in cases {
         let limiter = DagFetchLimiter::new(2);
         let diagnostics = diagnostics();
         for expected in expected {
-            let fixture = Fixture::new(1, 1, cancellable).await;
+            let fixture = Fixture::new(1, 1).await;
             fixture.transport.fetch_stats.store(stats.clone());
             let context = fixture.refuse(refusing, Duration::ZERO, context(true));
             assert!(fixture.fetch(context, &limiter, &diagnostics).await);
@@ -161,7 +151,7 @@ async fn a_fast_refusal_cools_only_the_announcing_peer_on_cancellable_transports
         assert_eq!(
             diagnostics.snapshot().provider_cooldown_skips,
             cooldown_skips,
-            "{refusing} refusing, cancellable={cancellable}"
+            "{refusing} refusing"
         );
     }
 }
@@ -170,7 +160,7 @@ async fn a_fast_refusal_cools_only_the_announcing_peer_on_cancellable_transports
 /// that fails each one after `delay`; returns the batches asked, the time it
 /// took and the limiter it ran under.
 async fn refused_batches(batches: usize, delay: Duration) -> (usize, Duration, DagFetchLimiter) {
-    let fixture = Fixture::new(SELECTIVE_FETCH_BATCH_SIZE * (batches - 1) + 1, 0, true).await;
+    let fixture = Fixture::new(SELECTIVE_FETCH_BATCH_SIZE * (batches - 1) + 1, 0).await;
     let context = fixture.refuse(SOURCE, delay, context(false));
     let limiter = DagFetchLimiter::new(2);
     let started = crate::rt::time::Instant::now();
@@ -188,7 +178,7 @@ async fn a_fast_refusal_does_not_spend_the_stall_budget() {
     assert_eq!(asked, 2 * MAX_FETCH_ATTEMPTS as usize);
 }
 
-/// A failure only at iroh's 30 s response timeout waited the window out.
+/// A failure only at pinc's 30 s response timeout waited the window out.
 #[nuclei::test(start_paused = true)]
 async fn a_failure_at_the_response_timeout_spends_the_stall_budget() {
     let (asked, elapsed, limiter) = refused_batches(2, Duration::from_secs(30)).await;

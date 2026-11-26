@@ -219,7 +219,6 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
         is_explicit_replicator: bool,
         explicit_replay_authorization: Option<ExplicitReplayAuthorization>,
     ) -> Result<()> {
-        let supports_same_stream_reply = request.supports_same_stream_reply;
         tracing::debug!(
             peer_id = %peer_id,
             doc_id = %request.doc_id,
@@ -252,8 +251,7 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
                 if let Err(sign_err) = sign_with_transport(&self.runtime.transport, &mut reply) {
                     tracing::error!(error = %sign_err, "Failed to sign invalid CID response");
                 }
-                self.send_two_stream_reply(&peer_id, reply, token, supports_same_stream_reply)
-                    .await;
+                self.send_two_stream_reply(&peer_id, reply, token).await;
                 return Err(crate::error::Error::InvalidCid(error_msg));
             }
         };
@@ -299,38 +297,27 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
             return Err(e);
         }
 
-        self.send_two_stream_reply(&peer_id, reply, token, supports_same_stream_reply)
-            .await;
+        self.send_two_stream_reply(&peer_id, reply, token).await;
 
         process_result
     }
 
-    /// Send a two-stream reply on the request stream when the sender advertised
-    /// support, falling back to the legacy reverse-stream response otherwise.
+    /// Send a two-stream reply on the request stream; a request that carried
+    /// no stream has nowhere to be answered.
     pub(in crate::sync::coordinator) async fn send_two_stream_reply(
         &self,
         peer_id: &PeerId,
         reply: PushLogReply,
         token: Option<T::ResponseToken>,
-        supports_same_stream_reply: bool,
     ) {
-        let send_result = if supports_same_stream_reply {
-            if let Some(token) = token {
+        let send_result = match token {
+            Some(token) => {
                 self.runtime
                     .transport
                     .send_pushlog_response(token, reply)
                     .await
-            } else {
-                self.runtime
-                    .transport
-                    .send_two_stream_response(peer_id, reply)
-                    .await
             }
-        } else {
-            self.runtime
-                .transport
-                .send_two_stream_response(peer_id, reply)
-                .await
+            None => Err(crate::transport::no_reply_stream("two-stream")),
         };
 
         if let Err(e) = send_result {

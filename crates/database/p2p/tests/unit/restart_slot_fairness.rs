@@ -97,14 +97,7 @@ fn a_root_acked_after_restart_takes_the_first_slot_a_stalled_catch_up_frees() {
         }
         let (fresh, fresh_data, _) = head_missing_its_field("fresh");
 
-        let transport = TestTransport::new(
-            blockstore.clone(),
-            fresh,
-            fresh_data.clone(),
-            RapidHashMap::new(),
-            RapidHashMap::new(),
-        );
-        transport.set_force_rooted_sync();
+        let transport = TestTransport::new(blockstore.clone(), RapidHashMap::new());
         let stalled: Vec<PeerId> = (0..=DEFAULT_MAX_CONCURRENT_DAG_FETCHES)
             .map(|slot| PeerId::new(format!("stalled-{slot}")))
             .collect();
@@ -256,14 +249,7 @@ fn a_slot_goes_to_another_peer_while_a_saturated_peer_has_no_free_permit() {
         }
         let (fresh, fresh_data, _) = head_missing_its_field("fresh");
 
-        let transport = TestTransport::new(
-            blockstore.clone(),
-            fresh,
-            fresh_data.clone(),
-            RapidHashMap::new(),
-            RapidHashMap::new(),
-        );
-        transport.set_force_rooted_sync();
+        let transport = TestTransport::new(blockstore.clone(), RapidHashMap::new());
         for peer in ["spoke-d", "spoke-e"] {
             transport.mark_provider_dead(peer);
         }

@@ -5,7 +5,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use cid::Cid;
 use defra_core::{is_lens_block, Block as DefraBlock, Signature};
-use p2p::bitswap::{BlockAcpMeta, BlockClass, BlockClassifier, BlockReadGate};
+use p2p::access::{BlockAcpMeta, BlockClass, BlockClassifier, BlockReadGate};
 use storage::corekv::Store;
 
 pub struct DbBlockClassifier<S: Store + 'static> {
@@ -260,7 +260,7 @@ mod tests {
     use std::sync::Arc;
 
     use acp::{DocumentACP, Identity, LocalDocumentACP, MemoryAcpStore};
-    use p2p::bitswap::{BlockAcpMeta, BlockClass, BlockClassifier, BlockReadGate};
+    use p2p::access::{BlockAcpMeta, BlockClass, BlockClassifier, BlockReadGate};
     use schema::CollectionVersion;
     use storage::RegolithStore;
 

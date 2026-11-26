@@ -129,14 +129,7 @@ fn an_acked_root_is_dispatched_within_a_quantum_of_trickling_holders() {
         served.insert(leaf, leaf_data);
         connected.push(PeerId::new("fresh-peer".to_string()));
 
-        let transport = TestTransport::new(
-            blockstore.clone(),
-            fresh,
-            fresh_data.clone(),
-            RapidHashMap::new(),
-            served,
-        );
-        transport.set_force_rooted_sync();
+        let transport = TestTransport::new(blockstore.clone(), served);
         transport.set_drip_delay(DRIP);
         transport.set_connected_peers(connected);
 

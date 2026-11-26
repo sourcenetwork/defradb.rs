@@ -1,7 +1,5 @@
 //! Commands from the `PincTransport` facade to the endpoint's thread.
 
-use cid::Cid;
-
 use p2p::error::Result;
 use p2p::message::CarFetchRequest;
 use p2p::rt::{mpsc, oneshot};
@@ -134,12 +132,6 @@ pub enum Command {
     /// The token for `id` was dropped unspent: reset its stream.
     DropReply {
         id: u64,
-    },
-    SendCarRequest {
-        peer_id: PeerId,
-        root_cid: Cid,
-        haves: Vec<Cid>,
-        reply: Reply<()>,
     },
     SyncBlocks {
         request: CarFetchRequest,

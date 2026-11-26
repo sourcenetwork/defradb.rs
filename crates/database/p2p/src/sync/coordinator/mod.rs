@@ -91,7 +91,7 @@ use kovan_map::HopscotchMap;
 use kovan_queue::seg_queue::SegQueue;
 use regolith::sync::{Event, OwnedSemaphorePermit, Semaphore};
 
-use crate::bitswap::{AccessMode, ReplicatorRegistry};
+use crate::access::{AccessMode, ReplicatorRegistry};
 use crate::replicator::ReplicationFilterMatcher;
 use crate::tracked_task::TrackedTask;
 use crate::transport::{P2PTransport, PeerId};
@@ -1084,11 +1084,11 @@ pub struct SyncCoordinator<B: Blockstore, T: P2PTransport> {
     /// the same decision for the same peer state.
     pub(super) authorizer: Arc<authorizer::RuntimeAuthorizer<T>>,
 
-    /// CID-aware block classifier shared by Bitswap and CAR serve paths.
-    pub(super) classifier: Arc<dyn crate::bitswap::BlockClassifier>,
+    /// CID-aware block classifier the CAR serve path reads blocks through.
+    pub(super) classifier: Arc<dyn crate::access::BlockClassifier>,
 
-    /// Late-bound ACP resolver/gate shared by Bitswap and CAR serve paths.
-    pub(super) serve_acp: Arc<crate::bitswap::LateBoundServeAcp>,
+    /// Late-bound ACP resolver/gate for the CAR serve path.
+    pub(super) serve_acp: Arc<crate::access::LateBoundServeAcp>,
 
     /// Resumable progress for rooted CAR authorization walks that exhausted a
     /// budget, so a retried request continues the traversal (#1727).

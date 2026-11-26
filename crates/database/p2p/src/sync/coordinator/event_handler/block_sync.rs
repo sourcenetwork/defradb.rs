@@ -342,10 +342,6 @@ mod tests {
             Ok(())
         }
 
-        async fn listen(&self, _addr: PeerAddr) -> P2PResult<()> {
-            Ok(())
-        }
-
         async fn connected_peers(&self) -> P2PResult<Vec<PeerId>> {
             Ok(Vec::new())
         }
@@ -402,26 +398,10 @@ mod tests {
             Ok(PushLogReply::success("noop"))
         }
 
-        async fn send_two_stream_response(
-            &self,
-            _peer_id: &PeerId,
-            _reply: PushLogReply,
-        ) -> P2PResult<()> {
-            Ok(())
-        }
-
         async fn send_doc_sync_request(
             &self,
             _peer_id: &PeerId,
             _req: DocSyncRequest,
-        ) -> P2PResult<()> {
-            Ok(())
-        }
-
-        async fn send_doc_sync_response(
-            &self,
-            _peer_id: &PeerId,
-            _reply: DocSyncReply,
         ) -> P2PResult<()> {
             Ok(())
         }
@@ -431,22 +411,6 @@ mod tests {
             _peer_id: &PeerId,
             _req: BranchableSyncRequest,
         ) -> P2PResult<()> {
-            Ok(())
-        }
-
-        async fn send_branchable_sync_response(
-            &self,
-            _peer_id: &PeerId,
-            _reply: BranchableSyncReply,
-        ) -> P2PResult<()> {
-            Ok(())
-        }
-
-        async fn send_car_request(&self, _peer_id: &PeerId, _root_cid: Cid) -> P2PResult<()> {
-            Ok(())
-        }
-
-        async fn send_car_response(&self, _peer_id: &PeerId, _car_data: Vec<u8>) -> P2PResult<()> {
             Ok(())
         }
 

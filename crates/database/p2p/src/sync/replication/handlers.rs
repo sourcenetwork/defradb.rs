@@ -237,7 +237,6 @@ where
             .with_pending_lease(coordinator.manager().pending_dag_lease(root_cid))
             .with_peer_permit(peer_permit)
             .with_block_sync_completions(coordinator.manager().block_sync_completion_tracker())
-            .with_rooted_car_completions(coordinator.manager().rooted_car_completion_tracker())
             .with_rooted_provider_discovery();
 
         let attempt = context.clone();

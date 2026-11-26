@@ -110,11 +110,11 @@ impl Node {
         }
     }
 
-    fn access_mode(config: &Config) -> p2p::bitswap::AccessMode {
+    fn access_mode(config: &Config) -> p2p::access::AccessMode {
         if config.acp.document_type != AcpDocumentType::None {
-            p2p::bitswap::AccessMode::Controlled
+            p2p::access::AccessMode::Controlled
         } else {
-            p2p::bitswap::AccessMode::Open
+            p2p::access::AccessMode::Open
         }
     }
 

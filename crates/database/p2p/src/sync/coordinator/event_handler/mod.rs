@@ -157,14 +157,12 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
         if let Err(sign_err) = sign_with_transport(&self.runtime.transport, &mut reply) {
             tracing::debug!(error = %sign_err, "Failed to sign two-stream backpressure nack");
         }
-        self.send_two_stream_reply(peer_id, reply, token, request.supports_same_stream_reply)
-            .await;
+        self.send_two_stream_reply(peer_id, reply, token).await;
         error
     }
 
     async fn reject_doc_sync(
         &self,
-        peer_id: &PeerId,
         message_id: &str,
         token: Option<T::ResponseToken>,
         reply_message: &str,
@@ -174,16 +172,14 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
         if let Err(sign_err) = sign_with_transport(&self.runtime.transport, &mut reply) {
             tracing::debug!(error = %sign_err, "Failed to sign DocSync backpressure nack");
         }
-        let send_result = if let Some(token) = token {
-            self.runtime
-                .transport
-                .send_doc_sync_response_token(token, reply)
-                .await
-        } else {
-            self.runtime
-                .transport
-                .send_doc_sync_response(peer_id, reply)
-                .await
+        let send_result = match token {
+            Some(token) => {
+                self.runtime
+                    .transport
+                    .send_doc_sync_response_token(token, reply)
+                    .await
+            }
+            None => Err(crate::transport::no_reply_stream("doc sync")),
         };
         if let Err(send_err) = send_result {
             tracing::debug!(error = %send_err, "Failed to send DocSync backpressure nack");
@@ -193,7 +189,6 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
 
     async fn reject_branchable_sync(
         &self,
-        peer_id: &PeerId,
         message_id: &str,
         collection_id: &str,
         token: Option<T::ResponseToken>,
@@ -204,16 +199,14 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
         if let Err(sign_err) = sign_with_transport(&self.runtime.transport, &mut reply) {
             tracing::debug!(error = %sign_err, "Failed to sign BranchableSync backpressure nack");
         }
-        let send_result = if let Some(token) = token {
-            self.runtime
-                .transport
-                .send_branchable_sync_response_token(token, reply)
-                .await
-        } else {
-            self.runtime
-                .transport
-                .send_branchable_sync_response(peer_id, reply)
-                .await
+        let send_result = match token {
+            Some(token) => {
+                self.runtime
+                    .transport
+                    .send_branchable_sync_response_token(token, reply)
+                    .await
+            }
+            None => Err(crate::transport::no_reply_stream("branchable sync")),
         };
         if let Err(send_err) = send_result {
             tracing::debug!(error = %send_err, "Failed to send BranchableSync backpressure nack");
@@ -223,7 +216,6 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
 
     async fn reject_car_fetch(
         &self,
-        peer_id: &PeerId,
         root_cid: &cid::Cid,
         token: Option<T::ResponseToken>,
         error: Error,
@@ -231,16 +223,14 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
         // Busy, not empty: the requester rotates now instead of charging this
         // provider a stalled window. Zero bytes is the legacy fallback.
         let reply = crate::sync::car::encode_car_busy(root_cid).unwrap_or_default();
-        let send_result = if let Some(token) = token {
-            self.runtime
-                .transport
-                .send_car_response_token(token, reply)
-                .await
-        } else {
-            self.runtime
-                .transport
-                .send_car_response(peer_id, reply)
-                .await
+        let send_result = match token {
+            Some(token) => {
+                self.runtime
+                    .transport
+                    .send_car_response_token(token, reply)
+                    .await
+            }
+            None => Err(crate::transport::no_reply_stream("CAR")),
         };
         if let Err(send_err) = send_result {
             tracing::debug!(error = %send_err, "Failed to send CAR backpressure rejection");
@@ -304,13 +294,7 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
             } => {
                 let error = Self::saturated_error(&peer_id);
                 Err(self
-                    .reject_doc_sync(
-                        &peer_id,
-                        &request.message_id,
-                        token,
-                        AT_CAPACITY_MESSAGE,
-                        error,
-                    )
+                    .reject_doc_sync(&request.message_id, token, AT_CAPACITY_MESSAGE, error)
                     .await)
             }
             TransportEvent::BranchableSyncRequest {
@@ -321,7 +305,6 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
                 let error = Self::saturated_error(&peer_id);
                 Err(self
                     .reject_branchable_sync(
-                        &peer_id,
                         &request.message_id,
                         &request.collection_id,
                         token,
@@ -336,9 +319,7 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
                 token,
             } => {
                 let error = Self::saturated_error(&peer_id);
-                Err(self
-                    .reject_car_fetch(&peer_id, &request.root_cid, token, error)
-                    .await)
+                Err(self.reject_car_fetch(&request.root_cid, token, error).await)
             }
             // A head hint has no reply and is never re-announced: keep it
             // durably rather than drop it with the workers saturated (#2489).
@@ -578,13 +559,7 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
                     "DocSyncRequest",
                 ) {
                     return Err(self
-                        .reject_doc_sync(
-                            &peer_id,
-                            &request.message_id,
-                            token,
-                            RATE_LIMITED_MESSAGE,
-                            error,
-                        )
+                        .reject_doc_sync(&request.message_id, token, RATE_LIMITED_MESSAGE, error)
                         .await);
                 }
                 self.handle_doc_sync_request(peer_id, request, token)
@@ -605,7 +580,6 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
                 ) {
                     return Err(self
                         .reject_branchable_sync(
-                            &peer_id,
                             &request.message_id,
                             &request.collection_id,
                             token,
@@ -630,9 +604,7 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
                     &peer_id,
                     "CarFetchRequest",
                 ) {
-                    return Err(self
-                        .reject_car_fetch(&peer_id, &request.root_cid, token, error)
-                        .await);
+                    return Err(self.reject_car_fetch(&request.root_cid, token, error).await);
                 }
                 self.handle_car_fetch_request(peer_id, request, token)
                     .await?;
@@ -652,11 +624,6 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
                         peer_id = %peer_id,
                         "Provider shed the CAR request as busy"
                     );
-                    self.manager.rooted_car_completion_tracker().complete_with(
-                        root_cid,
-                        &peer_id,
-                        crate::sync::manager::FetchCompletion::ProviderBusy,
-                    );
                     return Ok(());
                 }
                 let has_blocks =
@@ -667,31 +634,7 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
                     .handle_car_fetch_response(peer_id.clone(), root_cid, car_data)
                     .await;
                 let disposition = result.as_ref().ok().copied();
-                match disposition {
-                    Some(car::CarIngestDisposition::Completed) => {
-                        self.manager
-                            .rooted_car_completion_tracker()
-                            .complete(root_cid, &peer_id, has_blocks);
-                    }
-                    Some(car::CarIngestDisposition::StorageContended) => {
-                        self.manager
-                            .rooted_car_completion_tracker()
-                            .defer(root_cid, &peer_id);
-                    }
-                    Some(car::CarIngestDisposition::SizeLimit(cid)) => {
-                        self.manager.rooted_car_completion_tracker().complete_with(
-                            root_cid,
-                            &peer_id,
-                            crate::sync::manager::FetchCompletion::SizeLimit(cid),
-                        );
-                    }
-                    None => {
-                        self.manager
-                            .rooted_car_completion_tracker()
-                            .complete(root_cid, &peer_id, false);
-                    }
-                }
-                // Iroh block-sync success is query-correlated with the CAR
+                // Block-sync success is query-correlated with the CAR
                 // response and becomes observable only after response storage.
                 // Header-only responses retain the transport's aggregate
                 // failure completion after all providers have answered.
@@ -813,10 +756,6 @@ mod tests {
             Ok(())
         }
 
-        async fn listen(&self, _addr: PeerAddr) -> P2PResult<()> {
-            Ok(())
-        }
-
         async fn connected_peers(&self) -> P2PResult<Vec<PeerId>> {
             Ok(self.connected.clone())
         }
@@ -882,14 +821,6 @@ mod tests {
             Ok(PushLogReply::success("noop"))
         }
 
-        async fn send_two_stream_response(
-            &self,
-            _peer_id: &PeerId,
-            _reply: PushLogReply,
-        ) -> P2PResult<()> {
-            Ok(())
-        }
-
         async fn send_doc_sync_request(
             &self,
             peer_id: &PeerId,
@@ -900,14 +831,6 @@ mod tests {
             Ok(())
         }
 
-        async fn send_doc_sync_response(
-            &self,
-            _peer_id: &PeerId,
-            _reply: DocSyncReply,
-        ) -> P2PResult<()> {
-            Ok(())
-        }
-
         async fn send_branchable_sync_request(
             &self,
             peer_id: &PeerId,
@@ -915,22 +838,6 @@ mod tests {
         ) -> P2PResult<()> {
             self.pulls
                 .push(format!("collection:{peer_id}:{}", req.collection_id));
-            Ok(())
-        }
-
-        async fn send_branchable_sync_response(
-            &self,
-            _peer_id: &PeerId,
-            _reply: BranchableSyncReply,
-        ) -> P2PResult<()> {
-            Ok(())
-        }
-
-        async fn send_car_request(&self, _peer_id: &PeerId, _root_cid: Cid) -> P2PResult<()> {
-            Ok(())
-        }
-
-        async fn send_car_response(&self, _peer_id: &PeerId, _car_data: Vec<u8>) -> P2PResult<()> {
             Ok(())
         }
 

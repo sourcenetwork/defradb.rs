@@ -3,7 +3,6 @@
 use std::rc::Rc;
 use std::time::Duration;
 
-use cid::Cid;
 use futures::FutureExt;
 use pinc::{Connection, Hosted, RecvStream, SendStream};
 use tracing::{debug, warn};
@@ -166,32 +165,6 @@ impl<H: Hosted + 'static> Node<H> {
                 }
             }
         }
-    }
-
-    /// Fetch the whole DAG below `root_cid` from `peer_id` and hand the CAR
-    /// to the engine as a response with no query.
-    pub(super) async fn car_request(
-        self: &Rc<Self>,
-        peer_id: &PeerId,
-        root_cid: Cid,
-        haves: Vec<Cid>,
-    ) -> Result<()> {
-        let request = CarFetchRequest::full_dag(root_cid).with_haves(haves);
-        let car = self.fetch_car(peer_id, &request).await?;
-        if self
-            .events
-            .send(TransportEvent::CarFetchResponse {
-                query_id: None,
-                peer_id: peer_id.clone(),
-                root_cid,
-                car_data: car,
-            })
-            .await
-            .is_err()
-        {
-            warn!("Event channel closed, cannot emit CarFetchResponse");
-        }
-        Ok(())
     }
 
     /// Fetch `request` from `peer_id`, measured in its fetch stats. A fetch

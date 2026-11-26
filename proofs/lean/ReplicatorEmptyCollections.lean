@@ -14,7 +14,7 @@ the store or after a load; a peer with no collections counts as a replicator
 of anything; or a write to a collection is pushed to a peer that does not
 list it.
 
-Rust owner: crates/database/p2p/src/bitswap/registry.rs `store_info`,
+Rust owner: crates/database/p2p/src/access/registry.rs `store_info`,
 `ReplicatorRegistry::load_from_infos`, `ReplicatorRegistry::is_any_replicator`;
 crates/database/p2p/src/sync/coordinator/broadcast.rs `replicator_in_collection`.
 -/

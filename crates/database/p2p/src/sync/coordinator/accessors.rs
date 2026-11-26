@@ -6,7 +6,7 @@ use acp::DocumentACP;
 use blockstore::Blockstore;
 
 use super::{DagFetchLimiter, HeadHintCarAuthority, SyncCoordinator, SyncShutdownHandle};
-use crate::bitswap::ReplicatorRegistry;
+use crate::access::ReplicatorRegistry;
 use crate::sync::broadcaster::Broadcaster;
 use crate::sync::manager::SyncManager;
 use crate::sync::peer_state::PeerStateTracker;

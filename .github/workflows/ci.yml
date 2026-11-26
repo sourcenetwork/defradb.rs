@@ -866,7 +866,7 @@ jobs:
       DEFRA_MULTIPLIERS: ${{ matrix.multipliers || '' }}
       DEFRA_E2E_KEEP: '1'
       # A failing scenario shows its in-process nodes' P2P trace.
-      DEFRA_TEST_TRACE: p2p=debug,defra_p2p_adapter=debug,warn
+      DEFRA_TEST_TRACE: p2p=debug,defra_p2p_adapter=debug,defra_pinc=debug,warn
       TESTO_FILTER: binary(testo)
       # Not run anywhere: verars, whose cluster needs the verad validator
       # binary from vera.rs, which CI does not build.

@@ -3,7 +3,7 @@
 use blockstore::{verify_block_cid, Blockstore};
 use cid::Cid;
 
-use crate::bitswap::BlockClass;
+use crate::access::BlockClass;
 use crate::error::Result;
 use crate::message::CarFetchRequest;
 use crate::sync::car::{
@@ -152,17 +152,11 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
             // requester-side car_empty_responses counter stays at zero
             // (issue #858 review feedback).
             let car_data = encode_car_response(&response_roots, &[], &served.oversized_blocks)?;
-            if let Some(token) = token {
-                self.runtime
-                    .transport
-                    .send_car_response_token(token, car_data)
-                    .await?;
-            } else {
-                self.runtime
-                    .transport
-                    .send_car_response(&peer_id, car_data)
-                    .await?;
-            }
+            let token = token.ok_or_else(|| crate::transport::no_reply_stream("CAR"))?;
+            self.runtime
+                .transport
+                .send_car_response_token(token, car_data)
+                .await?;
             return Ok(());
         }
 
@@ -191,17 +185,11 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
             );
         }
 
-        if let Some(token) = token {
-            self.runtime
-                .transport
-                .send_car_response_token(token, car_data)
-                .await?;
-        } else {
-            self.runtime
-                .transport
-                .send_car_response(&peer_id, car_data)
-                .await?;
-        }
+        let token = token.ok_or_else(|| crate::transport::no_reply_stream("CAR"))?;
+        self.runtime
+            .transport
+            .send_car_response_token(token, car_data)
+            .await?;
         Ok(())
     }
 
@@ -447,10 +435,7 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
     /// cannot attribute: doc-less collection commits, composites whose merge
     /// terminal-skipped before recording ownership, and roots still awaiting
     /// their first merge.
-    async fn root_authorization_meta(
-        &self,
-        root_cid: &Cid,
-    ) -> Option<crate::bitswap::BlockAcpMeta> {
+    async fn root_authorization_meta(&self, root_cid: &Cid) -> Option<crate::access::BlockAcpMeta> {
         let payload_bounded = matches!(
             self.manager.blockstore().get_size(root_cid).await,
             Ok(Some(size)) if size <= crate::sync::car::CAR_MAX_BYTES

@@ -13,7 +13,7 @@ use blockstore::Blockstore;
 
 use super::authorizer::AccessAuthorizer;
 use super::SyncCoordinator;
-use crate::bitswap::AccessMode;
+use crate::access::AccessMode;
 use crate::error::{Error, Result};
 use crate::transport::{P2PTransport, PeerId};
 

@@ -21,16 +21,14 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
     ) -> Result<()> {
         sign_with_transport(&self.runtime.transport, &mut reply)?;
 
-        let send_result = if let Some(token) = token {
-            self.runtime
-                .transport
-                .send_branchable_sync_response_token(token, reply)
-                .await
-        } else {
-            self.runtime
-                .transport
-                .send_branchable_sync_response(peer_id, reply)
-                .await
+        let send_result = match token {
+            Some(token) => {
+                self.runtime
+                    .transport
+                    .send_branchable_sync_response_token(token, reply)
+                    .await
+            }
+            None => Err(crate::transport::no_reply_stream("branchable sync")),
         };
 
         if let Err(e) = send_result {

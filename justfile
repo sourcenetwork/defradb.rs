@@ -591,19 +591,6 @@ integration-suite suite *args: build-lenses
 integration-one-worker *args:
     DEFRA_WORKERS=1 cargo nextest run -p integration-test --test legacy -E 'test(/^(basic|query)::/)' --cargo-profile {{ profile }} {{ args }}
 
-# The pure-Rust half of the P2P topologies, serialized. The `::go_` filter drops the
-# dual-runtime variants; the harness port allocator has a bind race in parallel
-# (see the P2P Integration job's comment in ci.yml).
-[doc("Pure-Rust P2P topologies, serialized (skips the go_ variants).")]
-[group('test')]
-integration-p2p:
-    cargo nextest run -p integration-test --test legacy -E 'test(/^p2p::/) & not test(/^[a-z0-9_]+::.*::go_/)' --cargo-profile {{ profile }}
-
-# The go_* half, which needs a Go DefraDB binary on PATH.
-[group('test')]
-integration-go:
-    cargo nextest run -p integration-test --test legacy -E 'test(/^p2p::/) & test(/^[a-z0-9_]+::.*::go_/)' --cargo-profile {{ profile }}
-
 # The ffi-test tool's own unit tests. No Go checkout or generated header needed.
 [group('test')]
 test-ffi:

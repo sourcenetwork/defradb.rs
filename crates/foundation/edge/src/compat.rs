@@ -1,5 +1,5 @@
 //! The one way into a library that needs a tokio runtime and lets us supply
-//! neither its sockets nor its executor: iroh, and the vera.rs clients.
+//! neither its sockets nor its executor: the vera.rs clients.
 //!
 //! The library's futures run where they are awaited, on nuclei, inside the
 //! context of a tokio runtime the edge owns, on the edge's cores: that

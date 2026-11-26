@@ -108,15 +108,7 @@ async fn resync_rotates_past_unfetchable_records() {
             .unwrap();
     }
 
-    let (any_root, any_root_data, ..) = roots[0].clone();
-    let transport = TestTransport::new(
-        blockstore.clone(),
-        any_root,
-        any_root_data,
-        RapidHashMap::new(),
-        leaves,
-    );
-    transport.set_force_rooted_sync();
+    let transport = TestTransport::new(blockstore.clone(), leaves);
     transport.set_connected_peers(connected);
 
     let config = SyncConfig {
@@ -235,14 +227,7 @@ async fn a_push_at_the_in_memory_cap_is_acknowledged_and_merged() {
     let (fresh, fresh_data, fresh_leaf, fresh_leaf_data) = head_missing_its_field("fresh");
     let mut leaves = RapidHashMap::new();
     leaves.insert(fresh_leaf, fresh_leaf_data);
-    let transport = TestTransport::new(
-        blockstore.clone(),
-        fresh,
-        fresh_data.clone(),
-        RapidHashMap::new(),
-        leaves,
-    );
-    transport.set_force_rooted_sync();
+    let transport = TestTransport::new(blockstore.clone(), leaves);
     transport.set_connected_peers(vec![PeerId::new("live".to_string())]);
 
     let config = SyncConfig {
@@ -386,17 +371,9 @@ async fn a_peers_roots_take_its_place_in_turn(unservable_roots: usize, edge: edg
             .unwrap();
     }
 
-    let (any_root, any_root_data, ..) = roots[0].clone();
     let mut leaves = RapidHashMap::new();
     leaves.insert(waiting_leaf, waiting_leaf_data);
-    let transport = TestTransport::new(
-        blockstore.clone(),
-        any_root,
-        any_root_data,
-        RapidHashMap::new(),
-        leaves,
-    );
-    transport.set_force_rooted_sync();
+    let transport = TestTransport::new(blockstore.clone(), leaves);
     transport.set_connected_peers(vec![PeerId::new("quota-peer".to_string())]);
 
     let config = SyncConfig {
@@ -558,17 +535,9 @@ async fn a_peer_held_at_its_quota_does_not_hold_back_other_peers() {
         .await
         .unwrap();
 
-    let (any_root, any_root_data, ..) = roots[0].clone();
     let mut leaves = RapidHashMap::new();
     leaves.insert(servable_leaf, servable_leaf_data);
-    let transport = TestTransport::new(
-        blockstore.clone(),
-        any_root,
-        any_root_data,
-        RapidHashMap::new(),
-        leaves,
-    );
-    transport.set_force_rooted_sync();
+    let transport = TestTransport::new(blockstore.clone(), leaves);
     transport.set_connected_peers(vec![PeerId::new("serving-peer".to_string())]);
 
     let config = SyncConfig {
