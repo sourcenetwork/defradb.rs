@@ -10,6 +10,10 @@ use regolith::sync::{Event, HopscotchMap};
 
 use crate::actions::shared::IndexGate;
 
+/// Go's `indexBackfillBatchSize`: a gated node backfills in Go's batches, so
+/// the gate sees a build's batch boundaries where Go's scenarios place them.
+pub const GO_BACKFILL_BATCH_DOCS: usize = 100;
+
 /// How long a scenario waits for a build to reach the gate.
 const ENTER_TIMEOUT: Duration = Duration::from_secs(10);
 

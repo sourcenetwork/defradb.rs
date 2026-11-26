@@ -441,6 +441,9 @@ pub struct NodeConfig {
     pub replication_filter: Option<ReplicationFilterHandle>,
     /// The gate index backfills pass before each batch; `None` holds none.
     pub index_build_gate: Option<IndexBuildGateHandle>,
+    /// Documents an index backfill indexes per batch; `None` keeps the engine
+    /// default.
+    pub index_backfill_batch_docs: Option<usize>,
     /// The gate explicit transaction commits pass before they are handed to
     /// their owner.
     pub commit_gate: Option<CommitGateHandle>,

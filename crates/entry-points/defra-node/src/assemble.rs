@@ -97,6 +97,7 @@ where
         introspection_cache,
         replication_filter,
         index_build_gate,
+        index_backfill_batch_docs,
         commit_gate,
     } = config;
     let introspection_cache = introspection_cache.unwrap_or(true);
@@ -181,6 +182,9 @@ where
     }
     if let Some(gate) = index_build_gate {
         db_options = db_options.with_index_build_gate(gate.0);
+    }
+    if let Some(docs) = index_backfill_batch_docs {
+        db_options = db_options.with_backfill_batch_docs(docs);
     }
     if let Some(gate) = commit_gate {
         db_options = db_options.with_commit_gate(gate.0);

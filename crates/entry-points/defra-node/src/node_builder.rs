@@ -345,6 +345,13 @@ impl NodeBuilder {
         self
     }
 
+    /// Index at most `docs` documents per index backfill batch, so a test can
+    /// place a build's batch boundaries where Go's fall.
+    pub fn with_index_backfill_batch_docs(mut self, docs: usize) -> Self {
+        self.config.index_backfill_batch_docs = Some(docs);
+        self
+    }
+
     /// Hold every explicit transaction commit at `gate` before it is handed
     /// to its owner, so a test can prove a commit whose HTTP answer passed its
     /// bound still lands.

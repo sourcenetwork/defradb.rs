@@ -401,7 +401,9 @@ fn build(spec: &NodeSpec, listen: &str, http: Option<HttpConfig>) -> Result<Node
         builder = builder.with_max_txn_retries(retries);
     }
     if let Some(gate) = &spec.index_gate {
-        builder = builder.with_index_build_gate(gate.clone());
+        builder = builder
+            .with_index_build_gate(gate.clone())
+            .with_index_backfill_batch_docs(crate::index_gate::GO_BACKFILL_BATCH_DOCS);
     }
     if let Some(gate) = &spec.commit_gate {
         builder = builder.with_commit_gate(gate.clone());
