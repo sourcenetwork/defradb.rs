@@ -25,10 +25,20 @@ pub struct ConnectPeers {
 
 impl ConnectPeers {
     /// What the dial names: the target's addresses, or with `by_id` the
-    /// peer id each one starts with.
+    /// peer id each one starts with. A Go node's libp2p address has no
+    /// pinc id to dial alone, so a by-id dial to or from one is a Rust
+    /// node's op only.
     fn addresses(&self, state: &State) -> Result<Vec<String>, Failure> {
         let mut addresses = addresses_of(state, &[self.target.as_str()])?;
         if self.by_id {
+            for name in [self.common.node(), self.target.as_str()] {
+                if state.node(name)?.is_go() {
+                    return Err(Failure::unsupported(format!(
+                        "{} argument byId with Go node {name}: only a pinc node dials by id alone",
+                        Self::name()
+                    )));
+                }
+            }
             for address in &mut addresses {
                 address.truncate(address.find('@').unwrap_or(address.len()));
             }

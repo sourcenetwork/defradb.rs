@@ -90,6 +90,19 @@ pub struct NodeSpec {
     pub stream: Option<crate::actions::stream::StreamNodeSpec>,
 }
 
+impl NodeSpec {
+    /// Admission limits, a loaded Go config, a relaying hub, a pinc bind and
+    /// bootstrap peers are a Rust node's options: under go-http such a node
+    /// is a Rust node reached over HTTP, as rust-http does.
+    pub fn needs_rust_node(&self) -> bool {
+        self.admission.is_some()
+            || self.go_config
+            || self.relay_hub
+            || self.pinc_bind.is_some()
+            || !self.bootstrap_peers.is_empty()
+    }
+}
+
 /// A running node: the node itself for the in-process client, or the URL the
 /// HTTP and CLI clients reach it at, and what must outlive it.
 pub struct TestNode {
@@ -132,19 +145,8 @@ impl TestNode {
             Some(address) => address.clone(),
             None => "/ip4/127.0.0.1/tcp/0".to_owned(),
         };
-        // Admission limits, a loaded Go config, a relaying hub and a pinc
-        // bind are a Rust node's options: under go-http the node is a Rust
-        // node reached over HTTP, as rust-http does.
         let client_type = match client_type {
-            ClientType::GoHttp
-                if spec.admission.is_some()
-                    || spec.go_config
-                    || spec.relay_hub
-                    || spec.pinc_bind.is_some()
-                    || !spec.bootstrap_peers.is_empty() =>
-            {
-                ClientType::RustHttp
-            }
+            ClientType::GoHttp if spec.needs_rust_node() => ClientType::RustHttp,
             other => other,
         };
         match client_type {

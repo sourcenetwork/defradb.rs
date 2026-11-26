@@ -113,6 +113,11 @@ impl<B: Blockstore + 'static> PincP2PAdapter<B> {
             })?
             .map_err(|error| match error {
                 p2p::error::Error::Unauthorized(message) => P2PError::unauthorized(message),
+                // The endpoint's own connect bound is as long as this one, so
+                // whichever fires first is the same timeout.
+                p2p::error::Error::ConnectionTimeout(_) => {
+                    P2PError::transport(format!("failed to connect: timeout dialing {peer_id}"))
+                }
                 error => P2PError::transport(format!("failed to connect: {error}")),
             })?;
 

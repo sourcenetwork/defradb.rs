@@ -216,6 +216,7 @@ impl Op for NewNode {
             max_txn_retries,
             ..Default::default()
         };
+        state.check_p2p_peers(self.common.node(), &spec)?;
         state.start_node(self.common.node(), spec);
         Ok(json!({}))
     }
