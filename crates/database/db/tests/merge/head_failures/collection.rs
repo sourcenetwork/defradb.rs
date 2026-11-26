@@ -19,7 +19,7 @@ async fn collection_block(
     heads: Vec<Cid>,
 ) -> CollectionBlock {
     let payload = CollectionDeltaPayload {
-        collection_version_id: "v1".to_string(),
+        collection_version_id: users_version_id().to_string(),
         priority,
     };
     let block = Block::new(CrdtDelta::Collection(payload.clone()), heads, vec![]);
@@ -34,7 +34,7 @@ async fn collection_block(
 }
 
 fn metadata() -> BlockMetadata<'static> {
-    BlockMetadata::normal("", "col-users", "peer-did", None, false)
+    BlockMetadata::normal("", users_collection_id(), "peer-did", None, false)
 }
 
 impl Fixture {

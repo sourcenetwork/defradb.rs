@@ -24,7 +24,6 @@ use defra_perf::emit::{Family, Group, Row};
 use defra_perf::measure::repeat;
 use document::{Document, NormalValue};
 use query::mutator::DocMutator;
-use schema::{CollectionVersion, FieldDescription, FieldKind};
 use storage::{RegolithStore, RegolithStoreOptions};
 use tempfile::TempDir;
 
@@ -46,23 +45,8 @@ fn profiles() -> Vec<Profile> {
     ]
 }
 
-fn collection_version(index: usize) -> CollectionVersion {
-    let fields = vec![
-        FieldDescription::new(
-            "1",
-            "_docID",
-            FieldKind::doc_id(),
-            schema::CType::LwwRegister,
-        ),
-        FieldDescription::new("2", "name", FieldKind::string(), schema::CType::LwwRegister),
-        FieldDescription::new("3", "note", FieldKind::string(), schema::CType::LwwRegister),
-    ];
-    CollectionVersion::new(
-        format!("Collection{index}"),
-        format!("bafkstartup{index:04}"),
-        format!("startup{index:04}"),
-        fields,
-    )
+fn collection_sdl(index: usize) -> String {
+    format!("type Collection{index} {{ name: String note: String }}")
 }
 
 /// Open a store at `path`, build a database over it, and register `count`
@@ -70,16 +54,22 @@ fn collection_version(index: usize) -> CollectionVersion {
 async fn seed(path: &Path, options: RegolithStoreOptions, count: usize, docs: usize) {
     let store = Arc::new(RegolithStore::open_with_options(path, options).expect("a store"));
     let db = Arc::new(DB::open_from_arc(store).await.expect("a database"));
+    let mut versions = Vec::with_capacity(count);
     for index in 0..count {
-        db.create_collection(collection_version(index))
+        versions.extend(
+            db.add_collection(
+                &defra_core::RequestContext::ambient(),
+                &collection_sdl(index),
+            )
             .await
-            .expect("the collection to register");
+            .expect("the collection to register"),
+        );
     }
-    if count > 0 && docs > 0 {
+    if let (Some(version), true) = (versions.first(), docs > 0) {
         let mutator = db::write::autocommit::AutoCommitMutator::new(db.clone());
-        let name = collection_version(0).name.clone();
+        let name = version.name.clone();
         for seq in 0..docs {
-            let mut doc = Document::new(collection_version(0));
+            let mut doc = Document::new(version.clone());
             doc.set("name", NormalValue::String(format!("name-{seq}")))
                 .unwrap();
             doc.set("note", NormalValue::String(format!("note-{seq}")))

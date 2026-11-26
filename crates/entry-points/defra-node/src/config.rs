@@ -12,39 +12,15 @@ use db::{DEFAULT_TRANSACTION_CLEANUP_INTERVAL, DEFAULT_TRANSACTION_IDLE_TIMEOUT}
 pub enum DocumentAcpConfig {
     #[default]
     Local,
-    /// On-chain document ACP via Vera.
-    ///
-    /// Requires the `vera` feature (on by default).
-    #[cfg(feature = "vera")]
-    Vera(VeraConfig),
-    /// On-chain document ACP via Vera with distinct LCD and gRPC
-    /// endpoints.
-    #[cfg(feature = "vera")]
-    VeraWithLcd {
-        config: VeraConfig,
-        lcd_address: String,
-    },
     /// Document ACP via a vera.rs node.
     #[cfg(feature = "vera")]
-    VeraRs(crate::VeraRsConfig),
+    Vera(crate::VeraConfig),
     /// Document ACP via a provider the host built.
     #[cfg(feature = "vera")]
     Provider(crate::DocumentAcpProvider),
     /// Document ACP via a Vera node this node runs in its own process.
     #[cfg(feature = "embedded-vera")]
     EmbeddedVera(crate::EmbeddedVeraConfig),
-}
-
-/// Vera document ACP configuration.
-///
-/// Requires the `vera` feature (on by default).
-#[cfg(feature = "vera")]
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct VeraConfig {
-    pub grpc_address: String,
-    pub comet_rpc_address: String,
-    pub chain_id: String,
-    pub signer_key: Vec<u8>,
 }
 
 /// Configuration for the optional HTTP GraphQL server.
@@ -244,11 +220,20 @@ pub struct Libp2pConfig {
     /// Where the DNS layers read the resolver configuration; the system's by
     /// default.
     pub resolver: p2p::ResolverSource,
+    /// The connection manager's low watermark: a trim closes peers until
+    /// the host is back at it.
+    pub connection_manager_low_water: u32,
+    /// The connection manager's high watermark: the host trims once it holds
+    /// more connections than this.
+    pub connection_manager_high_water: u32,
+    /// How long a new connection is safe from a trim.
+    pub connection_manager_grace_period: std::time::Duration,
 }
 
 #[cfg(feature = "libp2p")]
 impl Default for Libp2pConfig {
     fn default() -> Self {
+        let host = p2p::P2PHostConfig::default();
         Self {
             listen_addrs: Vec::new(),
             bootstrap_peers: Vec::new(),
@@ -259,6 +244,9 @@ impl Default for Libp2pConfig {
             orphan_sweep: db::block::orphan_gc::OrphanSweepConfig::default(),
             resource_limits: p2p::ResourceLimits::default(),
             resolver: p2p::ResolverSource::System,
+            connection_manager_low_water: host.connection_manager_low_water,
+            connection_manager_high_water: host.connection_manager_high_water,
+            connection_manager_grace_period: host.connection_manager_grace_period,
         }
     }
 }

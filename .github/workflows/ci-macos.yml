@@ -72,26 +72,40 @@ jobs:
             }
             core.setOutput('reused', reused ? 'true' : 'false');
 
+  # A pull request run with macOS tests waits for CI's approval (ci-approved.yml).
+  approval:
+    name: Wait for CI approval
+    if: >-
+      github.event_name == 'pull_request' &&
+      (contains(github.event.pull_request.labels.*.name, 'ci:macos') || contains(github.event.pull_request.labels.*.name, 'ci:full'))
+    permissions:
+      actions: read
+    uses: ./.github/workflows/ci-approved.yml
+
   unit-tests:
     name: Unit tests
-    needs: reuse
-    # Main runs it; a pull request does with ci:macos or ci:full; a queue entry
-    # does unless it reuses its pull request run. It is not a required check.
+    needs: [reuse, approval]
+    # Main runs it; a pull request does with ci:macos or ci:full once approved; a
+    # queue entry does unless it reuses its pull request run. It is not a required check.
     if: >-
       always() &&
       (github.event_name == 'push' ||
-       (github.event_name == 'pull_request' && (contains(github.event.pull_request.labels.*.name, 'ci:macos') || contains(github.event.pull_request.labels.*.name, 'ci:full'))) ||
+       (github.event_name == 'pull_request' && needs.approval.outputs.approved == 'true') ||
        (github.event_name == 'merge_group' && needs.reuse.outputs.reused != 'true'))
     uses: ./.github/workflows/unit-tests.yml
     with:
-      os: macos-latest
+      # Fred's pull requests run on his ephemeral Tart runner: a fresh VM per job,
+      # deleted after it (#3344). Everything else runs on GitHub's macOS runners.
+      os: ${{ github.event_name == 'pull_request' && github.event.pull_request.user.login == 'fredcarle' && 'macos-fred' || 'macos-latest' }}
 
   # Records the tree the pull request run tested (the merge commit with its
   # base), so the queue reuses this macOS run only for that exact tree.
   stamp:
     name: macOS passed
     needs: unit-tests
-    if: github.event_name == 'pull_request' && needs.unit-tests.result == 'success'
+    # always(): reuse is skipped on a pull request, and a skipped ancestor skips
+    # every job whose if has no status function.
+    if: always() && github.event_name == 'pull_request' && needs.unit-tests.result == 'success'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/github-script@v9

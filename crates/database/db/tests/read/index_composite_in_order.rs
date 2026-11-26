@@ -3,6 +3,7 @@
 //! the secondary field's order, and within one full key it is the order the
 //! documents were created in (their short IDs), as in Go.
 
+use crate::common::schema::parsed;
 use db::database::DB;
 use db::DbDocFetcher;
 use db::DbDocMutator;
@@ -13,10 +14,6 @@ use query::planner::index_selection::IndexScanParams;
 use query::planner::index_selection::IndexScanType;
 use query::runner::DocFetcher;
 use schema::CollectionVersion;
-use schema::FieldDescription;
-use schema::FieldKind;
-use schema::IndexDescription;
-use schema::IndexedFieldDescription;
 use std::sync::Arc;
 use storage::RegolithStore;
 
@@ -30,52 +27,16 @@ const CATEGORY: &str = "a";
 /// p1's DocID sorts below p3's: a DocID tie-break within rank 1 fails too.
 const SEED: [(&str, i64); 5] = [("p0", 2), ("p3", 1), ("p2", 3), ("p1", 1), ("p4", 2)];
 
+const PRODUCTS_SDL: &str = r#"type products @index(name: "by_category_rank", includes: [{field: "category"}, {field: "rank"}]) { category: String rank: Int name: String }"#;
+
 fn schema() -> CollectionVersion {
-    let mut version = CollectionVersion::new(
-        COLLECTION,
-        "v1",
-        "col-products",
-        vec![
-            FieldDescription::new(
-                "1",
-                "_docID",
-                FieldKind::doc_id(),
-                schema::CType::LwwRegister,
-            ),
-            FieldDescription::new(
-                "2",
-                "category",
-                FieldKind::string(),
-                schema::CType::LwwRegister,
-            ),
-            FieldDescription::new("3", "rank", FieldKind::int(), schema::CType::LwwRegister),
-            FieldDescription::new("4", "name", FieldKind::string(), schema::CType::LwwRegister),
-        ],
-    );
-    version.indexes = vec![IndexDescription {
-        name: INDEX.to_string(),
-        id: 0,
-        fields: vec![
-            IndexedFieldDescription {
-                name: "category".to_string(),
-                descending: false,
-            },
-            IndexedFieldDescription {
-                name: "rank".to_string(),
-                descending: false,
-            },
-        ],
-        unique: false,
-        kind: None,
-        auto_generated: false,
-    }];
-    version
+    parsed(PRODUCTS_SDL)
 }
 
 /// Returns (rank, doc_id) per seeded document, in insertion order.
 async fn populated() -> (Arc<DB<RegolithStore>>, Vec<(i64, String)>) {
     let db = Arc::new(DB::new(RegolithStore::in_memory().unwrap()).expect("a database"));
-    db.create_collection(schema())
+    db.add_collection(&defra_core::RequestContext::ambient(), PRODUCTS_SDL)
         .await
         .expect("the collection must register");
 

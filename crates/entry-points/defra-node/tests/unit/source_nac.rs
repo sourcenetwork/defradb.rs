@@ -133,7 +133,7 @@ fn revoked_source_invalidates_a_concurrent_claim() {
             .await
             .unwrap();
         let owner = context(OWNER);
-        node.add_collection_as(&owner, "type ClaimMarker { value: String }")
+        node.add_collection(&owner, "type ClaimMarker { value: String }")
             .await
             .unwrap();
         let created = node.execute_request(
@@ -687,7 +687,7 @@ fn host_source_noop_validates_the_edge_and_does_not_borrow_node_authority() {
             .unwrap();
         let owner = context(node.node_identity_did().unwrap());
         let user = context(ACTOR);
-        node.add_collection_as(&owner, "type SourceNoopMarker { value: String }")
+        node.add_collection(&owner, "type SourceNoopMarker { value: String }")
             .await
             .unwrap();
         let created = node.execute_request(query::QueryRequest::new(

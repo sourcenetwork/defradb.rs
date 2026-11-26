@@ -7,6 +7,7 @@
 //! The fetcher here commits such a merge right before the first index scan
 //! it is asked for, so the race happens on every run.
 
+use crate::common::schema::parsed;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 
@@ -27,32 +28,25 @@ use query::error::Result;
 use query::planner::index_selection::IndexScanParams;
 use query::{DocFetcher, FetchByIdsResult, QueryExecutor, QueryRequest};
 use rapidhash::RapidHashMap;
-use schema::{CollectionVersion, FieldDescription, FieldKind, IndexDescription};
+use schema::CollectionVersion;
 use storage::{RegolithStore, Store};
 
-const V1: &str = "v1";
-const COLLECTION_ID: &str = "col-users";
 const CREATOR: &str = "did:key:z6MkrPlanScanRace";
 /// The value the lens gives every document's `name`.
 const LENSED: &str = "Grace";
 
+fn version_id() -> String {
+    users().version_id
+}
+
+fn collection_id() -> String {
+    users().collection_id
+}
+
+const USERS_SDL: &str = r#"type Users { name: String @index(name: "idx_name") }"#;
+
 fn users() -> CollectionVersion {
-    let mut version = CollectionVersion::new(
-        "Users",
-        V1,
-        COLLECTION_ID,
-        vec![
-            FieldDescription::new(
-                "1",
-                "_docID",
-                FieldKind::doc_id(),
-                schema::CType::LwwRegister,
-            ),
-            FieldDescription::new("2", "name", FieldKind::string(), schema::CType::LwwRegister),
-        ],
-    );
-    version.indexes = vec![IndexDescription::new("idx_name").with_field("name", false)];
-    version
+    parsed(USERS_SDL)
 }
 
 /// A lens store whose every lens sets `name` to [`LENSED`].
@@ -136,7 +130,8 @@ async fn merge_at_v1(db: &Arc<DB<RegolithStore>>, store: &Arc<RegolithStore>, na
         blockstore.put(&cid, &bytes).await.unwrap();
     }
     let handler = DbMergeHandler::new(db.clone(), blockstore);
-    let metadata = BlockMetadata::normal(&written.doc_id, COLLECTION_ID, CREATOR, None, false);
+    let collection_id = collection_id();
+    let metadata = BlockMetadata::normal(&written.doc_id, &collection_id, CREATOR, None, false);
     let outcome = handler
         .handle_block(&written.cid, &written.block, metadata)
         .await
@@ -275,7 +270,7 @@ fn a_merge_between_plan_and_scan_does_not_hide_the_document() {
         let mut raw = DB::from_arc(store.clone()).unwrap();
         raw.set_lens_store(Arc::new(RenamingStore::default()));
         let db = Arc::new(raw);
-        db.create_collection(users()).await.unwrap();
+        db.add_collection(&defra_core::RequestContext::ambient(), USERS_SDL).await.unwrap();
         db.patch_collection(
             &defra_core::RequestContext::default(),
             r#"[{"op":"add","path":"/Users/Fields/-","value":{"Name":"level","Kind":"Int"}}]"#,
@@ -290,7 +285,7 @@ fn a_merge_between_plan_and_scan_does_not_hide_the_document() {
             .version_id()
             .to_string();
         db.set_migration(
-            LensConfig::new(V1, &v2, LensModule::from_bytes(b"\0asm\x01\0\0\0".to_vec())),
+            LensConfig::new(version_id(), &v2, LensModule::from_bytes(b"\0asm\x01\0\0\0".to_vec())),
             None,
         )
         .await

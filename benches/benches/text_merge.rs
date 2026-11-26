@@ -9,7 +9,9 @@
 //! critical block (`critical`); `replay` is the whole history, which a merge
 //! falls back to. Swept by history depth: one writer's edits, each a
 //! five-character insert or a three-character delete at a random spot, then
-//! one block concurrent with the last edit.
+//! one block concurrent with the last edit. `churn` replays the same kind of
+//! history with the text held near [`CHURN_CHARS`] characters, so the
+//! history grows while the text does not.
 
 use std::hint::black_box;
 
@@ -20,6 +22,9 @@ use defra_core::TextOp;
 mod common;
 
 const DEPTHS: [usize; 4] = [10, 100, 1_000, 10_000];
+const CHURN_DEPTHS: [usize; 2] = [10_000, 100_000];
+/// The length past which a churning history only deletes.
+const CHURN_CHARS: u64 = 1_000;
 
 /// A CID-like ID: hashed, so sibling order is unrelated to write order.
 fn id(n: usize) -> Vec<u8> {
@@ -33,8 +38,9 @@ fn id(n: usize) -> Vec<u8> {
     id
 }
 
-/// `depth` linear blocks and the text they leave.
-fn history(depth: usize) -> (Vec<TextBlock>, String) {
+/// `depth` linear blocks and the text they leave, deleting whenever the text
+/// is `cap` characters or longer.
+fn history(depth: usize, cap: u64) -> (Vec<TextBlock>, String) {
     let mut seed = depth as u64;
     let mut below = |n: u64| {
         seed = seed
@@ -46,7 +52,7 @@ fn history(depth: usize) -> (Vec<TextBlock>, String) {
     let mut text = String::new();
     for n in 0..depth {
         let len = text.chars().count() as u64;
-        let op = if len > 10 && below(4) == 0 {
+        let op = if len >= cap || (len > 10 && below(4) == 0) {
             TextOp::Delete {
                 pos: below(len - 3),
                 len: 3,
@@ -70,7 +76,7 @@ fn history(depth: usize) -> (Vec<TextBlock>, String) {
 fn merge(c: &mut Criterion) {
     let mut group = c.benchmark_group("text_merge");
     for depth in DEPTHS {
-        let (mut blocks, text) = history(depth);
+        let (mut blocks, text) = history(depth, u64::MAX);
         let edit = vec![TextOp::Insert {
             pos: text.chars().count() as u64 / 2,
             text: "world".into(),
@@ -107,5 +113,17 @@ fn merge(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, merge);
+fn churn(c: &mut Criterion) {
+    let mut group = c.benchmark_group("text_merge_churn");
+    group.sample_size(10);
+    for depth in CHURN_DEPTHS {
+        let (blocks, _) = history(depth, CHURN_CHARS);
+        group.bench_with_input(BenchmarkId::new("replay", depth), &blocks, |b, blocks| {
+            b.iter(|| black_box(replay(black_box(blocks)).expect("a whole history")))
+        });
+    }
+    group.finish();
+}
+
+criterion_group!(benches, merge, churn);
 criterion_main!(benches);

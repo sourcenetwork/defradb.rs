@@ -102,7 +102,7 @@ fn exercise_projected_access_notifications() -> Vec<bool> {
             node.add_nac_actor_relationship_as(&admin, permission.as_str(), observer_did.as_str()).await.unwrap();
         }
         let policy = node.add_dac_policy_as(&admin, "name: Projected access\nresources:\n  - name: children\n    relations:\n      - name: reader\n        types: [actor]\n    permissions:\n      - name: read\n        expr: reader\n      - name: update\n      - name: delete\n").await.unwrap();
-        node.add_collection(&format!("type AccessChild @policy(id: \"{policy}\", resource: \"children\") {{ name: String }}\ntype AccessParent {{ value: Boolean }}")).await.unwrap();
+        node.add_collection(&admin, &format!("type AccessChild @policy(id: \"{policy}\", resource: \"children\") {{ name: String }}\ntype AccessParent {{ value: Boolean }}")).await.unwrap();
         let request = |query: &str| QueryRequest::new(query).with_identity(Some(user.did().unwrap()));
         let child = node.execute_request(signer.attach(request("mutation { create_AccessChild(input:{name:\"child\"}) {_docID} }"))).await;
         assert!(!child.has_errors(), "{:?}", child.errors);

@@ -110,7 +110,13 @@ fn a_registration_that_fails_after_its_commit_is_reported_and_takes_a_fresh_cred
                 .is_some_and(|reason| reason.contains("expired")),
             "{owed:?}"
         );
-        assert_eq!(owed[0].txn, txn.as_str().parse().ok());
+        assert_eq!(
+            owed[0].txn,
+            txn.as_str()
+                .parse::<defra_core::TxnId>()
+                .ok()
+                .map(|id| id.route)
+        );
         assert!(!owed[0].sendable);
         // The grant waits behind it, neither sent nor parked.
         assert!(matches!(owed[1].what, OwedWhat::Change { .. }));
@@ -748,6 +754,11 @@ fn a_pass_sends_a_registration_with_whichever_owed_delegation_the_report_found()
                 .await,
             Ok(RelationshipChange::Staged { .. })
         ));
+        // The node's drainer passes by itself after the commit and after
+        // each back-off, and would send the registration before the report
+        // below looks at it: the provider holds every registration it takes
+        // until the report is read.
+        on.remote.hold_registrations.store(true, Ordering::SeqCst);
         on.remote.down.store(true, Ordering::SeqCst);
         on.node.commit_transaction(&txn).await.unwrap();
         on.remote.down.store(false, Ordering::SeqCst);
@@ -764,6 +775,7 @@ fn a_pass_sends_a_registration_with_whichever_owed_delegation_the_report_found()
         assert_eq!(owed.len(), 3, "{owed:?}");
         assert_eq!(owed[0].state, OwedState::AwaitingAuthority);
         assert!(owed[0].sendable, "{owed:?}");
+        on.remote.release_registrations();
 
         // What the report calls sendable a pass sends: the registration
         // goes with the second grant's delegation, that grant follows, and

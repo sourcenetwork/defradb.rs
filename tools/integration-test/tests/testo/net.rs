@@ -1,9 +1,11 @@
+mod connection_manager;
 mod gossip_admission;
 mod iroh_large_update;
 mod stream_protocols;
 mod info {
     mod connect_peers;
     mod disconnect_peers;
+    mod disconnect_reconnect;
 }
 mod one_to_many {
     mod peer {
@@ -67,6 +69,7 @@ mod simple {
             mod text;
         }
         mod cross_version;
+        mod list_shape;
         mod with_add;
         mod with_add_add_field;
         mod with_add_restart;
