@@ -394,7 +394,7 @@ impl Planner {
             || is_complex_filter
             || select.group_by.is_some()
             // prepare_filter removes computed aliases before classifying the filter.
-            || select.filter.as_ref().is_some_and(|filter| filter.split_for_scores().1.is_some())
+            || select.filter.as_ref().is_some_and(|filter| filter.waits_for_scores())
             || (self.acp.is_some() && collection.policy.is_some())
             || collection.chunk_of.is_some()
             || self.app_gates_reads(&collection)
@@ -511,7 +511,7 @@ impl Planner {
             // so remaining conditions are applied as post-filtering on the fetched documents.
             // Strip _alias for complex filters (same reason as ScanNode below).
             if let Some(ref filter) = scalar_filter {
-                if is_complex_filter && filter.split_for_scores().1.is_some() {
+                if is_complex_filter && filter.waits_for_scores() {
                     if let Some(f) = filter.split_for_scores().0 {
                         index_scan_node = index_scan_node
                             .with_explain_filter(f.clone())
@@ -544,7 +544,7 @@ impl Planner {
             // the relation index. The full filter (including _alias) is applied after
             // joins at the complex filter SelectNode.
             if let Some(ref filter) = scalar_filter {
-                if is_complex_filter && filter.split_for_scores().1.is_some() {
+                if is_complex_filter && filter.waits_for_scores() {
                     if let Some(f) = filter.split_for_scores().0 {
                         scan = scan.with_filter(f);
                     }

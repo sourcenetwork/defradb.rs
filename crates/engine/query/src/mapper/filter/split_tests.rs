@@ -59,3 +59,27 @@ fn a_filter_without_an_alias_runs_before_scores() {
     assert_eq!(json_of(&row), Some(conditions));
     assert!(alias.is_none());
 }
+
+#[test]
+fn waits_for_scores_agrees_with_the_split() {
+    for conditions in [
+        json!({"_alias": {"sim": {"_gt": 1}}}),
+        json!({"a": {"_eq": 1}, "_alias": {"sim": {"_gt": 1}}}),
+        json!({"_or": [{"a": {"_eq": 1}}, {"_alias": {"sim": {"_gt": 1}}}]}),
+        json!({"_not": {"_alias": {"sim": {"_gt": 1}}}}),
+        json!({"a": {"_eq": 1}}),
+        json!({"_or": [{"a": {"_eq": 1}}, {"b": {"_eq": 2}}]}),
+    ] {
+        let f = filter(conditions.clone());
+        assert_eq!(
+            f.waits_for_scores(),
+            f.split_for_scores().1.is_some(),
+            "{conditions}"
+        );
+    }
+}
+
+#[test]
+fn an_empty_filter_does_not_wait_for_scores() {
+    assert!(!filter(json!({})).waits_for_scores());
+}
