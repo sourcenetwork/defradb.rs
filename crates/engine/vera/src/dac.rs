@@ -13,7 +13,6 @@ use identity::Did;
 
 use acp::{DocumentACP, DocumentPermission, Identity, Result, Subject};
 
-use crate::access_cache::AccessCache;
 use crate::decisions::{DecisionKey, RemoteDecisions};
 use crate::provider::{
     AcpLightClientStatus, ActorRelationshipQuery, ProviderError, SubjectRef, VeraProvider,
@@ -23,13 +22,11 @@ use crate::{PolicyAction, PolicyCommand, PolicySubject};
 /// DocumentACP backed by Vera's ACP module.
 ///
 /// Delegates write and read operations to a `VeraProvider` implementation.
-/// [`new`](Self::new) caches allowed `verify_access` results for a TTL;
-/// [`without_access_cache`](Self::without_access_cache) asks the provider every
-/// time, as a node does, because Vera's ACP state changes outside DefraDB's
-/// mutation path.
+/// It keeps no decision cache of its own: Vera's ACP state changes outside
+/// DefraDB's mutation path, so only a decision read at a verified state is
+/// reused, keyed by that state (see `decisions`).
 pub struct VeraDocumentACP {
     provider: Arc<dyn VeraProvider>,
-    access_cache: Option<Arc<AccessCache>>,
     /// Remote decisions: one call per tuple in flight, a deadline, retries.
     decisions: inputs::Service<RemoteDecisions>,
     /// The request this ACP serves, for one bound to it: the bearer tokens
@@ -41,19 +38,10 @@ pub struct VeraDocumentACP {
 const DECISION_TIMEOUT: Duration = Duration::from_secs(5);
 
 impl VeraDocumentACP {
-    pub fn new(provider: Arc<dyn VeraProvider>, cache_ttl: Duration) -> Self {
-        Self::with_cache(provider, Some(Arc::new(AccessCache::new(cache_ttl))))
-    }
-
-    pub fn without_access_cache(provider: Arc<dyn VeraProvider>) -> Self {
-        Self::with_cache(provider, None)
-    }
-
-    fn with_cache(provider: Arc<dyn VeraProvider>, access_cache: Option<Arc<AccessCache>>) -> Self {
+    pub fn new(provider: Arc<dyn VeraProvider>) -> Self {
         Self {
             decisions: Self::decisions(&provider, inputs::Runtime::on_demand(), DECISION_TIMEOUT),
             provider,
-            access_cache,
             context: None,
         }
     }
@@ -88,13 +76,6 @@ impl VeraDocumentACP {
     /// The metrics of remote decisions.
     pub fn decision_stats(&self) -> &inputs::Stats {
         self.decisions.stats()
-    }
-
-    fn invalidate_cached_access(&self, policy_id: &str) {
-        if let Some(cache) = &self.access_cache {
-            // Other objects can inherit access through this object's relationships.
-            cache.invalidate_policy(policy_id);
-        }
     }
 
     /// The DID the provider itself acts as, for a provider that has one.
@@ -448,7 +429,6 @@ impl DocumentACP for VeraDocumentACP {
     fn bind_request(&self, context: &defra_core::RequestContext) -> Option<Arc<dyn DocumentACP>> {
         Some(Arc::new(Self {
             provider: Arc::clone(&self.provider),
-            access_cache: self.access_cache.clone(),
             decisions: self.decisions.clone(),
             context: Some(context.clone()),
         }))
@@ -534,7 +514,6 @@ impl DocumentACP for VeraDocumentACP {
         }
         let acp = Arc::new(Self {
             provider: Arc::clone(&self.provider),
-            access_cache: self.access_cache.clone(),
             decisions: self.decisions.clone(),
             context: None,
         });
@@ -578,10 +557,8 @@ impl DocumentACP for VeraDocumentACP {
         self.provider.unregistered_documents_are_public()
     }
 
-    /// Only without the access cache: a cached decision may outlive the
-    /// freshness limit its provider proves it within.
     fn proves_decisions(&self) -> bool {
-        self.access_cache.is_none() && self.provider.proves_decisions()
+        self.provider.proves_decisions()
     }
 
     async fn register_doc_object(
@@ -610,7 +587,6 @@ impl DocumentACP for VeraDocumentACP {
         })
         .await
         .map_err(provider_err)?;
-        self.invalidate_cached_access(policy_id);
         Ok(())
     }
 
@@ -671,7 +647,6 @@ impl DocumentACP for VeraDocumentACP {
         })
         .await
         .map_err(provider_err)?;
-        self.invalidate_cached_access(policy_id);
         Ok(())
     }
 
@@ -729,29 +704,7 @@ impl DocumentACP for VeraDocumentACP {
             None => "did:key:anonymous".to_string(),
         };
 
-        if let Some(cache) = &self.access_cache {
-            if let Some(cached) = cache.get(
-                &actor_did,
-                policy_id,
-                resource_name,
-                doc_id,
-                permission.as_str(),
-            ) {
-                return Ok(cached);
-            }
-        }
-
-        let pending = self.access_cache.as_ref().map(|cache| {
-            cache.begin_check(
-                &actor_did,
-                policy_id,
-                resource_name,
-                doc_id,
-                permission.as_str(),
-            )
-        });
-        let result = self
-            .decisions
+        self.decisions
             .get(DecisionKey {
                 actor: actor_did,
                 policy: policy_id.to_string(),
@@ -764,17 +717,7 @@ impl DocumentACP for VeraDocumentACP {
             .map_err(|error| match error {
                 inputs::Error::Source(error) => provider_err(error),
                 other => acp::Error::Storage(format!("Vera: {other}")),
-            })?;
-
-        // Only an allow is cached: a cached denial would delay seeing a
-        // grant made elsewhere.
-        if let Some(pending) = pending {
-            if result {
-                pending.complete(true);
-            }
-        }
-
-        Ok(result)
+            })
     }
 
     async fn create_access_decision(
@@ -840,8 +783,6 @@ impl DocumentACP for VeraDocumentACP {
             .await
             .map_err(provider_err)?;
 
-        self.invalidate_cached_access(policy_id);
-
         Ok(result)
     }
 
@@ -875,7 +816,6 @@ impl DocumentACP for VeraDocumentACP {
         })
         .await
         .map_err(provider_err)?;
-        self.invalidate_cached_access(policy_id);
         Ok(())
     }
 
@@ -920,8 +860,6 @@ impl DocumentACP for VeraDocumentACP {
             })
             .await
             .map_err(provider_err)?;
-
-        self.invalidate_cached_access(policy_id);
 
         Ok(result)
     }
@@ -994,7 +932,6 @@ impl DocumentACP for VeraDocumentACP {
                     })
                     .await
                     .map_err(provider_err)?;
-                self.invalidate_cached_access(policy_id);
                 Ok(result)
             }
             other => Err(acp::Error::UnsupportedSubject(other.to_string())),
@@ -1069,7 +1006,6 @@ impl DocumentACP for VeraDocumentACP {
                     })
                     .await
                     .map_err(provider_err)?;
-                self.invalidate_cached_access(policy_id);
                 Ok(result)
             }
             other => Err(acp::Error::UnsupportedSubject(other.to_string())),
@@ -1112,8 +1048,6 @@ impl DocumentACP for VeraDocumentACP {
         })
         .await
         .map_err(provider_err)?;
-
-        self.invalidate_cached_access(policy_id);
 
         Ok(())
     }
