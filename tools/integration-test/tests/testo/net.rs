@@ -1,3 +1,4 @@
+mod connection_manager;
 mod gossip_admission;
 mod iroh_large_update;
 mod stream_protocols;
