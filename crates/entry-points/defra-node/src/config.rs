@@ -221,8 +221,12 @@ pub enum TransportConfig {
 #[cfg(feature = "p2p")]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PincConfig {
-    /// The UDP address the endpoint binds; port 0 picks one.
+    /// The UDP address the endpoint binds; port 0 picks one. A wildcard IP
+    /// lists the address of every interface, never loopback.
     pub bind: std::net::SocketAddr,
+    /// Addresses peers reach the node at that are on none of its
+    /// interfaces (a public address in front of a NAT); listed first.
+    pub public_addrs: Vec<std::net::SocketAddr>,
     /// Who may connect in. Defaults to every peer.
     pub allowlist: defra_pinc::PincAllowlistConfig,
     /// Path of the secret key file; what it means depends on `peer_key`.
@@ -231,6 +235,9 @@ pub struct PincConfig {
     pub peer_key: PeerKeySource,
     /// The most sessions at once.
     pub max_connections: usize,
+    /// How long a block sync waits for a provider's blocks, Go's
+    /// `P2PBlockSyncTimeout`. Defaults to 30 s.
+    pub block_sync_timeout: std::time::Duration,
     /// The pinc hubs topics run through, as `<peer id>@<udp address>`. With
     /// none, gossip and the KMS key exchange reach no one.
     pub hubs: Vec<String>,
@@ -256,10 +263,12 @@ impl Default for PincConfig {
     fn default() -> Self {
         Self {
             bind: std::net::SocketAddr::from(([0, 0, 0, 0], 0)),
+            public_addrs: Vec::new(),
             allowlist: defra_pinc::PincAllowlistConfig::default(),
             secret_key_path: None,
             peer_key: PeerKeySource::default(),
             max_connections: defra_pinc::PincEndpointConfig::DEFAULT_MAX_CONNECTIONS,
+            block_sync_timeout: defra_pinc::PincEndpointConfig::DEFAULT_BLOCK_SYNC_TIMEOUT,
             hubs: Vec::new(),
             bootstrap_peers: Vec::new(),
             rebroadcast_on_merge: false,

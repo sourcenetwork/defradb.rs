@@ -36,19 +36,34 @@ where
     defra_core::cbor::from_slice(payload.as_ref()).map_err(|e| Error::Codec(e.to_string()))
 }
 
+/// The four-byte big-endian length of `payload`.
+fn length_prefix(payload: &[u8]) -> Result<[u8; 4]> {
+    u32::try_from(payload.len())
+        .map(u32::to_be_bytes)
+        .map_err(|_| Error::Codec(format!("a {} byte message is too large", payload.len())))
+}
+
 /// Write an encoded body with its length prefix.
 pub async fn write_payload<H>(send: &mut SendStream<H>, payload: &[u8]) -> Result<()>
 where
     H: Hosted,
 {
-    let len = u32::try_from(payload.len())
-        .map_err(|_| Error::Codec(format!("a {} byte message is too large", payload.len())))?;
-    send.write_all(&len.to_be_bytes())
+    let len = length_prefix(payload)?;
+    send.write_all(&len)
         .await
         .map_err(|e| pinc_error("write length", e))?;
     send.write_all(payload)
         .await
         .map_err(|e| pinc_error("write payload", e))
+}
+
+/// `payload` with its length prefix, as one write.
+pub fn frame(payload: &[u8]) -> Result<Vec<u8>> {
+    let len = length_prefix(payload)?;
+    let mut framed = Vec::with_capacity(len.len() + payload.len());
+    framed.extend_from_slice(&len);
+    framed.extend_from_slice(payload);
+    Ok(framed)
 }
 
 pub async fn read_length<H>(recv: &mut RecvStream<H>) -> Result<usize>

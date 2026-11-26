@@ -18,6 +18,10 @@ impl<H: Hosted + 'static> Node<H> {
     /// Open a `protocol` stream to `peer_id`, dialing `addrs` if no
     /// connection is held, and write `request` as its first message. The
     /// halves' pumps run on this thread until each half is done.
+    ///
+    /// The pumps start before anything is written, and the request goes
+    /// through them: an open refused busy drops the pinc stream with nothing
+    /// on it, so the peer never serves a request its opener was told failed.
     pub(super) async fn open_protocol_stream(
         self: &Rc<Self>,
         peer_id: &PeerId,
@@ -47,11 +51,14 @@ impl<H: Hosted + 'static> Node<H> {
         send.set_urgency(protocol.priority.urgency())
             .await
             .map_err(|e| pinc_error("stream urgency", e))?;
-        wire::write_payload(&mut send, &request).await?;
-        let (send, recv, pump_send, pump_recv) = bridge(send, recv);
-        if self.spawn(pump_send).is_none() || self.spawn(pump_recv).is_none() {
+        let (mut send, recv, pump_send, pump_recv) = bridge(send, recv);
+        let pumps = async move {
+            futures::join!(pump_send, pump_recv);
+        };
+        if self.spawn(pumps).is_none() {
             return Err(Error::Transport("the pinc endpoint is busy".to_owned()));
         }
+        send.write_vec(wire::frame(&request)?).await?;
         Ok((send, recv))
     }
 }

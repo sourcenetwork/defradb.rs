@@ -119,9 +119,11 @@ pub use db::{CommitGate, CommitWait};
 pub use defra_p2p_adapter::{
     ReplicationFilter, ReplicationFilters, ReplicatorPushOptions, ReplicatorPushOptionsState,
 };
-/// Runs a pinc hub, which pinc topics travel through.
+/// Runs a pinc hub, which pinc topics travel through, and with
+/// [`PincHubConfig::relay`] the sessions of members that cannot reach each
+/// other directly.
 #[cfg(feature = "p2p")]
-pub use defra_pinc::spawn_hub as spawn_pinc_hub;
+pub use defra_pinc::{spawn_hub as spawn_pinc_hub, HubConfig as PincHubConfig};
 pub use dense_search::{DenseHybridSearchHit, DenseHybridSearchRequest, DenseHybridSearchResponse};
 pub use embedded_signer::{EmbeddedSigner, EmbeddedSignerError};
 #[cfg(feature = "embedded-vera")]

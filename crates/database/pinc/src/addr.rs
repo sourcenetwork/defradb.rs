@@ -4,7 +4,7 @@
 //! address is pinc's one-line form, `<id>` or `<id>@<ip:port>,<ip:port>`,
 //! optionally behind `pinc://`.
 
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 
 use pinc::{NodeAddr, NodeId};
 
@@ -84,7 +84,10 @@ pub fn format_public_listen_addrs(peer_id: &PeerId, raw_addrs: &[PeerAddr]) -> V
     out
 }
 
-/// The one address to share: the first that is not loopback, else the first.
+/// The one address to share: the first that is not loopback. A node bound
+/// to a wildcard lists no loopback address ([`advertised`]), so this is
+/// loopback only for a node bound to loopback on purpose, and `None` for a
+/// node with no address another host can reach.
 pub fn best_shareable_public_addr(peer_id: &PeerId, raw_addrs: &[PeerAddr]) -> Option<String> {
     let node = node_id(peer_id).ok()?;
     let sockets = socket_addrs(raw_addrs);
@@ -93,6 +96,59 @@ pub fn best_shareable_public_addr(peer_id: &PeerId, raw_addrs: &[PeerAddr]) -> O
         .find(|socket| !socket.ip().is_loopback() && !socket.ip().is_unspecified())
         .or_else(|| sockets.first())?;
     Some(NodeAddr::new(node).with_direct(*best).ticket())
+}
+
+/// The addresses a node bound at `local` tells peers: `public` first, then
+/// `local` itself, or, for a wildcard bind, the address of every interface
+/// of its family (both families for `[::]`, which carries IPv4 as mapped
+/// addresses) on the bound port. A wildcard bind lists no loopback or
+/// IPv6 link-local address: neither is one another host can dial.
+pub(super) fn advertised(local: SocketAddr, public: &[SocketAddr]) -> Vec<SocketAddr> {
+    let interfaces = if local.ip().is_unspecified() {
+        match if_addrs::get_if_addrs() {
+            Ok(interfaces) => interfaces.into_iter().map(|iface| iface.ip()).collect(),
+            Err(error) => {
+                tracing::warn!(%error, %local, "could not list the host's interfaces: the node lists only its public addresses");
+                Vec::new()
+            }
+        }
+    } else {
+        Vec::new()
+    };
+    advertised_from(local, public, &interfaces)
+}
+
+fn advertised_from(
+    local: SocketAddr,
+    public: &[SocketAddr],
+    interfaces: &[IpAddr],
+) -> Vec<SocketAddr> {
+    let mut out: Vec<SocketAddr> = Vec::new();
+    let mut push = |addr: SocketAddr| {
+        if !out.contains(&addr) {
+            out.push(addr);
+        }
+    };
+    public.iter().copied().for_each(&mut push);
+    if !local.ip().is_unspecified() {
+        push(local);
+        return out;
+    }
+    for ip in interfaces {
+        let reachable = match ip {
+            IpAddr::V4(v4) => !v4.is_loopback() && !v4.is_unspecified(),
+            IpAddr::V6(v6) => {
+                local.is_ipv6()
+                    && !v6.is_loopback()
+                    && !v6.is_unspecified()
+                    && !v6.is_unicast_link_local()
+            }
+        };
+        if reachable {
+            push(SocketAddr::new(*ip, local.port()));
+        }
+    }
+    out
 }
 
 #[cfg(test)]
@@ -140,5 +196,31 @@ mod tests {
         assert!(parse_public_peer_addr("").is_err());
         assert!(parse_public_peer_addr("not-an-id").is_err());
         assert!(parse_canonical_peer_id("12").is_err());
+    }
+
+    #[test]
+    fn a_wildcard_bind_lists_every_interface_but_loopback_and_public_first() {
+        let interfaces: Vec<IpAddr> = ["127.0.0.1", "10.0.0.7", "::1", "fe80::1", "2001:db8::7"]
+            .iter()
+            .map(|ip| ip.parse().unwrap())
+            .collect();
+        let public: SocketAddr = "203.0.113.9:4000".parse().unwrap();
+        let v4 = advertised_from("0.0.0.0:9".parse().unwrap(), &[public], &interfaces);
+        assert_eq!(v4, vec![public, "10.0.0.7:9".parse().unwrap()]);
+        let v6 = advertised_from("[::]:9".parse().unwrap(), &[], &interfaces);
+        assert_eq!(
+            v6,
+            vec![
+                "10.0.0.7:9".parse().unwrap(),
+                "[2001:db8::7]:9".parse().unwrap()
+            ]
+        );
+        let explicit = advertised_from("127.0.0.1:9".parse().unwrap(), &[], &interfaces);
+        assert_eq!(explicit, vec!["127.0.0.1:9".parse().unwrap()]);
+        // Loopback only: nothing another host can reach.
+        let lone = advertised_from("0.0.0.0:9".parse().unwrap(), &[], &interfaces[..1]);
+        assert!(lone.is_empty());
+        let peer = PeerId::new(ID.to_owned());
+        assert_eq!(best_shareable_public_addr(&peer, &[]), None);
     }
 }

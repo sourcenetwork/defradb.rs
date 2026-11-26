@@ -20,7 +20,8 @@ use super::services::{self, MAX_CAR_SIZE};
 use super::wire::{self, pinc_error};
 
 pub(super) const OPEN_STREAM_TIMEOUT: Duration = Duration::from_secs(10);
-/// How long a reply may take once the request is written.
+/// How long a reply may take once the request is written. A CAR fetch waits
+/// [`PincEndpointConfig::block_sync_timeout`](super::PincEndpointConfig) instead.
 pub(super) const REQUEST_RESPONSE_TIMEOUT: Duration = Duration::from_secs(30);
 /// How long a one-way message waits for the peer to end its side.
 const TELL_WAIT: Duration = Duration::from_secs(5);
@@ -191,7 +192,7 @@ impl<H: Hosted + 'static> Node<H> {
             .await?;
         let read = wire::read_to_end_observed(&mut recv, MAX_CAR_SIZE, |_| {});
         futures::select_biased! {
-            car = p2p::rt::time::timeout(REQUEST_RESPONSE_TIMEOUT, read).fuse() => {
+            car = p2p::rt::time::timeout(self.block_sync_timeout, read).fuse() => {
                 car.map_err(|_| Error::ResponseTimeout)?
             }
             reason = connection.closed().fuse() => Err(pinc_error("CAR fetch", reason)),

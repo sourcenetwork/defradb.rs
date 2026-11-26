@@ -35,6 +35,7 @@
 
 use std::cell::Cell;
 use std::rc::Rc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use ed25519_dalek::Verifier as _;
@@ -49,6 +50,7 @@ use p2p::transport::{MessageId, PeerId, TransportEvent};
 use super::addr::node_to_peer_id;
 use super::command::Reply;
 use super::endpoint::Node;
+use super::hub::MAX_TOPIC_MESSAGE;
 use super::wire::pinc_error;
 
 /// How long a waiting publish holds for a member of its topic.
@@ -66,6 +68,33 @@ pub(super) const FANOUT_TTL: Duration = Duration::from_secs(60);
 /// The most topics held for publishes at once: half of pinc's default topic
 /// limit (`Limits::topics`, 128), the rest left to the engine's subscriptions.
 const MAX_FANOUT: usize = 64;
+
+/// The publishes that failed where no caller hears of it: a waiting publish
+/// answers before it is sent. Each is counted and logged at warn.
+#[derive(Debug, Default)]
+pub(super) struct PublishCounters {
+    oversized: AtomicU64,
+    failed_after_reply: AtomicU64,
+}
+
+impl PublishCounters {
+    pub(super) fn snapshot(&self) -> PublishStats {
+        PublishStats {
+            oversized: self.oversized.load(Ordering::Relaxed),
+            failed_after_reply: self.failed_after_reply.load(Ordering::Relaxed),
+        }
+    }
+}
+
+/// How many of a node's publishes never reached its hubs, by why.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct PublishStats {
+    /// Refused, to their caller, as larger than one topic message
+    /// ([`MAX_TOPIC_MESSAGE`]).
+    pub oversized: u64,
+    /// Waiting publishes that failed after their caller was answered.
+    pub failed_after_reply: u64,
+}
 
 impl<H: Hosted + 'static> Node<H> {
     pub(super) async fn subscribe(self: &Rc<Self>, topic: String, raw: bool, reply: Reply<bool>) {
@@ -251,6 +280,22 @@ impl<H: Hosted + 'static> Node<H> {
         wait: bool,
         reply: Reply<MessageId>,
     ) {
+        // A payload no hub takes fails its caller here, before a waiting
+        // publish answers and the failure has nobody to reach.
+        if payload.len() > MAX_TOPIC_MESSAGE {
+            self.publishes.oversized.fetch_add(1, Ordering::Relaxed);
+            warn!(
+                topic,
+                size = payload.len(),
+                limit = MAX_TOPIC_MESSAGE,
+                "pinc publish refused: larger than one topic message"
+            );
+            let _ = reply.send(Err(Error::GossipTooLarge {
+                size: payload.len(),
+                limit: MAX_TOPIC_MESSAGE,
+            }));
+            return;
+        }
         // The hub tells a topic's members only to its members, so a waiting
         // publish must be on the topic to see one arrive.
         self.hold_fanout(&topic).await;
@@ -271,7 +316,11 @@ impl<H: Hosted + 'static> Node<H> {
                 result => result,
             };
             if let Err(error) = result {
-                debug!(topic, %error, "pinc waiting publish failed");
+                publisher
+                    .publishes
+                    .failed_after_reply
+                    .fetch_add(1, Ordering::Relaxed);
+                warn!(topic, %error, "pinc waiting publish failed after its caller was answered");
             }
         });
         let _ = reply.send(match spawned {

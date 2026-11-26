@@ -6,12 +6,15 @@
 
 mod allowlist;
 mod bench;
+mod block_sync;
 mod bridge;
 mod exchange;
 mod identity;
 mod inbound_admission;
 mod mux;
+mod protocol_streams;
 mod redial;
+mod relay;
 mod sticky_disconnect;
 mod topics;
 mod two_stream;
@@ -25,7 +28,8 @@ use zeroize::Zeroizing;
 
 use super::endpoint::EventReceiver;
 use super::{
-    spawn_endpoint, PincAllowlistConfig, PincEndpointConfig, PincResponseToken, PincTransport,
+    spawn_endpoint, spawn_hub, HubConfig, PincAllowlistConfig, PincEndpointConfig,
+    PincResponseToken, PincTransport,
 };
 use p2p::message::PushLogRequest;
 use p2p::signing::sign_with_transport;
@@ -46,6 +50,16 @@ where
 
 pub(super) fn loopback() -> SocketAddr {
     SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0)
+}
+
+/// A hub on loopback, with pinc's relay role when `relay`, and its ticket.
+pub(super) async fn hub_with(relay: bool) -> String {
+    let mut config = HubConfig::new(seed(), loopback());
+    config.relay = relay;
+    let (ticket, task) = spawn_hub(config, edge::testing::edge()).await.unwrap();
+    // ponytail: the hub runs until the test edge closes with the process.
+    std::mem::forget(task);
+    ticket
 }
 
 /// A fresh seed: every test node has its own identity.

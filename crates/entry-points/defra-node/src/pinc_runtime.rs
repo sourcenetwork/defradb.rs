@@ -49,9 +49,11 @@ where
         }
     };
     let mut endpoint = defra_pinc::PincEndpointConfig::new(seed, config.bind);
+    endpoint.public_addrs = config.public_addrs.clone();
     endpoint.allowlist = config.allowlist.clone();
     endpoint.node_identity = node_identity;
     endpoint.max_connections = config.max_connections;
+    endpoint.block_sync_timeout = config.block_sync_timeout;
     endpoint.hubs = config.hubs.clone();
     endpoint.stream_protocols = stream_protocols;
     let mut peer_config = PincPeerConfig::new(endpoint, document_acp, scope.edge().clone());

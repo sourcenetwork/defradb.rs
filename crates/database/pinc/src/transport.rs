@@ -30,10 +30,12 @@ use p2p::QueryId;
 
 use super::admission::AdmissionAuthority;
 use super::command::{Command, CommandSender, EndpointStopped, Outbound, ReplyBody};
+use super::hub::MAX_TOPIC_MESSAGE;
 use super::protocol_stream::{ProtocolRecvStream, ProtocolSendStream};
 use super::services;
 use super::stream_protocols::StreamProtocol;
 use super::token::PincResponseToken;
+use super::topics::{PublishCounters, PublishStats};
 use super::wire;
 
 #[derive(Clone)]
@@ -47,6 +49,7 @@ pub struct PincTransport {
     signing_key: Arc<ed25519_dalek::SigningKey>,
     replicators: Arc<ReplicatorRegistry>,
     explicit_replay_capabilities: ExplicitReplayCapabilityCache,
+    publishes: Arc<PublishCounters>,
 }
 
 impl PincTransport {
@@ -54,6 +57,7 @@ impl PincTransport {
         commands: CommandSender,
         seed: &[u8; 32],
         replicators: Arc<ReplicatorRegistry>,
+        publishes: Arc<PublishCounters>,
     ) -> Self {
         let (commands, stopped) = commands;
         let signing_key = ed25519_dalek::SigningKey::from_bytes(seed);
@@ -66,7 +70,13 @@ impl PincTransport {
             signing_key: Arc::new(signing_key),
             replicators,
             explicit_replay_capabilities: ExplicitReplayCapabilityCache::default(),
+            publishes,
         }
+    }
+
+    /// How many of this node's publishes never reached its hubs.
+    pub fn publish_stats(&self) -> PublishStats {
+        self.publishes.snapshot()
     }
 
     /// Open a stream for `protocol` to `peer_id`, dialing `addrs` if the two
@@ -382,6 +392,11 @@ impl P2PTransport for PincTransport {
             reply,
         })
         .await
+    }
+
+    /// One topic message: a KMS batch whose reply would be larger is split.
+    fn max_raw_publish(&self) -> Option<usize> {
+        Some(MAX_TOPIC_MESSAGE)
     }
 
     async fn subscribe_raw(&self, topic: String) -> Result<bool> {

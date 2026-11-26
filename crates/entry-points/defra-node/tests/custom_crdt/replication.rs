@@ -39,8 +39,10 @@ async fn node(with_type: bool, path: Option<&Path>) -> Node {
 async fn hub() -> (String, edge::Task<()>) {
     let seed = defra_pinc::generate_seed().unwrap();
     defra_node::spawn_pinc_hub(
-        *seed,
-        std::net::SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0),
+        defra_node::PincHubConfig::new(
+            seed,
+            std::net::SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0),
+        ),
         edge::testing::edge(),
     )
     .await

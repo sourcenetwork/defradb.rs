@@ -17,6 +17,7 @@ fn default_start_args() -> StartArgs {
         peers: None,
         pinc_bind_addr: None,
         pinc_bind_port: None,
+        pinc_public_addrs: None,
         pinc_hubs: None,
         pinc_allowed_peers: None,
         max_txn_retries: None,
@@ -147,6 +148,7 @@ fn test_apply_to_config_all_flags() {
         peers: Some(vec!["peer1".to_string(), "peer2".to_string()]),
         pinc_bind_addr: Some(std::net::IpAddr::from([127, 0, 0, 1])),
         pinc_bind_port: Some(4001),
+        pinc_public_addrs: Some(vec!["203.0.113.9:4001".parse().unwrap()]),
         pinc_hubs: Some(vec!["hub1".to_string()]),
         pinc_allowed_peers: Some(vec!["peer1".to_string()]),
         max_txn_retries: Some(10),
@@ -240,6 +242,10 @@ fn test_apply_to_config_all_flags() {
         Some(std::net::IpAddr::from([127, 0, 0, 1]))
     );
     assert_eq!(config.net.pinc_bind_port, Some(4001));
+    assert_eq!(
+        config.net.pinc_public_addrs,
+        vec!["203.0.113.9:4001".parse::<std::net::SocketAddr>().unwrap()]
+    );
     assert_eq!(config.net.pinc_hubs, vec!["hub1"]);
     assert_eq!(config.net.pinc_allowed_peers, vec!["peer1"]);
     assert!(config.net.p2p_disabled);
@@ -364,6 +370,7 @@ const P2P_START_FLAGS: &[&str] = &[
     "peers",
     "pinc-bind-addr",
     "pinc-bind-port",
+    "pinc-public-addrs",
     "pinc-hubs",
     "pinc-allowed-peers",
     "no-p2p",

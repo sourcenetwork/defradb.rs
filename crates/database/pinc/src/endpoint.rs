@@ -24,7 +24,7 @@ use p2p::rt::{mpsc, oneshot};
 use p2p::sync::DispatchSender;
 use p2p::transport::{PeerAddr, PeerConnectionInfo, PeerId, TransportEvent};
 
-use super::addr::{node_id, node_to_peer_id, socket_addrs};
+use super::addr::{advertised, node_id, node_to_peer_id, socket_addrs};
 use super::admission::Allowlist;
 use super::command::{Command, Reply};
 use super::config::PincEndpointConfig;
@@ -35,6 +35,7 @@ use super::reply_table::ReplyTable;
 use super::services::{self, ALPN_MUX};
 use super::stream_protocols::StreamProtocols;
 use super::token::PincResponseToken;
+use super::topics::PublishCounters;
 use super::transport::PincTransport;
 use super::wire::pinc_error;
 use p2p::quiet_peers::QuietPeers;
@@ -45,8 +46,6 @@ const EVENT_LANE_CAPACITY: usize = 64;
 const COMMAND_CAPACITY: usize = 256;
 /// Replies owed at once; a request past this is refused busy.
 const MAX_PENDING_REPLIES: usize = 4096;
-/// Tasks local to the endpoint at once: streams, dials and requests.
-const MAX_LOCAL_TASKS: usize = 8192;
 /// Callers waiting for a peer to connect.
 const MAX_CONNECT_WAITERS: usize = 1024;
 /// How long a reply stream is held for the engine's answer.
@@ -99,13 +98,15 @@ pub async fn spawn_endpoint(
         p2p::sync::dispatch_queue::<TransportEvent<PincResponseToken>>(EVENT_LANE_CAPACITY);
     let (ready_tx, ready_rx) = oneshot::channel::<Result<SocketAddr>>();
     let replicators = Arc::new(ReplicatorRegistry::new());
+    let publishes = Arc::new(PublishCounters::default());
     let seed = *config.seed;
     let task_edge = edge.clone();
     let commands = command_tx.clone();
+    let counters = Arc::clone(&publishes);
     let task = edge
         .spawn_pinned(move || {
             run(
-                config, task_edge, command_rx, commands, event_tx, running, ready_tx,
+                config, task_edge, command_rx, commands, event_tx, running, ready_tx, counters,
             )
         })
         .within(Duration::MAX);
@@ -122,6 +123,7 @@ pub async fn spawn_endpoint(
         (command_tx, stopped.shared()),
         &seed,
         Arc::clone(&replicators),
+        publishes,
     );
     Ok((transport, event_rx, replicators, task))
 }
@@ -162,6 +164,7 @@ async fn run(
     events: EventSender,
     running: oneshot::Sender<()>,
     ready: oneshot::Sender<Result<SocketAddr>>,
+    publishes: Arc<PublishCounters>,
 ) {
     let built = async {
         let stream_protocols = StreamProtocols::new(config.stream_protocols.clone())?;
@@ -208,6 +211,14 @@ async fn run(
             return;
         }
     };
+    let advertised = advertised(ep.local_addr(), &config.public_addrs);
+    if advertised.is_empty() {
+        warn!(
+            bind = %config.bind,
+            "the pinc endpoint binds every interface but the host has no address another host can reach: \
+             peers can dial it only through a hub"
+        );
+    }
     let node = Rc::new(Node {
         ep,
         edge,
@@ -232,6 +243,10 @@ async fn run(
         next_connection: Cell::new(1),
         quiet: RefCell::new(QuietPeers::default()),
         stream_protocols,
+        advertised,
+        max_tasks: config.max_tasks,
+        block_sync_timeout: config.block_sync_timeout,
+        publishes,
     });
     let _ = ready.send(Ok(node.ep.local_addr()));
     let reply = node.serve(command_rx, running).await;
@@ -284,6 +299,14 @@ pub(super) struct Node<H: Hosted + 'static> {
     /// The peers a `DisconnectPeers` closed, on either side: peer exchange
     /// never dials them, and only an explicit dial or allow lifts it (#2992).
     pub(super) quiet: RefCell<QuietPeers<NodeId>>,
+    /// The addresses peers are told: [`advertised`].
+    advertised: Vec<SocketAddr>,
+    /// The most tasks at once ([`PincEndpointConfig::max_tasks`]).
+    max_tasks: usize,
+    /// How long a CAR fetch waits for its blocks.
+    pub(super) block_sync_timeout: Duration,
+    /// The publishes that failed where no caller hears it.
+    pub(super) publishes: Arc<PublishCounters>,
 }
 
 impl<H: Hosted + 'static> Node<H> {
@@ -299,7 +322,7 @@ impl<H: Hosted + 'static> Node<H> {
                 debug!(%error, "a pinc endpoint task ended without finishing");
             }
         }
-        if tasks.len() >= MAX_LOCAL_TASKS {
+        if tasks.len() >= self.max_tasks {
             warn!(
                 tasks = tasks.len(),
                 "pinc endpoint has no room for another task"
@@ -332,7 +355,7 @@ impl<H: Hosted + 'static> Node<H> {
         self.spawn(async move { topics.topic_events().await });
 
         let local = node_to_peer_id(&self.ep.id());
-        let listening = PeerAddr::new(self.ep.addr().ticket());
+        let listening = PeerAddr::new(self.listen_addr().ticket());
         if self
             .events
             .send(TransportEvent::Listening(listening))
@@ -374,6 +397,14 @@ impl<H: Hosted + 'static> Node<H> {
         self.ep.close().await;
         debug!(peer_id = %local, "pinc endpoint stopped");
         shutdown_reply
+    }
+
+    /// This node's address as it tells peers: its id, the addresses it
+    /// advertises and its hubs.
+    fn listen_addr(&self) -> NodeAddr {
+        let mut addr = self.ep.addr();
+        addr.direct.clone_from(&self.advertised);
+        addr
     }
 
     async fn accept_loop(self: Rc<Self>) {
@@ -640,9 +671,7 @@ impl<H: Hosted + 'static> Node<H> {
             }
             Command::ListenAddresses { reply } => {
                 let addrs = self
-                    .ep
-                    .addr()
-                    .direct
+                    .advertised
                     .iter()
                     .map(|socket| PeerAddr::new(socket.to_string()))
                     .collect();

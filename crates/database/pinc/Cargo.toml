@@ -38,6 +38,8 @@ tracing = { workspace = true }
 # The transport signs and verifies with the shared Ed25519 seed.
 ed25519-dalek = { workspace = true }
 zeroize = "1"
+# The host's interface addresses, which a node bound to a wildcard lists.
+if-addrs = "0.15"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 edge = { path = "../../foundation/edge", features = ["testing"] }

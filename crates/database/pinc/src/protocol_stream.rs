@@ -4,7 +4,10 @@
 //! runs anywhere, so each half is a `Send` handle over a bounded channel to a
 //! pump on the endpoint's thread that owns the pinc half. Dropping a send half
 //! before it is finished resets the stream, so a reply cut short never reads
-//! as a whole one; dropping a receive half stops the stream.
+//! as a whole one; dropping a receive half stops the stream. Each half
+//! signals its pump when it is dropped, so this holds while the pump waits
+//! on the peer: a send pump blocked writing to a peer that does not read is
+//! reset the moment its half goes, as at a handler's deadline.
 
 use futures::FutureExt;
 use pinc::{Hosted, RecvStream, SendStream};
@@ -34,14 +37,22 @@ enum SendOp {
 /// stream with [`RESET_CANCELLED`].
 pub struct ProtocolSendStream {
     ops: Option<mpsc::Sender<SendOp>>,
+    /// Dropped with this half, which tells its pump to reset the stream
+    /// even while it waits on the peer.
+    _dropped: oneshot::Sender<()>,
 }
 
 impl ProtocolSendStream {
     /// Writes all of `bytes`, returning once the stream has taken them.
     pub async fn write_all(&mut self, bytes: &[u8]) -> Result<()> {
+        self.write_vec(bytes.to_vec()).await
+    }
+
+    /// [`write_all`](Self::write_all) of bytes the caller already owns.
+    pub(super) async fn write_vec(&mut self, bytes: Vec<u8>) -> Result<()> {
         let ops = self.ops.as_ref().ok_or(Error::ConnectionClosed)?;
         let (done, wait) = oneshot::channel();
-        ops.send(SendOp::Write(bytes.to_vec(), done))
+        ops.send(SendOp::Write(bytes, done))
             .await
             .map_err(|_| Error::ConnectionClosed)?;
         wait.await.map_err(|_| Error::ConnectionClosed)?
@@ -122,28 +133,47 @@ where
 {
     let (ops, ops_rx) = mpsc::channel(SEND_QUEUE);
     let (chunks_tx, chunks) = mpsc::channel(RECV_QUEUE);
-    let (dropped, dropped_rx) = oneshot::channel();
+    let (send_dropped, send_dropped_rx) = oneshot::channel();
+    let (recv_dropped, recv_dropped_rx) = oneshot::channel();
     (
-        ProtocolSendStream { ops: Some(ops) },
+        ProtocolSendStream {
+            ops: Some(ops),
+            _dropped: send_dropped,
+        },
         ProtocolRecvStream {
             chunks,
             pending: Vec::new(),
             read: 0,
-            _dropped: dropped,
+            _dropped: recv_dropped,
         },
-        pump_send(send, ops_rx),
-        pump_recv(recv, chunks_tx, dropped_rx),
+        pump_send(send, ops_rx, send_dropped_rx),
+        pump_recv(recv, chunks_tx, recv_dropped_rx),
     )
 }
 
-async fn pump_send<H>(mut send: SendStream<H>, mut ops: mpsc::Receiver<SendOp>)
-where
+/// Run the send half's writes and its finish until it is done. A half
+/// dropped unfinished, between two writes or in the middle of one, resets
+/// the stream: the write in flight is abandoned with it.
+async fn pump_send<H>(
+    mut send: SendStream<H>,
+    mut ops: mpsc::Receiver<SendOp>,
+    dropped: oneshot::Receiver<()>,
+) where
     H: Hosted,
 {
+    let mut dropped = dropped.fuse();
     loop {
-        match ops.recv().await {
+        let op = futures::select_biased! {
+            _ = dropped => None,
+            op = ops.recv().fuse() => op,
+        };
+        match op {
             Some(SendOp::Write(bytes, done)) => {
-                let written = send.write_all(&bytes).await.map_err(stream_error);
+                let written = futures::select_biased! {
+                    _ = dropped => None,
+                    written = send.write_all(&bytes).fuse() => Some(written.map_err(stream_error)),
+                };
+                let Some(written) = written else { break };
                 let failed = written.is_err();
                 let _ = done.send(written);
                 if failed {
@@ -151,11 +181,16 @@ where
                 }
             }
             Some(SendOp::Finish(done)) => {
+                let finished = futures::select_biased! {
+                    _ = dropped => None,
+                    finished = send.finish().fuse() => Some(finished),
+                };
+                let Some(finished) = finished else { break };
                 // A peer whose handler took what it needed and dropped its
                 // receive half stops the stream with RESET_CANCELLED: our
                 // side still ended where it meant to, so the finish holds.
                 // Any other stop (busy, too large) is the peer refusing.
-                let finished = match send.finish().await {
+                let finished = match finished {
                     Err(error)
                         if matches!(error.kind(), pinc::ErrorKind::Stopped(RESET_CANCELLED)) =>
                     {
@@ -166,12 +201,10 @@ where
                 let _ = done.send(finished);
                 return;
             }
-            None => {
-                send.reset(RESET_CANCELLED).await;
-                return;
-            }
+            None => break,
         }
     }
+    send.reset(RESET_CANCELLED).await;
 }
 
 async fn pump_recv<H>(

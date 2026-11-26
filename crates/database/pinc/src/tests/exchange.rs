@@ -1,7 +1,7 @@
 //! Peer exchange: peers of a peer connect to each other.
 
-use super::{connect, loopback, run, seed, TestNode, IO_TIMEOUT};
-use crate::{spawn_hub, PincEndpointConfig};
+use super::{connect, hub_with, loopback, run, seed, TestNode, IO_TIMEOUT};
+use crate::PincEndpointConfig;
 use p2p::transport::P2PTransport;
 
 #[test]
@@ -31,11 +31,7 @@ fn two_peers_of_one_node_connect_to_each_other() {
 #[test]
 fn two_peers_of_one_node_connect_before_their_records_are_signed() {
     run(async {
-        let (ticket, task) = spawn_hub(*seed(), loopback(), edge::testing::edge())
-            .await
-            .unwrap();
-        // ponytail: the hub runs until the test edge closes with the process.
-        std::mem::forget(task);
+        let ticket = hub_with(false).await;
         let on_hub = || {
             let mut config = PincEndpointConfig::new(seed(), loopback());
             config.max_connections = 8;

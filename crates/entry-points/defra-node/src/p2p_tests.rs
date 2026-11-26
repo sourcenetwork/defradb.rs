@@ -38,8 +38,10 @@ fn test_p2p_config() -> PincConfig {
 async fn hub() -> (String, edge::Task<()>) {
     let seed = defra_pinc::generate_seed().expect("hub seed");
     crate::spawn_pinc_hub(
-        *seed,
-        std::net::SocketAddr::from((IpAddr::V4(Ipv4Addr::LOCALHOST), 0)),
+        crate::PincHubConfig::new(
+            seed,
+            std::net::SocketAddr::from((IpAddr::V4(Ipv4Addr::LOCALHOST), 0)),
+        ),
         edge::testing::edge(),
     )
     .await

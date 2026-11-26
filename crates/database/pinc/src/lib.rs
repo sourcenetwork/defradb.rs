@@ -57,7 +57,7 @@ pub use addr::{
 pub use admission::AdmissionAuthority;
 pub use config::{PincAllowlistConfig, PincEndpointConfig};
 pub use endpoint::spawn_endpoint;
-pub use hub::spawn_hub;
+pub use hub::{spawn_hub, HubConfig};
 pub use inbound_budget::peer_share_bytes;
 pub use protocol_stream::{ProtocolRecvStream, ProtocolSendStream, RESET_CANCELLED};
 pub use seed::{generate_seed, load_or_generate_seed};
@@ -68,6 +68,7 @@ pub use stream_protocols::{
     MAX_STREAM_DEADLINE, RESERVED_TAG_PREFIX,
 };
 pub use token::PincResponseToken;
+pub use topics::PublishStats;
 pub use transport::{PincPeerIdentityResolver, PincTransport};
 
 /// The sync coordinator over the pinc transport.

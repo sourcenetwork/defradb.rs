@@ -58,6 +58,12 @@ fn test_net_config_defaults() {
     assert!(config.peers.is_empty());
     assert_eq!(config.pinc_bind_addr, None);
     assert_eq!(config.pinc_bind_port, None);
+    assert!(config.pinc_public_addrs.is_empty());
+    // Unset, the endpoint binds loopback, as Go's default does.
+    assert_eq!(
+        config.pinc_bind(),
+        std::net::SocketAddr::from(([127, 0, 0, 1], 0))
+    );
     assert!(config.pinc_allowed_peers.is_empty());
     assert!(config.pinc_hubs.is_empty());
 }

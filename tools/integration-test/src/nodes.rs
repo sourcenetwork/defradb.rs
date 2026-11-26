@@ -45,6 +45,12 @@ pub struct NodeSpec {
     /// The node was configured from a Go-written `config.yaml` through the
     /// Rust CLI's loader, so it is a Rust node under every client.
     pub go_config: bool,
+    /// Where the node's pinc endpoint binds when `listen` names no address:
+    /// the CLI's resolved bind for a node started from a Go config.
+    pub pinc_bind: Option<std::net::SocketAddr>,
+    /// The node names [`RELAY_HUB`] in place of [`PINC_HUB`]: a Rust node
+    /// under every client.
+    pub relay_hub: bool,
     /// The node's own identity, Go's `NodeIdentity(seed)`; the node signs as it.
     pub node_identity: Option<u64>,
     /// The node takes `node_identity` from the process's signing registry,
@@ -118,11 +124,11 @@ impl TestNode {
             Some(address) => address.clone(),
             None => "/ip4/127.0.0.1/tcp/0".to_owned(),
         };
-        // Admission limits and a loaded Go config are a Rust node's options:
-        // under go-http the node is a Rust node reached over HTTP, as
-        // rust-http does.
+        // Admission limits, a loaded Go config and a relaying hub are a Rust
+        // node's options: under go-http the node is a Rust node reached over
+        // HTTP, as rust-http does.
         let client_type = match client_type {
-            ClientType::GoHttp if spec.admission.is_some() || spec.go_config => {
+            ClientType::GoHttp if spec.admission.is_some() || spec.go_config || spec.relay_hub => {
                 ClientType::RustHttp
             }
             other => other,
@@ -388,9 +394,9 @@ fn build(spec: &NodeSpec, listen: &str, http: Option<HttpConfig>) -> Result<Node
     Ok(node)
 }
 
-/// Run `builder`'s node over pinc on loopback. A node restarted on its old
-/// address binds the port that address names; its key lives in its store, so
-/// a restart keeps its peer id.
+/// Run `builder`'s node over pinc, on loopback unless `spec.pinc_bind`
+/// says otherwise. A node restarted on its old address binds the port that
+/// address names; its key lives in its store, so a restart keeps its peer id.
 fn pinc_transport(
     builder: defra_node::NodeBuilder,
     spec: &NodeSpec,
@@ -400,12 +406,17 @@ fn pinc_transport(
         .split_once('@')
         .and_then(|(_, addrs)| addrs.split(',').next())
         .and_then(|addr| addr.parse().ok())
+        .or(spec.pinc_bind)
         .unwrap_or_else(|| std::net::SocketAddr::from(([127, 0, 0, 1], 0)));
+    let hub = match spec.relay_hub {
+        true => RELAY_HUB.clone(),
+        false => PINC_HUB.clone(),
+    };
     let mut config = defra_node::PincConfig {
         bind,
         peer_key: defra_node::PeerKeySource::Store,
         max_connections: 16,
-        hubs: vec![PINC_HUB.clone()],
+        hubs: vec![hub],
         ..Default::default()
     };
     if let Some(limits) = &spec.admission {
@@ -421,12 +432,23 @@ fn pinc_transport(
 
 /// The pinc hub every node of this test process names: pinc topics run
 /// through a hub.
-static PINC_HUB: regolith::sync::Lazy<String> = regolith::sync::Lazy::new(|| {
+static PINC_HUB: regolith::sync::Lazy<String> =
+    regolith::sync::Lazy::new(|| spawn_hub(0x48, false));
+
+/// The hub the nodes started with `relay_hub` name: it also runs pinc's
+/// relay role, so its members reach each other by peer id alone.
+static RELAY_HUB: regolith::sync::Lazy<String> =
+    regolith::sync::Lazy::new(|| spawn_hub(0x52, true));
+
+/// A hub on loopback for the rest of the process, and its ticket.
+fn spawn_hub(seed: u8, relay: bool) -> String {
     let edge = edge::testing::edge();
     let bind = std::net::SocketAddr::from(([127, 0, 0, 1], 0));
+    let mut config = defra_node::PincHubConfig::new(defra_node::Zeroizing::new([seed; 32]), bind);
+    config.relay = relay;
     let (ticket, task) = workers::block_on(
         edge.clone()
-            .spawn(async move { defra_node::spawn_pinc_hub([0x48; 32], bind, edge).await }),
+            .spawn(async move { defra_node::spawn_pinc_hub(config, edge).await }),
     )
     .expect("the test thread waits")
     .expect("the hub task runs")
@@ -434,7 +456,7 @@ static PINC_HUB: regolith::sync::Lazy<String> = regolith::sync::Lazy::new(|| {
     // ponytail: the hub lives as long as the process; nothing stops it.
     std::mem::forget(task);
     ticket
-});
+}
 
 /// The key a node signs with: its node identity's, or, for a node that only
 /// signs, a key of its own that no test identity shares.

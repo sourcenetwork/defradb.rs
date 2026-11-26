@@ -315,14 +315,21 @@ pub struct NetConfig {
     /// Peers dialed at start, each `<peer id>@<udp address>`.
     #[serde(default)]
     pub peers: Vec<String>,
-    /// The IP address the pinc endpoint binds. Unset binds every interface
-    /// (0.0.0.0); naming one keeps the node from advertising addresses peers
-    /// on other networks cannot reach.
+    /// The IP address the pinc endpoint binds. Unset binds loopback
+    /// (127.0.0.1), as Go's default `net.p2paddresses` does, so a node
+    /// started with no P2P settings takes no connection from another host.
+    /// A wildcard (`0.0.0.0`, `::`) listens on every interface and lists
+    /// each interface's address, never loopback.
     #[serde(default)]
     pub pinc_bind_addr: Option<std::net::IpAddr>,
     /// The UDP port the pinc endpoint binds. Unset lets the OS pick one.
     #[serde(default)]
     pub pinc_bind_port: Option<u16>,
+    /// Addresses peers reach the node at that are on none of its
+    /// interfaces, each `<ip>:<port>` (a public address in front of a NAT,
+    /// a forwarded port). The node lists them first.
+    #[serde(default)]
+    pub pinc_public_addrs: Vec<std::net::SocketAddr>,
     /// Peer ids allowed to open an inbound connection. Empty (the default)
     /// accepts every peer, which is fine on a private network. Listing any id
     /// switches the node to accepting only the ids listed, which is what a
@@ -412,6 +419,7 @@ impl Default for NetConfig {
             peers: Vec::new(),
             pinc_bind_addr: None,
             pinc_bind_port: None,
+            pinc_public_addrs: Vec::new(),
             pinc_allowed_peers: Vec::new(),
             pinc_hubs: Vec::new(),
             p2p_rate_limit_burst: default_rate_limit_burst(),
@@ -429,6 +437,16 @@ impl Default for NetConfig {
 }
 
 impl NetConfig {
+    /// The address the pinc endpoint binds: `pinc_bind_addr`, loopback when
+    /// unset, on `pinc_bind_port`, a port the OS picks when unset.
+    pub fn pinc_bind(&self) -> std::net::SocketAddr {
+        std::net::SocketAddr::new(
+            self.pinc_bind_addr
+                .unwrap_or(std::net::IpAddr::from([127, 0, 0, 1])),
+            self.pinc_bind_port.unwrap_or(0),
+        )
+    }
+
     /// Validate the network configuration
     pub fn validate(&self) -> Result<()> {
         if self.p2p_disabled {

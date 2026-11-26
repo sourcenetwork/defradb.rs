@@ -45,13 +45,19 @@ pub struct StartArgs {
     #[arg(long, value_delimiter = ',')]
     pub peers: Option<Vec<String>>,
 
-    /// The IP address the pinc endpoint binds (default: every interface)
+    /// The IP address the pinc endpoint binds (default: 127.0.0.1, so only
+    /// this host can connect; 0.0.0.0 listens on every interface)
     #[arg(long)]
     pub pinc_bind_addr: Option<std::net::IpAddr>,
 
     /// The UDP port the pinc endpoint binds (default: one the OS picks)
     #[arg(long)]
     pub pinc_bind_port: Option<u16>,
+
+    /// Addresses peers reach this node at that are on none of its
+    /// interfaces (a public address in front of a NAT), each `<ip>:<port>`
+    #[arg(long, value_delimiter = ',')]
+    pub pinc_public_addrs: Option<Vec<std::net::SocketAddr>>,
 
     /// The pinc hubs topics run through, each `<peer id>@<udp address>`
     #[arg(long, value_delimiter = ',')]
@@ -520,6 +526,9 @@ impl StartArgs {
         }
         if let Some(port) = self.pinc_bind_port {
             config.net.pinc_bind_port = Some(port);
+        }
+        if let Some(addrs) = &self.pinc_public_addrs {
+            config.net.pinc_public_addrs = addrs.clone();
         }
         if let Some(ref hubs) = self.pinc_hubs {
             config.net.pinc_hubs = hubs.clone();

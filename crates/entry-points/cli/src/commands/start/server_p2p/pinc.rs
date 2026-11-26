@@ -1,7 +1,8 @@
-//! The pinc peer: direct connections on `net.pinc_bind_addr` and
-//! `net.pinc_bind_port`, inbound admission from `net.pinc_allowed_peers`,
-//! topics through the hubs `net.pinc_hubs` names, and a dial of each of
-//! `net.peers` at start.
+//! The pinc peer: direct connections on `net.pinc_bind_addr` (loopback
+//! unless set, as Go) and `net.pinc_bind_port`, the extra addresses
+//! `net.pinc_public_addrs` lists, inbound admission from
+//! `net.pinc_allowed_peers`, topics through the hubs `net.pinc_hubs` names,
+//! and a dial of each of `net.peers` at start.
 
 use std::sync::Arc;
 
@@ -26,18 +27,16 @@ impl Node {
         edge: &edge::Edge,
     ) -> Result<P2PSetup> {
         info!("Initializing P2P network (pinc)");
-        let bind = std::net::SocketAddr::new(
-            config
-                .net
-                .pinc_bind_addr
-                .unwrap_or(std::net::IpAddr::from([0, 0, 0, 0])),
-            config.net.pinc_bind_port.unwrap_or(0),
-        );
+        let bind = config.net.pinc_bind();
+        if !bind.ip().is_loopback() && config.net.pinc_allowed_peers.is_empty() {
+            warn!(%bind, "the pinc endpoint is reachable from other hosts and net.pinc_allowed_peers is empty: any peer may connect");
+        }
         let seed = match peer_seed {
             Some(seed) => seed,
             None => defra_pinc::generate_seed().map_err(Error::P2P)?,
         };
         let mut endpoint = defra_pinc::PincEndpointConfig::new(seed, bind);
+        endpoint.public_addrs = config.net.pinc_public_addrs.clone();
         endpoint.node_identity = node_identity;
         endpoint.allowlist = if config.net.pinc_allowed_peers.is_empty() {
             defra_pinc::PincAllowlistConfig::AcceptAll

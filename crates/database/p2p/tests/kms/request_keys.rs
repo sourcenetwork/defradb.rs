@@ -77,3 +77,25 @@ fn the_reply_size_bound_is_measured() {
         );
     }
 }
+
+/// pinc's topic message limit, which `PincTransport::max_raw_publish`
+/// reports (`defra_pinc`'s `MAX_TOPIC_MESSAGE`, checked against this value
+/// by its own tests).
+const PINC_TOPIC_MESSAGE: usize = 64 * 1024;
+
+/// Over pinc topics, a request for `keys_per_request` keys and its reply
+/// both fit one topic message, and the reply for the batch the KMS sent
+/// before pinc reported its limit (512 keys) does not.
+#[test]
+fn a_request_and_its_reply_fit_one_pinc_topic_message() {
+    let limit = PINC_TOPIC_MESSAGE;
+    let keys = keys_per_request(limit);
+    eprintln!(
+        "limit {limit}: {keys} keys, reply {} bytes, request {} bytes",
+        reply(keys).len(),
+        request(keys).len()
+    );
+    assert!(reply(keys).len() <= limit);
+    assert!(request(keys).len() <= limit);
+    assert!(reply(512).len() > limit, "an unsplit batch fits after all");
+}

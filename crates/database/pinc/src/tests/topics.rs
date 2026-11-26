@@ -3,19 +3,14 @@
 
 use bytes::Bytes;
 
-use super::{connect, loopback, run, seed, TestNode, IO_TIMEOUT};
-use crate::{spawn_hub, PincEndpointConfig};
+use super::{connect, hub_with, loopback, run, seed, TestNode, IO_TIMEOUT};
+use crate::PincEndpointConfig;
 use p2p::message::PushLogBroadcast;
 use p2p::topics::DefraTopic;
 use p2p::transport::{P2PTransport, PeerId, TransportEvent};
 
 async fn hub() -> String {
-    let (ticket, task) = spawn_hub(*seed(), loopback(), edge::testing::edge())
-        .await
-        .unwrap();
-    // ponytail: the hub runs until the test edge closes with the process.
-    std::mem::forget(task);
-    ticket
+    hub_with(false).await
 }
 
 async fn node_on(hub: &str) -> TestNode {
@@ -180,6 +175,69 @@ fn a_head_hint_over_the_topic_message_limit_is_refused() {
             .await;
         assert!(result.is_err(), "{result:?}");
         a.shutdown().await;
+    });
+}
+
+/// A raw publish (a KMS request or reply) waits for a member before it is
+/// sent, so it answers first: one larger than a topic message fails its
+/// caller instead of vanishing, and is counted.
+#[test]
+fn an_oversized_raw_publish_fails_its_caller_and_is_counted() {
+    run(async {
+        let hub = hub().await;
+        let a = node_on(&hub).await;
+        let limit = crate::hub::MAX_TOPIC_MESSAGE;
+        assert_eq!(a.transport.max_raw_publish(), Some(limit));
+        // p2p's `a_request_and_its_reply_fit_one_pinc_topic_message` sizes
+        // KMS batches against this value.
+        assert_eq!(limit, 64 * 1024);
+        let result = a
+            .transport
+            .publish_raw("encryption".to_owned(), vec![7; limit + 1])
+            .await;
+        assert!(
+            matches!(
+                result,
+                Err(p2p::Error::GossipTooLarge { size, limit: max }) if size == limit + 1 && max == limit
+            ),
+            "{result:?}"
+        );
+        assert_eq!(a.transport.publish_stats().oversized, 1);
+        assert_eq!(a.transport.publish_stats().failed_after_reply, 0);
+        a.shutdown().await;
+    });
+}
+
+/// A raw message of exactly the limit reaches a subscriber whole.
+#[test]
+fn a_raw_publish_of_one_whole_topic_message_is_delivered() {
+    run(async {
+        let hub = hub().await;
+        let a = node_on(&hub).await;
+        let mut b = node_on(&hub).await;
+        b.transport.subscribe(DefraTopic::Encryption).await.unwrap();
+        b.transport
+            .register_pubsub_rpc_topic("encryption".to_owned())
+            .await
+            .unwrap();
+        connect(&a.transport, &b.transport).await;
+        let limit = crate::hub::MAX_TOPIC_MESSAGE;
+        a.transport
+            .publish_raw("encryption".to_owned(), vec![7; limit])
+            .await
+            .unwrap();
+        let data = b
+            .next(|event| match event {
+                TransportEvent::GossipRawMessage { topic, data, .. } if topic == "encryption" => {
+                    Some(data)
+                }
+                _ => None,
+            })
+            .await;
+        assert_eq!(data.len(), limit);
+        assert_eq!(a.transport.publish_stats(), crate::PublishStats::default());
+        a.shutdown().await;
+        b.shutdown().await;
     });
 }
 
