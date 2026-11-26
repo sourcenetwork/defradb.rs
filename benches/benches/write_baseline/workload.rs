@@ -56,6 +56,13 @@ pub fn chunk_max_chars() -> Option<u32> {
         })
 }
 
+/// `DEFRA_BASELINE_EMBEDDING_URL` embeds the chunked `left` through that provider.
+pub fn embedding_url() -> Option<String> {
+    // Only a chunked field is embedded, so the URL alone changes nothing.
+    chunk_max_chars()?;
+    std::env::var("DEFRA_BASELINE_EMBEDDING_URL").ok()
+}
+
 #[derive(Clone, Copy, Debug)]
 pub enum Scenario {
     Creates,
@@ -93,8 +100,14 @@ impl Scenario {
                 let vector = vector_maintenance()
                     .map(|_| format!(", vec: {}", vector_literal(writer, operation)))
                     .unwrap_or_default();
+                // Each create embeds a text of its own, so the cache answers none of them.
+                let left = if embedding_url().is_some() {
+                    token.as_str()
+                } else {
+                    "same"
+                };
                 format!(
-                    r#"mutation {{ add_Sample(input: {{label: "{token}", left: "same", right: "same", count: 0{vector}}}) {{ _docID }} }}"#
+                    r#"mutation {{ add_Sample(input: {{label: "{token}", left: "{left}", right: "same", count: 0{vector}}}) {{ _docID }} }}"#
                 )
             }
             Self::SharedUpdates | Self::CountersIndexes | Self::Counters | Self::CounterIndex => {
@@ -165,10 +178,18 @@ impl Fixture {
                 )
             })
             .unwrap_or_default();
+        let embedded = embedding_url()
+            .map(|url| {
+                format!(
+                    r#"left_v: [Float32!] @embedding(fields: ["left"], provider: "openai", model: "bench", url: "{url}")"#
+                )
+            })
+            .unwrap_or_default();
         let sdl = format!(
             r#"type {COLLECTION} {{
                 label: String
                 left: String {chunk}
+                {embedded}
                 right: String
                 count: Int @crdt(type: "pncounter")
                 {vector}

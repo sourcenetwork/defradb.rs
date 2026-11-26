@@ -3,6 +3,7 @@ mod block;
 mod collection;
 mod dac;
 mod document;
+mod embedding;
 mod encrypted_index;
 mod expect;
 mod index;
@@ -10,6 +11,7 @@ mod lens;
 mod list_actions;
 mod nac;
 mod node;
+mod openapi_document;
 mod parallel;
 mod peer;
 mod query;
@@ -25,12 +27,14 @@ pub use block::*;
 pub use collection::*;
 pub use dac::*;
 pub use document::*;
+pub use embedding::*;
 pub use encrypted_index::*;
 pub use index::*;
 pub use lens::*;
 pub use list_actions::ListActions;
 pub use nac::*;
 pub use node::*;
+pub use openapi_document::OpenApiDocument;
 pub use parallel::Parallel;
 pub use peer::*;
 pub use query::*;
@@ -146,6 +150,7 @@ client_actions! {
         ListReplicators,
         NewEncryptedIndex,
         NewIndex,
+        OpenApiDocument,
         PatchCollection,
         PeerInfo,
         PurgeDocs,
@@ -177,6 +182,7 @@ client_actions! {
         Benchmark,
         ClientSigningSession,
         Close,
+        EmbeddingModel,
         GetNodeIdentity,
         ListAllEncryptedIndexes,
         NewNode,

@@ -5,6 +5,7 @@ use document::{DocID, Document, NormalValue};
 use query::error::{QueryError, Result};
 use query::mutator::DerivedWrite;
 use query::prepared::{PreparedInputKind, PreparedInputRequest};
+use rapidhash::RapidHashSet;
 use schema::{CHUNK_HASH_FIELD, CHUNK_SOURCE_ID_FIELD, CHUNK_TEXT_FIELD};
 use storage::corekv::Store;
 
@@ -78,17 +79,76 @@ where
             .map_err(|_| QueryError::execution("invalid prepared chunk short ID"))
     }
 
-    pub(super) async fn create(
-        &self,
+    /// The chunk of `parent` holding `text`, before its vectors.
+    pub(super) fn chunk_document(
         target: &ChunkCollection,
         parent: &str,
         text: String,
         hash: String,
+    ) -> Result<Document> {
+        chunk_document(&target.collection, parent, text, &hash)
+    }
+
+    /// Sets the chunk's vectors from the memo, or returns the first request
+    /// it lacks. Every miss is noted in the memo, so one wave answers them all.
+    pub(super) fn embed(
+        &self,
+        target: &ChunkCollection,
+        doc: &mut Document,
+    ) -> Result<Option<PreparedInputRequest>> {
+        let embeddings = &target.collection.schema().vector_embeddings;
+        if embeddings.is_empty() {
+            return Ok(None);
+        }
+        // The model is never called inside the transaction, so with no memo
+        // there is nowhere to take the vector from.
+        let inputs = self.prepared_inputs.ok_or_else(|| {
+            QueryError::execution(format!(
+                "{} needs its embeddings prepared before the transaction",
+                target.collection.name()
+            ))
+        })?;
+        let config = self.db.options().embedding_config();
+        // Schema checks make this unreachable today. A chunk is never written
+        // again, so one stored without its vector would stay without one.
+        for embedding in embeddings {
+            if let Err(missing) =
+                crate::search::embedding::resolve_embedding_config(embedding, &config)
+            {
+                let missing = match missing {
+                    crate::search::embedding::MissingEmbeddingConfig::Url => "URL",
+                    crate::search::embedding::MissingEmbeddingConfig::Model => "model",
+                };
+                return Err(QueryError::execution(format!(
+                    "a chunk embedding needs a {missing}: set it on the @embedding or in the node's embedding config. Field: {}.{}",
+                    target.collection.name(),
+                    embedding.field_name
+                )));
+            }
+        }
+        match crate::search::embedding::set_embedding_from_inputs(
+            embeddings,
+            doc,
+            true,
+            &RapidHashSet::default(),
+            &config,
+            inputs,
+        ) {
+            Ok(_) => Ok(None),
+            Err(QueryError::NeedsInput(request)) => Ok(Some(request)),
+            Err(error) => Err(error),
+        }
+    }
+
+    pub(super) async fn create(
+        &self,
+        target: &ChunkCollection,
+        parent: &str,
+        mut doc: Document,
+        hash: String,
         encrypt: bool,
     ) -> Result<DerivedWrite> {
         let collection = &target.collection;
-        let mut doc = chunk_document(collection, parent, text, &hash)?;
-
         let encryption = encrypt.then(|| EncryptionConfig {
             encrypt_doc: true,
             encrypt_fields: Vec::new(),

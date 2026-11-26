@@ -89,6 +89,7 @@ async fn execute(
             context: Default::default(),
             parsed: None,
             filter_origin: Default::default(),
+            known_inputs: None,
         },
     )
     .await;

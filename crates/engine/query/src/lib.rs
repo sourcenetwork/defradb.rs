@@ -73,6 +73,7 @@ pub use plan::{
     TypeJoinMany, TypeJoinOne, UpdateInput, UpdateNode, UpsertAction, UpsertInput, UpsertNode,
 };
 pub use planner::{Doc, DocStatus, ExecInfo, PlanNode, Planner};
+pub use prepared::KnownInputs;
 pub use query_parse::{
     parse_filter_string, parse_mutations, parse_mutations_with_limits, parse_query,
     parse_query_with_limits, parse_request, parse_request_with_limits, ExplainType,

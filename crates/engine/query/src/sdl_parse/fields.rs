@@ -19,6 +19,7 @@ use super::directives::{
     known_directive_arguments, IndexConfig, IndexDirection, ParsedDirectives,
     KNOWN_FIELD_DIRECTIVES, KNOWN_TYPE_DIRECTIVES,
 };
+use super::field_type_refusal::refusal;
 use super::helpers::{
     graphql_schema_value_to_json, normalize_datetime_string, parse_governed_directive,
     parse_graphql_type, parse_policy_directive,
@@ -28,6 +29,10 @@ use super::warnings::{DirectiveLocation, ParseWarning};
 
 impl<'a> SdlParser<'a> {
     pub(super) fn parse_field(&mut self, field: &Field<'_, String>) -> Result<ParsedField> {
+        let object = self.current_type.as_deref().unwrap_or_default();
+        if let Some(refused) = refusal(object, &field.name, &field.field_type) {
+            return Err(QueryError::UnsupportedFieldType(refused.into()));
+        }
         let field_type = parse_graphql_type(&field.field_type);
         let directives =
             self.parse_field_directives(&field.directives, &field.name, &field_type.base_type)?;

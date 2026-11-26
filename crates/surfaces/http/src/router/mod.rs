@@ -1,11 +1,13 @@
 //! Router configuration and route definitions.
 
+mod collection_refusal;
 #[cfg(feature = "server")]
 mod routes;
 #[cfg(feature = "server")]
 mod state;
 mod traits;
 
+pub use collection_refusal::CollectionRefusal;
 #[cfg_attr(not(feature = "server"), allow(unused_imports))]
 pub(crate) use defra_p2p_adapter::{
     peer, ExplicitReplayCapabilityInput, ManageRequester, P2PError, P2POperations, RemoteManageOp,

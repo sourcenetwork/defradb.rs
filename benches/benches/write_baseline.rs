@@ -6,6 +6,7 @@
 //! DEFRA_BASELINE_WRITERS (comma-separated), DEFRA_BASELINE_OPERATIONS and
 //! DEFRA_BASELINE_REPETITIONS. DEFRA_BASELINE_CHUNK_MAX_CHARS makes `left` a
 //! `@chunk` field and emits the families with a `_chunked` suffix;
+//! DEFRA_BASELINE_EMBEDDING_URL also embeds it, with an `_embedded` suffix;
 //! DEFRA_BASELINE_PROJECTOR=empty installs a document projector that changes
 //! nothing. DEFRA_BASELINE_VECTOR=sync|deferred adds a 128-dimension HNSW
 //! vector to every create and emits the families with a `_vector_<mode>`
@@ -112,6 +113,7 @@ fn main() {
             "shared_documents": workload::SHARED_DOCUMENTS,
                 "chunk_max_chars": workload::chunk_max_chars(),
                 "vector_maintenance": workload::vector_maintenance(),
+                "embedded": workload::embedding_url().is_some(),
                 "load_guard": guard,
             }
         })
@@ -183,11 +185,15 @@ fn main() {
         for group in groups {
             family = family.group(group);
         }
-        let mut suffix = if workload::chunk_max_chars().is_some() {
-            "_chunked".to_string()
-        } else {
-            String::new()
-        };
+        let mut suffix = match (
+            workload::chunk_max_chars().is_some(),
+            workload::embedding_url().is_some(),
+        ) {
+            (true, true) => "_chunked_embedded",
+            (true, false) => "_chunked",
+            (false, _) => "",
+        }
+        .to_string();
         if let Some(mode) = workload::vector_maintenance() {
             suffix.push_str(&format!("_vector_{mode}"));
         }
