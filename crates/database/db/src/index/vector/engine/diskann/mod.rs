@@ -24,6 +24,13 @@
 //! transaction with point reads and writes only, so a writer appending to the
 //! pending set meanwhile does not abort it.
 //!
+//! With resident codes a record holds ids only, and a node's record is keyed
+//! by a cluster: the cluster of the nearest node its walk found that still has
+//! room, or a new one it founds. A cluster holds about [`CLUSTER_BYTES`] of
+//! records, so the records a walk reads near its target share pages. A node
+//! keeps its cluster until a consolidation removes it; edges name ids, so no
+//! edge ever changes with a cluster.
+//!
 //! Unlike the paper the pending set is not an in-memory graph: it lives in the
 //! store, which keeps it transactional and durable without a redo log. Every
 //! pending write also appends to a commit-ordered log, so searches share an
@@ -42,15 +49,16 @@ mod graph;
 mod merge;
 mod params;
 mod pending_cache;
+mod record;
 
 #[cfg(test)]
 pub(crate) use cache::BUILT as CODE_CACHES_BUILT;
-pub use cache::{CodeCache, CodeCaches, Codes};
+pub use cache::{CodeCache, CodeCaches, Coded, Codes};
 pub use codec::State;
 pub use merge::MergePlan;
 pub use params::{
-    DiskAnnParams, CONSOLIDATE_MIN_DELETED, MAX_ALPHA_PERCENT, MAX_L, MAX_M, MAX_PLAN_PENDING,
-    MAX_R, MERGE_MIN_BATCH, SLACK_PERCENT, TRAIN_THRESHOLD,
+    DiskAnnParams, CLUSTER_BYTES, CLUSTER_CANDIDATES, CONSOLIDATE_MIN_DELETED, MAX_ALPHA_PERCENT,
+    MAX_L, MAX_M, MAX_PLAN_PENDING, MAX_R, MERGE_MIN_BATCH, SLACK_PERCENT, TRAIN_THRESHOLD,
 };
 pub use pending_cache::{
     Copy, PendingCache, Segment, Tag, ENTRY_OVERHEAD, MAX_PENDING_CACHE_BYTES,

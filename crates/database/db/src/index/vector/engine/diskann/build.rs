@@ -3,6 +3,7 @@
 use std::sync::Arc;
 
 use super::codec::{self, GraphState, Trained};
+use super::record::ClusterSizes;
 use super::DiskAnn;
 use crate::index::error::{Error, Result};
 use crate::index::vector::engine::ivf;
@@ -91,11 +92,12 @@ impl<S: VectorNodeStore> DiskAnn<S> {
             training: Some(rand::random()),
         };
         let mut graph = GraphState::default();
+        let mut sizes = ClusterSizes::default();
         for id in std::iter::once(medoid).chain(ids.into_iter().filter(|id| *id != medoid)) {
             let Some(node) = self.store().get_node(id).await? else {
                 continue;
             };
-            self.graph_insert(&trained, &mut graph, id, &node.vector)
+            self.graph_insert(&trained, &mut graph, &mut sizes, id, &node.vector)
                 .await?;
         }
         self.put_graph_state(&graph).await?;

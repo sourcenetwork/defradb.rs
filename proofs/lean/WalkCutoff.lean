@@ -23,9 +23,9 @@ A rank is a number here: the position of (distance, id) in the frontier's
 order. Ids in a walk are distinct, so no two ranks are equal, and sorting a
 list is the same as inserting its items one by one into a sorted list.
 
-Rust anchors: `DiskAnn::walk` and `DiskAnn::each_edge`
+Rust anchors: `DiskAnn::walk`
 (`crates/database/db/src/index/vector/engine/diskann/graph.rs`), sorted by
-`by_distance` in the same file.
+`by_distance` in the same file, and `DiskAnn::each_edge` (`record.rs` beside it).
 -/
 
 namespace WalkCutoff

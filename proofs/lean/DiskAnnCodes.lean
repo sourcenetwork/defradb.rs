@@ -22,6 +22,10 @@ Rust anchors: `Codes::insert` and `Codes::get` in
 `RapidHashMap<NodeId, u32>`, modeled here as a function from id to slot; bytes
 are modeled as natural numbers. `started` stands for `!index.is_empty()`: the
 map only ever grows, so it is empty exactly until the first insert succeeds.
+In Rust each slot is the code followed by four bytes of the node's cluster,
+so the model's code of length `len` is the Rust slot, of the code's length
+plus four; `DiskAnnClusterKeys.slot_round_trip` covers what the cluster bytes
+read back as.
 -/
 
 namespace DiskAnnCodes

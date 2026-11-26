@@ -14,6 +14,7 @@ use kovan_map::HopscotchMap;
 use rapidhash::fast::RandomState;
 use rapidhash::RapidHashMap;
 
+use super::codec::NO_CLUSTER;
 use super::pending_cache::PendingCache;
 use crate::index::error::{Error, Result};
 use crate::index::vector::quantize::ProductQuantizer;
@@ -22,6 +23,10 @@ use crate::index::vector::store::NodeId;
 /// Codes loaded in one pass, back to back in one array with an index of where
 /// each starts. A concurrent map holding each code as its own allocation cost
 /// about six times the codes themselves at 1M vectors.
+///
+/// Each slot is the code followed by the node's cluster, which names its
+/// record's key, or [`NO_CLUSTER`] for a node whose record is keyed by its id
+/// alone. The cluster sits beside the code so one lookup touches one place.
 #[derive(Debug, Default)]
 pub struct Codes {
     index: RapidHashMap<NodeId, u32>,
@@ -29,10 +34,16 @@ pub struct Codes {
     len: usize,
 }
 
+/// A node's code and the cluster its record is keyed by, if any.
+pub type Coded = (Vec<u8>, Option<u32>);
+
+/// Bytes of a slot past its code: the cluster.
+const CLUSTER_LEN: usize = 4;
+
 impl Codes {
     /// Every code of one index has the same length, set by the first; a code
     /// of another length would shift every later slot, so it is refused.
-    pub fn insert(&mut self, id: NodeId, code: &[u8]) -> Result<()> {
+    pub fn insert(&mut self, id: NodeId, code: &[u8], cluster: Option<u32>) -> Result<()> {
         if self.index.is_empty() {
             self.len = code.len();
         }
@@ -43,16 +54,22 @@ impl Codes {
                 got: code.len(),
             });
         }
-        let slot = u32::try_from(self.bytes.len() / self.len.max(1))
+        let slot = u32::try_from(self.bytes.len() / (self.len + CLUSTER_LEN))
             .map_err(|_| Error::DiskAnnCodeSlots { id: id.0 })?;
         self.index.insert(id, slot);
         self.bytes.extend_from_slice(code);
+        self.bytes
+            .extend_from_slice(&cluster.unwrap_or(NO_CLUSTER).to_le_bytes());
         Ok(())
     }
 
-    fn get(&self, id: NodeId) -> Option<&[u8]> {
+    fn get(&self, id: NodeId) -> Option<(&[u8], Option<u32>)> {
         let slot = *self.index.get(&id)? as usize;
-        Some(&self.bytes[slot * self.len..][..self.len])
+        let (code, cluster) = self.bytes[slot * (self.len + CLUSTER_LEN)..]
+            [..self.len + CLUSTER_LEN]
+            .split_at(self.len);
+        let cluster = u32::from_le_bytes(cluster.try_into().unwrap());
+        Some((code, (cluster != NO_CLUSTER).then_some(cluster)))
     }
 
     fn shrink_to_fit(&mut self) {
@@ -93,7 +110,7 @@ struct Loaded {
     /// The graph generation the codes were loaded at; `None` until loaded.
     generation: Option<u64>,
     codes: Codes,
-    misses: HopscotchMap<NodeId, Vec<u8>, RandomState>,
+    misses: HopscotchMap<NodeId, Coded, RandomState>,
 }
 
 impl CodeCache {
@@ -133,16 +150,18 @@ impl CodeCache {
         });
     }
 
-    pub fn get(&self, id: NodeId) -> Option<Vec<u8>> {
+    /// A node's code and cluster. The cluster may be another generation's:
+    /// a search that finds no record under it reads the node's own.
+    pub fn get(&self, id: NodeId) -> Option<Coded> {
         let loaded = self.loaded.load();
         match loaded.codes.get(id) {
-            Some(code) => Some(code.to_vec()),
+            Some((code, cluster)) => Some((code.to_vec(), cluster)),
             None => loaded.misses.get(&id),
         }
     }
 
-    pub fn insert(&self, id: NodeId, code: Vec<u8>) {
-        self.loaded.load().misses.insert(id, code);
+    pub fn insert(&self, id: NodeId, coded: Coded) {
+        self.loaded.load().misses.insert(id, coded);
     }
 
     /// Whether the codes are at least as new as `generation`.

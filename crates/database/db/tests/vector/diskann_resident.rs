@@ -5,11 +5,11 @@ use std::sync::Arc;
 
 use crate::diskann_engine::{all, corpus, count, params, recall, CORPUS, K, SEED};
 use db::index::vector::engine::ann::VectorIndexEngine;
-use db::index::vector::engine::diskann::{codec, CodeCache, Codes, DiskAnn, DiskAnnParams};
+use db::index::vector::engine::diskann::{codec, CodeCache, Coded, Codes, DiskAnn, DiskAnnParams};
 use db::index::vector::store::{MemoryNodeStore, NodeId, VectorNodeStore};
 use defra_core::vector::Metric;
 
-async fn built(vectors: &[Vec<f32>]) -> DiskAnn<MemoryNodeStore> {
+pub async fn built(vectors: &[Vec<f32>]) -> DiskAnn<MemoryNodeStore> {
     let params = DiskAnnParams {
         resident_codes: true,
         ..params()
@@ -22,10 +22,14 @@ async fn built(vectors: &[Vec<f32>]) -> DiskAnn<MemoryNodeStore> {
     index
 }
 
-async fn stored_code(index: &DiskAnn<MemoryNodeStore>, id: u64) -> Vec<u8> {
+/// A node's code and cluster as stored.
+pub async fn stored_code(index: &DiskAnn<MemoryNodeStore>, id: u64) -> Coded {
     let key = codec::record_key(NodeId(id));
-    let code = index.store().get_aux(codec::CODE, &key).await.unwrap();
-    code.unwrap().to_vec()
+    let value = index.store().get_aux(codec::CODE, &key).await.unwrap();
+    let m = index.state().await.unwrap().unwrap().m as usize;
+    let value = value.unwrap();
+    let (code, cluster) = codec::decode_code(&value, m).unwrap();
+    (code.to_vec(), cluster)
 }
 
 #[test]
@@ -97,7 +101,7 @@ fn the_cache_reloads_after_a_merge() {
 fn an_older_reload_does_not_replace_a_newer_one() {
     let codes = |code: u8| {
         let mut codes = Codes::default();
-        codes.insert(NodeId(1), &[code]).unwrap();
+        codes.insert(NodeId(1), &[code], None).unwrap();
         codes
     };
     let cache = CodeCache::default();
@@ -106,26 +110,29 @@ fn an_older_reload_does_not_replace_a_newer_one() {
     cache.replace(1, codes(1));
 
     assert!(cache.is_current(2));
-    assert_eq!(cache.get(NodeId(1)), Some(vec![2]));
+    assert_eq!(cache.get(NodeId(1)), Some((vec![2], None)));
 }
 
-/// Each loaded code reads back from its own slot, and a miss filled after the
+/// Each loaded code reads back from its own slot with its cluster, a node
+/// without a cluster reads back without one, and a miss filled after the
 /// load reads back beside them.
 #[test]
 fn every_loaded_code_reads_back() {
     let code = |id: u64| id.wrapping_mul(0x9e37_79b9_7f4a_7c15).to_le_bytes();
+    let cluster = |id: u64| (!id.is_multiple_of(3)).then(|| codec::cluster_tag(NodeId(id / 7)));
     let ids = 1..=1000u64;
     let mut codes = Codes::default();
     for id in ids.clone() {
-        codes.insert(NodeId(id), &code(id)).unwrap();
+        codes.insert(NodeId(id), &code(id), cluster(id)).unwrap();
     }
     let cache = CodeCache::default();
     cache.replace(1, codes);
     let miss = 1001;
-    cache.insert(NodeId(miss), code(miss).to_vec());
+    cache.insert(NodeId(miss), (code(miss).to_vec(), cluster(miss)));
 
     for id in ids.chain([miss]) {
-        assert_eq!(cache.get(NodeId(id)), Some(code(id).to_vec()), "node {id}");
+        let want = (code(id).to_vec(), cluster(id));
+        assert_eq!(cache.get(NodeId(id)), Some(want), "node {id}");
     }
     assert_eq!(cache.get(NodeId(miss + 1)), None);
 }
@@ -134,9 +141,9 @@ fn every_loaded_code_reads_back() {
 #[test]
 fn a_code_of_another_length_is_refused() {
     let mut codes = Codes::default();
-    codes.insert(NodeId(1), &[1, 2, 3]).unwrap();
+    codes.insert(NodeId(1), &[1, 2, 3], None).unwrap();
 
-    let err = codes.insert(NodeId(2), &[1, 2]).unwrap_err();
+    let err = codes.insert(NodeId(2), &[1, 2], None).unwrap_err();
 
     assert!(matches!(
         err,
