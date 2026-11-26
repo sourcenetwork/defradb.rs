@@ -12,6 +12,7 @@ mod multi_role;
 mod negative;
 mod node_access;
 mod policy_counter_restart;
+mod policy_transition_guard;
 mod policy_validation;
 mod register_ops;
 mod relation_queries;
