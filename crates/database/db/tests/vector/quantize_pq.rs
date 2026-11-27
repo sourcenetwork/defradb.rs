@@ -191,6 +191,13 @@ fn mismatched_codebooks_are_refused() {
     let (pq, _) = trained(9);
     assert!(ProductQuantizer::from_books(DIMENSIONS, Vec::new()).is_err());
     assert!(ProductQuantizer::from_books(DIMENSIONS + 1, pq.books().to_vec()).is_err());
+    let mut short = pq.books().to_vec();
+    short[0].values.pop();
+    let err = ProductQuantizer::from_books(DIMENSIONS, short).unwrap_err();
+    assert!(
+        err.to_string().contains("wrong shape"),
+        "a codebook with too few values must be refused, got: {err}"
+    );
 }
 
 /// Compression is the reason this kind exists, so it is asserted rather than

@@ -25,7 +25,7 @@ edge (`no_since_keeps_a_covered_edge`).
 What covers what is left abstract (`covers`), so the result holds whatever
 distance and `alpha` decide it.
 
-Rust anchors: `RobustPrune::select`
+Rust anchors: `RobustPrune::keep`
 (`crates/database/db/src/index/vector/engine/select/robust_prune.rs`), whose blocks are
 `pool.chunks(BLOCK)`; `squared_euclidean_block`
 (`crates/foundation/defra-core/src/vector/kernel/mod.rs`) computes the distances behind

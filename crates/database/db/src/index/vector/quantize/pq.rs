@@ -143,9 +143,12 @@ impl ProductQuantizer {
             ));
         }
         let dsub = dimensions / m;
-        if books.iter().any(|book| book.dimensions != dsub) {
+        if books
+            .iter()
+            .any(|book| book.dimensions != dsub || book.values.len() != book.k * dsub)
+        {
             return Err(Error::Other(
-                "a product quantizer codebook has the wrong subspace width".into(),
+                "a product quantizer codebook has the wrong shape".into(),
             ));
         }
         Ok(Self {
