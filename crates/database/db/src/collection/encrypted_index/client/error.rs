@@ -12,9 +12,6 @@ pub enum EncryptedIndexError {
     /// The transaction the request names is not open. Go's text.
     #[error("transaction not found")]
     TransactionNotFound,
-    /// The read-only transaction a listing reads in could not be opened.
-    #[error("failed to create transaction: {0}")]
-    TxnCreate(#[source] crate::Error),
 }
 
 impl From<crate::Error> for EncryptedIndexError {

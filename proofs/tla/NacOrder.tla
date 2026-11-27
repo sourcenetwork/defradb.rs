@@ -59,9 +59,11 @@
 \*                                       crates/database/db/src/txn/registry/indexes.rs check_access_in
 \*                                       (an index or encrypted index created, listed or
 \*                                       dropped in a transaction);
-\*                                       crates/database/db/src/collection/encrypted_index/client/mod.rs
-\*                                       DbTransactionRegistry::check_encrypted_index_access
-\*                                       (an encrypted index changed or listed outside one)
+\*                                       crates/database/db/src/collection/encrypted_index.rs
+\*                                       DB::add_encrypted_index_as, DB::delete_encrypted_index_as,
+\*                                       DB::encrypted_indexes_as, DB::all_encrypted_indexes_as
+\*                                       (an encrypted index changed or listed outside one,
+\*                                       checked in that operation's transaction)
 \*   - a write in an explicit            crates/engine/query/src/runner/turn.rs QueryRunner::lent,
 \*     transaction, whose refusal          lent_node_permission: walks go_order once, stops at
 \*     names the first missing one         the first missing permission and names it, never

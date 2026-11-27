@@ -25,16 +25,27 @@ impl NodeOps {
     /// Add an equality encrypted index on `field_name` of `collection`.
     pub(crate) async fn add_encrypted_index(
         &self,
-        context: &RequestContext,
+        owner: &RequestContext,
+        caller: &RequestContext,
         collection: &str,
         field_name: &str,
     ) -> Result<EncryptedIndexListing> {
-        let (registry, context) = (self.txn_registry.clone(), context.clone());
+        let (registry, owner, caller) = (self.txn_registry.clone(), owner.clone(), caller.clone());
         let (collection, field) = (collection.to_owned(), field_name.to_owned());
-        self.encrypted(context.txn().is_some(), move || async move {
-            Ok(registry
-                .add_encrypted_index_as(&context, &collection, &field)
-                .await?)
+        self.encrypted(owner.txn().is_some(), move || async move {
+            Ok(match owner.txn() {
+                Some(txn) => {
+                    let txn = txn.to_string();
+                    registry
+                        .add_encrypted_index_in_txn_for(&owner, &caller, &txn, &collection, &field)
+                        .await?
+                }
+                None => {
+                    registry
+                        .add_encrypted_index_as(&caller, &collection, &field)
+                        .await?
+                }
+            })
         })
         .await?;
         Ok(listing(field_name))
@@ -43,14 +54,23 @@ impl NodeOps {
     /// The encrypted indexes of `collection`.
     pub(crate) async fn list_encrypted_indexes(
         &self,
-        context: &RequestContext,
+        owner: &RequestContext,
+        caller: &RequestContext,
         collection: &str,
     ) -> Result<Vec<EncryptedIndexListing>> {
-        let (registry, context) = (self.txn_registry.clone(), context.clone());
+        let (registry, owner, caller) = (self.txn_registry.clone(), owner.clone(), caller.clone());
         let collection = collection.to_owned();
         let fields = self
-            .encrypted(context.txn().is_some(), move || async move {
-                Ok(registry.encrypted_indexes_as(&context, &collection).await?)
+            .encrypted(owner.txn().is_some(), move || async move {
+                Ok(match owner.txn() {
+                    Some(txn) => {
+                        let txn = txn.to_string();
+                        registry
+                            .encrypted_indexes_in_txn_for(&owner, &caller, &txn, &collection)
+                            .await?
+                    }
+                    None => registry.encrypted_indexes_as(&caller, &collection).await?,
+                })
             })
             .await?;
         Ok(fields.iter().map(|field| listing(field)).collect())
@@ -60,12 +80,21 @@ impl NodeOps {
     /// collection without one is left out.
     pub(crate) async fn list_all_encrypted_indexes(
         &self,
-        context: &RequestContext,
+        owner: &RequestContext,
+        caller: &RequestContext,
     ) -> Result<Vec<(String, Vec<EncryptedIndexListing>)>> {
-        let (registry, context) = (self.txn_registry.clone(), context.clone());
+        let (registry, owner, caller) = (self.txn_registry.clone(), owner.clone(), caller.clone());
         let all = self
-            .encrypted(context.txn().is_some(), move || async move {
-                Ok(registry.all_encrypted_indexes_as(&context).await?)
+            .encrypted(owner.txn().is_some(), move || async move {
+                Ok(match owner.txn() {
+                    Some(txn) => {
+                        let txn = txn.to_string();
+                        registry
+                            .all_encrypted_indexes_in_txn_for(&owner, &caller, &txn)
+                            .await?
+                    }
+                    None => registry.all_encrypted_indexes_as(&caller).await?,
+                })
             })
             .await?;
         Ok(all
@@ -77,16 +106,33 @@ impl NodeOps {
     /// Delete the encrypted index on `field_name` of `collection`.
     pub(crate) async fn delete_encrypted_index(
         &self,
-        context: &RequestContext,
+        owner: &RequestContext,
+        caller: &RequestContext,
         collection: &str,
         field_name: &str,
     ) -> Result<()> {
-        let (registry, context) = (self.txn_registry.clone(), context.clone());
+        let (registry, owner, caller) = (self.txn_registry.clone(), owner.clone(), caller.clone());
         let (collection, field) = (collection.to_owned(), field_name.to_owned());
-        self.encrypted(context.txn().is_some(), move || async move {
-            Ok(registry
-                .delete_encrypted_index_as(&context, &collection, &field)
-                .await?)
+        self.encrypted(owner.txn().is_some(), move || async move {
+            Ok(match owner.txn() {
+                Some(txn) => {
+                    let txn = txn.to_string();
+                    registry
+                        .delete_encrypted_index_in_txn_for(
+                            &owner,
+                            &caller,
+                            &txn,
+                            &collection,
+                            &field,
+                        )
+                        .await?
+                }
+                None => {
+                    registry
+                        .delete_encrypted_index_as(&caller, &collection, &field)
+                        .await?
+                }
+            })
         })
         .await
     }

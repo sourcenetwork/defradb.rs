@@ -342,7 +342,7 @@ A collection patch that adds, removes or modifies `/Users/EncryptedIndexes` fail
 # `defra.searchable_encryption.index.one_answer`: Every client manages encrypted indexes through the same checks
 
 - **Parents:** ["go.searchable_encryption.index"]
-- **Scenarios:** ["searchable_encryption::missing_collection::encrypted_index_on_a_missing_collection_is_refused_in_and_outside_a_transaction"]
+- **Scenarios:** ["searchable_encryption::missing_collection::encrypted_index_on_a_missing_collection_is_refused_in_and_outside_a_transaction", "searchable_encryption::caller_identity::an_anonymous_caller_cannot_use_the_signing_nodes_identity_in_a_transaction"]
 
 `NewEncryptedIndex`, `ListEncryptedIndexes`, `ListAllEncryptedIndexes` and `DeleteEncryptedIndex` answer the same through the embedded node, FFI, the CLI, the embedded node's HTTP server and the HTTP server `defradb start` runs. In a transaction each runs there, with node access checked in it; with none, the caller must hold `get-collection` and then the operation's own permission (`new-encrypted-index`, `list-encrypted-index`, `delete-encrypted-index`), or `list-all-encrypted-index` alone for every collection's listing, and a change commits in a transaction of its own. A collection the node does not hold fails with `collection not found. Name: <name>` (Go's `collection not found`, naming the collection), inside a transaction and outside one alike, and a transaction that is not open fails with `transaction not found`.
 

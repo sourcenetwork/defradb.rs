@@ -7,7 +7,6 @@ mod error;
 
 pub use error::EncryptedIndexError;
 
-use acp::nac::NodePermission;
 use defra_core::RequestContext;
 use storage::corekv::Store;
 
@@ -32,9 +31,10 @@ where
                 .add_encrypted_index_in_txn(context, &txn.to_string(), collection, field)
                 .await?);
         }
-        self.check_encrypted_index_access(context, NodePermission::EncryptedIndexAdd)
-            .await?;
-        Ok(self.db().add_encrypted_index(collection, field).await?)
+        Ok(self
+            .db()
+            .add_encrypted_index_as(context, collection, field)
+            .await?)
     }
 
     /// Go's `DeleteEncryptedIndex`: drop the encrypted index on `field` of
@@ -50,9 +50,10 @@ where
                 .delete_encrypted_index_in_txn(context, &txn.to_string(), collection, field)
                 .await?);
         }
-        self.check_encrypted_index_access(context, NodePermission::EncryptedIndexDelete)
-            .await?;
-        Ok(self.db().delete_encrypted_index(collection, field).await?)
+        Ok(self
+            .db()
+            .delete_encrypted_index_as(context, collection, field)
+            .await?)
     }
 
     /// Go's `ListEncryptedIndexes`: the fields of `collection` that carry an
@@ -67,16 +68,7 @@ where
                 .encrypted_indexes_in_txn(context, &txn.to_string(), collection)
                 .await?);
         }
-        self.check_encrypted_index_access(context, NodePermission::EncryptedIndexList)
-            .await?;
-        let db = self.db();
-        let txn = db
-            .new_txn(true)
-            .await
-            .map_err(EncryptedIndexError::TxnCreate)?;
-        let fields = db.encrypted_indexes_in(&txn, collection).await;
-        let _ = txn.discard();
-        Ok(fields?)
+        Ok(self.db().encrypted_indexes_as(context, collection).await?)
     }
 
     /// Go's `ListAllEncryptedIndexes`: every collection's encrypted index
@@ -92,30 +84,6 @@ where
                 .all_encrypted_indexes_in_txn(context, &txn.to_string())
                 .await?);
         }
-        let db = self.db();
-        db.check_node_access_as(context, NodePermission::EncryptedIndexListAll)
-            .await?;
-        let txn = db
-            .new_txn(true)
-            .await
-            .map_err(EncryptedIndexError::TxnCreate)?;
-        let all = db.all_encrypted_indexes_in(&txn).await;
-        let _ = txn.discard();
-        Ok(all?)
-    }
-
-    /// Node access for an operation on a collection outside a transaction:
-    /// `get-collection`, as Go's collection lookup checks first, then
-    /// `permission`.
-    async fn check_encrypted_index_access(
-        &self,
-        context: &RequestContext,
-        permission: NodePermission,
-    ) -> Result<()> {
-        let db = self.db();
-        for needed in [NodePermission::CollectionGet, permission] {
-            db.check_node_access_as(context, needed).await?;
-        }
-        Ok(())
+        Ok(self.db().all_encrypted_indexes_as(context).await?)
     }
 }

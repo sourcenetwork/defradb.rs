@@ -1,4 +1,5 @@
 mod add;
+mod caller_identity;
 mod delete;
 mod list;
 mod missing_collection;
