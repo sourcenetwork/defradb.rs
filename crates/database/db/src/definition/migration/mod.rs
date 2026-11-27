@@ -24,7 +24,7 @@ use crate::error::Result;
 use crate::DB;
 
 pub use reindex::ReindexReport;
-pub(crate) use reindex::{owe_reindex, owed_failure, reindex_owed};
+pub(crate) use reindex::{owe_reindex, owed_failure, owed_status, reindex_owed};
 
 impl<S: Store> DB<S> {
     /// Run the ordered database-open migration pipeline.

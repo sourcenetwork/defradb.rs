@@ -44,7 +44,7 @@ use crate::index::pages::PAGE_ITEMS;
 use crate::DB;
 
 pub use owed::ReindexReport;
-pub(crate) use owed::{owe_reindex, owed_failure, reindex_owed};
+pub(crate) use owed::{owe_reindex, owed_failure, owed_status, reindex_owed};
 use page::{ReindexPage, Step};
 
 impl<S> DB<S>

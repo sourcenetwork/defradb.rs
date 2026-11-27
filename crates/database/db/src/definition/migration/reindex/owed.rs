@@ -16,10 +16,13 @@
 //! ran before it.
 //!
 //! While a record stands, none of the collection's indexes answers queries
-//! ([`reindex_owed`], read wherever index statuses are), so a query plans a
+//! ([`owed_status`], read wherever index statuses are), so a query plans a
 //! scan instead of reading entries that may describe documents at an older
-//! version or be half rebuilt. Writing or clearing a record republishes the
-//! cached collection when the transaction commits, in commit order.
+//! version or be half rebuilt. A unique index the last rebuild could not fill
+//! takes no writes either, until a rebuild tries it again from the start
+//! (`proofs/tla/ReindexFailureListing.tla`). Writing or clearing a record
+//! republishes the cached collection when the transaction commits, in commit
+//! order.
 
 use std::sync::Arc;
 
@@ -50,8 +53,9 @@ pub(super) struct OwedReindex {
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub(super) persists_migrations: bool,
     /// Why the last rebuild of this reindex stopped, when a migration gave
-    /// two documents one value of a unique index. A reindex owed again
-    /// starts without one, and the record goes when the rebuild finishes.
+    /// two documents one value of a unique index. Writers stop maintaining
+    /// that index while it stands. A reindex owed again starts without one,
+    /// and a rebuild that tries it again removes it on its first page.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     failure: Option<OwedFailure>,
 }
@@ -91,6 +95,19 @@ pub(crate) async fn reindex_owed(systemstore: &NamespaceView, collection_id: &st
         .map_err(Error::Storage)
 }
 
+/// The reindex owed to `collection_id` as index statuses see it: `None` when
+/// nothing is owed, otherwise the unique index its last rebuild could not
+/// fill, if one. The read is validated, so a writer that decided which
+/// indexes to maintain on it conflicts with a change to the record.
+pub(crate) async fn owed_status(
+    systemstore: &NamespaceView,
+    collection_id: &str,
+) -> Result<Option<Option<u32>>> {
+    Ok(read_owed(systemstore, collection_id)
+        .await?
+        .map(|owed| owed.failure.map(|failure| failure.index)))
+}
+
 /// The unique index the last rebuild of the reindex owed to `collection_id`
 /// could not fill, and why. It is shown and never decided on, so the read is
 /// not validated.
@@ -113,6 +130,9 @@ pub(crate) async fn owed_failure(
 /// Records, in the transaction of `systemstore`, on the reindex owed to
 /// `collection_id` under `token`, that its rebuild stopped at unique index
 /// `index` for `reason`. A reindex owed again since keeps no record of it.
+/// The rebuild's progress goes: writers stop maintaining `index`, so a
+/// rebuild that tries it again clears every index first instead of resuming
+/// past documents written since.
 pub(super) async fn record_failure(
     systemstore: &NamespaceView,
     collections: &Arc<EpochedCollections>,
@@ -125,7 +145,24 @@ pub(super) async fn record_failure(
         return Ok(());
     };
     owed.failure = Some(OwedFailure { index, reason });
+    super::progress::clear(systemstore, collection_id).await?;
     write_owed(systemstore, collections, collection_id, &owed).await
+}
+
+/// Removes, in the transaction of the first page of a rebuild that tries
+/// `owed` again, the failure its last rebuild met, so writers maintain the
+/// failed index again while this rebuild walks. A record without one is left
+/// as it is.
+pub(super) async fn retry_failed(
+    systemstore: &NamespaceView,
+    collections: &Arc<EpochedCollections>,
+    collection_id: &str,
+    mut owed: OwedReindex,
+) -> Result<()> {
+    if owed.failure.take().is_some() {
+        write_owed(systemstore, collections, collection_id, &owed).await?;
+    }
+    Ok(())
 }
 
 /// Records, in the transaction of `systemstore`, the reindex a schema change
@@ -190,7 +227,8 @@ async fn write_owed(
         .set(&owed_key(collection_id), &bytes)
         .await
         .map_err(Error::Storage)?;
-    publish_reindex_owed(systemstore, collections, collection_id, true).await
+    let failed = owed.failure.as_ref().map(|failure| failure.index);
+    publish_reindex_owed(systemstore, collections, collection_id, true, failed).await
 }
 
 /// The reindex owed to `collection_id` if it is still the one with `token`.
@@ -233,18 +271,20 @@ pub(super) async fn clear_owed_reindex(
             .await
             .map_err(Error::Storage)?;
         super::progress::clear(systemstore, collection_id).await?;
-        publish_reindex_owed(systemstore, collections, collection_id, false).await?;
+        publish_reindex_owed(systemstore, collections, collection_id, false, None).await?;
     }
     Ok(())
 }
 
 /// Once the transaction of `systemstore` commits, the cached collection
-/// `collection_id` answers queries from its indexes again, or stops.
+/// `collection_id` answers queries from its indexes again, or stops, and its
+/// writers maintain every index but `failed`.
 async fn publish_reindex_owed(
     systemstore: &NamespaceView,
     collections: &Arc<EpochedCollections>,
     collection_id: &str,
     owed: bool,
+    failed: Option<u32>,
 ) -> Result<()> {
     let collections = Arc::clone(collections);
     let collection_id = collection_id.to_owned();
@@ -253,7 +293,7 @@ async fn publish_reindex_owed(
             collections.rcu(|cache| {
                 let mut cache = cache.clone();
                 cache.update(&collection_id, |collection| {
-                    collection.with_reindex_owed(owed)
+                    collection.with_reindex_owed(owed, failed)
                 });
                 cache
             });

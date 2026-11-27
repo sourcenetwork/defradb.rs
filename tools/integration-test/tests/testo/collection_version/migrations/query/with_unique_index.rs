@@ -165,6 +165,22 @@ fn migration_giving_two_documents_one_unique_value_fails_the_index() {
                 ..Default::default()
             }
             .into(),
+            AddDoc {
+                collection: "Users".into(),
+                doc_map: Some(json!({ "age": 5, "name": "Gina" })),
+                ..Default::default()
+            }
+            .into(),
+            age_index_failed(),
+            query_age(
+                5,
+                json!([
+                    { "age": 5, "name": "Andy" },
+                    { "age": 5, "name": "John" },
+                    { "age": 5, "name": "Fred" },
+                    { "age": 5, "name": "Gina" },
+                ]),
+            ),
         ],
     );
 }

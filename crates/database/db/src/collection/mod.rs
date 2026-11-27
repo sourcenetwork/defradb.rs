@@ -154,7 +154,11 @@ pub struct Collection {
     /// collection is built. It is only a fast-path hint: snapshot readers must
     /// still fetch the persisted value and require an exact byte match.
     definition_wire: Option<Arc<[u8]>>,
+    /// The indexes writers maintain.
     write_indexes: Vec<IndexDescription>,
+    /// The indexes a rebuild fills: those writers maintain, and the unique
+    /// index the owed reindex's last rebuild could not fill.
+    rebuilt_indexes: Vec<IndexDescription>,
     /// The indexes that were built and that no action is changing.
     built_indexes: Vec<IndexDescription>,
     /// A reindex is owed, so no index answers queries ([`index_status`]).
@@ -200,6 +204,15 @@ fn query_schema_of(
     Arc::new(schema)
 }
 
+/// `rebuilt` without `failed`, the index writers stop maintaining.
+fn maintained(rebuilt: &[IndexDescription], failed: Option<u32>) -> Vec<IndexDescription> {
+    rebuilt
+        .iter()
+        .filter(|index| failed != Some(index.id))
+        .cloned()
+        .collect()
+}
+
 fn serialize_definition_hint(def: &CollectionVersion) -> Option<Arc<[u8]>> {
     serde_json::to_vec(def).ok().map(Arc::from)
 }
@@ -228,6 +241,7 @@ impl Collection {
             def,
             definition_wire,
             write_indexes: indexes.clone(),
+            rebuilt_indexes: indexes.clone(),
             built_indexes: indexes,
             reindex_owed: false,
             query_schema,
@@ -284,6 +298,12 @@ impl Collection {
             .filter(|index| statuses.takes_writes(index))
             .cloned()
             .collect();
+        let rebuilt_indexes = def
+            .indexes
+            .iter()
+            .filter(|index| statuses.rebuilds(index))
+            .cloned()
+            .collect();
         let built_indexes: Vec<IndexDescription> = def
             .indexes
             .iter()
@@ -296,6 +316,7 @@ impl Collection {
             def,
             definition_wire,
             write_indexes,
+            rebuilt_indexes,
             built_indexes,
             reindex_owed,
             query_schema,
@@ -309,11 +330,18 @@ impl Collection {
         &self.crdts
     }
 
-    /// This collection with a reindex owed or settled, as the cache publishes
-    /// it when the owed record commits or is cleared.
-    pub(crate) fn with_reindex_owed(&self, reindex_owed: bool) -> Self {
+    /// This collection with a reindex owed or settled, and writers no longer
+    /// maintaining `failed_rebuild`, the unique index the owed reindex's last
+    /// rebuild could not fill: as the cache publishes it when the owed record
+    /// commits or is cleared.
+    pub(crate) fn with_reindex_owed(
+        &self,
+        reindex_owed: bool,
+        failed_rebuild: Option<u32>,
+    ) -> Self {
         Self {
             reindex_owed,
+            write_indexes: maintained(&self.rebuilt_indexes, failed_rebuild),
             query_schema: query_schema_of(
                 &self.def,
                 queryable(&self.built_indexes, reindex_owed),
@@ -381,6 +409,13 @@ impl Collection {
 
     pub(crate) fn write_indexes(&self) -> &[IndexDescription] {
         &self.write_indexes
+    }
+
+    /// The indexes a rebuild fills: those writers maintain, and the unique
+    /// index the owed reindex's last rebuild could not fill, which it tries
+    /// again.
+    pub(crate) fn rebuilt_indexes(&self) -> &[IndexDescription] {
+        &self.rebuilt_indexes
     }
 
     /// The indexes that answer queries: the built ones, none while a reindex is owed.
@@ -644,7 +679,7 @@ mod tests {
         schema.indexes.push(index);
         let settled = Collection::new(schema, crdt::Crdts::default());
 
-        let owed = settled.with_reindex_owed(true);
+        let owed = settled.with_reindex_owed(true, None);
         assert!(owed.queryable_indexes().is_empty());
         assert!(owed.schema_for_queries().indexes.is_empty());
         assert_eq!(owed.write_indexes().len(), 1);
@@ -653,9 +688,32 @@ mod tests {
             "a writer's check is not about which indexes answer queries"
         );
 
-        let again = owed.with_reindex_owed(false);
+        let again = owed.with_reindex_owed(false, None);
         assert_eq!(again.queryable_indexes().len(), 1);
         assert_eq!(again.schema_for_queries().indexes.len(), 1);
+    }
+
+    #[test]
+    fn a_failed_rebuild_takes_no_writes_and_is_rebuilt() {
+        let mut schema = CollectionVersion::new("users", "version", "collection", vec![]);
+        for (id, name) in [(1, "by_name"), (2, "by_age")] {
+            let mut index = IndexDescription::new(name);
+            index.id = id;
+            schema.indexes.push(index);
+        }
+        let settled = Collection::new(schema, crdt::Crdts::default());
+
+        let failed = settled.with_reindex_owed(true, Some(2));
+        let ids = |indexes: &[IndexDescription]| indexes.iter().map(|i| i.id).collect::<Vec<_>>();
+        assert_eq!(ids(failed.write_indexes()), [1]);
+        assert_eq!(ids(failed.rebuilt_indexes()), [1, 2]);
+        assert!(
+            !failed.same_index_statuses(&settled.with_reindex_owed(true, None)),
+            "a writer's check sees the index it stopped maintaining"
+        );
+
+        let retried = failed.with_reindex_owed(true, None);
+        assert_eq!(ids(retried.write_indexes()), [1, 2]);
     }
 }
 
