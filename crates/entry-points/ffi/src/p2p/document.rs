@@ -75,7 +75,7 @@ pub unsafe fn defra_p2p_document_sync(
         let collection = go_string(collection);
         let doc_ids = split_comma_separated(&go_string(doc_ids));
         ok(run(node_ptr, identity_ptr, NodePermission::P2pSyncDocuments, limit, |ops| async move {
-            ops.sync_documents(&collection, doc_ids, limit).await
+            peer::sync_documents(&*ops, &collection, &doc_ids, limit).await
         }))
     }
 }

@@ -3,6 +3,8 @@
 //! node, FFI and WASM call. Each function checks its input and
 //! answers with Go's texts and shapes; the transport work is the adapter's.
 
+use std::time::Duration;
+
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -13,10 +15,11 @@ use crate::{
 /// underlying message unchanged.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum Error {
-    /// The caller may not do this on the node.
-    #[error("{0}")]
-    NotAuthorized(String),
-    /// The request was refused; its message, unchanged.
+    /// The adapter refused the operation. The text is its message alone,
+    /// without the category, which an edge may still map to a status.
+    #[error("{}", refusal_message(.0))]
+    Refused(P2PError),
+    /// The request was refused before it reached the adapter.
     #[error("{0}")]
     Request(String),
     /// The node was started without a network. Go's `ErrNoP2P`.
@@ -63,13 +66,17 @@ pub const ADDRESSES_EMPTY: &str = "addresses cannot be empty";
 
 /// A transport refusal as the client sees it: its message, unchanged.
 pub fn refused(error: P2PError) -> Error {
+    Error::Refused(error)
+}
+
+fn refusal_message(error: &P2PError) -> &str {
     match error {
-        P2PError::Unauthorized(message) => Error::NotAuthorized(message),
-        P2PError::NotFound(message)
+        P2PError::Unauthorized(message)
+        | P2PError::NotFound(message)
         | P2PError::InvalidInput(message)
         | P2PError::Unsupported(message)
         | P2PError::Transport(message)
-        | P2PError::Internal(message) => Error::Request(message),
+        | P2PError::Internal(message) => message,
     }
 }
 
@@ -87,15 +94,24 @@ pub async fn peer_info<P>(p2p: &P) -> Result<Vec<String>>
 where
     P: P2POperations + ?Sized,
 {
+    peer_info_with_id(p2p).await.map(|(_, addresses)| addresses)
+}
+
+/// The local peer ID and every listen address with `/p2p/<peer ID>` appended.
+pub async fn peer_info_with_id<P>(p2p: &P) -> Result<(String, Vec<String>)>
+where
+    P: P2POperations + ?Sized,
+{
     let peer_id = p2p.local_peer_id().await.map_err(refused)?;
     let addresses = p2p.listen_addresses().await.map_err(refused)?;
-    Ok(addresses
+    let addresses = addresses
         .into_iter()
         .map(|address| match address.starts_with('/') {
             true => format!("{address}/p2p/{peer_id}"),
             false => address,
         })
-        .collect())
+        .collect();
+    Ok((peer_id, addresses))
 }
 
 /// Go's `ActivePeers`.
@@ -258,12 +274,18 @@ where
         .collect())
 }
 
-/// Go's `SyncDocuments`: fetch the heads of `doc_ids` from connected peers.
-pub async fn sync_documents<P>(p2p: &P, collection: &str, doc_ids: &[String]) -> Result<()>
+/// Go's `SyncDocuments`: fetch the heads of `doc_ids` from connected peers
+/// within `timeout`, or the adapter's default when none is given.
+pub async fn sync_documents<P>(
+    p2p: &P,
+    collection: &str,
+    doc_ids: &[String],
+    timeout: Option<Duration>,
+) -> Result<()>
 where
     P: P2POperations + ?Sized,
 {
-    p2p.sync_documents(collection, doc_ids.to_vec(), None)
+    p2p.sync_documents(collection, doc_ids.to_vec(), timeout)
         .await
         .map_err(refused)
 }
@@ -303,6 +325,22 @@ mod tests {
             ADDRESSES_EMPTY
         );
         assert!(addresses_given(&["/ip4/127.0.0.1/tcp/1".to_owned()]).is_ok());
+    }
+
+    #[test]
+    fn a_refusal_reads_as_the_adapter_message_alone() {
+        let refusals = [
+            P2PError::InvalidInput("bad".to_owned()),
+            P2PError::NotFound("bad".to_owned()),
+            P2PError::Unauthorized("bad".to_owned()),
+            P2PError::Unsupported("bad".to_owned()),
+            P2PError::Transport("bad".to_owned()),
+            P2PError::Internal("bad".to_owned()),
+        ];
+        for refusal in refusals {
+            assert_eq!(refused(refusal.clone()).to_string(), "bad");
+            assert_eq!(refused(refusal.clone()), Error::Refused(refusal));
+        }
     }
 
     #[test]
