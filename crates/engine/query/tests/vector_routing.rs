@@ -248,8 +248,9 @@ fn an_unfixed_dimension_accepts_any_length() {
 }
 
 /// A filter does not appear in this decision at all. The planner keeps a
-/// query whose filter has conditions away from the vector index before it
-/// calls `route`, so `route` itself never refuses for a filter.
+/// top-level select whose filter has conditions away from the vector index
+/// before it calls `route`; a one-to-many child select routes with its scalar
+/// filter applied at the scan. Either way `route` never refuses for a filter.
 #[test]
 fn a_filter_is_not_a_reason_to_refuse() {
     let indexes = [vector_index(7, "embedding", DIMENSIONS)];

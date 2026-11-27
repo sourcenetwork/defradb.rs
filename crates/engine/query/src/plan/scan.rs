@@ -179,11 +179,12 @@ impl ScanNode {
     /// Ask the index for the next, larger batch of candidates and stream the
     /// ones not already seen.
     ///
-    /// A routed query carries no filter conditions, but the scan still drops
-    /// some candidates (a deleted document, one outside a `docID` argument or
-    /// a join's parent scope), so the nearest `k` overall can hold fewer than
-    /// `k` rows. Asking for a wider `k` and continuing is what returns a full
-    /// page instead of whatever survived the first `k`. Widening
+    /// The scan drops some candidates: a deleted document, one outside a
+    /// `docID` argument, and, on a nested child route, one outside the join's
+    /// parent scope or one the child select's scalar filter rejects. So the
+    /// nearest `k` overall can hold fewer than `k` rows. Asking for a wider `k`
+    /// and continuing is what returns a full page instead of whatever survived
+    /// the first `k`. Widening
     /// stops at a fixed candidate budget, or when the index has nothing new.
     /// A short page then falls back to one exhaustive scan. This bounds graph
     /// search effort and deduplication state independently of collection size.
