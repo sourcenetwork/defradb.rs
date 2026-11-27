@@ -253,8 +253,8 @@ async fn fan_in_pushlog_admission_no_silent_divergence() {
         // Require a negotiated hint from actual receiver saturation and a later
         // durable dispatch honoring its deadline, not merely a default retry rung.
         let mut hinted_retries = 0;
-        for pusher in 1..=PUSHERS {
-            let path = cluster.nodes[pusher]
+        for pusher in &cluster.nodes[1..=PUSHERS] {
+            let path = pusher
                 .rootdir
                 .parent()
                 .unwrap()

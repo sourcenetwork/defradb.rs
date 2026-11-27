@@ -1,25 +1,33 @@
 ---- MODULE DeferredAcp ----
-\* Deferred-ACP overlay consistency, abstracting
-\* crates/query/src/txn/primitives/context.rs (DeferredAcpMutations: projected_registrations
-\* + commit-time hooks, check_doc_access_with_overlay / is_doc_registered_with_overlay)
-\* and crates/db/src/txn/registry/lifecycle.rs (one Arc<DeferredAcpMutations> per txn, hooks wired
-\* to db_txn.on_success_async => run only on commit, never on discard/rollback).
-\* Anchors are in DeferredAcp_DESIGN.md.
+\* Deferred-ACP overlay consistency: a transaction's own, uncommitted ACP registrations
+\* gate its reads as the committed state would. Anchors are in DeferredAcp_DESIGN.md.
 \*
-\* THE MECHANISM.  An explicit DefraDB transaction buffers ACP register/unregister writes
-\* as commit-time hooks AND maintains a txn-LOCAL projected_registrations map. Access checks
-\* within the txn read that projection FIRST (check_doc_access_with_overlay): a not-yet-
-\* committed Registered{owner} already gates reads to the owner, a projected Unregistered
-\* opens reads. The real ACP writes (the hooks) apply only after the storage txn commits
-\* (on_success_async); on rollback (discard) the hooks never run and committed ACP is
-\* untouched. Each txn owns its OWN DeferredAcpMutations (new Arc per begin()), so one txn's
-\* projection is invisible to another.
+\* THE CODE THIS ABSTRACTS.  The projection is the transaction's own writes in its ACP
+\* namespace:
+\*   * a local provider joins the transaction (DocumentACP::bind_transaction) and registers
+\*     or unregisters through the transaction's view (register_created_doc and
+\*     unregister_deleted_doc in crates/database/db/src/write/autocommit/helpers.rs);
+\*   * an external provider cannot join, so the create records the registration it owes in
+\*     the same view (PendingRegistrations::record in crates/engine/acp/src/pending.rs), and
+\*     AcpRegistrationProjection in crates/engine/query/src/txn/context.rs reads it back
+\*     (owed_creator), built per transaction by DbTxn::acp_registration_projection in
+\*     crates/database/db/src/txn/mod.rs.
+\* What happens to an owed registration after the commit is AcpOutbox.tla, not this model.
+\*
+\* THE MECHANISM.  An explicit DefraDB transaction writes ACP registrations and
+\* unregistrations into its own view (`proj` below). Access checks within the txn read that
+\* projection FIRST (check_doc_access_with_projection): a not-yet-committed
+\* Registered{owner} already gates reads to the owner (is_creator), a projected Unregistered
+\* opens reads. The writes reach committed ACP state only when the storage txn commits; on
+\* rollback (discard) they are dropped with the rest of the transaction's writes and
+\* committed ACP is untouched. Each txn reads through its OWN view, so one txn's projection
+\* is invisible to another.
 \*
 \* THE PROPERTY (fail-closed across projected -> committed):
 \*   (1) Isolation: a read in txn T consults only T's own projection, never the other txn's
 \*       uncommitted projection.
 \*   (2) Atomicity on commit: committing T applies EXACTLY T's projected registrations to
-\*       the committed ACP state (all hooks, atomically w.r.t. observers).
+\*       the committed ACP state (all of them, atomically w.r.t. observers).
 \*   (3) No-op on rollback: rolling back T changes committed ACP not at all.
 \*   (4) Fail-CLOSED: whenever the overlay GRANTS a read to reader r for doc d inside txn T,
 \*       the COMMITTED ACP state that T's own commit would produce also grants it. An
@@ -35,10 +43,10 @@
 \*
 \* Three knobs select the correct mechanism vs. adversary variants:
 \*   IsolationMode = "PerTxn" - real: each txn reads only its own projection            [GREEN]
-\*                 = "Shared"  - bug: txns share one projection map (one global Arc) so a
+\*                 = "Shared"  - bug: txns share one projection (not one view each) so a
 \*                               txn sees another's uncommitted registration             [RED]
-\*   RollbackMode  = "NoHooks" - real: discard() never fires on_success_async hooks      [GREEN]
-\*                 = "RunHooks"- bug: rollback applies the buffered hooks anyway          [RED]
+\*   RollbackMode  = "NoHooks" - real: discard() drops the transaction's ACP writes      [GREEN]
+\*                 = "RunHooks"- bug: rollback applies the projected writes anyway        [RED]
 \*   OwnerCheck    = "Strict"  - real: Registered{o} grants only to o                     [GREEN]
 \*                 = "Any"     - bug: Registered grants to any authenticated identity     [RED]
 EXTENDS Naturals, FiniteSets, Sequences, TLC
@@ -78,7 +86,7 @@ ProjVals == Regs \cup {NoProj}
 
 VARIABLES
   committed,   \* [Docs -> Regs]            ORACLE: the actually-committed ACP state
-  proj,        \* [Txns -> [Docs -> ProjVals]]  txn-local projected_registrations
+  proj,        \* [Txns -> [Docs -> ProjVals]]  the txn's own ACP registration writes
   status,      \* [Txns -> {"active","committed","rolledback"}]  per-txn lifecycle
   ops,         \* [Txns -> Nat]             projection ops spent (bounds the state space)
   reads,       \* recorded granted reads: set of [txn,doc,reader] the overlay GRANTED
@@ -124,10 +132,10 @@ ProspectiveCommitted(t) ==
   [d \in Docs |-> IF proj[t][d] = NoProj THEN committed[d] ELSE proj[t][d]]
 
 \* ---- The overlay gate (the MECHANISM under test) --------------------------------------
-\* check_doc_access_with_overlay: which projection map does a read in txn t consult?
+\* check_doc_access_with_projection: which projection does a read in txn t consult?
 \*   PerTxn (real): exactly t's own proj.
 \*   Shared (bug):  a single global map -- if ANY active txn has projected this doc, that
-\*                  projection is seen (models one shared Arc<DeferredAcpMutations>).
+\*                  projection is seen (models a projection not bound to one txn's view).
 \* When the consulted projection has an entry, the overlay decides from it; otherwise it
 \* falls through to committed ACP.
 EffectiveProj(t, d) ==
@@ -156,8 +164,8 @@ OverlayGrant(t, d, r) ==
 \* ACTIONS
 \* ======================================================================================
 
-\* schedule_register_doc_object: set txn-local projection to Registered{owner} and (in the
-\* model) buffer the hook implicitly via the projection (commit replays the projection).
+\* register_created_doc: set the txn-local projection to Registered{owner}. Commit applies
+\* the projection.
 Register(t, d, o) ==
   /\ status[t] = "active"
   /\ ops[t] < MaxOps
@@ -165,7 +173,7 @@ Register(t, d, o) ==
   /\ ops'  = [ops  EXCEPT ![t] = @ + 1]
   /\ UNCHANGED << committed, status, reads, rbDirtied >>
 
-\* schedule_unregister_doc_object: set txn-local projection to Unregistered.
+\* unregister_deleted_doc: set the txn-local projection to Unregistered.
 Unregister(t, d) ==
   /\ status[t] = "active"
   /\ ops[t] < MaxOps
@@ -187,8 +195,8 @@ Read(t, d, r) ==
                             ownHadProj |-> proj[t][d] # NoProj ]}
   /\ UNCHANGED << committed, proj, status, ops, rbDirtied >>
 
-\* Commit: run all hooks atomically -- apply T's projection to committed ACP -- then mark
-\* committed and DROP the projection (hooks are drained; the txn is consumed).
+\* Commit: apply T's projection to committed ACP atomically, then mark committed and DROP
+\* the projection (the txn is consumed).
 Commit(t) ==
   /\ status[t] = "active"
   /\ committed' = [d \in Docs |->
@@ -198,7 +206,7 @@ Commit(t) ==
   /\ UNCHANGED << ops, reads, rbDirtied >>
 
 \* Rollback (discard): NoHooks (real) -- committed ACP untouched; RunHooks (bug) -- the
-\* buffered hooks fire anyway, mutating committed ACP though the txn aborted.
+\* projected writes are applied anyway, mutating committed ACP though the txn aborted.
 Rollback(t) ==
   LET newCommitted == IF RollbackMode = "RunHooks"
                       THEN [d \in Docs |->
@@ -245,8 +253,9 @@ INV_FailClosedActive ==
 
 \* ---- (1) ISOLATION -------------------------------------------------------------------
 \* When a txn had NO projection of its own for the doc, the overlay must fall through to the
-\* committed ACP state (is_doc_registered_with_overlay / check_doc_access_with_overlay return
-\* the projected entry ONLY if present, else defer to acp.*). So any read GRANTED with
+\* committed ACP state (is_doc_registered_with_projection and
+\* check_doc_access_with_projection return the projected entry ONLY if present, else defer
+\* to acp.*). So any read GRANTED with
 \* ownHadProj=FALSE must be granted by the BARE committed state -- it can never be justified by
 \* a SIBLING txn's uncommitted projection. RED under IsolationMode="Shared": a txn with no own
 \* projection is granted off a sibling's buffered Unregister, but committed still denies.
@@ -256,8 +265,8 @@ INV_NoCrossTxnLeak ==
 
 \* ---- (3) ROLLBACK IS A NO-OP ----------------------------------------------------------
 \* A rolled-back txn must change committed ACP not at all. The ghost bit rbDirtied is set
-\* exactly when a Rollback action mutates committed; the real mechanism (discard never fires
-\* on_success_async) keeps it FALSE forever. This has teeth independent of WHO rolled back or
+\* exactly when a Rollback action mutates committed; the real mechanism (discard drops the
+\* transaction's writes) keeps it FALSE forever. This has teeth independent of WHO rolled back or
 \* WHAT they projected: any committed-write on a rollback path trips it. RED under
 \* RollbackMode="RunHooks".
 INV_RollbackNoOp == ~rbDirtied

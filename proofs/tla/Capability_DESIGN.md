@@ -13,7 +13,7 @@ that gates **live encrypted-replay** between P2P peers. Family: `Capability.tla`
 
 ## Source anchors (the model abstracts these exact paths)
 
-All in `crates/p2p/src/explicit_replay.rs`:
+All in `crates/database/p2p/src/explicit_replay.rs`:
 
 | Spec symbol | Real code | Anchor |
 |---|---|---|
@@ -28,12 +28,12 @@ All in `crates/p2p/src/explicit_replay.rs`:
 | `Verify` → `accepted` | returns `ExplicitReplayAuthorization` (= replay authorized) | l.302–308 |
 
 Enforcement wiring (the gate guards encrypted replay before merge):
-`crates/p2p/src/sync/merge.rs:253–269` (`explicit_replay_authorizer_for`,
+`crates/database/p2p/src/sync/merge.rs:253–269` (`explicit_replay_authorizer_for`,
 `allows_explicit_replay_for`), invoked via `validate_authorization`
 (`merge.rs:333–339`, `merge.rs:360–378`). Call sites that mint/verify on the
-replicator path: `crates/cli/src/p2p_adapter.rs:391–449`,
-`crates/p2p-adapter/src/libp2p.rs:262–283`, re-exported in
-`crates/p2p/src/lib.rs:93–99`.
+replicator path: `crates/entry-points/cli/src/p2p_adapter.rs:391–449`,
+`crates/surfaces/p2p-adapter/src/libp2p.rs:262–283`, re-exported in
+`crates/database/p2p/src/lib.rs:93–99`.
 
 ## Grounding each spec symbol
 
@@ -83,7 +83,7 @@ Each weakening is a concrete bug a nearby implementation could ship.
 
 ## Scenarios, run commands, expected verdicts
 
-Run from `proofs/tla` (integrator wires these into `run-all.sh`; not edited here):
+Run from `proofs/tla` (`run-all.sh` picks these up from every top-level `*.cfg`):
 
 ```
 ./tools/tlc -metadir states/<x> -config <cfg> MC_Capability_Common.tla

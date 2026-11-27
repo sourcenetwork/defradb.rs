@@ -9,8 +9,8 @@
 # CLI's libp2p into every tree.
 set -euo pipefail
 
-# Always `-p defra-node`, `-p cli`, `-p db`, or `-p ffi`. Workspace trees are
-# forbidden.
+# Always `-p defra-node`, `-p cli`, `-p db`, `-p ffi` or `-p vera-delegation`.
+# Workspace trees are forbidden.
 cd "$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
 assert_present() {
@@ -22,7 +22,7 @@ assert_present() {
   stdout="$(cargo tree -p "$crate" -e normal --locked "$@" -i "$pkg")"
   rc=$?
   set -e
-  if printf '%s\n' "$stdout" | grep -q "^${pkg} v"; then
+  if grep -q "^${pkg} v" <<<"$stdout"; then
     echo "ok: ${crate}${*:+ $*} contains ^${pkg} v"
     return 0
   fi
@@ -45,7 +45,7 @@ assert_absent() {
   stdout="$(cargo tree -p "$crate" -e normal --locked "$@" -i "$pkg")"
   rc=$?
   set -e
-  if printf '%s\n' "$stdout" | grep -q "^${pkg} v"; then
+  if grep -q "^${pkg} v" <<<"$stdout"; then
     echo "error: unexpected ^${pkg} v in ${crate}${*:+ $*} tree (cargo tree -i exit ${rc})" >&2
     printf '%s\n' "$stdout" >&2
     exit 1
@@ -64,7 +64,7 @@ assert_no_libp2p() {
   shift
   local stdout
   stdout="$(cargo tree -p "$crate" -e normal --locked --prefix none "$@")"
-  if printf '%s\n' "$stdout" | grep -q '^libp2p'; then
+  if grep -q '^libp2p' <<<"$stdout"; then
     echo "error: unexpected ^libp2p in ${crate}${*:+ $*} --prefix none tree" >&2
     printf '%s\n' "$stdout" | grep '^libp2p' >&2
     exit 1
@@ -99,6 +99,13 @@ LEAN_IROH=(--no-default-features --features native,p2p)
 assert_no_libp2p defra-node "${LEAN_IROH[@]}"
 assert_present defra-node iroh "${LEAN_IROH[@]}"
 
+# pinc is opt-in: absent from the default node, the iroh node and the CLI,
+# present only with the pinc feature.
+assert_absent defra-node pinc
+assert_absent defra-node pinc "${LEAN_IROH[@]}"
+assert_absent cli pinc
+assert_present defra-node pinc --no-default-features --features native,pinc
+
 # p2p crate feature line (the ^p2p v package, not p2p-*). Default cargo tree
 # omits features; --format '{p} {f}' prints them so this can fail.
 assert_p2p_crate_iroh_only() {
@@ -115,12 +122,12 @@ assert_p2p_crate_iroh_only() {
     fi
     exit 1
   fi
-  if ! printf '%s\n' "$line" | grep -q 'iroh-transport'; then
+  if ! grep -q 'iroh-transport' <<<"$line"; then
     echo "error: p2p crate line missing iroh-transport" >&2
     printf '%s\n' "$line" >&2
     exit 1
   fi
-  if printf '%s\n' "$line" | grep -q 'libp2p-transport'; then
+  if grep -q 'libp2p-transport' <<<"$line"; then
     echo "error: p2p crate line enables libp2p-transport" >&2
     printf '%s\n' "$line" >&2
     exit 1
@@ -144,9 +151,33 @@ assert_absent ffi iroh "${NO_TRANSPORT_FFI[@]}"
 # Default ffi keeps libp2p.
 assert_present ffi libp2p
 
-# Default ffi still carries the full Go-interop capability set.
-assert_present ffi vera
+# Default ffi carries Lens migrations, and no Vera client: no FFI option
+# configures one.
+assert_absent ffi vera
 assert_present ffi wasmtime
+
+# Delegation minting (#3038) builds wherever a client runs: no vera.rs client
+# or Commonware runtime (which does not build for Windows), no keyring (the
+# upstream crate links the OS keyring), no network runtime. `--target all`
+# also takes in target-specific dependencies no real target selects.
+assert_graph_free_of() {
+  local crate=$1 target=$2 graph pkg
+  shift 2
+  graph="$(cargo tree -p "$crate" -e normal --locked --target "$target" --prefix none)"
+  for pkg in "$@"; do
+    if grep -q "^${pkg} v" <<<"$graph"; then
+      echo "error: unexpected ^${pkg} v in ${crate} --target ${target} tree" >&2
+      cargo tree -p "$crate" -e normal --locked --target "$target" -i "$pkg" >&2 || true
+      exit 1
+    fi
+  done
+  echo "ok: ${crate} --target ${target} has none of: $*"
+}
+for target in all x86_64-pc-windows-msvc x86_64-unknown-linux-gnu; do
+  assert_graph_free_of vera-delegation "$target" \
+    commonware-runtime commonware-glue commonware-consensus commonware-p2p commonware-storage \
+    vera-client vera-domain vera-permission acp-light-client keyring edge cosmrs reqwest
+done
 
 # Unique crate names. Log only — not a gate and not binary size. Main may move.
 echo "defra-node default unique crate names: $(unique_crate_names)"

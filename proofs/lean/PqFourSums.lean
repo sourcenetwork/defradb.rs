@@ -22,7 +22,7 @@ of the adds can change the last bit of the result; that rounding is outside
 this model and is covered by measuring recall.
 
 Rust anchor: `ProductQuantizer::distance`
-(`crates/db/src/index/vector/quantize/pq.rs`).
+(`crates/database/db/src/index/vector/quantize/pq.rs`).
 -/
 
 namespace PqFourSums

@@ -1,6 +1,6 @@
 # vector-bench
 
-Tools around `crates/db/tests/vector/vector_disk_cost.rs`, the on-disk vector
+Tools around `crates/database/db/tests/vector/vector_disk_cost.rs`, the on-disk vector
 index benchmark. Standalone: not a workspace member.
 
 | Tool | What it does |

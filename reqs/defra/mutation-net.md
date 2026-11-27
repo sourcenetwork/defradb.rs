@@ -218,12 +218,27 @@ Setting `_authorID` or `author` on a `Book` links it, visible as `Author { publi
 
 Disconnecting from one or several connected peers leaves the active peer list empty; disconnecting an empty list fails with `addresses cannot be empty`.
 
+# `defra.net.peers.connection_manager_settles`: A trim's pruned peers stay disconnected
+
+- **Parents:** ["go.net.peers"]
+- **Scenarios:** ["net::connection_manager::net_connection_manager_pruned_peers_stay_disconnected", "p2p::connection_manager::rust_connection_manager_pruned_peers_stay_disconnected"]
+
+A node started with `--connection-manager-low-water`, `--connection-manager-high-water` and `--connection-manager-grace-period-ms` that gets more connections than its high-water mark closes its oldest peers outside the grace period until it is back at low water. For the 10 seconds after that trim (go-libp2p connmgr's silence period) the node runs no other trim. For the 10 seconds after any peer's last connection closes, by a trim, a restart, a network blip or `client p2p disconnect`, neither end's Kademlia dials the other: the far end of a trim sees only a remote close, so it holds on every close. With nothing else asking for a connection, the pruned peers stay out of `client p2p active-peers` and the peers it kept stay in it, so a node at high water settles instead of pruning and reconnecting. Only Kademlia's dials are held: an explicit `client p2p connect`, a replicator push or a Bitswap fetch that needs a pruned peer still reconnects to it, and a Kademlia dial that finds such a dial already in flight waits for it.
+
 # `go.net.subscribe.collection_list`: Listing collection subscriptions
 
 - **Parents:** ["go.net.subscribe"]
 - **Scenarios:** ["net.simple.peer.subscribe.collection.p2-pcollection-add-get-multiple", "net.simple.peer.subscribe.collection.p2-pcollection-add-get-single", "net.simple.peer.subscribe.collection.p2-pcollection-add-remove-get-multiple", "net.simple.peer.subscribe.collection.p2-pcollection-add-remove-get-single", "net.simple.peer.subscribe.collection.p2-pcollection-get-all"]
 
 Listing P2P collections returns nothing until some are added, then exactly the added collection IDs; removing one leaves only the rest.
+
+# `defra.net.peers.sticky_disconnect`: Explicit disconnect blocks background reconnect
+
+- **Parents:** ["go.net.peers.disconnect"]
+- **Scenarios:** ["net::info::disconnect_reconnect::a_replicator_retry_does_not_redial_a_disconnected_peer"]
+
+After an explicit disconnect, background retries and incoming connections do not reconnect that peer until an explicit local dial clears the disconnect marker.
+A refused connection that was never announced does not emit a peer-disconnected event.
 
 # `defra.replicator_filter`: A replicator that pushes only matching documents
 
@@ -265,3 +280,87 @@ An upsert on a `@crdt(type: text)` field that finds no document adds it with the
 - **Scenarios:** ["net::sync::collection_version::view_over_synced_lens::a_view_names_a_lens_p2p_sync_fetched_before_and_after_a_restart"]
 
 When `SyncCollectionVersions` fetches a view version whose query source names a lens, the receiving node commits that lens's config as if it had added the lens itself, then registers it. A view on the receiving node can then name the lens with `AddView(transform_cid)`, before and after the node restarts; it never fails with `lens CID not found`.
+
+# `defra.net.migrated_counter_merge`: An old-version counter update merges through a lens once
+
+- **Parents:** ["defra"]
+- **Scenarios:** ["issues::t_2916::an_old_version_counter_update_merges_through_a_lens_once", "issues::t_2916::an_old_version_counter_update_merges_through_a_forward_only_lens", "issues::t_2916::an_old_version_counter_update_adds_to_a_counter_a_forward_only_lens_wrote", "issues::t_2916::an_old_version_counter_update_keeps_the_fields_the_lens_wrote", "issues::t_2916::an_old_version_counter_update_lands_on_a_document_stored_at_the_source_version"]
+
+When a peer still at a collection's source version increments a counter and the receiving node has migrated that counter with a lens, the receiving node applies the increment to the source-version projection, then migrates the result once. Later increments from the peer remain visible. With an increment-by-one lens, a source value of one reads as two after migration and three and four after the peer's next two increments; the peer reads two and three.
+
+A lens with no `inverse` export cannot give the source-version projection back. The receiving node then adds the increment to the migrated counter as it is, and the block still merges: with a lens that only copies `name` to `note`, the counter reads one, two and three; with a lens that adds one and then copies, it reads two, three and four.
+
+That answer is exact only for a forward-only lens that leaves the counter alone or shifts it by a constant. A forward-only lens that sets or scales the counter, such as a `set_default` on it or a doubling lens, reads `T(source) + 1` on a node storing the active version and `T(source + 1)` on a node still storing the source version, so the two disagree; such a lens needs an `inverse` export for every node to read the same counter.
+
+The increment changes the counter alone. A field the lens wrote, such as a default `note`, reads the same before and after each increment.
+
+A receiving node that still stores the document at the source version, as it does while the collection has no index, has nothing to translate: it adds the increment to the stored value, and each read migrates the whole document, the counter and the fields the lens writes alike.
+
+# `defra.net.sync.migration_transform_is_kept`: A synced migration transform stays attached
+
+- **Parents:** ["go.net.sync"]
+- **Scenarios:** ["net::sync::collection_version::migration_transform::a_synced_migration_transform_stays_attached_to_its_definition"]
+
+A migration transform registered on one node stays attached to the definition a second node syncs, so a document at the source version read through that synced definition has the destination version's transformed fields.
+
+# `defra.net.sync.exact_fetch`: A DAG fetch is sent only what the receiver lacks
+
+- **Parents:** ["defra"]
+
+A node fetching a document's DAG from a defradb.rs peer names the composite heads it holds, and a few of their ancestors. The peer leaves out every block those heads reach, so the fetch carries the blocks the node is missing and not the history both already hold. A Go peer, or an older defradb.rs one, keeps today's messages and today's answers.
+
+# `defra.net.sync.exact_fetch.steady_state`: A new head over held history is served alone
+
+- **Parents:** ["defra.net.sync.exact_fetch"]
+- **Scenarios:** ["net::sync::exact_fetch::each_new_head_over_held_history_is_served_alone"]
+
+After each of 30 updates, the node that holds the document's history and is told of the new head is served at most the update's own blocks: a composite and its field blocks, three at most. The provider's `car_served_cids` stays at or below three per update, and the receiver's `car_received_already_held` stays at zero: it counts the blocks a response re-sends that the receiver holds, other than the head the fetch asked for by name.
+
+# `defra.net.sync.exact_fetch.concurrent_branch`: A deep concurrent branch is served without shared history
+
+- **Parents:** ["defra.net.sync.exact_fetch"]
+- **Scenarios:** ["net::sync::exact_fetch::a_deep_concurrent_branch_is_served_without_shared_history"]
+
+Two nodes share 20 updates of a document, then lose touch. One makes 40 more updates and the other one of its own. Back in touch, the first node's next update reaches the second, which converges on it while being served the 41 missing updates and none of the 21 shared ones: `car_served_cids` grows by at most three per missing update, and the receiver is sent no block it holds besides the head it asked for (`car_received_already_held` zero on both nodes). The other way, the first node fetching the second node's update is served that update alone (three blocks at most), though none of its own recent heads are on the second node: it names the fetched head's parents, which it holds.
+
+# `defra.net.sync.exact_fetch.empty_receiver`: A receiver holding nothing gets the whole document
+
+- **Parents:** ["defra.net.sync.exact_fetch"]
+- **Scenarios:** ["net::sync::exact_fetch::a_receiver_holding_nothing_still_gets_the_whole_document"]
+
+A node that holds none of a document with 31 updates, told of its next head, fetches the whole DAG and converges on it. It is sent no block it holds besides the head it asked for (`car_received_already_held` zero), however many of the writer's heads gossip delivered before the fetch.
+
+# `defra.net.replicator.list_shape`: Replicator list response shape
+
+- **Parents:** ["defra.net"]
+- **Scenarios:** ["net::simple::replicator::list_shape::a_replicator_list_reports_go_shape"]
+
+Listing replicators returns each entry as `{ID, Addresses, CollectionIDs, Status, LastStatusChange}`, with `Addresses` as an array and `Status` as Go's numeric status.
+Adding a new replicator records the current time as `LastStatusChange`; updating its collections retains its existing status and timestamp.
+
+# `defra.net.sync.fetch_slots`: A node's P2P status reports what holds its fetch slots
+
+- **Parents:** ["defra"]
+
+A defradb.rs node's `p2p status` carries `pending_dag_fetch_slots`: the slot `limit` (`--p2p-max-concurrent-dag-fetches`, 4 by default), the number `held`, how many are `scheduled`, `claimed`, `running` and `merging`, and a `roots` list naming the root CID and state of each held slot. A Go node has no such status.
+
+# `defra.net.sync.fetch_slots.released`: Fetch slots are free once a fetched DAG merges
+
+- **Parents:** ["defra.net.sync.fetch_slots"]
+- **Scenarios:** ["net::sync::fetch_slots::fetch_slots_are_free_once_a_fetched_dag_merges"]
+
+A node holding none of a document with 11 updates, told of its next head, fetches the whole DAG from its peer (the peer's `car_served_cids` is at least one) and converges on it. Its `pending_dag_fetch_slots.limit` is then 4, and `pending_dag_fetch_slots.held` comes back to zero.
+
+# `defra.net.replicator.list`: A replicator with no collections is listed
+
+- **Parents:** ["go.net.replicator"]
+- **Scenarios:** ["net::simple::replicator::with_no_collections::a_replicator_with_no_collections_is_listed_after_a_restart"]
+
+`AddReplicator` naming no collections, on a node that has none, succeeds, and `ListReplicators` then returns the target's peer ID, right after the add and again after the node closes keeping its data and starts. Go stores such a replicator with an empty collection list and restores it on start. It is pushed no documents until it has a collection (`go.net.replicator.push`).
+
+# `defra.net.push.parked_offline`: A push to a stopped peer is parked and delivered on its return
+
+- **Parents:** ["defra"]
+- **Scenarios:** ["net::simple::replicator::with_offline_push::a_push_to_a_stopped_peer_is_parked_until_it_restarts"]
+
+A replicator pushes a document to a stopped target without treating the offline target as a failed job: before the target starts again, the source's `push_backlog.failed_total` is no more than zero and `push_backlog.parked_total` is at least one. When the target restarts with its data, it receives the document.

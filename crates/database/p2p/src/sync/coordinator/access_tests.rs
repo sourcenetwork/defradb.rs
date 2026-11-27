@@ -1,0 +1,4840 @@
+//! Tests for coordinator access control (findings 03-21).
+//!
+//! Verifies that DocSync and BranchableSync handlers enforce access checks
+//! in Controlled mode before processing requests.
+
+#[path = "../../../tests/unit/car_serving.rs"]
+mod car_serving;
+
+#[path = "../../../tests/unit/cid_check.rs"]
+mod cid_check;
+
+#[path = "../../../tests/unit/selected_car_authority.rs"]
+#[cfg(not(target_arch = "wasm32"))]
+mod selected_car_authority;
+
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::Arc;
+use std::time::Duration;
+use std::{future::Future, pin::Pin};
+
+use crate::rt::time::timeout;
+use blockstore::{Blockstore, DefraBlockstore, Error as BlockstoreError};
+use cid::Cid;
+use multihash_codetable::{Code, MultihashDigest};
+use storage::RegolithStore;
+
+use crate::bitswap::{
+    AccessMode, BlockAcpMeta, BlockClass, BlockClassifier, BlockReadGate, LateBoundServeAcp,
+    ReplicatorRegistry, ServeAcp,
+};
+use crate::error::Error;
+use crate::message::{
+    BranchableSyncReply, BranchableSyncRequest, CarFetchRequest, DocSyncItem, DocSyncReply,
+    DocSyncRequest, PushLogBroadcast, PushLogReply, PushLogRequest,
+};
+use crate::sync::broadcaster::Broadcaster;
+use crate::sync::collection_store::MemoryCollectionStorage;
+use crate::sync::head_provider::{DocumentHeadProvider, NoOpHeadProvider};
+use crate::sync::manager::{SyncConfig, SyncEvent, SyncManager};
+use crate::sync::peer_state::PeerStateTracker;
+use crate::sync::rate_limiter::PeerRateLimiter;
+use crate::sync::SyncShutdownHandle;
+use crate::topics::{DefraTopic, DOC_SYNC_TOPIC};
+use crate::transport::{MessageId, P2PTransport, PeerAddr, PeerId, TransportEvent};
+use crate::PeerIdentityResolver;
+use crate::QueryId;
+use crate::{ReplicationFilter, ReplicationFilters, ReplicatorInfo};
+use async_trait::async_trait;
+use kovan::{Atom, AtomOption};
+use kovan_map::HopscotchMap;
+use rapidhash::HashMapExt;
+
+use super::authorizer::RuntimeAuthorizer;
+use super::{
+    DagFetchLimiter, SyncAccessState, SyncCoordinator, SyncRuntime, SyncSubscriptionState,
+    DEFAULT_MAX_CONCURRENT_DAG_FETCHES, DEFAULT_MAX_CONCURRENT_PUSH_TASKS,
+    DEFAULT_MAX_DOC_SYNC_REQUEST_DOC_IDS,
+};
+
+type TestBlockstore = DefraBlockstore<RegolithStore>;
+type TwoStreamHandler = Arc<
+    dyn Fn(
+            PeerId,
+            PushLogRequest,
+        ) -> Pin<Box<dyn Future<Output = crate::Result<PushLogReply>> + Send>>
+        + Send
+        + Sync,
+>;
+const BLOCK_DATA: &[u8] = b"block data";
+
+struct StaticDataClassifier {
+    collection_id: String,
+}
+
+#[async_trait]
+impl BlockClassifier for StaticDataClassifier {
+    async fn classify(&self, _cid: &Cid, _data: &[u8]) -> BlockClass {
+        BlockClass::Data(BlockAcpMeta {
+            collection_id: self.collection_id.clone(),
+            is_branchable: false,
+            policy: None,
+            doc_ids: vec!["doc1".to_string()],
+        })
+    }
+
+    async fn classify_indexed(&self, _cid: &Cid) -> Option<BlockClass> {
+        Some(self.classify(_cid, b"").await)
+    }
+}
+
+/// Classifies only from payloads: durable metadata is unavailable, so every
+/// indexed authorization must fail closed.
+struct PayloadOnlyClassifier {
+    collection_id: String,
+}
+
+#[async_trait]
+impl BlockClassifier for PayloadOnlyClassifier {
+    async fn classify(&self, _cid: &Cid, _data: &[u8]) -> BlockClass {
+        BlockClass::Data(BlockAcpMeta {
+            collection_id: self.collection_id.clone(),
+            is_branchable: false,
+            policy: None,
+            doc_ids: vec!["doc1".to_string()],
+        })
+    }
+}
+
+struct CollectionHeadClassifier {
+    collection_id: String,
+}
+
+struct FixedIdentityResolver(identity::Did);
+
+#[async_trait]
+impl PeerIdentityResolver for FixedIdentityResolver {
+    async fn resolve(&self, _peer_id: &PeerId) -> Option<identity::Did> {
+        Some(self.0.clone())
+    }
+}
+
+struct CountingIdentityResolver(Arc<AtomicUsize>);
+
+#[async_trait]
+impl PeerIdentityResolver for CountingIdentityResolver {
+    async fn resolve(&self, _peer_id: &PeerId) -> Option<identity::Did> {
+        self.0.fetch_add(1, Ordering::SeqCst);
+        None
+    }
+}
+
+struct PeerBoundIdentityResolver {
+    peer_id: PeerId,
+    identity: identity::Did,
+}
+
+#[async_trait]
+impl PeerIdentityResolver for PeerBoundIdentityResolver {
+    async fn resolve(&self, peer_id: &PeerId) -> Option<identity::Did> {
+        (peer_id == &self.peer_id).then(|| self.identity.clone())
+    }
+}
+
+struct OnlyIdentityReadGate(identity::Did);
+
+#[async_trait]
+impl BlockReadGate for OnlyIdentityReadGate {
+    async fn may_read(&self, identity: &acp::Identity, _meta: &BlockAcpMeta) -> bool {
+        identity.did() == Some(&self.0)
+    }
+}
+
+#[async_trait]
+impl BlockClassifier for CollectionHeadClassifier {
+    async fn classify(&self, _cid: &Cid, _data: &[u8]) -> BlockClass {
+        BlockClass::Data(BlockAcpMeta {
+            collection_id: self.collection_id.clone(),
+            is_branchable: false,
+            policy: None,
+            // Collection commits are intentionally not mapped to one document.
+            doc_ids: Vec::new(),
+        })
+    }
+
+    async fn classify_indexed(&self, _cid: &Cid) -> Option<BlockClass> {
+        Some(self.classify(_cid, b"").await)
+    }
+}
+
+fn filtered_replicator_registry(peer: &PeerId, collection_id: &str) -> Arc<ReplicatorRegistry> {
+    let mut filters = ReplicationFilters::new();
+    filters.insert(
+        collection_id.to_string(),
+        ReplicationFilter::new("status", serde_json::json!("ready")),
+    );
+    let registry = Arc::new(ReplicatorRegistry::new());
+    registry.set_replicator_info(ReplicatorInfo::from_raw_with_filters(
+        peer.to_string(),
+        vec![collection_id.to_string()],
+        Vec::new(),
+        filters,
+    ));
+    registry
+}
+
+fn create_test_coordinator(
+    access_mode: AccessMode,
+    replicators: Arc<ReplicatorRegistry>,
+    peer_state: Arc<PeerStateTracker>,
+) -> (
+    SyncCoordinator<TestBlockstore, NoopTransport>,
+    crate::sync::SyncEventReceiver,
+) {
+    create_test_coordinator_with_rate_limiter(
+        access_mode,
+        replicators,
+        peer_state,
+        Arc::new(PeerRateLimiter::default()),
+    )
+}
+
+fn create_test_coordinator_with_rate_limiter(
+    access_mode: AccessMode,
+    replicators: Arc<ReplicatorRegistry>,
+    peer_state: Arc<PeerStateTracker>,
+    rate_limiter: Arc<PeerRateLimiter>,
+) -> (
+    SyncCoordinator<TestBlockstore, NoopTransport>,
+    crate::sync::SyncEventReceiver,
+) {
+    create_test_coordinator_with_options(
+        access_mode,
+        replicators,
+        peer_state,
+        rate_limiter,
+        SyncConfig::default(),
+    )
+}
+
+fn create_test_coordinator_with_sync_config(
+    access_mode: AccessMode,
+    replicators: Arc<ReplicatorRegistry>,
+    peer_state: Arc<PeerStateTracker>,
+    sync_config: SyncConfig,
+) -> (
+    SyncCoordinator<TestBlockstore, NoopTransport>,
+    crate::sync::SyncEventReceiver,
+) {
+    create_test_coordinator_with_options(
+        access_mode,
+        replicators,
+        peer_state,
+        Arc::new(PeerRateLimiter::default()),
+        sync_config,
+    )
+}
+
+fn create_test_coordinator_with_options(
+    access_mode: AccessMode,
+    replicators: Arc<ReplicatorRegistry>,
+    peer_state: Arc<PeerStateTracker>,
+    rate_limiter: Arc<PeerRateLimiter>,
+    sync_config: SyncConfig,
+) -> (
+    SyncCoordinator<TestBlockstore, NoopTransport>,
+    crate::sync::SyncEventReceiver,
+) {
+    // Most limiter tests exercise one path at a time; share the injected
+    // limiter across gossip and request intake so either path sees it.
+    let request_rate_limiter = rate_limiter.clone();
+    create_test_coordinator_full(
+        access_mode,
+        replicators,
+        peer_state,
+        rate_limiter,
+        request_rate_limiter,
+        sync_config,
+    )
+}
+
+fn create_test_coordinator_with_split_limiters(
+    access_mode: AccessMode,
+    replicators: Arc<ReplicatorRegistry>,
+    peer_state: Arc<PeerStateTracker>,
+    rate_limiter: Arc<PeerRateLimiter>,
+    request_rate_limiter: Arc<PeerRateLimiter>,
+) -> (
+    SyncCoordinator<TestBlockstore, NoopTransport>,
+    crate::sync::SyncEventReceiver,
+) {
+    create_test_coordinator_full(
+        access_mode,
+        replicators,
+        peer_state,
+        rate_limiter,
+        request_rate_limiter,
+        SyncConfig::default(),
+    )
+}
+
+fn create_test_coordinator_full(
+    access_mode: AccessMode,
+    replicators: Arc<ReplicatorRegistry>,
+    peer_state: Arc<PeerStateTracker>,
+    rate_limiter: Arc<PeerRateLimiter>,
+    request_rate_limiter: Arc<PeerRateLimiter>,
+    sync_config: SyncConfig,
+) -> (
+    SyncCoordinator<TestBlockstore, NoopTransport>,
+    crate::sync::SyncEventReceiver,
+) {
+    let transport = NoopTransport::new();
+    let local_peer_id = transport.local_peer_id().to_string();
+    let broadcaster = Broadcaster::new(transport.clone());
+    let store = Arc::new(RegolithStore::in_memory().unwrap());
+    let blockstore = Arc::new(DefraBlockstore::new(store, true));
+    create_test_coordinator_with_blockstore(TestCoordinatorParams {
+        sync_config,
+        request_rate_limiter,
+        access_mode,
+        replicators,
+        peer_state,
+        transport,
+        local_peer_id,
+        broadcaster,
+        blockstore,
+        rate_limiter,
+    })
+}
+
+/// Bundled constructor arguments for [`create_test_coordinator_with_blockstore`].
+/// Grouped so the test helper stays under clippy's `too_many_arguments` budget
+/// without hiding the list of inputs behind a builder pattern.
+struct TestCoordinatorParams<B: Blockstore + 'static> {
+    sync_config: SyncConfig,
+    request_rate_limiter: Arc<PeerRateLimiter>,
+    access_mode: AccessMode,
+    replicators: Arc<ReplicatorRegistry>,
+    peer_state: Arc<PeerStateTracker>,
+    transport: NoopTransport,
+    local_peer_id: String,
+    broadcaster: Broadcaster<NoopTransport>,
+    blockstore: Arc<B>,
+    rate_limiter: Arc<PeerRateLimiter>,
+}
+
+fn create_test_coordinator_with_blockstore<B: Blockstore + 'static>(
+    params: TestCoordinatorParams<B>,
+) -> (
+    SyncCoordinator<B, NoopTransport>,
+    crate::sync::SyncEventReceiver,
+) {
+    create_test_coordinator_with_blockstore_and_head_provider(params, Arc::new(NoOpHeadProvider))
+}
+
+fn create_test_coordinator_with_blockstore_and_head_provider<B: Blockstore + 'static>(
+    params: TestCoordinatorParams<B>,
+    head_provider: Arc<dyn DocumentHeadProvider>,
+) -> (
+    SyncCoordinator<B, NoopTransport>,
+    crate::sync::SyncEventReceiver,
+) {
+    let TestCoordinatorParams {
+        sync_config,
+        request_rate_limiter,
+        access_mode,
+        replicators,
+        peer_state,
+        transport,
+        local_peer_id,
+        broadcaster,
+        blockstore,
+        rate_limiter,
+    } = params;
+
+    let (manager, events) = SyncManager::new(blockstore, peer_state.clone(), sync_config);
+
+    let authorizer = Arc::new(RuntimeAuthorizer::new(
+        transport.clone(),
+        Arc::clone(&peer_state),
+        Arc::clone(&replicators),
+        access_mode,
+    ));
+
+    let shutdown = SyncShutdownHandle::new(
+        DEFAULT_MAX_CONCURRENT_DAG_FETCHES,
+        crate::network::test_network(),
+    );
+    let coordinator = SyncCoordinator {
+        runtime: SyncRuntime {
+            transport,
+            broadcaster: broadcaster.clone(),
+            failure_tx: Arc::new(AtomOption::none()),
+            dag_fetch_limiter: DagFetchLimiter::new(DEFAULT_MAX_CONCURRENT_DAG_FETCHES),
+            push_backlog: crate::sync::push_backlog::PushBacklog::new(
+                crate::sync::DEFAULT_PUSH_QUEUE_CAPACITY,
+                crate::sync::DEFAULT_PUSH_QUEUE_BYTE_CAPACITY,
+                crate::sync::DEFAULT_MAX_ACTIVE_PUSHES_PER_PEER,
+                DEFAULT_MAX_CONCURRENT_PUSH_TASKS,
+                edge::testing::edge(),
+            ),
+            broadcast_coalescer: Arc::new(
+                crate::sync::broadcast_coalescer::BroadcastCoalescer::default(),
+            ),
+            selective_car_access: Arc::new(
+                super::selective_car_access::SelectiveCarAccess::default(),
+            ),
+            rate_limiter,
+            request_rate_limiter,
+            max_doc_sync_request_doc_ids: DEFAULT_MAX_DOC_SYNC_REQUEST_DOC_IDS,
+            broadcast_wait_deadline: crate::sync::DEFAULT_BROADCAST_WAIT_DEADLINE,
+            broadcast_room: Arc::new(super::broadcast_room::BroadcastRoom::new(
+                crate::sync::DEFAULT_BROADCAST_PENDING_BYTES,
+            )),
+            shutdown: shutdown.clone(),
+            dispatch_diagnostics: Arc::new(crate::sync::DispatchDiagnostics::default()),
+            filter_matcher: Arc::new(crate::replicator::EqOnlyFilterMatcher),
+        },
+        manager,
+        access: SyncAccessState {
+            peer_state,
+            local_peer_id,
+            access_mode,
+            replicators,
+            gossip_direction_filtered: std::sync::atomic::AtomicU64::new(0),
+            followed_documents: Arc::new(super::FollowedDocuments::with_hasher(
+                rapidhash::fast::RandomState::default(),
+            )),
+            gossip_unfollowed_dropped: std::sync::atomic::AtomicU64::new(0),
+        },
+        subscriptions: SyncSubscriptionState {
+            collections: super::subscriptions::CollectionSubscriptions::new(
+                Arc::new(MemoryCollectionStorage::default()),
+                broadcaster.clone(),
+                shutdown.clone(),
+            ),
+            head_provider,
+        },
+        authorizer,
+        classifier: Arc::new(crate::bitswap::DefaultBlockClassifier),
+        serve_acp: Arc::new(crate::bitswap::LateBoundServeAcp::new()),
+        rooted_authorization: crate::sync::car_authorization::RootedAuthorizationProgress::new(),
+        document_acp: regolith::sync::OnceCell::new(),
+        #[cfg(feature = "kms")]
+        kms_transport: regolith::sync::OnceCell::new(),
+        #[cfg(feature = "libp2p-transport")]
+        pubsub_services: None,
+    };
+
+    (coordinator, events)
+}
+
+struct ConflictOnceBlockstore {
+    inner: TestBlockstore,
+    delayed_get: Option<Cid>,
+    remaining_put_conflicts: AtomicUsize,
+    remaining_put_many_conflicts: AtomicUsize,
+    put_attempts: AtomicUsize,
+    put_many_attempts: AtomicUsize,
+}
+
+struct ObservedWriteGuard<'a> {
+    active: &'a AtomicUsize,
+}
+
+impl Drop for ObservedWriteGuard<'_> {
+    fn drop(&mut self) {
+        self.active.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
+/// Test blockstore that holds the first inbound write so a second transport
+/// path has a deterministic chance to contend for the same CID.
+struct SingleOwnerBlockstore {
+    inner: TestBlockstore,
+    write_calls: AtomicUsize,
+    active_writes: AtomicUsize,
+    max_active_writes: AtomicUsize,
+    first_write_entered: nuclei::sync::Semaphore,
+    concurrent_write_entered: nuclei::sync::Semaphore,
+    release_first_write: nuclei::sync::Semaphore,
+}
+
+impl SingleOwnerBlockstore {
+    fn new() -> Self {
+        Self {
+            inner: DefraBlockstore::new(Arc::new(RegolithStore::in_memory().unwrap()), true),
+            write_calls: AtomicUsize::new(0),
+            active_writes: AtomicUsize::new(0),
+            max_active_writes: AtomicUsize::new(0),
+            first_write_entered: nuclei::sync::Semaphore::new(0),
+            concurrent_write_entered: nuclei::sync::Semaphore::new(0),
+            release_first_write: nuclei::sync::Semaphore::new(0),
+        }
+    }
+
+    async fn enter_write(&self) -> ObservedWriteGuard<'_> {
+        let call = self.write_calls.fetch_add(1, Ordering::SeqCst);
+        let active = self.active_writes.fetch_add(1, Ordering::SeqCst) + 1;
+        self.max_active_writes.fetch_max(active, Ordering::SeqCst);
+        if active > 1 {
+            self.concurrent_write_entered.add_permits(1);
+        }
+        if call == 0 {
+            self.first_write_entered.add_permits(1);
+            self.release_first_write
+                .acquire()
+                .await
+                .expect("test release semaphore remains open")
+                .forget();
+        }
+        ObservedWriteGuard {
+            active: &self.active_writes,
+        }
+    }
+
+    fn max_active_writes(&self) -> usize {
+        self.max_active_writes.load(Ordering::SeqCst)
+    }
+}
+
+#[async_trait]
+impl Blockstore for SingleOwnerBlockstore {
+    async fn get(&self, cid: &Cid) -> blockstore::Result<Option<bytes::Bytes>> {
+        self.inner.get(cid).await
+    }
+
+    async fn put(&self, cid: &Cid, data: &[u8]) -> blockstore::Result<()> {
+        let _write = self.enter_write().await;
+        self.inner.put(cid, data).await
+    }
+
+    async fn put_many(&self, blocks: &[(&Cid, &[u8])]) -> blockstore::Result<()> {
+        let _write = self.enter_write().await;
+        self.inner.put_many(blocks).await
+    }
+
+    async fn has(&self, cid: &Cid) -> blockstore::Result<bool> {
+        self.inner.has(cid).await
+    }
+
+    async fn delete(&self, cid: &Cid) -> blockstore::Result<()> {
+        self.inner.delete(cid).await
+    }
+
+    async fn get_size(&self, cid: &Cid) -> blockstore::Result<Option<usize>> {
+        self.inner.get_size(cid).await
+    }
+
+    async fn all_cids(&self) -> blockstore::Result<Vec<Cid>> {
+        self.inner.all_cids().await
+    }
+
+    fn hash_on_read(&self, enabled: bool) {
+        self.inner.hash_on_read(enabled);
+    }
+
+    async fn is_merged(&self, cid: &Cid) -> blockstore::Result<bool> {
+        self.inner.is_merged(cid).await
+    }
+
+    async fn mark_as_merged(&self, cid: &Cid) -> blockstore::Result<()> {
+        self.inner.mark_as_merged(cid).await
+    }
+
+    async fn mark_batch_as_merged(&self, cids: &[Cid]) -> blockstore::Result<()> {
+        self.inner.mark_batch_as_merged(cids).await
+    }
+
+    async fn get_unmerged(&self) -> blockstore::Result<Vec<Cid>> {
+        self.inner.get_unmerged().await
+    }
+}
+
+impl ConflictOnceBlockstore {
+    fn new() -> Self {
+        let store = Arc::new(RegolithStore::in_memory().unwrap());
+        Self {
+            inner: DefraBlockstore::new(store, true),
+            delayed_get: None,
+            remaining_put_conflicts: AtomicUsize::new(1),
+            remaining_put_many_conflicts: AtomicUsize::new(0),
+            put_attempts: AtomicUsize::new(0),
+            put_many_attempts: AtomicUsize::new(0),
+        }
+    }
+
+    fn new_put_many() -> Self {
+        let store = Arc::new(RegolithStore::in_memory().unwrap());
+        Self {
+            inner: DefraBlockstore::new(store, true),
+            delayed_get: None,
+            remaining_put_conflicts: AtomicUsize::new(0),
+            remaining_put_many_conflicts: AtomicUsize::new(1),
+            put_attempts: AtomicUsize::new(0),
+            put_many_attempts: AtomicUsize::new(0),
+        }
+    }
+
+    fn put_attempts(&self) -> usize {
+        self.put_attempts.load(Ordering::SeqCst)
+    }
+
+    fn put_many_attempts(&self) -> usize {
+        self.put_many_attempts.load(Ordering::SeqCst)
+    }
+}
+
+#[async_trait]
+impl Blockstore for ConflictOnceBlockstore {
+    async fn get(&self, cid: &Cid) -> blockstore::Result<Option<bytes::Bytes>> {
+        if self.delayed_get.as_ref() == Some(cid) {
+            crate::rt::time::sleep(Duration::from_secs(3)).await;
+        }
+        self.inner.get(cid).await
+    }
+
+    #[allow(deprecated, reason = "try_update requires Rust 1.95; MSRV is 1.91")]
+    async fn put(&self, cid: &Cid, data: &[u8]) -> blockstore::Result<()> {
+        self.put_attempts.fetch_add(1, Ordering::SeqCst);
+        if self
+            .remaining_put_conflicts
+            .try_update(Ordering::SeqCst, Ordering::SeqCst, |remaining| {
+                if remaining > 0 {
+                    Some(remaining - 1)
+                } else {
+                    None
+                }
+            })
+            .is_ok()
+        {
+            return Err(BlockstoreError::Storage(
+                storage::corekv::Error::TxnConflict,
+            ));
+        }
+
+        self.inner.put(cid, data).await
+    }
+
+    #[allow(deprecated, reason = "try_update requires Rust 1.95; MSRV is 1.91")]
+    async fn put_many(&self, blocks: &[(&Cid, &[u8])]) -> blockstore::Result<()> {
+        self.put_many_attempts.fetch_add(1, Ordering::SeqCst);
+        if self
+            .remaining_put_many_conflicts
+            .try_update(Ordering::SeqCst, Ordering::SeqCst, |remaining| {
+                if remaining > 0 {
+                    Some(remaining - 1)
+                } else {
+                    None
+                }
+            })
+            .is_ok()
+        {
+            return Err(BlockstoreError::Storage(
+                storage::corekv::Error::TxnConflict,
+            ));
+        }
+        self.inner.put_many(blocks).await
+    }
+
+    async fn has(&self, cid: &Cid) -> blockstore::Result<bool> {
+        self.inner.has(cid).await
+    }
+
+    async fn delete(&self, cid: &Cid) -> blockstore::Result<()> {
+        self.inner.delete(cid).await
+    }
+
+    async fn get_size(&self, cid: &Cid) -> blockstore::Result<Option<usize>> {
+        self.inner.get_size(cid).await
+    }
+
+    async fn all_cids(&self) -> blockstore::Result<Vec<Cid>> {
+        self.inner.all_cids().await
+    }
+
+    fn hash_on_read(&self, enabled: bool) {
+        self.inner.hash_on_read(enabled);
+    }
+
+    async fn is_merged(&self, cid: &Cid) -> blockstore::Result<bool> {
+        self.inner.is_merged(cid).await
+    }
+
+    async fn mark_as_merged(&self, cid: &Cid) -> blockstore::Result<()> {
+        self.inner.mark_as_merged(cid).await
+    }
+
+    async fn mark_batch_as_merged(&self, cids: &[Cid]) -> blockstore::Result<()> {
+        self.inner.mark_batch_as_merged(cids).await
+    }
+
+    async fn get_unmerged(&self) -> blockstore::Result<Vec<Cid>> {
+        self.inner.get_unmerged().await
+    }
+}
+
+#[derive(Clone)]
+pub(super) struct NoopTransport {
+    peer_id: PeerId,
+    pubkey: Vec<u8>,
+    replicators: Arc<Atom<rapidhash::RapidHashMap<String, Vec<String>>>>,
+    connected_peers: Arc<Atom<Vec<PeerId>>>,
+    doc_sync_replies: Arc<Atom<Vec<DocSyncReply>>>,
+    car_responses: Arc<Atom<Vec<Vec<u8>>>>,
+    pushlog_replies: Arc<Atom<Vec<crate::message::PushLogReply>>>,
+    pushlog_response_tokens: Arc<Atom<Vec<usize>>>,
+    two_stream_replies: Arc<Atom<Vec<crate::message::PushLogReply>>>,
+    two_stream_handler: Arc<AtomOption<TwoStreamHandler>>,
+    branchable_replies: Arc<Atom<Vec<BranchableSyncReply>>>,
+    car_requests: Arc<Atom<Vec<Cid>>>,
+    /// Whether `publish_raw` has a topic peer; without one it is refused with
+    /// `InsufficientPeers`, as libp2p's gossipsub refuses it.
+    pub(super) raw_topic_has_peer: Arc<AtomicBool>,
+    /// Topics of every `publish_raw` gossipsub accepted.
+    pub(super) raw_published: Arc<Atom<Vec<String>>>,
+    /// Gets a permit on every `publish_raw` call, accepted or refused.
+    pub(super) raw_publish_attempted: Arc<regolith::sync::Notify>,
+    /// Whether `publish_raw` never completes, like a host whose command queue
+    /// does not drain.
+    pub(super) raw_publish_stalls: Arc<AtomicBool>,
+    /// Whether a publish finds a subscriber; open unless a test closes it.
+    publish_open: Arc<AtomicBool>,
+    /// The topics every publish that found a subscriber went to.
+    published: Arc<Atom<Vec<DefraTopic>>>,
+}
+
+/// Appends to a recorder that tests read back cumulatively.
+fn record<T: Clone + Send + Sync + 'static>(log: &Atom<Vec<T>>, item: T) {
+    log.rcu(|items| {
+        let mut next = items.clone();
+        next.push(item.clone());
+        next
+    });
+}
+
+impl NoopTransport {
+    pub(super) fn new() -> Self {
+        Self {
+            peer_id: PeerId::new("local-peer".to_string()),
+            pubkey: vec![1, 2, 3],
+            replicators: Arc::new(Atom::new(rapidhash::RapidHashMap::new())),
+            connected_peers: Arc::new(Atom::new(Vec::new())),
+            doc_sync_replies: Arc::new(Atom::new(Vec::new())),
+            car_responses: Arc::new(Atom::new(Vec::new())),
+            pushlog_replies: Arc::new(Atom::new(Vec::new())),
+            pushlog_response_tokens: Arc::new(Atom::new(Vec::new())),
+            two_stream_replies: Arc::new(Atom::new(Vec::new())),
+            two_stream_handler: Arc::new(AtomOption::none()),
+            branchable_replies: Arc::new(Atom::new(Vec::new())),
+            car_requests: Arc::new(Atom::new(Vec::new())),
+            raw_topic_has_peer: Arc::new(AtomicBool::new(false)),
+            raw_published: Arc::new(Atom::new(Vec::new())),
+            raw_publish_attempted: Arc::new(regolith::sync::Notify::new()),
+            raw_publish_stalls: Arc::new(AtomicBool::new(false)),
+            publish_open: Arc::new(AtomicBool::new(true)),
+            published: Arc::new(Atom::new(Vec::new())),
+        }
+    }
+
+    /// A libp2p peer id, so the coordinator starts its pubsub_rpc services.
+    #[cfg(feature = "libp2p-transport")]
+    pub(super) fn with_libp2p_identity(mut self) -> Self {
+        self.peer_id = PeerId::new(libp2p::PeerId::random().to_string());
+        self
+    }
+
+    /// Open or close the topics to subscribers: a closed publish fails with
+    /// gossipsub's `InsufficientPeers`.
+    pub(super) fn set_publish_open(&self, open: bool) {
+        self.publish_open
+            .store(open, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    /// The topics publishes reached, in order.
+    pub(super) fn published(&self) -> Vec<DefraTopic> {
+        self.published.load_clone()
+    }
+
+    fn set_connected_peers(&self, peers: Vec<PeerId>) {
+        self.connected_peers.store(peers);
+    }
+
+    fn doc_sync_replies(&self) -> Vec<DocSyncReply> {
+        self.doc_sync_replies.load_clone()
+    }
+
+    fn pushlog_replies(&self) -> Vec<crate::message::PushLogReply> {
+        self.pushlog_replies.load_clone()
+    }
+
+    fn pushlog_response_tokens(&self) -> Vec<usize> {
+        self.pushlog_response_tokens.load_clone()
+    }
+
+    fn two_stream_replies(&self) -> Vec<crate::message::PushLogReply> {
+        self.two_stream_replies.load_clone()
+    }
+
+    fn set_two_stream_handler(&self, handler: TwoStreamHandler) {
+        self.two_stream_handler.store_some(handler);
+    }
+
+    fn branchable_replies(&self) -> Vec<BranchableSyncReply> {
+        self.branchable_replies.load_clone()
+    }
+
+    /// CARv1 payloads the coordinator sent, in order (used to assert which
+    /// blocks were actually served after per-block serve filtering).
+    fn car_responses(&self) -> Vec<Vec<u8>> {
+        self.car_responses.load_clone()
+    }
+
+    fn car_requests(&self) -> Vec<Cid> {
+        self.car_requests.load_clone()
+    }
+}
+
+#[async_trait]
+impl P2PTransport for NoopTransport {
+    type ResponseToken = usize;
+
+    fn local_peer_id(&self) -> &PeerId {
+        &self.peer_id
+    }
+
+    fn local_public_key_proto(&self) -> &[u8] {
+        &self.pubkey
+    }
+
+    fn sign(&self, _data: &[u8]) -> crate::Result<Vec<u8>> {
+        Ok(vec![0])
+    }
+
+    async fn dial(&self, _peer_id: &PeerId, _addrs: Vec<PeerAddr>) -> crate::Result<()> {
+        Ok(())
+    }
+
+    async fn disconnect(&self, _peer_id: &PeerId) -> crate::Result<()> {
+        Ok(())
+    }
+
+    async fn listen(&self, _addr: PeerAddr) -> crate::Result<()> {
+        Ok(())
+    }
+
+    async fn connected_peers(&self) -> crate::Result<Vec<PeerId>> {
+        Ok(self.connected_peers.load_clone())
+    }
+
+    async fn listen_addresses(&self) -> crate::Result<Vec<PeerAddr>> {
+        Ok(Vec::new())
+    }
+
+    async fn poll_until_connected(
+        &self,
+        _peer_id: &PeerId,
+        _timeout: Duration,
+    ) -> crate::Result<()> {
+        Ok(())
+    }
+
+    async fn peer_addresses(&self) -> crate::Result<Vec<String>> {
+        Ok(Vec::new())
+    }
+
+    async fn subscribe(&self, _topic: DefraTopic) -> crate::Result<bool> {
+        Ok(true)
+    }
+
+    async fn unsubscribe(&self, _topic: DefraTopic) -> crate::Result<bool> {
+        Ok(true)
+    }
+
+    async fn publish(
+        &self,
+        topic: DefraTopic,
+        _msg: crate::message::PushLogBroadcast,
+    ) -> crate::Result<MessageId> {
+        if !self.publish_open.load(std::sync::atomic::Ordering::SeqCst) {
+            return Err(crate::error::Error::GossipSubPublish(
+                "InsufficientPeers".to_string(),
+            ));
+        }
+        record(&self.published, topic);
+        Ok(MessageId::new("noop".to_string()))
+    }
+
+    async fn publish_raw(&self, topic: String, _data: Vec<u8>) -> crate::Result<MessageId> {
+        if self.raw_publish_stalls.load(Ordering::Acquire) {
+            std::future::pending::<()>().await;
+        }
+        let accepted = self.raw_topic_has_peer.load(Ordering::Acquire);
+        if accepted {
+            record(&self.raw_published, topic);
+        }
+        self.raw_publish_attempted.notify_one();
+        if accepted {
+            Ok(MessageId::new("raw".to_string()))
+        } else {
+            Err(Error::GossipSubPublish("InsufficientPeers".to_string()))
+        }
+    }
+
+    async fn subscribe_raw(&self, _topic: String) -> crate::Result<bool> {
+        Ok(true)
+    }
+
+    async fn topic_peers(&self, _topic: DefraTopic) -> crate::Result<Vec<PeerId>> {
+        Ok(Vec::new())
+    }
+
+    async fn send_pushlog_response(
+        &self,
+        token: Self::ResponseToken,
+        reply: crate::message::PushLogReply,
+    ) -> crate::Result<()> {
+        record(&self.pushlog_response_tokens, token);
+        record(&self.pushlog_replies, reply);
+        Ok(())
+    }
+
+    async fn send_two_stream_request(
+        &self,
+        peer_id: &PeerId,
+        req: PushLogRequest,
+    ) -> crate::Result<crate::message::PushLogReply> {
+        let handler = self.two_stream_handler.load().as_deref().cloned();
+        if let Some(handler) = handler {
+            return handler(peer_id.clone(), req).await;
+        }
+        Ok(crate::message::PushLogReply::success("noop"))
+    }
+
+    async fn send_two_stream_response(
+        &self,
+        _peer_id: &PeerId,
+        reply: crate::message::PushLogReply,
+    ) -> crate::Result<()> {
+        record(&self.two_stream_replies, reply);
+        Ok(())
+    }
+
+    async fn send_doc_sync_request(
+        &self,
+        _peer_id: &PeerId,
+        _req: DocSyncRequest,
+    ) -> crate::Result<()> {
+        Ok(())
+    }
+
+    async fn send_doc_sync_response(
+        &self,
+        _peer_id: &PeerId,
+        reply: crate::message::DocSyncReply,
+    ) -> crate::Result<()> {
+        record(&self.doc_sync_replies, reply);
+        Ok(())
+    }
+
+    async fn send_branchable_sync_request(
+        &self,
+        _peer_id: &PeerId,
+        _req: BranchableSyncRequest,
+    ) -> crate::Result<()> {
+        Ok(())
+    }
+
+    async fn send_branchable_sync_response(
+        &self,
+        _peer_id: &PeerId,
+        reply: crate::message::BranchableSyncReply,
+    ) -> crate::Result<()> {
+        record(&self.branchable_replies, reply);
+        Ok(())
+    }
+
+    async fn send_car_request(&self, _peer_id: &PeerId, root_cid: Cid) -> crate::Result<()> {
+        record(&self.car_requests, root_cid);
+        Ok(())
+    }
+
+    async fn send_car_response(&self, _peer_id: &PeerId, car_data: Vec<u8>) -> crate::Result<()> {
+        record(&self.car_responses, car_data);
+        Ok(())
+    }
+
+    async fn send_car_response_token(
+        &self,
+        _token: Self::ResponseToken,
+        car_data: Vec<u8>,
+    ) -> crate::Result<()> {
+        record(&self.car_responses, car_data);
+        Ok(())
+    }
+
+    async fn send_doc_sync_response_token(
+        &self,
+        _token: Self::ResponseToken,
+        reply: crate::message::DocSyncReply,
+    ) -> crate::Result<()> {
+        record(&self.doc_sync_replies, reply);
+        Ok(())
+    }
+
+    async fn send_branchable_sync_response_token(
+        &self,
+        _token: Self::ResponseToken,
+        reply: crate::message::BranchableSyncReply,
+    ) -> crate::Result<()> {
+        record(&self.branchable_replies, reply);
+        Ok(())
+    }
+
+    async fn send_se_artifacts(
+        &self,
+        _peer_id: &PeerId,
+        _req: crate::message::PushSEArtifactsRequest,
+    ) -> crate::Result<()> {
+        Ok(())
+    }
+
+    async fn sync_blocks(
+        &self,
+        _root: Cid,
+        _providers: Vec<PeerId>,
+        _missing: Vec<Cid>,
+    ) -> crate::Result<QueryId> {
+        Ok(QueryId(1))
+    }
+
+    async fn cancel_sync(&self, _query_id: QueryId) -> crate::Result<bool> {
+        Ok(true)
+    }
+
+    async fn create_replicator(
+        &self,
+        peer_id: &PeerId,
+        collections: Vec<String>,
+    ) -> crate::Result<()> {
+        self.replicators.rcu(|replicators| {
+            let mut next = replicators.clone();
+            next.insert(peer_id.to_string(), collections.clone());
+            next
+        });
+        Ok(())
+    }
+
+    async fn delete_replicator(&self, peer_id: &PeerId) -> crate::Result<()> {
+        self.replicators.rcu(|replicators| {
+            let mut next = replicators.clone();
+            next.remove(peer_id.as_str());
+            next
+        });
+        Ok(())
+    }
+
+    async fn list_replicators(&self) -> crate::Result<Vec<ReplicatorInfo>> {
+        Ok(self.replicators.peek(|replicators| {
+            replicators
+                .iter()
+                .map(|(peer_id, collections)| {
+                    ReplicatorInfo::from_raw(peer_id.clone(), collections.clone(), Vec::new())
+                })
+                .collect()
+        }))
+    }
+
+    async fn get_replicator(&self, peer_id: &PeerId) -> crate::Result<Option<ReplicatorInfo>> {
+        Ok(self
+            .replicators
+            .peek(|replicators| replicators.get(peer_id.as_str()).cloned())
+            .map(|collections| {
+                ReplicatorInfo::from_raw(peer_id.to_string(), collections, Vec::new())
+            }))
+    }
+
+    async fn remove_replicator_collections(
+        &self,
+        peer_id: &PeerId,
+        collections: Vec<String>,
+    ) -> crate::Result<bool> {
+        let mut fully_deleted = None;
+        self.replicators.rcu(|replicators| {
+            let mut next = replicators.clone();
+            fully_deleted = next.get_mut(peer_id.as_str()).map(|existing| {
+                existing.retain(|collection| !collections.contains(collection));
+                existing.is_empty()
+            });
+            if fully_deleted == Some(true) {
+                next.remove(peer_id.as_str());
+            }
+            next
+        });
+
+        Ok(fully_deleted.unwrap_or(false))
+    }
+
+    async fn shutdown(&self) -> crate::Result<()> {
+        Ok(())
+    }
+}
+
+fn doc_sync_event(peer_id: PeerId) -> TransportEvent<usize> {
+    doc_sync_event_with_ids(peer_id, vec!["doc1".to_string()])
+}
+
+fn doc_sync_event_with_ids(peer_id: PeerId, doc_ids: Vec<String>) -> TransportEvent<usize> {
+    TransportEvent::DocSyncRequest {
+        peer_id,
+        request: DocSyncRequest::new(doc_ids),
+        token: None,
+    }
+}
+
+fn branchable_sync_event(peer_id: PeerId, collection_id: &str) -> TransportEvent<usize> {
+    TransportEvent::BranchableSyncRequest {
+        peer_id,
+        request: BranchableSyncRequest::new(collection_id.to_string()),
+        token: None,
+    }
+}
+
+fn branchable_sync_reply_event(
+    peer_id: PeerId,
+    collection_id: &str,
+    heads: Vec<Cid>,
+) -> TransportEvent<usize> {
+    TransportEvent::BranchableSyncReply {
+        peer_id,
+        reply: BranchableSyncReply::success(
+            "branchable-sync-request",
+            collection_id,
+            heads.iter().map(|cid| cid.to_bytes()).collect(),
+        ),
+    }
+}
+
+fn random_peer_id() -> PeerId {
+    static NEXT_PEER_ID: AtomicUsize = AtomicUsize::new(0);
+    PeerId::new(format!(
+        "test-peer-{}",
+        NEXT_PEER_ID.fetch_add(1, Ordering::Relaxed)
+    ))
+}
+
+fn cid_for(data: &[u8]) -> Cid {
+    let hash = Code::Sha2_256.digest(data);
+    Cid::new_v1(0x71, hash)
+}
+
+fn pushlog_request(collection_id: &str) -> PushLogRequest {
+    let block = defra_core::Block::new(
+        defra_core::CrdtDelta::Composite(defra_core::CompositeDeltaPayload {
+            collection_version_id: "schema1".to_string(),
+            priority: 1,
+            status: 1,
+        }),
+        vec![],
+        vec![],
+    );
+    let block_data = block.to_dag_cbor().expect("encode composite head");
+    let cid = block.generate_cid().expect("composite head cid");
+    PushLogRequest::new(
+        "doc1".to_string(),
+        bytes::Bytes::from(cid.to_bytes()),
+        collection_id.to_string(),
+        "creator1".to_string(),
+        bytes::Bytes::from(block_data),
+    )
+}
+
+/// A collection commit: doc-less, so it has no document topic to fall back to.
+fn collection_commit_request(collection_id: &str) -> PushLogRequest {
+    let block = defra_core::Block::new(
+        defra_core::CrdtDelta::Collection(defra_core::CollectionDeltaPayload {
+            collection_version_id: "schema1".to_string(),
+            priority: 1,
+        }),
+        vec![],
+        vec![],
+    );
+    let block_data = block.to_dag_cbor().expect("encode collection head");
+    let cid = block.generate_cid().expect("collection head cid");
+    PushLogRequest::new(
+        String::new(),
+        bytes::Bytes::from(cid.to_bytes()),
+        collection_id.to_string(),
+        "creator1".to_string(),
+        bytes::Bytes::from(block_data),
+    )
+}
+
+fn collection_commit_gossip_event(peer_id: PeerId, collection_id: &str) -> TransportEvent<usize> {
+    let mut message = PushLogBroadcast::from_request(&collection_commit_request(collection_id));
+    message.authenticate_source_peer(peer_id.to_string());
+    message.authenticate_origin_peer(peer_id.to_string());
+    TransportEvent::GossipMessage {
+        propagation_source: peer_id,
+        message_id: MessageId::new("gossip".to_string()),
+        topic: collection_id.to_string(),
+        message,
+    }
+}
+
+fn pushlog_event(peer_id: PeerId, collection_id: &str) -> TransportEvent<usize> {
+    TransportEvent::PushLogRequest {
+        peer_id,
+        request: pushlog_request(collection_id),
+        token: 0,
+    }
+}
+
+fn gossip_event(peer_id: PeerId, collection_id: &str) -> TransportEvent<usize> {
+    gossip_event_on_topic(peer_id, collection_id, collection_id)
+}
+
+fn gossip_event_on_topic(
+    peer_id: PeerId,
+    topic: &str,
+    collection_id: &str,
+) -> TransportEvent<usize> {
+    let mut message = PushLogBroadcast::from_request(&pushlog_request(collection_id));
+    message.authenticate_source_peer(peer_id.to_string());
+    message.authenticate_origin_peer(peer_id.to_string());
+    TransportEvent::GossipMessage {
+        propagation_source: peer_id,
+        message_id: MessageId::new("gossip".to_string()),
+        topic: topic.to_string(),
+        message,
+    }
+}
+
+fn car_fetch_event(peer_id: PeerId, root_cid: Cid) -> TransportEvent<usize> {
+    TransportEvent::CarFetchRequest {
+        peer_id,
+        request: CarFetchRequest::full_dag(root_cid),
+        token: None,
+    }
+}
+
+fn selective_car_fetch_event(
+    peer_id: PeerId,
+    root_cid: Cid,
+    wanted_cids: Vec<Cid>,
+) -> TransportEvent<usize> {
+    TransportEvent::CarFetchRequest {
+        peer_id,
+        request: CarFetchRequest::selective_blocks(root_cid, wanted_cids),
+        token: None,
+    }
+}
+
+fn selective_dag_car_fetch_event(
+    peer_id: PeerId,
+    root_cid: Cid,
+    wanted_cids: Vec<Cid>,
+) -> TransportEvent<usize> {
+    TransportEvent::CarFetchRequest {
+        peer_id,
+        request: CarFetchRequest::selective_dag(root_cid, wanted_cids),
+        token: None,
+    }
+}
+
+struct StaticHeadProvider {
+    heads: Vec<Cid>,
+}
+
+#[async_trait]
+impl DocumentHeadProvider for StaticHeadProvider {
+    async fn get_document_heads(&self, _doc_id: &str) -> crate::Result<Vec<Cid>> {
+        Ok(self.heads.clone())
+    }
+
+    async fn get_collection_heads(&self, _collection_id: &str) -> crate::Result<Vec<Cid>> {
+        Ok(Vec::new())
+    }
+}
+
+fn two_stream_event(
+    peer_id: PeerId,
+    collection_id: &str,
+    is_explicit_replicator: bool,
+) -> TransportEvent<usize> {
+    TransportEvent::TwoStreamRequest {
+        peer_id,
+        request: pushlog_request(collection_id),
+        token: None,
+        is_explicit_replicator,
+        explicit_replay_authorization: None,
+    }
+}
+
+async fn recv_block_received(
+    events: &mut crate::sync::SyncEventReceiver,
+) -> crate::sync::manager::SyncEvent {
+    timeout(Duration::from_secs(1), events.recv())
+        .await
+        .expect("expected sync event")
+        .expect("event channel closed")
+}
+
+/// Test coordinators do not spawn the production receiver retry clock. Drive
+/// its single-owner boundary explicitly for a locally complete PushLog head.
+async fn dispatch_complete_pending<B: Blockstore + 'static, T: P2PTransport>(
+    coordinator: &SyncCoordinator<B, T>,
+) {
+    let roots = coordinator.manager().pending_dag_cids();
+    assert_eq!(roots.len(), 1, "expected one durable merge obligation");
+    let root = roots[0];
+    assert!(coordinator
+        .manager()
+        .try_claim_pending_dag_dispatch(&root, crate::rt::time::Instant::now()));
+    assert!(coordinator
+        .manager()
+        .retry_pending_dag(&root)
+        .await
+        .expect("receiver clock dispatch should succeed"));
+}
+
+async fn recv_complete_pushlog<B: Blockstore + 'static, T: P2PTransport>(
+    coordinator: &SyncCoordinator<B, T>,
+    events: &mut crate::sync::SyncEventReceiver,
+) -> SyncEvent {
+    dispatch_complete_pending(coordinator).await;
+    recv_block_received(events).await
+}
+
+// --- DocSync access check tests ---
+
+#[nuclei::test(threads = 0)]
+async fn doc_sync_controlled_mode_rejects_unknown_peer() {
+    let replicators = Arc::new(ReplicatorRegistry::new());
+    let peer_state = Arc::new(PeerStateTracker::new());
+    let (coordinator, _events) =
+        create_test_coordinator(AccessMode::Controlled, replicators, peer_state);
+
+    let unknown_peer = random_peer_id();
+    let result = coordinator
+        .handle_transport_event(doc_sync_event(unknown_peer))
+        .await;
+
+    assert!(result.is_err());
+    assert!(
+        matches!(&result, Err(Error::AccessDenied { .. })),
+        "Expected AccessDenied, got {:?}",
+        result
+    );
+}
+
+#[nuclei::test(threads = 0)]
+async fn doc_sync_controlled_mode_allows_replicator() {
+    let replicators = Arc::new(ReplicatorRegistry::new());
+    let peer_state = Arc::new(PeerStateTracker::new());
+
+    let authorized_peer = random_peer_id();
+    replicators.add_replicator("collection1", authorized_peer.as_str());
+
+    let (coordinator, _events) =
+        create_test_coordinator(AccessMode::Controlled, replicators, peer_state);
+
+    // The handler should pass the access check. It may fail later when
+    // trying to sign/send the response, but should NOT fail with AccessDenied.
+    let result = coordinator
+        .handle_transport_event(doc_sync_event(authorized_peer))
+        .await;
+
+    assert!(
+        !matches!(&result, Err(Error::AccessDenied { .. })),
+        "Replicator should not get AccessDenied, got {:?}",
+        result
+    );
+}
+
+#[nuclei::test(threads = 0)]
+async fn doc_sync_controlled_mode_allows_connected_peer() {
+    let replicators = Arc::new(ReplicatorRegistry::new());
+    let peer_state = Arc::new(PeerStateTracker::new());
+
+    let connected_peer = random_peer_id();
+    peer_state.peer_connected(connected_peer.as_str());
+
+    let (coordinator, _events) =
+        create_test_coordinator(AccessMode::Controlled, replicators, peer_state);
+
+    let result = coordinator
+        .handle_transport_event(doc_sync_event(connected_peer))
+        .await;
+
+    assert!(
+        !matches!(&result, Err(Error::AccessDenied { .. })),
+        "Connected peer should be allowed for Go-compatible DocSync, got {:?}",
+        result
+    );
+}
+
+#[nuclei::test(threads = 0)]
+async fn doc_sync_controlled_mode_allows_data_topic_subscriber() {
+    let replicators = Arc::new(ReplicatorRegistry::new());
+    let peer_state = Arc::new(PeerStateTracker::new());
+
+    let peer = random_peer_id();
+    peer_state.peer_subscribed(peer.as_str(), "collection1".to_string());
+
+    let (coordinator, _events) =
+        create_test_coordinator(AccessMode::Controlled, replicators, peer_state);
+
+    let result = coordinator
+        .handle_transport_event(doc_sync_event(peer))
+        .await;
+
+    assert!(
+        !matches!(&result, Err(Error::AccessDenied { .. })),
+        "Data-topic subscriber should not get AccessDenied, got {:?}",
+        result
+    );
+}
+
+#[nuclei::test(threads = 0)]
+async fn doc_sync_controlled_mode_rejects_system_topic_only_subscriber() {
+    let replicators = Arc::new(ReplicatorRegistry::new());
+    let peer_state = Arc::new(PeerStateTracker::new());
+
+    let peer = random_peer_id();
+    peer_state.peer_subscribed(peer.as_str(), DOC_SYNC_TOPIC.to_string());
+
+    let (coordinator, _events) =
+        create_test_coordinator(AccessMode::Controlled, replicators, peer_state);
+
+    let result = coordinator
+        .handle_transport_event(doc_sync_event(peer))
+        .await;
+
+    assert!(
+        matches!(&result, Err(Error::AccessDenied { .. })),
+        "System RPC topic subscription must not authorize DocSync, got {:?}",
+        result
+    );
+}
+
+#[nuclei::test(threads = 0)]
+async fn doc_sync_controlled_mode_allows_any_replicator() {
+    let replicators = Arc::new(ReplicatorRegistry::new());
+    let peer_state = Arc::new(PeerStateTracker::new());
+
+    let peer = random_peer_id();
+    replicators.add_replicator("collection1", peer.as_str());
+
+    let (coordinator, _events) =
+        create_test_coordinator(AccessMode::Controlled, replicators, peer_state);
+
+    let result = coordinator
+        .handle_transport_event(doc_sync_event(peer))
+        .await;
+
+    assert!(
+        !matches!(&result, Err(Error::AccessDenied { .. })),
+        "Registered replicator (any collection) should be allowed, got {:?}",
+        result
+    );
+}
+
+#[nuclei::test(threads = 0)]
+async fn doc_sync_filters_heads_outside_replicator_collection() {
+    use defra_core::{Block, CompositeDeltaPayload, CrdtDelta};
+
+    let replicators = Arc::new(ReplicatorRegistry::new());
+    let peer_state = Arc::new(PeerStateTracker::new());
+
+    let peer = random_peer_id();
+    replicators.add_replicator("collection_a", peer.as_str());
+
+    let transport = NoopTransport::new();
+    let transport_handle = transport.clone();
+    let local_peer_id = transport.local_peer_id().to_string();
+    let broadcaster = Broadcaster::new(transport.clone());
+    let store = Arc::new(RegolithStore::in_memory().unwrap());
+    let blockstore = Arc::new(DefraBlockstore::new(store, true));
+
+    let block = Block::new(
+        CrdtDelta::Composite(CompositeDeltaPayload {
+            collection_version_id: "collection_b".to_string(),
+            priority: 1,
+            status: 1,
+        }),
+        vec![],
+        vec![],
+    );
+    let block_data = block.to_dag_cbor().unwrap();
+    let cid = block.generate_cid().unwrap();
+    blockstore.put(&cid, &block_data).await.unwrap();
+
+    let (coordinator, _events) = create_test_coordinator_with_blockstore_and_head_provider(
+        TestCoordinatorParams {
+            sync_config: SyncConfig::default(),
+            request_rate_limiter: Arc::new(PeerRateLimiter::default()),
+            access_mode: AccessMode::Controlled,
+            replicators,
+            peer_state,
+            transport,
+            local_peer_id,
+            broadcaster,
+            blockstore,
+            rate_limiter: Arc::new(PeerRateLimiter::default()),
+        },
+        Arc::new(StaticHeadProvider { heads: vec![cid] }),
+    );
+
+    coordinator
+        .handle_transport_event(doc_sync_event(peer))
+        .await
+        .unwrap();
+
+    let replies = transport_handle.doc_sync_replies();
+    assert_eq!(replies.len(), 1);
+    assert!(
+        replies[0].results.is_empty(),
+        "DocSync must not return heads from collections the peer cannot replicate"
+    );
+}
+
+// Go parity: the CAR serve path no longer returns a coarse AccessDenied for a
+// wrong-collection root (that Rust-only gate also waved permissioned blocks
+// through to any connected peer / subscriber with no ACP check). It now filters
+// PER BLOCK, matching Go's `hasAccess`: a replicator-for-the-block's-collection
+// or an ACP-authorized identity is served; everyone else is dropped and a
+// well-formed (here header-only) CAR is returned. The test coordinator's
+// DefaultBlockClassifier classifies a Composite/data block as Deny, so the block
+// is filtered out and no data is served.
+#[nuclei::test(threads = 0)]
+async fn car_fetch_controlled_mode_filters_unauthorized_data_block() {
+    use defra_core::{Block, CompositeDeltaPayload, CrdtDelta};
+
+    let replicators = Arc::new(ReplicatorRegistry::new());
+    let peer_state = Arc::new(PeerStateTracker::new());
+
+    let peer = random_peer_id();
+    replicators.add_replicator("collection_a", peer.as_str());
+
+    let transport = NoopTransport::new();
+    let transport_handle = transport.clone();
+    let local_peer_id = transport.local_peer_id().to_string();
+    let broadcaster = Broadcaster::new(transport.clone());
+    let store = Arc::new(RegolithStore::in_memory().unwrap());
+    let blockstore = Arc::new(DefraBlockstore::new(store, true));
+
+    let block = Block::new(
+        CrdtDelta::Composite(CompositeDeltaPayload {
+            collection_version_id: "collection_b".to_string(),
+            priority: 1,
+            status: 1,
+        }),
+        vec![],
+        vec![],
+    );
+    let block_data = block.to_dag_cbor().unwrap();
+    let cid = block.generate_cid().unwrap();
+    blockstore.put(&cid, &block_data).await.unwrap();
+
+    let (coordinator, _events) = create_test_coordinator_with_blockstore(TestCoordinatorParams {
+        sync_config: SyncConfig::default(),
+        request_rate_limiter: Arc::new(PeerRateLimiter::default()),
+        access_mode: AccessMode::Controlled,
+        replicators,
+        peer_state,
+        transport,
+        local_peer_id,
+        broadcaster,
+        blockstore,
+        rate_limiter: Arc::new(PeerRateLimiter::default()),
+    });
+
+    let result = coordinator
+        .handle_transport_event(car_fetch_event(peer, cid))
+        .await;
+
+    assert!(result.is_ok(), "CAR serve must not error, got {:?}", result);
+
+    let cars = transport_handle.car_responses();
+    assert_eq!(cars.len(), 1, "handler must send exactly one CAR response");
+    let (_roots, served) = crate::sync::car::decode_car(&cars[0]).unwrap();
+    assert!(
+        served.is_empty(),
+        "no data blocks may be served for a classifier-denied block, got {}",
+        served.len()
+    );
+}
+
+#[nuclei::test(threads = 0)]
+async fn duplicate_car_ingest_defers_without_waiting_for_root_owner() {
+    let replicators = Arc::new(ReplicatorRegistry::new());
+    let peer_state = Arc::new(PeerStateTracker::new());
+    let (coordinator, _events) = create_test_coordinator(AccessMode::Open, replicators, peer_state);
+    let peer = random_peer_id();
+    let block_data = b"selective car block";
+    let root_cid = Cid::new_v1(0x71, Code::Sha2_256.digest(block_data));
+    let car_data =
+        crate::sync::car::encode_car(&[root_cid], &[(&root_cid, block_data.as_slice())]).unwrap();
+
+    let owner = coordinator
+        .manager()
+        .process_queue()
+        .try_acquire_nowait(&root_cid)
+        .expect("first CAR response owns the root");
+    let mut completion = coordinator
+        .manager()
+        .rooted_car_completion_tracker()
+        .register(root_cid, peer.clone());
+
+    coordinator
+        .handle_transport_event(TransportEvent::CarFetchResponse {
+            query_id: None,
+            peer_id: peer.clone(),
+            root_cid,
+            car_data: car_data.clone(),
+        })
+        .await
+        .unwrap();
+
+    assert_eq!(
+        completion.try_recv().unwrap(),
+        crate::sync::manager::FetchCompletion::Deferred
+    );
+    assert_eq!(
+        coordinator
+            .manager()
+            .diagnostics()
+            .snapshot()
+            .single_flight_suppressed,
+        1
+    );
+    assert!(!coordinator
+        .manager()
+        .blockstore()
+        .has(&root_cid)
+        .await
+        .unwrap());
+
+    drop(owner);
+    let completion = coordinator
+        .manager()
+        .rooted_car_completion_tracker()
+        .register(root_cid, peer.clone());
+    coordinator
+        .handle_transport_event(TransportEvent::CarFetchResponse {
+            query_id: None,
+            peer_id: peer,
+            root_cid,
+            car_data,
+        })
+        .await
+        .unwrap();
+
+    assert_eq!(
+        completion.await.unwrap(),
+        crate::sync::manager::FetchCompletion::Success
+    );
+    assert!(coordinator
+        .manager()
+        .blockstore()
+        .has(&root_cid)
+        .await
+        .unwrap());
+}
+
+#[nuclei::test(threads = 0)]
+async fn car_put_many_conflict_is_reported_once_and_not_re_run() {
+    let replicators = Arc::new(ReplicatorRegistry::new());
+    let peer_state = Arc::new(PeerStateTracker::new());
+    let transport = NoopTransport::new();
+    let local_peer_id = transport.local_peer_id().to_string();
+    let broadcaster = Broadcaster::new(transport.clone());
+    let blockstore = Arc::new(ConflictOnceBlockstore::new_put_many());
+    let (coordinator, _events) = create_test_coordinator_with_blockstore(TestCoordinatorParams {
+        sync_config: SyncConfig::default(),
+        request_rate_limiter: Arc::new(PeerRateLimiter::default()),
+        access_mode: AccessMode::Open,
+        replicators,
+        peer_state,
+        transport,
+        local_peer_id,
+        broadcaster,
+        blockstore: blockstore.clone(),
+        rate_limiter: Arc::new(PeerRateLimiter::default()),
+    });
+    let coordinator = Arc::new(coordinator);
+    let peer = random_peer_id();
+    let block_data = b"retryable selective car block";
+    let root_cid = Cid::new_v1(0x71, Code::Sha2_256.digest(block_data));
+    let car_data =
+        crate::sync::car::encode_car(&[root_cid], &[(&root_cid, block_data.as_slice())]).unwrap();
+    let respond = || {
+        let completion = coordinator
+            .manager()
+            .rooted_car_completion_tracker()
+            .register(root_cid, peer.clone());
+        let coordinator = Arc::clone(&coordinator);
+        let (peer, car_data) = (peer.clone(), car_data.clone());
+        let ingest = crate::rt::spawn(async move {
+            coordinator
+                .handle_transport_event(TransportEvent::CarFetchResponse {
+                    query_id: None,
+                    peer_id: peer,
+                    root_cid,
+                    car_data,
+                })
+                .await
+        });
+        (completion, ingest)
+    };
+
+    // The blockstore settles its own conflicts in the engine; one it could
+    // not settle reaches the event once, and the event handler does not run
+    // the ingest again.
+    let (completion, ingest) = respond();
+    assert_eq!(
+        timeout(Duration::from_secs(1), completion)
+            .await
+            .expect("the CAR completion should be published")
+            .expect("completion sender remains alive"),
+        crate::sync::manager::FetchCompletion::Failure(crate::transport::FetchFailureCause::Error),
+    );
+    assert!(ingest.join().await.unwrap().is_err());
+    assert_eq!(blockstore.put_many_attempts(), 1);
+    assert!(!blockstore.has(&root_cid).await.unwrap());
+
+    // The fetch is asked again and its response lands: one success
+    // completion, and the block stored.
+    let (completion, ingest) = respond();
+    assert_eq!(
+        timeout(Duration::from_secs(1), completion)
+            .await
+            .expect("the CAR completion should be published")
+            .expect("completion sender remains alive"),
+        crate::sync::manager::FetchCompletion::Success,
+    );
+    ingest.join().await.unwrap().unwrap();
+    assert_eq!(blockstore.put_many_attempts(), 2);
+    assert!(blockstore.has(&root_cid).await.unwrap());
+}
+
+#[nuclei::test(threads = 0)]
+async fn car_fetch_allows_relayed_receiver_via_authenticated_defra_identity() {
+    use defra_core::{Block, CompositeDeltaPayload, CrdtDelta, DAGLink, LwwDeltaPayload};
+
+    let receiver = random_peer_id();
+    let receiver_did =
+        identity::Did::new("did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK").unwrap();
+    let transport = NoopTransport::new();
+    let transport_handle = transport.clone();
+    let store = Arc::new(RegolithStore::in_memory().unwrap());
+    let blockstore = Arc::new(DefraBlockstore::new(store, true));
+
+    let field_block = Block::new(
+        CrdtDelta::Lww(LwwDeltaPayload {
+            field_name: "status".to_string(),
+            priority: 14,
+            collection_version_id: "collection1".to_string(),
+            data: b"ready".to_vec(),
+        }),
+        vec![],
+        vec![],
+    );
+    let field_data = field_block.to_dag_cbor().unwrap();
+    let field_cid = field_block.generate_cid().unwrap();
+    blockstore.put(&field_cid, &field_data).await.unwrap();
+    let root_block = Block::new(
+        CrdtDelta::Composite(CompositeDeltaPayload {
+            collection_version_id: "collection1".to_string(),
+            priority: 17,
+            status: 1,
+        }),
+        vec![],
+        vec![DAGLink::new("status".to_string(), field_cid)],
+    );
+    let root_data = root_block.to_dag_cbor().unwrap();
+    let root_cid = root_block.generate_cid().unwrap();
+    blockstore.put(&root_cid, &root_data).await.unwrap();
+
+    // A relayed receiver is neither a direct subscriber nor a configured
+    // replicator at the origin. Its authenticated DID is therefore the only
+    // authority for serving linked data blocks.
+    let serve_acp = Arc::new(LateBoundServeAcp::new());
+    serve_acp.set(ServeAcp {
+        resolver: Arc::new(FixedIdentityResolver(receiver_did.clone())),
+        gate: Arc::new(OnlyIdentityReadGate(receiver_did)),
+    });
+    let (coordinator, _events) = SyncCoordinator::with_access_control_and_serve_gate(
+        transport,
+        blockstore,
+        crate::network::test_network(),
+        SyncConfig::default(),
+        AccessMode::Controlled,
+        Arc::new(ReplicatorRegistry::new()),
+        Arc::new(MemoryCollectionStorage::default()),
+        Arc::new(crate::replicator::EqOnlyFilterMatcher),
+        Arc::new(StaticDataClassifier {
+            collection_id: "collection1".to_string(),
+        }),
+        serve_acp,
+    )
+    .await
+    .unwrap();
+
+    coordinator
+        .handle_transport_event(selective_car_fetch_event(
+            receiver,
+            root_cid,
+            vec![field_cid],
+        ))
+        .await
+        .unwrap();
+
+    let responses = transport_handle.car_responses();
+    let (_roots, blocks) = crate::sync::car::decode_car(&responses[0]).unwrap();
+    assert_eq!(blocks, vec![(field_cid, field_data)]);
+}
+
+#[nuclei::test(threads = 0)]
+async fn derived_selective_car_authority_is_peer_and_root_scoped() {
+    use defra_core::{Block, CompositeDeltaPayload, CrdtDelta, DAGLink, LwwDeltaPayload};
+
+    let peer = random_peer_id();
+    let transport = NoopTransport::new();
+    let transport_handle = transport.clone();
+    let store = Arc::new(RegolithStore::in_memory().unwrap());
+    let blockstore = Arc::new(DefraBlockstore::new(store, true));
+
+    let field_block = Block::new(
+        CrdtDelta::Lww(LwwDeltaPayload {
+            field_name: "status".to_string(),
+            priority: 14,
+            collection_version_id: "version1".to_string(),
+            data: b"ready".to_vec(),
+        }),
+        vec![],
+        vec![],
+    );
+    let field_data = field_block.to_dag_cbor().unwrap();
+    let field_cid = field_block.generate_cid().unwrap();
+    blockstore.put(&field_cid, &field_data).await.unwrap();
+
+    let root_block = Block::new(
+        CrdtDelta::Composite(CompositeDeltaPayload {
+            collection_version_id: "version1".to_string(),
+            priority: 17,
+            status: 1,
+        }),
+        vec![],
+        vec![DAGLink::new("status".to_string(), field_cid)],
+    );
+    let root_data = root_block.to_dag_cbor().unwrap();
+    let root_cid = root_block.generate_cid().unwrap();
+    blockstore.put(&root_cid, &root_data).await.unwrap();
+    let unrelated_block = Block::new(
+        CrdtDelta::Lww(LwwDeltaPayload {
+            field_name: "other".to_string(),
+            priority: 1,
+            collection_version_id: "version1".to_string(),
+            data: b"unrelated".to_vec(),
+        }),
+        vec![],
+        vec![],
+    );
+    let unrelated_data = unrelated_block.to_dag_cbor().unwrap();
+    let unrelated_cid = unrelated_block.generate_cid().unwrap();
+    blockstore
+        .put(&unrelated_cid, &unrelated_data)
+        .await
+        .unwrap();
+
+    let replicators = filtered_replicator_registry(&peer, "collection1");
+    let (coordinator, _events) = SyncCoordinator::with_access_control_and_serve_gate(
+        transport,
+        blockstore,
+        crate::network::test_network(),
+        SyncConfig::default(),
+        AccessMode::Controlled,
+        replicators,
+        Arc::new(MemoryCollectionStorage::default()),
+        Arc::new(crate::replicator::EqOnlyFilterMatcher),
+        Arc::new(StaticDataClassifier {
+            collection_id: "collection1".to_string(),
+        }),
+        Arc::new(LateBoundServeAcp::new()),
+    )
+    .await
+    .unwrap();
+
+    coordinator
+        .handle_transport_event(selective_car_fetch_event(
+            peer.clone(),
+            root_cid,
+            vec![field_cid],
+        ))
+        .await
+        .unwrap();
+    let responses = transport_handle.car_responses();
+    let (_roots, derived_blocks) = crate::sync::car::decode_car(&responses[0]).unwrap();
+    assert_eq!(
+        derived_blocks,
+        vec![(field_cid, field_data.clone())],
+        "durable replicator configuration plus the exact root must re-derive CAR authority"
+    );
+
+    coordinator
+        .handle_transport_event(selective_car_fetch_event(
+            random_peer_id(),
+            root_cid,
+            vec![field_cid],
+        ))
+        .await
+        .unwrap();
+    let responses = transport_handle.car_responses();
+    let (_roots, unrelated_peer_blocks) = crate::sync::car::decode_car(&responses[1]).unwrap();
+    assert!(
+        unrelated_peer_blocks.is_empty(),
+        "derived root authority must not authorize another peer"
+    );
+
+    coordinator
+        .handle_transport_event(selective_car_fetch_event(
+            peer.clone(),
+            root_cid,
+            vec![unrelated_cid],
+        ))
+        .await
+        .unwrap();
+    let responses = transport_handle.car_responses();
+    let (_roots, unrelated_root_blocks) = crate::sync::car::decode_car(&responses[2]).unwrap();
+    assert!(
+        unrelated_root_blocks.is_empty(),
+        "derived root authority must not authorize an unrelated CID"
+    );
+
+    coordinator
+        .handle_transport_event(selective_car_fetch_event(peer, root_cid, vec![field_cid]))
+        .await
+        .unwrap();
+
+    let responses = transport_handle.car_responses();
+    let (_roots, blocks) = crate::sync::car::decode_car(&responses[3]).unwrap();
+    assert_eq!(blocks, vec![(field_cid, field_data)]);
+}
+
+#[nuclei::test(start_paused = true)]
+async fn committed_head_admission_does_not_wait_for_a_batching_timer() {
+    use defra_core::{Block, CompositeDeltaPayload, CrdtDelta};
+
+    let transport = NoopTransport::new();
+    let store = Arc::new(RegolithStore::in_memory().unwrap());
+    let blockstore = Arc::new(DefraBlockstore::new(store, true));
+    let (mut coordinator, _events) = SyncCoordinator::new(
+        transport.clone(),
+        blockstore,
+        crate::network::test_network(),
+        SyncConfig::default(),
+    )
+    .await
+    .unwrap();
+    let (failure_tx, mut failure_rx) = crate::rt::mpsc::channel::<super::PushFailure>(16);
+    coordinator.set_failure_channel(failure_tx);
+    let registered = Arc::new(AtomicUsize::new(0));
+    let observer = Arc::clone(&registered);
+    let markers = crate::rt::spawn(async move {
+        while let Some(mut observation) = failure_rx.recv().await {
+            if let Some(ack) = observation.durable_tx.take() {
+                if !observation.admission_only
+                    && !observation.create_retry
+                    && !observation.acknowledged
+                {
+                    observer.fetch_add(1, Ordering::SeqCst);
+                }
+                let generation = Some(observation.marker_generation.unwrap_or(1));
+                let _ = ack.send(generation);
+            }
+        }
+    });
+    let block = Block::new(
+        CrdtDelta::Composite(CompositeDeltaPayload {
+            collection_version_id: "version1".to_string(),
+            priority: 1,
+            status: 1,
+        }),
+        vec![],
+        vec![],
+    );
+    let data = block.to_dag_cbor().unwrap();
+    let root = block.generate_cid().unwrap();
+    for paired in [false, true] {
+        if paired {
+            let paired_peer = random_peer_id();
+            transport
+                .create_replicator(&paired_peer, vec!["collection1".to_string()])
+                .await
+                .unwrap();
+            coordinator
+                .peer_state()
+                .peer_connected(paired_peer.as_str());
+        }
+        let started = crate::rt::time::Instant::now();
+        coordinator
+            .push_to_replicators(&root, &data, "doc1", "collection1")
+            .await
+            .unwrap();
+        assert_eq!(crate::rt::time::Instant::now(), started, "committed writes must wait for durable admission, not debounce windows; paired={paired}");
+        if paired {
+            assert_eq!(registered.load(Ordering::SeqCst), 1);
+        }
+    }
+    coordinator.shutdown().await;
+    markers.abort();
+}
+
+/// The live acknowledgement of one head clears its scope's marker, and the
+/// marker stands for every head registered under it. A hub that merged two
+/// concurrent heads of a document holds both; the ack of either leaves the
+/// other undelivered, so only an ack of the document's whole frontier may
+/// clear the marker. The retry ladder delivers the rest. An ack that may not
+/// clear the marker is not reported: without its generation the recorder
+/// would write the acked heads unfenced, over the frontier the ladder records.
+/// No heads at all is no frontier: `NoOpHeadProvider`, which the default
+/// constructors install, finds none.
+#[nuclei::test]
+async fn live_ack_of_a_sibling_head_does_not_clear_the_scope_marker() {
+    use defra_core::{Block, CompositeDeltaPayload, CrdtDelta, DAGLink};
+
+    let composite = |priority: u64, field: &str, parents: Vec<Cid>| {
+        let block = Block::new(
+            CrdtDelta::Composite(CompositeDeltaPayload {
+                collection_version_id: "version1".to_string(),
+                priority,
+                status: 1,
+            }),
+            parents,
+            vec![DAGLink::new(field, cid_for(field.as_bytes()))],
+        );
+        (block.generate_cid().unwrap(), block.to_dag_cbor().unwrap())
+    };
+    let (base, _) = composite(1, "base", vec![]);
+    let (left, _) = composite(2, "left", vec![base]);
+    let (right, right_data) = composite(2, "right", vec![base]);
+
+    for (heads, clears) in [
+        (vec![left, right], false),
+        (vec![], false),
+        (vec![right], true),
+    ] {
+        let transport = NoopTransport::new();
+        let store = Arc::new(RegolithStore::in_memory().unwrap());
+        let blockstore = Arc::new(DefraBlockstore::new(store, true));
+        let (mut coordinator, _events) = SyncCoordinator::with_head_provider(
+            transport.clone(),
+            blockstore,
+            crate::network::test_network(),
+            SyncConfig::default(),
+            AccessMode::Open,
+            Arc::new(ReplicatorRegistry::new()),
+            Arc::new(MemoryCollectionStorage::default()),
+            Arc::new(StaticHeadProvider { heads }),
+            Arc::new(crate::replicator::EqOnlyFilterMatcher),
+        )
+        .await
+        .unwrap();
+        let (failure_tx, mut failure_rx) = crate::rt::mpsc::channel::<super::PushFailure>(16);
+        coordinator.set_failure_channel(failure_tx);
+        let replicator = random_peer_id();
+        transport
+            .create_replicator(&replicator, vec!["collection1".to_string()])
+            .await
+            .unwrap();
+        coordinator.peer_state().peer_connected(replicator.as_str());
+
+        let (acks_tx, mut acks) = crate::rt::mpsc::unbounded_channel();
+        let recorder = crate::rt::spawn(async move {
+            while let Some(mut event) = failure_rx.recv().await {
+                if event.acknowledged {
+                    let _ = acks_tx.send(event.marker_generation);
+                }
+                if let Some(reply) = event.durable_tx.take() {
+                    let _ = reply.send(Some(event.marker_generation.unwrap_or(7)));
+                }
+            }
+        });
+        coordinator
+            .push_to_replicators(&right, &right_data, "doc1", "collection1")
+            .await
+            .unwrap();
+        let ack = timeout(Duration::from_secs(2), acks.recv()).await.ok();
+        assert_eq!(
+            ack,
+            clears.then_some(Some(Some(7))),
+            "only an ack of the whole frontier is reported, with its marker generation"
+        );
+        coordinator.shutdown().await;
+        recorder.abort();
+    }
+}
+
+#[nuclei::test(start_paused = true)]
+async fn car_authorization_timeout_preserves_only_independent_grants() {
+    use ipld_core::{codec::Codec, ipld};
+    use serde_ipld_dagcbor::codec::DagCborCodec;
+
+    let leaf_data = DagCborCodec::encode_to_vec(&ipld!({"value": 0})).unwrap();
+    let leaf = cid_for(&leaf_data);
+    let root_data = DagCborCodec::encode_to_vec(&ipld!({"child": leaf})).unwrap();
+    let root = cid_for(&root_data);
+    for filtered in [false, true] {
+        let peer = random_peer_id();
+        let mut store = ConflictOnceBlockstore::new();
+        store.delayed_get = Some(root);
+        store.inner.put(&root, &root_data).await.unwrap();
+        store.inner.put(&leaf, &leaf_data).await.unwrap();
+        let registry = if filtered {
+            filtered_replicator_registry(&peer, "collection1")
+        } else {
+            let registry = Arc::new(ReplicatorRegistry::new());
+            registry.add_replicator("collection1", peer.as_str());
+            registry
+        };
+        let transport = NoopTransport::new();
+        let (coordinator, _events) = SyncCoordinator::with_access_control_and_serve_gate(
+            transport.clone(),
+            Arc::new(store),
+            crate::network::test_network(),
+            SyncConfig::default(),
+            AccessMode::Controlled,
+            registry,
+            Arc::new(MemoryCollectionStorage::default()),
+            Arc::new(crate::replicator::EqOnlyFilterMatcher),
+            Arc::new(StaticDataClassifier {
+                collection_id: "collection1".to_string(),
+            }),
+            Arc::new(LateBoundServeAcp::new()),
+        )
+        .await
+        .unwrap();
+        let _grant = coordinator
+            .runtime
+            .selective_car_access
+            .register(peer.clone(), root)
+            .unwrap();
+        let started = crate::rt::time::Instant::now();
+        coordinator
+            .handle_transport_event(selective_car_fetch_event(peer, root, vec![leaf]))
+            .await
+            .unwrap();
+        assert_eq!(started.elapsed(), Duration::from_secs(2));
+        let responses = transport.car_responses();
+        let (_, blocks) = crate::sync::car::decode_car(responses.last().unwrap()).unwrap();
+        assert_eq!(
+            blocks.len(),
+            usize::from(!filtered),
+            "timeout grants no partial rooted authority, but cannot veto an independent grant"
+        );
+        if !filtered {
+            assert_eq!(blocks[0], (leaf, leaf_data.clone()));
+        }
+    }
+}
+
+#[nuclei::test(start_paused = true)]
+async fn filtered_car_recovers_descendant_beyond_first_response_limit() {
+    use ipld_core::{codec::Codec, ipld};
+    use serde_ipld_dagcbor::codec::DagCborCodec;
+
+    let receiver = random_peer_id();
+    let transport = NoopTransport::new();
+    let store = Arc::new(RegolithStore::in_memory().unwrap());
+    let blockstore = Arc::new(DefraBlockstore::new(store, true));
+    let leaf_data = DagCborCodec::encode_to_vec(&ipld!({"value": 0})).unwrap();
+    let leaf = Cid::new_v1(0x71, Code::Sha2_256.digest(&leaf_data));
+    blockstore.put(&leaf, &leaf_data).await.unwrap();
+    let mut root = leaf;
+    for _ in 0..crate::sync::car::CAR_MAX_BLOCKS {
+        let data = DagCborCodec::encode_to_vec(&ipld!({"child": root})).unwrap();
+        root = Cid::new_v1(0x71, Code::Sha2_256.digest(&data));
+        blockstore.put(&root, &data).await.unwrap();
+    }
+    let (coordinator, _events) = SyncCoordinator::with_access_control_and_serve_gate(
+        transport.clone(),
+        blockstore,
+        crate::network::test_network(),
+        SyncConfig::default(),
+        AccessMode::Controlled,
+        filtered_replicator_registry(&receiver, "collection1"),
+        Arc::new(MemoryCollectionStorage::default()),
+        Arc::new(crate::replicator::EqOnlyFilterMatcher),
+        Arc::new(StaticDataClassifier {
+            collection_id: "collection1".to_string(),
+        }),
+        Arc::new(LateBoundServeAcp::new()),
+    )
+    .await
+    .unwrap();
+    let _grant = coordinator
+        .runtime
+        .selective_car_access
+        .register(receiver.clone(), root)
+        .unwrap();
+    coordinator
+        .handle_transport_event(selective_dag_car_fetch_event(receiver, root, vec![leaf]))
+        .await
+        .unwrap();
+    let responses = transport.car_responses();
+    let response = responses.last().expect("selective recovery response");
+    let (_, blocks) = crate::sync::car::decode_car(response).unwrap();
+    assert!(
+        blocks.iter().any(|(cid, _)| *cid == leaf),
+        "response-size limit must not permanently exclude authorized older history"
+    );
+}
+
+#[nuclei::test(threads = 0)]
+async fn filtered_car_authority_is_rederived_after_sender_restart() {
+    use defra_core::{Block, CompositeDeltaPayload, CrdtDelta, DAGLink, LwwDeltaPayload};
+
+    let receiver = random_peer_id();
+    let transport = NoopTransport::new();
+    transport
+        .create_replicator(&receiver, vec!["collection1".to_string()])
+        .await
+        .unwrap();
+
+    let store = Arc::new(RegolithStore::in_memory().unwrap());
+    let blockstore = Arc::new(DefraBlockstore::new(store, true));
+    let previous_field = Block::new(
+        CrdtDelta::Lww(LwwDeltaPayload {
+            field_name: "status".to_string(),
+            priority: 13,
+            collection_version_id: "version1".to_string(),
+            data: b"starting".to_vec(),
+        }),
+        vec![],
+        vec![],
+    );
+    let previous_field_data = previous_field.to_dag_cbor().unwrap();
+    let previous_field_cid = previous_field.generate_cid().unwrap();
+    blockstore
+        .put(&previous_field_cid, &previous_field_data)
+        .await
+        .unwrap();
+    let field_block = Block::new(
+        CrdtDelta::Lww(LwwDeltaPayload {
+            field_name: "status".to_string(),
+            priority: 14,
+            collection_version_id: "version1".to_string(),
+            data: b"ready".to_vec(),
+        }),
+        vec![previous_field_cid],
+        vec![],
+    );
+    let field_data = field_block.to_dag_cbor().unwrap();
+    let field_cid = field_block.generate_cid().unwrap();
+    blockstore.put(&field_cid, &field_data).await.unwrap();
+
+    let root_block = Block::new(
+        CrdtDelta::Composite(CompositeDeltaPayload {
+            collection_version_id: "version1".to_string(),
+            priority: 17,
+            status: 1,
+        }),
+        vec![],
+        vec![DAGLink::new("status".to_string(), field_cid)],
+    );
+    let root_data = root_block.to_dag_cbor().unwrap();
+    let root_cid = root_block.generate_cid().unwrap();
+    blockstore.put(&root_cid, &root_data).await.unwrap();
+
+    let replicators = filtered_replicator_registry(&receiver, "collection1");
+    let (mut coordinator, _events) = SyncCoordinator::with_access_control_and_serve_gate(
+        transport.clone(),
+        Arc::clone(&blockstore),
+        crate::network::test_network(),
+        SyncConfig::default(),
+        AccessMode::Controlled,
+        replicators,
+        Arc::new(MemoryCollectionStorage::default()),
+        Arc::new(crate::replicator::EqOnlyFilterMatcher),
+        Arc::new(StaticDataClassifier {
+            collection_id: "collection1".to_string(),
+        }),
+        Arc::new(LateBoundServeAcp::new()),
+    )
+    .await
+    .unwrap();
+    let (failure_tx, mut failure_rx) = crate::rt::mpsc::channel(16);
+    coordinator.set_failure_channel(failure_tx);
+    crate::rt::spawn(async move {
+        while let Some(mut event) = failure_rx.recv().await {
+            if let Some(durable_tx) = event.durable_tx.take() {
+                let generation = Some(event.marker_generation.unwrap_or(1));
+                let _ = durable_tx.send(generation);
+            }
+        }
+    })
+    .detach();
+    let coordinator = Arc::new(coordinator);
+    coordinator.peer_state().peer_connected(receiver.as_str());
+
+    let receiver_blocks: Arc<HopscotchMap<Cid, (), rapidhash::fast::RandomState>> = Arc::new(
+        HopscotchMap::with_hasher(rapidhash::fast::RandomState::default()),
+    );
+    let root_acked = Arc::new(AtomicBool::new(false));
+    transport.set_two_stream_handler(Arc::new({
+        let receiver_blocks = Arc::clone(&receiver_blocks);
+        let root_acked = Arc::clone(&root_acked);
+        move |_peer_id, request| {
+            let receiver_blocks = Arc::clone(&receiver_blocks);
+            let root_acked = Arc::clone(&root_acked);
+            Box::pin(async move {
+                let pushed_cid = Cid::try_from(request.cid.as_ref()).unwrap();
+                if pushed_cid == field_cid {
+                    // Simulate a receiver hole: the dependency PushLog was acked
+                    // but its block is absent when the later root arrives.
+                    return Ok(PushLogReply::success("field-ack"));
+                }
+
+                receiver_blocks.insert(pushed_cid, ());
+                assert_eq!(pushed_cid, root_cid);
+                assert!(!receiver_blocks.contains_key(&field_cid));
+                root_acked.store(true, Ordering::SeqCst);
+                Ok(PushLogReply::success("root-ack"))
+            })
+        }
+    }));
+
+    coordinator
+        .push_to_replicators(&root_cid, &root_data, "doc1", "collection1")
+        .await
+        .unwrap();
+
+    let snapshot = timeout(Duration::from_secs(5), async {
+        loop {
+            let snapshot = coordinator.sync_status().await.push_backlog;
+            if root_acked.load(Ordering::SeqCst) && snapshot.completed_total == 1 {
+                break snapshot;
+            }
+            crate::rt::yield_now().await;
+        }
+    })
+    .await
+    .expect("sender push did not complete after the receiver acked the root");
+
+    assert_eq!(snapshot.failed_total, 0);
+    assert!(receiver_blocks.contains_key(&root_cid));
+    assert!(!receiver_blocks.contains_key(&field_cid));
+    assert!(coordinator
+        .runtime
+        .selective_car_access
+        .allows_root(&receiver, &root_cid));
+
+    // A fresh coordinator has no process-local grant from the acknowledged
+    // push. It must reconstruct the exact-root authority from the persisted
+    // replicator configuration and the DB-classified requested root.
+    // Production restart begins with a cold coordinator cache. The transport
+    // owns the persisted replicator record and must repopulate the cache on
+    // demand at the CAR serve boundary.
+    let restarted_replicators = Arc::new(ReplicatorRegistry::new());
+    let (restarted, _restart_events) = SyncCoordinator::with_access_control_and_serve_gate(
+        transport.clone(),
+        blockstore,
+        crate::network::test_network(),
+        SyncConfig::default(),
+        AccessMode::Controlled,
+        restarted_replicators,
+        Arc::new(MemoryCollectionStorage::default()),
+        Arc::new(crate::replicator::EqOnlyFilterMatcher),
+        Arc::new(StaticDataClassifier {
+            collection_id: "collection1".to_string(),
+        }),
+        Arc::new(LateBoundServeAcp::new()),
+    )
+    .await
+    .unwrap();
+    assert!(!restarted
+        .runtime
+        .selective_car_access
+        .allows_root(&receiver, &root_cid));
+
+    restarted
+        .handle_transport_event(selective_dag_car_fetch_event(
+            receiver,
+            root_cid,
+            vec![field_cid],
+        ))
+        .await
+        .unwrap();
+
+    let response = transport.car_responses().last().cloned().unwrap();
+    let (_roots, blocks) = crate::sync::car::decode_car(&response).unwrap();
+    for (cid, _data) in blocks {
+        receiver_blocks.insert(cid, ());
+    }
+    assert!(receiver_blocks.contains_key(&field_cid));
+    assert!(
+        receiver_blocks.contains_key(&previous_field_cid),
+        "one bounded frontier CAR must include linked descendants"
+    );
+}
+
+#[nuclei::test(threads = 0)]
+async fn collection_head_car_authority_is_rederived_from_transport_after_restart() {
+    use defra_core::{Block, CompositeDeltaPayload, CrdtDelta, DAGLink, LwwDeltaPayload};
+
+    let receiver = random_peer_id();
+    let transport = NoopTransport::new();
+    transport
+        .create_replicator(&receiver, vec!["collection1".to_string()])
+        .await
+        .unwrap();
+
+    let store = Arc::new(RegolithStore::in_memory().unwrap());
+    let blockstore = Arc::new(DefraBlockstore::new(store, true));
+    let child = Block::new(
+        CrdtDelta::Lww(LwwDeltaPayload {
+            field_name: "status".to_string(),
+            priority: 1,
+            collection_version_id: "version1".to_string(),
+            data: b"ready".to_vec(),
+        }),
+        vec![],
+        vec![],
+    );
+    let child_data = child.to_dag_cbor().unwrap();
+    let child_cid = child.generate_cid().unwrap();
+    blockstore.put(&child_cid, &child_data).await.unwrap();
+
+    let collection_head = Block::new(
+        CrdtDelta::Composite(CompositeDeltaPayload {
+            collection_version_id: "version1".to_string(),
+            priority: 2,
+            status: 1,
+        }),
+        vec![],
+        vec![DAGLink::new("member".to_string(), child_cid)],
+    );
+    let root_data = collection_head.to_dag_cbor().unwrap();
+    let root_cid = collection_head.generate_cid().unwrap();
+    blockstore.put(&root_cid, &root_data).await.unwrap();
+
+    let identity_resolutions = Arc::new(AtomicUsize::new(0));
+    let serve_acp = Arc::new(LateBoundServeAcp::new());
+    serve_acp.set(ServeAcp {
+        resolver: Arc::new(CountingIdentityResolver(Arc::clone(&identity_resolutions))),
+        gate: Arc::new(OnlyIdentityReadGate(
+            identity::Did::new("did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK").unwrap(),
+        )),
+    });
+    let (restarted, _events) = SyncCoordinator::with_access_control_and_serve_gate(
+        transport.clone(),
+        blockstore,
+        crate::network::test_network(),
+        SyncConfig::default(),
+        AccessMode::Controlled,
+        Arc::new(ReplicatorRegistry::new()),
+        Arc::new(MemoryCollectionStorage::default()),
+        Arc::new(crate::replicator::EqOnlyFilterMatcher),
+        Arc::new(CollectionHeadClassifier {
+            collection_id: "collection1".to_string(),
+        }),
+        serve_acp,
+    )
+    .await
+    .unwrap();
+
+    assert!(!restarted
+        .runtime
+        .selective_car_access
+        .allows_root(&receiver, &root_cid));
+    restarted
+        .handle_transport_event(selective_car_fetch_event(
+            receiver.clone(),
+            root_cid,
+            vec![child_cid],
+        ))
+        .await
+        .unwrap();
+
+    let response = transport.car_responses().last().cloned().unwrap();
+    let (_roots, blocks) = crate::sync::car::decode_car(&response).unwrap();
+    assert_eq!(blocks, vec![(child_cid, child_data)]);
+    assert_eq!(
+        identity_resolutions.load(Ordering::SeqCst),
+        0,
+        "durable replicator authority must short-circuit reverse identity resolution"
+    );
+}
+
+#[nuclei::test(threads = 0)]
+async fn gossip_car_authority_is_rederived_from_acp_without_subscription_event_after_restart() {
+    use defra_core::{Block, CompositeDeltaPayload, CrdtDelta, DAGLink, LwwDeltaPayload};
+
+    let receiver = random_peer_id();
+    let transport = NoopTransport::new();
+    let store = Arc::new(RegolithStore::in_memory().unwrap());
+    let blockstore = Arc::new(DefraBlockstore::new(store, true));
+    let child = Block::new(
+        CrdtDelta::Lww(LwwDeltaPayload {
+            field_name: "status".to_string(),
+            priority: 1,
+            collection_version_id: "version1".to_string(),
+            data: b"ready".to_vec(),
+        }),
+        vec![],
+        vec![],
+    );
+    let child_data = child.to_dag_cbor().unwrap();
+    let child_cid = child.generate_cid().unwrap();
+    blockstore.put(&child_cid, &child_data).await.unwrap();
+
+    let root = Block::new(
+        CrdtDelta::Composite(CompositeDeltaPayload {
+            collection_version_id: "version1".to_string(),
+            priority: 2,
+            status: 1,
+        }),
+        vec![],
+        vec![DAGLink::new("status".to_string(), child_cid)],
+    );
+    let root_data = root.to_dag_cbor().unwrap();
+    let root_cid = root.generate_cid().unwrap();
+    blockstore.put(&root_cid, &root_data).await.unwrap();
+    // This is a cold sender coordinator: no volatile head-hint grant, no
+    // outbound replicator record, and deliberately no PeerSubscribed event.
+    // The authenticated requester's ACP identity plus the exact classified
+    // root must be sufficient; otherwise Iroh can race CAR recovery ahead of
+    // its gossip neighbor observation and strand a success-acked pending root.
+    let receiver_did =
+        identity::Did::new("did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK").unwrap();
+    let serve_acp = Arc::new(LateBoundServeAcp::new());
+    serve_acp.set(ServeAcp {
+        resolver: Arc::new(PeerBoundIdentityResolver {
+            peer_id: receiver.clone(),
+            identity: receiver_did.clone(),
+        }),
+        gate: Arc::new(OnlyIdentityReadGate(receiver_did)),
+    });
+    let (restarted, _events) = SyncCoordinator::with_access_control_and_serve_gate(
+        transport.clone(),
+        blockstore,
+        crate::network::test_network(),
+        SyncConfig::default(),
+        AccessMode::Controlled,
+        Arc::new(ReplicatorRegistry::new()),
+        Arc::new(MemoryCollectionStorage::default()),
+        Arc::new(crate::replicator::EqOnlyFilterMatcher),
+        Arc::new(StaticDataClassifier {
+            collection_id: "collection1".to_string(),
+        }),
+        serve_acp,
+    )
+    .await
+    .unwrap();
+    assert!(!restarted
+        .access
+        .peer_state
+        .peer_subscribed_to_collection(receiver.as_str(), "collection1"));
+    assert!(!restarted
+        .runtime
+        .selective_car_access
+        .allows_root(&receiver, &root_cid));
+
+    restarted
+        .handle_transport_event(selective_car_fetch_event(
+            receiver.clone(),
+            root_cid,
+            vec![child_cid],
+        ))
+        .await
+        .unwrap();
+
+    let response = transport.car_responses().last().cloned().unwrap();
+    let (_roots, blocks) = crate::sync::car::decode_car(&response).unwrap();
+    assert_eq!(blocks, vec![(child_cid, child_data)]);
+
+    restarted
+        .handle_transport_event(selective_car_fetch_event(
+            random_peer_id(),
+            root_cid,
+            vec![child_cid],
+        ))
+        .await
+        .unwrap();
+    let response = transport.car_responses().last().cloned().unwrap();
+    let (_roots, blocks) = crate::sync::car::decode_car(&response).unwrap();
+    assert!(
+        blocks.is_empty(),
+        "a requester denied by ACP must not inherit another peer's rooted authority"
+    );
+}
+
+#[nuclei::test(threads = 0)]
+async fn doc_sync_open_mode_allows_any_peer() {
+    let replicators = Arc::new(ReplicatorRegistry::new());
+    let peer_state = Arc::new(PeerStateTracker::new());
+    let (coordinator, _events) = create_test_coordinator(AccessMode::Open, replicators, peer_state);
+
+    let random_peer = random_peer_id();
+    let result = coordinator
+        .handle_transport_event(doc_sync_event(random_peer))
+        .await;
+
+    assert!(
+        !matches!(&result, Err(Error::AccessDenied { .. })),
+        "Open mode should not deny access, got {:?}",
+        result
+    );
+}
+
+#[nuclei::test(threads = 0)]
+async fn doc_sync_rejects_requests_above_configured_doc_id_limit() {
+    let transport = NoopTransport::new();
+    let store = Arc::new(RegolithStore::in_memory().unwrap());
+    let blockstore = Arc::new(DefraBlockstore::new(store, true));
+    let config = SyncConfig {
+        max_doc_sync_request_doc_ids: 2,
+        ..Default::default()
+    };
+    let (coordinator, _events) = SyncCoordinator::new(
+        transport,
+        blockstore,
+        crate::network::test_network(),
+        config,
+    )
+    .await
+    .unwrap();
+
+    let result = coordinator
+        .handle_transport_event(doc_sync_event_with_ids(
+            random_peer_id(),
+            vec!["doc1".into(), "doc2".into(), "doc3".into()],
+        ))
+        .await;
+
+    let Err(Error::InvalidConfig(message)) = result else {
+        panic!("expected InvalidConfig, got {:?}", result);
+    };
+    assert!(message.contains("3 doc IDs"));
+    assert!(message.contains("limit of 2"));
+}
+
+#[nuclei::test(threads = 0)]
+async fn doc_sync_accepts_requests_at_exactly_configured_doc_id_limit() {
+    let transport = NoopTransport::new();
+    let store = Arc::new(RegolithStore::in_memory().unwrap());
+    let blockstore = Arc::new(DefraBlockstore::new(store, true));
+    let config = SyncConfig {
+        max_doc_sync_request_doc_ids: 2,
+        ..Default::default()
+    };
+    let (coordinator, _events) = SyncCoordinator::new(
+        transport,
+        blockstore,
+        crate::network::test_network(),
+        config,
+    )
+    .await
+    .unwrap();
+
+    let result = coordinator
+        .handle_transport_event(doc_sync_event_with_ids(
+            random_peer_id(),
+            vec!["doc1".into(), "doc2".into()],
+        ))
+        .await;
+
+    assert!(
+        !matches!(&result, Err(Error::InvalidConfig(_))),
+        "a request with exactly the configured limit of doc IDs must be accepted, got {:?}",
+        result
+    );
+}
+
+#[nuclei::test(threads = 0)]
+async fn doc_sync_zero_config_resolves_to_default_limit() {
+    let transport = NoopTransport::new();
+    let store = Arc::new(RegolithStore::in_memory().unwrap());
+    let blockstore = Arc::new(DefraBlockstore::new(store, true));
+    let config = SyncConfig {
+        max_doc_sync_request_doc_ids: 0,
+        ..Default::default()
+    };
+    let (coordinator, _events) = SyncCoordinator::new(
+        transport,
+        blockstore,
+        crate::network::test_network(),
+        config,
+    )
+    .await
+    .unwrap();
+
+    let at_default = (0..DEFAULT_MAX_DOC_SYNC_REQUEST_DOC_IDS)
+        .map(|i| format!("doc{i}"))
+        .collect::<Vec<_>>();
+    let result = coordinator
+        .handle_transport_event(doc_sync_event_with_ids(random_peer_id(), at_default))
+        .await;
+    assert!(
+        !matches!(&result, Err(Error::InvalidConfig(_))),
+        "config 0 should resolve to the default limit, accepting a default-sized request, got {:?}",
+        result
+    );
+
+    let over_default = (0..=DEFAULT_MAX_DOC_SYNC_REQUEST_DOC_IDS)
+        .map(|i| format!("doc{i}"))
+        .collect::<Vec<_>>();
+    let result = coordinator
+        .handle_transport_event(doc_sync_event_with_ids(random_peer_id(), over_default))
+        .await;
+    assert!(
+        matches!(&result, Err(Error::InvalidConfig(_))),
+        "config 0 should resolve to the default limit, rejecting an over-default request, got {:?}",
+        result
+    );
+}
+
+// --- BranchableSync access check tests ---
+
+#[nuclei::test(threads = 0)]
+async fn branchable_sync_controlled_mode_rejects_unknown_peer() {
+    let replicators = Arc::new(ReplicatorRegistry::new());
+    let peer_state = Arc::new(PeerStateTracker::new());
+    let (coordinator, _events) =
+        create_test_coordinator(AccessMode::Controlled, replicators, peer_state);
+
+    let unknown_peer = random_peer_id();
+    let result = coordinator
+        .handle_transport_event(branchable_sync_event(unknown_peer, "collection1"))
+        .await;
+
+    assert!(result.is_err());
+    assert!(
+        matches!(&result, Err(Error::AccessDenied { .. })),
+        "Expected AccessDenied, got {:?}",
+        result
+    );
+}
+
+#[nuclei::test(threads = 0)]
+async fn branchable_sync_controlled_mode_rejects_wrong_collection() {
+    let replicators = Arc::new(ReplicatorRegistry::new());
+    let peer_state = Arc::new(PeerStateTracker::new());
+
+    let peer = random_peer_id();
+    replicators.add_replicator("collection_A", peer.as_str());
+
+    let (coordinator, _events) =
+        create_test_coordinator(AccessMode::Controlled, replicators, peer_state);
+
+    // Request for collection_B, but peer is only registered for collection_A
+    let result = coordinator
+        .handle_transport_event(branchable_sync_event(peer, "collection_B"))
+        .await;
+
+    assert!(result.is_err());
+    assert!(
+        matches!(&result, Err(Error::AccessDenied { .. })),
+        "Expected AccessDenied for wrong collection, got {:?}",
+        result
+    );
+}
+
+#[nuclei::test(threads = 0)]
+async fn branchable_sync_controlled_mode_allows_replicator() {
+    let replicators = Arc::new(ReplicatorRegistry::new());
+    let peer_state = Arc::new(PeerStateTracker::new());
+
+    let authorized_peer = random_peer_id();
+    replicators.add_replicator("collection1", authorized_peer.as_str());
+
+    let (coordinator, _events) =
+        create_test_coordinator(AccessMode::Controlled, replicators, peer_state);
+
+    let result = coordinator
+        .handle_transport_event(branchable_sync_event(authorized_peer, "collection1"))
+        .await;
+
+    assert!(
+        !matches!(&result, Err(Error::AccessDenied { .. })),
+        "Replicator should not get AccessDenied, got {:?}",
+        result
+    );
+}
+
+#[nuclei::test(threads = 0)]
+async fn branchable_sync_controlled_mode_allows_connected_peer() {
+    let replicators = Arc::new(ReplicatorRegistry::new());
+    let peer_state = Arc::new(PeerStateTracker::new());
+
+    let connected_peer = random_peer_id();
+    peer_state.peer_connected(connected_peer.as_str());
+
+    let (coordinator, _events) =
+        create_test_coordinator(AccessMode::Controlled, replicators, peer_state);
+
+    let result = coordinator
+        .handle_transport_event(branchable_sync_event(connected_peer, "collection1"))
+        .await;
+
+    assert!(
+        !matches!(&result, Err(Error::AccessDenied { .. })),
+        "Connected peer should be allowed for Go-compatible BranchableSync, got {:?}",
+        result
+    );
+}
+
+#[nuclei::test(threads = 0)]
+async fn branchable_sync_reply_remerges_locally_complete_unmerged_head() {
+    use defra_core::{Block, CompositeDeltaPayload, CrdtDelta};
+
+    let replicators = Arc::new(ReplicatorRegistry::new());
+    let peer_state = Arc::new(PeerStateTracker::new());
+    let peer = random_peer_id();
+
+    let transport = NoopTransport::new();
+    let local_peer_id = transport.local_peer_id().to_string();
+    let broadcaster = Broadcaster::new(transport.clone());
+    let store = Arc::new(RegolithStore::in_memory().unwrap());
+    let blockstore = Arc::new(DefraBlockstore::new(store, true));
+
+    let block = Block::new(
+        CrdtDelta::Composite(CompositeDeltaPayload {
+            collection_version_id: "collection1".to_string(),
+            priority: 1,
+            status: 1,
+        }),
+        vec![],
+        vec![],
+    );
+    let block_data = block.to_dag_cbor().unwrap();
+    let cid = block.generate_cid().unwrap();
+    blockstore.put(&cid, &block_data).await.unwrap();
+    assert!(
+        !blockstore.is_merged(&cid).await.unwrap(),
+        "test setup requires an unmerged local root"
+    );
+
+    let (coordinator, mut events) =
+        create_test_coordinator_with_blockstore(TestCoordinatorParams {
+            sync_config: SyncConfig::default(),
+            request_rate_limiter: Arc::new(PeerRateLimiter::default()),
+            access_mode: AccessMode::Open,
+            replicators,
+            peer_state,
+            transport,
+            local_peer_id,
+            broadcaster,
+            blockstore,
+            rate_limiter: Arc::new(PeerRateLimiter::default()),
+        });
+
+    coordinator
+        .handle_transport_event(branchable_sync_reply_event(
+            peer.clone(),
+            "collection1",
+            vec![cid],
+        ))
+        .await
+        .unwrap();
+
+    match recv_block_received(&mut events).await {
+        SyncEvent::BlockReceived {
+            cid: event_cid,
+            doc_id,
+            collection_id,
+            sender_peer,
+            ..
+        } => {
+            assert_eq!(event_cid, cid);
+            assert_eq!(doc_id, document::DocID::new_v0(cid).to_string());
+            assert_eq!(collection_id, "collection1");
+            assert_eq!(sender_peer.as_deref(), Some(peer.as_str()));
+        }
+        other => panic!("expected BlockReceived for unmerged BranchableSync head, got {other:?}"),
+    }
+}
+
+#[nuclei::test(threads = 0)]
+async fn gossip_subscribed_collection_accepts_without_peer_connection_cache() {
+    let replicators = Arc::new(ReplicatorRegistry::new());
+    let peer_state = Arc::new(PeerStateTracker::new());
+    let peer = random_peer_id();
+    let (coordinator, _events) =
+        create_test_coordinator(AccessMode::Controlled, replicators, peer_state.clone());
+
+    assert!(
+        !peer_state.is_connected(peer.as_str()),
+        "test setup requires the coordinator peer_state cache to start cold"
+    );
+
+    coordinator
+        .subscriptions
+        .collections
+        .insert_live("collection1");
+
+    let result = coordinator
+        .handle_transport_event(gossip_event(peer.clone(), "collection1"))
+        .await;
+
+    assert!(
+        !matches!(&result, Err(Error::AccessDenied { .. })),
+        "delivered gossip on a subscribed collection should not require a separate connection-cache hit, got {:?}",
+        result
+    );
+}
+
+#[nuclei::test(threads = 0)]
+async fn branchable_sync_open_mode_allows_any_peer() {
+    let replicators = Arc::new(ReplicatorRegistry::new());
+    let peer_state = Arc::new(PeerStateTracker::new());
+    let (coordinator, _events) = create_test_coordinator(AccessMode::Open, replicators, peer_state);
+
+    let random_peer = random_peer_id();
+    let result = coordinator
+        .handle_transport_event(branchable_sync_event(random_peer, "any_collection"))
+        .await;
+
+    assert!(
+        !matches!(&result, Err(Error::AccessDenied { .. })),
+        "Open mode should not deny access, got {:?}",
+        result
+    );
+}
+
+// #838: PushLog in Controlled mode must reject a merely-connected peer
+// that isn't registered as a replicator for the target collection.
+#[nuclei::test(threads = 0)]
+async fn pushlog_controlled_mode_rejects_non_replicator_connected_peer() {
+    let replicators = Arc::new(ReplicatorRegistry::new());
+    let peer_state = Arc::new(PeerStateTracker::new());
+    let peer = random_peer_id();
+    peer_state.peer_connected(peer.as_str());
+
+    let (coordinator, _events) =
+        create_test_coordinator(AccessMode::Controlled, replicators, peer_state);
+
+    let result = coordinator
+        .handle_transport_event(pushlog_event(peer, "collection1"))
+        .await;
+
+    assert!(
+        matches!(&result, Err(Error::AccessDenied { .. })),
+        "Connected-but-not-registered peer must be denied in Controlled mode, got {:?}",
+        result
+    );
+}
+
+#[nuclei::test(threads = 0)]
+async fn committed_head_marker_failure_is_returned_before_queue_admission() {
+    let replicators = Arc::new(ReplicatorRegistry::new());
+    let peer_state = Arc::new(PeerStateTracker::new());
+    let peer = random_peer_id();
+    let (coordinator, _events) = create_test_coordinator(AccessMode::Open, replicators, peer_state);
+    coordinator
+        .create_replicator(&peer, vec!["collection1".to_string()], false)
+        .await
+        .unwrap();
+    coordinator.peer_state().peer_connected(peer.as_str());
+
+    let block = defra_core::Block::new(
+        defra_core::CrdtDelta::Composite(defra_core::CompositeDeltaPayload {
+            collection_version_id: "collection1".to_string(),
+            priority: 1,
+            status: 1,
+        }),
+        vec![],
+        vec![],
+    );
+    let data = block.to_dag_cbor().unwrap();
+    let cid = block.generate_cid().unwrap();
+
+    let error = coordinator
+        .push_to_replicators(&cid, &data, "doc1", "collection1")
+        .await
+        .expect_err("a missing durable recorder must fail the committed head handoff");
+    assert!(matches!(error, Error::DurableHeadMarker(_)));
+    let snapshot = coordinator.sync_status().await.push_backlog;
+    assert_eq!(snapshot.head_hints_failed_local, 1);
+    assert_eq!(snapshot.enqueued_total, 0);
+}
+
+#[nuclei::test(threads = 0)]
+async fn pushlog_controlled_mode_allows_locally_subscribed_collection() {
+    let replicators = Arc::new(ReplicatorRegistry::new());
+    let peer_state = Arc::new(PeerStateTracker::new());
+    let peer = random_peer_id();
+    let (coordinator, mut events) =
+        create_test_coordinator(AccessMode::Controlled, replicators, peer_state);
+
+    coordinator
+        .subscriptions
+        .collections
+        .insert_live("collection1");
+
+    coordinator
+        .handle_transport_event(pushlog_event(peer.clone(), "collection1"))
+        .await
+        .unwrap();
+
+    match recv_complete_pushlog(&coordinator, &mut events).await {
+        SyncEvent::DagReady {
+            sender_peer,
+            is_explicit_replicator,
+            ..
+        } => {
+            assert_eq!(sender_peer.as_deref(), Some(peer.as_str()));
+            assert!(
+                !is_explicit_replicator,
+                "collection subscription should not mark the source as an explicit replicator"
+            );
+        }
+        other => panic!("expected DagReady, got {:?}", other),
+    }
+}
+
+#[nuclei::test(threads = 0)]
+async fn pushlog_registered_replicator_is_marked_explicit_replicator() {
+    let replicators = Arc::new(ReplicatorRegistry::new());
+    let peer_state = Arc::new(PeerStateTracker::new());
+    let peer = random_peer_id();
+    replicators.add_replicator("collection1", peer.as_str());
+
+    let (coordinator, mut events) =
+        create_test_coordinator(AccessMode::Controlled, replicators, peer_state);
+
+    coordinator
+        .handle_transport_event(pushlog_event(peer.clone(), "collection1"))
+        .await
+        .unwrap();
+
+    match recv_complete_pushlog(&coordinator, &mut events).await {
+        SyncEvent::DagReady {
+            sender_peer,
+            is_explicit_replicator,
+            ..
+        } => {
+            assert_eq!(sender_peer.as_deref(), Some(peer.as_str()));
+            assert!(
+                is_explicit_replicator,
+                "registered replicator should preserve explicit replicator trust"
+            );
+        }
+        other => panic!("expected DagReady, got {:?}", other),
+    }
+}
+
+// Go parity: the direct replicator protocol skips the receiver-side
+// collection access gate. The sending node's replicator registry selects the
+// target; merge-time ACP still applies downstream.
+#[nuclei::test(threads = 0)]
+async fn two_stream_controlled_mode_accepts_replicator_protocol_without_local_registration() {
+    let replicators = Arc::new(ReplicatorRegistry::new());
+    let peer_state = Arc::new(PeerStateTracker::new());
+    let peer = random_peer_id();
+    peer_state.peer_connected(peer.as_str());
+
+    let (coordinator, mut events) =
+        create_test_coordinator(AccessMode::Controlled, replicators, peer_state);
+
+    coordinator
+        .handle_transport_event(two_stream_event(peer.clone(), "collection1", false))
+        .await
+        .unwrap();
+
+    match recv_complete_pushlog(&coordinator, &mut events).await {
+        SyncEvent::DagReady {
+            sender_peer,
+            is_explicit_replicator,
+            ..
+        } => {
+            assert_eq!(sender_peer.as_deref(), Some(peer.as_str()));
+            assert!(
+                !is_explicit_replicator,
+                "ordinary direct replicator pushes should not imply explicit replay trust"
+            );
+        }
+        other => panic!("expected DagReady, got {:?}", other),
+    }
+}
+
+#[nuclei::test(threads = 0)]
+async fn two_stream_controlled_mode_accepts_unknown_peer() {
+    let replicators = Arc::new(ReplicatorRegistry::new());
+    let peer_state = Arc::new(PeerStateTracker::new());
+    let peer = random_peer_id();
+
+    let (coordinator, mut events) =
+        create_test_coordinator(AccessMode::Controlled, replicators, peer_state);
+
+    coordinator
+        .handle_transport_event(two_stream_event(peer.clone(), "collection1", false))
+        .await
+        .unwrap();
+
+    match recv_complete_pushlog(&coordinator, &mut events).await {
+        SyncEvent::DagReady {
+            sender_peer,
+            is_explicit_replicator,
+            ..
+        } => {
+            assert_eq!(sender_peer.as_deref(), Some(peer.as_str()));
+            assert!(
+                !is_explicit_replicator,
+                "two-stream transport auth and explicit replay trust remain separate"
+            );
+        }
+        other => panic!("expected DagReady, got {:?}", other),
+    }
+}
+
+#[nuclei::test(threads = 0)]
+async fn two_stream_controlled_mode_allows_locally_subscribed_collection() {
+    let replicators = Arc::new(ReplicatorRegistry::new());
+    let peer_state = Arc::new(PeerStateTracker::new());
+    let peer = random_peer_id();
+    let (coordinator, mut events) =
+        create_test_coordinator(AccessMode::Controlled, replicators, peer_state);
+
+    coordinator
+        .subscriptions
+        .collections
+        .insert_live("collection1");
+
+    coordinator
+        .handle_transport_event(two_stream_event(peer.clone(), "collection1", false))
+        .await
+        .unwrap();
+
+    match recv_complete_pushlog(&coordinator, &mut events).await {
+        SyncEvent::DagReady {
+            sender_peer,
+            is_explicit_replicator,
+            ..
+        } => {
+            assert_eq!(sender_peer.as_deref(), Some(peer.as_str()));
+            assert!(
+                !is_explicit_replicator,
+                "collection subscription should not mark two-stream senders as explicit replicators"
+            );
+        }
+        other => panic!("expected DagReady, got {:?}", other),
+    }
+}
+
+// --- GossipSub access check tests ---
+
+#[nuclei::test(threads = 0)]
+async fn gossip_controlled_mode_rejects_unregistered_unsubscribed_peer() {
+    let replicators = Arc::new(ReplicatorRegistry::new());
+    let peer_state = Arc::new(PeerStateTracker::new());
+    let peer = random_peer_id();
+    peer_state.peer_connected(peer.as_str());
+    let (coordinator, _events) =
+        create_test_coordinator(AccessMode::Controlled, replicators, peer_state);
+
+    let result = coordinator
+        .handle_transport_event(gossip_event(peer, "collection1"))
+        .await;
+
+    assert!(
+        matches!(&result, Err(Error::AccessDenied { .. })),
+        "connected peer that is neither registered nor on a subscribed collection must be denied, got {:?}",
+        result
+    );
+}
+
+#[nuclei::test(threads = 0)]
+async fn gossip_controlled_mode_allows_subscribed_collection() {
+    let replicators = Arc::new(ReplicatorRegistry::new());
+    let peer_state = Arc::new(PeerStateTracker::new());
+    let peer = random_peer_id();
+    let (coordinator, _events) =
+        create_test_coordinator(AccessMode::Controlled, replicators, peer_state);
+
+    coordinator
+        .subscriptions
+        .collections
+        .insert_live("collection1");
+
+    let result = coordinator
+        .handle_transport_event(gossip_event(peer, "collection1"))
+        .await;
+
+    assert!(
+        !matches!(&result, Err(Error::AccessDenied { .. })),
+        "gossip on a subscribed collection must be accepted, got {:?}",
+        result
+    );
+}
+
+#[nuclei::test(threads = 0)]
+async fn gossip_relay_cannot_confer_explicit_replicator_trust_on_origin() {
+    let replicators = Arc::new(ReplicatorRegistry::new());
+    let peer_state = Arc::new(PeerStateTracker::new());
+    let relay = random_peer_id();
+    let origin = random_peer_id();
+    replicators.add_replicator("collection1", relay.as_str());
+    peer_state.peer_connected(relay.as_str());
+    peer_state.peer_connected(origin.as_str());
+    let (coordinator, mut events) =
+        create_test_coordinator(AccessMode::Controlled, replicators, peer_state);
+    coordinator
+        .subscriptions
+        .collections
+        .insert_live("collection1");
+
+    let mut event = gossip_event(relay.clone(), "collection1");
+    let TransportEvent::GossipMessage { message, .. } = &mut event else {
+        unreachable!("gossip helper must create gossip event");
+    };
+    message.authenticate_origin_peer(origin.to_string());
+
+    coordinator.handle_transport_event(event).await.unwrap();
+
+    match recv_complete_pushlog(&coordinator, &mut events).await {
+        SyncEvent::DagReady {
+            sender_peer,
+            is_explicit_replicator,
+            ..
+        } => {
+            assert_eq!(sender_peer.as_deref(), Some(origin.as_str()));
+            assert!(
+                !is_explicit_replicator,
+                "the relay's configured status must not authorize a different origin"
+            );
+        }
+        other => panic!("expected DagReady, got {other:?}"),
+    }
+}
+
+#[nuclei::test(threads = 0)]
+async fn gossip_controlled_mode_allows_document_topic() {
+    let replicators = Arc::new(ReplicatorRegistry::new());
+    let peer_state = Arc::new(PeerStateTracker::new());
+    let peer = random_peer_id();
+    let (coordinator, _events) =
+        create_test_coordinator(AccessMode::Controlled, replicators, peer_state);
+    coordinator
+        .access
+        .followed_documents
+        .insert("doc1".to_string(), ());
+
+    let result = coordinator
+        .handle_transport_event(gossip_event_on_topic(peer, "doc1", "collection1"))
+        .await;
+
+    assert!(
+        !matches!(&result, Err(Error::AccessDenied { .. })),
+        "gossip on a followed document topic must be accepted, got {:?}",
+        result
+    );
+    assert_eq!(unfollowed_dropped(&coordinator).await, 0);
+}
+
+#[nuclei::test(threads = 0)]
+async fn gossip_document_topic_dropped_after_document_unfollowed() {
+    let replicators = Arc::new(ReplicatorRegistry::new());
+    let peer_state = Arc::new(PeerStateTracker::new());
+    let peer = random_peer_id();
+    let (coordinator, _events) =
+        create_test_coordinator(AccessMode::Controlled, replicators, peer_state);
+    coordinator
+        .access
+        .followed_documents
+        .insert("doc1".to_string(), ());
+    coordinator.access.followed_documents.remove("doc1");
+
+    let result = coordinator
+        .handle_transport_event(gossip_event_on_topic(peer, "doc1", "collection1"))
+        .await;
+
+    assert!(
+        matches!(&result, Ok(())),
+        "a late message for an unfollowed document is dropped without error, got {:?}",
+        result
+    );
+    assert_eq!(unfollowed_dropped(&coordinator).await, 1);
+}
+
+#[nuclei::test(threads = 0)]
+async fn gossip_document_topic_accepted_when_collection_subscribed() {
+    let replicators = Arc::new(ReplicatorRegistry::new());
+    let peer_state = Arc::new(PeerStateTracker::new());
+    let peer = random_peer_id();
+    let (coordinator, _events) =
+        create_test_coordinator(AccessMode::Controlled, replicators, peer_state);
+    coordinator
+        .subscriptions
+        .collections
+        .insert_live("collection1");
+
+    let result = coordinator
+        .handle_transport_event(gossip_event_on_topic(peer, "doc1", "collection1"))
+        .await;
+
+    assert!(
+        !matches!(&result, Err(Error::AccessDenied { .. })),
+        "a subscribed collection keeps its document-topic updates, got {:?}",
+        result
+    );
+    assert_eq!(unfollowed_dropped(&coordinator).await, 0);
+}
+
+async fn unfollowed_dropped(coordinator: &SyncCoordinator<TestBlockstore, NoopTransport>) -> u64 {
+    coordinator
+        .sync_status()
+        .await
+        .gossip_unfollowed_dropped_total
+}
+
+#[nuclei::test(threads = 0)]
+async fn gossip_controlled_mode_rejects_mismatched_topic_and_payload_collection() {
+    let replicators = Arc::new(ReplicatorRegistry::new());
+    let peer_state = Arc::new(PeerStateTracker::new());
+    let peer = random_peer_id();
+    let (coordinator, _events) =
+        create_test_coordinator(AccessMode::Controlled, replicators, peer_state);
+
+    coordinator
+        .subscriptions
+        .collections
+        .insert_live("collection1");
+
+    let result = coordinator
+        .handle_transport_event(gossip_event_on_topic(peer, "collection2", "collection1"))
+        .await;
+
+    assert!(
+        matches!(&result, Err(Error::AccessDenied { .. })),
+        "gossip payload collection must match the received topic, got {:?}",
+        result
+    );
+}
+
+#[nuclei::test(threads = 0)]
+async fn gossip_controlled_mode_rejects_mismatched_document_topic() {
+    let replicators = Arc::new(ReplicatorRegistry::new());
+    let peer_state = Arc::new(PeerStateTracker::new());
+    let peer = random_peer_id();
+    let (coordinator, _events) =
+        create_test_coordinator(AccessMode::Controlled, replicators, peer_state);
+
+    let result = coordinator
+        .handle_transport_event(gossip_event_on_topic(peer, "doc2", "collection1"))
+        .await;
+
+    assert!(
+        matches!(&result, Err(Error::AccessDenied { .. })),
+        "gossip document topic must match the payload document id, got {:?}",
+        result
+    );
+}
+
+#[nuclei::test(threads = 0)]
+async fn gossip_controlled_mode_allows_subscribed_outbound_replicator_target() {
+    let replicators = Arc::new(ReplicatorRegistry::new());
+    let peer_state = Arc::new(PeerStateTracker::new());
+    let peer = random_peer_id();
+    peer_state.peer_connected(peer.as_str());
+    let (coordinator, _events) =
+        create_test_coordinator(AccessMode::Controlled, replicators, peer_state);
+
+    coordinator
+        .create_replicator(&peer, vec!["collection1".to_string()], false)
+        .await
+        .unwrap();
+
+    coordinator
+        .subscriptions
+        .collections
+        .insert_live("collection1");
+
+    let result = coordinator
+        .handle_transport_event(gossip_event(peer, "collection1"))
+        .await;
+
+    assert!(
+        !matches!(&result, Err(Error::AccessDenied { .. })),
+        "subscribed collections must accept gossip from outbound replicator targets, got {:?}",
+        result
+    );
+    assert_eq!(
+        coordinator
+            .sync_status()
+            .await
+            .gossip_direction_filtered_total,
+        0
+    );
+}
+
+/// Collection commits carry an EMPTY `doc_id`, so unlike document updates they
+/// have no document-topic fallback: the collection topic is their only delivery
+/// path. A symmetric mesh makes both peers each other's outbound replicator
+/// target, so if that closed the collection topic, collection commits could
+/// never be delivered at all (source-inc/gents#696).
+#[nuclei::test(threads = 0)]
+async fn gossip_allows_doc_less_collection_commit_from_outbound_replicator_target() {
+    let replicators = Arc::new(ReplicatorRegistry::new());
+    let peer_state = Arc::new(PeerStateTracker::new());
+    let peer = random_peer_id();
+    peer_state.peer_connected(peer.as_str());
+    let (coordinator, _events) =
+        create_test_coordinator(AccessMode::Controlled, replicators, peer_state);
+
+    coordinator
+        .create_replicator(&peer, vec!["collection1".to_string()], false)
+        .await
+        .unwrap();
+
+    coordinator
+        .subscriptions
+        .collections
+        .insert_live("collection1");
+
+    let result = coordinator
+        .handle_transport_event(collection_commit_gossip_event(peer, "collection1"))
+        .await;
+
+    assert!(
+        !matches!(&result, Err(Error::AccessDenied { .. })),
+        "a doc-less collection commit has no document-topic fallback; the subscribed \
+         collection topic must accept it from a peer we also replicate to, got {:?}",
+        result
+    );
+    assert_eq!(
+        coordinator
+            .sync_status()
+            .await
+            .gossip_direction_filtered_total,
+        0
+    );
+}
+
+#[nuclei::test(threads = 0)]
+async fn gossip_document_topic_allows_outbound_replicator_target() {
+    let replicators = Arc::new(ReplicatorRegistry::new());
+    let peer_state = Arc::new(PeerStateTracker::new());
+    let peer = random_peer_id();
+    peer_state.peer_connected(peer.as_str());
+    let (coordinator, _events) =
+        create_test_coordinator(AccessMode::Controlled, replicators, peer_state);
+
+    coordinator
+        .create_replicator(&peer, vec!["collection1".to_string()], false)
+        .await
+        .unwrap();
+    coordinator
+        .access
+        .followed_documents
+        .insert("doc1".to_string(), ());
+
+    let result = coordinator
+        .handle_transport_event(gossip_event_on_topic(peer, "doc1", "collection1"))
+        .await;
+
+    assert!(
+        !matches!(&result, Err(Error::AccessDenied { .. })),
+        "document-topic subscriptions must accept updates from outbound replicator targets, got {:?}",
+        result
+    );
+}
+
+#[nuclei::test(threads = 0)]
+async fn gossip_open_mode_rejects_unsubscribed_outbound_replicator_target() {
+    let replicators = Arc::new(ReplicatorRegistry::new());
+    let peer_state = Arc::new(PeerStateTracker::new());
+    let peer = random_peer_id();
+    replicators.add_replicator("collection1", peer.as_str());
+
+    let (coordinator, _events) = create_test_coordinator(AccessMode::Open, replicators, peer_state);
+
+    let result = coordinator
+        .handle_transport_event(gossip_event(peer.clone(), "collection1"))
+        .await;
+
+    assert!(
+        matches!(&result, Err(Error::AccessDenied { .. })),
+        "unsubscribed outbound replicator targets must not become gossip sources, got {:?}",
+        result
+    );
+    assert_eq!(
+        coordinator
+            .sync_status()
+            .await
+            .gossip_direction_filtered_total,
+        1
+    );
+}
+
+#[nuclei::test(threads = 0)]
+async fn gossip_ignores_transport_replicator_state_for_directionality() {
+    let replicators = Arc::new(ReplicatorRegistry::new());
+    let peer_state = Arc::new(PeerStateTracker::new());
+    let transport = NoopTransport::new();
+    let local_peer_id = transport.local_peer_id().to_string();
+    let broadcaster = Broadcaster::new(transport.clone());
+    let store = Arc::new(RegolithStore::in_memory().unwrap());
+    let blockstore = Arc::new(DefraBlockstore::new(store, true));
+
+    let peer = random_peer_id();
+    transport
+        .create_replicator(&peer, vec!["collection1".to_string()])
+        .await
+        .unwrap();
+
+    let (coordinator, _events) = create_test_coordinator_with_blockstore(TestCoordinatorParams {
+        sync_config: SyncConfig::default(),
+        request_rate_limiter: Arc::new(PeerRateLimiter::default()),
+        access_mode: AccessMode::Controlled,
+        replicators: replicators.clone(),
+        peer_state,
+        transport,
+        local_peer_id,
+        broadcaster,
+        blockstore,
+        rate_limiter: Arc::new(PeerRateLimiter::default()),
+    });
+
+    assert!(
+        !replicators.is_replicator("collection1", peer.as_str()),
+        "test setup requires the coordinator registry to start empty"
+    );
+
+    let result = coordinator
+        .handle_transport_event(gossip_event(peer.clone(), "collection1"))
+        .await;
+
+    assert!(
+        matches!(&result, Err(Error::AccessDenied { .. })),
+        "transport outbound replicator state must not authorize inbound gossip, got {:?}",
+        result
+    );
+    assert!(
+        !replicators.is_replicator("collection1", peer.as_str()),
+        "gossip access checks must not backfill outbound replicator state as inbound gossip trust"
+    );
+}
+
+#[nuclei::test(threads = 0)]
+async fn delete_replicator_removes_gossip_access_without_subscription() {
+    let replicators = Arc::new(ReplicatorRegistry::new());
+    let peer_state = Arc::new(PeerStateTracker::new());
+    let transport = NoopTransport::new();
+    let local_peer_id = transport.local_peer_id().to_string();
+    let broadcaster = Broadcaster::new(transport.clone());
+    let store = Arc::new(RegolithStore::in_memory().unwrap());
+    let blockstore = Arc::new(DefraBlockstore::new(store, true));
+
+    let peer = random_peer_id();
+    transport.set_connected_peers(vec![peer.clone()]);
+
+    let (coordinator, _events) = create_test_coordinator_with_blockstore(TestCoordinatorParams {
+        sync_config: SyncConfig::default(),
+        request_rate_limiter: Arc::new(PeerRateLimiter::default()),
+        access_mode: AccessMode::Controlled,
+        replicators,
+        peer_state,
+        transport,
+        local_peer_id,
+        broadcaster,
+        blockstore,
+        rate_limiter: Arc::new(PeerRateLimiter::default()),
+    });
+
+    coordinator
+        .create_replicator(&peer, vec!["collection1".to_string()], false)
+        .await
+        .unwrap();
+    coordinator.delete_replicator(&peer).await.unwrap();
+
+    let result = coordinator
+        .handle_transport_event(gossip_event(peer, "collection1"))
+        .await;
+
+    assert!(
+        matches!(&result, Err(Error::AccessDenied { .. })),
+        "connected peers without registry or subscription access must be denied after delete, got {:?}",
+        result
+    );
+}
+
+#[nuclei::test(threads = 0)]
+async fn create_replicator_update_keeps_outbound_targets_from_gossip_sources() {
+    let replicators = Arc::new(ReplicatorRegistry::new());
+    let peer_state = Arc::new(PeerStateTracker::new());
+    let transport = NoopTransport::new();
+    let local_peer_id = transport.local_peer_id().to_string();
+    let broadcaster = Broadcaster::new(transport.clone());
+    let store = Arc::new(RegolithStore::in_memory().unwrap());
+    let blockstore = Arc::new(DefraBlockstore::new(store, true));
+
+    let peer = random_peer_id();
+    transport.set_connected_peers(vec![peer.clone()]);
+
+    let (coordinator, _events) = create_test_coordinator_with_blockstore(TestCoordinatorParams {
+        sync_config: SyncConfig::default(),
+        request_rate_limiter: Arc::new(PeerRateLimiter::default()),
+        access_mode: AccessMode::Controlled,
+        replicators,
+        peer_state,
+        transport,
+        local_peer_id,
+        broadcaster,
+        blockstore,
+        rate_limiter: Arc::new(PeerRateLimiter::default()),
+    });
+
+    coordinator
+        .create_replicator(&peer, vec!["collection_a".to_string()], false)
+        .await
+        .unwrap();
+    coordinator
+        .create_replicator(&peer, vec!["collection_b".to_string()], false)
+        .await
+        .unwrap();
+
+    let old_collection_result = coordinator
+        .handle_transport_event(gossip_event(peer.clone(), "collection_a"))
+        .await;
+    let new_collection_result = coordinator
+        .handle_transport_event(gossip_event(peer, "collection_b"))
+        .await;
+
+    assert!(
+        matches!(&old_collection_result, Err(Error::AccessDenied { .. })),
+        "updating a replicator must remove old collection access without subscription, got {:?}",
+        old_collection_result
+    );
+    assert!(
+        matches!(&new_collection_result, Err(Error::AccessDenied { .. })),
+        "updating a replicator must not turn the outbound target into a gossip source, got {:?}",
+        new_collection_result
+    );
+}
+
+#[nuclei::test(threads = 0)]
+async fn two_stream_authenticated_explicit_replicator_is_marked_explicit_replicator() {
+    let replicators = Arc::new(ReplicatorRegistry::new());
+    let peer_state = Arc::new(PeerStateTracker::new());
+    let peer = random_peer_id();
+    peer_state.peer_connected(peer.as_str());
+
+    let (coordinator, mut events) =
+        create_test_coordinator(AccessMode::Controlled, replicators, peer_state);
+
+    coordinator
+        .handle_transport_event(two_stream_event(peer.clone(), "collection1", true))
+        .await
+        .unwrap();
+
+    match recv_complete_pushlog(&coordinator, &mut events).await {
+        SyncEvent::DagReady {
+            sender_peer,
+            is_explicit_replicator,
+            ..
+        } => {
+            assert_eq!(sender_peer.as_deref(), Some(peer.as_str()));
+            assert!(
+                is_explicit_replicator,
+                "authenticated two-stream explicit replicator push should preserve explicit trust"
+            );
+        }
+        other => panic!("expected DagReady, got {:?}", other),
+    }
+}
+
+// fa4a84f7's `two_stream_bypasses_gossip_rate_limiter_for_authenticated_sync`
+// asserted that authenticated two-stream pushes skip the rate limiter entirely.
+// #1088 W4 re-lands #592's intake admission: the concern that test protected —
+// authenticated sync must never be SILENTLY dropped like gossip — is preserved
+// and strengthened by `two_stream_rate_limited_replies_backpressure_nack` below:
+// over-budget pushes now get an explicit RATE_LIMITED_MESSAGE nack that the
+// pusher's backoff consumer (#843) turns into a retry, never a lost document.
+
+#[nuclei::test(threads = 0)]
+async fn gossip_remains_rate_limited_when_bucket_is_empty() {
+    let replicators = Arc::new(ReplicatorRegistry::new());
+    let peer_state = Arc::new(PeerStateTracker::new());
+    let (coordinator, _events) = create_test_coordinator_with_rate_limiter(
+        AccessMode::Open,
+        replicators,
+        peer_state,
+        Arc::new(PeerRateLimiter::new(0, 0.0)),
+    );
+
+    let peer = random_peer_id();
+    let result = coordinator
+        .handle_transport_event(gossip_event(peer, "collection1"))
+        .await;
+
+    assert!(
+        matches!(&result, Err(Error::RateLimited { .. })),
+        "gossip should still be rate limited, got {:?}",
+        result
+    );
+}
+
+#[nuclei::test(threads = 0)]
+async fn pushlog_block_conflict_is_reported_once_and_not_re_run() {
+    let replicators = Arc::new(ReplicatorRegistry::new());
+    let peer_state = Arc::new(PeerStateTracker::new());
+    let transport = NoopTransport::new();
+    let local_peer_id = transport.local_peer_id().to_string();
+    let broadcaster = Broadcaster::new(transport.clone());
+    let blockstore = Arc::new(ConflictOnceBlockstore::new());
+
+    let (coordinator, mut events) =
+        create_test_coordinator_with_blockstore(TestCoordinatorParams {
+            sync_config: SyncConfig::default(),
+            request_rate_limiter: Arc::new(PeerRateLimiter::default()),
+            access_mode: AccessMode::Open,
+            replicators,
+            peer_state,
+            transport,
+            local_peer_id,
+            broadcaster,
+            blockstore: blockstore.clone(),
+            rate_limiter: Arc::new(PeerRateLimiter::default()),
+        });
+
+    let peer = random_peer_id();
+    let _ = coordinator
+        .handle_transport_event(pushlog_event(peer.clone(), "collection1"))
+        .await;
+
+    assert_eq!(blockstore.put_attempts(), 1);
+    match recv_block_received(&mut events).await {
+        SyncEvent::SyncError { error, .. } => assert!(error.contains("conflict"), "{error}"),
+        other => panic!("expected the conflict as a sync error, got {:?}", other),
+    }
+    assert!(coordinator.manager().pending_dag_cids().is_empty());
+
+    // The nacked pusher keeps its retry record and pushes again: the block
+    // lands and its DAG is ready, with no sync error.
+    coordinator
+        .handle_transport_event(pushlog_event(peer.clone(), "collection1"))
+        .await
+        .unwrap();
+    assert_eq!(blockstore.put_attempts(), 2);
+    match recv_complete_pushlog(&coordinator, &mut events).await {
+        SyncEvent::DagReady { sender_peer, .. } => {
+            assert_eq!(sender_peer.as_deref(), Some(peer.as_str()));
+        }
+        other => panic!("expected DagReady after the push again, got {:?}", other),
+    }
+}
+
+#[nuclei::test(threads = 0)]
+async fn gossip_block_conflict_is_reported_once_and_not_re_run() {
+    let replicators = Arc::new(ReplicatorRegistry::new());
+    let peer_state = Arc::new(PeerStateTracker::new());
+    let transport = NoopTransport::new();
+    let local_peer_id = transport.local_peer_id().to_string();
+    let broadcaster = Broadcaster::new(transport.clone());
+    let blockstore = Arc::new(ConflictOnceBlockstore::new());
+
+    // A gossip origin is only a recovery provider while the transport has a
+    // route to it; this test is about a block conflict, so make it routable.
+    let peer = random_peer_id();
+    peer_state.peer_connected(peer.as_str());
+
+    let (coordinator, mut events) =
+        create_test_coordinator_with_blockstore(TestCoordinatorParams {
+            sync_config: SyncConfig::default(),
+            request_rate_limiter: Arc::new(PeerRateLimiter::default()),
+            access_mode: AccessMode::Open,
+            replicators,
+            peer_state,
+            transport,
+            local_peer_id,
+            broadcaster,
+            blockstore: blockstore.clone(),
+            rate_limiter: Arc::new(PeerRateLimiter::default()),
+        });
+
+    let _ = coordinator
+        .handle_transport_event(gossip_event(peer.clone(), "collection1"))
+        .await;
+
+    assert_eq!(blockstore.put_attempts(), 1);
+    match recv_block_received(&mut events).await {
+        SyncEvent::SyncError { error, .. } => assert!(error.contains("conflict"), "{error}"),
+        other => panic!("expected the conflict as a sync error, got {:?}", other),
+    }
+    assert!(coordinator.manager().pending_dag_cids().is_empty());
+
+    // The head arrives again: the block lands and its DAG is ready, with no
+    // sync error.
+    coordinator
+        .handle_transport_event(gossip_event(peer.clone(), "collection1"))
+        .await
+        .unwrap();
+    assert_eq!(blockstore.put_attempts(), 2);
+    match recv_complete_pushlog(&coordinator, &mut events).await {
+        SyncEvent::DagReady { sender_peer, .. } => {
+            assert_eq!(sender_peer.as_deref(), Some(peer.as_str()));
+        }
+        other => panic!(
+            "expected DagReady after the head arrived again, got {:?}",
+            other
+        ),
+    }
+}
+
+#[nuclei::test(threads = 0)]
+async fn concurrent_same_cid_pushlog_and_car_have_one_storage_owner() {
+    let replicators = Arc::new(ReplicatorRegistry::new());
+    let peer_state = Arc::new(PeerStateTracker::new());
+    let transport = NoopTransport::new();
+    let local_peer_id = transport.local_peer_id().to_string();
+    let broadcaster = Broadcaster::new(transport.clone());
+    let blockstore = Arc::new(SingleOwnerBlockstore::new());
+
+    let (coordinator, mut events) =
+        create_test_coordinator_with_blockstore(TestCoordinatorParams {
+            sync_config: SyncConfig::default(),
+            request_rate_limiter: Arc::new(PeerRateLimiter::default()),
+            access_mode: AccessMode::Open,
+            replicators,
+            peer_state,
+            transport,
+            local_peer_id,
+            broadcaster,
+            blockstore: blockstore.clone(),
+            rate_limiter: Arc::new(PeerRateLimiter::default()),
+        });
+    let coordinator = Arc::new(coordinator);
+    let peer = random_peer_id();
+    let request = pushlog_request("collection1");
+    let root_cid = Cid::try_from(request.cid.as_ref()).expect("request CID");
+    let root_data = request.block.clone();
+    let car_data = crate::sync::car::encode_car(&[root_cid], &[(&root_cid, root_data.as_ref())])
+        .expect("encode test CAR");
+    let query_id = QueryId(88);
+    let mut completion = Box::pin(
+        coordinator
+            .manager()
+            .block_sync_completion_tracker()
+            .register(query_id),
+    );
+
+    let push = {
+        let coordinator = Arc::clone(&coordinator);
+        let peer = peer.clone();
+        crate::rt::spawn(async move {
+            coordinator
+                .handle_transport_event(TransportEvent::PushLogRequest {
+                    peer_id: peer,
+                    request,
+                    token: 0,
+                })
+                .await
+        })
+    };
+    blockstore
+        .first_write_entered
+        .acquire()
+        .await
+        .expect("first write observation semaphore remains open")
+        .forget();
+
+    let car = {
+        let coordinator = Arc::clone(&coordinator);
+        let peer = peer.clone();
+        crate::rt::spawn(async move {
+            coordinator
+                .handle_transport_event(TransportEvent::CarFetchResponse {
+                    query_id: Some(query_id),
+                    peer_id: peer,
+                    root_cid,
+                    car_data,
+                })
+                .await
+        })
+    };
+
+    assert!(
+        timeout(
+            Duration::from_millis(25),
+            blockstore.concurrent_write_entered.acquire()
+        )
+        .await
+        .is_err(),
+        "CAR storage must wait behind the PushLog owner for the same root"
+    );
+    car.join().await.unwrap().unwrap();
+    assert_eq!(
+        timeout(Duration::from_millis(250), &mut completion)
+            .await
+            .expect("contended CAR should receive a prompt retry signal")
+            .expect("completion sender remains alive"),
+        crate::sync::manager::FetchCompletion::Deferred,
+        "contended CAR must defer without reporting provider failure or durable success",
+    );
+    blockstore.release_first_write.add_permits(1);
+
+    push.join().await.unwrap().unwrap();
+    assert_eq!(blockstore.max_active_writes(), 1);
+    dispatch_complete_pending(&coordinator).await;
+    assert!(matches!(
+        events.try_recv().expect("receiver clock emits merge event"),
+        SyncEvent::DagReady { root_cid: cid, .. } if cid == root_cid
+    ));
+}
+
+// --- #1088 W1/W4: intake backpressure nacks (re-land #592, regressed by fa4a84f7) ---
+//
+// The M1 invariant: a success PushLogReply implies the pushed block is either
+// merged or registered as pending on the hub. Both rejection classes must reply
+// a byte-exact sentinel so the sender retains its durable scope marker instead
+// of laundering the failure as success. They remain distinct sentinels for
+// observability; neither starts an in-process resend loop.
+
+/// A PushLog request whose composite block links to a field block that is never
+/// stored, so `process_pushlog` must register a pending DAG to track it.
+fn pushlog_request_with_missing_link(collection_id: &str, doc_id: &str) -> PushLogRequest {
+    // Deltas no longer carry a docID, so distinct documents must differ in
+    // content to produce distinct genesis CIDs (as unsigned creates do).
+    let field_block = defra_core::Block::new(
+        defra_core::CrdtDelta::Lww(defra_core::LwwDeltaPayload {
+            field_name: "field".to_string(),
+            priority: 1,
+            collection_version_id: "schema1".to_string(),
+            data: doc_id.as_bytes().to_vec(),
+        }),
+        vec![],
+        vec![],
+    );
+    let field_cid = field_block.generate_cid().expect("field cid");
+
+    let composite = defra_core::Block::new(
+        defra_core::CrdtDelta::Composite(defra_core::CompositeDeltaPayload {
+            collection_version_id: "schema1".to_string(),
+            priority: 1,
+            status: 1,
+        }),
+        vec![],
+        vec![defra_core::DAGLink::new("field", field_cid)],
+    );
+    let composite_bytes = composite.to_dag_cbor().expect("encode composite");
+    let composite_cid = composite.generate_cid().expect("composite cid");
+
+    PushLogRequest::new(
+        doc_id.to_string(),
+        bytes::Bytes::from(composite_cid.to_bytes()),
+        collection_id.to_string(),
+        "creator1".to_string(),
+        bytes::Bytes::from(composite_bytes),
+    )
+}
+
+fn always_limited_rate_limiter() -> Arc<PeerRateLimiter> {
+    Arc::new(PeerRateLimiter::with_backoff_steps(
+        0,
+        0.0,
+        vec![Duration::from_secs(60)],
+    ))
+}
+
+#[nuclei::test(threads = 0)]
+async fn pushlog_request_at_pending_capacity_replies_at_capacity_nack() {
+    let replicators = Arc::new(ReplicatorRegistry::new());
+    let peer_state = Arc::new(PeerStateTracker::new());
+    let (coordinator, _events) = create_test_coordinator_with_sync_config(
+        AccessMode::Open,
+        replicators,
+        peer_state,
+        SyncConfig {
+            max_pending_dags: 1,
+            ..SyncConfig::default()
+        },
+    );
+    let transport = coordinator.runtime.transport.clone();
+    let peer = random_peer_id();
+
+    coordinator
+        .handle_transport_event(TransportEvent::PushLogRequest {
+            peer_id: peer.clone(),
+            request: pushlog_request_with_missing_link("collection1", "docA"),
+            token: 0,
+        })
+        .await
+        .unwrap();
+    let first = transport.pushlog_replies().pop().expect("first reply");
+    assert_eq!(
+        first.err_message, None,
+        "registered pending DAG must ack success"
+    );
+
+    let result = coordinator
+        .handle_transport_event(TransportEvent::PushLogRequest {
+            peer_id: peer.clone(),
+            request: pushlog_request_with_missing_link("collection1", "docB"),
+            token: 0,
+        })
+        .await;
+    assert!(
+        result.is_err(),
+        "capacity drop must surface as an error, got {:?}",
+        result
+    );
+
+    let reply = transport.pushlog_replies().pop().expect("overflow reply");
+    assert_eq!(
+        reply.err_message.as_deref(),
+        Some(crate::error::AT_CAPACITY_MESSAGE),
+        "capacity overflow must nack with the byte-exact capacity sentinel, never success"
+    );
+}
+
+#[nuclei::test(threads = 0)]
+async fn two_stream_at_pending_capacity_replies_at_capacity_nack() {
+    let replicators = Arc::new(ReplicatorRegistry::new());
+    let peer_state = Arc::new(PeerStateTracker::new());
+    let (coordinator, _events) = create_test_coordinator_with_sync_config(
+        AccessMode::Open,
+        replicators,
+        peer_state,
+        SyncConfig {
+            max_pending_dags: 1,
+            ..SyncConfig::default()
+        },
+    );
+    let transport = coordinator.runtime.transport.clone();
+    let peer = random_peer_id();
+
+    coordinator
+        .handle_transport_event(TransportEvent::TwoStreamRequest {
+            peer_id: peer.clone(),
+            request: pushlog_request_with_missing_link("collection1", "docA"),
+            token: None,
+            is_explicit_replicator: false,
+            explicit_replay_authorization: None,
+        })
+        .await
+        .unwrap();
+    let first = transport.two_stream_replies().pop().expect("first reply");
+    assert_eq!(
+        first.err_message, None,
+        "registered pending DAG must ack success"
+    );
+
+    let result = coordinator
+        .handle_transport_event(TransportEvent::TwoStreamRequest {
+            peer_id: peer.clone(),
+            request: pushlog_request_with_missing_link("collection1", "docB"),
+            token: None,
+            is_explicit_replicator: false,
+            explicit_replay_authorization: None,
+        })
+        .await;
+    assert!(
+        result.is_err(),
+        "capacity drop must surface as an error, got {:?}",
+        result
+    );
+
+    let reply = transport
+        .two_stream_replies()
+        .pop()
+        .expect("overflow reply");
+    assert_eq!(
+        reply.err_message.as_deref(),
+        Some(crate::error::AT_CAPACITY_MESSAGE),
+        "capacity overflow must nack with the byte-exact capacity sentinel, never success"
+    );
+}
+
+#[nuclei::test(threads = 0)]
+async fn two_stream_reply_with_response_token_does_not_reverse_dial() {
+    let replicators = Arc::new(ReplicatorRegistry::new());
+    let peer_state = Arc::new(PeerStateTracker::new());
+    let (coordinator, _events) = create_test_coordinator(AccessMode::Open, replicators, peer_state);
+    let transport = coordinator.runtime.transport.clone();
+    let peer = random_peer_id();
+
+    coordinator
+        .send_two_stream_reply(&peer, PushLogReply::success("message-1"), Some(7), true)
+        .await;
+
+    assert_eq!(transport.pushlog_response_tokens(), vec![7]);
+    assert_eq!(transport.pushlog_replies().len(), 1);
+    assert!(
+        transport.two_stream_replies().is_empty(),
+        "a response token must avoid a fresh reverse-dial"
+    );
+}
+
+#[nuclei::test(threads = 0)]
+async fn two_stream_reply_without_response_token_falls_back_to_reverse_dial() {
+    let replicators = Arc::new(ReplicatorRegistry::new());
+    let peer_state = Arc::new(PeerStateTracker::new());
+    let (coordinator, _events) = create_test_coordinator(AccessMode::Open, replicators, peer_state);
+    let transport = coordinator.runtime.transport.clone();
+    let peer = random_peer_id();
+
+    coordinator
+        .send_two_stream_reply(&peer, PushLogReply::success("message-1"), None, true)
+        .await;
+
+    assert!(transport.pushlog_response_tokens().is_empty());
+    assert!(transport.pushlog_replies().is_empty());
+    assert_eq!(transport.two_stream_replies().len(), 1);
+}
+
+#[nuclei::test(threads = 0)]
+async fn two_stream_reply_for_legacy_sender_falls_back_to_reverse_dial() {
+    let replicators = Arc::new(ReplicatorRegistry::new());
+    let peer_state = Arc::new(PeerStateTracker::new());
+    let (coordinator, _events) = create_test_coordinator(AccessMode::Open, replicators, peer_state);
+    let transport = coordinator.runtime.transport.clone();
+    let peer = random_peer_id();
+
+    coordinator
+        .send_two_stream_reply(&peer, PushLogReply::success("message-1"), Some(7), false)
+        .await;
+
+    assert!(transport.pushlog_response_tokens().is_empty());
+    assert!(transport.pushlog_replies().is_empty());
+    assert_eq!(transport.two_stream_replies().len(), 1);
+}
+
+#[nuclei::test(threads = 0)]
+async fn pushlog_request_rate_limited_replies_backpressure_nack() {
+    let replicators = Arc::new(ReplicatorRegistry::new());
+    let peer_state = Arc::new(PeerStateTracker::new());
+    let (coordinator, _events) = create_test_coordinator_with_rate_limiter(
+        AccessMode::Open,
+        replicators,
+        peer_state,
+        always_limited_rate_limiter(),
+    );
+    let transport = coordinator.runtime.transport.clone();
+    let peer = random_peer_id();
+
+    let result = coordinator
+        .handle_transport_event(pushlog_event(peer.clone(), "collection1"))
+        .await;
+    assert!(
+        matches!(&result, Err(e) if e.is_rate_limited()),
+        "expected rate-limited rejection, got {:?}",
+        result
+    );
+
+    let reply = transport.pushlog_replies().pop().expect("nack reply sent");
+    assert_eq!(
+        reply.err_message.as_deref(),
+        Some(crate::error::RATE_LIMITED_MESSAGE)
+    );
+    assert_eq!(reply.retry_after_ms, None);
+}
+
+#[nuclei::test(threads = 0)]
+async fn negotiated_pushlog_rate_limit_carries_retry_after() {
+    for iroh in [false, true] {
+        let (coordinator, _events) = create_test_coordinator_with_rate_limiter(
+            AccessMode::Open,
+            Arc::new(ReplicatorRegistry::new()),
+            Arc::new(PeerStateTracker::new()),
+            always_limited_rate_limiter(),
+        );
+        let mut request = pushlog_request("collection1");
+        request.supports_retry_after = iroh;
+        request.negotiated_retry_after = !iroh;
+        coordinator
+            .handle_transport_event(TransportEvent::TwoStreamRequest {
+                peer_id: random_peer_id(),
+                request,
+                token: None,
+                is_explicit_replicator: true,
+                explicit_replay_authorization: None,
+            })
+            .await
+            .expect_err("rate limited");
+        let reply = coordinator
+            .runtime
+            .transport
+            .two_stream_replies()
+            .pop()
+            .unwrap();
+        assert!(reply.retry_after().is_some());
+        assert_eq!(
+            reply.err_message.as_deref(),
+            Some(crate::error::RATE_LIMITED_MESSAGE)
+        );
+    }
+}
+
+#[nuclei::test(threads = 0)]
+async fn saturated_request_worker_replies_with_actionable_capacity_nack() {
+    let replicators = Arc::new(ReplicatorRegistry::new());
+    let peer_state = Arc::new(PeerStateTracker::new());
+    let (coordinator, mut events) =
+        create_test_coordinator(AccessMode::Open, replicators, peer_state);
+    let transport = coordinator.runtime.transport.clone();
+    let peer = random_peer_id();
+
+    let result = coordinator
+        .handle_transport_event_with_admission(
+            pushlog_event(peer, "collection1"),
+            crate::sync::DispatchAdmission::Saturated,
+        )
+        .await;
+    assert!(result.is_err(), "saturated work must not be admitted");
+
+    let reply = transport
+        .pushlog_replies()
+        .pop()
+        .expect("capacity nack sent");
+    assert_eq!(
+        reply.err_message.as_deref(),
+        Some(crate::error::AT_CAPACITY_MESSAGE)
+    );
+    assert!(
+        crate::rt::time::timeout(Duration::from_millis(25), events.recv())
+            .await
+            .is_err(),
+        "rejected work must not reach receiver ownership"
+    );
+}
+
+#[nuclei::test(threads = 0)]
+async fn two_stream_rate_limited_replies_backpressure_nack() {
+    let replicators = Arc::new(ReplicatorRegistry::new());
+    let peer_state = Arc::new(PeerStateTracker::new());
+    let (coordinator, _events) = create_test_coordinator_with_rate_limiter(
+        AccessMode::Open,
+        replicators,
+        peer_state,
+        always_limited_rate_limiter(),
+    );
+    let transport = coordinator.runtime.transport.clone();
+    let peer = random_peer_id();
+
+    let result = coordinator
+        .handle_transport_event(two_stream_event(peer.clone(), "collection1", false))
+        .await;
+    assert!(
+        matches!(&result, Err(e) if e.is_rate_limited()),
+        "expected rate-limited rejection, got {:?}",
+        result
+    );
+
+    let reply = transport
+        .two_stream_replies()
+        .pop()
+        .expect("nack reply sent");
+    assert_eq!(
+        reply.err_message.as_deref(),
+        Some(crate::error::RATE_LIMITED_MESSAGE)
+    );
+}
+
+#[nuclei::test(threads = 0)]
+async fn doc_sync_rate_limited_replies_backpressure_nack() {
+    let replicators = Arc::new(ReplicatorRegistry::new());
+    let peer_state = Arc::new(PeerStateTracker::new());
+    let (coordinator, _events) = create_test_coordinator_with_rate_limiter(
+        AccessMode::Open,
+        replicators,
+        peer_state,
+        always_limited_rate_limiter(),
+    );
+    let transport = coordinator.runtime.transport.clone();
+    let peer = random_peer_id();
+
+    let result = coordinator
+        .handle_transport_event(doc_sync_event(peer.clone()))
+        .await;
+    assert!(
+        matches!(&result, Err(e) if e.is_rate_limited()),
+        "expected rate-limited rejection, got {:?}",
+        result
+    );
+
+    let reply = transport.doc_sync_replies().pop().expect("nack reply sent");
+    assert_eq!(
+        reply.err_message.as_deref(),
+        Some(crate::error::RATE_LIMITED_MESSAGE)
+    );
+}
+
+#[nuclei::test(threads = 0)]
+async fn branchable_sync_rate_limited_replies_backpressure_nack() {
+    let replicators = Arc::new(ReplicatorRegistry::new());
+    let peer_state = Arc::new(PeerStateTracker::new());
+    let (coordinator, _events) = create_test_coordinator_with_rate_limiter(
+        AccessMode::Open,
+        replicators,
+        peer_state,
+        always_limited_rate_limiter(),
+    );
+    let transport = coordinator.runtime.transport.clone();
+    let peer = random_peer_id();
+
+    let result = coordinator
+        .handle_transport_event(branchable_sync_event(peer.clone(), "collection1"))
+        .await;
+    assert!(
+        matches!(&result, Err(e) if e.is_rate_limited()),
+        "expected rate-limited rejection, got {:?}",
+        result
+    );
+
+    let reply = transport
+        .branchable_replies()
+        .pop()
+        .expect("nack reply sent");
+    assert_eq!(
+        reply.err_message.as_deref(),
+        Some(crate::error::RATE_LIMITED_MESSAGE)
+    );
+}
+
+#[nuclei::test(threads = 0)]
+async fn car_fetch_rate_limited_replies_busy() {
+    let replicators = Arc::new(ReplicatorRegistry::new());
+    let peer_state = Arc::new(PeerStateTracker::new());
+    let (coordinator, _events) = create_test_coordinator_with_rate_limiter(
+        AccessMode::Open,
+        replicators,
+        peer_state,
+        always_limited_rate_limiter(),
+    );
+    let transport = coordinator.runtime.transport.clone();
+    let peer = random_peer_id();
+
+    let result = coordinator
+        .handle_transport_event(car_fetch_event(peer.clone(), cid_for(BLOCK_DATA)))
+        .await;
+    assert!(
+        matches!(&result, Err(e) if e.is_rate_limited()),
+        "expected rate-limited rejection, got {:?}",
+        result
+    );
+
+    assert_busy_reply_for(&transport, cid_for(BLOCK_DATA));
+}
+
+fn assert_busy_reply_for(transport: &NoopTransport, root: Cid) {
+    let reply = transport
+        .car_responses()
+        .pop()
+        .expect("a CAR reply was sent");
+    assert!(crate::sync::car::is_car_busy(&reply));
+    assert_eq!(crate::sync::car::decode_car(&reply).unwrap().0, vec![root]);
+}
+
+#[nuclei::test(threads = 0)]
+async fn car_fetch_shed_at_capacity_replies_busy() {
+    let (coordinator, _events) = create_test_coordinator(
+        AccessMode::Open,
+        Arc::new(ReplicatorRegistry::new()),
+        Arc::new(PeerStateTracker::new()),
+    );
+    let root = cid_for(BLOCK_DATA);
+
+    let result = coordinator
+        .handle_transport_event_with_admission(
+            car_fetch_event(random_peer_id(), root),
+            crate::sync::DispatchAdmission::Saturated,
+        )
+        .await;
+
+    assert!(result.is_err(), "saturated work must not be admitted");
+    assert_busy_reply_for(&coordinator.runtime.transport, root);
+}
+
+#[nuclei::test(threads = 0)]
+async fn busy_replies_complete_rooted_and_block_sync_waiters_as_busy() {
+    use crate::sync::manager::FetchCompletion;
+    let (coordinator, _events) = create_test_coordinator(
+        AccessMode::Open,
+        Arc::new(ReplicatorRegistry::new()),
+        Arc::new(PeerStateTracker::new()),
+    );
+    let root = cid_for(BLOCK_DATA);
+    let hub = random_peer_id();
+    let manager = coordinator.manager();
+    let rooted = manager
+        .rooted_car_completion_tracker()
+        .register(root, hub.clone());
+    let query = QueryId(7);
+    let block_sync = manager.block_sync_completion_tracker().register(query);
+
+    for event in [
+        TransportEvent::CarFetchResponse {
+            query_id: None,
+            peer_id: hub,
+            root_cid: root,
+            car_data: crate::sync::car::encode_car_busy(&root).unwrap(),
+        },
+        TransportEvent::BlockSyncComplete {
+            query_id: query,
+            success: false,
+            cause: Some(crate::transport::FetchFailureCause::Refused),
+            error: Some("every provider busy".to_string()),
+            provider_busy: true,
+        },
+    ] {
+        coordinator.handle_transport_event(event).await.unwrap();
+    }
+
+    assert_eq!(rooted.await.unwrap(), FetchCompletion::ProviderBusy);
+    assert_eq!(block_sync.await.unwrap(), FetchCompletion::ProviderBusy);
+    let snapshot = manager.diagnostics().snapshot();
+    assert_eq!(snapshot.car_busy_responses, 1);
+    assert_eq!(snapshot.car_empty_responses, 0);
+}
+
+/// #1088 W5 (in-process half): 8 pushers × 6 docs fan into a hub whose pending
+/// map holds 2 slots. Nothing drains (no Bitswap in NoopTransport), so exactly
+/// `cap` pushes can be admitted; every other push must be nacked — never
+/// success-acked (M1) — and the pending depth must never exceed the cap.
+#[nuclei::test(threads = 0)]
+async fn fan_in_pushes_keep_pending_depth_bounded_and_account_every_reply() {
+    const CAP: usize = 2;
+    const FAN_IN_PUSHERS: usize = 8;
+    const DOCS_PER_PUSHER: usize = 6;
+
+    let replicators = Arc::new(ReplicatorRegistry::new());
+    let peer_state = Arc::new(PeerStateTracker::new());
+    let (coordinator, _events) = create_test_coordinator_with_sync_config(
+        AccessMode::Open,
+        replicators,
+        peer_state,
+        SyncConfig {
+            max_pending_dags: CAP,
+            ..SyncConfig::default()
+        },
+    );
+    let transport = coordinator.runtime.transport.clone();
+
+    for pusher in 0..FAN_IN_PUSHERS {
+        let peer = random_peer_id();
+        for doc in 0..DOCS_PER_PUSHER {
+            let _ = coordinator
+                .handle_transport_event(TransportEvent::TwoStreamRequest {
+                    peer_id: peer.clone(),
+                    request: pushlog_request_with_missing_link(
+                        "collection1",
+                        &format!("p{pusher}-d{doc}"),
+                    ),
+                    token: None,
+                    is_explicit_replicator: false,
+                    explicit_replay_authorization: None,
+                })
+                .await;
+            assert!(
+                coordinator.manager.pending_dag_count() <= CAP,
+                "pending depth exceeded the configured cap"
+            );
+        }
+    }
+
+    let replies = transport.two_stream_replies();
+    let total = FAN_IN_PUSHERS * DOCS_PER_PUSHER;
+    assert_eq!(replies.len(), total, "every push must receive a reply");
+
+    let successes = replies.iter().filter(|r| r.err_message.is_none()).count();
+    let nacks = replies
+        .iter()
+        .filter(|r| r.err_message.as_deref() == Some(crate::error::AT_CAPACITY_MESSAGE))
+        .count();
+    assert_eq!(
+        successes, CAP,
+        "only registered pushes may be success-acked (M1: success => registered-or-merged)"
+    );
+    assert_eq!(
+        nacks,
+        total - CAP,
+        "every dropped registration must be nacked with the capacity sentinel"
+    );
+
+    // No completed DAGs and no arriving link blocks here, so admission overflow
+    // must not trigger any pending-DAG re-walks (the M4 CPU burn shape).
+    let diagnostics = coordinator.manager.diagnostics().snapshot();
+    assert_eq!(
+        diagnostics.missing_link_retries, 0,
+        "capacity overflow must not cause retry walks"
+    );
+}
+
+/// An error DocSyncReply (e.g. a RATE_LIMITED_MESSAGE nack from #1088 W4)
+/// carries no results; it must surface as an error, not be consumed as an
+/// empty successful sync.
+#[nuclei::test(threads = 0)]
+async fn doc_sync_error_reply_is_not_consumed_as_empty_success() {
+    let replicators = Arc::new(ReplicatorRegistry::new());
+    let peer_state = Arc::new(PeerStateTracker::new());
+    let (coordinator, _events) = create_test_coordinator(AccessMode::Open, replicators, peer_state);
+    let peer = random_peer_id();
+
+    let result = coordinator
+        .handle_transport_event(TransportEvent::DocSyncReply {
+            peer_id: peer.clone(),
+            reply: DocSyncReply::error("doc-sync-1", crate::error::RATE_LIMITED_MESSAGE),
+        })
+        .await;
+
+    assert!(
+        result.is_err(),
+        "an error reply must not be treated as an empty successful sync, got {:?}",
+        result
+    );
+}
+
+#[nuclei::test(threads = 0)]
+async fn doc_sync_reply_starts_independent_dag_roots_concurrently() {
+    let transport = NoopTransport::new();
+    let transport_handle = transport.clone();
+    let store = Arc::new(RegolithStore::in_memory().unwrap());
+    let blockstore = Arc::new(DefraBlockstore::new(store, true));
+    let (coordinator, _events) = SyncCoordinator::new(
+        transport,
+        blockstore,
+        crate::network::test_network(),
+        SyncConfig::default(),
+    )
+    .await
+    .unwrap();
+    let first_root = cid_for(b"first root");
+    let second_root = cid_for(b"second root");
+    let peer = random_peer_id();
+    transport_handle.set_connected_peers(vec![peer.clone()]);
+
+    coordinator
+        .handle_transport_event(TransportEvent::DocSyncReply {
+            peer_id: peer,
+            reply: DocSyncReply::success(
+                "doc-sync-1",
+                vec![
+                    DocSyncItem {
+                        doc_id: "doc1".to_string(),
+                        heads: vec![first_root.to_bytes()],
+                    },
+                    DocSyncItem {
+                        doc_id: "doc2".to_string(),
+                        heads: vec![second_root.to_bytes()],
+                    },
+                ],
+            ),
+        })
+        .await
+        .unwrap();
+
+    timeout(Duration::from_secs(1), async {
+        while transport_handle.car_requests().len() < 2 {
+            crate::rt::yield_now().await;
+        }
+    })
+    .await
+    .expect("a stalled first root must not block the second root");
+
+    let requested: rapidhash::RapidHashSet<_> =
+        transport_handle.car_requests().into_iter().collect();
+    assert_eq!(
+        requested,
+        rapidhash::RapidHashSet::from_iter([first_root, second_root])
+    );
+}
+
+/// Same for BranchableSync: an error reply has empty heads and must not be
+/// mistaken for "peer has no heads for collection".
+#[nuclei::test(threads = 0)]
+async fn branchable_sync_error_reply_is_not_consumed_as_no_heads() {
+    let replicators = Arc::new(ReplicatorRegistry::new());
+    let peer_state = Arc::new(PeerStateTracker::new());
+    let (coordinator, _events) = create_test_coordinator(AccessMode::Open, replicators, peer_state);
+    let peer = random_peer_id();
+
+    let result = coordinator
+        .handle_transport_event(TransportEvent::BranchableSyncReply {
+            peer_id: peer.clone(),
+            reply: BranchableSyncReply::error(
+                "branchable-1",
+                "collection1",
+                crate::error::RATE_LIMITED_MESSAGE,
+            ),
+        })
+        .await;
+
+    assert!(
+        result.is_err(),
+        "an error reply must not be treated as \"peer has no heads\", got {:?}",
+        result
+    );
+}
+
+/// The gossip limiter (abuse ladder) and the request-intake limiter (pacing)
+/// are separate: an exhausted gossip bucket must not block replicator pushes,
+/// which have their own paced bucket.
+#[nuclei::test(threads = 0)]
+async fn request_intake_uses_paced_limiter_separate_from_gossip_ladder() {
+    let replicators = Arc::new(ReplicatorRegistry::new());
+    let peer_state = Arc::new(PeerStateTracker::new());
+    let (coordinator, _events) = create_test_coordinator_with_split_limiters(
+        AccessMode::Open,
+        replicators,
+        peer_state,
+        always_limited_rate_limiter(),
+        Arc::new(PeerRateLimiter::default()),
+    );
+    let peer = random_peer_id();
+
+    let gossip_result = coordinator
+        .handle_transport_event(gossip_event(peer.clone(), "collection1"))
+        .await;
+    assert!(
+        matches!(&gossip_result, Err(e) if e.is_rate_limited()),
+        "gossip must still be governed by the ladder limiter, got {:?}",
+        gossip_result
+    );
+
+    let push_result = coordinator
+        .handle_transport_event(two_stream_event(peer.clone(), "collection1", false))
+        .await;
+    assert!(
+        push_result.is_ok(),
+        "request intake must use its own paced limiter, got {:?}",
+        push_result
+    );
+}
+
+#[nuclei::test(threads = 0)]
+async fn sync_status_surfaces_quarantine_counters() {
+    let replicators = Arc::new(ReplicatorRegistry::new());
+    let peer_state = Arc::new(PeerStateTracker::new());
+    let (coordinator, _events) = create_test_coordinator(AccessMode::Open, replicators, peer_state);
+
+    let before = coordinator.sync_status().await;
+    assert_eq!(before.pending_dag_terminal_quarantined, 0);
+    assert_eq!(before.quarantined_pending_dags, 0);
+
+    let root = cid_for(b"sync-status-quarantine-root");
+    coordinator
+        .manager
+        .quarantine_pending_dag(&root, "unique constraint violation")
+        .await;
+
+    let after = coordinator.sync_status().await;
+    assert_eq!(after.pending_dag_terminal_quarantined, 1);
+    assert_eq!(after.quarantined_pending_dags, 1);
+}
+
+#[nuclei::test(threads = 0)]
+async fn live_connection_allows_pull_before_lifecycle_notification_without_granting_push() {
+    let replicators = Arc::new(ReplicatorRegistry::new());
+    let peer_state = Arc::new(PeerStateTracker::new());
+    let peer = random_peer_id();
+    let unknown = random_peer_id();
+    let (coordinator, _) =
+        create_test_coordinator(AccessMode::Controlled, replicators, Arc::clone(&peer_state));
+    coordinator
+        .runtime
+        .transport
+        .set_connected_peers(vec![peer.clone()]);
+    assert!(!peer_state.is_connected(peer.as_str()));
+    assert!(coordinator
+        .check_access_str(peer.as_str(), "collection1")
+        .await
+        .is_ok());
+    assert!(coordinator.check_peer_is_replicator(&peer).await.is_ok());
+    assert!(coordinator
+        .check_pushlog_access_str(peer.as_str(), "collection1")
+        .await
+        .is_err());
+    assert!(coordinator
+        .check_access_str(unknown.as_str(), "collection1")
+        .await
+        .is_err());
+    coordinator
+        .runtime
+        .transport
+        .set_connected_peers(Vec::new());
+    assert!(coordinator
+        .check_access_str(peer.as_str(), "collection1")
+        .await
+        .is_err());
+}
+
+/// A receive gate that refuses every document it is asked about.
+struct RefuseAll;
+
+#[async_trait::async_trait]
+impl crate::sync::receive_gate::ReceiveGate for RefuseAll {
+    async fn allows(
+        &self,
+        _collection_id: &str,
+        _doc_id: &str,
+        _head: &[u8],
+        _blocks: &dyn crate::sync::receive_gate::GateBlocks,
+    ) -> bool {
+        false
+    }
+}
+
+/// A one-field document: its composite head and the field block it links.
+fn gated_document() -> ((Cid, Vec<u8>), (Cid, Vec<u8>)) {
+    use defra_core::block::{Block, CompositeDeltaPayload, CrdtDelta, DAGLink, LwwDeltaPayload};
+    let field = Block::new(
+        CrdtDelta::Lww(LwwDeltaPayload {
+            field_name: "blockNumber".to_string(),
+            priority: 1,
+            collection_version_id: "v1".to_string(),
+            data: vec![0x18, 100],
+        }),
+        vec![],
+        vec![],
+    );
+    let field_cid = field.generate_cid().unwrap();
+    let head = Block::new(
+        CrdtDelta::Composite(CompositeDeltaPayload {
+            collection_version_id: "v1".to_string(),
+            priority: 1,
+            status: 1,
+        }),
+        vec![],
+        vec![DAGLink::new("blockNumber", field_cid)],
+    );
+    (
+        (head.generate_cid().unwrap(), head.to_dag_cbor().unwrap()),
+        (field_cid, field.to_dag_cbor().unwrap()),
+    )
+}
+
+/// A push the gate refuses on arrival stores nothing and asks for nothing.
+#[nuclei::test(threads = 0)]
+async fn a_push_the_gate_refuses_on_arrival_stores_nothing() {
+    let (coordinator, _events) = create_test_coordinator(
+        AccessMode::Open,
+        Arc::new(ReplicatorRegistry::new()),
+        Arc::new(PeerStateTracker::new()),
+    );
+    coordinator.set_receive_gate(Arc::new(RefuseAll));
+    let ((head_cid, head), _) = gated_document();
+    let broadcast = PushLogBroadcast::new(
+        "doc".to_string(),
+        bytes::Bytes::from(head_cid.to_bytes()),
+        "col-log".to_string(),
+        "creator".to_string(),
+        bytes::Bytes::from(head),
+    );
+
+    assert!(!coordinator.gate_arrival(&broadcast).await);
+    assert!(!coordinator
+        .manager()
+        .blockstore()
+        .has(&head_cid)
+        .await
+        .unwrap());
+    assert!(coordinator
+        .manager()
+        .pending_dag_snapshot(&head_cid)
+        .is_none());
+}
+
+/// A CAR fetched for a root the gate then refuses is not imported, and the
+/// root is discharged so it is not fetched again.
+#[nuclei::test(threads = 0)]
+async fn a_fetched_car_the_gate_refuses_is_not_imported() {
+    let (coordinator, _events) = create_test_coordinator(
+        AccessMode::Open,
+        Arc::new(ReplicatorRegistry::new()),
+        Arc::new(PeerStateTracker::new()),
+    );
+    let ((head_cid, head), (field_cid, field)) = gated_document();
+    let broadcast = PushLogBroadcast::new(
+        "doc".to_string(),
+        bytes::Bytes::from(head_cid.to_bytes()),
+        "col-log".to_string(),
+        "creator".to_string(),
+        bytes::Bytes::from(head.clone()),
+    );
+    // Kept on arrival (no gate yet): the head is stored and its field block
+    // is to be fetched.
+    coordinator
+        .manager()
+        .process_pushlog(&broadcast, Some("peer-1"), false, None)
+        .await
+        .unwrap();
+    assert!(coordinator
+        .manager()
+        .pending_dag_snapshot(&head_cid)
+        .is_some());
+
+    coordinator.set_receive_gate(Arc::new(RefuseAll));
+    let car = crate::sync::car::encode_car(
+        &[head_cid],
+        &[(&head_cid, head.as_slice()), (&field_cid, field.as_slice())],
+    )
+    .unwrap();
+    coordinator
+        .handle_transport_event(TransportEvent::CarFetchResponse {
+            query_id: None,
+            peer_id: random_peer_id(),
+            root_cid: head_cid,
+            car_data: car,
+        })
+        .await
+        .unwrap();
+
+    assert!(
+        !coordinator
+            .manager()
+            .blockstore()
+            .has(&field_cid)
+            .await
+            .unwrap(),
+        "nothing of the refused CAR was imported"
+    );
+    assert!(coordinator
+        .manager()
+        .pending_dag_snapshot(&head_cid)
+        .is_none());
+    assert!(coordinator
+        .manager()
+        .blockstore()
+        .is_merged(&head_cid)
+        .await
+        .unwrap());
+}
+
+/// A replicator's direct push meets the receive gate too: refused, it is
+/// skipped and nothing of it is stored.
+#[nuclei::test(threads = 0)]
+async fn a_two_stream_push_the_gate_refuses_stores_nothing() {
+    let (coordinator, _events) = create_test_coordinator(
+        AccessMode::Open,
+        Arc::new(ReplicatorRegistry::new()),
+        Arc::new(PeerStateTracker::new()),
+    );
+    coordinator.set_receive_gate(Arc::new(RefuseAll));
+    let ((head_cid, head), _) = gated_document();
+    let request = PushLogRequest::new(
+        "doc".to_string(),
+        bytes::Bytes::from(head_cid.to_bytes()),
+        "col-log".to_string(),
+        "creator".to_string(),
+        bytes::Bytes::from(head),
+    );
+    let _ = coordinator
+        .handle_transport_event(TransportEvent::TwoStreamRequest {
+            peer_id: random_peer_id(),
+            request,
+            token: None,
+            is_explicit_replicator: true,
+            explicit_replay_authorization: None,
+        })
+        .await;
+    assert!(!coordinator
+        .manager()
+        .blockstore()
+        .has(&head_cid)
+        .await
+        .unwrap());
+}

@@ -1,0 +1,67 @@
+use std::process::Command;
+use std::sync::Arc;
+
+use db::database::DB;
+use keyring::{FileKeyring, Keyring, ENCRYPTION_KEY, KEYRING_SECRET_ENV};
+
+#[nuclei::test]
+async fn server_dump_reads_encrypted_regolith_store() {
+    let root = tempfile::tempdir().unwrap();
+    let secret = "server-dump-test-secret";
+    let encryption_key = [42; 32];
+
+    let mut config = cli::config::Config {
+        rootdir: root.path().to_path_buf(),
+        ..Default::default()
+    };
+    config.datastore.at_rest_encryption = true;
+
+    let keyring = FileKeyring::open(config.keyring_path(), secret.as_bytes()).unwrap();
+    keyring.set(ENCRYPTION_KEY, &encryption_key).unwrap();
+
+    std::fs::write(
+        root.path().join("config.yaml"),
+        serde_yaml::to_string(&config).unwrap(),
+    )
+    .unwrap();
+
+    let expected = {
+        let store = Arc::new(
+            storage::RegolithStore::open_with_options(
+                config.data_path(),
+                storage::RegolithStoreOptions::default().with_encryption_key(encryption_key),
+            )
+            .unwrap(),
+        );
+        let database = DB::open_from_arc(store).await.unwrap();
+        database
+            .add_collection(
+                &defra_core::RequestContext::ambient(),
+                "type Users { name: String }",
+            )
+            .await
+            .unwrap();
+        database.print_dump().await.unwrap()
+    };
+
+    let output = Command::new(env!("CARGO_BIN_EXE_defradb"))
+        .args(["--rootdir"])
+        .arg(root.path())
+        .arg("server-dump")
+        .env(KEYRING_SECRET_ENV, secret)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "server-dump failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8(output.stdout)
+            .unwrap()
+            .lines()
+            .collect::<Vec<_>>(),
+        expected
+    );
+}

@@ -12,17 +12,17 @@ path = "src/main.rs"
 [dependencies]
 rapidhash.workspace = true
 axum = { workspace = true }
-defra-version = { path = "../../crates/defra-version" }
+defra-version = { path = "../../crates/foundation/defra-version" }
 clap = { version = "4.5", features = ["derive"] }
 nuclei.workspace = true
-edge = { path = "../../crates/edge" }
-net = { path = "../../crates/net" }
+edge = { path = "../../crates/foundation/edge" }
+net = { path = "../../crates/building-blocks/net" }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 thiserror = "2.0"
 chrono = { version = "0.4", features = ["serde"] }
-colored = "2.0"
-dirs = "5.0"
+colored = "3.1"
+dirs = "7.0"
 
 [lints]
 workspace = true

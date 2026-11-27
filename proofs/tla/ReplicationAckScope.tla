@@ -36,16 +36,16 @@
 \* at the scope it was pushed at, reads as acknowledged.
 \*
 \* Code this models (defradb.rs):
-\*   crates/p2p/src/ack_scope.rs    AckScope::new (the one scope rule)
-\*   crates/p2p/src/replicator.rs   ReplicatorInfo::ack_scope
-\*   crates/p2p/src/sync/coordinator/broadcast.rs
+\*   crates/database/p2p/src/ack_scope.rs    AckScope::new (the one scope rule)
+\*   crates/database/p2p/src/replicator.rs   ReplicatorInfo::ack_scope
+\*   crates/database/p2p/src/sync/coordinator/broadcast.rs
 \*                                  SyncCoordinator::push_jobs (who gets a push)
-\*   crates/db/src/merge/txn_broadcaster.rs
+\*   crates/database/db/src/merge/txn_broadcaster.rs
 \*                                  broadcast (document push, then collection push)
-\*   crates/storage/src/stores/peerstore.rs
+\*   crates/engine/storage/src/stores/peerstore.rs
 \*                                  Peerstore::record_acknowledged_heads,
 \*                                  Peerstore::acknowledged_heads
-\*   crates/db/src/merge/replication_ack.rs
+\*   crates/database/db/src/merge/replication_ack.rs
 \*                                  replication_acknowledged (the read)
 \*
 \* Correspondence table (model -> Rust):

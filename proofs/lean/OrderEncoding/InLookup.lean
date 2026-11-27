@@ -1,7 +1,7 @@
 import OrderEncoding.Bytes
 
 /-!
-# OrderEncoding.InLookup — `_in` point lookups run in key order, each once
+# OrderEncoding.InLookup — `_in` point lookups run in key order under an order, as written without one, each once
 
 The story. A query asks for `age _in [55, 25, 45, 35, 25]` on an indexed field,
 ordered by age. The planner trusts the index to hand rows back already in order,
@@ -9,27 +9,36 @@ so it sorts nothing itself. The index answers an `_in` with one point lookup per
 value. If those lookups run in the order the filter wrote them, the rows come
 back as 55, 25, 45, 35: out of order, and 25 twice. That must never happen.
 
-The fix (`sort_in_key_order` in
-`crates/query/src/planner/index_selection/filter_to_scan.rs`, called from
-`filter_to_index_scan`) encodes every value into its index key, sorts the keys
-in byte order (the same `memcmp` order the store keeps keys in), drops a key
-equal to the one before it, and reverses the list when the scan runs backward.
+The fix (`order_in_values` in
+`crates/engine/query/src/planner/index_selection/filter_to_scan.rs`, called from
+`filter_to_index_scan`) encodes every value into its index key, drops a key it
+has already seen, sorts the keys in byte order (the same `memcmp` order the
+store keeps keys in), and reverses the list when the scan runs backward.
+
+A query with no order asks for nothing, so there the same function only drops
+the repeated keys and leaves the rest as the filter wrote them: `_in [55, 25,
+55]` looks up 55, then 25. That is the order Go's lookups run in.
 
 What this file promises:
 * the lookup list is strictly increasing in key order (so rows come back in
   index order and no key is looked up twice), `lookups_strictly_increasing`;
 * reversed for a backward scan, it is strictly decreasing, `reversed_lookups_strictly_decreasing`;
 * no value the filter asked for is lost, and nothing new appears, `mem_lookups`;
-* each key appears once, `lookups_nodup`.
+* each key appears once, `lookups_nodup`;
+* without an order, the lookups are the filter's keys in the order written
+  (`written_sublist`), none lost and none new (`mem_written`), each once
+  (`written_nodup`).
 
 Why key order is the requested order: `OrderEncoding.lean` proves the ascending
 encoding preserves value order and the descending one inverts it, so byte order
 on keys is the index's own order, ASC or DESC.
 
 Model notes. A key is `Bytes` from `OrderEncoding.Bytes`, ordered by `Lex`
-(`memcmp`). The Rust code sorts then deduplicates neighbours; the model inserts
+(`memcmp`). The Rust code drops repeated keys then sorts; the model inserts
 each key into an already-sorted list, skipping an equal one. Both produce the
 strictly increasing list of the same keys, which is all the theorems below state.
+Without an order the Rust code keeps a key the first time it sees it; `written`
+does the same by keeping the head and removing it from the rest.
 A value that fails to encode is kept after the encoded ones in Rust; the model
 covers only encoded keys.
 -/
@@ -195,6 +204,54 @@ theorem lookups_nodup (ks : List Bytes) : (lookups ks).Nodup :=
   (lookups_strictly_increasing ks).imp (fun {a b} (h : a <ₗ b) (e : a = b) => by
     -- an equal pair would put a key before itself
     subst e; exact Lex.irrefl h)
+
+/-! ## Without an order: as written, each once -/
+
+/-- The lookups for a query with no order: the filter's keys as written, a
+    repeated key kept only where it first appears. -/
+def written : List Bytes → List Bytes
+  -- no keys: no lookups
+  | [] => []
+  -- keep the first key, and drop it from the lookups for the rest
+  | k :: ks => k :: (written ks).filter (fun x => x ≠ k)
+
+/-- Every key the filter asked for is looked up, and no other. -/
+theorem mem_written (y : Bytes) : ∀ ks, y ∈ written ks ↔ y ∈ ks
+  -- no keys: nothing looked up
+  | [] => by simp [written]
+  -- `y` is the first key, or a different key found in the rest
+  | k :: ks => by
+    -- unfold one step and use the same fact for the rest
+    simp only [written, List.mem_cons, List.mem_filter, mem_written y ks, decide_eq_true_eq]
+    constructor
+    -- looked up: it is the head, or it is in the rest
+    · rintro (h | ⟨h, _⟩)
+      · exact Or.inl h
+      · exact Or.inr h
+    -- asked for: the head is kept; a key of the rest is kept unless it is the head
+    · rintro (h | h)
+      · exact Or.inl h
+      · by_cases e : y = k
+        · exact Or.inl e
+        · exact Or.inr ⟨h, e⟩
+
+/-- The lookups are in the order the filter wrote them: the list is the
+    filter's own with some keys left out, nothing moved. -/
+theorem written_sublist : ∀ ks, (written ks).Sublist ks
+  -- no keys: the empty list is inside the empty list
+  | [] => List.Sublist.slnil
+  -- the head stays in front; what follows is inside the rest
+  | k :: ks => List.Sublist.cons₂ k ((List.filter_sublist _).trans (written_sublist ks))
+
+/-- Each key is looked up once: a repeated `_in` value yields one row. -/
+theorem written_nodup : ∀ ks, (written ks).Nodup
+  -- no keys: no repeats
+  | [] => List.nodup_nil
+  -- the head was removed from the rest, and the rest had no repeats
+  | k :: ks => by
+    refine List.nodup_cons.mpr ⟨?_, (written_nodup ks).sublist (List.filter_sublist _)⟩
+    -- the filter keeps only keys different from the head
+    simp [List.mem_filter]
 
 /-! ## Red: the bugs these rule out -/
 

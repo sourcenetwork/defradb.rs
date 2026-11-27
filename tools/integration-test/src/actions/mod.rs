@@ -3,6 +3,7 @@ mod block;
 mod collection;
 mod dac;
 mod document;
+mod embedding;
 mod encrypted_index;
 mod expect;
 mod index;
@@ -10,11 +11,13 @@ mod lens;
 mod list_actions;
 mod nac;
 mod node;
+mod openapi_document;
 mod parallel;
 mod peer;
 mod query;
 mod replicator;
 pub mod shared;
+pub mod stream;
 mod txn;
 mod view;
 mod wait;
@@ -24,16 +27,19 @@ pub use block::*;
 pub use collection::*;
 pub use dac::*;
 pub use document::*;
+pub use embedding::*;
 pub use encrypted_index::*;
 pub use index::*;
 pub use lens::*;
 pub use list_actions::ListActions;
 pub use nac::*;
 pub use node::*;
+pub use openapi_document::OpenApiDocument;
 pub use parallel::Parallel;
 pub use peer::*;
 pub use query::*;
 pub use replicator::*;
+pub use stream::{AllowStreamPeer, DenyStreamPeer, NewIrohNode, OpenStream, ReadKeptStream};
 pub use txn::*;
 pub use view::*;
 pub use wait::Wait;
@@ -111,6 +117,7 @@ client_actions! {
         AddDACActorRelationship,
         AddDACPolicy,
         AddDoc,
+        AddDocClientSigned,
         AddDocumentSubscription,
         AddLens,
         AddNACActorRelationship,
@@ -118,6 +125,7 @@ client_actions! {
         AddView,
         ConfigureMigration,
         ConnectPeers,
+        DeleteCollection,
         DeleteCollectionSubscription,
         DeleteDACActorRelationship,
         DeleteDoc,
@@ -143,8 +151,10 @@ client_actions! {
         ListReplicators,
         NewEncryptedIndex,
         NewIndex,
+        OpenApiDocument,
         PatchCollection,
         PeerInfo,
+        PurgeDocs,
         ReEnableNAC,
         RefreshViews,
         Request,
@@ -156,6 +166,7 @@ client_actions! {
         TxnBegin,
         TxnCommit,
         TxnDiscard,
+        TxnOutcome,
         UpdateDoc,
         UpdateWithFilter,
         VerifyBlockSignature,
@@ -163,19 +174,29 @@ client_actions! {
     shared: [
         Connect,
         Parallel,
+        AllowStreamPeer,
+        DenyStreamPeer,
+        NewIrohNode,
+        OpenStream,
+        PushCommit,
+        ReadKeptStream,
         Await,
         Benchmark,
+        ClientSigningSession,
         Close,
-        DeleteCollection,
+        EmbeddingModel,
         GetNodeIdentity,
         ListAllEncryptedIndexes,
         NewNode,
-        PurgeDocs,
+        HoldCommit,
+        ReleaseCommit,
         SaveDocs,
         Restart,
         Start,
         SubscriptionRequest,
+        SyncCounters,
         Wait,
+        WaitForBlocks,
         WaitForIndexReady,
         WaitForPeersEvents,
         WaitForSESync,

@@ -28,11 +28,6 @@ ignore = [
     # direct alloy pin is already at the latest workspace version.
     "RUSTSEC-2024-0436",
 
-    # rustls-pemfile 1.x — unmaintained (2.x is current). Pulled by
-    # reqwest 0.11 inside tendermint-rpc 0.40.4 (vera's Cosmos client).
-    # Removable when tendermint-rpc moves to reqwest 0.12.
-    "RUSTSEC-2025-0134",
-
     # unsafe-libyaml — unmaintained. Pulled by serde_yaml 0.9, itself
     # deprecated, which acp reads policies with. Removable when acp moves to
     # a maintained YAML crate.
@@ -51,7 +46,7 @@ ignore = [
 
     # crypto-bigint 0.5.5 has no patched release in its 0.5 line. It is
     # required by elliptic-curve 0.13 through k256, libp2p-identity,
-    # alloy and cosmrs. The 0.7 dependency is patched in Cargo.lock.
+    # and alloy. The 0.7 dependency is patched in Cargo.lock.
     # Remove when these upstream consumers move to patched RustCrypto
     # releases; the remaining timing side-channel exposure is tracked in #2261.
     { id = "RUSTSEC-2026-0387", reason = "Unpatched crypto-bigint 0.5 dependency through elliptic-curve 0.13; upstream migration tracked in #2261" },
@@ -62,32 +57,28 @@ ignore = [
     "RUSTSEC-2026-0118",
     "RUSTSEC-2026-0119",
 
-    # h2 0.3 and rustls-webpki 0.101 — pulled by reqwest 0.11 inside
-    # tendermint-rpc 0.40.4 (vera's Cosmos client), already the latest
-    # release. Reached only over TLS to the configured Cosmos RPC endpoint.
-    # Removable when tendermint-rpc moves to reqwest 0.12.
-    "RUSTSEC-2026-0258",
-    "RUSTSEC-2026-0098",
-    "RUSTSEC-2026-0099",
-    "RUSTSEC-2026-0104",
-    # emSign intermediates: 0.101 has no fix; our direct 0.103 is on 0.103.16.
-    "RUSTSEC-2026-0382",
-    # rustls 0.21 from the same reqwest 0.11. 0346 needs a custom session
-    # store that logs with Debug, which we don't have; 0349 is fixed only in
-    # rustls 0.23.46, which our direct rustls is already on.
-    "RUSTSEC-2026-0346",
-    "RUSTSEC-2026-0349",
-
-    # zstd 0.13 and zstd-safe 7 — pulled only by commonware-storage from the
-    # iverc/commonware-upstream fork, through vera.rs and backbone's
-    # acp-light-client (pinned revs). It calls bulk::Decompressor (one-shot
-    # DCtx::decompress) and CCtx, never stream::raw with_context (0391) or
-    # DCtx::decompress_stream (0403), and leaves the seekable feature off
-    # (0398). zstd-sys is already on the patched 2.1.2. Remove when the fork
-    # moves to zstd 0.14.3 and vera.rs and backbone repin (#2298).
-    { id = "RUSTSEC-2026-0391", reason = "commonware-storage fork still on zstd 0.13; unreachable call; #2298" },
-    { id = "RUSTSEC-2026-0398", reason = "commonware-storage fork still on zstd-safe 7; seekable off; #2298" },
-    { id = "RUSTSEC-2026-0403", reason = "commonware-storage fork still on zstd-safe 7; no decompress_stream; #2298" },
+    # hickory-proto 0.25.2 comes only through libp2p 0.56's libp2p-dns; the fix
+    # (0.26.2) needs libp2p 0.57. 0487, 0489 and 0490 panic only when parsing
+    # the text (zone file) form, which a resolver never does. 0491 is reachable:
+    # a hostile DNS server answering a /dns multiaddr lookup can inflate
+    # allocations. Remove all hickory IDs with the libp2p 0.57 bump (#2813).
+    { id = "RUSTSEC-2026-0487", reason = "hickory-proto 0.25 via libp2p 0.56; zone-file text parsing only; #2813" },
+    { id = "RUSTSEC-2026-0489", reason = "hickory-proto 0.25 via libp2p 0.56; zone-file text parsing only; #2813" },
+    { id = "RUSTSEC-2026-0490", reason = "hickory-proto 0.25 via libp2p 0.56; zone-file lexer only; #2813" },
+    { id = "RUSTSEC-2026-0491", reason = "hickory-proto 0.25 via libp2p 0.56; reachable via DNS answers; fix needs libp2p 0.57; #2813" },
+    { id = "RUSTSEC-2026-0504", reason = "hickory-proto 0.25 via libp2p 0.56; no safe upgrade until libp2p 0.57; #2813" },
+    { id = "RUSTSEC-2026-0505", reason = "hickory-proto 0.25 via libp2p 0.56; no safe upgrade until libp2p 0.57; #2813" },
+    { id = "RUSTSEC-2026-0511", reason = "hickory-proto 0.25 via libp2p 0.56; no safe upgrade until libp2p 0.57; #2813" },
+    { id = "RUSTSEC-2026-0512", reason = "hickory-proto 0.25 via libp2p 0.56; no safe upgrade until libp2p 0.57; #2813" },
+    { id = "RUSTSEC-2026-0514", reason = "hickory-proto 0.25 via libp2p 0.56; no safe upgrade until libp2p 0.57; #2813" },
+    { id = "RUSTSEC-2026-0530", reason = "hickory-proto 0.25 via libp2p 0.56; no safe upgrade until libp2p 0.57; #2813" },
+    { id = "RUSTSEC-2026-0531", reason = "hickory-proto 0.25 via libp2p 0.56; no safe upgrade until libp2p 0.57; #2813" },
+    { id = "RUSTSEC-2026-0532", reason = "hickory-proto 0.25 via libp2p 0.56; no safe upgrade until libp2p 0.57; #2813" },
+    { id = "RUSTSEC-2026-0534", reason = "libp2p-gossipsub 0.49 via libp2p 0.56; PRUNE backoff fix needs libp2p 0.57; #2813" },
+    { id = "RUSTSEC-2026-0543", reason = "chrono 0.4 is unmaintained and pulled by the current schema/date ecosystem; migration tracked separately" },
+    { id = "RUSTSEC-2026-0549", reason = "hickory-proto 0.25 via libp2p 0.56; no safe upgrade until libp2p 0.57; #2813" },
+    { id = "RUSTSEC-2026-0550", reason = "hickory-proto 0.25 via libp2p 0.56; no safe upgrade until libp2p 0.57; #2813" },
+    { id = "RUSTSEC-2026-0551", reason = "hickory-proto 0.25 via libp2p 0.56; no safe upgrade until libp2p 0.57; #2813" },
 ]
 
 [licenses]
@@ -105,6 +96,13 @@ allow = [
     "Unlicense",
     "OpenSSL",
     "CDLA-Permissive-2.0",
+]
+# BUSL-1.1 crates vera.rs depends on (acp-rs, its Zanzibar engine and Orbis
+# reporting), pinned to the versions vera.rs's own deny.toml allows.
+exceptions = [
+    { name = "sourcenetwork-acp", version = "=0.0.1", allow = ["BUSL-1.1"] },
+    { name = "orbis-reporting", version = "=0.0.3", allow = ["BUSL-1.1"] },
+    { name = "sourcenetwork-zanzi", version = "=0.0.1", allow = ["BUSL-1.1"] },
 ]
 
 [bans]
@@ -134,11 +132,11 @@ deny = [
         "igd-next", "iroh", "iroh-dns", "iroh-relay", "jsonrpsee-client-transport",
         "jsonrpsee-core", "jsonrpsee-server", "libp2p-quic", "libp2p-swarm", "libp2p-tcp",
         "n0-dns-resolver", "n0-future", "netlink-sys", "netwatch", "noq", "opentelemetry_sdk",
-        "pgwire", "portmapper", "quinn", "reqwest", "rtnetlink", "tendermint-rpc",
+        "pgwire", "portmapper", "quinn", "reqwest", "rtnetlink",
         "test-infra", "tokio-native-tls", "tokio-rustls", "tokio-stream", "tokio-tungstenite",
         "tokio-util", "tokio-websockets", "tower", "vera-backend", "vera-client",
-        "vera-consensus", "vera-executor", "vera-harness", "vera-jsonrpc", "vera-node",
-        "vera-test-infra", "wasm-bindgen-futures",
+        "vera-consensus", "vera-harness", "vera-jsonrpc", "vera-node", "vera-support",
+        "wasm-bindgen-futures",
     ] },
 ]
 highlight = "lowest-version"
@@ -158,77 +156,49 @@ highlight = "lowest-version"
 #     | awk '{print $1}' | sort -u | wc -l
 #
 # `keyring v0.5.0` alongside `keyring v3.6.3` in that output is our own
-# crates/keyring colliding with the crates.io name. Not a duplicate.
+# crates/foundation/keyring colliding with the crates.io name. Not a duplicate.
 # ------------------------------------------------------------------
 skip = [
-    # prost 0.13 — cosmos-sdk-proto / tendermint / ics23 under cosmrs
-    # 0.22 (crates/vera), and jmt under acp-light-client.
-    # Removable when that stack moves to prost 0.14.
-    { crate = "prost@0.13.5", reason = "hard-pinned by the cosmrs 0.22 / tendermint 0.40 stack; not ours to move" },
-
-    # sha2 0.9 — ed25519-consensus 2.1, via commonware-cryptography and
-    # tendermint. Only present in vera/backbone builds.
-    { crate = "sha2@0.9.9", reason = "ed25519-consensus 2.1 under commonware-cryptography and tendermint" },
-
     # sha2 0.11 — multihash-codetable 0.2.2 requires sha2 0.11 and sits
-    # in the CID path via crates/blockstore; ed25519-dalek 3.0.0-rc.0
-    # (iroh) pulls it too. The 0.10 floor is held by libp2p-identity
-    # 0.2.13 (requires 0.10.8), and libp2p stays, so the floor for sha2
-    # is 2 versions. Bumping our workspace sha2 to 0.11 would change
-    # hashing under docID/CID and still not remove 0.10.
-    { crate = "sha2@0.11.0", reason = "multihash-codetable 0.2.2 needs 0.11 in the CID path; libp2p-identity 0.2.13 pins 0.10.8 — floor is 2" },
+    # in the CID path via crates/engine/blockstore; ed25519-dalek 3, k256
+    # 0.14 and p256 0.14 pull it too. The 0.10 floor is held by
+    # libp2p-identity 0.2 (requires 0.10.8), and libp2p stays, so the
+    # floor for sha2 is 2 versions.
+    { crate = "sha2@0.11.1", reason = "multihash-codetable 0.2.2, ed25519-dalek 3, k256/p256 0.14 need 0.11; libp2p-identity 0.2 pins 0.10 — floor is 2" },
 
-    # ed25519-dalek / curve25519-dalek — iroh-base 1.0.1 uses exact
-    # pins (=3.0.0-rc.0, =5.0.0-rc.0) leaving no semver room, while
-    # libp2p-identity 0.2.13 requires ed25519-dalek 2.1. Unification is
-    # impossible in both directions; moving crates/crypto to the rc
-    # line would put Go-interop signing on a prerelease and still leave
-    # 2.2.0 in the graph. Absent from the default cli and ffi graphs
-    # (iroh is opt-in); dies with #1341.
-    { crate = "ed25519-dalek@3.0.0-rc.0", reason = "exact-pinned by iroh-base 1.0.1; libp2p-identity floor-pins 2.x — dies with #1341" },
-    { crate = "curve25519-dalek@5.0.0-rc.0", reason = "exact-pinned by iroh-base 1.0.1 — dies with #1341" },
+    # ed25519-dalek / curve25519-dalek 2.x / 4.x — crates/foundation/crypto
+    # is on ed25519-dalek 3, with iroh and vera.rs, while libp2p-identity
+    # 0.2 requires ed25519-dalek 2 and libp2p-noise 0.46 x25519-dalek 2.
+    # Removable with the libp2p 0.57 bump (#1875).
+    { crate = "ed25519-dalek@2.2.0", reason = "libp2p-identity 0.2 requires 2.x; ours is on 3 — removable with #1875" },
+    { crate = "curve25519-dalek@4.1.3", reason = "ed25519-dalek 2 and x25519-dalek 2 under libp2p, and snow — removable with #1875" },
 
-    # reqwest 0.11 — one edge: tendermint-rpc 0.40.4 under cosmrs 0.22.
-    # It carries hyper 0.14, h2 0.3, rustls 0.21, tokio-rustls 0.24,
-    # hyper-rustls 0.24, rustls-webpki 0.101, system-configuration 0.5
-    # and untrusted 0.7 with it. cosmrs gates tendermint-rpc behind an
-    # optional `rpc` feature that is not in its defaults, so this may
-    # be removable — tracked separately under #1327.
-    { crate = "reqwest@0.11.27", reason = "tendermint-rpc 0.40.4 under cosmrs 0.22; cosmrs/rpc audit tracked under #1327" },
-
-    # reqwest 0.13 — iroh 1.0.1 / iroh-relay. Dies with #1341.
-    { crate = "reqwest@0.13.3", reason = "iroh 1.0.1 and iroh-relay — dies with #1341" },
+    # reqwest 0.12 — backbone's acp-light-client and defra-harness, and
+    # vera.rs's vera-client and vera-harness (pinned revs). Ours is 0.13.
+    { crate = "reqwest@0.12.28", reason = "acp-light-client, defra-harness, vera-client, vera-harness at their pinned revs" },
 
     # rand / getrandom — every major has third-party dependents that
-    # pin it: libp2p and ring on getrandom 0.2, hickory/quinn/yamux on
-    # rand 0.9, iroh and hickory 0.26 on rand 0.10. crates/crypto and
-    # defra-core use rand 0.8 for key generation, so our declaration
-    # does not move without a key-generation review.
-    { crate = "rand@0.9.2", reason = "hickory-proto 0.25, quinn-proto, yamux, governor; crates/p2p follows them" },
-    { crate = "rand@0.10.1", reason = "iroh 1.0.1, hickory 0.26, pgwire — largely dies with #1341" },
-    { crate = "getrandom@0.3.4", reason = "rand_core 0.9 under ahash, fastbloom, governor" },
-    { crate = "getrandom@0.4.2", reason = "rand 0.10, tempfile 3.26, uuid 1.23" },
-
-    # unsigned-varint 0.2 — reached only through multicodec 0.1 under
-    # defra-core. Removed for free by #1330.
-    { crate = "unsigned-varint@0.2.3", reason = "multicodec 0.1 under defra-core — removed by #1330" },
+    # pin it: libp2p and ring on getrandom 0.2 and rand 0.8, hickory,
+    # yamux and opentelemetry_sdk on rand 0.9. The workspace is on rand
+    # 0.10, with iroh, commonware and pgwire.
+    { crate = "rand@0.8.8", reason = "libp2p 0.56, ark-std 0.4, and the vera.rs/backbone test harness" },
+    { crate = "rand@0.9.5", reason = "hickory-proto 0.25, yamux 0.13, governor, opentelemetry_sdk, tungstenite 0.26" },
+    { crate = "getrandom@0.2.17", reason = "ring, libp2p, rand_core 0.6, commonware" },
+    { crate = "getrandom@0.3.4", reason = "rand_core 0.9 under ahash, governor" },
 
     # unsigned-varint 0.7 — multistream-select 0.13 inside libp2p.
     { crate = "unsigned-varint@0.7.2", reason = "multistream-select 0.13 inside libp2p" },
 
-    # sysinfo 0.37 — commonware-runtime, i.e. vera/backbone builds
-    # only. crates/p2p was moved 0.29 -> 0.33 in #1333 to unify with
-    # libp2p-memory-connection-limits 0.5, which is present in every
-    # Go-interop variant; 0.37 would have unified with commonware
-    # instead and left the default CLI on two versions.
-    { crate = "sysinfo@0.37.2", reason = "commonware-runtime; vera/backbone builds only" },
+    # sysinfo 0.33 — libp2p-memory-connection-limits 0.5, in every
+    # libp2p build. crates/database/p2p is on 0.39 with commonware-runtime.
+    # The libp2p 0.57 line (#1875) moves it to 0.38, so it unifies only
+    # once that release and commonware agree on one version.
+    { crate = "sysinfo@0.33.1", reason = "libp2p-memory-connection-limits 0.5; ours follows commonware-runtime on 0.39" },
 
-    # thiserror 1 — graphql-parser 0.4, josekit 0.8, lark-kv,
-    # cosmrs, jmt, tendermint-rpc,
-    # proc-macro-crate 1.1 and quick-protobuf-codec. No first-party
-    # crate declares v1 as of #1333; the duplicate is entirely
-    # third-party.
-    { crate = "thiserror@1.0.69", reason = "graphql-parser, josekit, lark-kv, cosmrs, jmt; no first-party declaration remains" },
+    # thiserror 1 — graphql-parser 0.4, jni 0.21, regolith 0.2, rtnetlink,
+    # orbis-reporting and quick-protobuf-codec. No first-party crate
+    # declares v1; the duplicate is entirely third-party.
+    { crate = "thiserror@1.0.69", reason = "graphql-parser, jni, regolith, rtnetlink, orbis-reporting, quick-protobuf-codec; no first-party declaration remains" },
 ]
 skip-tree = []
 

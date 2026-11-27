@@ -47,7 +47,7 @@ fn vector_index_warning_multiple_similarity_fields_reports_warning() {
             .into(),
             AddDoc {
                 collection: "User".into(),
-                doc_map: Some(json!({ "age": 40, "name": "z", "vector": [0.0, 0.0, 1.0] })),
+                doc_map: Some(json!({ "age": 40, "name": "z", "vector": [-1.0, 0.0, 1.0] })),
                 common: Common { capture: captures([("doc0_3", "/docID")]), ..Default::default() },
                 ..Default::default()
             }
@@ -134,7 +134,7 @@ fn vector_index_warning_no_limit_reports_warning() {
             .into(),
             AddDoc {
                 collection: "User".into(),
-                doc_map: Some(json!({ "age": 40, "name": "z", "vector": [0.0, 0.0, 1.0] })),
+                doc_map: Some(json!({ "age": 40, "name": "z", "vector": [-1.0, 0.0, 1.0] })),
                 common: Common { capture: captures([("doc0_3", "/docID")]), ..Default::default() },
                 ..Default::default()
             }
@@ -164,7 +164,7 @@ fn vector_index_warning_no_limit_reports_warning() {
                         },
                         {
                             "name": "z",
-                            "sim": m::similarity_score("COSINE", json!([0, 0, 1]), json!([1, 0, 0])),
+                            "sim": m::similarity_score("COSINE", json!([-1, 0, 1]), json!([1, 0, 0])),
                         },
                     ],
                 }),
@@ -283,7 +283,7 @@ fn vector_index_warning_ordered_ascending_reports_warning() {
             .into(),
             AddDoc {
                 collection: "User".into(),
-                doc_map: Some(json!({ "age": 40, "name": "z", "vector": [0.0, 0.0, 1.0] })),
+                doc_map: Some(json!({ "age": 40, "name": "z", "vector": [-1.0, 0.0, 1.0] })),
                 common: Common { capture: captures([("doc0_3", "/docID")]), ..Default::default() },
                 ..Default::default()
             }
@@ -301,7 +301,7 @@ fn vector_index_warning_ordered_ascending_reports_warning() {
                     "User": [
                         {
                             "name": "z",
-                            "sim": m::similarity_score("COSINE", json!([0, 0, 1]), json!([1, 0, 0])),
+                            "sim": m::similarity_score("COSINE", json!([-1, 0, 1]), json!([1, 0, 0])),
                         },
                         {
                             "name": "y",
@@ -368,7 +368,7 @@ fn vector_index_warning_query_uses_index_reports_no_warning() {
             .into(),
             AddDoc {
                 collection: "User".into(),
-                doc_map: Some(json!({ "age": 40, "name": "z", "vector": [0.0, 0.0, 1.0] })),
+                doc_map: Some(json!({ "age": 40, "name": "z", "vector": [-1.0, 0.0, 1.0] })),
                 common: Common { capture: captures([("doc0_3", "/docID")]), ..Default::default() },
                 ..Default::default()
             }
@@ -443,7 +443,7 @@ fn vector_index_warning_selective_filter_still_returns_matching_docs() {
             .into(),
             AddDoc {
                 collection: "User".into(),
-                doc_map: Some(json!({ "age": 40, "name": "z", "vector": [0.0, 0.0, 1.0] })),
+                doc_map: Some(json!({ "age": 40, "name": "z", "vector": [-1.0, 0.0, 1.0] })),
                 common: Common { capture: captures([("doc0_3", "/docID")]), ..Default::default() },
                 ..Default::default()
             }
@@ -461,7 +461,7 @@ fn vector_index_warning_selective_filter_still_returns_matching_docs() {
                     "User": [
                         {
                             "name": "z",
-                            "sim": m::similarity_score("COSINE", json!([0, 0, 1]), json!([1, 0, 0])),
+                            "sim": m::similarity_score("COSINE", json!([-1, 0, 1]), json!([1, 0, 0])),
                         },
                     ],
                 }),
@@ -523,7 +523,7 @@ fn vector_index_warning_with_filter_reports_warning() {
             .into(),
             AddDoc {
                 collection: "User".into(),
-                doc_map: Some(json!({ "age": 40, "name": "z", "vector": [0.0, 0.0, 1.0] })),
+                doc_map: Some(json!({ "age": 40, "name": "z", "vector": [-1.0, 0.0, 1.0] })),
                 common: Common { capture: captures([("doc0_3", "/docID")]), ..Default::default() },
                 ..Default::default()
             }
@@ -546,6 +546,90 @@ fn vector_index_warning_with_filter_reports_warning() {
                         {
                             "name": "y",
                             "sim": m::similarity_score("COSINE", json!([0, 1, 0]), json!([1, 0, 0])),
+                        },
+                    ],
+                }),
+                expected_extensions: json!(m::object(json!({
+                    "warnings": [
+                        m::object(json!({
+                            "code": "VECTOR_INDEX_UNUSED",
+                            "detail": { "field": "vector", "reason": "filter" },
+                            "message": m::nonempty_string(),
+                        })),
+                    ],
+                }))),
+                ..Default::default()
+            }
+            .into(),
+        ],
+        ..Default::default()
+    }
+    .execute();
+}
+
+#[test]
+#[mantra_macros::req_test("defra.query.simple.similarity.filtered_vector_warning")]
+fn vector_index_warning_and_wrapped_filter_reports_warning() {
+    TestCase {
+        id: integration_test::scenario_id!(),
+        actions: vec![
+            AddCollection {
+                sdl: r#"
+                    type User {
+                                    name: String
+                                    age: Int
+                                    vector: [Float32!] @index(vector: {dimensions: 3, hnsw: {metric: COSINE}})
+                                }
+                "#.into(),
+                ..Default::default()
+            }
+            .into(),
+            AddDoc {
+                collection: "User".into(),
+                doc_map: Some(json!({ "age": 10, "name": "x", "vector": [1.0, 0.0, 0.0] })),
+                ..Default::default()
+            }
+            .into(),
+            AddDoc {
+                collection: "User".into(),
+                doc_map: Some(json!({ "age": 20, "name": "y", "vector": [0.5, 1.0, 0.0] })),
+                ..Default::default()
+            }
+            .into(),
+            AddDoc {
+                collection: "User".into(),
+                doc_map: Some(json!({ "age": 30, "name": "xy", "vector": [0.9, 0.4, 0.0] })),
+                ..Default::default()
+            }
+            .into(),
+            AddDoc {
+                collection: "User".into(),
+                doc_map: Some(json!({ "age": 40, "name": "z", "vector": [-1.0, 0.0, 1.0] })),
+                ..Default::default()
+            }
+            .into(),
+            Request {
+                request: r#"
+                    query {
+                        User(
+                            filter: {_and: [{age: {_gt: 15}}]},
+                            order: {_alias: {sim: DESC}},
+                            limit: 2
+                        ) {
+                            name
+                            sim: SIMILARITY(vector: {vector: [1, 0, 0]})
+                        }
+                    }
+                "#.into(),
+                expected_data: json!({
+                    "User": [
+                        {
+                            "name": "xy",
+                            "sim": m::similarity_score("COSINE", json!([0.9, 0.4, 0]), json!([1, 0, 0])),
+                        },
+                        {
+                            "name": "y",
+                            "sim": m::similarity_score("COSINE", json!([0.5, 1, 0]), json!([1, 0, 0])),
                         },
                     ],
                 }),

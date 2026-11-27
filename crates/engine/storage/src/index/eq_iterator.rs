@@ -1,0 +1,395 @@
+//! Exact match iterator for index lookups
+//!
+//! Provides iteration over index entries that exactly match specific field values.
+//! Supports both unique and non-unique indexes.
+
+use async_trait::async_trait;
+use document::NormalValue;
+use schema::IndexDescription;
+
+use super::iterator::{IndexEntry, IndexIterator};
+use crate::corekv::{IterOptions, Iterator, MaybeSend, Reader, Result};
+use crate::keys::datastore::IndexedField;
+use crate::keys::doc_id_index::decode_doc_short_id;
+use crate::keys::{IndexDataStoreKey, SEPARATOR};
+
+/// Iterator for exact match queries on an index.
+///
+/// For SimpleIndex: scans all entries with the exact encoded value prefix,
+/// extracting doc short IDs from the key suffix.
+///
+/// For UniqueIndex: performs a direct lookup for non-NULL values (single result,
+/// doc short ID decoded from the value), or prefix scan for NULL values
+/// (multiple results allowed, doc short ID in the key suffix).
+pub struct ExactMatchIterator {
+    /// The underlying KV iterator (None after exhaustion or for unique index after first result)
+    inner: Option<Box<dyn Iterator>>,
+    /// The key prefix (encoded field values without the doc short ID)
+    key_prefix: Vec<u8>,
+    /// The exact field values being matched
+    values: Vec<NormalValue>,
+    /// Single result for unique index direct lookup (consumed on first next())
+    unique_result: Option<IndexEntry>,
+    /// Cached copy of unique_result for reset() support
+    cached_unique_result: Option<IndexEntry>,
+    /// Whether the iterator has been exhausted
+    exhausted: bool,
+}
+
+impl ExactMatchIterator {
+    /// Create a new exact match iterator for a simple (non-unique) index.
+    ///
+    /// Scans all index entries with the given field values.
+    pub async fn new_simple<R: Reader + MaybeSend + ?Sized>(
+        txn: &R,
+        collection_short_id: u32,
+        desc: &IndexDescription,
+        values: &[NormalValue],
+    ) -> Result<Self> {
+        let fields = build_indexed_fields(values, desc);
+        let key_prefix =
+            IndexDataStoreKey::new(collection_short_id, desc.id, fields).try_bytes()?;
+
+        let opts = IterOptions::default().with_prefix(key_prefix.clone());
+        let inner = txn.iterator(opts).await?;
+
+        Ok(Self {
+            inner: Some(inner),
+            key_prefix,
+            values: values.to_vec(),
+            unique_result: None,
+            cached_unique_result: None,
+            exhausted: false,
+        })
+    }
+
+    /// Create a new exact match iterator for a unique index.
+    ///
+    /// For non-NULL values: performs direct key lookup (single result).
+    /// For NULL values: performs prefix scan (multiple results allowed).
+    pub async fn new_unique<R: Reader + MaybeSend + ?Sized>(
+        txn: &R,
+        collection_short_id: u32,
+        desc: &IndexDescription,
+        values: &[NormalValue],
+    ) -> Result<Self> {
+        let fields = build_indexed_fields(values, desc);
+        let key_prefix =
+            IndexDataStoreKey::new(collection_short_id, desc.id, fields).try_bytes()?;
+
+        // Check if any value is nil - if so, use prefix scan like SimpleIndex
+        let has_nil = values.iter().any(|v| v.is_nil());
+
+        if has_nil {
+            // NULL values: use prefix scan (multiple documents can have NULL)
+            let opts = IterOptions::default().with_prefix(key_prefix.clone());
+            let inner = txn.iterator(opts).await?;
+
+            Ok(Self {
+                inner: Some(inner),
+                key_prefix,
+                values: values.to_vec(),
+                unique_result: None,
+                cached_unique_result: None,
+                exhausted: false,
+            })
+        } else {
+            // A query read decides nothing, so it is never validated: a writer
+            // of this value elsewhere must not fail the reader's commit. A
+            // writer's own uniqueness check is validated in `UniqueIndex::save`.
+            let unique_result = if let Some(value_bytes) = txn.get_parts(&key_prefix, &[]).await? {
+                let doc_short_id = decode_doc_short_id(&value_bytes)?;
+                Some(IndexEntry::new(doc_short_id, values.to_vec()))
+            } else {
+                None
+            };
+
+            Ok(Self {
+                inner: None, // No iterator needed for direct lookup
+                key_prefix,
+                values: values.to_vec(),
+                cached_unique_result: unique_result.clone(),
+                unique_result,
+                exhausted: false,
+            })
+        }
+    }
+
+    /// Extract the doc short ID from an index key.
+    ///
+    /// For entries carrying doc identity in the key, the suffix after the
+    /// encoded field values is `/[uvarint doc short ID]`.
+    fn extract_doc_short_id(&self, key: &[u8]) -> Result<u64> {
+        let suffix = &key[self.key_prefix.len().min(key.len())..];
+        if suffix.len() < 2 || suffix[0] != SEPARATOR {
+            return Err(crate::corekv::Error::Other(
+                "index key missing doc short ID suffix".to_string(),
+            ));
+        }
+        decode_doc_short_id(&suffix[1..])
+    }
+}
+
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+impl IndexIterator for ExactMatchIterator {
+    async fn next(&mut self) -> Result<Option<IndexEntry>> {
+        if self.exhausted {
+            return Ok(None);
+        }
+
+        // Check for single unique result first
+        if let Some(entry) = self.unique_result.take() {
+            self.exhausted = true;
+            return Ok(Some(entry));
+        }
+
+        // Use the inner iterator if available
+        if let Some(ref mut iter) = self.inner {
+            if let Some(kv) = iter.next().await? {
+                // For unique index with NULL: doc short ID is in key suffix
+                // For simple index: doc short ID is in key suffix
+                // For unique index without NULL: handled above via unique_result
+                let doc_short_id = self.extract_doc_short_id(&kv.key)?;
+                return Ok(Some(IndexEntry::new(doc_short_id, self.values.clone())));
+            }
+        }
+
+        self.exhausted = true;
+        Ok(None)
+    }
+
+    async fn close(&mut self) -> Result<()> {
+        if let Some(ref mut iter) = self.inner {
+            iter.close().await?;
+        }
+        self.inner = None;
+        self.exhausted = true;
+        Ok(())
+    }
+
+    async fn reset(&mut self) -> Result<()> {
+        if let Some(ref mut iter) = self.inner {
+            iter.reset().await?;
+        }
+        // Restore unique_result from cache for unique index direct lookups
+        if self.cached_unique_result.is_some() && self.unique_result.is_none() {
+            self.unique_result = self.cached_unique_result.clone();
+        }
+        self.exhausted = false;
+        Ok(())
+    }
+
+    async fn seek(&mut self, key: &[u8]) -> Result<bool> {
+        if self.exhausted {
+            return Ok(false);
+        }
+        if let Some(ref mut iter) = self.inner {
+            return iter.seek(key).await;
+        }
+        Ok(false)
+    }
+}
+
+/// Build IndexedField structs from values and index description.
+fn build_indexed_fields(values: &[NormalValue], desc: &IndexDescription) -> Vec<IndexedField> {
+    values
+        .iter()
+        .zip(desc.fields.iter())
+        .map(|(value, field_desc)| IndexedField::new(value.clone(), field_desc.descending))
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::backends::RegolithStore;
+    use crate::corekv::Store;
+    use crate::index::{CollectionIndex, SimpleIndex, UniqueIndex};
+    use schema::IndexedFieldDescription;
+
+    fn test_index_description(unique: bool) -> IndexDescription {
+        IndexDescription {
+            id: 1,
+            name: "test_index".to_string(),
+            unique,
+            kind: None,
+            auto_generated: false,
+            fields: vec![IndexedFieldDescription {
+                name: "name".to_string(),
+                descending: false,
+            }],
+        }
+    }
+
+    #[test]
+    fn test_exact_match_simple_single_result() {
+        workers::block_on(async {
+            let store = RegolithStore::in_memory().unwrap();
+            let mut txn = store.new_txn(false).await.unwrap();
+
+            let desc = test_index_description(false);
+            let index = SimpleIndex::new(1, desc.clone());
+
+            index
+                .save(&mut txn, 1, &[NormalValue::String("alice".to_string())])
+                .await
+                .unwrap();
+            txn.commit().await.unwrap();
+
+            let txn = store.new_txn(true).await.unwrap();
+            let mut iter = ExactMatchIterator::new_simple(
+                txn.as_ref(),
+                1,
+                &desc,
+                &[NormalValue::String("alice".to_string())],
+            )
+            .await
+            .unwrap();
+
+            let entry = iter.next().await.unwrap();
+            assert!(entry.is_some());
+            let entry = entry.unwrap();
+            assert_eq!(entry.doc_short_id, 1);
+
+            let entry = iter.next().await.unwrap();
+            assert!(entry.is_none());
+        })
+        .unwrap()
+    }
+
+    #[test]
+    fn test_exact_match_simple_multiple_results() {
+        workers::block_on(async {
+            let store = RegolithStore::in_memory().unwrap();
+            let mut txn = store.new_txn(false).await.unwrap();
+
+            let desc = test_index_description(false);
+            let index = SimpleIndex::new(1, desc.clone());
+
+            // Same value, multiple documents
+            index
+                .save(&mut txn, 1, &[NormalValue::String("alice".to_string())])
+                .await
+                .unwrap();
+            index
+                .save(&mut txn, 2, &[NormalValue::String("alice".to_string())])
+                .await
+                .unwrap();
+            index
+                .save(&mut txn, 3, &[NormalValue::String("bob".to_string())])
+                .await
+                .unwrap();
+            txn.commit().await.unwrap();
+
+            let txn = store.new_txn(true).await.unwrap();
+            let mut iter = ExactMatchIterator::new_simple(
+                txn.as_ref(),
+                1,
+                &desc,
+                &[NormalValue::String("alice".to_string())],
+            )
+            .await
+            .unwrap();
+
+            let entries = iter.collect_all().await.unwrap();
+            assert_eq!(entries.len(), 2);
+            assert!(entries.iter().any(|e| e.doc_short_id == 1));
+            assert!(entries.iter().any(|e| e.doc_short_id == 2));
+        })
+        .unwrap()
+    }
+
+    #[test]
+    fn test_exact_match_unique_single_result() {
+        workers::block_on(async {
+            let store = RegolithStore::in_memory().unwrap();
+            let mut txn = store.new_txn(false).await.unwrap();
+
+            let desc = test_index_description(true);
+            let index = UniqueIndex::new(1, desc.clone());
+
+            index
+                .save(&mut txn, 1, &[NormalValue::String("alice".to_string())])
+                .await
+                .unwrap();
+            txn.commit().await.unwrap();
+
+            let txn = store.new_txn(true).await.unwrap();
+            let mut iter = ExactMatchIterator::new_unique(
+                txn.as_ref(),
+                1,
+                &desc,
+                &[NormalValue::String("alice".to_string())],
+            )
+            .await
+            .unwrap();
+
+            let entry = iter.next().await.unwrap();
+            assert!(entry.is_some());
+            let entry = entry.unwrap();
+            assert_eq!(entry.doc_short_id, 1);
+
+            let entry = iter.next().await.unwrap();
+            assert!(entry.is_none());
+        })
+        .unwrap()
+    }
+
+    #[test]
+    fn test_exact_match_unique_not_found() {
+        workers::block_on(async {
+            let store = RegolithStore::in_memory().unwrap();
+            let mut txn = store.new_txn(false).await.unwrap();
+
+            let desc = test_index_description(true);
+            let index = UniqueIndex::new(1, desc.clone());
+
+            index
+                .save(&mut txn, 1, &[NormalValue::String("alice".to_string())])
+                .await
+                .unwrap();
+            txn.commit().await.unwrap();
+
+            let txn = store.new_txn(true).await.unwrap();
+            let mut iter = ExactMatchIterator::new_unique(
+                txn.as_ref(),
+                1,
+                &desc,
+                &[NormalValue::String("bob".to_string())],
+            )
+            .await
+            .unwrap();
+
+            let entry = iter.next().await.unwrap();
+            assert!(entry.is_none());
+        })
+        .unwrap()
+    }
+
+    #[test]
+    fn test_exact_match_unique_null_multiple() {
+        workers::block_on(async {
+            let store = RegolithStore::in_memory().unwrap();
+            let mut txn = store.new_txn(false).await.unwrap();
+
+            let desc = test_index_description(true);
+            let index = UniqueIndex::new(1, desc.clone());
+
+            // Multiple documents with NULL - allowed for unique index
+            index.save(&mut txn, 1, &[NormalValue::Null]).await.unwrap();
+            index.save(&mut txn, 2, &[NormalValue::Null]).await.unwrap();
+            txn.commit().await.unwrap();
+
+            let txn = store.new_txn(true).await.unwrap();
+            let mut iter =
+                ExactMatchIterator::new_unique(txn.as_ref(), 1, &desc, &[NormalValue::Null])
+                    .await
+                    .unwrap();
+
+            let entries = iter.collect_all().await.unwrap();
+            assert_eq!(entries.len(), 2);
+        })
+        .unwrap()
+    }
+}

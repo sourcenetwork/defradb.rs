@@ -19,7 +19,7 @@ idempotent (`join_idem`), with "no edit yet" as its identity (`join_none`).
 The temporal story (peers, blocks, deletes, edits at different depths) is the
 TLA+ model `proofs/tla/JsonCrdt.tla`.
 
-Rust anchors: `beats` and `Index::winner` in `crates/defra-core/src/json_crdt.rs`,
+Rust anchors: `beats` and `Index::winner` in `crates/foundation/defra-core/src/json_crdt.rs`,
 the per-path registers (issue #2129). The Rust tiebreak is a block ID, a digest
 standing in for the CID.
 -/

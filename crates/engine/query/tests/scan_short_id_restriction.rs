@@ -1,0 +1,248 @@
+//! Restricting a scan to known documents by short id.
+
+use async_trait::async_trait;
+use query::doc_stream::{DocStream, VecStream};
+use query::document::DocumentMapping;
+use query::error::Result;
+use query::explain_asserter::ExplainAsserter;
+use query::fetcher::DocFetcher;
+use query::plan::ScanNode;
+use query::planner::PlanNode;
+use schema::{CollectionVersion, FieldDescription, FieldKind};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
+
+/// Counts what the scan actually asked for, so a claim of narrowing can be
+/// checked rather than assumed.
+#[derive(Default)]
+struct RecordingFetcher {
+    scans: AtomicUsize,
+    seeks: AtomicUsize,
+    sought: kovan::Atom<Vec<u64>>,
+}
+
+impl RecordingFetcher {
+    /// A document per short id, titled after it, so a caller can tell which
+    /// ones came back.
+    fn document(short_id: u64) -> document::Document {
+        let mut doc = document::Document::new(definition(&["title"]));
+        doc.set(
+            "title",
+            document::NormalValue::String(format!("doc-{short_id}")),
+        )
+        .unwrap();
+        doc
+    }
+}
+
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+impl DocFetcher for RecordingFetcher {
+    async fn get_all(&self, _collection: &str) -> Result<Vec<document::Document>> {
+        Ok((1..=10).map(Self::document).collect())
+    }
+
+    async fn get_by_ids(
+        &self,
+        _collection: &str,
+        _doc_ids: &[String],
+    ) -> Result<query::fetcher::FetchByIdsResult> {
+        unreachable!("this test never fetches by document id")
+    }
+
+    async fn get_by_field_value(
+        &self,
+        _collection: &str,
+        _field_name: &str,
+        _value: &str,
+    ) -> Result<Vec<document::Document>> {
+        unreachable!("this test never fetches by field value")
+    }
+
+    async fn stream_all_with_deleted(
+        &self,
+        _collection: &str,
+        _show_deleted: bool,
+    ) -> Result<Box<dyn DocStream>> {
+        self.scans.fetch_add(1, Ordering::Relaxed);
+        Ok(Box::new(VecStream::new(
+            (1..=10).map(|id| (Self::document(id), false)).collect(),
+        )))
+    }
+
+    async fn stream_by_doc_short_ids(
+        &self,
+        _collection: &str,
+        doc_short_ids: &[u64],
+        _show_deleted: bool,
+    ) -> Result<Box<dyn DocStream>> {
+        self.seeks.fetch_add(1, Ordering::Relaxed);
+        self.sought.rcu(|sought| {
+            let mut next = sought.clone();
+            next.extend_from_slice(doc_short_ids);
+            next
+        });
+        Ok(Box::new(VecStream::new(
+            doc_short_ids
+                .iter()
+                .filter(|id| (1u64..=10).contains(id))
+                .map(|id| (Self::document(*id), false))
+                .collect(),
+        )))
+    }
+}
+
+fn collection() -> CollectionVersion {
+    CollectionVersion::new(
+        "docs",
+        "v1",
+        "col-docs",
+        vec![
+            FieldDescription::new(
+                "1",
+                "_docID",
+                FieldKind::doc_id(),
+                schema::CType::LwwRegister,
+            ),
+            FieldDescription::new(
+                "2",
+                "title",
+                FieldKind::string(),
+                schema::CType::LwwRegister,
+            ),
+        ],
+    )
+}
+
+async fn titles(node: &mut ScanNode) -> Vec<String> {
+    node.init().await.unwrap();
+    node.start().await.unwrap();
+    let mut out = Vec::new();
+    while node.next().await.unwrap() {
+        if let Some(title) = node.value().get(1).and_then(|v| v.as_str()) {
+            out.push(title.to_string());
+        }
+    }
+    out
+}
+
+fn mapping() -> DocumentMapping {
+    let mut mapping = DocumentMapping::new();
+    mapping.add(0, "_docID");
+    mapping.add(1, "title");
+    mapping
+}
+
+fn scan(fetcher: Arc<RecordingFetcher>) -> ScanNode {
+    ScanNode::new(collection(), mapping()).with_fetcher(fetcher)
+}
+
+/// The restriction must narrow the read, not filter after it.
+#[test]
+fn a_restricted_scan_seeks_instead_of_scanning() {
+    workers::block_on(async {
+        let fetcher = Arc::new(RecordingFetcher::default());
+        let mut node = scan(fetcher.clone()).with_doc_short_ids(vec![2, 5, 9]);
+
+        assert_eq!(titles(&mut node).await, vec!["doc-2", "doc-5", "doc-9"]);
+        assert_eq!(fetcher.seeks.load(Ordering::Relaxed), 1, "must have sought");
+        assert_eq!(
+            fetcher.scans.load(Ordering::Relaxed),
+            0,
+            "a restricted scan must not read the collection"
+        );
+        assert_eq!(fetcher.sought.load_clone(), vec![2, 5, 9]);
+    })
+    .unwrap()
+}
+
+#[test]
+fn an_unrestricted_scan_still_scans() {
+    workers::block_on(async {
+        let fetcher = Arc::new(RecordingFetcher::default());
+        let mut node = scan(fetcher.clone());
+
+        assert_eq!(titles(&mut node).await.len(), 10);
+        assert_eq!(fetcher.scans.load(Ordering::Relaxed), 1);
+        assert_eq!(fetcher.seeks.load(Ordering::Relaxed), 0);
+    })
+    .unwrap()
+}
+
+/// An empty restriction means nothing matched, which is not the same as no
+/// restriction. Falling back to a full scan here would turn an empty vector
+/// search result into every document in the collection.
+#[test]
+fn an_empty_restriction_yields_nothing() {
+    workers::block_on(async {
+        let fetcher = Arc::new(RecordingFetcher::default());
+        let mut node = scan(fetcher.clone()).with_doc_short_ids(Vec::new());
+
+        assert!(titles(&mut node).await.is_empty());
+        assert_eq!(fetcher.scans.load(Ordering::Relaxed), 0);
+    })
+    .unwrap()
+}
+
+/// A short id whose document is gone is skipped, not reported: an id from an
+/// index may be stale.
+#[test]
+fn absent_ids_are_skipped() {
+    workers::block_on(async {
+        let fetcher = Arc::new(RecordingFetcher::default());
+        let mut node = scan(fetcher.clone()).with_doc_short_ids(vec![3, 999, 7]);
+
+        assert_eq!(titles(&mut node).await, vec!["doc-3", "doc-7"]);
+    })
+    .unwrap()
+}
+
+/// The order asked for is the order returned, because the caller asked in
+/// nearest-first order and nothing below re-sorts.
+#[test]
+fn the_requested_order_is_preserved() {
+    workers::block_on(async {
+        let fetcher = Arc::new(RecordingFetcher::default());
+        let mut node = scan(fetcher.clone()).with_doc_short_ids(vec![8, 1, 4]);
+
+        assert_eq!(titles(&mut node).await, vec!["doc-8", "doc-1", "doc-4"]);
+    })
+    .unwrap()
+}
+
+/// A vector-routed scan reports one index fetch, which is how an explain shows
+/// the query routed. An unrouted one reports none.
+#[test]
+fn a_vector_routed_scan_reports_an_index_fetch() {
+    workers::block_on(async {
+        let fetcher = Arc::new(RecordingFetcher::default());
+        let mut routed = scan(fetcher.clone())
+            .with_doc_short_ids(vec![1, 2])
+            .as_vector_indexed();
+        titles(&mut routed).await;
+        ExplainAsserter::new(&routed.explain_execute_inner()).index_fetches(1);
+
+        let mut unrouted = scan(fetcher).with_doc_short_ids(vec![1, 2]);
+        titles(&mut unrouted).await;
+        ExplainAsserter::new(&unrouted.explain_execute_inner()).index_fetches(0);
+    })
+    .unwrap()
+}
+
+fn definition(fields: &[&str]) -> schema::CollectionVersion {
+    fields
+        .iter()
+        .enumerate()
+        .fold(
+            schema::CollectionBuilder::new("Test", "bafytest"),
+            |builder, (i, name)| {
+                builder.field(schema::FieldDescription::new(
+                    i.to_string(),
+                    *name,
+                    schema::FieldKind::Scalar(schema::ScalarKind::None),
+                    schema::CType::LwwRegister,
+                ))
+            },
+        )
+        .build()
+}

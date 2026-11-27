@@ -1,0 +1,571 @@
+//! Fixed worker pool draining the outbound push backlog (#1099).
+//!
+//! Exactly `worker_count` tasks are spawned once at coordinator construction
+//! and live until shutdown; they are the only long-lived push handles, and
+//! they own request signing and transport sends, so queued jobs stay compact.
+
+use std::sync::Arc;
+use std::time::Duration;
+
+use bytes::Bytes;
+use cid::Cid;
+use futures::FutureExt;
+use kovan::AtomOption;
+
+use super::{PushFailure, SyncShutdownHandle};
+use crate::message::PushLogRequest;
+use crate::signing::sign_with_transport;
+use crate::sync::head_provider::DocumentHeadProvider;
+use crate::sync::peer_state::PeerStateTracker;
+use crate::sync::push_backlog::{HeadHintFailureReason, JobCompletion, PushBacklog, PushJobSpec};
+use crate::transport::P2PTransport;
+
+pub(super) struct PushWorkerContext<T> {
+    pub(super) transport: T,
+    pub(super) backlog: Arc<PushBacklog>,
+    pub(super) selective_car_access: Arc<super::selective_car_access::SelectiveCarAccess>,
+    pub(super) failure_tx: Arc<AtomOption<crate::rt::mpsc::Sender<PushFailure>>>,
+    pub(super) send_timeout: Duration,
+    pub(super) peer_state: Arc<PeerStateTracker>,
+    /// The local heads of a scope, read before an ack may clear its marker.
+    pub(super) head_provider: Arc<dyn DocumentHeadProvider>,
+}
+
+/// Hand a failed/rejected push to the persisted retry ladder. Losslessly:
+/// a full channel applies backpressure to the reporter instead of dropping
+/// the retry record — dropping here would silently lose the exact overflow
+/// this queue exists to make durable. Only a closed channel (recorder gone,
+/// process shutting down) is logged and released.
+pub(super) async fn report_push_failure(
+    failure_tx: &Arc<AtomOption<crate::rt::mpsc::Sender<PushFailure>>>,
+    peer_id: &crate::transport::PeerId,
+    doc_id: String,
+    collection_id: String,
+    cid: Option<Cid>,
+    head_priority: u64,
+) -> bool {
+    report_push_event(
+        failure_tx,
+        peer_id,
+        doc_id,
+        collection_id,
+        cid,
+        head_priority,
+        true,
+        false,
+        None,
+        false,
+        None,
+        true,
+    )
+    .await
+    .is_some()
+}
+
+pub(super) async fn report_observed_head(
+    failure_tx: &Arc<AtomOption<crate::rt::mpsc::Sender<PushFailure>>>,
+    job: &PushJobSpec,
+) -> Option<u64> {
+    report_push_event(
+        failure_tx,
+        &job.peer_id,
+        job.doc_id.clone(),
+        job.collection_id.clone(),
+        Some(job.root_cid),
+        job.head_priority(),
+        false,
+        false,
+        None,
+        false,
+        None,
+        false,
+    )
+    .await
+}
+
+pub(super) async fn report_push_ack(
+    failure_tx: &Arc<AtomOption<crate::rt::mpsc::Sender<PushFailure>>>,
+    job: &PushJobSpec,
+) -> bool {
+    report_push_event(
+        failure_tx,
+        &job.peer_id,
+        job.doc_id.clone(),
+        job.collection_id.clone(),
+        Some(job.root_cid),
+        job.head_priority(),
+        false,
+        true,
+        None,
+        false,
+        job.marker_generation,
+        false,
+    )
+    .await
+    .is_some()
+}
+
+/// Asks the durable recorder whether an offline push may park. `None` from
+/// the recorder is a denial, not an accepted marker; a gone recorder fails.
+async fn offline_push_admitted<T>(context: &PushWorkerContext<T>, job: &PushJobSpec) -> bool
+where
+    T: P2PTransport,
+{
+    report_push_event(
+        &context.failure_tx,
+        &job.peer_id,
+        job.doc_id.clone(),
+        job.collection_id.clone(),
+        Some(job.root_cid),
+        job.head_priority(),
+        false,
+        false,
+        None,
+        true,
+        job.marker_generation,
+        false,
+    )
+    .await
+    .is_some()
+}
+
+/// Whether `job`'s head is the whole current frontier of its scope. A marker
+/// stands for every head registered under it, and the live path sends only
+/// the latest; with a sibling head beside this one, only the retry ladder,
+/// which sends every current head, may complete the scope, and this head's
+/// ack is not reported: without its generation the recorder would record it
+/// unfenced, over the frontier the ladder records. A failed lookup, or one that
+/// finds no heads (`NoOpHeadProvider` finds none), leaves the marker in place.
+async fn is_whole_frontier<T>(context: &PushWorkerContext<T>, job: &PushJobSpec) -> bool {
+    let heads = if job.doc_id.is_empty() {
+        context
+            .head_provider
+            .get_collection_heads(&job.collection_id)
+            .await
+    } else {
+        context.head_provider.get_document_heads(&job.doc_id).await
+    };
+    heads.is_ok_and(|heads| heads == [job.root_cid])
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn report_push_event(
+    failure_tx: &Arc<AtomOption<crate::rt::mpsc::Sender<PushFailure>>>,
+    peer_id: &crate::transport::PeerId,
+    doc_id: String,
+    collection_id: String,
+    cid: Option<Cid>,
+    head_priority: u64,
+    create_retry: bool,
+    acknowledged: bool,
+    retry_after: Option<Duration>,
+    admission_only: bool,
+    marker_generation: Option<u64>,
+    initial_registration: bool,
+) -> Option<u64> {
+    // Collection commits are doc-less. Their durable obligation is a collection
+    // marker whose retry rederives the current collection heads. The CID below
+    // identifies only this live attempt and is never persisted as delivery state.
+    //
+    // A doc-less failure with no CID (the versionless SE-artifact path) still
+    // has nothing to replay: no document to re-resolve and no CID to re-send.
+    if doc_id.is_empty() && cid.is_none() {
+        if create_retry {
+            tracing::warn!(
+                peer_id = %peer_id,
+                collection_id,
+                "Versionless collection-scoped push failed with no CID; nothing to replay"
+            );
+        }
+        return None;
+    }
+    let tx = failure_tx.load().as_deref().cloned();
+    if let Some(tx) = tx {
+        let (durable_tx, durable_rx) = crate::rt::oneshot::channel();
+        let failure = PushFailure {
+            peer_id: peer_id.to_string(),
+            doc_id,
+            collection_id,
+            cid: cid.map(|cid| cid.to_string()).unwrap_or_default(),
+            head_priority,
+            create_retry,
+            initial_registration,
+            acknowledged,
+            marker_generation,
+            retry_after,
+            admission_only,
+            durable_tx: Some(durable_tx),
+        };
+        let doc_id = failure.doc_id.clone();
+        // The send waits until the recorder makes room. Re-polling the same
+        // send future after each timeout loses nothing, so sustained recorder
+        // backpressure surfaces in the logs instead of silently stalling the
+        // push pool. The data path reports from a pool worker, which has no
+        // reactor: the pool's timer serves on a worker and off one alike.
+        let mut send = std::pin::pin!(tx.send(failure));
+        loop {
+            match workers::timeout(Duration::from_secs(5), &mut send).await {
+                Ok(_) => break,
+                Err(_) => tracing::warn!(
+                    peer_id = %peer_id,
+                    doc_id = %doc_id,
+                    "Push failure recorder is backlogged; still waiting to hand off retry record"
+                ),
+            }
+        }
+        match durable_rx.await {
+            Ok(generation) => return generation,
+            Err(_) if tx.is_closed() => {
+                tracing::warn!(
+                    peer_id = %peer_id,
+                    doc_id = %doc_id,
+                    "Push failure recorder is gone; dropping retry record"
+                );
+            }
+            Err(_) => {}
+        }
+    }
+    None
+}
+
+pub(super) fn spawn_push_workers<T>(
+    context: Arc<PushWorkerContext<T>>,
+    shutdown: &SyncShutdownHandle,
+) where
+    T: P2PTransport,
+{
+    for _ in 0..context.backlog.worker_count() {
+        let context = Arc::clone(&context);
+        let stopping = shutdown.clone();
+        shutdown.spawn_task(async move {
+            // A worker waiting for its next job stops with the coordinator;
+            // a job already running finishes, or is aborted at the drain's
+            // deadline.
+            loop {
+                let job = futures::select_biased! {
+                    () = stopping.cancelled().fuse() => None,
+                    job = context.backlog.next_job().fuse() => job,
+                };
+                let Some(job) = job else {
+                    return;
+                };
+                let completion = run_push_job(&context, &job).await;
+                context.backlog.job_done(&job, completion).await;
+            }
+        });
+    }
+}
+
+async fn run_push_job<T>(context: &PushWorkerContext<T>, job: &PushJobSpec) -> JobCompletion
+where
+    T: P2PTransport,
+{
+    if !context.backlog.is_current(job).await {
+        return JobCompletion::Retired;
+    }
+
+    // An offline target is expected absence, not a transport failure. Keep its
+    // retry obligation on the ladder and leave queued work for the reconnect
+    // window; only a live send's transport error counts as failed.
+    if !context.peer_state.is_connected(job.peer_id.as_str()) {
+        if !offline_push_admitted(context, job).await {
+            return JobCompletion::Failed;
+        }
+        context.backlog.record_head_hint_parked_offline();
+        context
+            .backlog
+            .park_peer_offline(job, Arc::clone(&context.peer_state));
+        return JobCompletion::Parked;
+    }
+
+    // The recorder reads the persisted peer floor, so replay-installed hints
+    // and process restarts cannot be bypassed by the volatile live queue.
+    if context.failure_tx.load().is_some()
+        && report_push_event(
+            &context.failure_tx,
+            &job.peer_id,
+            job.doc_id.clone(),
+            job.collection_id.clone(),
+            Some(job.root_cid),
+            job.head_priority(),
+            false,
+            false,
+            None,
+            true,
+            job.marker_generation,
+            false,
+        )
+        .await
+        .is_none()
+    {
+        return JobCompletion::Failed;
+    }
+
+    let root_request = build_request(&context.transport, job);
+    let root_missing = root_request.is_none();
+    let send_outcome = if let Some(root_request) = root_request {
+        // The receiver owns DAG completion. Install a bounded root capability
+        // before announcing the head; linked-CID reachability is validated on
+        // demand in the CAR handler, so announcement work stays O(heads×peers).
+        let Some(_car_access) = context
+            .selective_car_access
+            .register(job.peer_id.clone(), job.root_cid)
+        else {
+            context
+                .backlog
+                .record_head_hint_failure(HeadHintFailureReason::Local);
+            return JobCompletion::Failed;
+        };
+        context.backlog.record_head_hint_sent(job);
+        send_head_hint_via_transport(
+            &context.transport,
+            &job.peer_id,
+            (job.root_cid, root_request),
+            context.send_timeout,
+        )
+        .await
+    } else {
+        // Every block failed to sign: report so the persisted retry ladder
+        // regenerates and re-pushes instead of silently losing the doc.
+        PushSendOutcome {
+            failed: true,
+            at_capacity: false,
+            failure_reason: Some(HeadHintFailureReason::Local),
+            retry_after: None,
+            error: Some("the head block could not be signed".to_string()),
+        }
+    };
+    if let Some(reason) = send_outcome.failure_reason {
+        context.backlog.record_head_hint_failure(reason);
+    }
+    let answered = !matches!(
+        send_outcome.failure_reason,
+        Some(HeadHintFailureReason::Transport | HeadHintFailureReason::Local)
+    );
+    // A saturated or unreachable receiver parks the whole peer: every CID we
+    // would push next fails for the same reason (defradb#1112).
+    let demoted = if send_outcome.failure_reason == Some(HeadHintFailureReason::Transport) {
+        context.backlog.park_peer_unreachable(job).await
+    } else if send_outcome.at_capacity || send_outcome.retry_after.is_some() {
+        context
+            .backlog
+            .park_peer_with_retry_after(&job.peer_id, send_outcome.retry_after);
+        context.backlog.take_queued_for_peer(&job.peer_id).await
+    } else {
+        if answered {
+            context.backlog.record_peer_answered(&job.peer_id);
+        }
+        Vec::new()
+    };
+    for queued_job in demoted {
+        let peer_id = queued_job.peer_id.clone();
+        let head_priority = queued_job.head_priority();
+        let _ = report_push_event(
+            &context.failure_tx,
+            &peer_id,
+            queued_job.doc_id,
+            queued_job.collection_id,
+            Some(queued_job.root_cid),
+            head_priority,
+            true,
+            false,
+            send_outcome.retry_after,
+            false,
+            queued_job.marker_generation,
+            false,
+        )
+        .await;
+    }
+    let send_failed = send_outcome.failed;
+    let any_failed = root_missing || send_failed;
+    match send_outcome.error {
+        Some(error) => {
+            context
+                .peer_state
+                .record_head_push_failed(job.peer_id.as_str(), error, answered)
+        }
+        None if !any_failed => context.peer_state.record_head_acked(job.peer_id.as_str()),
+        None => {}
+    }
+
+    if any_failed && context.backlog.is_current(job).await {
+        let _ = report_push_event(
+            &context.failure_tx,
+            &job.peer_id,
+            job.doc_id.clone(),
+            job.collection_id.clone(),
+            Some(job.root_cid),
+            job.head_priority(),
+            true,
+            false,
+            send_outcome.retry_after,
+            false,
+            job.marker_generation,
+            false,
+        )
+        .await;
+        JobCompletion::Failed
+    } else if context.backlog.is_current(job).await {
+        if job.marker_generation.is_none() || is_whole_frontier(context, job).await {
+            let _ = report_push_ack(&context.failure_tx, job).await;
+            crate::model_trace!(Ack {
+                doc: &job.doc_id,
+                receiver: job.peer_id.as_str(),
+                head: job.root_cid.to_string(),
+            });
+        }
+        JobCompletion::Succeeded
+    } else {
+        // A newer head of this document is queued. Generations are allocated
+        // after commit, so this older head can hold the newer generation and
+        // its marker; acknowledging on the generation alone would clear it
+        // before the newer head lands (`LiveMarkerGeneration.tla`
+        // `Red_NoHeadFence`). Only a head that is still the whole frontier
+        // completes the scope, as on the current branch.
+        if job.marker_generation.is_some() && is_whole_frontier(context, job).await {
+            let _ = report_push_ack(&context.failure_tx, job).await;
+        }
+        if any_failed {
+            JobCompletion::Retired
+        } else {
+            JobCompletion::RetiredAfterDelivery
+        }
+    }
+}
+
+fn build_request<T: P2PTransport>(transport: &T, job: &PushJobSpec) -> Option<PushLogRequest> {
+    let mut request = PushLogRequest::new(
+        job.doc_id.clone(),
+        Bytes::from(job.root_cid.to_bytes()),
+        job.collection_id.clone(),
+        job.creator.clone(),
+        job.head_block.clone(),
+    );
+    match sign_with_transport(transport, &mut request) {
+        Ok(()) => Some(request),
+        Err(error) => {
+            tracing::debug!(cid = %job.root_cid, error = %error, "Failed to sign PushLog request");
+            None
+        }
+    }
+}
+
+/// Outcome of announcing one head hint to one peer.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub(super) struct PushSendOutcome {
+    /// Any block failed to land.
+    pub failed: bool,
+    /// The receiver reported its pending-DAG registry FULL. This is peer-wide
+    /// and structural, so the caller parks the whole peer rather than just this
+    /// CID (defradb#1112).
+    pub at_capacity: bool,
+    pub failure_reason: Option<HeadHintFailureReason>,
+    pub retry_after: Option<Duration>,
+    /// What went wrong, for the peer's failure history.
+    pub error: Option<String>,
+}
+
+pub(super) async fn send_head_hint_via_transport<T: P2PTransport>(
+    transport: &T,
+    peer_id: &crate::transport::PeerId,
+    (cid, request): (Cid, PushLogRequest),
+    send_timeout: Duration,
+) -> PushSendOutcome {
+    use crate::error::is_at_capacity_message;
+
+    match crate::rt::time::timeout(
+        send_timeout,
+        transport.send_two_stream_request(peer_id, request.clone()),
+    )
+    .await
+    {
+        Err(_) => {
+            tracing::warn!(
+                peer_id = %peer_id,
+                cid = %cid,
+                timeout_ms = send_timeout.as_millis(),
+                "PushLog to replicator timed out"
+            );
+            PushSendOutcome {
+                failed: true,
+                at_capacity: false,
+                failure_reason: Some(HeadHintFailureReason::Transport),
+                retry_after: None,
+                error: Some(format!("no reply within {}ms", send_timeout.as_millis())),
+            }
+        }
+        Ok(Err(e)) => {
+            if e.is_connection_like() {
+                tracing::debug!(
+                    peer_id = %peer_id,
+                    cid = %cid,
+                    error = %e,
+                    "PushLog to replicator failed because the connection became unavailable"
+                );
+            } else {
+                tracing::debug!(
+                        peer_id = %peer_id,
+                        cid = %cid,
+                        error = %e,
+                        "PushLog to replicator failed"
+                );
+            }
+            PushSendOutcome {
+                failed: true,
+                at_capacity: false,
+                failure_reason: Some(HeadHintFailureReason::Transport),
+                retry_after: None,
+                error: Some(e.to_string()),
+            }
+        }
+        Ok(Ok(reply)) => {
+            let Some(error_message) = reply.err_message.as_deref() else {
+                tracing::debug!(
+                    target: "p2p::sync::restart_recovery",
+                    peer_id = %peer_id,
+                    cid = %cid,
+                    doc_id = %request.doc_id,
+                    "PushLog head hint accepted by replicator"
+                );
+                return PushSendOutcome {
+                    failed: false,
+                    at_capacity: false,
+                    failure_reason: None,
+                    retry_after: None,
+                    error: None,
+                };
+            };
+            if is_at_capacity_message(error_message) {
+                tracing::debug!(
+                    peer_id = %peer_id,
+                    cid = %cid,
+                    "PushLog rejected: receiver at capacity; parking peer and deferring to persisted retry"
+                );
+                return PushSendOutcome {
+                    failed: true,
+                    at_capacity: true,
+                    failure_reason: Some(HeadHintFailureReason::CapacityNack),
+                    retry_after: reply.retry_after(),
+                    error: Some(format!("rejected by peer: {error_message}")),
+                };
+            }
+            tracing::warn!(
+                peer_id = %peer_id,
+                cid = %cid,
+                error = %error_message,
+                "PushLog head hint was rejected"
+            );
+            PushSendOutcome {
+                failed: true,
+                at_capacity: false,
+                failure_reason: Some(HeadHintFailureReason::OtherNack),
+                retry_after: reply.retry_after(),
+                error: Some(format!("rejected by peer: {error_message}")),
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+#[path = "push_worker_tests.rs"]
+mod tests;

@@ -1,181 +1,20 @@
 import Lake
-open Lake DSL
+open Lake DSL System
 
 package defraConvergence where
 
-@[default_target]
-lean_lib LocalFetchPermit where
+/-- Every `*.lean` beside this file, except this file, is a root: a proof is
+built because its file exists. Lake caches this list with the lakefile, so
+build with `lake build -R`. -/
+def proofRoots (dir : FilePath) : IO (Array Lean.Name) := do
+  let entries ← dir.readDir
+  let stems ← entries.filterMapM fun entry => do
+    let file : FilePath := entry.fileName
+    if file.extension != some "lean" || entry.fileName == "lakefile.lean" then return none
+    if ← entry.path.isDir then return none
+    return file.fileStem
+  return (stems.qsort (· < ·)).map Lean.Name.mkSimple
 
 @[default_target]
-lean_lib HttpRouterComposition where
-
-@[default_target]
-lean_lib EndpointBind where
-
-@[default_target]
-lean_lib DocKeyScopes where
-
-@[default_target]
-lean_lib DefraConvergence where
-
-@[default_target]
-lean_lib Acp where
-
-@[default_target]
-lean_lib Cid where
-
-@[default_target]
-lean_lib OrderEncoding where
-
-@[default_target]
-lean_lib IndexMaintenance where
-
-@[default_target]
-lean_lib Conformance where
-
-@[default_target]
-lean_lib HeadSet where
-
-@[default_target]
-lean_lib SingleFlight where
-
-@[default_target]
-lean_lib CommitFence where
-
-@[default_target]
-lean_lib HistoryTurns where
-
-@[default_target]
-lean_lib RootedAuthorization where
-
-@[default_target]
-lean_lib SelectiveCarCapacity where
-
-@[default_target]
-lean_lib ReplicatorInstall where
-
-@[default_target]
-lean_lib EngineTickers where
-
-@[default_target]
-lean_lib CpuLedger where
-
-@[default_target]
-lean_lib DefaultPool where
-
-@[default_target]
-lean_lib DiskAnnCodes where
-
-@[default_target]
-lean_lib SchemaPublication where
-
-@[default_target]
-lean_lib PeerConnection where
-
-@[default_target]
-lean_lib ByteBudget where
-
-@[default_target]
-lean_lib FetchStats where
-
-@[default_target]
-lean_lib ProviderHealth where
-
-@[default_target]
-lean_lib GossipFrame where
-
-@[default_target]
-lean_lib OrphanMarker where
-
-@[default_target]
-lean_lib ServiceRecord where
-
-@[default_target]
-lean_lib StorageFailure where
-
-@[default_target]
-lean_lib WalkCutoff where
-
-@[default_target]
-lean_lib PqFourSums where
-
-@[default_target]
-lean_lib FragmentNesting where
-
-@[default_target]
-lean_lib TextCrdt where
-
-@[default_target]
-lean_lib JsonCrdt where
-
-@[default_target]
-lean_lib CustomCrdtCode where
-
-@[default_target]
-lean_lib PendingCache where
-
-@[default_target]
-lean_lib SharedQuantizer where
-
-@[default_target]
-lean_lib RobustPruneBlocks where
-
-@[default_target]
-lean_lib BackEdgesInPlace where
-
-@[default_target]
-lean_lib DocumentPush where
-
-@[default_target]
-lean_lib SelectedCarAuthority where
-
-@[default_target]
-lean_lib RetrySchedule where
-
-@[default_target]
-lean_lib ChunkSplit where
-
-@[default_target]
-lean_lib TxnId where
-
-@[default_target]
-lean_lib LensListing where
-
-@[default_target]
-lean_lib JsonSubPathCut where
-
-@[default_target]
-lean_lib CarClosureDepth where
-
-@[default_target]
-lean_lib TxnAdmission where
-
-@[default_target]
-lean_lib HttpClient where
-
-@[default_target]
-lean_lib Arbitration where
-
-@[default_target]
-lean_lib RequestDrain where
-
-@[default_target]
-lean_lib NacToggle where
-
-@[default_target]
-lean_lib DocumentSave where
-
-@[default_target]
-lean_lib Rfc3339Nano where
-
-@[default_target]
-lean_lib DocIdText where
-
-@[default_target]
-lean_lib SecondaryRelation where
-
-@[default_target]
-lean_lib CursorToken where
-
-@[default_target]
-lean_lib ViewQuerySource where
+lean_lib Proofs where
+  roots := run_io proofRoots __dir__

@@ -1,0 +1,903 @@
+//! [`NodeBuilder`]: opens the store, then hands the node to the one assembly.
+
+use std::path::PathBuf;
+use std::sync::Arc;
+use std::time::Duration;
+
+#[cfg(feature = "p2p")]
+use crate::assemble::check_access_hooks;
+use crate::assemble::{assemble, Extras};
+use crate::config::{NodeConfig, NodeSigning, Persistence, SigningKey, TransportConfig};
+#[cfg(feature = "vera")]
+use crate::DocumentAcpConfig;
+#[cfg(feature = "http")]
+use crate::HttpConfig;
+use crate::Node;
+#[cfg(feature = "otel")]
+use crate::TelemetryHandle;
+#[cfg(feature = "p2p")]
+use crate::{AccessHooks, P2PConfig};
+use crate::{Error, QueryLimits, Result};
+
+/// Selects which persistent storage backend to use when `data_path` is set.
+#[derive(Debug, Clone, Copy, Default)]
+#[non_exhaustive]
+pub enum StorageBackend {
+    /// regolith, the one store. Kept as an enum so `with_storage_backend`
+    /// stays on the builder and a later variant does not churn it.
+    #[default]
+    Regolith,
+}
+
+/// The sizing profile regolith opens a store with, when no explicit options
+/// are given.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum StoreProfile {
+    /// `RegolithStoreOptions::default()`, sized for a server.
+    #[default]
+    Server,
+    /// `RegolithStoreOptions::embedded()`, sized for a 1-4 MiB working set, as a
+    /// phone or other embedded host has to live inside.
+    Embedded,
+}
+
+/// Builder for constructing an `Node`. Its setters fill in a
+/// [`NodeConfig`], which is the one place the node's settings live.
+#[derive(Default)]
+pub struct NodeBuilder {
+    config: NodeConfig,
+    workers: Option<workers::Config>,
+    data_path: Option<PathBuf>,
+    storage_backend: StorageBackend,
+    storage_profile: StoreProfile,
+    storage_durability: storage::backends::DurabilityMode,
+    regolith_options: Option<storage::RegolithStoreOptions>,
+    embedding_url: Option<String>,
+    embedding_model: Option<String>,
+    embedding_api_key: Option<String>,
+    at_rest_encryption_key: Option<[u8; 32]>,
+    previous_at_rest_encryption_keys: Vec<[u8; 32]>,
+    #[cfg(feature = "http")]
+    http_config: Option<HttpConfig>,
+    #[cfg(feature = "p2p")]
+    access_hooks: Option<AccessHooks>,
+    #[cfg(feature = "p2p")]
+    stream_protocols: Vec<p2p::iroh::StreamRegistration>,
+    #[cfg(feature = "otel")]
+    telemetry_handle: Option<TelemetryHandle>,
+    crdts: Vec<crdt::Registration>,
+    txn_ownership: db::TxnOwnership,
+    document_projector: Option<Arc<dyn db::DocumentMutationProjector>>,
+    replica_registration: Option<db::merge::ReplicaRegistration>,
+    #[cfg(all(test, feature = "p2p"))]
+    kms_transport_wrapper: Option<crate::assemble::TestKmsTransportWrapper>,
+    /// How long an idle explicit transaction lives, and how often the sweep
+    /// looks; when set, it takes precedence over an HTTP config's setting.
+    #[cfg(not(target_arch = "wasm32"))]
+    transaction_idle: Option<(Duration, Duration)>,
+    /// Where a libp2p transport's DNS layers read the resolver
+    /// configuration, when not the system's.
+    #[cfg(feature = "libp2p")]
+    resolver_source: Option<p2p::ResolverSource>,
+}
+
+/// Durability is a separate builder setting, so it is applied over the
+/// caller's options rather than being one of the values they replace.
+fn resolve_regolith_options(
+    explicit: Option<storage::RegolithStoreOptions>,
+    profile: StoreProfile,
+    durability: storage::backends::DurabilityMode,
+) -> storage::RegolithStoreOptions {
+    explicit
+        .unwrap_or_else(|| match profile {
+            StoreProfile::Server => storage::RegolithStoreOptions::default(),
+            StoreProfile::Embedded => storage::RegolithStoreOptions::embedded(),
+        })
+        .with_durability(durability)
+}
+
+/// The builder's at-rest keys, current and previous, installed on `options`.
+fn with_at_rest_keys(
+    options: storage::RegolithStoreOptions,
+    current: Option<[u8; 32]>,
+    previous: &[[u8; 32]],
+) -> Result<storage::RegolithStoreOptions> {
+    match current {
+        Some(key) => options
+            .with_encryption_keys(key, previous.iter().copied())
+            .map_err(Error::InvalidAtRestKeys),
+        None => Ok(options),
+    }
+}
+
+impl NodeBuilder {
+    #[cfg(all(test, feature = "p2p"))]
+    pub(crate) fn with_test_kms_transport_wrapper(
+        mut self,
+        wrap: crate::assemble::TestKmsTransportWrapper,
+    ) -> Self {
+        self.kms_transport_wrapper = Some(wrap);
+        self
+    }
+
+    /// Install a trusted in-process document projector. It stages its changes
+    /// through the mutation's transaction and cannot be selected over HTTP.
+    pub fn with_document_projector(
+        mut self,
+        projector: Arc<dyn db::DocumentMutationProjector>,
+    ) -> Self {
+        self.document_projector = Some(projector);
+        self
+    }
+
+    /// Register replicated documents of the listed collections with the
+    /// node's remote ACP provider (Vera): a document whose creator is not one
+    /// of the deployment's own actors is registered by this node as its
+    /// provider's actor, with the grants `registration` asks for its creator,
+    /// before its genesis merges. Off by default; a local provider and an
+    /// unlisted collection are not affected.
+    pub fn with_replica_registration(
+        mut self,
+        registration: db::merge::ReplicaRegistration,
+    ) -> Self {
+        self.replica_registration = Some(registration);
+        self
+    }
+
+    /// The worker pool the node's data path runs on. Unset, the pool's own
+    /// defaults (`workers::Config::default()`).
+    pub fn with_workers(mut self, config: workers::Config) -> Self {
+        self.workers = Some(config);
+        self
+    }
+
+    /// Run the node's network work (signed queries, the HTTP server, P2P)
+    /// on the application's network runtime. Without one, the node starts
+    /// its own when it has network work to run, and stops it at shutdown.
+    pub fn with_edge(mut self, edge: edge::Edge) -> Self {
+        self.config.edge = Some(edge);
+        self
+    }
+
+    /// Set the data directory for persistent storage.
+    /// If not set, uses in-memory storage.
+    pub fn data_path(mut self, path: impl Into<PathBuf>) -> Self {
+        self.data_path = Some(path.into());
+        self
+    }
+
+    /// Select the persistent storage backend (default: `Regolith`, the only
+    /// one).
+    ///
+    /// Has no effect when `data_path` is not set (in-memory mode).
+    pub fn with_storage_backend(mut self, backend: StorageBackend) -> Self {
+        self.storage_backend = backend;
+        self
+    }
+
+    /// Set the persistent storage durability mode (default: `Immediate`).
+    ///
+    /// `Immediate` fsyncs acknowledged commits. `Eventual` can improve write
+    /// throughput, but OS crashes may lose acknowledged writes.
+    pub fn with_storage_durability(
+        mut self,
+        durability: storage::backends::DurabilityMode,
+    ) -> Self {
+        self.storage_durability = durability;
+        self
+    }
+
+    /// Set the regolith store options, including its memory budget.
+    ///
+    /// Defaults to [`storage::RegolithStoreOptions::default`], whose sizing
+    /// targets a server. An embedded host that opens the node in-process
+    /// pays that budget out of its own address space, so it picks a profile
+    /// here rather than inheriting one. Durability stays with
+    /// [`NodeBuilder::with_storage_durability`] and is applied over whatever
+    /// is set here.
+    pub fn with_regolith_options(mut self, options: storage::RegolithStoreOptions) -> Self {
+        self.regolith_options = Some(options);
+        self
+    }
+
+    /// Enable engine file encryption at rest for the persistent storage backend.
+    pub fn with_at_rest_encryption_key(mut self, key: [u8; 32]) -> Self {
+        self.at_rest_encryption_key = Some(key);
+        self
+    }
+
+    /// Keys the store's files may still be sealed under after a rotation to
+    /// the key given to [`NodeBuilder::with_at_rest_encryption_key`]. They
+    /// only open what they sealed; new files use the current key.
+    pub fn with_previous_at_rest_encryption_keys<I>(mut self, keys: I) -> Self
+    where
+        I: IntoIterator<Item = [u8; 32]>,
+    {
+        self.previous_at_rest_encryption_keys = keys.into_iter().collect();
+        self
+    }
+
+    /// Set the maximum number of auto-commit transaction conflict retries.
+    pub fn with_max_txn_retries(mut self, retries: u32) -> Self {
+        self.config.max_txn_retries = Some(retries);
+        self
+    }
+
+    /// Set the fallback OpenAI-compatible embedding base URL.
+    pub fn with_embedding_url(mut self, url: impl Into<String>) -> Self {
+        self.embedding_url = Some(url.into());
+        self
+    }
+
+    /// Set the fallback embedding model name used when the schema leaves it empty.
+    pub fn with_embedding_model(mut self, model: impl Into<String>) -> Self {
+        self.embedding_model = Some(model.into());
+        self
+    }
+
+    /// Set the resolved embedding API key value used for Authorization headers.
+    pub fn with_embedding_api_key(mut self, api_key: impl Into<String>) -> Self {
+        self.embedding_api_key = Some(api_key.into());
+        self
+    }
+
+    /// Configure the node to use document ACP backed by a vera.rs node.
+    ///
+    /// Requires the `vera` feature (on by default).
+    #[cfg(feature = "vera")]
+    pub fn with_vera(mut self, config: crate::VeraConfig) -> Self {
+        self.config.document_acp = DocumentAcpConfig::Vera(config);
+        self
+    }
+
+    /// Use a document ACP provider the host built, for example one over a
+    /// Vera node it runs itself. The node wires it as it wires
+    /// [`with_vera`](Self::with_vera): verified access decisions without
+    /// a cache, remote policies mirrored locally, owed registrations gated.
+    ///
+    /// Requires the `vera` feature (on by default).
+    #[cfg(feature = "vera")]
+    pub fn with_document_acp_provider(mut self, provider: crate::DocumentAcpProvider) -> Self {
+        self.config.document_acp = DocumentAcpConfig::Provider(provider);
+        self
+    }
+
+    /// Run a single-validator Vera node in this process and use it for
+    /// document ACP. The node starts before document ACP is set up and stops
+    /// in [`Node::shutdown`](crate::Node::shutdown).
+    ///
+    /// Requires the `embedded-vera` feature.
+    #[cfg(feature = "embedded-vera")]
+    pub fn with_embedded_vera(mut self, config: crate::EmbeddedVeraConfig) -> Self {
+        self.config.document_acp = DocumentAcpConfig::EmbeddedVera(config);
+        self
+    }
+
+    /// Use an identity already registered in DefraDB's process-local signing registry.
+    ///
+    /// The caller must register the signer before calling [`NodeBuilder::build`].
+    /// Registered identities may be backed by exportable private key bytes or by a
+    /// remote signer such as a host Secure Enclave adapter.
+    pub fn with_node_identity_did(mut self, did: impl Into<String>) -> Self {
+        self.config.signing = NodeSigning::RegisteredIdentity { did: did.into() };
+        self
+    }
+
+    /// Enable Node Access Control (NAC) with the configured node identity as owner.
+    ///
+    /// NAC is disabled by default. When enabled, DB-layer node operations are
+    /// gated by the NAC policy; the node's own identity always retains full
+    /// access (it is the owner). Requires [`NodeBuilder::with_node_identity_did`]
+    /// to be set with an identity backed by local key bytes, so the node DID can
+    /// own the policy — [`NodeBuilder::build`] fails otherwise.
+    pub fn with_node_acp_enabled(mut self) -> Self {
+        self.config.node_acp_enabled = true;
+        self
+    }
+
+    /// Enable Node Access Control (NAC) owned by `owner`, the identity
+    /// starting the node, as Go's `start` with NAC enabled does. A node whose
+    /// NAC was set up before keeps its owner.
+    pub fn with_node_acp_owner(mut self, owner: impl Into<String>) -> Self {
+        self.config.node_acp_enabled = true;
+        self.config.node_acp_owner = Some(owner.into());
+        self
+    }
+
+    /// Set the query execution timeout.
+    ///
+    /// `Duration::ZERO` disables query execution timeouts.
+    pub fn with_query_timeout(mut self, timeout: Duration) -> Self {
+        self.config.query_timeout = Some(timeout);
+        self
+    }
+
+    /// Set GraphQL parsing and filter evaluation limits.
+    pub fn with_query_limits(mut self, limits: QueryLimits) -> Self {
+        self.config.query_limits = limits;
+        self
+    }
+
+    /// Enable or disable the introspection schema cache. Enabled by default.
+    pub fn with_introspection_cache(mut self, enabled: bool) -> Self {
+        self.config.introspection_cache = Some(enabled);
+        self
+    }
+
+    /// Ask `filter` whether to keep each replicated document before its
+    /// commit stores anything.
+    pub fn with_replication_filter(
+        mut self,
+        filter: Arc<dyn db::replication_filter::ReplicationFilter>,
+    ) -> Self {
+        self.config.replication_filter = Some(crate::ReplicationFilterHandle(filter));
+        self
+    }
+
+    /// Hold every index backfill at `gate` before each of its batches, so a
+    /// test can watch a build half done. Go's `db.IndexBuildGate`.
+    pub fn with_index_build_gate(
+        mut self,
+        gate: Arc<dyn db::index::build_gate::IndexBuildGate>,
+    ) -> Self {
+        self.config.index_build_gate = Some(crate::IndexBuildGateHandle(gate));
+        self
+    }
+
+    /// Indexes at most `docs` documents per backfill transaction.
+    pub fn with_backfill_batch_docs(mut self, docs: usize) -> Self {
+        self.config.backfill_batch_docs = Some(docs.max(1));
+        self
+    }
+
+    /// Hold every explicit transaction commit at `gate` before it is handed
+    /// to its owner, so a test can prove a commit whose HTTP answer passed its
+    /// bound still lands.
+    pub fn with_commit_gate(mut self, gate: Arc<dyn db::CommitGate>) -> Self {
+        self.config.commit_gate = Some(crate::CommitGateHandle(gate));
+        self
+    }
+
+    /// Enable the HTTP GraphQL server.
+    #[cfg(feature = "http")]
+    pub fn with_http(mut self, config: HttpConfig) -> Self {
+        self.http_config = Some(config);
+        self
+    }
+
+    /// Set the server-side bound on waiting for a transaction commit.
+    ///
+    /// `Duration::ZERO` disables the bound. A commit still running when the
+    /// bound passes keeps running.
+    #[cfg(feature = "http")]
+    pub fn with_commit_timeout(mut self, timeout: Duration) -> Self {
+        self.http_config
+            .as_mut()
+            .expect("an HTTP config")
+            .commit_timeout = timeout;
+        self
+    }
+
+    /// Enable Iroh/QUIC P2P replication.
+    ///
+    /// Requires the `p2p` feature, which implies `native`.
+    #[cfg(feature = "p2p")]
+    pub fn with_p2p(mut self, config: P2PConfig) -> Self {
+        self.config.transport = TransportConfig::Iroh(config);
+        self
+    }
+
+    /// Enable P2P replication over pinc: direct connections, no gossip.
+    #[cfg(feature = "pinc")]
+    pub fn with_pinc(mut self, config: crate::PincConfig) -> Self {
+        self.config.transport = TransportConfig::Pinc(config);
+        self
+    }
+
+    /// Hand a pre-built telemetry handle to the node so it owns shutdown.
+    ///
+    /// The caller is responsible for calling [`telemetry::init`] and
+    /// composing the bridge layer onto their `tracing` subscriber — this
+    /// method just transfers ownership of the lifecycle handle so the node
+    /// flushes providers when it shuts down. Because the handle is moved,
+    /// calling this twice is a compile error rather than a silent overwrite.
+    ///
+    /// For a one-call ergonomic version, callers can write
+    /// `.with_telemetry(telemetry::init(cfg, edge)?.0)` — `init` exports on
+    /// the given network `edge` and returns `(TelemetryHandle, SdkTracer)`.
+    #[cfg(feature = "otel")]
+    pub fn with_telemetry(mut self, handle: TelemetryHandle) -> Self {
+        self.telemetry_handle = Some(handle);
+        self
+    }
+
+    /// A custom CRDT type, which a field takes with `@crdt(custom: "<name>")`;
+    /// `crdt.ctype()` is `CType::Custom` of that name. The type implements
+    /// [`crdt::FieldCrdt`] and passes `crdt::field::testing::check_field_crdt`.
+    ///
+    /// The type belongs to this node alone: another node in the process has
+    /// only the types its own builder registers. A node without the type
+    /// keeps and replicates definitions naming it, leaves the field out of
+    /// its queries, and parks the field's replicated blocks; a later build
+    /// with the type merges them. Registering two types under one name fails
+    /// [`build`](Self::build).
+    pub fn with_crdt<T>(mut self, crdt: T) -> Self
+    where
+        T: crdt::FieldCrdt + 'static,
+    {
+        self.crdts.push(crdt::Registration::new(crdt));
+        self
+    }
+
+    /// Start from `config`, replacing every setting a setter filled in before.
+    pub fn with_config(mut self, config: NodeConfig) -> Self {
+        self.config = config;
+        self
+    }
+
+    /// The settings the setters have filled in so far.
+    pub fn config(&self) -> &NodeConfig {
+        &self.config
+    }
+
+    /// Size the store for an embedded host ([`StoreProfile::Embedded`]) rather
+    /// than a server. Explicit [`NodeBuilder::with_regolith_options`] win.
+    pub fn with_store_profile(mut self, profile: StoreProfile) -> Self {
+        self.storage_profile = profile;
+        self
+    }
+
+    /// Run the transport `transport` names.
+    pub fn with_transport(mut self, transport: TransportConfig) -> Self {
+        self.config.transport = transport;
+        self
+    }
+
+    /// Run libp2p replication, listening on `listen_addr`.
+    #[cfg(feature = "libp2p")]
+    pub fn with_libp2p(mut self, listen_addr: impl Into<String>) -> Self {
+        self.config.transport = TransportConfig::Libp2p(crate::Libp2pConfig {
+            listen_addrs: vec![listen_addr.into()],
+            ..Default::default()
+        });
+        self
+    }
+
+    /// Read the libp2p transport's DNS resolver configuration from `source`
+    /// rather than the system's, whichever libp2p transport the builder runs.
+    #[cfg(feature = "libp2p")]
+    pub fn with_resolver_source(mut self, source: p2p::ResolverSource) -> Self {
+        self.resolver_source = Some(source);
+        self
+    }
+
+    /// Keep the transport identity in an application-owned keyring.
+    ///
+    /// The backend must provide durable storage and its own namespace per node.
+    /// Startup rejects existing plaintext peer keys; this does not erase or
+    /// migrate historical key material from a database or its backups.
+    pub fn with_peer_keyring(mut self, keyring: Arc<dyn keyring::Keyring>) -> Self {
+        self.config.peer_keyring = Some(crate::PeerKeyring::new(keyring));
+        self
+    }
+
+    /// Use `key` as the transport identity for this start only, as Go's
+    /// `P2PPrivateKey`: it wins over the keyring and the store's key, and is
+    /// recorded in neither, so a later start without it uses the store's key.
+    pub fn with_start_peer_key(mut self, key: crate::StartPeerKey) -> Self {
+        self.config.start_peer_key = Some(key);
+        self
+    }
+
+    /// Sign as a node identity the node creates from `key`.
+    pub fn with_signing_key(mut self, key: SigningKey) -> Self {
+        self.config.signing = NodeSigning::Enabled { key: Some(key) };
+        self
+    }
+
+    /// Sign as a node identity the node generates.
+    pub fn enable_signing(mut self) -> Self {
+        self.config.signing = NodeSigning::Enabled { key: None };
+        self
+    }
+
+    /// Keep the node identity [`NodeBuilder::with_signing_key`],
+    /// [`NodeBuilder::enable_signing`] or [`NodeBuilder::with_node_identity_did`]
+    /// gives the node, for P2P, the KMS and NAC, but write unsigned blocks and
+    /// run each request as its caller, never as the node: Go's `NodeIdentity`
+    /// with `EnableSigning` off.
+    ///
+    /// The node's own calls ([`Node::execute`], [`Node::add_collection`],
+    /// [`Node::new_txn`] and the rest of the unscoped node) then act
+    /// as no one. With node access control enabled they are checked as
+    /// anonymous, as Go checks a call that names no identity; a request that
+    /// names the node's DID keeps the node's full access. The transactions the
+    /// node begins are owned by no one, so requests that name no identity run
+    /// in them. A trusted document projector still acts as the node's DID.
+    ///
+    /// [`NodeBuilder::build`] fails with [`Error::IdentityOnlyNeedsIdentity`]
+    /// when nothing gives the node an identity.
+    pub fn with_identity_only(mut self) -> Self {
+        self.config.identity_only = true;
+        self
+    }
+
+    /// Replicas' bytes per block chunk; the database default when unset.
+    pub fn with_chunk_size(mut self, bytes: usize) -> Self {
+        self.config.chunk_size = Some(bytes);
+        self
+    }
+
+    /// Install the app's own access control. Only an iroh node accepts it:
+    /// `build` fails for any other transport.
+    #[cfg(feature = "p2p")]
+    pub fn with_access_hooks(mut self, hooks: AccessHooks) -> Self {
+        self.access_hooks = Some(hooks);
+        self
+    }
+
+    /// Serve `protocol` on the node's iroh connections: a stream a peer opens
+    /// with its tag is admitted as Defra's own are, then handed to `handler`
+    /// on the network runtime. The handler reaches the database through the
+    /// node's request path ([`Node::execute_request`]); see
+    /// [`p2p::iroh::StreamHandler`]. A handler made before the node holds a
+    /// `Weak<Node>` set once `build` returns, and resets streams that arrive
+    /// before then by dropping them. `build` fails unless the transport is
+    /// iroh, for a protocol [`p2p::iroh::StreamProtocol::validate`] refuses,
+    /// and for a tag given twice.
+    #[cfg(feature = "p2p")]
+    pub fn with_stream_protocol(
+        mut self,
+        protocol: p2p::iroh::StreamProtocol,
+        handler: Arc<dyn p2p::iroh::StreamHandler>,
+    ) -> Self {
+        self.stream_protocols.push((protocol, handler));
+        self
+    }
+
+    /// Which requests may reach a transaction this node began. Unset, only
+    /// requests acting as the identity that began it;
+    /// [`db::TxnOwnership::Embedder`] suits a node whose embedding process is
+    /// its only caller, such as the one behind the C API.
+    pub fn with_txn_ownership(mut self, ownership: db::TxnOwnership) -> Self {
+        self.txn_ownership = ownership;
+        self
+    }
+
+    /// End explicit transactions no request has used for `idle`, checking
+    /// every `sweep`, on a node with or without an HTTP server: the sweep is
+    /// a job on a worker's deadline queue, read through the Env clock. A zero
+    /// `idle` keeps transactions until they are committed or discarded. This
+    /// setting takes precedence over an HTTP config's idle timeout, which
+    /// applies only when this is not called.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn with_transaction_idle_timeout(mut self, idle: Duration, sweep: Duration) -> Self {
+        self.transaction_idle = Some((idle, sweep));
+        self
+    }
+
+    /// Build and start the embedded DefraDB node.
+    pub async fn build(mut self) -> Result<Node> {
+        let crdts = crdt::Crdts::new(std::mem::take(&mut self.crdts))?;
+        #[cfg(feature = "p2p")]
+        check_access_hooks(&self.config, self.access_hooks.as_ref())?;
+        #[cfg(feature = "p2p")]
+        if !self.stream_protocols.is_empty()
+            && !matches!(self.config.transport, TransportConfig::Iroh(_))
+        {
+            return Err(Error::StreamProtocolsNeedIroh);
+        }
+
+        #[cfg(feature = "http")]
+        let (serves_http, http_idle) = match self.http_config.as_ref() {
+            Some(config) => (
+                true,
+                Some((
+                    config.transaction_idle_timeout,
+                    config.transaction_cleanup_interval,
+                )),
+            ),
+            None => (false, None),
+        };
+        #[cfg(all(not(feature = "http"), not(target_arch = "wasm32")))]
+        let http_idle: Option<(Duration, Duration)> = None;
+        #[cfg(not(target_arch = "wasm32"))]
+        let transaction_cleanup = match self.transaction_idle.or(http_idle) {
+            Some((idle, _)) if idle.is_zero() => None,
+            Some((_, sweep)) if sweep.is_zero() => return Err(Error::ZeroCleanupInterval),
+            Some((idle, sweep)) => Some(crate::TransactionCleanupConfig {
+                max_idle_age: idle,
+                sweep_interval: sweep,
+            }),
+            None => None,
+        };
+
+        #[cfg(feature = "http")]
+        if serves_http && self.txn_ownership == db::TxnOwnership::Embedder {
+            return Err(crate::Error::HttpEmbedderTransactionOwnership);
+        }
+
+        let extras = Extras {
+            embedding_url: self.embedding_url.take(),
+            embedding_model: self.embedding_model.take(),
+            embedding_api_key: self.embedding_api_key.take(),
+            txn_ownership: self.txn_ownership,
+            document_projector: self.document_projector.take(),
+            replica_registration: self.replica_registration.take(),
+            #[cfg(all(test, feature = "p2p"))]
+            kms_transport_wrapper: self.kms_transport_wrapper.take(),
+            #[cfg(not(target_arch = "wasm32"))]
+            transaction_cleanup,
+            #[cfg(feature = "http")]
+            serves_http,
+            #[cfg(feature = "p2p")]
+            access_hooks: self.access_hooks.take(),
+            #[cfg(feature = "p2p")]
+            stream_protocols: std::mem::take(&mut self.stream_protocols),
+            #[cfg(feature = "otel")]
+            telemetry: self.telemetry_handle.take(),
+        };
+
+        #[cfg(feature = "libp2p")]
+        if let (Some(source), TransportConfig::Libp2p(libp2p)) =
+            (self.resolver_source.take(), &mut self.config.transport)
+        {
+            libp2p.resolver = source;
+        }
+        self.config.persistence = if self.data_path.is_some() {
+            Persistence::Persistent
+        } else {
+            Persistence::Memory
+        };
+        let config = self.config.clone();
+        let query_limits = config.query_limits;
+        #[cfg(feature = "http")]
+        let identity_only = config.identity_only;
+        #[cfg(all(feature = "http", not(target_arch = "wasm32")))]
+        let node_acp_enabled = config.node_acp_enabled;
+        query_limits.check_fragment_nesting()?;
+        let workers = self.workers.take();
+        let node = assemble(|pool| self.open_store(pool, crdts), config, workers, extras).await?;
+
+        // Spawn the HTTP server if configured.
+        #[cfg(feature = "http")]
+        if let Some(http_cfg) = self.http_config.take() {
+            let network = node.network.as_ref().ok_or(Error::HttpNeedsNetwork)?;
+            let server_config = defra_http::ServerConfig {
+                address: http_cfg.address,
+                request_timeout: crate::timeout_secs(http_cfg.request_timeout),
+                commit_timeout_ms: crate::timeout_millis(http_cfg.commit_timeout),
+                query_limits,
+                no_signing: identity_only,
+                ..Default::default()
+            };
+            let server = defra_http::Server::from_arc_with_config(
+                node.runner.clone(),
+                server_config,
+                network.requests().clone(),
+            )
+            .with_event_bus_arc(node.event_bus.clone())
+            .with_rest_arc(node.rest.clone())
+            .with_pool(node.pool.clone())
+            .with_dev_mode(http_cfg.dev_mode)
+            .with_schema_arc(Arc::new(crate::HttpSchemaOps {
+                schema_ops: node.schema_ops.clone(),
+                context: None,
+            }));
+            let ops = crate::ops::HttpNodeOps::new(node.ops());
+            let server = server
+                .with_view_arc(ops.clone())
+                .with_backup_arc(ops.clone())
+                .with_doc_acp_arc(ops.clone())
+                .with_encrypted_index_arc(ops.clone())
+                .with_block_arc(ops);
+
+            #[cfg(not(target_arch = "wasm32"))]
+            let server = server.with_index_arc(defra_http::index_adapter::IndexAdapter::new_arc(
+                Arc::clone(node.database()),
+            ));
+            #[cfg(not(target_arch = "wasm32"))]
+            let server = {
+                let collections =
+                    defra_http::collection_mgmt_adapter::CollectionManagementAdapter::new_arc(
+                        Arc::clone(node.database()),
+                    );
+                // The event stream gates chunk events by collection even without the management routes.
+                let server = server.with_collection_lookup_arc(collections.clone());
+                match http_cfg.collection_management {
+                    true => server.with_collection_mgmt_arc(collections),
+                    false => server,
+                }
+            };
+            // With node ACP configured, the routes that check permissions at
+            // the edge (events, P2P, `/node/*`) check them, as `defradb
+            // start` does. Configured covers a store a previous run enabled
+            // node ACP in: the adapter then follows its status, disabled and
+            // re-enabled included. A node never configured gets no adapter,
+            // so `/acp/node/enable` cannot hand an open node to its first
+            // caller.
+            #[cfg(not(target_arch = "wasm32"))]
+            let nac_configured = node_acp_enabled
+                || db::NacManagerApi::status(&**node.nac_manager()).await
+                    != acp::nac::NacStatus::NotConfigured;
+            #[cfg(not(target_arch = "wasm32"))]
+            let server = match nac_configured {
+                true => server.with_nac_arc(Arc::new(
+                    defra_http::nac_adapter::NacAdapter::new(Arc::clone(node.nac_manager()))
+                        .placed_on(node.pool.as_ref()),
+                )),
+                false => server,
+            };
+
+            // A local document ACP is the node's own store: its routes run on
+            // the pool, as the node's own calls do.
+            let server = match node.remote_acp {
+                true => server,
+                false => server.with_local_acp(),
+            };
+
+            // The node's own DID, however it was configured: a registered
+            // identity, or one signing generated or was given a key for.
+            let server = if let Some(did) = node.node_identity_did() {
+                server.with_node_identity_did(did.to_owned())
+            } else {
+                server
+            };
+
+            #[cfg(any(feature = "p2p", feature = "libp2p"))]
+            let server = if let Some(p2p) = node.p2p_arc() {
+                server.with_p2p_arc(p2p)
+            } else {
+                server
+            };
+
+            let server = match http_cfg.authenticated_routes {
+                Some(routes) => server.with_authenticated_routes(routes),
+                None => server,
+            };
+            let server = match http_cfg.extra_routes {
+                Some(extra) => server.with_extra_routes(extra),
+                None => server,
+            };
+            let server = match http_cfg.router_transform {
+                Some(transform) => server.with_router_transform(transform),
+                None => server,
+            };
+            let addr = http_cfg.address;
+            let bound = http_cfg.listener;
+            // The server runs in the node's request scope: draining it
+            // stops the server accepting first and waits for its requests.
+            drop(network.requests().spawn(async move {
+                let served = match bound {
+                    Some(listener) => server.serve_on(listener).await,
+                    None => server.run().await,
+                };
+                if let Err(e) = served {
+                    tracing::error!(error = %e, address = %addr, "HTTP server exited with error");
+                }
+            }));
+            tracing::info!(address = %addr, "HTTP server started");
+        }
+        #[cfg(not(feature = "http"))]
+        let _ = query_limits;
+
+        Ok(node)
+    }
+
+    /// Opens the node's regolith store on `pool`, in memory or at `data_path`.
+    fn open_store(
+        &self,
+        pool: &workers::Pool,
+        crdts: crdt::Crdts,
+    ) -> Result<Arc<storage::RegolithStore>> {
+        let store = if let Some(path) = self.data_path.as_ref() {
+            std::fs::create_dir_all(path)?;
+            tracing::info!(
+                storage_backend = "regolith",
+                data_path = %path.display(),
+                "node starting"
+            );
+            let opts = with_at_rest_keys(
+                resolve_regolith_options(
+                    self.regolith_options.clone(),
+                    self.storage_profile,
+                    self.storage_durability,
+                )
+                .placed_on(pool)
+                .with_crdts(crdts),
+                self.at_rest_encryption_key,
+                &self.previous_at_rest_encryption_keys,
+            )?;
+            storage::RegolithStore::open_with_options(path, opts).map_err(Error::StoreOpen)?
+        } else {
+            tracing::info!(
+                storage_backend = "memory",
+                "node starting (ephemeral, no data_path)"
+            );
+            storage::RegolithStore::open_with_options(
+                "memory",
+                with_at_rest_keys(
+                    storage::RegolithStoreOptions::memory()
+                        .placed_on(pool)
+                        .with_crdts(crdts),
+                    self.at_rest_encryption_key,
+                    &self.previous_at_rest_encryption_keys,
+                )?,
+            )
+            .map_err(Error::MemoryStoreOpen)?
+        };
+        Ok(Arc::new(store))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn node_builder_accepts_regolith_options() {
+        let builder =
+            crate::Node::builder().with_regolith_options(storage::RegolithStoreOptions::embedded());
+
+        assert_eq!(
+            builder
+                .regolith_options
+                .as_ref()
+                .map(|options| options.engine.get_write_buffer_size()),
+            Some(256 * 1024)
+        );
+    }
+
+    #[test]
+    fn the_embedded_profile_sizes_the_store_for_an_embedded_host() {
+        let resolved = super::resolve_regolith_options(
+            None,
+            super::StoreProfile::Embedded,
+            storage::backends::DurabilityMode::Immediate,
+        );
+
+        assert_eq!(resolved.engine.get_write_buffer_size(), 256 * 1024);
+        assert_eq!(resolved.engine.get_block_cache_size(), 0);
+    }
+
+    #[test]
+    fn regolith_options_default_to_server_sizing() {
+        let resolved = super::resolve_regolith_options(
+            None,
+            super::StoreProfile::Server,
+            storage::backends::DurabilityMode::Immediate,
+        );
+        let server = storage::RegolithStoreOptions::default();
+
+        assert_eq!(
+            resolved.engine.get_write_buffer_size(),
+            server.engine.get_write_buffer_size()
+        );
+        assert_eq!(
+            resolved.engine.get_block_cache_size(),
+            server.engine.get_block_cache_size()
+        );
+    }
+
+    #[test]
+    fn explicit_regolith_options_survive_and_durability_stays_with_the_builder() {
+        let resolved = super::resolve_regolith_options(
+            Some(storage::RegolithStoreOptions::embedded()),
+            super::StoreProfile::Server,
+            storage::backends::DurabilityMode::Eventual,
+        );
+        let expected = storage::RegolithStoreOptions::embedded()
+            .with_durability(storage::backends::DurabilityMode::Eventual);
+
+        assert_eq!(resolved.engine.get_write_buffer_size(), 256 * 1024);
+        assert_eq!(resolved.engine.get_block_cache_size(), 0);
+        assert_eq!(format!("{resolved:?}"), format!("{expected:?}"));
+    }
+
+    #[test]
+    fn node_builder_accepts_query_timeout() {
+        let timeout = std::time::Duration::from_secs(45);
+        let builder = crate::Node::builder().with_query_timeout(timeout);
+
+        assert_eq!(builder.config.query_timeout, Some(timeout));
+    }
+}

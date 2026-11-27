@@ -1,0 +1,450 @@
+//! Application state and builder.
+
+use std::sync::Arc;
+
+use edge::Edge;
+use query::executor::QueryExecutor;
+use query::rest::RestOperations;
+use query::QueryLimits;
+use serde_json::Map;
+
+use super::{
+    BackupOperations, BlockOperations, CollectionLookup, CollectionManagementOperations,
+    CollectionOperations, DocumentAcpOperations, DumpOperations, EncryptedIndexOperations,
+    IndexOperations, ManageRequester, NodeAcpOperations, P2POperations, ViewOperations,
+};
+
+/// Application state shared across handlers.
+#[derive(Clone)]
+pub struct AppState(Arc<AppStateFields>);
+
+/// What [`AppState`] holds; its fields read through `AppState`.
+pub struct AppStateFields {
+    pub executor: Arc<dyn QueryExecutor>,
+    /// The network runtime request work runs on.
+    pub edge: Edge,
+    pub(crate) signing_slots: Arc<nuclei::sync::Semaphore>,
+    /// The worker pool a request's storage work runs on, when the node has
+    /// one.
+    pub pool: Option<workers::Pool>,
+    pub rest: Option<Arc<dyn RestOperations>>,
+    pub p2p: Option<Arc<dyn P2POperations>>,
+    pub manage: Option<Arc<dyn ManageRequester>>,
+    pub index: Option<Arc<dyn IndexOperations>>,
+    pub encrypted_index: Option<Arc<dyn EncryptedIndexOperations>>,
+    pub backup: Option<Arc<dyn BackupOperations>>,
+    pub block: Option<Arc<dyn BlockOperations>>,
+    pub schema: Option<Arc<dyn CollectionOperations>>,
+    pub nac: Option<Arc<dyn NodeAcpOperations>>,
+    pub collection_mgmt: Option<Arc<dyn CollectionManagementOperations>>,
+    /// What the event stream resolves an event's collection with.
+    pub collection_lookup: Option<Arc<dyn CollectionLookup>>,
+    pub doc_acp: Option<Arc<dyn DocumentAcpOperations>>,
+    pub view: Option<Arc<dyn ViewOperations>>,
+    pub dump: Option<Arc<dyn DumpOperations>>,
+    pub event_bus: Option<Arc<dyn events::Bus>>,
+    pub node_options: Option<Arc<Map<String, serde_json::Value>>>,
+    pub node_identity_did: Option<String>,
+    pub signing_enabled: bool,
+    pub dev_mode: bool,
+    pub query_limits: QueryLimits,
+}
+
+impl std::ops::Deref for AppState {
+    type Target = AppStateFields;
+
+    fn deref(&self) -> &AppStateFields {
+        &self.0
+    }
+}
+
+impl std::fmt::Debug for AppState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+impl std::fmt::Debug for AppStateFields {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AppState")
+            .field("executor", &"<QueryExecutor>")
+            .field("rest", &self.rest.as_ref().map(|_| "<RestOperations>"))
+            .field("p2p", &self.p2p.as_ref().map(|_| "<P2POperations>"))
+            .field("manage", &self.manage.as_ref().map(|_| "<ManageRequester>"))
+            .field("index", &self.index.as_ref().map(|_| "<IndexOperations>"))
+            .field(
+                "encrypted_index",
+                &self
+                    .encrypted_index
+                    .as_ref()
+                    .map(|_| "<EncryptedIndexOperations>"),
+            )
+            .field(
+                "backup",
+                &self.backup.as_ref().map(|_| "<BackupOperations>"),
+            )
+            .field("block", &self.block.as_ref().map(|_| "<BlockOperations>"))
+            .field(
+                "schema",
+                &self.schema.as_ref().map(|_| "<CollectionOperations>"),
+            )
+            .field("nac", &self.nac.as_ref().map(|_| "<NodeAcpOperations>"))
+            .field(
+                "collection_mgmt",
+                &self
+                    .collection_mgmt
+                    .as_ref()
+                    .map(|_| "<CollectionManagementOperations>"),
+            )
+            .field(
+                "doc_acp",
+                &self.doc_acp.as_ref().map(|_| "<DocumentAcpOperations>"),
+            )
+            .field("view", &self.view.as_ref().map(|_| "<ViewOperations>"))
+            .field("dump", &self.dump.as_ref().map(|_| "<DumpOperations>"))
+            .field("event_bus", &self.event_bus.as_ref().map(|_| "<EventBus>"))
+            .field(
+                "node_options",
+                &self.node_options.as_ref().map(|_| "<NodeOptions>"),
+            )
+            .field("node_identity_did", &self.node_identity_did)
+            .field("dev_mode", &self.dev_mode)
+            .field("query_limits", &self.query_limits)
+            .finish()
+    }
+}
+
+impl AppState {
+    /// Get P2P operations or return ServiceUnavailable error.
+    pub fn require_p2p(&self) -> Result<&Arc<dyn P2POperations>, crate::error::HttpError> {
+        self.p2p
+            .as_ref()
+            .ok_or_else(|| crate::error::peer_refused(defra_p2p_adapter::peer::Error::NoP2P))
+    }
+
+    /// Get the management requester or return ServiceUnavailable error.
+    pub fn require_manage(&self) -> Result<&Arc<dyn ManageRequester>, crate::error::HttpError> {
+        self.manage.as_ref().ok_or_else(|| {
+            crate::error::HttpError::ServiceUnavailable(
+                "P2P management is not enabled. Start the server with P2P enabled to use this feature.".into()
+            )
+        })
+    }
+
+    /// Get index operations or return ServiceUnavailable error.
+    pub fn require_index(&self) -> Result<&Arc<dyn IndexOperations>, crate::error::HttpError> {
+        self.index.as_ref().ok_or_else(|| {
+            crate::error::HttpError::ServiceUnavailable(
+                "Index operations are not enabled. Start the server with indexing enabled to use this feature.".into()
+            )
+        })
+    }
+
+    /// Get encrypted index operations or return ServiceUnavailable error.
+    pub fn require_encrypted_index(
+        &self,
+    ) -> Result<&Arc<dyn EncryptedIndexOperations>, crate::error::HttpError> {
+        self.encrypted_index.as_ref().ok_or_else(|| {
+            crate::error::HttpError::ServiceUnavailable(
+                "Encrypted index operations are not enabled.".into(),
+            )
+        })
+    }
+
+    /// Get block operations or return ServiceUnavailable error.
+    pub fn require_block(&self) -> Result<&Arc<dyn BlockOperations>, crate::error::HttpError> {
+        self.block.as_ref().ok_or_else(|| {
+            crate::error::HttpError::ServiceUnavailable("Block operations are not enabled.".into())
+        })
+    }
+
+    /// Get backup operations or return ServiceUnavailable error.
+    pub fn require_backup(&self) -> Result<&Arc<dyn BackupOperations>, crate::error::HttpError> {
+        self.backup.as_ref().ok_or_else(|| {
+            crate::error::HttpError::ServiceUnavailable(
+                "Backup operations are not enabled. Start the server with backup enabled to use this feature.".into()
+            )
+        })
+    }
+
+    /// Get schema operations or return ServiceUnavailable error.
+    pub fn require_schema(
+        &self,
+    ) -> Result<&Arc<dyn CollectionOperations>, crate::error::HttpError> {
+        self.schema.as_ref().ok_or_else(|| {
+            crate::error::HttpError::ServiceUnavailable(
+                "Schema operations are not enabled. Start the server with schema enabled to use this feature.".into()
+            )
+        })
+    }
+
+    /// Get collection management operations or return ServiceUnavailable error.
+    pub fn require_collection_mgmt(
+        &self,
+    ) -> Result<&Arc<dyn CollectionManagementOperations>, crate::error::HttpError> {
+        self.collection_mgmt.as_ref().ok_or_else(|| {
+            crate::error::HttpError::ServiceUnavailable(
+                "Collection management operations are not enabled.".into(),
+            )
+        })
+    }
+
+    /// Get document ACP operations or return ServiceUnavailable error.
+    pub fn require_doc_acp(
+        &self,
+    ) -> Result<&Arc<dyn DocumentAcpOperations>, crate::error::HttpError> {
+        self.doc_acp.as_ref().ok_or_else(|| {
+            crate::error::HttpError::ServiceUnavailable(
+                "Document ACP operations are not enabled. Start the server with ACP enabled to use this feature.".into(),
+            )
+        })
+    }
+
+    /// Get dump operations or return ServiceUnavailable error.
+    pub fn require_dump(&self) -> Result<&Arc<dyn DumpOperations>, crate::error::HttpError> {
+        self.dump.as_ref().ok_or_else(|| {
+            crate::error::HttpError::ServiceUnavailable("Dump operations are not enabled.".into())
+        })
+    }
+
+    /// Get view operations or return ServiceUnavailable error.
+    pub fn require_view(&self) -> Result<&Arc<dyn ViewOperations>, crate::error::HttpError> {
+        self.view.as_ref().ok_or_else(|| {
+            crate::error::HttpError::ServiceUnavailable("View operations are not enabled.".into())
+        })
+    }
+
+    /// Get NAC operations or return ServiceUnavailable error.
+    pub fn require_nac(&self) -> Result<&Arc<dyn NodeAcpOperations>, crate::error::HttpError> {
+        self.nac.as_ref().ok_or_else(|| {
+            crate::error::HttpError::ServiceUnavailable(
+                "NAC (Node Access Control) is not enabled. Start the server with --node-acp-enable to use this feature.".into()
+            )
+        })
+    }
+}
+
+/// Builder for constructing AppState with optional components.
+pub struct AppStateBuilder {
+    executor: Arc<dyn QueryExecutor>,
+    edge: Edge,
+    pool: Option<workers::Pool>,
+    rest: Option<Arc<dyn RestOperations>>,
+    p2p: Option<Arc<dyn P2POperations>>,
+    manage: Option<Arc<dyn ManageRequester>>,
+    index: Option<Arc<dyn IndexOperations>>,
+    encrypted_index: Option<Arc<dyn EncryptedIndexOperations>>,
+    backup: Option<Arc<dyn BackupOperations>>,
+    block: Option<Arc<dyn BlockOperations>>,
+    schema: Option<Arc<dyn CollectionOperations>>,
+    nac: Option<Arc<dyn NodeAcpOperations>>,
+    collection_mgmt: Option<Arc<dyn CollectionManagementOperations>>,
+    collection_lookup: Option<Arc<dyn CollectionLookup>>,
+    doc_acp: Option<Arc<dyn DocumentAcpOperations>>,
+    view: Option<Arc<dyn ViewOperations>>,
+    dump: Option<Arc<dyn DumpOperations>>,
+    event_bus: Option<Arc<dyn events::Bus>>,
+    node_options: Option<Arc<Map<String, serde_json::Value>>>,
+    node_identity_did: Option<String>,
+    signing_enabled: bool,
+    dev_mode: bool,
+    query_limits: QueryLimits,
+}
+
+impl AppStateBuilder {
+    /// Create a new builder with the required executor and the network
+    /// runtime its requests run on.
+    pub fn new(executor: Arc<dyn QueryExecutor>, edge: Edge) -> Self {
+        Self {
+            executor,
+            edge,
+            pool: None,
+            rest: None,
+            p2p: None,
+            manage: None,
+            index: None,
+            encrypted_index: None,
+            backup: None,
+            block: None,
+            schema: None,
+            nac: None,
+            collection_mgmt: None,
+            collection_lookup: None,
+            doc_acp: None,
+            view: None,
+            dump: None,
+            event_bus: None,
+            node_options: None,
+            node_identity_did: None,
+            signing_enabled: false,
+            dev_mode: false,
+            query_limits: QueryLimits::default(),
+        }
+    }
+
+    /// Run the requests' storage work on `pool`.
+    pub fn with_pool(mut self, pool: Option<workers::Pool>) -> Self {
+        self.pool = pool;
+        self
+    }
+
+    /// Set REST operations.
+    pub fn with_rest(mut self, rest: Arc<dyn RestOperations>) -> Self {
+        self.rest = Some(rest);
+        self
+    }
+
+    /// Set P2P operations.
+    pub fn with_p2p(mut self, p2p: Arc<dyn P2POperations>) -> Self {
+        self.p2p = Some(p2p);
+        self
+    }
+
+    /// Set the remote management requester.
+    pub fn with_manage(mut self, manage: Arc<dyn ManageRequester>) -> Self {
+        self.manage = Some(manage);
+        self
+    }
+
+    /// Set index operations.
+    pub fn with_index(mut self, index: Arc<dyn IndexOperations>) -> Self {
+        self.index = Some(index);
+        self
+    }
+
+    /// Set encrypted index operations.
+    pub fn with_encrypted_index(
+        mut self,
+        encrypted_index: Arc<dyn EncryptedIndexOperations>,
+    ) -> Self {
+        self.encrypted_index = Some(encrypted_index);
+        self
+    }
+
+    /// Set backup operations.
+    pub fn with_backup(mut self, backup: Arc<dyn BackupOperations>) -> Self {
+        self.backup = Some(backup);
+        self
+    }
+
+    /// Set block operations.
+    pub fn with_block(mut self, block: Arc<dyn BlockOperations>) -> Self {
+        self.block = Some(block);
+        self
+    }
+
+    /// Set schema operations.
+    pub fn with_schema(mut self, schema: Arc<dyn CollectionOperations>) -> Self {
+        self.schema = Some(schema);
+        self
+    }
+
+    /// Set NAC (Node Access Control) operations.
+    pub fn with_nac(mut self, nac: Arc<dyn NodeAcpOperations>) -> Self {
+        self.nac = Some(nac);
+        self
+    }
+
+    /// Set collection management operations.
+    pub fn with_collection_mgmt(
+        mut self,
+        collection_mgmt: Arc<dyn CollectionManagementOperations>,
+    ) -> Self {
+        self.collection_mgmt = Some(collection_mgmt);
+        self
+    }
+
+    /// Set the collection lookup the event stream uses, for a host without the management routes.
+    pub fn with_collection_lookup(mut self, collection_lookup: Arc<dyn CollectionLookup>) -> Self {
+        self.collection_lookup = Some(collection_lookup);
+        self
+    }
+
+    /// Set document ACP operations.
+    pub fn with_doc_acp(mut self, doc_acp: Arc<dyn DocumentAcpOperations>) -> Self {
+        self.doc_acp = Some(doc_acp);
+        self
+    }
+
+    /// Set view operations.
+    pub fn with_view(mut self, view: Arc<dyn ViewOperations>) -> Self {
+        self.view = Some(view);
+        self
+    }
+
+    /// Set dump operations.
+    pub fn with_dump(mut self, dump: Arc<dyn DumpOperations>) -> Self {
+        self.dump = Some(dump);
+        self
+    }
+
+    /// Set event bus for subscriptions.
+    pub fn with_event_bus(mut self, bus: Arc<dyn events::Bus>) -> Self {
+        self.event_bus = Some(bus);
+        self
+    }
+
+    /// Set the effective node configuration exposed by the HTTP API.
+    pub fn with_node_options(mut self, options: Map<String, serde_json::Value>) -> Self {
+        self.node_options = Some(Arc::new(options));
+        self
+    }
+
+    /// Set the node identity DID for signing config fallback.
+    pub fn with_node_identity_did(mut self, did: String) -> Self {
+        self.node_identity_did = Some(did);
+        self
+    }
+
+    /// Enable block signing for anonymous requests.
+    pub fn with_signing_enabled(mut self, enabled: bool) -> Self {
+        self.signing_enabled = enabled;
+        self
+    }
+
+    /// Enable development mode (allows purge and other dev-only operations).
+    pub fn with_dev_mode(mut self, dev_mode: bool) -> Self {
+        self.dev_mode = dev_mode;
+        self
+    }
+
+    /// Set GraphQL parsing and filter evaluation limits.
+    pub fn with_query_limits(mut self, limits: QueryLimits) -> Self {
+        self.query_limits = limits;
+        self
+    }
+
+    /// Build the AppState.
+    pub fn build(self) -> AppState {
+        AppState(Arc::new(AppStateFields {
+            signing_slots: Arc::new(nuclei::sync::Semaphore::new(32)),
+            executor: self.executor,
+            edge: self.edge,
+            pool: self.pool,
+            rest: self.rest,
+            p2p: self.p2p,
+            manage: self.manage,
+            index: self.index,
+            encrypted_index: self.encrypted_index,
+            backup: self.backup,
+            block: self.block,
+            schema: self.schema,
+            nac: self.nac,
+            collection_lookup: self.collection_lookup.or_else(|| {
+                self.collection_mgmt
+                    .clone()
+                    .map(|collection_mgmt| collection_mgmt as Arc<dyn CollectionLookup>)
+            }),
+            collection_mgmt: self.collection_mgmt,
+            doc_acp: self.doc_acp,
+            view: self.view,
+            dump: self.dump,
+            event_bus: self.event_bus,
+            node_options: self.node_options,
+            node_identity_did: self.node_identity_did,
+            signing_enabled: self.signing_enabled,
+            dev_mode: self.dev_mode,
+            query_limits: self.query_limits,
+        }))
+    }
+}

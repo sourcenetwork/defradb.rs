@@ -11,12 +11,11 @@ and out-of-scope crates (covered by integration tests).
 Candidates with `already_modeled=true`, grouped by the existing proof slice they
 map onto. This is a sanity cross-check that the surveys agree with what is built.
 
-### Acp slice (Zanzibar soundness + stale-revocation cache)
+### Acp slice (Zanzibar soundness + revocation reach)
 - **acp** — Zanzibar check soundness / no-escalation (Lean)
-- **acp** — Tuple revocation + stale positive cache (TLA+)
+- **acp** — Tuple revocation reaches every replicated tuple view (TLA+)
 - **acp** — NAC management-channel auth gate (TLA+)
 - **db-nac** — NAC lifecycle auth gate, live-vs-persisted admin asymmetry (TLA+)
-- **vera** — Access-decision cache stale-revocation (TLA+) — `MC_Acp_StaleCache_Red`
 - **zanzibar** — Check soundness / no-escalation (Lean) — `Acp/Soundness.lean`
 - **zanzibar** — Cycle-detection safety (Lean)
 
@@ -89,7 +88,7 @@ high → low priority.
 | NAC lifecycle privilege-escalation safety | acp | TLA+ | Across Enabled→DisabledTemporarily→re_enable, no non-admin mutates admin/grant set; writes while disabled rejected; persisted disabled-flag survives restart; live-vs-persisted is_admin asymmetry is sound | medium |
 | TxnRegistryCleanupRace | db | TLA+ | Stale-txn cleanup sweep never evicts a still-live transaction (no lost active txn); only genuinely idle-past-max-age txns are removed and rolled back | medium |
 | merge-queue-serialization | db-merge | TLA+ | Per-doc MergeQueue mutex serializes same-doc merges while parallel across docs; bounded 5x conflict-retry loses/duplicates no block; retry exhaustion fails closed | medium |
-| Deferred-ACP overlay consistency | query | TLA+ | Txn-local projected_registrations gates reads as the committed ACP state would; commit applies all hooks, rollback applies none; no txn observes another's uncommitted projection; fail-closed across projected→committed | medium |
+| Deferred-ACP overlay consistency | query | TLA+ | A transaction's own uncommitted ACP registrations gate reads as the committed ACP state would; commit applies all of them, rollback none; no txn observes another's uncommitted projection; fail-closed across projected→committed | medium |
 | index-maintenance-consistency | db-index | Lean | After on_document_update(old,new) the stored index-entry set equals extract(new): no stale tuples remain, none missing | medium |
 | JWT issuer binding / algorithm-confusion resistance | identity | either | from_token yields DID d only when iss==did(pubkey)==d, header alg matches key_type, signature verifies; no cross-curve confusion; discharges Auth-slice assumption | medium |
 | capability revocation consistency | p2p | TLA+ | Once revoked, every later verify denies; revocation monotone and consistent under concurrent verify/revoke on shared deny-list | medium |
@@ -124,7 +123,7 @@ integration tests, Go FFI parity, or unit tests. One line each on why.
 - **db-backup** — JSON (de)serialization + deterministic 3-phase FK-remap transform; covered by `--test backup`; content-addressing belongs to document layer.
 - **db-blocks** — deterministic single-txn block construction; the produce-side twin of already-modeled CRDT/convergence/content-addressing properties.
 - **db-search** — linear embed→query→fuse flow; only RRF total-order determinism, a low-value v1 heuristic de-risked by a doc_id tie-break.
-- **db-nac** — config-aware wrapper; the real NAC state machine lives in crates/acp; auth gate already in the Auth slice.
+- **db-nac** — config-aware wrapper; the real NAC state machine lives in crates/engine/acp; auth gate already in the Auth slice.
 - **defra-node** — pure assembly/wiring; all emergent protocol behavior delegated to crates with existing slices.
 - **defra-version** — compile-time version/build metadata; immutable string/JSON shapes covered by unit tests.
 - **document** — pure single-threaded value handling; only content-addressing determinism, already assumed by Convergence/Integrity and recorded in db-blocks survey.
@@ -140,7 +139,7 @@ integration tests, Go FFI parity, or unit tests. One line each on why.
 - **pg-compat** — stateless SQL→GraphQL transpiler + pgwire IO; auth check is a one-line DID==username guard; translation pinned by integration tests.
 - **query** — deterministic single-node dataflow + trait-seam glue; every security/replication concern delegated to already-modeled crates.
 - **schema** — pure deterministic definition logic; content-addressing core lives in defra-core; validation = "matches Go" via FFI parity.
-- **vera** — on-chain ACP client plumbing; the security-critical cache state machine is already in the Acp slice; light-client trust is external.
+- **vera** — on-chain ACP client plumbing; decision reuse is keyed by the verified root and modelled in the Acp slice; light-client trust is external.
 - **telemetry** — OpenTelemetry exporter glue; only a once-per-process latch + dedup string filter, covered by unit tests.
 - **wasm** — wasm-bindgen JS-boundary shim; only a 2-state open/closed lifecycle; substantive logic re-exported from already-modeled crates.
 - **zanzibar** — entire correctness surface already proven by the acp Lean slice (`Acp/Soundness.lean`); remaining modules are deterministic glue.

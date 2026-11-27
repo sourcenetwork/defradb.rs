@@ -1,5 +1,6 @@
 mod add_relation_with_collection;
 mod deterministic_ids;
+mod id_added_alone;
 mod refresh {
     mod list_actions;
 }
@@ -9,7 +10,9 @@ mod truncate {
     mod dac;
     mod filter;
     mod index_filter;
+    mod isolation;
     mod list_actions;
+    mod other_collections;
     mod parallel;
     mod simple;
     mod view;

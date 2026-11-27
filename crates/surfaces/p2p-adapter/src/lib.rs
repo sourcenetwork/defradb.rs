@@ -1,0 +1,798 @@
+//! The P2P operation surface (`P2POperations` and the `peer` core every edge
+//! calls) and the adapters that implement it over libp2p and iroh.
+
+#[cfg(feature = "kms")]
+mod key_arrival;
+#[cfg(feature = "kms")]
+pub use key_arrival::key_arrival_promoter;
+
+use std::sync::Arc;
+
+use kovan::Atom;
+#[cfg(test)]
+use rapidhash::RapidHashMap;
+use rapidhash::RapidHashSet;
+use zeroize::Zeroizing;
+
+#[cfg(any(feature = "iroh", feature = "libp2p", feature = "pinc"))]
+mod doc_sync;
+#[cfg(feature = "iroh")]
+mod iroh;
+#[cfg(feature = "iroh")]
+mod iroh_peer;
+#[cfg(feature = "libp2p")]
+mod libp2p;
+pub mod manage;
+mod operations;
+pub mod peer;
+#[cfg(any(feature = "iroh", feature = "libp2p", feature = "pinc"))]
+mod peer_details;
+#[cfg(all(feature = "pinc", not(target_arch = "wasm32")))]
+mod pinc;
+#[cfg(all(feature = "pinc", not(target_arch = "wasm32")))]
+mod pinc_peer;
+#[cfg(any(feature = "iroh", feature = "libp2p", feature = "pinc"))]
+mod pooled_doc_pusher;
+mod read_gate;
+mod replication_events;
+#[cfg(any(feature = "iroh", feature = "libp2p", feature = "pinc"))]
+mod replicator_install_store;
+#[cfg(any(feature = "iroh", feature = "libp2p", feature = "pinc"))]
+mod replicator_installs;
+#[cfg(any(feature = "iroh", feature = "libp2p", feature = "pinc"))]
+mod replicator_replay;
+mod replicator_status;
+#[cfg(any(feature = "iroh", all(feature = "pinc", not(target_arch = "wasm32"))))]
+mod restore;
+#[cfg(any(feature = "iroh", feature = "libp2p", feature = "pinc"))]
+mod retry;
+#[cfg(any(feature = "iroh", feature = "libp2p", feature = "pinc"))]
+mod schema_history;
+#[cfg(any(feature = "iroh", feature = "libp2p", feature = "pinc"))]
+mod transport_doc_pusher;
+#[cfg(any(feature = "iroh", feature = "pinc"))]
+mod transport_version_syncer;
+#[cfg(feature = "libp2p")]
+mod version_syncer;
+
+#[cfg(feature = "iroh")]
+pub use iroh::IrohP2PAdapter;
+#[cfg(feature = "iroh")]
+pub use iroh_peer::{
+    IrohBlockstore, IrohCoordinator, IrohPeer, IrohPeerConfig, IrohPeerShutdown,
+    IrohReplicationStack, ManageChannel,
+};
+#[cfg(feature = "libp2p")]
+pub use libp2p::{CollectionLookup, P2PAdapter, VersionSyncer};
+#[cfg(any(feature = "iroh", feature = "libp2p", feature = "pinc"))]
+pub use peer_details::PeerPushRetries;
+#[cfg(all(feature = "pinc", not(target_arch = "wasm32")))]
+pub use pinc::PincP2PAdapter;
+#[cfg(all(feature = "pinc", not(target_arch = "wasm32")))]
+pub use pinc_peer::{
+    PincBlockstore, PincCoordinator, PincManageChannel, PincPeer, PincPeerConfig, PincPeerShutdown,
+    PincReplicationStack,
+};
+#[cfg(any(feature = "iroh", feature = "libp2p", feature = "pinc"))]
+pub use pooled_doc_pusher::pooled;
+pub use read_gate::{DbBlockClassifier, DbBlockReadGate};
+pub use replication_events::publish_replication_result;
+#[cfg(any(feature = "iroh", feature = "libp2p", feature = "pinc"))]
+pub use replicator_install_store::{ReplicatorInstall, ReplicatorInstallRequest};
+pub use replicator_status::{
+    load_persisted_replicators, set_persisted_replicator_status,
+    set_persisted_replicator_status_for_incarnation,
+    set_persisted_replicator_status_for_incarnation_with_marker_state,
+    set_persisted_replicator_status_for_scope_generation,
+};
+#[cfg(any(feature = "iroh", all(feature = "pinc", not(target_arch = "wasm32"))))]
+pub use restore::restore_p2p_state;
+#[cfg(any(feature = "iroh", feature = "libp2p", feature = "pinc"))]
+pub use retry::{
+    activate_retry_peer, run_retry_pass, spawn_failure_recorder, spawn_retry_loop, FailureRecorder,
+};
+#[cfg(any(feature = "iroh", feature = "libp2p", feature = "pinc"))]
+pub use transport_doc_pusher::{DbTransportDocPusher, TransportDocPusher};
+#[cfg(any(feature = "iroh", feature = "pinc"))]
+pub use transport_version_syncer::{DbTransportVersionSyncer, TransportVersionSyncer};
+#[cfg(feature = "libp2p")]
+pub use version_syncer::DbVersionSyncer;
+
+pub use operations::{
+    ExplicitReplayCapabilityInput, ManageRequester, P2PError, P2POperations, P2PResult,
+    P2pDocumentInfo, P2pDocumentRequest, RemoteManageDocRef, RemoteManageOp, RemoteManageQueryOp,
+    RemoteManageQueryResult, ReplicationFilter, ReplicationFilters, ReplicatorInfo,
+    SyncBranchableRequest, SyncDocumentsRequest, SyncVersionsRequest, TransportPeerId,
+    MANAGE_UNAUTHORIZED,
+};
+
+/// Resolve replicator-delete collection arguments from names to CIDs.
+///
+/// The push registry is keyed by collection CID (see `add_replicator`, which stores
+/// CIDs), so a name passed to delete must be resolved to its CID to match. Lenient:
+/// an unresolved string is kept as-is, so a CID (or already-resolved id) passed
+/// directly still works. An empty input is returned untouched (full-delete path).
+pub fn resolve_remove_collections<F>(collections: Vec<String>, resolve: F) -> Vec<String>
+where
+    F: Fn(&str) -> Option<String>,
+{
+    if collections.is_empty() {
+        return collections;
+    }
+    collections
+        .into_iter()
+        .map(|c| resolve(&c).unwrap_or(c))
+        .collect()
+}
+
+/// `names` plus their `@chunk` collections, which replicate and subscribe with
+/// their parent. A filtered parent's filter decides its chunks too.
+#[cfg(any(feature = "iroh", feature = "libp2p"))]
+pub fn with_chunk_collections(
+    pusher: Option<&Arc<dyn TransportDocPusher>>,
+    names: Vec<String>,
+) -> Vec<String> {
+    let Some(pusher) = pusher else {
+        return names;
+    };
+    let mut all = names.clone();
+    for name in &names {
+        for chunks in pusher.chunk_collections(name) {
+            if !all.contains(&chunks) {
+                all.push(chunks);
+            }
+        }
+    }
+    all
+}
+
+/// Collection names or IDs to remove, each with its `@chunk` collections, as IDs.
+#[cfg(any(feature = "iroh", feature = "libp2p"))]
+pub fn collections_to_remove(
+    pusher: Option<&Arc<dyn TransportDocPusher>>,
+    collections: Vec<String>,
+) -> Vec<String> {
+    let Some(pusher) = pusher else {
+        return collections;
+    };
+    // A chunk collection is found by its parent's name, which an ID first resolves to.
+    let names = collections
+        .into_iter()
+        .map(|collection| match pusher.get_collection_name(&collection) {
+            Ok(Some(name)) => name,
+            _ => collection,
+        })
+        .collect();
+    resolve_remove_collections(with_chunk_collections(Some(pusher), names), |name| {
+        pusher.get_collection_id(name)
+    })
+}
+
+#[cfg(any(feature = "iroh", feature = "libp2p", feature = "pinc"))]
+/// Pairs each `@chunk` collection of a filtered parent in `info` with that
+/// parent, from the schema as it is now. A record written before the pairs
+/// were kept gets them here.
+pub fn set_chunk_sources(
+    pusher: Option<&Arc<dyn TransportDocPusher>>,
+    info: &mut p2p::ReplicatorInfo,
+) {
+    let Some(pusher) = pusher else {
+        return;
+    };
+    pair_chunk_sources(info, |parent_id| {
+        let Ok(Some(name)) = pusher.get_collection_name(parent_id) else {
+            return Vec::new();
+        };
+        pusher
+            .chunk_collections(&name)
+            .iter()
+            .filter_map(|chunks| pusher.get_collection_id(chunks))
+            .collect()
+    });
+}
+
+#[cfg(any(feature = "iroh", feature = "libp2p", feature = "pinc"))]
+fn pair_chunk_sources<F>(info: &mut p2p::ReplicatorInfo, chunk_ids_of: F)
+where
+    F: Fn(&str) -> Vec<String>,
+{
+    let pairs: Vec<(String, String)> = info
+        .filters
+        .keys()
+        .flat_map(|parent| {
+            chunk_ids_of(parent)
+                .into_iter()
+                .map(move |chunks| (chunks, parent.clone()))
+        })
+        .collect();
+    info.set_chunk_sources(pairs);
+}
+
+/// Collections that need an initial document replay when adding a replicator.
+///
+/// Replays collections that are newly authorized, or whose filter or explicit
+/// replay capability changed.
+pub fn collections_requiring_replay(
+    effective_collections: &[String],
+    collection_cids: &[String],
+    existing: Option<&p2p::ReplicatorInfo>,
+    requested: &p2p::ReplicatorInfo,
+    collections_with_changed_capabilities: &RapidHashSet<String>,
+) -> Vec<String> {
+    let pairs: Vec<(&String, &String)> =
+        effective_collections.iter().zip(collection_cids).collect();
+    let changed: RapidHashSet<&String> = pairs
+        .iter()
+        .filter(|(_, cid)| {
+            existing.is_none_or(|existing| {
+                !existing.collections.contains(*cid)
+                    || existing.deciding_filter(cid) != requested.deciding_filter(cid)
+            }) || collections_with_changed_capabilities.contains(*cid)
+        })
+        .map(|(_, cid)| *cid)
+        .collect();
+    // A filtered peer gets a chunk only with its parent, so a replayed chunk
+    // collection replays its parent too.
+    let parents: RapidHashSet<&String> = changed
+        .iter()
+        .filter_map(|cid| requested.chunk_sources.get(*cid))
+        .collect();
+    pairs
+        .iter()
+        .filter(|(_, cid)| changed.contains(cid) || parents.contains(cid))
+        .map(|(name, _)| (*name).clone())
+        .collect()
+}
+
+#[cfg(test)]
+fn collections_with_changed_capabilities(
+    collection_cids: &[String],
+    validated_capabilities: &[(String, String)],
+    capability_matches: impl Fn(&str, Option<&str>) -> bool,
+) -> RapidHashSet<String> {
+    let requested_capabilities: RapidHashMap<&str, &str> = validated_capabilities
+        .iter()
+        .map(|(collection_id, capability)| (collection_id.as_str(), capability.as_str()))
+        .collect();
+
+    collection_cids
+        .iter()
+        .filter(|collection_id| {
+            !capability_matches(
+                collection_id,
+                requested_capabilities.get(collection_id.as_str()).copied(),
+            )
+        })
+        .cloned()
+        .collect()
+}
+
+#[cfg_attr(
+    not(any(feature = "iroh", feature = "libp2p", feature = "pinc")),
+    allow(dead_code)
+)]
+fn validate_explicit_replay_capabilities(
+    capabilities: Vec<ExplicitReplayCapabilityInput>,
+    expected_authorizer_did: Option<&str>,
+    requested_collections: &RapidHashSet<String>,
+    source_peer_id: &str,
+    target_peer_id: &str,
+) -> P2PResult<Vec<(String, String)>> {
+    if capabilities.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let expected_authorizer_did = expected_authorizer_did.ok_or_else(|| {
+        P2PError::invalid_input("explicit replay capabilities require an authenticated identity")
+    })?;
+    capabilities
+        .into_iter()
+        .map(|input| {
+            if !requested_collections.contains(&input.collection_id) {
+                return Err(P2PError::invalid_input(format!(
+                    "explicit replay capability collection '{}' was not requested",
+                    input.collection_id
+                )));
+            }
+
+            let authorization = p2p::verify_explicit_replay_capability(
+                &input.capability,
+                source_peer_id,
+                target_peer_id,
+                &input.collection_id,
+            )
+            .map_err(|error| {
+                P2PError::invalid_input(format!(
+                    "invalid explicit replay capability for collection '{}': {}",
+                    input.collection_id, error
+                ))
+            })?;
+            if authorization.authorizer_did != expected_authorizer_did {
+                return Err(P2PError::invalid_input(format!(
+                    "explicit replay capability authorizer '{}' did not match authenticated identity '{}'",
+                    authorization.authorizer_did, expected_authorizer_did
+                )));
+            }
+            Ok((input.collection_id, input.capability))
+        })
+        .collect()
+}
+
+/// Overlay persisted peer metadata onto live replicator authorization state.
+///
+/// The live registry/transport is authoritative for which peers and collections
+/// are currently replicators. Peerstore rows are persisted metadata and may lag
+/// live authorization changes, so they must not introduce peers or collections.
+///
+/// A persisted peer with no live counterpart is intentionally omitted (it is no
+/// longer an authorized replicator), but it is logged so the divergence is
+/// observable rather than a silently under-reported list.
+pub fn merge_live_replicators_with_persisted_metadata(
+    live: Vec<p2p::ReplicatorInfo>,
+    persisted: Option<Vec<p2p::ReplicatorInfo>>,
+) -> Vec<p2p::ReplicatorInfo> {
+    let Some(persisted) = persisted else {
+        return live;
+    };
+
+    let live_peers: RapidHashSet<&str> = live.iter().map(|info| info.peer_id_str()).collect();
+    for persisted_info in &persisted {
+        if !live_peers.contains(persisted_info.peer_id_str()) {
+            tracing::debug!(
+                peer_id = persisted_info.peer_id_str(),
+                "persisted replicator absent from live registry; omitting from reported state"
+            );
+        }
+    }
+
+    let persisted_by_peer: std::collections::BTreeMap<String, p2p::ReplicatorInfo> = persisted
+        .into_iter()
+        .map(|info| (info.peer_id_str().to_string(), info))
+        .collect();
+
+    live.into_iter()
+        .map(|mut info| {
+            let Some(persisted_info) = persisted_by_peer.get(info.peer_id_str()) else {
+                return info;
+            };
+
+            for address in &persisted_info.addresses {
+                if !info.addresses.iter().any(|existing| existing == address) {
+                    info.addresses.push(address.clone());
+                }
+            }
+            info.status = persisted_info.status;
+            info.last_status_change = persisted_info.last_status_change;
+            info
+        })
+        .collect()
+}
+
+#[cfg(all(test, any(feature = "iroh", feature = "libp2p")))]
+#[path = "../tests/unit/chunk_sources.rs"]
+mod chunk_sources_tests;
+
+#[cfg(test)]
+mod resolve_remove_collections_tests {
+    use super::{
+        collections_requiring_replay, collections_with_changed_capabilities,
+        merge_live_replicators_with_persisted_metadata, resolve_remove_collections,
+    };
+    use rapidhash::{HashMapExt, RapidHashMap, RapidHashSet};
+
+    fn resolver(map: RapidHashMap<&'static str, &'static str>) -> impl Fn(&str) -> Option<String> {
+        move |name| map.get(name).map(|cid| cid.to_string())
+    }
+
+    #[test]
+    fn resolves_name_to_cid() {
+        let map = RapidHashMap::from_iter([("AgentDoc", "bafyCID")]);
+        let out = resolve_remove_collections(vec!["AgentDoc".to_string()], resolver(map));
+        assert_eq!(out, vec!["bafyCID".to_string()]);
+    }
+
+    #[test]
+    fn keeps_unresolved_string_lenient() {
+        let map = RapidHashMap::new();
+        let out = resolve_remove_collections(vec!["bafyAlreadyCID".to_string()], resolver(map));
+        assert_eq!(out, vec!["bafyAlreadyCID".to_string()]);
+    }
+
+    #[test]
+    fn empty_is_untouched_full_delete() {
+        let map = RapidHashMap::from_iter([("AgentDoc", "bafyCID")]);
+        let out = resolve_remove_collections(Vec::new(), resolver(map));
+        assert!(out.is_empty());
+    }
+
+    #[test]
+    fn collections_requiring_replay_replays_existing_collection_when_capability_changes() {
+        let effective_collections = vec!["User".to_string()];
+        let collection_cids = vec!["cid-user".to_string()];
+        let existing = replicator(&collection_cids, p2p::ReplicationFilters::new());
+        let changed_capabilities = RapidHashSet::from_iter(["cid-user".to_string()]);
+
+        let replay_collections = collections_requiring_replay(
+            &effective_collections,
+            &collection_cids,
+            Some(&existing),
+            &existing,
+            &changed_capabilities,
+        );
+
+        assert_eq!(replay_collections, vec!["User".to_string()]);
+    }
+
+    #[test]
+    fn collections_requiring_replay_skips_existing_collection_when_capability_matches() {
+        let effective_collections = vec!["User".to_string()];
+        let collection_cids = vec!["cid-user".to_string()];
+        let existing = replicator(&collection_cids, p2p::ReplicationFilters::new());
+        let changed_capabilities = RapidHashSet::default();
+
+        let replay_collections = collections_requiring_replay(
+            &effective_collections,
+            &collection_cids,
+            Some(&existing),
+            &existing,
+            &changed_capabilities,
+        );
+
+        assert!(replay_collections.is_empty());
+    }
+
+    #[test]
+    fn removing_a_cached_capability_counts_as_a_change() {
+        let cached_capabilities = RapidHashMap::from_iter([("cid-user", "old-capability")]);
+
+        let changed = collections_with_changed_capabilities(
+            &["cid-user".to_string()],
+            &[],
+            |collection_id, requested| cached_capabilities.get(collection_id).copied() == requested,
+        );
+
+        assert_eq!(changed, RapidHashSet::from_iter(["cid-user".to_string()]));
+    }
+
+    #[test]
+    fn collections_requiring_replay_scopes_filter_changes() {
+        let effective_collections = vec!["User".to_string(), "Post".to_string()];
+        let collection_cids = vec!["cid-user".to_string(), "cid-post".to_string()];
+        let existing_filters = p2p::ReplicationFilters::from([
+            (
+                "cid-user".to_string(),
+                p2p::ReplicationFilter::new("name".to_string(), serde_json::json!("old")),
+            ),
+            (
+                "cid-post".to_string(),
+                p2p::ReplicationFilter::new("title".to_string(), serde_json::json!("same")),
+            ),
+        ]);
+        let requested_filters = p2p::ReplicationFilters::from([
+            (
+                "cid-user".to_string(),
+                p2p::ReplicationFilter::new("name".to_string(), serde_json::json!("new")),
+            ),
+            (
+                "cid-post".to_string(),
+                p2p::ReplicationFilter::new("title".to_string(), serde_json::json!("same")),
+            ),
+        ]);
+
+        let replay_collections = collections_requiring_replay(
+            &effective_collections,
+            &collection_cids,
+            Some(&replicator(&collection_cids, existing_filters)),
+            &replicator(&collection_cids, requested_filters),
+            &RapidHashSet::default(),
+        );
+
+        assert_eq!(replay_collections, vec!["User".to_string()]);
+    }
+
+    #[test]
+    fn a_changed_parent_filter_replays_its_chunk_collection() {
+        let effective_collections = vec!["Article".to_string(), "Article__body_chunk".to_string()];
+        let collection_cids = vec!["cid-article".to_string(), "cid-chunks".to_string()];
+        let filtered_by = |kind: &str| {
+            replicator(
+                &collection_cids,
+                p2p::ReplicationFilters::from([(
+                    "cid-article".to_string(),
+                    p2p::ReplicationFilter::new("kind".to_string(), serde_json::json!(kind)),
+                )]),
+            )
+            .with_chunk_sources([("cid-chunks".to_string(), "cid-article".to_string())])
+        };
+
+        let replay_collections = collections_requiring_replay(
+            &effective_collections,
+            &collection_cids,
+            Some(&filtered_by("old")),
+            &filtered_by("new"),
+            &RapidHashSet::default(),
+        );
+
+        assert_eq!(replay_collections, effective_collections);
+    }
+
+    #[test]
+    fn a_replayed_chunk_collection_replays_its_filtered_parent_too() {
+        let effective_collections = vec!["Article".to_string(), "Article__body_chunk".to_string()];
+        let collection_cids = vec!["cid-article".to_string(), "cid-chunks".to_string()];
+        let info = replicator(
+            &collection_cids,
+            p2p::ReplicationFilters::from([(
+                "cid-article".to_string(),
+                p2p::ReplicationFilter::new("kind".to_string(), serde_json::json!("public")),
+            )]),
+        )
+        .with_chunk_sources([("cid-chunks".to_string(), "cid-article".to_string())]);
+        let only_the_parent = p2p::ReplicatorInfo {
+            collections: vec!["cid-article".to_string()],
+            ..info.clone()
+        };
+
+        let replay_collections = collections_requiring_replay(
+            &effective_collections,
+            &collection_cids,
+            Some(&only_the_parent),
+            &info,
+            &RapidHashSet::default(),
+        );
+
+        assert_eq!(replay_collections, effective_collections);
+    }
+
+    #[cfg(any(feature = "iroh", feature = "libp2p", feature = "pinc"))]
+    #[test]
+    fn a_record_written_without_chunk_sources_gets_them_back() {
+        let old_record = br#"{"ID":"peer","Addresses":[],"CollectionIDs":["cid-article","cid-chunks"],"Status":0,"LastStatusChange":"0001-01-01T00:00:00Z","Filters":{"cid-article":{"predicate":{"kind":{"_eq":"public"}}}}}"#;
+        let mut info = p2p::ReplicatorInfo::from_bytes(old_record).unwrap();
+        assert!(!info.is_filtered_for_collection("cid-chunks"));
+
+        super::pair_chunk_sources(&mut info, |parent| match parent {
+            "cid-article" => vec!["cid-chunks".to_string()],
+            _ => Vec::new(),
+        });
+
+        assert_eq!(
+            info.chunk_sources.get("cid-chunks").map(String::as_str),
+            Some("cid-article")
+        );
+        assert!(info.is_filtered_for_collection("cid-chunks"));
+    }
+
+    #[cfg(any(feature = "iroh", feature = "libp2p", feature = "pinc"))]
+    #[test]
+    fn an_unfiltered_parent_pairs_no_chunks() {
+        let ids = vec!["cid-article".to_string(), "cid-chunks".to_string()];
+        let mut info = replicator(&ids, p2p::ReplicationFilters::new());
+
+        super::pair_chunk_sources(&mut info, |_| vec!["cid-chunks".to_string()]);
+
+        assert!(info.chunk_sources.is_empty());
+    }
+
+    fn replicator(collections: &[String], filters: p2p::ReplicationFilters) -> p2p::ReplicatorInfo {
+        p2p::ReplicatorInfo::from_raw_with_filters(
+            "peer".to_string(),
+            collections.to_vec(),
+            Vec::new(),
+            filters,
+        )
+    }
+
+    #[test]
+    fn live_replicator_state_is_authoritative_over_persisted_collections() {
+        let peer = "peer-1".to_string();
+        let live = vec![p2p::ReplicatorInfo::from_raw(
+            peer.clone(),
+            vec!["allowed".to_string()],
+            vec!["live-addr".to_string()],
+        )];
+
+        let mut persisted = p2p::ReplicatorInfo::from_raw(
+            peer.clone(),
+            vec!["allowed".to_string(), "revoked".to_string()],
+            vec!["persisted-addr".to_string()],
+        );
+        persisted.set_status_if_changed_now(p2p::ReplicatorStatus::Inactive);
+
+        let persisted_only = p2p::ReplicatorInfo::from_raw(
+            "stale-peer".to_string(),
+            vec!["stale".to_string()],
+            vec!["stale-addr".to_string()],
+        );
+
+        let merged = merge_live_replicators_with_persisted_metadata(
+            live,
+            Some(vec![persisted.clone(), persisted_only]),
+        );
+
+        assert_eq!(merged.len(), 1);
+        assert_eq!(merged[0].peer_id_str(), peer);
+        assert_eq!(merged[0].collections, vec!["allowed".to_string()]);
+        assert_eq!(
+            merged[0].addresses,
+            vec!["live-addr".to_string(), "persisted-addr".to_string()]
+        );
+        assert_eq!(merged[0].status, p2p::ReplicatorStatus::Inactive);
+        assert_eq!(merged[0].last_status_change, persisted.last_status_change);
+    }
+}
+
+/// Convert a p2p `ReplicatorInfo` into the HTTP-facing `ReplicatorInfo`.
+pub(crate) fn to_http_replicator_info(info: p2p::ReplicatorInfo) -> ReplicatorInfo {
+    let addresses = info.addresses_str().to_vec();
+    let status = Some(info.status.into());
+    let last_status_change = Some(info.last_status_change_go_string());
+    ReplicatorInfo {
+        id: Some(info.peer_id_str().to_string()),
+        collections: info.collections,
+        addresses,
+        status,
+        last_status_change,
+        filters: info
+            .filters
+            .into_iter()
+            .filter_map(|(collection, filter)| Some((collection, p2p_filter_to_http(&filter)?)))
+            .collect(),
+    }
+}
+
+/// Convert a `p2p::ReplicationFilter` to the HTTP wire representation.
+///
+/// Simple single-field `_eq` predicates use the legacy `Field`/`Value` shape so
+/// older clients can still read them. All other predicates (multi-field, `_in`,
+/// `_gt`, etc.) are encoded via the `Conditions` field.
+pub(crate) fn p2p_filter_to_http(
+    filter: &p2p::ReplicationFilter,
+) -> Option<crate::ReplicationFilter> {
+    match filter {
+        p2p::ReplicationFilter::Predicate(conds) => {
+            if conds.len() == 1 {
+                let (field, condition) = conds.iter().next()?;
+                if let Some(value) = condition.as_object().and_then(|op| op.get("_eq")).cloned() {
+                    return Some(crate::ReplicationFilter::eq(field.clone(), value));
+                }
+            }
+            Some(crate::ReplicationFilter::predicate(conds.clone()))
+        }
+        p2p::ReplicationFilter::Acp { .. } => {
+            tracing::warn!(
+                "replication filter variant not representable over HTTP yet; omitted from replicator listing"
+            );
+            None
+        }
+    }
+}
+
+/// Optional inputs used when pushing existing documents to replicators.
+#[derive(Debug, Clone, Default)]
+pub struct ReplicatorPushOptions {
+    pub se_encryption_key: Option<Zeroizing<Vec<u8>>>,
+    pub se_identity_pubkey: Option<Vec<u8>>,
+}
+
+impl PartialEq for ReplicatorPushOptions {
+    fn eq(&self, other: &Self) -> bool {
+        self.se_encryption_key.as_ref().map(|key| key.as_slice())
+            == other.se_encryption_key.as_ref().map(|key| key.as_slice())
+            && self.se_identity_pubkey == other.se_identity_pubkey
+    }
+}
+
+impl Eq for ReplicatorPushOptions {}
+
+#[derive(Debug, Clone, Default)]
+pub struct ReplicatorPushOptionsState {
+    inner: Arc<Atom<ReplicatorPushOptions>>,
+}
+
+impl ReplicatorPushOptionsState {
+    pub fn new(options: ReplicatorPushOptions) -> Self {
+        Self {
+            inner: Arc::new(Atom::new(options)),
+        }
+    }
+
+    pub fn load(&self) -> ReplicatorPushOptions {
+        self.inner.load_clone()
+    }
+
+    pub fn store(&self, options: ReplicatorPushOptions) -> Result<(), String> {
+        self.inner.store(options);
+        Ok(())
+    }
+}
+
+#[cfg_attr(
+    not(any(feature = "iroh", feature = "libp2p", feature = "pinc")),
+    allow(dead_code)
+)]
+pub(crate) trait P2PErrorExt {
+    fn invalid_input(message: impl Into<String>) -> Self;
+    fn not_found(message: impl Into<String>) -> Self;
+    fn unauthorized(message: impl Into<String>) -> Self;
+    fn transport(message: impl Into<String>) -> Self;
+    fn persistence(message: impl Into<String>) -> Self;
+    fn internal(message: impl Into<String>) -> Self;
+}
+
+impl P2PErrorExt for P2PError {
+    fn invalid_input(message: impl Into<String>) -> Self {
+        Self::InvalidInput(message.into())
+    }
+
+    fn not_found(message: impl Into<String>) -> Self {
+        Self::NotFound(message.into())
+    }
+
+    fn unauthorized(message: impl Into<String>) -> Self {
+        Self::Unauthorized(message.into())
+    }
+
+    fn transport(message: impl Into<String>) -> Self {
+        Self::Transport(message.into())
+    }
+
+    fn persistence(message: impl Into<String>) -> Self {
+        Self::Internal(message.into())
+    }
+
+    fn internal(message: impl Into<String>) -> Self {
+        Self::Internal(message.into())
+    }
+}
+
+#[cfg_attr(
+    not(any(feature = "iroh", feature = "libp2p", feature = "pinc")),
+    allow(dead_code)
+)]
+fn map_nac_error(error: db::Error) -> P2PError {
+    match error {
+        db::Error::NotAuthorized { .. } => P2PError::unauthorized(error.to_string()),
+        other => P2PError::internal(other.to_string()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{map_nac_error, P2PError, ReplicatorPushOptions, ReplicatorPushOptionsState};
+    use zeroize::Zeroizing;
+
+    #[test]
+    fn replicator_push_options_state_stores_latest_snapshot() {
+        let state = ReplicatorPushOptionsState::default();
+
+        state
+            .store(ReplicatorPushOptions {
+                se_encryption_key: Some(Zeroizing::new(vec![7; 32])),
+                se_identity_pubkey: Some(b"did:key:zTest".to_vec()),
+            })
+            .unwrap();
+
+        assert_eq!(
+            state.load(),
+            ReplicatorPushOptions {
+                se_encryption_key: Some(Zeroizing::new(vec![7; 32])),
+                se_identity_pubkey: Some(b"did:key:zTest".to_vec()),
+            }
+        );
+    }
+
+    #[test]
+    fn nac_denial_is_distinct_from_checker_failure() {
+        assert!(matches!(
+            map_nac_error(db::Error::NotAuthorized {
+                permission: "P2pPeerActive".to_string()
+            }),
+            P2PError::Unauthorized(_)
+        ));
+        assert!(matches!(
+            map_nac_error(db::Error::Acp("policy backend unavailable".to_string())),
+            P2PError::Internal(_)
+        ));
+    }
+}

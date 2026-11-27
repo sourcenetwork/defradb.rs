@@ -60,4 +60,140 @@ theorem install_preserves_incarnation (current allocated : Nat)
   · contradiction
   · exact Nat.le_of_not_lt ‹¬ allocated < current›
 
+-- A replay status update carries the incarnation chosen by its install.
+structure ReplayRow where
+  incarnation : Nat
+  active : Bool
+  deriving DecidableEq
+
+-- A missing or replaced row is left alone; a matching row becomes inactive.
+def deferReplay (row : Option ReplayRow) (installId : Nat) : Option ReplayRow :=
+  match row with
+  | none => none
+  | some current =>
+      if current.incarnation = installId then some { current with active := false } else row
+
+-- Deferring an installed replay preserves the identity used by finish.
+theorem defer_preserves_incarnation (row : ReplayRow) (id : Nat) :
+    (deferReplay (some row) id).map ReplayRow.incarnation = some row.incarnation := by
+  -- Both a matching update and a rejected update keep the original identity.
+  simp only [deferReplay]
+  split <;> rfl
+
+-- A replay that returns after deletion cannot recreate the peer row.
+theorem defer_does_not_resurrect (id : Nat) : deferReplay none id = none := by
+  -- A missing row takes the first branch of deferReplay, which returns no row.
+  rfl
+
+-- A replay from an older install cannot change a replacement's status.
+theorem stale_defer_leaves_replacement (row : ReplayRow) (id : Nat)
+    (h : row.incarnation ≠ id) : deferReplay (some row) id = some row := by
+  -- The row's incarnation differs from the install's, so the update branch is skipped.
+  simp [deferReplay, h]
+
+-- How a replay writes the status it defers: `fenced` compares the row's
+-- incarnation with the install's before writing (the fix); `create` rewrites
+-- the row through create_replicator, which allocates the next identity (F48).
+inductive ReplayWrite where
+  | fenced
+  | create
+  deriving DecidableEq
+
+-- The row a replay leaves behind, by how it writes. `next` is the identity the
+-- allocator would hand out next.
+def replayWrite (write : ReplayWrite) (row : Option ReplayRow) (installId next : Nat) :
+    Option ReplayRow :=
+  match write with
+  -- The fenced write is exactly deferReplay.
+  | .fenced => deferReplay row installId
+  -- create_replicator writes an inactive row under a fresh identity, row or no row.
+  | .create => some { incarnation := next, active := false }
+
+-- The fenced write keeps the identity the install's own finish compares against.
+theorem fenced_preserves_incarnation (row : ReplayRow) (id next : Nat) :
+    (replayWrite .fenced (some row) id next).map ReplayRow.incarnation =
+      some row.incarnation :=
+  -- The fenced write unfolds to deferReplay, whose identity is already preserved.
+  defer_preserves_incarnation row id
+
+-- The red case: the create write moves the row to a new identity whenever the
+-- allocator has moved past it, so the install sees its own change.
+theorem create_changes_incarnation (row : ReplayRow) (id next : Nat)
+    (moved : next ≠ row.incarnation) :
+    (replayWrite .create (some row) id next).map ReplayRow.incarnation ≠
+      some row.incarnation := by
+  -- The create write names `next`, which differs from the row's identity.
+  simp [replayWrite, moved]
+
+-- The create write also brings back a row that was deleted while the replay ran.
+theorem create_resurrects (id next : Nat) : replayWrite .create none id next ≠ none := by
+  -- It returns a row whatever it was given.
+  simp [replayWrite]
+
+-- A replay records a retry marker only while its own install is the peer's
+-- incarnation; the peerstore transaction compares the two with the write.
+-- `current` is the peer's incarnation at the write, or none once it is deleted.
+def markReplay (current : Option Nat) (installId : Nat) (marks : List Nat) : List Nat :=
+  -- The marker is written, tagged with the install, only for a matching incarnation.
+  if current = some installId then installId :: marks else marks
+
+-- A replay that started under an older install writes no marker for its replacement.
+theorem stale_mark_writes_nothing (current installId : Nat) (marks : List Nat)
+    (h : current ≠ installId) : markReplay (some current) installId marks = marks := by
+  -- The incarnations differ, so the comparison fails and the markers are unchanged.
+  simp [markReplay, h]
+
+-- A replay returning after the peer was deleted writes no marker either.
+theorem deleted_mark_writes_nothing (installId : Nat) (marks : List Nat) :
+    markReplay none installId marks = marks := by
+  -- No incarnation equals some install, so the markers are unchanged.
+  simp [markReplay]
+
+-- What one fenced replay marker write did. Only a replaced install stops the
+-- replay; a scope a live push already holds with a newer marker is covered,
+-- and the replay moves on to its next failed document.
+inductive MarkOutcome where
+  | written
+  | superseded
+  | installReplaced
+  deriving DecidableEq
+
+-- The outcome of recording one failed document. `current` is the peer's
+-- incarnation at the write (none once deleted); `held` says a newer marker
+-- already holds the document's scope.
+def markOutcome (current : Option Nat) (installId : Nat) (held : Bool) : MarkOutcome :=
+  -- The incarnation check comes first: a replaced install writes nothing.
+  if current = some installId then
+    -- The install is current: a held scope is covered, otherwise it is written.
+    if held then .superseded else .written
+  else .installReplaced
+
+-- Whether an outcome ends the replay's recording.
+def stopsReplay : MarkOutcome → Bool
+  -- Only a replaced install stops it.
+  | .installReplaced => true
+  -- A written or already-held document lets it continue.
+  | .written | .superseded => false
+
+-- A replay stops recording exactly when its install is no longer current.
+theorem only_replacement_stops (current : Option Nat) (installId : Nat) (held : Bool) :
+    stopsReplay (markOutcome current installId held) = true ↔ current ≠ some installId := by
+  -- Split on the incarnation check, then on whether the scope is held.
+  unfold markOutcome
+  split <;> (try split) <;> simp_all [stopsReplay]
+
+-- A newer marker on one document never stops a replay whose install is current.
+theorem superseded_continues (installId : Nat) :
+    stopsReplay (markOutcome (some installId) installId true) = false := by
+  -- The install is current and the scope is held: the outcome is superseded.
+  simp [markOutcome, stopsReplay]
+
+-- Every marker a replay writes names the incarnation it was written under.
+theorem mark_owned (current installId : Nat) (marks : List Nat)
+    (h : markReplay (some current) installId marks ≠ marks) : current = installId := by
+  -- If the incarnations differed the markers would be unchanged, contradicting h.
+  by_cases hc : current = installId
+  · exact hc
+  · exact absurd (stale_mark_writes_nothing current installId marks hc) h
+
 end ReplicatorInstall

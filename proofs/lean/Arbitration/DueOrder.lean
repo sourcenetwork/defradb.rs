@@ -35,7 +35,7 @@ What must never happen:
   root that became due during the attempt (`rearmed_root_goes_behind`).
 
 Rust anchors: `TIE_BUCKET` and `tie_break_reorders` in
-`crates/p2p/src/sync/arbitration/due_order.rs`, measured in
+`crates/database/p2p/src/sync/arbitration/due_order.rs`, measured in
 `SyncManager::observe_dispatch_pass` (`sync/manager/process/estimates.rs`).
 Dispatch itself keeps due-time order; the pass only counts when the tie-break
 would differ.

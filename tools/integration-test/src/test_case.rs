@@ -6,12 +6,13 @@ use defra_node::Node;
 use rapidhash::RapidHashMap;
 use regolith::sync::Atom;
 use serde_json::Value;
-use testo::multiplier::get_active_multipliers;
+use testo::multiplier::{get_active_multipliers, SkipReason};
 use testo::prelude::*;
 
 use crate::actions::Actions;
 use crate::client_type::ClientType;
 use crate::export;
+use crate::multiplier::TestMultiplier;
 use crate::nodes::{NodeSpec, TestNode};
 use crate::scenario::{Bindings, Failure};
 
@@ -26,6 +27,10 @@ pub struct State {
     pub txns: Txns,
     /// The subscriptions the test opened, by name, until it reads them.
     pub subscriptions: crate::actions::Subscriptions,
+    /// Stream-protocol streams the test keeps open across actions.
+    pub streams: crate::actions::stream::KeptStreams,
+    /// How many nodes the test has started, Go's next node index.
+    pub go_nodes_started: u64,
 }
 
 /// The transactions a test has begun. Shared by every clone of the state, and
@@ -75,6 +80,15 @@ impl State {
             .expect("no client type: the Connect action did not run")
     }
 
+    /// Every running node, by name.
+    pub fn running(&self) -> Vec<(String, Arc<TestNode>)> {
+        self.nodes
+            .0
+            .iter()
+            .filter_map(|(name, slot)| Some((name.clone(), slot.node.clone()?)))
+            .collect()
+    }
+
     /// The running node `name`.
     pub fn node(&self, name: &str) -> Result<Arc<TestNode>, Failure> {
         self.slot(name)
@@ -105,6 +119,28 @@ impl State {
         self.slot(name).and_then(|slot| slot.spec.node_identity)
     }
 
+    /// The index Go's harness gives the next node the test starts, which
+    /// names its `NodeIdentity`: how many it started before, an unnamed one
+    /// included, closed ones still counted. The default node every test
+    /// begins with is not one of them, as Go has no counterpart of it.
+    pub fn next_go_node_index(&mut self) -> u64 {
+        let index = self.go_nodes_started;
+        self.go_nodes_started += 1;
+        index
+    }
+
+    /// The client seed that acts as node `name`'s identity, as an
+    /// `identityNode` argument asks.
+    pub fn node_as_client(&self, op: &str, name: &str) -> Result<u64, Failure> {
+        self.node_identity_of(name)
+            .and_then(|seed| crate::scenario::identity::NODE_IDENTITY_BASE.checked_add(seed))
+            .ok_or_else(|| {
+                Failure::unsupported(format!(
+                    "{op} argument identityNode: node {name} was started with no identity"
+                ))
+            })
+    }
+
     /// The public key (hex) and key type node `name` signs blocks with, if it
     /// signs.
     pub fn signer_of(&self, name: &str) -> Option<(String, crate::actions::shared::KeyType)> {
@@ -121,6 +157,26 @@ impl State {
             node: Some(node),
         };
         self.nodes.0.insert(name.to_owned(), slot);
+    }
+
+    /// [`State::start_node`], failing with the node builder's error and
+    /// leaving no node `name` when the start is refused.
+    pub fn try_start_node(&mut self, name: &str, spec: NodeSpec) -> Result<(), Failure> {
+        self.stop_node(name, false);
+        self.start_stopped(name, spec)
+    }
+
+    /// Start node `name`, already stopped, keeping its stopped slot when the
+    /// start is refused.
+    fn start_stopped(&mut self, name: &str, spec: NodeSpec) -> Result<(), Failure> {
+        let node =
+            TestNode::try_start(self.client_type(), spec.clone()).map_err(Failure::operation)?;
+        let slot = Slot {
+            spec,
+            node: Some(Arc::new(node)),
+        };
+        self.nodes.0.insert(name.to_owned(), slot);
+        Ok(())
     }
 
     /// Start stopped node `name` again with NAC options, as Go's `Start`:
@@ -144,11 +200,17 @@ impl State {
         spec.nac_owner = owner;
         configure(&mut spec);
         self.stop_node(name, true);
-        let node =
-            TestNode::try_start(self.client_type(), spec.clone()).map_err(Failure::operation)?;
+        self.start_stopped(name, spec)
+    }
+
+    /// Start the in-process iroh node `name` as `spec` says, failing with the
+    /// builder's error, closing any node of that name first.
+    pub fn start_iroh_node(&mut self, name: &str, spec: NodeSpec) -> Result<(), String> {
+        self.stop_node(name, false);
+        let node = Arc::new(TestNode::start_iroh(spec.clone())?);
         let slot = Slot {
             spec,
-            node: Some(Arc::new(node)),
+            node: Some(node),
         };
         self.nodes.0.insert(name.to_owned(), slot);
         Ok(())
@@ -168,6 +230,9 @@ impl State {
                     .iter()
                     .map(|address| address.split("/p2p/").next().unwrap_or(address).to_owned())
                     .collect();
+                if node.is_go() {
+                    spec.reserved = crate::reserved_port::hold_all(&spec.listen);
+                }
             }
             self.block_on(node.stop());
         }
@@ -211,6 +276,43 @@ impl State {
         RequestContext::ambient().with_txn(id)
     }
 
+    /// The scope an in-process node call runs in: inside transaction number
+    /// `txn` when the action names one, as client identity `identity` when it
+    /// names one.
+    pub fn scope_as(
+        &self,
+        txn: Option<usize>,
+        identity: Option<u64>,
+    ) -> crate::node_scope::NodeScope {
+        crate::node_scope::NodeScope {
+            did: identity.map(|seed| {
+                ::identity::Did::new(crate::scenario::identity::did(seed))
+                    .expect("a client identity has a valid DID")
+            }),
+            signing: None,
+            txn: self.context(txn).txn(),
+        }
+    }
+
+    /// [`State::scope_as`] for an in-process write to node `node`, signing
+    /// with the acting client identity's own key where
+    /// [`State::context_on`] attaches it.
+    pub fn scope_on(
+        &self,
+        node: &str,
+        txn: Option<usize>,
+        identity: Option<u64>,
+        enable_signing: Option<bool>,
+    ) -> crate::node_scope::NodeScope {
+        crate::node_scope::NodeScope {
+            signing: self
+                .context_on(node, txn, identity, enable_signing)
+                .signing()
+                .cloned(),
+            ..self.scope_as(txn, identity)
+        }
+    }
+
     /// [`State::context`] with client identity `identity` acting in it when
     /// the action names one.
     pub fn context_as(&self, txn: Option<usize>, identity: Option<u64>) -> RequestContext {
@@ -219,6 +321,48 @@ impl State {
             Some(seed) => context.with_identity(Some(crate::scenario::identity::did(seed))),
             None => context,
         }
+    }
+
+    /// [`State::context_as`] for an in-process write to node `node`, carrying
+    /// the acting client identity's own secp256k1 key when Go's in-process
+    /// client would sign with it: Go's `contextForSigning` keeps a request
+    /// identity that holds a private key, and signs with it when signing is
+    /// on. The key is attached only when all three hold:
+    ///
+    /// - the write signs in Go: `enable_signing` is `Some(true)`, or it is
+    ///   unset and node `node` signs; never when it is `Some(false)`, since
+    ///   defradb.rs signs with any key a caller attaches;
+    /// - the context does not bypass DAC, which explicit signing refuses;
+    /// - the identity is a client seed. An `identityNode` write attaches
+    ///   nothing, so the node signs with its own key of its own type, as
+    ///   Go's `NodeIdentity` does.
+    ///
+    /// The harness's client keys are all secp256k1, so Go's Ed25519
+    /// client-key test (`signature_with_client_identity_should_use_it_for_signing`)
+    /// stays skipped, as Go skips it. The key is never put in the process's
+    /// signing registry: a client identity there would let the HTTP and CLI
+    /// routes sign with it too, where Go falls back to the node key.
+    pub fn context_on(
+        &self,
+        node: &str,
+        txn: Option<usize>,
+        identity: Option<u64>,
+        enable_signing: Option<bool>,
+    ) -> RequestContext {
+        let context = self.context_as(txn, identity);
+        let Some(seed) =
+            identity.filter(|seed| *seed < crate::scenario::identity::NODE_IDENTITY_BASE)
+        else {
+            return context;
+        };
+        let signs = enable_signing.unwrap_or_else(|| {
+            self.slot(node)
+                .is_some_and(|slot| slot.spec.signing.is_some())
+        });
+        if !signs || context.dac_bypass() {
+            return context;
+        }
+        context.with_signing(Some(crate::scenario::identity::signing_config(seed)))
     }
 
     /// Transaction number `txn`'s ID as the HTTP API and the CLI write it.
@@ -251,6 +395,8 @@ pub struct TestCase {
     /// Go's in-process client is `InProcess`, its HTTP client `RustHttp` and
     /// `GoHttp`, its CLI `Cli`. Unset, every client.
     pub client_types: Option<&'static [ClientType]>,
+    /// The `DEFRA_MULTIPLIERS` the test does not run under, Go's `MultiplierExcludes`.
+    pub multiplier_excludes: &'static [&'static str],
 }
 
 /// Why a Go conformance scenario does not apply to defradb.rs. The scenario
@@ -315,8 +461,21 @@ impl TestCase {
             eprintln!("skipped: runs only under {:?}", self.client_types);
             return;
         }
+        let multipliers = TestMultiplier::active();
+        let multipliers: Vec<&TestMultiplier> = multipliers.iter().collect();
+        let skip = testo::multiplier::skip::<State, Actions, Actions, TestMultiplier>(
+            &self.actions,
+            &multipliers,
+            &[],
+            self.multiplier_excludes,
+        );
+        if let SkipReason::Skip(reason) = skip {
+            eprintln!("skipped: {reason}");
+            return;
+        }
         trace_from_env();
-        let actions = with_stub_embedder(&self.actions);
+        let actions = testo::multiplier::apply(&self.actions, &multipliers);
+        let actions = with_stub_embedder(&actions);
         for client_type in clients {
             let actions = client_type.apply(&actions);
             drop(testo::action::execute(State::default(), &actions));

@@ -1,21 +1,70 @@
 use std::path::PathBuf;
 
 pub mod actions;
+mod cli_command;
 mod client_type;
 pub mod clients;
+pub mod commit_gate;
 mod cross_runtime;
 pub mod export;
 mod feature_binaries;
 mod go_node;
+pub mod hostile;
+pub mod index_gate;
 pub mod introspection_sdl;
+pub mod multiplier;
+pub mod node_scope;
 pub mod nodes;
 mod purge;
+mod reserved_port;
 pub mod scenario;
 mod stub_embedder;
 pub mod test_case;
+pub mod transport_choice;
+pub mod wasm_lens;
 
+pub use cli_command::cli_command;
 pub use client_type::ClientType;
 pub use scenario::m;
+
+/// Locate the Go compatibility binary provisioned by CI, or an explicit override.
+pub fn go_compat_binary() -> PathBuf {
+    if let Some(path) =
+        std::env::var_os("DEFRA_GO_BINARY").or_else(|| std::env::var_os("DEFRA_GO_BIN"))
+    {
+        return PathBuf::from(path);
+    }
+    let home = PathBuf::from(std::env::var_os("HOME").expect("HOME"));
+    cached_go_compat_binary(
+        &home,
+        defra_version::GO_COMPAT_TAG,
+        defra_version::GO_COMPAT_COMMIT,
+    )
+}
+
+pub(crate) fn cached_go_compat_binary(home: &std::path::Path, tag: &str, commit: &str) -> PathBuf {
+    let pin = if tag.is_empty() { commit } else { tag };
+    home.join(".cache/defra-harness").join(pin).join("defradb")
+}
+
+#[cfg(test)]
+mod go_compat_tests {
+    use super::cached_go_compat_binary;
+    use std::path::Path;
+
+    #[test]
+    fn cached_binary_uses_tag_when_available() {
+        let home = Path::new("/test-home");
+        assert_eq!(
+            cached_go_compat_binary(home, "v1.2.0", "abc"),
+            home.join(".cache/defra-harness/v1.2.0/defradb")
+        );
+        assert_eq!(
+            cached_go_compat_binary(home, "", "abc"),
+            home.join(".cache/defra-harness/abc/defradb")
+        );
+    }
+}
 
 pub use cross_runtime::{assert_query_equivalent, query_both};
 pub use feature_binaries::{build_cli_variant, listing_tests, vera_cli_binary, TestBuild};
@@ -55,19 +104,8 @@ pub use defra_harness::sse::{
     open_events_sse, open_merge_events_sse, open_peer_events_sse, wait_for_merge_events,
     wait_for_peer_events,
 };
-pub use defra_harness::WasmLens;
 
-/// Provides a `WasmLens` configured for the defradb.rs test-lenses directory.
-pub mod wasm_lens {
-    use crate::workspace_root;
-    use defra_harness::WasmLens;
-
-    pub fn wasm_lens_defra() -> WasmLens {
-        WasmLens::new(workspace_root().join("tools/integration-test/test-lenses/set_default"))
-    }
-}
-
-#[ctor::ctor]
+#[ctor::ctor(unsafe)]
 fn init_workspace_root() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../..")

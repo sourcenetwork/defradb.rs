@@ -31,6 +31,7 @@ mod add {
             mod with_txn;
         }
     }
+    mod signed_duplicate;
     mod simple;
     mod simple_add_many;
     mod txn_discard;
@@ -42,7 +43,9 @@ mod add {
     mod with_version;
 }
 mod delete_relation_filter;
+mod error_code;
 mod delete {
+    mod with_filter_unknown;
     mod field_kinds {
         mod one_to_many {
             mod with_show_deleted;
@@ -79,9 +82,11 @@ mod truncate {
     mod docid;
     mod filter;
     mod simple;
+    mod with_filter_unknown;
 }
 mod update {
     mod concurrent;
+    mod with_filter_unknown;
     mod constraints {
         mod size_constraint;
     }
@@ -133,4 +138,5 @@ mod upsert {
     mod date_time;
     mod simple;
     mod text;
+    mod with_filter_unknown;
 }

@@ -1,0 +1,184 @@
+use acp::{nac::NodePermission, PersistentZanzibarStore};
+use db::{BasicTxn, NacConfig, NacManager, NacManagerApi};
+use identity::Did;
+use std::sync::Arc;
+use storage::RegolithStore;
+
+#[test]
+fn node_permission_revocation_invalidates_authorized_write() {
+    workers::block_on(async {
+        let store = Arc::new(RegolithStore::in_memory().unwrap());
+        let manager = NacManager::new(
+            Arc::new(PersistentZanzibarStore::from_store(store.clone())),
+            NacConfig::new().with_enabled(),
+        );
+        let owner = Did::new("did:key:owner").unwrap();
+        let writer = Did::new("did:key:writer").unwrap();
+        manager.initialize(Some(&owner)).await.unwrap();
+        manager
+            .add_permission_grant(&owner, &writer, NodePermission::DocumentUpdate)
+            .await
+            .unwrap();
+        let txn = BasicTxn::new(store.as_ref(), 1, false).await.unwrap();
+        assert!(manager
+            .check_permission_in_txn(txn.acpstore(), &writer, NodePermission::DocumentUpdate)
+            .await
+            .unwrap());
+        manager
+            .remove_permission_grant(&owner, &writer, NodePermission::DocumentUpdate)
+            .await
+            .unwrap();
+        txn.datastore()
+            .set(b"authorized-document", b"changed")
+            .await
+            .unwrap();
+        assert!(txn.commit().await.is_err());
+        let retry = BasicTxn::new(store.as_ref(), 2, false).await.unwrap();
+        assert!(!manager
+            .check_permission_in_txn(retry.acpstore(), &writer, NodePermission::DocumentUpdate)
+            .await
+            .unwrap());
+        retry.discard().unwrap();
+    })
+    .unwrap()
+}
+
+/// The node policy is parsed once and shared: an authorized write reads NAC's
+/// state in its own transaction but never the policy body again. A body that
+/// no longer parses proves no transaction re-reads it.
+#[test]
+fn authorized_writes_share_the_loaded_node_policy() {
+    workers::block_on(async {
+        let store = Arc::new(RegolithStore::in_memory().unwrap());
+        let manager = NacManager::new(
+            Arc::new(PersistentZanzibarStore::from_store(store.clone())),
+            NacConfig::new().with_enabled(),
+        );
+        let owner = Did::new("did:key:owner").unwrap();
+        let writer = Did::new("did:key:writer").unwrap();
+        manager.initialize(Some(&owner)).await.unwrap();
+        manager
+            .add_permission_grant(&owner, &writer, NodePermission::DocumentUpdate)
+            .await
+            .unwrap();
+        let corrupt = BasicTxn::new(store.as_ref(), 1, false).await.unwrap();
+        corrupt
+            .acpstore()
+            .set(
+                format!("/zanzibar/policy/{}", acp::nac::NODE_POLICY_ID).as_bytes(),
+                b"not a policy",
+            )
+            .await
+            .unwrap();
+        corrupt.commit().await.unwrap();
+
+        for id in 2..4 {
+            let txn = BasicTxn::new(store.as_ref(), id, false).await.unwrap();
+            assert!(manager
+                .check_permission_in_txn(txn.acpstore(), &writer, NodePermission::DocumentUpdate)
+                .await
+                .unwrap());
+            txn.discard().unwrap();
+        }
+    })
+    .unwrap()
+}
+
+#[test]
+fn bound_active_check_is_unavailable_for_nontransactional_or_incomplete_nac() {
+    workers::block_on(async {
+        use acp::ZanzibarStore;
+        let store = Arc::new(RegolithStore::in_memory().unwrap());
+        let nontransactional =
+            NacManager::new(Arc::new(acp::MemoryZanzibarStore::new()), NacConfig::new());
+        let owner = Did::new("did:key:owner").unwrap();
+        let txn = BasicTxn::new(store.as_ref(), 1, false).await.unwrap();
+        assert_eq!(
+            nontransactional
+                .check_bound_permission_in_txn(
+                    txn.acpstore(),
+                    &owner,
+                    NodePermission::DocumentRead,
+                    true,
+                )
+                .await
+                .unwrap(),
+            None
+        );
+        assert_eq!(
+            nontransactional
+                .check_bound_permission_in_txn(
+                    txn.acpstore(),
+                    &owner,
+                    NodePermission::DocumentRead,
+                    false
+                )
+                .await
+                .unwrap(),
+            None
+        );
+        txn.discard().unwrap();
+        let nac_store = Arc::new(PersistentZanzibarStore::from_store(store.clone()));
+        let manager = NacManager::new(nac_store.clone(), NacConfig::new().with_enabled());
+        manager.initialize(Some(&owner)).await.unwrap();
+        let relation = acp::Relationship::with_entity(
+            acp::NODE_RESOURCE_NAME,
+            acp::NODE_OBJECT_ID,
+            acp::NAC_OWNER_RELATION,
+            owner.clone(),
+        );
+        assert!(nac_store
+            .delete_relationship(acp::NODE_POLICY_ID, &relation)
+            .await
+            .unwrap());
+        let txn = BasicTxn::new(store.as_ref(), 2, false).await.unwrap();
+        assert_eq!(
+            manager
+                .check_bound_permission_in_txn(
+                    txn.acpstore(),
+                    &owner,
+                    NodePermission::DocumentRead,
+                    true,
+                )
+                .await
+                .unwrap(),
+            None
+        );
+        txn.discard().unwrap();
+    })
+    .unwrap();
+}
+
+#[test]
+fn source_mutation_rejects_unbound_persistent_store() {
+    workers::block_on(async {
+        let first = Arc::new(RegolithStore::in_memory().unwrap());
+        let second = Arc::new(RegolithStore::in_memory().unwrap());
+        let manager = NacManager::new(
+            Arc::new(PersistentZanzibarStore::from_store(first)),
+            NacConfig::new().with_enabled(),
+        );
+        let owner = Did::new("did:key:owner").unwrap();
+        manager.initialize(Some(&owner)).await.unwrap();
+        let txn = BasicTxn::new(second.as_ref(), 1, false).await.unwrap();
+        assert_eq!(
+            manager
+                .change_source_permission_in_txn(
+                    txn.acpstore(),
+                    &owner,
+                    &db::nac::SourcePermissionChange {
+                        permission: NodePermission::CollectionPatch,
+                        parent_source: None,
+                        subject_kind: "source",
+                        subject: "tools:one",
+                        delete: false,
+                    },
+                )
+                .await
+                .unwrap(),
+            None
+        );
+        txn.discard().unwrap();
+    })
+    .unwrap();
+}

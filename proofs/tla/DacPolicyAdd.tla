@@ -18,6 +18,12 @@
 \*   5. valid    the policy parses and is one documents can use.
 \* With a remote ACP one more guard follows the remote create:
 \*   6. mirror   the node keeps a copy of what the remote ACP created.
+\* And the store honours how the caller asked for the ID to be made:
+\*   7. seed     a counter names a local ACP's policy, a nonce a remote
+\*               ACP's (vera.rs derives the ID from the definition, the
+\*               nonce and the creator); the other ACP cannot honour it, so
+\*               the request is refused rather than given an ID made another
+\*               way. Asking for neither is always taken.
 \*
 \* Who acts: the caller's request moving through the checks, then the store.
 \* Every check's answer, whether the ACP is remote, and whether keeping the
@@ -27,14 +33,18 @@
 \* permission, without a creator (Vera once got an empty one), or that is
 \* empty or invalid; a policy created on the remote ACP that is invalid; an
 \* ID handed back that the node cannot find in its own store; a refusal
-\* reported with a later check's error than Go's.
+\* reported with a later check's error than Go's; a policy stored or an ID
+\* handed back that ignores the counter or nonce the caller asked for.
 \*
-\* Code it models (crates/db/src/access/dac/mod.rs):
+\* Code it models (crates/database/db/src/access/dac/mod.rs):
 \*   DB::add_dac_policy_as   the whole sequence, for every edge
-\*   DB::add_policy          checks 1 to 5 in Go's order, then the store
+\*   DB::add_dac_policy_with_counter_as, DB::add_dac_policy_with_nonce_as
+\*                           the same, with the caller's counter or nonce
+\*   DB::add_policy          checks 1 to 5 in Go's order, then guard 7 and
+\*                           the store
 \*   parse, build            check 5: the policy's shape and expressions
 \*   DacPolicies::keep       the local store, and guard 6 (policies.rs)
-\*   RemotePolicies::add_policy  the remote create (crates/acp/src/policy_lookup.rs, Vera's impl in crates/vera/src/cosmos/dac.rs)
+\*   RemotePolicies::add_policy  the remote create (crates/engine/acp/src/policy_lookup.rs, Vera's impl in crates/engine/vera/src/dac.rs)
 EXTENDS Naturals, Sequences   \* Seq and indexing, for the checks in Go's order
 
 CONSTANTS
@@ -42,7 +52,7 @@ CONSTANTS
   CreatorFirst  \* the creator is checked before ACP, as the HTTP handler did
 
 \* Only the six named guards can be enforced.
-ASSUME Enforced \subseteq {"nac", "acp", "creator", "data", "valid", "mirror"}
+ASSUME Enforced \subseteq {"nac", "acp", "creator", "data", "valid", "mirror", "seed"}
 \* The order switch is a yes or a no.
 ASSUME CreatorFirst \in BOOLEAN
 
@@ -64,6 +74,7 @@ VARIABLES
   valid,          \* the policy parses and documents can use it
   remote,         \* the ACP is remote (Vera)
   keepFails,      \* keeping the local copy fails
+  seed,           \* how the caller asked for the ID: "none", "counter" or "nonce"
   step,           \* "check", then "store", then "done"
   reason,         \* the check the request was refused at, or "none"
   remoteCreated,  \* the remote ACP holds the policy
@@ -71,7 +82,7 @@ VARIABLES
   returned        \* the caller got the policy's ID back
 
 \* Every variable, for saying a step leaves them all as they are.
-vars == <<permitted, acpOn, hasCreator, hasData, valid, remote, keepFails,
+vars == <<permitted, acpOn, hasCreator, hasData, valid, remote, keepFails, seed,
           step, reason, remoteCreated, localCopy, returned>>
 
 \* Whether check `c` passes for this request.
@@ -100,8 +111,9 @@ TypeOK ==
   /\ valid \in BOOLEAN
   /\ remote \in BOOLEAN
   /\ keepFails \in BOOLEAN
+  /\ seed \in {"none", "counter", "nonce"}
   /\ step \in {"check", "store", "done"}
-  /\ reason \in {"none", "nac", "acp", "creator", "data", "valid"}
+  /\ reason \in {"none", "nac", "acp", "creator", "data", "valid", "seed"}
   /\ remoteCreated \in BOOLEAN
   /\ localCopy \in BOOLEAN
   /\ returned \in BOOLEAN
@@ -115,6 +127,7 @@ Init ==
   /\ valid \in BOOLEAN
   /\ remote \in BOOLEAN
   /\ keepFails \in BOOLEAN
+  /\ seed \in {"none", "counter", "nonce"}
   /\ step = "check"
   /\ reason = "none"
   /\ remoteCreated = FALSE
@@ -130,31 +143,47 @@ Check ==
        THEN /\ reason' = First(CheckOrder) /\ step' = "done"
        ELSE /\ reason' = reason /\ step' = "store"
   /\ UNCHANGED <<permitted, acpOn, hasCreator, hasData, valid, remote,
-                 keepFails, remoteCreated, localCopy, returned>>
+                 keepFails, seed, remoteCreated, localCopy, returned>>
+
+\* Whether the ACP can make the ID the way the caller asked: a counter only
+\* locally, a nonce only remotely, and neither anywhere.
+SeedHonourable ==
+  \/ seed = "none"
+  \/ seed = "counter" /\ ~remote
+  \/ seed = "nonce" /\ remote
 
 \* The store. Without ACP, let through, there is nowhere to store, and the
 \* request fails. With local ACP the node's store keeps the policy and the ID
 \* goes back unless keeping it fails. With a remote ACP the remote creates the
 \* policy first; then the node keeps its copy (guard 6) and hands the ID back
 \* only once the copy is kept. Without guard 6 the ID goes back with no copy.
+\* Guard 7 first refuses a counter on a remote ACP and a nonce on a local
+\* one; without it the ACP makes the ID its own way.
 Store ==
   /\ step = "store"
   /\ step' = "done"
-  /\ IF ~acpOn
-       THEN UNCHANGED <<remoteCreated, localCopy, returned>>
+  /\ IF acpOn /\ "seed" \in Enforced /\ ~SeedHonourable
+       THEN /\ reason' = "seed"
+            /\ UNCHANGED <<remoteCreated, localCopy, returned>>
+     ELSE IF ~acpOn
+       THEN /\ reason' = reason
+            /\ UNCHANGED <<remoteCreated, localCopy, returned>>
      ELSE IF ~remote
-       THEN /\ localCopy' = ~keepFails
+       THEN /\ reason' = reason
+            /\ localCopy' = ~keepFails
             /\ returned' = ~keepFails
             /\ UNCHANGED remoteCreated
      ELSE IF "mirror" \in Enforced
-       THEN /\ remoteCreated' = TRUE
+       THEN /\ reason' = reason
+            /\ remoteCreated' = TRUE
             /\ localCopy' = ~keepFails
             /\ returned' = ~keepFails
-     ELSE /\ remoteCreated' = TRUE
+     ELSE /\ reason' = reason
+          /\ remoteCreated' = TRUE
           /\ returned' = TRUE
           /\ UNCHANGED localCopy
   /\ UNCHANGED <<permitted, acpOn, hasCreator, hasData, valid, remote,
-                 keepFails, reason>>
+                 keepFails, seed>>
 
 \* Each step of a request is one of the two.
 Next == Check \/ Store
@@ -185,11 +214,18 @@ INV_NoPolicyWithoutAcp == Stored => acpOn
 \* collections and documents that name it can be checked.
 INV_ReturnedIsKeptLocally == returned => localCopy
 
+\* A policy is stored, and an ID handed back, only as the caller asked: a
+\* counter's by the local ACP, a nonce's by the remote one.
+INV_SeedHonoured == (Stored \/ returned) => SeedHonourable
+
 \* A request that was not refused and got no ID back failed only because
 \* keeping the policy failed, which it reports: none fails silently.
 INV_NoSilentFailure ==
   (step = "done" /\ reason = "none" /\ ~returned) => (acpOn /\ keepFails)
 
-\* A refused request reports the first failing check in Go's order.
-INV_GoOrder == (step = "done" /\ reason # "none") => reason = First(GoOrder)
+\* A refused request reports the first failing check in Go's order; it is
+\* refused for its counter or nonce only once every one of Go's checks passed.
+INV_GoOrder ==
+  /\ (step = "done" /\ reason \notin {"none", "seed"}) => reason = First(GoOrder)
+  /\ reason = "seed" => First(GoOrder) = "none"
 ====

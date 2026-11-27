@@ -36,7 +36,7 @@ What must never happen:
 * occupancy's half-life on its tick is not 88 to 89 ticks, 176 to 178 s
   (`occupancy_half_life_ticks`).
 
-Rust anchors: the constants in `crates/p2p/src/sync/arbitration/mod.rs`,
+Rust anchors: the constants in `crates/database/p2p/src/sync/arbitration/mod.rs`,
 `weight_q32` in `ewma.rs`. `Conformance.lean` emits `contract` and
 `proofs/tests/lean_conformance.rs` asserts the Rust constants format to the
 same strings.

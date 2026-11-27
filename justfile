@@ -53,13 +53,17 @@ protoc_sha256_osx_aarch64   := "193289af0470c6a1aada357d4fba0bbf8d78bfaac8b5e42c
 # rustup is installed with --no-modify-path, so cargo's bin directory is only
 # on PATH if the user already had it. Without this, every recipe after
 # setup-rust fails to find cargo on a fresh machine.
+# The Go defradb the go_* and go-http suites run, under its pin in the
+# harness cache: GO_COMPAT_TAG when set, else GO_COMPAT_COMMIT, as CI lays it out.
+go_defradb_pin := `f=crates/foundation/defra-version/src/lib.rs; tag=$(sed -n 's/^pub const GO_COMPAT_TAG: &str = "\(.*\)";$/\1/p' "$f"); commit=$(sed -n 's/^pub const GO_COMPAT_COMMIT: &str = "\(.*\)";$/\1/p' "$f"); echo "${tag:-$commit}"`
+go_defradb_dir := home_directory() / ".cache/defra-harness" / go_defradb_pin
 cargo_bin := env('CARGO_HOME', home_directory() / ".cargo") / "bin"
 elan_bin  := env('ELAN_HOME', home_directory() / ".elan") / "bin"
-export PATH := tooling_bin + ":" + go_root + "/bin" + ":" + cargo_bin + ":" + elan_bin + ":" + env('PATH')
+export PATH := tooling_bin + ":" + go_root + "/bin" + ":" + go_defradb_dir + ":" + cargo_bin + ":" + elan_bin + ":" + env('PATH')
 
 # Integration areas: the top-level modules of the testo and legacy test binaries
 # in tools/integration-test. An area in both runs in both.
-integration_suites := "acp backup collection collection_version encryption explain export index issues matchers mutation net node query searchable_encryption signature subscription txn view basic cursor fts identity nac p2p p2p_iroh vector vera verars"
+integration_suites := "acp backup collection collection_version encryption explain export index issues matchers mutation net node query searchable_encryption signature subscription txn view basic cursor fts identity nac p2p p2p_iroh vector vera"
 
 # Cargo profile for the build and test recipes. `dev` is the stock debug
 # profile and the default; `just profile=super-dev test` opts into the lean
@@ -86,7 +90,7 @@ _sha256 file:
 # Install core development tools. Browser tools install best-effort: the
 # browser suites name what they need when it is missing.
 [group('setup')]
-setup: setup-rust setup-jq setup-cargo-tools setup-protoc setup-go setup-jdk setup-lean setup-tla setup-browser
+setup: setup-rust setup-jq setup-cargo-tools setup-protoc setup-go setup-go-defradb setup-jdk setup-lean setup-tla setup-browser
     @echo
     @just doctor
 
@@ -106,10 +110,10 @@ setup-rust:
         # shellcheck disable=SC1090
         source "${CARGO_HOME:-$HOME/.cargo}/env"
     fi
-    rustup toolchain install stable --profile minimal --no-self-update
-    # ci.yml runs fmt (:64) and 10 clippy invocations; :122 needs the wasm target.
-    rustup component add --toolchain stable rustfmt clippy
-    rustup target add --toolchain stable wasm32-unknown-unknown
+    # rust-toolchain.toml names the toolchain, its components and the wasm32 target. rustup 1.28+
+    # installs it with a bare `toolchain install`; 1.27 needs a toolchain argument there, but its
+    # cargo proxy installs the pinned toolchain on first use.
+    rustup toolchain install --no-self-update 2>/dev/null || cargo --version
     echo "rust: $(rustc --version)"
 
 # jq is required by setup-cargo-tools (lockfile-matched wasm-bindgen) and by
@@ -163,8 +167,8 @@ setup-cargo-tools:
     fi
     echo "wasm-bindgen-cli: $wb_version (matched to Cargo.lock)"
 
-# protoc, required by crates/orbis's build.rs (proto/orbis.proto via tonic-prost-build).
-[doc("protoc, required by crates/orbis's build.rs.")]
+# protoc, required by crates/building-blocks/orbis's build.rs (proto/orbis.proto via tonic-prost-build).
+[doc("protoc, required by crates/building-blocks/orbis's build.rs.")]
 [group('setup')]
 setup-protoc:
     #!/usr/bin/env bash
@@ -360,6 +364,65 @@ setup-go:
     tar -C "{{ tooling }}" -xzf "$tmp/go.tar.gz"
     echo "go: $({{ go_root }}/bin/go version)"
 
+# The Go defradb at the pinned baseline, the way ci.yml's go-defradb job gets
+# it: the release binary when GO_COMPAT_TAG is set, else a build of
+# GO_COMPAT_COMMIT on GO_COMPAT_BRANCH. A host with no release asset builds the
+# tag instead. DEFRADB_GO_REPO, when set, is the source checkout to build from.
+[doc("The Go defradb at the pinned baseline, for the go_* and go-http suites.")]
+[group('setup')]
+setup-go-defradb:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    lib=crates/foundation/defra-version/src/lib.rs
+    pin_of() { sed -n "s/^pub const $1: &str = \"\(.*\)\";$/\1/p" "$lib"; }
+    commit="$(pin_of GO_COMPAT_COMMIT)"
+    branch="$(pin_of GO_COMPAT_BRANCH)"
+    tag="$(pin_of GO_COMPAT_TAG)"
+    dir="{{ go_defradb_dir }}"
+    bin="$dir/defradb"
+    if [ -x "$bin" ]; then
+        echo "go defradb: ${tag:-$commit} already at $bin"; exit 0
+    fi
+    mkdir -p "$dir"
+    tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
+    asset=""
+    if [ -n "$tag" ]; then
+        case "$(uname -s)-$(uname -m)" in
+            Linux-x86_64|Linux-amd64)  asset="defradb_${tag#v}_linux_x86_64" ;;
+            Darwin-arm64|Darwin-aarch64) asset="defradb_${tag#v}_darwin_arm64" ;;
+        esac
+    fi
+    if [ -n "$asset" ]; then
+        base="https://github.com/sourcenetwork/defradb/releases/download/${tag}"
+        echo "fetching go defradb ${tag} (${asset})"
+        curl -fsSL -o "$tmp/defradb" "$base/$asset"
+        curl -fsSL -o "$tmp/checksums.txt" "$base/defradb_${tag#v}_checksums.txt"
+        want="$(awk -v f="$asset" '$2==f {print $1}' "$tmp/checksums.txt")"
+        [ -n "$want" ] || { echo "error: no published checksum for $asset" >&2; exit 1; }
+        got="$(just _sha256 "$tmp/defradb")"
+        [ "$got" = "$want" ] || { echo "error: go defradb checksum mismatch" >&2; echo "  expected $want" >&2; echo "  got      $got" >&2; exit 1; }
+    else
+        ref="${tag:-$commit}"
+        [ -n "$ref" ] && [ -n "$branch" ] || { echo "error: no Go pin in $lib" >&2; exit 1; }
+        command -v go >/dev/null 2>&1 || { echo "error: go is required to build $ref; run 'just setup-go'" >&2; exit 1; }
+        src="$tmp/defradb-src"
+        if [ -n "${DEFRADB_GO_REPO:-}" ]; then
+            git -C "$DEFRADB_GO_REPO" rev-parse --verify --quiet "${ref}^{commit}" >/dev/null \
+                || { echo "error: $ref is not in $DEFRADB_GO_REPO; fetch origin there first" >&2; exit 1; }
+            git -C "$DEFRADB_GO_REPO" worktree add --detach "$src" "$ref"
+            trap 'git -C "$DEFRADB_GO_REPO" worktree remove --force "$src"; rm -rf "$tmp"' EXIT
+        else
+            git clone --filter=blob:none --branch "$branch" https://github.com/sourcenetwork/defradb "$src"
+            git -C "$src" checkout "$ref"
+        fi
+        echo "building go defradb $ref with $(go version)"
+        make -C "$src" build path="$tmp/defradb"
+    fi
+    chmod +x "$tmp/defradb"
+    mv "$tmp/defradb" "$bin"
+    "$bin" version --format json
+    echo "go defradb: $bin"
+
 # A JDK, required by TLC. proofs/README.md asks for Java 11+; Temurin 21 is LTS.
 [doc("A Temurin JDK, required by TLC.")]
 [group('setup')]
@@ -488,12 +551,43 @@ build-fast:
 [group('build')]
 build-wasm:
     CARGO_PROFILE_RELEASE_OPT_LEVEL=z \
-        wasm-pack build crates/wasm --release --target web --out-dir ../../pkg/wasm
+        wasm-pack build crates/surfaces/wasm --release --target web --out-dir ../../../pkg/wasm
 
 # Regenerate the C header for the FFI surface.
 [group('build')]
 build-ffi-header:
-    cbindgen --config crates/ffi/cbindgen.toml --crate ffi --output crates/ffi/defradb.h
+    cbindgen --config crates/entry-points/ffi/cbindgen.toml --crate ffi --output crates/entry-points/ffi/defradb.h
+    just check-ffi-header crates/entry-points/ffi/defradb.h
+
+# Compile a generated C header as C11 and C++17 with every warning an error,
+# so its inline wrappers and options structs are valid for both. -Wpadded
+# fails on any struct with implicit padding: an options struct only grows at
+# its end, so a gap must be an explicit reserved field.
+[group('build')]
+check-ffi-header header:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    work=$(mktemp -d)
+    trap 'rm -rf "$work"' EXIT
+    echo "#include \"$(realpath {{header}})\"" > "$work/check.c"
+    cp "$work/check.c" "$work/check.cpp"
+    cc -std=c11 -Wall -Wextra -Wpadded -Werror -fsyntax-only "$work/check.c"
+    c++ -std=c++17 -Wall -Wextra -Wpadded -Werror -fsyntax-only "$work/check.cpp"
+
+# Check this tree's C API against base's, as CI's C API job does: no padding,
+# no function, field, typedef, enum constant or macro removed or changed,
+# options structs only grown at their end, and every exported function with C
+# linkage in C++. Needs cbindgen and clang.
+[group('build')]
+check-c-api base="origin/main":
+    bash .github/scripts/check-c-api.sh {{base}}
+
+# Check the Go OpenAPI snapshot the HTTP crate merges is Go's document at
+# GO_COMPAT_COMMIT, as CI's OpenAPI snapshot job does. Reads it from
+# DEFRADB_GO_REPO when that is set, from GitHub otherwise.
+[group('build')]
+check-openapi-snapshot:
+    bash .github/scripts/check-openapi-snapshot.sh
 
 # Apple .xcframework plus the Swift import smoke test.
 [group('build')]
@@ -557,14 +651,21 @@ test-features:
     cargo nextest run -p cli --cargo-profile {{ profile }} --features otel --test telemetry_dedup
     cargo nextest run -p defra-node --cargo-profile {{ profile }} --features p2p
 
+# The WASM lens modules in tools/lenses that integration tests load. The
+# target dir is pinned because the tests read tools/lenses/target whatever
+# CARGO_TARGET_DIR says.
+[group('test')]
+build-lenses:
+    cargo build --manifest-path tools/lenses/Cargo.toml --target wasm32-unknown-unknown --target-dir tools/lenses/target
+
 # Every integration area, serially. Each spawns real nodes.
 [group('test')]
-integration:
+integration: build-lenses
     cargo nextest run -p integration-test --cargo-profile {{ profile }}
 
 # One integration area: `just integration-suite acp`, `just integration-suite p2p`.
 [group('test')]
-integration-suite suite *args:
+integration-suite suite *args: build-lenses
     cargo nextest run -p integration-test -E 'test(/^{{ suite }}::/) | binary({{ suite }})' --cargo-profile {{ profile }} {{ args }}
 
 # The basic and query areas with every node's data path on a one-worker pool
@@ -636,9 +737,11 @@ tla-model cfg module:
     cd proofs/tla && ./tools/tlc -config {{ cfg }} {{ module }}
 
 # Lean proofs. Must build clean with zero `sorry`.
+# A new top-level `.lean` file is built with no lakefile edit; `-R` makes Lake
+# list the directory again.
 [group('proofs')]
 lean:
-    cd proofs/lean && lake build
+    cd proofs/lean && lake build -R
 
 # Model-to-code binding. The Lean axis needs no binary; the TLA axis drives the
 # real release binary and is serial because each test spins up real nodes.
@@ -714,10 +817,31 @@ lint-wasm:
     cargo clippy -p defra-wasm --target wasm32-unknown-unknown --no-default-features --all-targets -- -D warnings
 
 # Docs must build without warnings; a broken intra-doc link fails CI.
-[doc("Build docs with warnings denied (broken links fail CI).")]
+# rustdoc's own landing page (--enable-index-page) is nightly-only, so the
+# recipe writes target/doc/index.html itself, one link per workspace crate,
+# from cargo metadata so dependency pages an earlier plain `cargo doc` left in
+# target/doc stay out of it.
+[doc("Build docs with warnings denied (broken links fail CI), plus an index.")]
 [group('check')]
 doc:
-    RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
+    #!/usr/bin/env bash
+    set -euo pipefail
+    RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --keep-going
+    dir="${CARGO_TARGET_DIR:-{{ root }}/target}/doc"
+    {
+        echo '<!doctype html><meta charset="utf-8"><title>defradb.rs crates</title>'
+        echo '<h1>defradb.rs crates</h1><ul>'
+        cargo metadata --no-deps --format-version 1 \
+            | jq -r '.packages[].targets[] | select(.kind | any(. != "test" and . != "bench" and . != "example" and . != "custom-build")) | .name | gsub("-"; "_")' \
+            | sort -u \
+            | while read -r name; do
+                if [ -f "$dir/$name/index.html" ]; then
+                    echo "<li><a href=\"$name/index.html\">$name</a></li>"
+                fi
+            done
+        echo '</ul>'
+    } > "$dir/index.html"
+    echo "docs: $dir/index.html"
 
 # What to make green before asking for a review.
 [group('check')]
@@ -935,4 +1059,4 @@ machete:
 # The Go compatibility baseline, read from its single source of truth.
 [group('misc')]
 go-baseline:
-    @grep -E 'GO_COMPAT_(BRANCH|COMMIT|TAG)' crates/defra-version/src/lib.rs
+    @grep -E 'GO_COMPAT_(BRANCH|COMMIT|TAG)' crates/foundation/defra-version/src/lib.rs

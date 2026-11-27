@@ -1,49 +1,53 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/defra-core",
-    "crates/crdt",
-    "crates/storage",
-    "crates/blockstore",
-    "crates/schema",
-    "crates/chunk-split",
-    "crates/query",
-    "crates/document",
-    "crates/p2p",
-    "crates/bitswap",
-    "crates/p2p-adapter",
-    "crates/crypto",
-    "crates/cursor",
-    "crates/http",
-    "crates/cli",
-    "crates/datastore",
-    "crates/db",
-    "crates/keyring",
-    "crates/kms",
-    "crates/identity",
-    "crates/zanzibar",
-    "crates/acp",
-    "crates/defra-version",
-    "crates/vera",
-    "crates/events",
-    "crates/ffi",
-    "crates/lens",
-    "crates/orbis",
-    "crates/wasm",
-    "crates/pg-compat",
-    "crates/defra-node",
-    "crates/replication-filter",
-    "crates/telemetry",
-    "crates/edge",
-    "crates/net",
-    "crates/workers",
-    "crates/inputs",
+    "crates/foundation/defra-core",
+    "crates/building-blocks/crdt",
+    "crates/engine/storage",
+    "crates/engine/blockstore",
+    "crates/foundation/schema",
+    "crates/building-blocks/chunk-split",
+    "crates/foundation/prolly",
+    "crates/engine/query",
+    "crates/building-blocks/document",
+    "crates/database/p2p",
+    "crates/building-blocks/bitswap",
+    "crates/surfaces/p2p-adapter",
+    "crates/foundation/crypto",
+    "crates/foundation/cursor",
+    "crates/surfaces/http",
+    "crates/entry-points/cli",
+    "crates/engine/datastore",
+    "crates/database/db",
+    "crates/foundation/keyring",
+    "crates/database/kms",
+    "crates/building-blocks/identity",
+    "crates/building-blocks/zanzibar",
+    "crates/engine/acp",
+    "crates/foundation/defra-version",
+    "crates/engine/vera",
+    "crates/engine/vera-delegation",
+    "crates/engine/vera-embedded",
+    "crates/foundation/events",
+    "crates/entry-points/ffi",
+    "crates/foundation/lens",
+    "crates/building-blocks/orbis",
+    "crates/surfaces/wasm",
+    "crates/database/pg-compat",
+    "crates/entry-points/defra-node",
+    "crates/database/replication-filter",
+    "crates/building-blocks/telemetry",
+    "crates/foundation/edge",
+    "crates/building-blocks/net",
+    "crates/foundation/workers",
+    "crates/building-blocks/inputs",
     "tools/lens-host",
     "tools/ffi-test",
     "tools/integration-test",
     "proofs",
     "benches",
 ]
+exclude = ["tools/lenses"]
 
 [workspace.package]
 version = "0.5.0"
@@ -70,7 +74,7 @@ await_holding_lock = "warn"
 await_holding_refcell_ref = "warn"
 
 [workspace.dependencies]
-defra-p2p-adapter = { path = "crates/p2p-adapter", default-features = false }
+defra-p2p-adapter = { path = "crates/surfaces/p2p-adapter", default-features = false }
 
 # Hashing for every map that needs no synchronization: the `fast` profile,
 # `unsafe` for unchecked reads (stable toolchain, so `nightly` is out).
@@ -80,10 +84,10 @@ rapidhash = { version = "4.5.1", features = ["unsafe"] }
 # AtomOption, HopscotchMap for shared maps, SegQueue and ArrayQueue for
 # shared queues, kovan-channel for owner tasks. Nothing shared sits behind a
 # Mutex or RwLock.
-kovan = "0.2.2"
-kovan-map = "0.2.2"
-kovan-queue = "0.2.2"
-kovan-channel = "0.2.2"
+kovan = "0.2.5"
+kovan-map = "0.2.5"
+kovan-queue = "0.2.5"
+kovan-channel = "0.2.5"
 
 # One rustls version workspace-wide: a crypto provider is installed into the
 # process registry of a single rustls major, so a second major in the graph
@@ -94,7 +98,7 @@ rustls = { version = "0.23", default-features = false }
 # Runs every task, timer and socket of ours natively. A library that needs a
 # tokio runtime is reached through `edge::compat`, the one caller of
 # async-compat.
-nuclei = "0.5.5"
+nuclei = "0.5.9"
 async-compat = { version = "0.2.6", features = ["multi-thread"] }
 async-trait = "0.1.92"
 futures = "0.3"
@@ -120,20 +124,19 @@ n0-future = "0.3"
 libp2p = { version = "0.56", features = ["tcp", "noise", "yamux", "gossipsub", "kad", "identify", "relay", "dns", "quic", "websocket", "secp256k1"] }
 asynchronous-codec = "0.7"
 libp2p-stream = "0.4.0-alpha"
-multiaddr = "0.18"
 
 # Iroh P2P transport (alternative to libp2p)
 iroh = "1.3.0"
-iroh-gossip = { version = "0.101.0", default-features = false }
+iroh-gossip = { version = "0.102.0", default-features = false }
 iroh-relay = { version = "1.3.0", features = ["server"] }
 iroh-tickets = "1.0.0"
 postcard = { version = "1.0", features = ["alloc"] }
 
 # Storage
-regolith = "0.2.3"
+regolith = "0.2.5"
 
 # Cryptography
-ed25519-dalek = { version = "2.1", features = ["serde", "zeroize"] }
+ed25519-dalek = { version = "3.0", features = ["serde", "zeroize"] }
 uuid = { version = "1.23.0", features = ["v4"] }
 k256 = { version = "0.14", features = ["ecdsa", "serde"] }
 # External SHA-2 assembly does not support MSVC.
@@ -145,19 +148,14 @@ sha2 = "0.10"
 # trait-bound errors. rand_core-0.9-compatible releases exist only as
 # prereleases (ed25519-dalek 3.0-pre, k256 0.14-rc, …). Bump together
 # once those stabilize. Tracked in #652.
-rand = "0.8"
-aes-gcm = "0.10"
+rand = "0.10"
+aes-gcm = "0.11"
 hex = "0.4"
 base64 = "0.23"
 
 # EVM / Alloy (vera.rs ACP backend)
 alloy-sol-types = "1"
 alloy-primitives = { version = "1", features = ["serde"] }
-alloy-consensus = { version = "1", features = ["k256"] }
-alloy-eips = "1"
-alloy-signer = "1"
-alloy-signer-local = { version = "1", default-features = false }
-alloy-rlp = "0.3.15"
 bs58 = "0.5"
 
 # IPLD
@@ -166,11 +164,12 @@ bs58 = "0.5"
 cid = { version = "0.11.3", features = ["serde"] }
 multihash = "0.19"
 multihash-codetable = { version = "0.2.2", features = ["sha2"] }
-serde_ipld_dagcbor = "0.6"
+serde_ipld_dagcbor = "0.7"
 ipld-core = { version = "0.4", features = ["codec", "serde"] }
 
 # Full-text search
 bm25 = "2.3"
+unicode-segmentation = "1.13"
 
 # GraphQL
 graphql-parser = "0.4"
@@ -180,7 +179,7 @@ graphql-parser = "0.4"
 # tokio-bound `serve` and WebSocket features stay off.
 axum = { version = "0.8.9", default-features = false, features = ["form", "json", "matched-path", "original-uri", "query", "tower-log", "tracing"] }
 tower = { version = "0.5", features = ["limit"] }
-tower-http = { version = "0.6", features = ["cors", "normalize-path", "trace"] }
+tower-http = { version = "0.7", features = ["cors", "normalize-path", "trace"] }
 hyper = "1.9.0"
 
 # Error handling
@@ -208,13 +207,9 @@ tracing = "0.1"
 
 # Testing
 proptest = "1.11.0"
-criterion = { version = "0.6", features = ["async"] }
+criterion = { version = "0.8", features = ["async"] }
 
 # Synchronization (non-poisoning locks)
-
-# Caching
-lru = "0.18.2"
-
 
 [profile.dev]
 opt-level = 0
@@ -320,11 +315,16 @@ opt-level = "z"
 opt-level = "z"
 [profile.release.package."hickory-resolver"]
 opt-level = "z"
-[profile.release.package."hickory-net"]
-opt-level = "z"
 
 [patch.crates-io]
 iroh = { git = "https://github.com/n0-computer/iroh", rev = "26dfe1d469e274d38fe3b41617a20f9bb7a10072" }
 iroh-base = { git = "https://github.com/n0-computer/iroh", rev = "26dfe1d469e274d38fe3b41617a20f9bb7a10072" }
 iroh-dns = { git = "https://github.com/n0-computer/iroh", rev = "26dfe1d469e274d38fe3b41617a20f9bb7a10072" }
 iroh-relay = { git = "https://github.com/n0-computer/iroh", rev = "26dfe1d469e274d38fe3b41617a20f9bb7a10072" }
+# Temporary: the unreleased Vera 0.2.0 crates, from vera.rs main.
+vera-client = { git = "https://github.com/sourcenetwork/vera.rs", rev = "faf4a4f094c1b4f5786bce0cbeb6567966e27999" }
+vera-crypto = { git = "https://github.com/sourcenetwork/vera.rs", rev = "faf4a4f094c1b4f5786bce0cbeb6567966e27999" }
+vera-domain = { git = "https://github.com/sourcenetwork/vera.rs", rev = "faf4a4f094c1b4f5786bce0cbeb6567966e27999" }
+vera-identity = { git = "https://github.com/sourcenetwork/vera.rs", rev = "faf4a4f094c1b4f5786bce0cbeb6567966e27999" }
+vera-modules = { git = "https://github.com/sourcenetwork/vera.rs", rev = "faf4a4f094c1b4f5786bce0cbeb6567966e27999" }
+vera-permission = { git = "https://github.com/sourcenetwork/vera.rs", rev = "faf4a4f094c1b4f5786bce0cbeb6567966e27999" }

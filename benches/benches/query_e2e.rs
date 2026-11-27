@@ -18,8 +18,8 @@
 //!
 //! Top-level aggregates are absent, and deliberately so rather than by
 //! oversight: `_count(User: {})` does not parse. `AggregateType::parse` in
-//! `crates/query/src/mapper/types.rs` matches `COUNT` and `AVG`, so the
-//! dispatch in `crates/query/src/query_parse/parser.rs` that would route a
+//! `crates/engine/query/src/mapper/types.rs` matches `COUNT` and `AVG`, so the
+//! dispatch in `crates/engine/query/src/query_parse/parser.rs` that would route a
 //! top-level aggregate never fires for `_count`, and the field falls through to
 //! the collection path where the collection name is rejected as an argument.
 //! Benchmarking a shape the engine rejects would measure its error path.
@@ -32,7 +32,6 @@ use db::DB;
 use document::{Document, NormalValue};
 use query::mutator::DocMutator;
 use query::{QueryExecutor, QueryRequest, QueryRunner};
-use schema::{CollectionVersion, FieldDescription, FieldKind};
 use storage::RegolithStore;
 
 mod common;
@@ -40,39 +39,35 @@ mod common;
 const COLLECTION: &str = "User";
 const CORPUS: [usize; 3] = [100, 1_000, 5_000];
 
-fn collection_version() -> CollectionVersion {
-    CollectionVersion::new(
-        COLLECTION,
-        "bafkquerye2e",
-        "querye2e",
-        vec![
-            FieldDescription::new(
-                "1",
-                "_docID",
-                FieldKind::doc_id(),
-                schema::CType::LwwRegister,
-            ),
-            FieldDescription::new("2", "name", FieldKind::string(), schema::CType::LwwRegister),
-            FieldDescription::new("3", "city", FieldKind::string(), schema::CType::LwwRegister),
-            FieldDescription::new("4", "age", FieldKind::int(), schema::CType::LwwRegister),
-        ],
-    )
-}
+const COLLECTION_SDL: &str = "type User { name: String city: String age: Int }";
+
+/// The same collection with a secondary index on `city`, so an `_eq` on it
+/// is an index ExactMatch.
+const INDEXED_COLLECTION_SDL: &str =
+    r#"type User { name: String city: String @index(name: "city_idx") age: Int }"#;
 
 /// A database holding `count` documents, and a runner over it.
 async fn fixture(count: usize) -> impl QueryExecutor {
+    fixture_of(count, COLLECTION_SDL).await
+}
+
+/// A database holding `count` documents of the collection `sdl` defines, and
+/// a runner over it.
+async fn fixture_of(count: usize, sdl: &str) -> impl QueryExecutor {
     let store = Arc::new(RegolithStore::in_memory().expect("an in-memory store"));
     let db = Arc::new(DB::open_from_arc(store).await.expect("a database"));
-    db.create_collection(collection_version())
+    let version = db
+        .add_collection(&defra_core::RequestContext::ambient(), sdl)
         .await
-        .expect("the collection to register");
+        .expect("the collection to register")
+        .remove(0);
 
     let mutator = Arc::new(db::write::autocommit::AutoCommitMutator::new(db.clone()));
     // Ten cities and a spread of ages, so a filter selects a tenth of the
     // corpus rather than all of it or none: a predicate nothing matches
     // measures the scan and never the rest of the pipeline.
     for seq in 0..count {
-        let mut doc = Document::new(collection_version());
+        let mut doc = Document::new(version.clone());
         doc.set("name", NormalValue::String(format!("person-{seq}")))
             .unwrap();
         doc.set("city", NormalValue::String(format!("city-{}", seq % 10)))
@@ -86,8 +81,7 @@ async fn fixture(count: usize) -> impl QueryExecutor {
     }
 
     let fetcher = db::AutoCommitFetcher::new(db.clone());
-    QueryRunner::new(fetcher, vec![collection_version()])
-        .with_mutator(mutator as Arc<dyn DocMutator>)
+    QueryRunner::new(fetcher, vec![version]).with_mutator(mutator as Arc<dyn DocMutator>)
 }
 
 /// Every shape a read-heavy application actually issues.
@@ -143,6 +137,49 @@ fn shapes(c: &mut Criterion) {
     group.finish();
 }
 
+/// An index `_eq` matches a tenth of the corpus. With a limit, only the page
+/// needs its short IDs resolved to DocIDs; without one, all of them do.
+const INDEXED_SHAPES: [(&str, &str); 3] = [
+    (
+        "index_eq",
+        r#"query { User(filter: {city: {_eq: "city-3"}}) { name age } }"#,
+    ),
+    (
+        "index_eq_limit_1",
+        r#"query { User(filter: {city: {_eq: "city-3"}}, limit: 1) { name age } }"#,
+    ),
+    (
+        "index_eq_limit_10",
+        r#"query { User(filter: {city: {_eq: "city-3"}}, limit: 10) { name age } }"#,
+    ),
+];
+
+fn indexed(c: &mut Criterion) {
+    let rt = common::owned_runtime();
+    let mut group = c.benchmark_group("query_e2e_indexed");
+    group.sample_size(20);
+
+    for count in CORPUS {
+        let runner = rt.block_on(fixture_of(count, INDEXED_COLLECTION_SDL));
+        for (name, query) in INDEXED_SHAPES {
+            group.throughput(Throughput::Elements(count as u64));
+            group.bench_with_input(BenchmarkId::new(name, count), &query, |b, query| {
+                b.iter(|| {
+                    let response =
+                        rt.block_on(runner.execute(QueryRequest::new(black_box(*query))));
+                    assert!(
+                        response.errors.is_empty(),
+                        "{name} failed: {:?}",
+                        response.errors
+                    );
+                    black_box(response)
+                })
+            });
+        }
+    }
+    group.finish();
+}
+
 /// A mutation through the same surface, so the write path is comparable with
 /// the read one at the level a user sees rather than at the mutator's.
 fn mutation(c: &mut Criterion) {
@@ -169,5 +206,5 @@ fn mutation(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, shapes, mutation);
+criterion_group!(benches, shapes, indexed, mutation);
 criterion_main!(benches);

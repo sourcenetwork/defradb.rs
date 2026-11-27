@@ -65,7 +65,7 @@
 \* properties are stated over that state, as invariants or as properties of
 \* each step, and nothing is recorded only to state them.
 \*
-\* Variables and the code state each one is (crates/p2p/src/sync):
+\* Variables and the code state each one is (crates/database/p2p/src/sync):
 \*   dueOrder  the pending roots whose PendingDag::next_retry_at (manager/pending.rs:81)
 \*             has passed, in next_retry_at order: what due_pending_dag_retries
 \*             (manager/process/pending_dag.rs:723) returns. next_retry_at is kept by
@@ -104,7 +104,7 @@
 \* pending_dag_fetch_tasks, coordinator/mod.rs) and pending the durable
 \* records (PersistedView, pending_store/view.rs:27).
 \*
-\* Code it models (crates/p2p/src/sync):
+\* Code it models (crates/database/p2p/src/sync):
 \*   coordinator/mod.rs  dispatch_due_pending_dag_fetches (oldest due first, one slot each,
 \*                        taken with a permit of the root's source peer, on the
 \*                        clock's own lane), DagFetchLimiter::try_reserve_peer,

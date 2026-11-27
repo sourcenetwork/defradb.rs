@@ -13,9 +13,9 @@
 \* returns, and net_info_disconnect_multiple_peers checks exactly that.
 \*
 \* The Rust code this models:
-\*   - the Disconnect command, which holds the reply   crates/p2p/src/host/command_handler/network.rs handle_disconnect
-\*   - the last connection closing, which sends it      crates/p2p/src/host/p2p_host/swarm.rs handle_connection_closed
-\*   - the held replies                                 crates/p2p/src/host/p2p_host/mod.rs P2PHost::pending_disconnects
+\*   - the Disconnect command, which holds the reply   crates/database/p2p/src/host/command_handler/network.rs handle_disconnect
+\*   - the last connection closing, which sends it      crates/database/p2p/src/host/p2p_host/swarm.rs handle_connection_closed
+\*   - the held replies                                 crates/database/p2p/src/host/p2p_host/mod.rs P2PHost::pending_disconnects
 EXTENDS Naturals
 
 CONSTANTS

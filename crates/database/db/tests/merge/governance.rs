@@ -1,0 +1,1350 @@
+//! App merge governance: a validator's verdicts, re-drive of deferred
+//! composites when what they await merges, and recovery.
+
+use kovan::Atom;
+use std::sync::Arc;
+
+use async_trait::async_trait;
+use blockstore::Blockstore as _;
+use blockstore::DefraBlockstore;
+use cid::Cid;
+use crypto::PrivateKey as _;
+use db::database::{DbOptions, DB};
+use db::merge::governance::{
+    Awaited, FieldValue, MergeCandidate, MergeGovernance, MergeValidator, MergeVerdict, MergeView,
+    RedrivenMerge, RedrivenMergeSink, SignatureStatus,
+};
+use db::merge::merge_handler::DbMergeHandler;
+use db::write::autocommit::batch::BatchMutator;
+use db::write::autocommit::AutoCommitMutator;
+use db::AutoCommitFetcher;
+use defra_core::block::{
+    Block, CompositeDeltaPayload, CrdtDelta, DAGLink, LwwDeltaPayload, Signature, SignatureHeader,
+    SignatureType,
+};
+use defra_core::merge::{BlockMetadata, MergeHandler, MergeOutcome};
+use document::{Document, NormalValue};
+use query::mutator::{DocMutator, MutationBatchController};
+use query::runner::DocFetcher;
+use regolith::sync::Notify;
+use storage::RegolithStore;
+
+mod definition;
+mod lookup;
+mod sweep;
+
+type Blocks = DefraBlockstore<RegolithStore>;
+
+struct Signer {
+    key: crypto::Ed25519PrivateKey,
+    did: String,
+}
+
+fn signer() -> Signer {
+    let key = crypto::generate_ed25519().unwrap();
+    let did = key.public_key().did().unwrap();
+    Signer { key, did }
+}
+
+fn push<T: Clone + Send + Sync + 'static>(log: &Atom<Vec<T>>, item: T) {
+    log.rcu(|entries| {
+        let mut next = entries.clone();
+        next.push(item.clone());
+        next
+    });
+}
+
+/// A note is accepted when the grant it names is held and names the note's
+/// verified signer as writer; its absence defers on the grant's CID.
+#[derive(Default)]
+struct GrantValidator {
+    seen: Atom<Vec<(Cid, SignatureStatus)>>,
+}
+
+impl GrantValidator {
+    fn seen(&self, cid: &Cid) -> Vec<SignatureStatus> {
+        self.seen
+            .load()
+            .iter()
+            .filter(|(seen, _)| seen == cid)
+            .map(|(_, status)| status.clone())
+            .collect()
+    }
+}
+
+#[async_trait]
+impl MergeValidator for GrantValidator {
+    async fn validate(
+        &self,
+        candidate: &MergeCandidate<'_>,
+        view: &dyn MergeView,
+    ) -> Result<MergeVerdict, String> {
+        push(&self.seen, (*candidate.cid, candidate.signature.clone()));
+        let signer = match &candidate.signature {
+            SignatureStatus::Verified(did) => did.clone(),
+            SignatureStatus::NotHeld(signature) => {
+                return Ok(MergeVerdict::defer("signature not held", [*signature]))
+            }
+            other => return Ok(MergeVerdict::reject(format!("bad signature: {other:?}"))),
+        };
+        let fields = view
+            .composite_fields(candidate.cid)
+            .await?
+            .unwrap_or_default();
+        let grant = fields.iter().find_map(|(name, value)| match value {
+            FieldValue::Value(NormalValue::String(grant)) if name == "grant" => {
+                Cid::try_from(grant.as_str()).ok()
+            }
+            _ => None,
+        });
+        let Some(grant) = grant else {
+            return Ok(MergeVerdict::reject("note names no grant"));
+        };
+        let Some(grant_fields) = view.composite_fields(&grant).await? else {
+            return Ok(MergeVerdict::defer("grant not held", [grant]));
+        };
+        let writer = grant_fields.iter().any(|(name, value)| {
+            name == "writer" && *value == FieldValue::Value(NormalValue::String(signer.clone()))
+        });
+        Ok(if writer {
+            MergeVerdict::Accept
+        } else {
+            MergeVerdict::reject("grant does not name the signer")
+        })
+    }
+}
+
+/// Stands in for the replication layer's post-merge path, which a composite
+/// merged by re-drive never reaches through `handle_block`'s return value.
+#[derive(Default)]
+struct RecordingSink {
+    forwarded: Atom<Vec<(Cid, String)>>,
+    forwarded_changed: Notify,
+}
+
+#[async_trait]
+impl RedrivenMergeSink for RecordingSink {
+    async fn forward(&self, merged: RedrivenMerge) {
+        push(&self.forwarded, (merged.cid, merged.collection_id));
+        self.forwarded_changed.notify_one();
+    }
+}
+
+struct Node {
+    db: Arc<DB<RegolithStore>>,
+    blockstore: Arc<Blocks>,
+    handler: Arc<DbMergeHandler<RegolithStore, Blocks>>,
+    sink: Arc<RecordingSink>,
+}
+
+impl Node {
+    async fn open(store: RegolithStore, governance: MergeGovernance, create: bool) -> Self {
+        let store = Arc::new(store);
+        let db = Arc::new(
+            DB::open_from_arc_with_options(store.clone(), DbOptions::default())
+                .await
+                .unwrap(),
+        );
+        if create {
+            for sdl in [GRANTS_SDL, NOTES_SDL] {
+                db.add_collection(&defra_core::RequestContext::ambient(), sdl)
+                    .await
+                    .unwrap();
+            }
+        }
+        db.set_merge_governance(governance);
+        Self::assemble(db, store)
+    }
+
+    /// Grants with an `@immutable` `writer` and a mutable `label`, and Notes
+    /// governed by `validator`.
+    async fn with_immutable_grants(validator: Arc<dyn MergeValidator>) -> Self {
+        let store = Arc::new(RegolithStore::in_memory().unwrap());
+        let db = Arc::new(
+            DB::open_from_arc_with_options(store.clone(), DbOptions::default())
+                .await
+                .unwrap(),
+        );
+        for sdl in [IMMUTABLE_GRANTS_SDL, NOTES_SDL] {
+            db.add_collection(&defra_core::RequestContext::ambient(), sdl)
+                .await
+                .unwrap();
+        }
+        db.set_merge_governance(MergeGovernance::new(["Notes"]).with_validator(validator));
+        Self::assemble(db, store)
+    }
+
+    fn assemble(db: Arc<DB<RegolithStore>>, store: Arc<RegolithStore>) -> Self {
+        let blockstore = Arc::new(DefraBlockstore::new(store, true));
+        let handler = Arc::new(DbMergeHandler::new(db.clone(), blockstore.clone()));
+        handler.install_local_commit_release();
+        let sink = Arc::new(RecordingSink::default());
+        handler.set_redriven_merge_sink(sink.clone());
+        Self {
+            db,
+            blockstore,
+            handler,
+            sink,
+        }
+    }
+
+    fn forwarded(&self) -> Vec<Cid> {
+        self.forwarded_with_ids()
+            .into_iter()
+            .map(|(cid, _)| cid)
+            .collect()
+    }
+
+    /// What was forwarded, with the collection id each was forwarded under.
+    fn forwarded_with_ids(&self) -> Vec<(Cid, String)> {
+        self.sink.forwarded.load_clone()
+    }
+
+    /// Grants as in `open`, and Notes patched to a second version, whose id
+    /// differs from its collection id, so a re-drive that confuses the two is
+    /// visible.
+    async fn with_versioned_notes(governance: MergeGovernance) -> Self {
+        let store = Arc::new(RegolithStore::in_memory().unwrap());
+        let db = Arc::new(
+            DB::open_from_arc_with_options(store.clone(), DbOptions::default())
+                .await
+                .unwrap(),
+        );
+        for sdl in [GRANTS_SDL, NOTES_SDL] {
+            db.add_collection(&defra_core::RequestContext::ambient(), sdl)
+                .await
+                .unwrap();
+        }
+        db.patch_collection(
+            &defra_core::RequestContext::default(),
+            r#"[{"op":"add","path":"/Notes/Fields/-","value":{"Name":"extra","Kind":"Int"}}]"#,
+            None,
+        )
+        .await
+        .unwrap();
+        db.set_merge_governance(governance);
+        Self::assemble(db, store)
+    }
+
+    /// Where documents of the collection named `name` are written on this node.
+    fn target(&self, name: &str) -> Target {
+        let collection = self.db.get_collection(name).unwrap().unwrap();
+        Target {
+            version_id: collection.schema().version_id.clone(),
+            collection_id: collection.schema().collection_id.clone(),
+        }
+    }
+
+    /// Delete a document the way a client mutation does, index cleanup included.
+    async fn delete_locally(&self, collection: &str, doc_id: &str) {
+        AutoCommitMutator::new(self.db.clone())
+            .delete(collection, &doc_id.parse().unwrap())
+            .await
+            .unwrap();
+    }
+
+    /// Create a document the way a client mutation does, and return its
+    /// composite's CID.
+    async fn create_locally(&self, collection: &str, json: &str) -> Cid {
+        let schema = self
+            .db
+            .get_collection(collection)
+            .unwrap()
+            .unwrap()
+            .schema_arc();
+        let txn = self.db.new_txn(false).await.unwrap();
+        let mutator = BatchMutator::new(self.db.clone(), Arc::new(txn)).await;
+        let created = mutator
+            .create(collection, Document::from_json_str(json, schema).unwrap())
+            .await
+            .unwrap();
+        mutator.commit().await.unwrap();
+        created.commit_cid.unwrap()
+    }
+
+    /// A local write releases waiters off the writing task, so the re-driven
+    /// merge lands shortly after the write returns.
+    async fn wait_for_doc(&self, collection: &str, doc_id: &str) {
+        for _ in 0..200 {
+            if self.doc_ids(collection).await.iter().any(|id| id == doc_id) {
+                return;
+            }
+            workers::delay(std::time::Duration::from_millis(25))
+                .unwrap()
+                .await
+                .unwrap();
+        }
+        panic!("{collection} never merged {doc_id}");
+    }
+
+    /// A re-driven document commits before the redrive sink receives it.
+    /// Observe the sink's own event rather than treating database visibility
+    /// as completion of the forwarding path.
+    async fn wait_for_forwarded(&self, cid: &Cid) {
+        workers::timeout(std::time::Duration::from_secs(5), async {
+            loop {
+                let notified = self.sink.forwarded_changed.notified();
+                if self.forwarded().contains(cid) {
+                    return;
+                }
+                notified.await;
+            }
+        })
+        .await
+        .expect("re-driven merge was not forwarded");
+    }
+
+    async fn doc_ids(&self, collection: &str) -> Vec<String> {
+        AutoCommitFetcher::new(self.db.clone())
+            .get_all(collection)
+            .await
+            .unwrap()
+            .iter()
+            .filter_map(|doc| doc.id().map(|id| id.to_string()))
+            .collect()
+    }
+}
+
+const GRANTS_SDL: &str = "type Grants { writer: String }";
+const NOTES_SDL: &str = "type Notes { grant: String }";
+const IMMUTABLE_GRANTS_SDL: &str = "type Grants { writer: String @immutable label: String }";
+
+/// The version a document is written at, and the collection it belongs to.
+#[derive(Clone)]
+struct Target {
+    version_id: String,
+    collection_id: String,
+}
+
+fn target(sdl: &str) -> Target {
+    let version = crate::common::schema::parsed(sdl);
+    Target {
+        version_id: version.version_id,
+        collection_id: version.collection_id,
+    }
+}
+
+/// `Grants` as `Node::open` defines it.
+fn grants() -> Target {
+    target(GRANTS_SDL)
+}
+
+fn notes() -> Target {
+    target(NOTES_SDL)
+}
+
+/// `Grants` as `Node::with_immutable_grants` defines it.
+fn immutable_grants() -> Target {
+    target(IMMUTABLE_GRANTS_SDL)
+}
+
+/// A genesis document held by its author, not yet sent to the node.
+struct Genesis {
+    cid: Cid,
+    doc_id: String,
+    blocks: Vec<(Cid, Vec<u8>)>,
+    collection_id: String,
+}
+
+fn genesis(target: &Target, field: &str, value: &str, by: &Signer) -> Genesis {
+    authored(target, None, field, value, by)
+}
+
+/// A composite setting `field`, as the genesis or as an update of `update_of`.
+fn authored(
+    target: &Target,
+    update_of: Option<&Genesis>,
+    field: &str,
+    value: &str,
+    by: &Signer,
+) -> Genesis {
+    authored_fields(target, update_of, &[(field, value)], by)
+}
+
+fn authored_fields(
+    target: &Target,
+    update_of: Option<&Genesis>,
+    fields: &[(&str, &str)],
+    by: &Signer,
+) -> Genesis {
+    let priority = if update_of.is_some() { 2 } else { 1 };
+    let heads: Vec<Cid> = update_of.map(|genesis| genesis.cid).into_iter().collect();
+    let mut blocks = Vec::new();
+    let mut links = Vec::new();
+    for (field, value) in fields {
+        let field_block = Block::new(
+            CrdtDelta::Lww(LwwDeltaPayload {
+                field_name: field.to_string(),
+                priority,
+                collection_version_id: target.version_id.clone(),
+                data: db::block::builder::encode_value_as_cbor(&NormalValue::String(
+                    value.to_string(),
+                ))
+                .unwrap(),
+            }),
+            vec![],
+            vec![],
+        );
+        let field_cid = field_block.generate_cid().unwrap();
+        blocks.push((field_cid, field_block.to_dag_cbor().unwrap()));
+        links.push(DAGLink::new(*field, field_cid));
+    }
+
+    let mut composite = Block::new(
+        CrdtDelta::Composite(CompositeDeltaPayload {
+            collection_version_id: target.version_id.clone(),
+            priority,
+            status: 1,
+        }),
+        heads,
+        links,
+    );
+    let value = by.key.sign(&composite.to_dag_cbor().unwrap()).unwrap();
+    let signature = Signature::new(
+        SignatureHeader::new(
+            SignatureType::EdDSA,
+            hex::encode(by.key.public_key().raw()).into_bytes(),
+        ),
+        value,
+    );
+    let signature_cid = signature.generate_cid().unwrap();
+    blocks.push((signature_cid, signature.to_dag_cbor().unwrap()));
+    composite.signature = Some(signature_cid);
+    let cid = composite.generate_cid().unwrap();
+    blocks.push((cid, composite.to_dag_cbor().unwrap()));
+
+    Genesis {
+        cid,
+        doc_id: db::block::builder::derive_doc_id(&update_of.map_or(cid, |genesis| genesis.cid)),
+        blocks,
+        collection_id: target.collection_id.clone(),
+    }
+}
+
+impl Genesis {
+    async fn store(&self, node: &Node) {
+        for (cid, bytes) in &self.blocks {
+            node.blockstore.put(cid, bytes).await.unwrap();
+        }
+    }
+
+    fn bytes(&self) -> &[u8] {
+        &self.blocks.last().unwrap().1
+    }
+
+    async fn merge(&self, node: &Node, creator: &str) -> MergeOutcome {
+        self.store(node).await;
+        node.handler
+            .handle_block(
+                &self.cid,
+                self.bytes(),
+                BlockMetadata::normal(
+                    &self.doc_id,
+                    &self.collection_id,
+                    creator,
+                    Some("peer"),
+                    false,
+                ),
+            )
+            .await
+            .unwrap()
+    }
+}
+
+fn governance(validator: &Arc<GrantValidator>) -> MergeGovernance {
+    MergeGovernance::new(["Notes"]).with_validator(validator.clone())
+}
+
+#[test]
+fn validator_accepts_rejects_and_defers() {
+    workers::block_on(async {
+        let validator = Arc::new(GrantValidator::default());
+        let node = Node::open(
+            RegolithStore::in_memory().unwrap(),
+            governance(&validator),
+            true,
+        )
+        .await;
+        let writer = signer();
+        let stranger = signer();
+
+        let grant = genesis(&grants(), "writer", &writer.did, &writer);
+        grant.store(&node).await;
+
+        let accepted = genesis(&notes(), "grant", &grant.cid.to_string(), &writer);
+        assert_eq!(
+            accepted.merge(&node, &writer.did).await,
+            MergeOutcome::Merged
+        );
+
+        let forged = genesis(&notes(), "grant", &grant.cid.to_string(), &stranger);
+        assert_eq!(
+            forged.merge(&node, &writer.did).await,
+            MergeOutcome::rejected("grant does not name the signer")
+        );
+
+        let unheld = genesis(&grants(), "writer", &stranger.did, &stranger);
+        let waiting = genesis(&notes(), "grant", &unheld.cid.to_string(), &stranger);
+        assert_eq!(
+            waiting.merge(&node, &stranger.did).await,
+            MergeOutcome::retryable_skip("grant not held")
+        );
+
+        assert_eq!(node.doc_ids("Notes").await, vec![accepted.doc_id.clone()]);
+    })
+    .unwrap()
+}
+
+#[test]
+fn deferred_composite_merges_when_its_dependency_merges() {
+    workers::block_on(async {
+        let validator = Arc::new(GrantValidator::default());
+        let node = Node::open(
+            RegolithStore::in_memory().unwrap(),
+            governance(&validator),
+            true,
+        )
+        .await;
+        let writer = signer();
+
+        let grant = genesis(&grants(), "writer", &writer.did, &writer);
+        let note = genesis(&notes(), "grant", &grant.cid.to_string(), &writer);
+        assert_eq!(
+            note.merge(&node, &writer.did).await,
+            MergeOutcome::retryable_skip("grant not held")
+        );
+        assert_eq!(node.handler.deferred_composites(), 1);
+        assert!(node.doc_ids("Notes").await.is_empty());
+
+        assert_eq!(grant.merge(&node, &writer.did).await, MergeOutcome::Merged);
+
+        assert_eq!(node.doc_ids("Notes").await, vec![note.doc_id.clone()]);
+        assert_eq!(node.handler.deferred_composites(), 0);
+        assert_eq!(node.forwarded(), vec![note.cid]);
+        assert_eq!(
+            validator.seen(&note.cid),
+            vec![
+                SignatureStatus::Verified(writer.did.clone()),
+                SignatureStatus::Verified(writer.did.clone()),
+            ]
+        );
+    })
+    .unwrap()
+}
+
+#[test]
+fn redrive_verifies_the_signature_at_dispatch() {
+    workers::block_on(async {
+        let validator = Arc::new(GrantValidator::default());
+        let node = Node::open(
+            RegolithStore::in_memory().unwrap(),
+            governance(&validator),
+            true,
+        )
+        .await;
+        let writer = signer();
+
+        let grant = genesis(&grants(), "writer", &writer.did, &writer);
+        let mut note = genesis(&notes(), "grant", &grant.cid.to_string(), &writer);
+        assert_eq!(
+            note.merge(&node, &writer.did).await,
+            MergeOutcome::retryable_skip("grant not held")
+        );
+
+        let signature_cid = note.blocks[1].0;
+        let impostor = signer();
+        let forged = Signature::new(
+            SignatureHeader::new(
+                SignatureType::EdDSA,
+                hex::encode(impostor.key.public_key().raw()).into_bytes(),
+            ),
+            impostor.key.sign(b"not this block").unwrap(),
+        );
+        note.blocks[1].1 = forged.to_dag_cbor().unwrap();
+        node.blockstore.delete(&signature_cid).await.unwrap();
+        node.blockstore
+            .put(&signature_cid, &note.blocks[1].1)
+            .await
+            .unwrap();
+
+        assert_eq!(grant.merge(&node, &writer.did).await, MergeOutcome::Merged);
+
+        assert!(node.doc_ids("Notes").await.is_empty());
+        assert_eq!(validator.seen(&note.cid).len(), 1);
+    })
+    .unwrap()
+}
+
+#[test]
+fn claimed_collection_without_validator_defers() {
+    workers::block_on(async {
+        let node = Node::open(
+            RegolithStore::in_memory().unwrap(),
+            MergeGovernance::new(["Notes"]),
+            true,
+        )
+        .await;
+        let writer = signer();
+        let note = genesis(&notes(), "grant", "anything", &writer);
+
+        assert!(matches!(
+            note.merge(&node, &writer.did).await,
+            MergeOutcome::Skipped {
+                terminal: false,
+                ..
+            }
+        ));
+        assert!(node.doc_ids("Notes").await.is_empty());
+    })
+    .unwrap()
+}
+
+#[test]
+fn deferred_forgery_stays_unmerged_after_restart() {
+    workers::block_on(async {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("node");
+        let writer = signer();
+        let forger = signer();
+        let grant = genesis(&grants(), "writer", &writer.did, &writer);
+        let forged = genesis(&notes(), "grant", &grant.cid.to_string(), &forger);
+
+        {
+            let validator = Arc::new(GrantValidator::default());
+            let node = Node::open(
+                RegolithStore::open(&path).unwrap(),
+                governance(&validator),
+                true,
+            )
+            .await;
+            assert_eq!(
+                forged.merge(&node, &writer.did).await,
+                MergeOutcome::retryable_skip("grant not held")
+            );
+            grant.store(&node).await;
+            node.db.close().await.unwrap();
+        }
+
+        let validator = Arc::new(GrantValidator::default());
+        let node = Node::open(
+            RegolithStore::open(&path).unwrap(),
+            governance(&validator),
+            false,
+        )
+        .await;
+        let outcome = node
+            .handler
+            .handle_block(
+                &forged.cid,
+                forged.bytes(),
+                BlockMetadata::recovered(
+                    &forged.doc_id,
+                    &forged.collection_id,
+                    &writer.did,
+                    Some(writer.did.clone()),
+                ),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(
+            outcome,
+            MergeOutcome::rejected("grant does not name the signer")
+        );
+        assert_eq!(
+            validator.seen(&forged.cid),
+            vec![SignatureStatus::Verified(forger.did.clone())]
+        );
+        assert!(node.doc_ids("Notes").await.is_empty());
+    })
+    .unwrap()
+}
+
+/// Accepts a signed genesis, and an update once its document's genesis is
+/// held; defers an update on the genesis it names otherwise.
+#[derive(Default)]
+struct GenesisFirst {
+    seen: Atom<Vec<(Cid, SignatureStatus)>>,
+}
+
+#[async_trait]
+impl MergeValidator for GenesisFirst {
+    async fn validate(
+        &self,
+        candidate: &MergeCandidate<'_>,
+        view: &dyn MergeView,
+    ) -> Result<MergeVerdict, String> {
+        push(&self.seen, (*candidate.cid, candidate.signature.clone()));
+        match &candidate.signature {
+            SignatureStatus::Verified(_) => {}
+            SignatureStatus::NotHeld(signature) => {
+                return Ok(MergeVerdict::defer("signature not held", [*signature]))
+            }
+            other => return Ok(MergeVerdict::reject(format!("bad signature: {other:?}"))),
+        }
+        if candidate.is_genesis {
+            return Ok(MergeVerdict::Accept);
+        }
+        let parent = candidate.block.heads.iter().flatten().next().copied();
+        match (view.genesis(candidate.cid).await?, parent) {
+            (Some(_), _) => Ok(MergeVerdict::Accept),
+            (None, Some(parent)) => Ok(MergeVerdict::defer("genesis not held", [parent])),
+            (None, None) => Ok(MergeVerdict::reject("update names no parent")),
+        }
+    }
+}
+
+async fn field_value(node: &Node, collection: &str, doc_id: &str, field: &str) -> Option<String> {
+    AutoCommitFetcher::new(node.db.clone())
+        .get_all(collection)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|doc| doc.id().is_some_and(|id| id.to_string() == doc_id))
+        .and_then(|doc| match doc.get(field) {
+            Some(NormalValue::String(value)) => Some(value.clone()),
+            _ => None,
+        })
+}
+
+fn merge_block(authored: &Genesis, creator: &str) -> defra_core::merge::MergeBlock {
+    defra_core::merge::MergeBlock {
+        cid: authored.cid,
+        block_data: bytes::Bytes::copy_from_slice(authored.bytes()),
+        doc_id: authored.doc_id.clone(),
+        collection_id: authored.collection_id.to_string(),
+        creator: creator.to_string(),
+        sender_peer: Some("peer".to_string()),
+        is_explicit_replicator: false,
+        explicit_replay_authorization: None,
+        verified_creator: None,
+    }
+}
+
+#[test]
+fn update_awaiting_its_genesis_merges_when_the_genesis_merges() {
+    workers::block_on(async {
+        let validator = Arc::new(GenesisFirst::default());
+        let node = Node::open(
+            RegolithStore::in_memory().unwrap(),
+            MergeGovernance::new(["Notes"]).with_validator(validator.clone()),
+            true,
+        )
+        .await;
+        let writer = signer();
+        let created = genesis(&notes(), "grant", "first", &writer);
+        let updated = authored(&notes(), Some(&created), "grant", "second", &writer);
+
+        assert_eq!(
+            updated.merge(&node, &writer.did).await,
+            MergeOutcome::retryable_skip("document genesis not held")
+        );
+        assert_eq!(node.handler.deferred_composites(), 1);
+
+        assert_eq!(
+            created.merge(&node, &writer.did).await,
+            MergeOutcome::Merged
+        );
+
+        assert_eq!(
+            field_value(&node, "Notes", &created.doc_id, "grant").await,
+            Some("second".to_string())
+        );
+        assert_eq!(node.handler.deferred_composites(), 0);
+    })
+    .unwrap()
+}
+
+#[test]
+fn batch_deferral_is_released_by_a_batch_merge() {
+    workers::block_on(async {
+        let validator = Arc::new(GenesisFirst::default());
+        let node = Node::open(
+            RegolithStore::in_memory().unwrap(),
+            MergeGovernance::new(["Notes"]).with_validator(validator.clone()),
+            true,
+        )
+        .await;
+        let writer = signer();
+        let created = genesis(&notes(), "grant", "first", &writer);
+        let updated = authored(&notes(), Some(&created), "grant", "second", &writer);
+
+        updated.store(&node).await;
+        let deferred = node
+            .handler
+            .handle_block_batch(&[merge_block(&updated, &writer.did)])
+            .await;
+        assert_eq!(
+            deferred.into_iter().next().unwrap().unwrap(),
+            MergeOutcome::retryable_skip("document genesis not held")
+        );
+        assert_eq!(node.handler.deferred_composites(), 1);
+
+        created.store(&node).await;
+        let merged = node
+            .handler
+            .handle_block_batch(&[merge_block(&created, &writer.did)])
+            .await;
+        assert_eq!(
+            merged.into_iter().next().unwrap().unwrap(),
+            MergeOutcome::Merged
+        );
+
+        assert_eq!(
+            field_value(&node, "Notes", &created.doc_id, "grant").await,
+            Some("second".to_string())
+        );
+        assert_eq!(node.handler.deferred_composites(), 0);
+    })
+    .unwrap()
+}
+
+#[test]
+fn awaiting_a_non_composite_cid_waits_for_the_retry_clock() {
+    workers::block_on(async {
+        let validator = Arc::new(GenesisFirst::default());
+        let node = Node::open(
+            RegolithStore::in_memory().unwrap(),
+            MergeGovernance::new(["Notes"]).with_validator(validator.clone()),
+            true,
+        )
+        .await;
+        let writer = signer();
+        let created = genesis(&notes(), "grant", "first", &writer);
+        let updated = authored(&notes(), Some(&created), "grant", "second", &writer);
+        let (signature_cid, signature) = created.blocks[1].clone();
+        for (cid, bytes) in created
+            .blocks
+            .iter()
+            .filter(|(cid, _)| *cid != signature_cid)
+        {
+            node.blockstore.put(cid, bytes).await.unwrap();
+        }
+
+        assert_eq!(
+            updated.merge(&node, &writer.did).await,
+            MergeOutcome::retryable_skip("signature not held")
+        );
+        node.blockstore
+            .put(&signature_cid, &signature)
+            .await
+            .unwrap();
+        let unrelated = genesis(&notes(), "grant", "unrelated", &writer);
+        assert_eq!(
+            unrelated.merge(&node, &writer.did).await,
+            MergeOutcome::Merged
+        );
+        assert_eq!(
+            field_value(&node, "Notes", &created.doc_id, "grant").await,
+            None
+        );
+        assert_eq!(node.handler.deferred_composites(), 1);
+
+        assert_eq!(
+            updated.merge(&node, &writer.did).await,
+            MergeOutcome::Merged
+        );
+        assert_eq!(
+            field_value(&node, "Notes", &created.doc_id, "grant").await,
+            Some("second".to_string())
+        );
+    })
+    .unwrap()
+}
+
+#[test]
+fn governed_collection_is_not_resolved_from_the_carrier() {
+    workers::block_on(async {
+    let validator = Arc::new(GrantValidator::default());
+    let node = Node::open(
+        RegolithStore::in_memory().unwrap(),
+        governance(&validator),
+        true,
+    )
+    .await;
+    let writer = signer();
+    let stray = genesis(
+        &Target {
+            version_id: "unknown-version".to_string(),
+            collection_id: notes().collection_id,
+        },
+        "grant",
+        "anything",
+        &writer,
+    );
+
+    assert_eq!(
+        stray.merge(&node, &writer.did).await,
+        MergeOutcome::retryable_skip(
+            "schema version unknown-version is not held; a governed collection is resolved only from the block"
+        )
+    );
+    assert!(validator.seen(&stray.cid).is_empty());
+    assert!(node.doc_ids("Notes").await.is_empty());
+})
+    .unwrap()
+}
+
+/// Accepts when `field` of `collection` has a merged document equal to
+/// `value`; otherwise defers on that field value.
+struct LookupValidator {
+    collection: &'static str,
+    field: &'static str,
+    value: String,
+}
+
+#[async_trait]
+impl MergeValidator for LookupValidator {
+    async fn validate(
+        &self,
+        _candidate: &MergeCandidate<'_>,
+        view: &dyn MergeView,
+    ) -> Result<MergeVerdict, String> {
+        let matches = view
+            .find_documents(
+                self.collection,
+                self.field,
+                &NormalValue::String(self.value.clone()),
+            )
+            .await?;
+        Ok(if matches.is_empty() {
+            MergeVerdict::defer(
+                "nothing matches",
+                [Awaited::immutable_field(
+                    self.collection,
+                    self.field,
+                    NormalValue::String(self.value.clone()),
+                )],
+            )
+        } else {
+            MergeVerdict::Accept
+        })
+    }
+}
+
+#[test]
+fn find_documents_refuses_a_mutable_field() {
+    workers::block_on(async {
+        let node = Node::open(
+            RegolithStore::in_memory().unwrap(),
+            MergeGovernance::new(["Notes"]).with_validator(Arc::new(LookupValidator {
+                collection: "Grants",
+                field: "writer",
+                value: "anyone".to_string(),
+            })),
+            true,
+        )
+        .await;
+        let writer = signer();
+        let note = genesis(&notes(), "grant", "anything", &writer);
+        note.store(&node).await;
+
+        let error = node
+            .handler
+            .handle_block(
+                &note.cid,
+                note.bytes(),
+                BlockMetadata::normal(&note.doc_id, &note.collection_id, &writer.did, None, false),
+            )
+            .await
+            .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("must be an @immutable scalar LWW field"),
+            "{error}"
+        );
+        assert!(node.doc_ids("Notes").await.is_empty());
+    })
+    .unwrap()
+}
+
+#[test]
+fn composite_deferred_on_an_immutable_field_merges_when_a_match_merges() {
+    workers::block_on(async {
+        let writer = signer();
+        let node = Node::with_immutable_grants(Arc::new(LookupValidator {
+            collection: "Grants",
+            field: "writer",
+            value: writer.did.clone(),
+        }))
+        .await;
+        let note = genesis(&notes(), "grant", "anything", &writer);
+
+        assert_eq!(
+            note.merge(&node, &writer.did).await,
+            MergeOutcome::retryable_skip("nothing matches")
+        );
+        assert_eq!(node.handler.deferred_composites(), 1);
+
+        let other = genesis(&immutable_grants(), "writer", "someone else", &writer);
+        assert_eq!(other.merge(&node, &writer.did).await, MergeOutcome::Merged);
+        assert!(node.doc_ids("Notes").await.is_empty());
+
+        let grant = genesis(&immutable_grants(), "writer", &writer.did, &writer);
+        assert_eq!(grant.merge(&node, &writer.did).await, MergeOutcome::Merged);
+
+        assert_eq!(node.doc_ids("Notes").await, vec![note.doc_id.clone()]);
+        assert_eq!(node.handler.deferred_composites(), 0);
+        assert_eq!(node.forwarded(), vec![note.cid]);
+    })
+    .unwrap()
+}
+
+/// Defers on a field the host must refuse to index.
+struct AwaitMutableField;
+
+#[async_trait]
+impl MergeValidator for AwaitMutableField {
+    async fn validate(
+        &self,
+        _candidate: &MergeCandidate<'_>,
+        _view: &dyn MergeView,
+    ) -> Result<MergeVerdict, String> {
+        Ok(MergeVerdict::defer(
+            "grant not merged",
+            [Awaited::immutable_field(
+                "Grants",
+                "writer",
+                NormalValue::String("anyone".to_string()),
+            )],
+        ))
+    }
+}
+
+#[test]
+fn awaiting_a_mutable_field_is_refused() {
+    workers::block_on(async {
+        let node = Node::open(
+            RegolithStore::in_memory().unwrap(),
+            MergeGovernance::new(["Notes"]).with_validator(Arc::new(AwaitMutableField)),
+            true,
+        )
+        .await;
+        let writer = signer();
+        let note = genesis(&notes(), "grant", "anything", &writer);
+        note.store(&node).await;
+
+        let error = node
+            .handler
+            .handle_block(
+                &note.cid,
+                note.bytes(),
+                BlockMetadata::normal(&note.doc_id, &note.collection_id, &writer.did, None, false),
+            )
+            .await
+            .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("must be an @immutable scalar LWW field"),
+            "{error}"
+        );
+        assert_eq!(node.handler.deferred_composites(), 0);
+    })
+    .unwrap()
+}
+
+type ImmutableRead = Option<Vec<(String, NormalValue)>>;
+
+/// Accepts when the immutable fields of the merged document `doc_id` in
+/// `collection` can be read; records what was read.
+struct ReadImmutable {
+    collection: &'static str,
+    doc_id: Atom<String>,
+    read: Atom<Option<ImmutableRead>>,
+}
+
+#[async_trait]
+impl MergeValidator for ReadImmutable {
+    async fn validate(
+        &self,
+        _candidate: &MergeCandidate<'_>,
+        view: &dyn MergeView,
+    ) -> Result<MergeVerdict, String> {
+        let doc_id = self.doc_id.load_clone();
+        let fields = view.immutable_fields(self.collection, &doc_id).await?;
+        self.read.store(Some(fields));
+        Ok(MergeVerdict::Accept)
+    }
+}
+
+#[test]
+fn immutable_fields_reads_only_immutable_scalar_fields_of_a_merged_document() {
+    workers::block_on(async {
+        let validator = Arc::new(ReadImmutable {
+            collection: "Grants",
+            doc_id: Atom::new(String::new()),
+            read: Atom::new(None),
+        });
+        let node = Node::with_immutable_grants(validator.clone()).await;
+        let writer = signer();
+        let grant = genesis(&immutable_grants(), "writer", &writer.did, &writer);
+        assert_eq!(grant.merge(&node, &writer.did).await, MergeOutcome::Merged);
+        let labelled = authored(
+            &immutable_grants(),
+            Some(&grant),
+            "label",
+            "mutable",
+            &writer,
+        );
+        assert_eq!(
+            labelled.merge(&node, &writer.did).await,
+            MergeOutcome::Merged
+        );
+        // `label` is set but mutable, so the read leaves it out.
+        validator.doc_id.store(grant.doc_id.clone());
+        let note = genesis(&notes(), "grant", "anything", &writer);
+        assert_eq!(note.merge(&node, &writer.did).await, MergeOutcome::Merged);
+        assert_eq!(
+            validator.read.load_clone().unwrap(),
+            Some(vec![(
+                "writer".to_string(),
+                NormalValue::String(writer.did.clone())
+            )])
+        );
+
+        // An unmerged document reads as `None`.
+        validator.doc_id.store("bae-missing".to_string());
+        let other = genesis(&notes(), "grant", "other", &writer);
+        assert_eq!(other.merge(&node, &writer.did).await, MergeOutcome::Merged);
+        assert_eq!(validator.read.load_clone().unwrap(), None);
+    })
+    .unwrap()
+}
+
+#[test]
+fn a_local_write_releases_a_composite_awaiting_an_immutable_field() {
+    workers::block_on(async {
+        let writer = signer();
+        let node = Node::with_immutable_grants(Arc::new(LookupValidator {
+            collection: "Grants",
+            field: "writer",
+            value: writer.did.clone(),
+        }))
+        .await;
+        let note = genesis(&notes(), "grant", "anything", &writer);
+
+        assert_eq!(
+            note.merge(&node, &writer.did).await,
+            MergeOutcome::retryable_skip("nothing matches")
+        );
+        assert_eq!(node.handler.deferred_composites(), 1);
+
+        node.create_locally("Grants", &format!(r#"{{"writer": "{}"}}"#, writer.did))
+            .await;
+
+        node.wait_for_doc("Notes", &note.doc_id).await;
+        node.wait_for_forwarded(&note.cid).await;
+        assert_eq!(node.handler.deferred_composites(), 0);
+        assert_eq!(node.forwarded(), vec![note.cid]);
+    })
+    .unwrap()
+}
+
+/// Defers until the composite `0` is held.
+struct AwaitComposite(Cid);
+
+#[async_trait]
+impl MergeValidator for AwaitComposite {
+    async fn validate(
+        &self,
+        _candidate: &MergeCandidate<'_>,
+        view: &dyn MergeView,
+    ) -> Result<MergeVerdict, String> {
+        Ok(if view.composite_fields(&self.0).await?.is_some() {
+            MergeVerdict::Accept
+        } else {
+            MergeVerdict::defer("grant not held", [self.0])
+        })
+    }
+}
+
+#[test]
+fn a_local_write_releases_a_composite_awaiting_its_genesis() {
+    workers::block_on(async {
+        let writer = signer();
+        let grant = format!(r#"{{"writer": "{}"}}"#, writer.did);
+
+        // A document is named by its genesis composite's CID, which is a function
+        // of its content, so another node writing the same grant names the same
+        // composite this node has yet to write.
+        let elsewhere = Node::with_immutable_grants(Arc::new(AwaitComposite(Cid::default()))).await;
+        let awaited = elsewhere.create_locally("Grants", &grant).await;
+
+        let node = Node::with_immutable_grants(Arc::new(AwaitComposite(awaited))).await;
+        let note = genesis(&notes(), "grant", "anything", &writer);
+        assert_eq!(
+            note.merge(&node, &writer.did).await,
+            MergeOutcome::retryable_skip("grant not held")
+        );
+        assert_eq!(node.handler.deferred_composites(), 1);
+
+        assert_eq!(node.create_locally("Grants", &grant).await, awaited);
+
+        node.wait_for_doc("Notes", &note.doc_id).await;
+        node.wait_for_forwarded(&note.cid).await;
+        assert_eq!(node.handler.deferred_composites(), 0);
+        assert_eq!(node.forwarded(), vec![note.cid]);
+    })
+    .unwrap()
+}
+
+/// Defers every note on a field of a collection this node does not hold.
+struct AwaitAbsentCollection;
+
+#[async_trait]
+impl MergeValidator for AwaitAbsentCollection {
+    async fn validate(
+        &self,
+        _candidate: &MergeCandidate<'_>,
+        _view: &dyn MergeView,
+    ) -> Result<MergeVerdict, String> {
+        Ok(MergeVerdict::defer(
+            "grant not replicated",
+            [Awaited::immutable_field(
+                "Absent",
+                "writer",
+                NormalValue::String("anyone".to_string()),
+            )],
+        ))
+    }
+}
+
+#[test]
+fn awaiting_a_field_of_an_absent_collection_is_indexed_not_refused() {
+    workers::block_on(async {
+        let node = Node::open(
+            RegolithStore::in_memory().unwrap(),
+            MergeGovernance::new(["Notes"]).with_validator(Arc::new(AwaitAbsentCollection)),
+            true,
+        )
+        .await;
+        let writer = signer();
+        let note = genesis(&notes(), "grant", "anything", &writer);
+
+        // `find_documents` answers an unknown collection empty and the validator
+        // defers on that; the wait key must be indexed so the arrival of the
+        // collection and a match can re-drive the note.
+        assert_eq!(
+            note.merge(&node, &writer.did).await,
+            MergeOutcome::retryable_skip("grant not replicated")
+        );
+        assert_eq!(node.handler.deferred_composites(), 1);
+    })
+    .unwrap()
+}
+
+#[test]
+fn an_unresolved_update_in_a_claimed_collection_without_validator_is_not_indexed() {
+    workers::block_on(async {
+        let node = Node::open(
+            RegolithStore::in_memory().unwrap(),
+            MergeGovernance::new(["Notes"]),
+            true,
+        )
+        .await;
+        let writer = signer();
+        let created = genesis(&notes(), "grant", "first", &writer);
+        let updated = authored(&notes(), Some(&created), "grant", "second", &writer);
+
+        // Claimed but no validator: defer, and nothing reaches the deferral
+        // machinery, the same as a composite whose document resolves.
+        assert!(matches!(
+            updated.merge(&node, &writer.did).await,
+            MergeOutcome::Skipped {
+                terminal: false,
+                ..
+            }
+        ));
+        assert_eq!(node.handler.deferred_composites(), 0);
+
+        assert!(matches!(
+            created.merge(&node, &writer.did).await,
+            MergeOutcome::Skipped {
+                terminal: false,
+                ..
+            }
+        ));
+        assert_eq!(node.handler.deferred_composites(), 0);
+        assert!(node.forwarded().is_empty());
+        assert!(node.doc_ids("Notes").await.is_empty());
+    })
+    .unwrap()
+}
+
+#[test]
+fn a_recovered_deferred_composite_is_not_forwarded_under_the_collection_version_id() {
+    workers::block_on(async {
+        let validator = Arc::new(GenesisFirst::default());
+        let node = Node::with_versioned_notes(
+            MergeGovernance::new(["Notes"]).with_validator(validator.clone()),
+        )
+        .await;
+        let writer = signer();
+        let notes = node.target("Notes");
+        assert_ne!(notes.version_id, notes.collection_id);
+        let created = genesis(&notes, "grant", "first", &writer);
+        let updated = authored(&notes, Some(&created), "grant", "second", &writer);
+
+        // A recovery merge carries no collection id.
+        updated.store(&node).await;
+        let outcome = node
+            .handler
+            .handle_block(&updated.cid, updated.bytes(), BlockMetadata::recovery())
+            .await
+            .unwrap();
+        assert_eq!(
+            outcome,
+            MergeOutcome::retryable_skip("document genesis not held")
+        );
+        assert_eq!(node.handler.deferred_composites(), 1);
+
+        assert_eq!(
+            created.merge(&node, &writer.did).await,
+            MergeOutcome::Merged
+        );
+        assert_eq!(
+            field_value(&node, "Notes", &created.doc_id, "grant").await,
+            Some("second".to_string())
+        );
+        // The re-driven merge is forwarded with the id it was given, which is
+        // none: the sink skips the push, as the first attempt would have. Never
+        // the collection version id, which no replicator subscribes to.
+        let forwarded = node.forwarded_with_ids();
+        assert_eq!(forwarded, vec![(updated.cid, String::new())]);
+    })
+    .unwrap()
+}
+
+#[test]
+fn immutable_fields_of_a_deleted_document_are_still_read() {
+    workers::block_on(async {
+        let validator = Arc::new(ReadImmutable {
+            collection: "Grants",
+            doc_id: Atom::new(String::new()),
+            read: Atom::new(None),
+        });
+        let node = Node::with_immutable_grants(validator.clone()).await;
+        let writer = signer();
+        let grant = genesis(&immutable_grants(), "writer", &writer.did, &writer);
+        assert_eq!(grant.merge(&node, &writer.did).await, MergeOutcome::Merged);
+        node.delete_locally("Grants", &grant.doc_id).await;
+        assert!(node.doc_ids("Grants").await.is_empty());
+
+        // A replica that merged the delete first must read what a replica that
+        // judged before the delete read; otherwise one accepts and the other
+        // defers forever.
+        validator.doc_id.store(grant.doc_id.clone());
+        let note = genesis(&notes(), "grant", "anything", &writer);
+        assert_eq!(note.merge(&node, &writer.did).await, MergeOutcome::Merged);
+        assert_eq!(
+            validator.read.load_clone().unwrap(),
+            Some(vec![(
+                "writer".to_string(),
+                NormalValue::String(writer.did.clone())
+            )])
+        );
+    })
+    .unwrap()
+}

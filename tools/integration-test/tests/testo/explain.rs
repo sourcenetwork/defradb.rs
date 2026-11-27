@@ -55,6 +55,7 @@ mod default {
     mod dagscan;
     mod delete;
     mod delete_with_error;
+    mod filter_applied_once;
     mod group;
     mod group_with_average;
     mod group_with_doc_id;
@@ -85,6 +86,7 @@ mod default {
     mod with_filter;
     mod with_filter_doc_id;
     mod with_index;
+    mod with_index_shape;
     mod with_limit;
     mod with_limit_count;
     mod with_limit_join;
@@ -102,6 +104,7 @@ mod execute {
     mod dagscan;
     mod delete;
     mod group;
+    mod index_name;
     mod query_deleted_docs;
     mod scan;
     mod top_level;
@@ -122,4 +125,5 @@ mod execute {
 mod simple {
     mod basic;
     mod with_index;
+    mod with_invalid_request;
 }

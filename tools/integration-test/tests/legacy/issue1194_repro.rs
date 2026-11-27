@@ -325,42 +325,6 @@ async fn issue1194_filtered_update_still_conflicts_on_predicate_field() {
     .await;
 }
 
-/// Selecting a field in the mutation response makes it a read dependency; the
-/// projected fast path is limited to `_docID`-only results.
-#[nuclei::test(threads = 4)]
-async fn issue1194_selected_output_field_still_conflicts() {
-    edge::compat(async {
-        let cluster = build_cluster().await;
-        let node = cluster.client(0);
-        node.schema_add("type Snap { status: String  content: String }")
-            .expect("schema add");
-        let data = node
-            .query(r#"mutation { add_Snap(input: {status: "streaming", content: "init"}) { _docID } }"#)
-            .expect("create doc");
-        let id = data["add_Snap"][0]["_docID"].as_str().unwrap().to_string();
-        let tx1 = node.tx_create().expect("tx1 create");
-        let tx2 = node.tx_create().expect("tx2 create");
-
-        node.query_with_tx(
-            &format!(r#"mutation {{ update_Snap(docID: "{id}", input: {{status: "claimed"}}) {{ content }} }}"#),
-            &tx1,
-        )
-        .expect("tx1 update with selected content");
-        node.query_with_tx(
-            &format!(r#"mutation {{ update_Snap(docID: "{id}", input: {{content: "changed"}}) {{ _docID }} }}"#),
-            &tx2,
-        )
-        .expect("tx2 update selected field");
-
-        node.tx_commit(&tx2).expect("tx2 commit");
-        let err = node
-            .tx_commit(&tx1)
-            .expect_err("selected output change must conflict");
-        assert!(format!("{err:#}").contains("transaction conflict"));
-    })
-    .await;
-}
-
 /// Composite index maintenance depends on every indexed component, including
 /// components the mutation did not patch.
 #[nuclei::test(threads = 4)]

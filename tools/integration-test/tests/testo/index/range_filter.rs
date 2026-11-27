@@ -20,7 +20,7 @@ const USERS: [(&str, i64); 10] = [
     ("Chris", 55),
 ];
 
-fn range_case(index: &str, filter: &str, names: &[&str], fetches: u64) {
+fn range_case(index: &str, filter: &str, names: &[&str], fetches: Option<u64>) {
     let mut actions = vec![AddCollection {
         sdl: format!("type User {{ name: String  age: Int {index} }}").into(),
         ..Default::default()
@@ -44,41 +44,75 @@ fn range_case(index: &str, filter: &str, names: &[&str], fetches: u64) {
         }
         .into(),
     );
-    actions.push(
-        Request {
-            request: format!("query @explain(type: execute) {{ {query} }}").into(),
-            expected_data: json!(m::explain_scan(json!({ "indexFetches": fetches }))),
-            ..Default::default()
-        }
-        .into(),
-    );
-    TestCase::from_actions(actions).execute();
+    if let Some(fetches) = fetches {
+        actions.push(
+            Request {
+                request: format!("query @explain(type: execute) {{ {query} }}").into(),
+                expected_data: json!(m::explain_scan(json!({ "indexFetches": fetches }))),
+                ..Default::default()
+            }
+            .into(),
+        );
+    }
+    TestCase {
+        actions,
+        ..Default::default()
+    }
+    .execute();
 }
 
 #[test]
 #[mantra_macros::req_test("defra.index.range_filter")]
-fn a_closed_range_fetches_only_the_range() {
+fn a_closed_range_returns_matching_rows() {
     range_case(
         "@index",
         "{_geq: 28, _leq: 33}",
         &["Fred", "John", "Islam", "Andy"],
-        4,
+        None,
     );
 }
 
 #[test]
 #[mantra_macros::req_test("defra.index.range_filter")]
-fn an_open_range_on_a_descending_index_fetches_only_the_range() {
+fn an_open_descending_range_returns_matching_rows() {
     range_case(
         "@index(direction: DESC)",
         "{_gt: 28, _lt: 44}",
         &["Addo", "Andy", "Islam", "John"],
-        4,
+        None,
     );
 }
 
 #[test]
 #[mantra_macros::req_test("defra.index.range_filter")]
-fn an_empty_range_fetches_nothing() {
-    range_case("@index", "{_gt: 44, _lt: 30}", &[], 0);
+fn an_empty_range_returns_no_rows() {
+    range_case("@index", "{_gt: 44, _lt: 30}", &[], None);
+}
+
+#[test]
+#[mantra_macros::req_test("defra.index.range_filter")]
+fn a_closed_range_limits_index_fetches() {
+    range_case(
+        "@index",
+        "{_geq: 28, _leq: 33}",
+        &["Fred", "John", "Islam", "Andy"],
+        Some(4),
+    );
+}
+
+#[test]
+#[mantra_macros::req_test("defra.index.range_filter")]
+fn an_open_descending_range_limits_index_fetches() {
+    range_case(
+        "@index(direction: DESC)",
+        "{_gt: 28, _lt: 44}",
+        &["Addo", "Andy", "Islam", "John"],
+        Some(4),
+    );
+}
+
+#[test]
+#[mantra_macros::req_test("defra.index.range_filter")]
+fn an_empty_range_limits_index_fetches() {
+    range_case("@index", "{_gt: 44, _lt: 30}", &[], Some(0));
 }

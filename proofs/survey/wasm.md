@@ -1,4 +1,4 @@
-# Survey: `crates/wasm/` (defra-wasm)
+# Survey: `crates/surfaces/wasm/` (defra-wasm)
 
 ## Purpose
 Browser client. Thin `wasm-bindgen` wrapper exposing DefraDB to JavaScript. All

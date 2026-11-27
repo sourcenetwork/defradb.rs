@@ -1,8 +1,10 @@
 use serial_test::serial;
 
-use super::blocks::{aged, author, genesis, genesis_parent_of, update, user, Signing};
 use super::protected::ProtectedNode;
 use super::receiver::wait_for_user;
+use integration_test::hostile::blocks::{
+    aged, author, genesis, genesis_parent_of, update, user, Signing,
+};
 
 #[nuclei::test]
 #[serial]

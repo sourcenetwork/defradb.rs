@@ -29,7 +29,7 @@
 \* same peer, whose reply is then refused and its requester times out as if
 \* the peer were slow. The window is twice the longest requester timeout.
 \*
-\* Code it models (crates/p2p/src/iroh):
+\* Code it models (crates/database/p2p/src/iroh):
 \*   solicited.rs          Solicited::expect (ExpectRead, ExpectWrite; an expired entry restarts at one)
 \*   solicited.rs          Solicited::take   (Admit)
 \*   solicited.rs          Solicited::prune  (Prune)

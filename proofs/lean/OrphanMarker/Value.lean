@@ -18,7 +18,7 @@ Bytes are modelled as natural numbers below 256 and times as naturals below
 2^64.
 
 Rust anchors: `marker_value`, `marker_time` in
-`crates/storage/src/stores/blockstore.rs`.
+`crates/engine/storage/src/stores/blockstore.rs`.
 -/
 
 namespace OrphanMarker

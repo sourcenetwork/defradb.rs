@@ -4,7 +4,9 @@
 //! present in the blockstore but unmerged, which drives
 //! `process_composite_delta` -> `prepare_composite_merge` -> head advance in
 //! `composite_heads.rs`. Parameterized by DAG depth and per-composite field
-//! link count.
+//! link count. The `off_version_lens_` rows merge blocks at a version that a
+//! patch and a pass-through migration left behind an indexed active version,
+//! the path where a merge owes its collection a reindex.
 //!
 //! The ancestry is produced by the real write path (`write_document_blocks` on a
 //! separate source store) and copied into the target blockstore, so the blocks
@@ -26,14 +28,13 @@ use db::merge::DbMergeHandler;
 use db::DB;
 use defra_core::merge::{BlockMetadata, MergeHandler, MergeOutcome};
 use document::{DocID, Document, NormalValue};
-use schema::{CollectionVersion, FieldDescription, FieldKind};
+use lens::{LensConfig, LensModule, MemoryTransformStore};
+use schema::CollectionVersion;
 use storage::RegolithStore;
 use storage::Store;
 
 mod common;
 
-const SCHEMA_VERSION_ID: &str = "v1";
-const COLLECTION_ID: &str = "col-users";
 const CREATOR: &str = "did:key:z6MkrMergeDagBench";
 const DEPTHS: [usize; 3] = [1, 8, 64];
 const FIELD_COUNTS: [usize; 2] = [1, 4];
@@ -44,37 +45,97 @@ fn field_names(field_count: usize) -> Vec<String> {
     (0..field_count).map(|i| format!("field_{i}")).collect()
 }
 
-fn collection_version(field_count: usize) -> CollectionVersion {
-    let mut fields = vec![FieldDescription::new(
-        "1",
-        "_docID",
-        FieldKind::doc_id(),
-        schema::CType::LwwRegister,
-    )];
-    for (index, name) in field_names(field_count).iter().enumerate() {
-        fields.push(FieldDescription::new(
-            (index + 2).to_string(),
-            name,
-            FieldKind::string(),
-            schema::CType::LwwRegister,
-        ));
-    }
-    CollectionVersion::new("Users", SCHEMA_VERSION_ID, COLLECTION_ID, fields)
+/// The collection's SDL, with an index on `field_0` when `indexed`. An index
+/// does not change the version ID, so the blocks built from the plain version
+/// merge into either.
+fn collection_sdl(field_count: usize, indexed: bool) -> String {
+    let fields = field_names(field_count)
+        .iter()
+        .map(|name| match (indexed, name.as_str()) {
+            (true, "field_0") => format!(r#"{name}: String @index(name: "idx_field_0")"#),
+            _ => format!("{name}: String"),
+        })
+        .collect::<Vec<_>>()
+        .join(" ");
+    format!("type Users {{ {fields} }}")
 }
 
-async fn make_handler(field_count: usize) -> (BenchHandler, Arc<DefraBlockstore<RegolithStore>>) {
+fn collection_version(field_count: usize) -> CollectionVersion {
+    query::parse_sdl(&collection_sdl(field_count, false))
+        .expect("the benchmark schema to parse")
+        .remove(0)
+}
+
+/// Where the merged blocks' version `v1` stands against the active version.
+#[derive(Clone, Copy)]
+enum Placement {
+    /// `v1` is active: the merge stores the document where reads see it.
+    OnActive,
+    /// `v1` was patched and migrated, through a pass-through lens, onto an
+    /// indexed active version: the merge stores the document off the active
+    /// version across a lens and owes the collection a reindex.
+    OffActiveAcrossLens,
+}
+
+impl Placement {
+    fn label(self) -> &'static str {
+        match self {
+            Placement::OnActive => "",
+            Placement::OffActiveAcrossLens => "off_version_lens_",
+        }
+    }
+}
+
+async fn make_handler(
+    field_count: usize,
+    placement: Placement,
+) -> (BenchHandler, Arc<DefraBlockstore<RegolithStore>>) {
     let store = Arc::new(RegolithStore::in_memory().unwrap());
-    let db = Arc::new(DB::from_arc(store.clone()).unwrap());
-    db.create_collection(collection_version(field_count))
+    let mut raw = DB::from_arc(store.clone()).unwrap();
+    raw.set_lens_store(Arc::new(MemoryTransformStore::new()));
+    let db = Arc::new(raw);
+    let indexed = matches!(placement, Placement::OffActiveAcrossLens);
+    let v1 = db
+        .add_collection(
+            &defra_core::RequestContext::ambient(),
+            &collection_sdl(field_count, indexed),
+        )
+        .await
+        .unwrap()
+        .remove(0)
+        .version_id;
+    if let Placement::OffActiveAcrossLens = placement {
+        db.patch_collection(
+            &defra_core::RequestContext::default(),
+            r#"[{"op":"add","path":"/Users/Fields/-","value":{"Name":"level","Kind":"Int"}}]"#,
+            None,
+        )
         .await
         .unwrap();
+        let v2 = db
+            .get_collection("Users")
+            .unwrap()
+            .unwrap()
+            .version_id()
+            .to_string();
+        db.set_migration(
+            LensConfig::new(
+                &v1,
+                &v2,
+                LensModule::from_bytes(b"\0asm\x01\0\0\0".to_vec()),
+            ),
+            None,
+        )
+        .await
+        .unwrap();
+    }
     let blockstore = Arc::new(DefraBlockstore::new(store, false));
     let handler = DbMergeHandler::new(db, blockstore.clone());
     (handler, blockstore)
 }
 
-fn make_document(field_count: usize, revision: usize) -> Document {
-    let mut doc = Document::new(collection_version(field_count));
+fn make_document(collection: &CollectionVersion, field_count: usize, revision: usize) -> Document {
+    let mut doc = Document::new(collection.clone());
     for name in field_names(field_count) {
         doc.set(&name, NormalValue::String(format!("{name}-rev{revision}")))
             .unwrap();
@@ -86,6 +147,7 @@ fn make_document(field_count: usize, revision: usize) -> Document {
 struct SyntheticDag {
     tip_cid: Cid,
     tip_bytes: Bytes,
+    collection_id: String,
     doc_id: String,
     blocks: Vec<(Cid, Bytes)>,
 }
@@ -105,7 +167,7 @@ async fn build_dag(depth: usize, field_count: usize) -> SyntheticDag {
     let modified: RapidHashSet<String> = field_names(field_count).into_iter().collect();
     let collection = collection_version(field_count);
 
-    let mut doc = make_document(field_count, 0);
+    let mut doc = make_document(&collection, field_count, 0);
     let mut result = db::block::builder::write_document_blocks(
         &blockstore,
         &headstore,
@@ -124,7 +186,7 @@ async fn build_dag(depth: usize, field_count: usize) -> SyntheticDag {
     cids.extend(result.field_cids.iter().copied());
 
     for revision in 1..depth {
-        doc = make_document(field_count, revision);
+        doc = make_document(&collection, field_count, revision);
         doc.set_id(DocID::from_string(&doc_id).unwrap());
         result = db::block::builder::write_document_blocks(
             &blockstore,
@@ -156,6 +218,7 @@ async fn build_dag(depth: usize, field_count: usize) -> SyntheticDag {
     SyntheticDag {
         tip_cid: result.cid,
         tip_bytes: result.block,
+        collection_id: collection.collection_id,
         doc_id,
         blocks,
     }
@@ -163,8 +226,12 @@ async fn build_dag(depth: usize, field_count: usize) -> SyntheticDag {
 
 /// A fresh handler whose blockstore holds `dag`'s blocks but which has merged none
 /// of them, so `handle_block` on the tip performs the full walk.
-async fn seed_handler(dag: &SyntheticDag, field_count: usize) -> BenchHandler {
-    let (handler, blockstore) = make_handler(field_count).await;
+async fn seed_handler(
+    dag: &SyntheticDag,
+    field_count: usize,
+    placement: Placement,
+) -> BenchHandler {
+    let (handler, blockstore) = make_handler(field_count, placement).await;
     for (cid, bytes) in &dag.blocks {
         blockstore.put(cid, bytes).await.unwrap();
     }
@@ -176,10 +243,14 @@ fn bench_merge_dag(c: &mut Criterion) {
     let mut group = c.benchmark_group("merge_dag");
     group.sample_size(10);
 
-    for field_count in FIELD_COUNTS {
+    let rows = FIELD_COUNTS
+        .into_iter()
+        .map(|field_count| (Placement::OnActive, field_count))
+        .chain([(Placement::OffActiveAcrossLens, 1)]);
+    for (placement, field_count) in rows {
         for depth in DEPTHS {
             let dag = rt.block_on(build_dag(depth, field_count));
-            let label = format!("depth{depth}_fields{field_count}");
+            let label = format!("{}depth{depth}_fields{field_count}", placement.label());
             group.throughput(Throughput::Elements(depth as u64));
 
             group.bench_function(BenchmarkId::from_parameter(&label), |b| {
@@ -187,12 +258,12 @@ fn bench_merge_dag(c: &mut Criterion) {
                 // the DAG, so moving it into the routine would put its teardown inside
                 // the measurement.
                 b.iter_batched_ref(
-                    || rt.block_on(seed_handler(&dag, field_count)),
+                    || rt.block_on(seed_handler(&dag, field_count, placement)),
                     |handler| {
                         rt.block_on(async {
                             let metadata = BlockMetadata::normal(
                                 &dag.doc_id,
-                                COLLECTION_ID,
+                                &dag.collection_id,
                                 CREATOR,
                                 None,
                                 false,

@@ -106,9 +106,9 @@ A query without `order` filtered through a composite index returns documents in 
 # `go.index.order.composite-in`: `_in` through a composite index with a reversed field
 
 - **Parents:** ["go.index.order"]
-- **Scenarios:** ["index.query-with-composite-index-with-in-filter-on-first-field-with-reverted-order-should-fetch", "index.query-with-composite-index-with-in-filter-on-second-field-with-reverted-order-should-fetch"]
+- **Scenarios:** ["index.query-with-composite-index-with-in-filter-on-first-field-with-reverted-order-should-fetch", "index.query-with-composite-index-with-in-filter-on-second-field-with-reverted-order-should-fetch", "index::composite_in_order::in_on_descending_first_field_without_order_keeps_the_written_order", "index::composite_in_order::in_on_ascending_first_field_without_order_keeps_the_written_order", "index::composite_in_order::in_on_descending_first_field_ordered_descending_follows_the_order", "index::composite_in_order::in_on_descending_first_field_ordered_ascending_follows_the_order"]
 
-`_in` on the first or second field of a composite index with one DESC field returns the matching documents.
+`_in` on the first or second field of a composite index with one DESC field returns the matching documents. Without `order`, `_in` on the first field returns them in the order the filter lists its values, whichever direction that field is indexed in: over Users named Shahzad, Bruno, Fred, Andy, Addo and Chris with `@index(includes: [{field: "name", direction: DESC}, {field: "age", direction: ASC}])`, `User(filter: {name: {_in: ["Fred", "Addo", "Andy"]}})` returns Fred, Addo, Andy, and so does the same query with `name` ASC and `age` DESC. A value listed twice returns its documents once. With `order` on that field the order decides, not the list: `order: {name: DESC}` returns Fred, Andy, Addo and `order: {name: ASC}` returns Addo, Andy, Fred. Go ignores `order` there and returns the listed order.
 
 # `go.index.order.composite-range`: Range filters on a composite index's first field
 
@@ -137,6 +137,13 @@ Filtering on an indexed field of a one-to-one related document, from the primary
 - **Scenarios:** ["index.index-group-by-with-filter-on-indexed-relation-returns-group-by-field-value", "index.index-query-with-index-on-one-to-many-relation-and-filter-data", "index.index-query-with-index-on-one-to-many-relation-and-filter-no-data", "index.index-query-with-index-on-one-to-many-relation-not-filter-data", "index.index-query-with-index-on-one-to-many-relation-not-filter-no-data", "index.index-query-with-index-on-one-to-many-relation-or-filter-data", "index.index-query-with-index-on-one-to-many-relation-or-filter-no-data", "index.query-with-composite-index-on-many-to-one-with-multiple-indexed-child-nodes-should-succeed", "index.query-with-index-with-filter-on2-relations-should-filter", "index.query-with-index-with-multiple-scalars-and-relation-filter-should-apply-all-as-and", "index.query-with-index-with-scalar-and-relation-filter-at-top-level-should-apply-both-as-and"]
 
 Scalar and relation conditions at the top level apply as an AND; `_and`, `_or` and `_not` over an indexed one-to-many relation return the right documents or none; filters on two relations, `groupBy` with a filter on an indexed relation, and a composite index on several indexed child fields all return correct results.
+
+# `defra.index.relation.filter_keeps_joined_parent`: An indexed FK filter keeps joined relations
+
+- **Parents:** ["go.index.relation"]
+- **Scenarios:** ["query::one_to_many::with_relation_filter_indexed_fk::relation_filter_through_an_indexed_fk_keeps_a_joined_list_relation", "query::one_to_many::with_relation_filter_indexed_fk::relation_filter_through_an_indexed_fk_keeps_a_list_relation_filter", "query::one_to_many::with_relation_filter_indexed_fk::relation_filter_through_an_indexed_fk_keeps_a_nested_joined_relation", "query::one_to_many::with_relation_filter_indexed_fk::relation_filter_through_an_indexed_fk_keeps_a_second_relation_filter", "query::one_to_many::with_relation_filter_indexed_fk::relation_filter_through_an_indexed_fk_keeps_another_joined_relation"]
+
+When a parent-side foreign key is indexed and the query filters through it, a relation already joined into the parent plan, such as a selected publisher, survives the FK lookups and is rendered with the matching parent, together with the relations nested under it (the publisher's owner). A list relation, such as the book's reviews, survives the same way with all its children. A filter on that other relation still applies: a parent whose publisher fails it, or none of whose reviews pass it, is not returned.
 
 # `go.index.relation.sub-filter`: Child sub-filters through indexes
 
@@ -179,6 +186,13 @@ An index on `[Int]`, `[Float]`, `[Boolean]`, `[String]` and their nillable-eleme
 - **Scenarios:** ["index.array-index-with-all-and-in-operator-succeed", "index.array-index-with-all-and-nin-operator-succeed", "index.array-index-with-any-and-in-operator-succeed", "index.array-index-with-any-and-nin-operator-succeed", "index.array-index-with-filter-on-indexed-array-using-all-should-use-index", "index.array-index-with-filter-on-indexed-array-using-any-should-use-index", "index.array-index-with-filter-on-indexed-array-using-none-should-not-use-index", "index.array-index-with-none-and-in-operator-succeed", "index.array-index-with-none-and-nin-operator-succeed"]
 
 `_any` and `_all` filters on an indexed array (with `_eq`, `_in`, `_nin`) use the index and return the matching documents; `_none` returns correct results without using the index.
+
+# `defra.index.array.all-empty`: `_all` on an indexed array finds empty arrays
+
+- **Parents:** ["go.index.array.operators"]
+- **Scenarios:** ["index::all_empty_array::all_on_an_indexed_array_finds_an_empty_array", "index::all_empty_array::all_on_an_indexed_composite_array_finds_an_empty_array", "index::all_empty_array::all_with_a_range_on_a_descending_indexed_array_finds_an_empty_array", "index::all_empty_array::all_with_a_range_on_an_indexed_array_finds_an_empty_array"]
+
+`_all` over an empty array is true, so `_all` (with `_eq`, `_in` or a range) on an indexed scalar array returns the documents whose array is empty, exactly as the same query on an unindexed array does, while still using the index; a null array and an array holding only failing elements are not returned. This holds for an ascending or a descending index, and when the array is the first field of a composite index. Go misses these documents (its index writes no entry for an empty array), so these scenarios are listed as Go divergences.
 
 # `go.index.array.nil-elements`: Null elements in indexed arrays
 
@@ -257,6 +271,20 @@ Inside a transaction, `UpdateDoc`, update-with-filter and `DeleteDoc` operate on
 
 A collection patch that adds, removes or modifies a secondary index, or changes a vector index's metric, fails with `collection indexes cannot be mutated`.
 
+# `defra.txn.docs.unique-filter-read`: A query through a unique index does not fail its transaction's commit
+
+- **Parents:** ["go.txn.docs"]
+- **Scenarios:** ["txn::unique_filter_read::a_unique_eq_filter_read_does_not_fail_the_commit", "txn::unique_filter_read::a_unique_in_filter_read_does_not_fail_the_commit", "txn::unique_filter_read::a_nil_writers_unique_filter_read_does_not_fail_the_commit", "txn::unique_filter_read::a_writer_of_the_filtered_value_still_loses_the_commit", "mutation::add::field_kinds::one_to_one_to_one::with_txn::transactional_creation_and_linking_of_relational_documents_forward"]
+
+With `type User { name: String @index(unique: true) age: Int }`, an explicit transaction runs `User(filter: {name: {_eq: "alice"}}) { name }` (or `{_in: ["alice"]}`) and gets `[]`, then adds `{name: "bob", age: 3}` or a document with no name, `{age: 3}`. An autocommit `add_User(input: {name: "alice", age: 1})` then succeeds, and committing the transaction succeeds too: a query read decides nothing, so it is not checked at commit, exactly as a filter on a field without an index. `User { name age }` then returns alice and the transaction's document. A transaction that adds `{name: "alice", age: 2}` instead still fails its commit with `transaction conflict. Please retry`, and only the autocommit alice is stored. The same holds for the unique index behind a one-to-one relation: with `Book { publisher: Publisher @primary }` and `Publisher { published: Book }`, two explicit transactions each add a book for a different publisher and run `Publisher { name published { name } }`, and both commit, leaving both books stored. Go checks these reads and fails the second commit in both cases; that is a deliberate divergence.
+
+# `defra.index.definition.create-duplicate`: Creating an index the collection already has is refused
+
+- **Parents:** ["go.index.definition"]
+- **Scenarios:** ["index::new_duplicate::index_new_same_generated_index_twice_is_refused", "index::new_duplicate::index_new_named_copy_of_existing_index_is_refused", "index::new_duplicate::index_new_copy_of_sdl_index_is_refused", "index::new_duplicate::index_new_same_unique_index_twice_is_refused", "index::new_duplicate::index_new_same_vector_index_twice_is_refused", "index::new_duplicate::index_new_taken_name_reports_the_name", "index::new_duplicate::index_new_differing_definitions_are_created", "index::new_duplicate::index_new_over_the_hidden_relation_index_is_created"]
+
+`NewIndex` with the same fields, in the same order and with the same directions, and the same kind as an index the collection already lists (an ordered index with the same uniqueness, or a vector index with the same configuration) fails with `index with the same definition already exists. Name: User_name_ASC`, naming the existing index, and creates nothing. This holds whether the new index's name is generated or given, and whether the existing index came from `NewIndex` or from an `@index` directive. A given name that is already taken fails first with `index with name already exists. Name: <name>`. An index that differs in any field, the field order, a direction or uniqueness is created. The unlisted index the node adds on its own for a primary relation's `_<name>ID` field does not count. The refusal applies to index creation requests (`NewIndex`, inside a transaction or not); the node's reconcile API for embedders (`ensure_ordinary_index`) still defines its stable name beside an index of the same definition. Go instead creates a copy named `User_name_ASC_2`; Rust refuses it because the copy only doubles every write's index maintenance.
+
 # `go.txn.definitions.same-txn-visibility`: Definition reads see only their own transaction
 
 - **Parents:** ["go.txn.definitions"]
@@ -270,3 +298,47 @@ A collection patch that adds, removes or modifies a secondary index, or changes 
 - **Scenarios:** ["signature::txn_acp::an_anonymous_caller_cannot_verify_a_block_the_txn_created"]
 
 `VerifySignature` inside a transaction checks NAC `SignatureVerify`, reads the block and checks document access as the caller, all at the transaction's view, its own writes included. With a `users` policy whose `read` is `reader`, a document that identity 1 creates in a transaction begun anonymously is registered to identity 1 there, before the transaction commits, so it is not public: the anonymous caller verifying the signature of its composite block in that transaction gets `missing permission`.
+
+# `defra.txn.indexes.list-all-encrypted`: Listing every encrypted index inside a transaction
+
+- **Parents:** ["go.txn.indexes"]
+- **Scenarios:** ["txn::list_all_encrypted_indexes::txn_list_all_encrypted_indexes_sees_its_own_changes_until_commit"]
+
+`ListAllEncryptedIndexes` given a transaction (the embedded node's request context, the HTTP `x-defradb-tx` header on `GET /api/v0/encrypted-indexes`, the CLI's `encrypted-index list --tx` without `--collection`) lists every collection's encrypted indexes as that transaction sees them, as Go's `ensureContextTxn` does: an index added in the transaction is listed and one deleted in it is gone, while a listing outside the transaction still returns the committed indexes until it commits. The answer is Go's: an object keyed by collection name, each a list of `{FieldName, Type: "equality"}`, with collections that have no encrypted index left out. NAC checks `list-all-encrypted-index` in the transaction; a caller without it gets `not authorized to perform operation. Permission: list-all-encrypted-index`.
+
+# `defra.index.backfill.http-build-mode`: `BuildInBackground` on the HTTP create-index request
+
+- **Parents:** ["go.index.backfill"]
+- **Scenarios:** ["index::build_in_background::an_index_created_in_the_background_lists_as_building_until_its_backfill_ends"]
+
+`POST /api/v0/collections/{name}/indexes` takes an optional boolean `BuildInBackground`, a field Go's request does not have. Left out or `false`, the response is sent once the backfill over the collection's existing documents has ended, so a listing straight after it never shows the index building. With `true`, the response is sent once the index definition has committed, with the same body (`Name`, `ID`, `Fields`, `Unique`, `Kind`), and the backfill goes on by itself: `ListIndexes` reports the index with `Execution` `Status: 1, Action: 3` (building) and filtered queries full-scan until the backfill ends, then `Status: 3, Action: 0` (ready) and queries use the index. The field decides only when the response is sent, never what is built: a `Vector` configuration sent with it creates a vector index, and without one the index is an ordered one. Under `x-defradb-tx` the field changes nothing, because that backfill runs when the transaction commits.
+
+# `defra.txn.indexes.concurrent-encrypted-changes`: Concurrent encrypted index changes outside a transaction
+
+- **Parents:** ["go.txn.indexes"]
+- **Scenarios:** ["txn::new_encrypted_index_concurrent::concurrent_encrypted_index_adds_all_land", "txn::new_encrypted_index_concurrent::a_concurrent_encrypted_index_delete_and_adds_all_land", "txn::new_encrypted_index_concurrent::concurrent_encrypted_index_adds_out_of_retries_fail"]
+
+Encrypted index changes made outside a transaction (`NewEncryptedIndex` and `DeleteEncryptedIndex` with no transaction), at the same time, on different fields of one collection, all succeed and none is lost, as long as the total number of changes does not exceed the node's retry budget (`max_txn_retries` + 1 attempts, 6 by default): a change loses an attempt only to another change's commit, and each change commits once. A change that loses the race runs again on the committed definition, so `ListEncryptedIndexes` afterwards lists every added index and none of the deleted ones. A change that runs out of retries fails with the storage error `transaction retry attempts exhausted: ` followed by the race it last lost (such as `a read lost to a newer put`), and changes nothing.
+
+# `defra.node.identity_only_transactions`: An identity-only node runs requests in the transactions it begins
+
+- **Parents:** ["go.node"]
+- **Scenarios:** ["node::identity_only::an_identity_only_node_runs_requests_in_a_transaction_it_begins"]
+
+A node that has an identity but does not sign (Go's `NodeIdentity` with `EnableSigning` off, defradb.rs's `NodeBuilder::with_identity_only`) acts as no one when a call names no identity. A transaction begun without an identity on it is owned by no one, so a request that names no identity runs in it: `add_Users(input: [{ name: "John" }])` in the transaction succeeds, and after the commit `Users` returns that document.
+
+# `defra.node.identity_only_nac`: Node access control checks an identity-only node's anonymous calls as anonymous
+
+- **Parents:** ["go.node"]
+- **Scenarios:** ["node::identity_only::an_identity_only_node_checks_an_anonymous_write_in_its_transaction_under_nac"]
+
+With node access control enabled and owned by identity 1, an identity-only node gives no anonymous call the node's access, inside a transaction it began as outside one: adding a `Users` document without an identity in that transaction fails with `not authorized to perform operation. Permission: get-collection`, as the same write outside a transaction does, and nothing is written. A refused write in a transaction never answers with empty data. Identity 1 adds and reads documents as usual.
+
+# `defra.txn.outcome-query`: HTTP transaction outcome after a lost commit answer
+
+- **Parents:** ["go.txn"]
+- **Scenarios:** ["txn::outcome::an_outcome_is_visible_to_its_owner_and_malformed_ids_are_refused"]
+
+`GET /api/v0/tx/{id}` returns `{"outcome":"open"}` while its owner's transaction has no commit queued, `{"outcome":"committing"}` from the moment a commit is queued until its final result is known, `{"outcome":"committed"}` after a successful commit, and `{"outcome":"aborted"}` after a discard, an idle expiry, an abandon, or a failed commit. The request belongs to the identity that began the transaction; every other caller, including no identity, gets `{"outcome":"unknown"}` with HTTP 200, exactly as an ID that names nothing does. A malformed ID is refused with HTTP 400 and the error `invalid transaction id`. A final result is retained for at least the transaction idle age; after that it is `unknown`. Each worker retains at most 4096 outcomes: past that the oldest final results are dropped early and read `unknown`, while the outcome of a transaction that is still open or committing is never dropped. An ID carries a token for the server start that issued it, so an ID from an earlier start is `unknown` and never names a new transaction.
+
+The wire ID is Go-compatible numeric `u64`. For compatibility, a bare numeric route whose high bits are zero is still accepted; it names the reserved legacy start `0`, which no new transaction uses. Every new ID is below 2^53, so a client that reads it as a JSON number, as JavaScript does, gets the same ID back.

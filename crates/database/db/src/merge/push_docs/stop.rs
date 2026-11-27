@@ -1,0 +1,112 @@
+//! The stop owner of one selected push call (`SelectedPushIsolation.tla`).
+
+use std::sync::Arc;
+
+use p2p::error::{AT_CAPACITY_MESSAGE, RATE_LIMITED_MESSAGE};
+use p2p::message::PushLogReply;
+use regolith::sync::{Notify, OnceCell};
+
+use crate::merge::push_docs_replay::ReplayPushSendError;
+
+/// One selected push call's stop flag, shared by its caller, the pool
+/// crossing, its scheduler and every task it started. Raised once, by the
+/// first outcome that proves the transfer cannot progress (a send deadline or
+/// a lost connection) or by the caller giving up. Once
+/// raised the call starts no more documents and no task sends again; sends
+/// already on the wire end on their own deadline and are joined.
+///
+/// A stop belongs to exactly one call. Once raised it stays raised, so a
+/// caller makes a new one for every call rather than reusing it.
+#[derive(Clone, Debug, Default)]
+pub struct SelectedPushStop(Arc<StopState>);
+
+#[derive(Debug, Default)]
+struct StopState {
+    cause: OnceCell<String>,
+    wake: Notify,
+}
+
+impl SelectedPushStop {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Raises the flag; the first `cause` is the one reported.
+    pub fn stop(&self, cause: impl Into<String>) {
+        let _ = self.0.cause.set(cause.into());
+        self.0.wake.notify_waiters();
+    }
+
+    /// Why the call stopped, once it has.
+    pub fn cause(&self) -> Option<&str> {
+        self.0.cause.get().map(String::as_str)
+    }
+
+    pub fn is_stopped(&self) -> bool {
+        self.0.cause.get().is_some()
+    }
+
+    pub(crate) async fn cancelled(&self) {
+        loop {
+            let notified = self.0.wake.notified();
+            if self.is_stopped() {
+                return;
+            }
+            notified.await;
+        }
+    }
+
+    /// A guard that raises the flag when dropped, held by a caller whose
+    /// drop would otherwise leave started work scheduling the rest. The call
+    /// disarms it once it has finished, so a completed call leaves the flag
+    /// as it found it.
+    pub fn stop_on_drop(&self) -> StopOnDrop {
+        StopOnDrop(Some(self.clone()))
+    }
+}
+
+/// Raises its [`SelectedPushStop`] when dropped before [`disarm`](Self::disarm).
+#[must_use = "dropping the guard stops the call"]
+pub struct StopOnDrop(Option<SelectedPushStop>);
+
+impl StopOnDrop {
+    /// The call finished and joined what it started: dropping the guard no
+    /// longer stops anything.
+    pub fn disarm(mut self) {
+        self.0 = None;
+    }
+}
+
+impl Drop for StopOnDrop {
+    fn drop(&mut self) {
+        if let Some(stop) = self.0.take() {
+            stop.stop("the caller stopped waiting");
+        }
+    }
+}
+
+/// Whether a selected send's failure proves the transfer cannot progress now
+/// (`DocumentPush.lean` `stopsTransfer`): its deadline passed or the
+/// connection is gone (the classifier the retry sweep stops a peer's pass
+/// on). Any other failure is one head's own, like a refusal or a head the
+/// receiver kept pausing past its deadline, and leaves the remaining
+/// documents to be tried.
+pub(crate) fn stops_selected_transfer(error: &ReplayPushSendError) -> bool {
+    match error {
+        ReplayPushSendError::Timeout { .. } | ReplayPushSendError::SemaphoreClosed => true,
+        ReplayPushSendError::Transport(error) => error.is_connection_like(),
+        ReplayPushSendError::Persistence(_)
+        | ReplayPushSendError::Stopped
+        | ReplayPushSendError::HeadDeferred { .. }
+        | ReplayPushSendError::Backpressure { .. } => false,
+    }
+}
+
+/// Whether a rejected reply is the receiver's backpressure rather than a
+/// refusal of this one head.
+pub(crate) fn reply_requests_pause(reply: &PushLogReply) -> bool {
+    matches!(
+        reply.err_message.as_deref(),
+        Some(message) if message == RATE_LIMITED_MESSAGE || message == AT_CAPACITY_MESSAGE
+    )
+}

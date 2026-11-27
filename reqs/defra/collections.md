@@ -229,6 +229,13 @@ A migration from version 1 to 2 is applied to every document written at version 
 
 Migrations that set a scalar, mutate an inline array, remove a field (returned as `null`) or copy a field produce those values even when the source or destination field is not requested, and a later request for a different field set still sees unmutated fields.
 
+# `defra.collection_version.migrations.query.date_time_format`: Migrated DateTime values keep Go's format
+
+- **Parents:** ["go.collection_version.migrations.query"]
+- **Scenarios:** ["collection_version::migrations::query::with_date_time::collection_migration_query_renders_migrated_date_times_without_trailing_zeros"]
+
+A DateTime field of a document read through a migration returns as Go's `time.RFC3339Nano` writes it, the same as before the migration: no fractional seconds when they are zero and no trailing zeros otherwise. With `Users { required: DateTime! @index, optional: DateTime }` holding `{required: "2026-08-01T12:34:56Z", optional: "1999-12-31T23:59:59Z"}` and `{required: "2026-08-02T12:34:56.120Z", optional: "1999-12-31T23:59:59.000000001Z"}`, a patch whose `set-default` lens sets a new `migrated` field to `true` makes the query return `"2026-08-01T12:34:56Z"`, `"1999-12-31T23:59:59Z"`, `"2026-08-02T12:34:56.12Z"` and `"1999-12-31T23:59:59.000000001Z"`, never `"2026-08-01T12:34:56.000000000Z"`.
+
 # `go.collection_version.migrations.query.active_version`: Migrations follow the active version
 
 - **Parents:** ["go.collection_version.migrations.query"]
@@ -271,6 +278,38 @@ Fields of kind `Blob`, `JSON`, `Float32`, `Float64`, `Float` and every other sup
 - **Scenarios:** ["collection_version.simple-errors-given-duplicate-collection", "collection_version.simple-errors-given-duplicate-collection-in-same-sdl", "collection_version.simple-errors-given-duplicate-collection-in-same-sdlmultiple", "collection_version.simple-errors-given-non-null-many-relation-field", "collection_version.simple-errors-given-type-with-invalid-field-type", "collection_version.simple-errors-given-type-with-invalid-field-type-multiple", "collection_version.with-missing-type-errors"]
 
 Adding a collection whose name already exists (in the store or twice in one SDL) fails with `collection already exists` (one `collection already exists. Name: Users` line per duplicate); an unknown field type fails with `no type found for given name. Field: name, Kind: NotAType` (one line per bad field); a non-null list relation such as `[Dogs!]` fails with `NonNull variants for type are not supported. Type: Dogs`; a field with no type fails with `field type not specified. Object: User, Field: name`.
+
+# `go.collection_version.define.field_type_forms`: Which field type declarations are accepted
+
+- **Parents:** ["go.collection_version.define"]
+- **Scenarios:** ["collection_version::field_type_forms::every_scalar_and_a_relation_is_accepted_nillable", "collection_version::field_type_forms::every_scalar_but_id_is_accepted_non_null", "collection_version::field_type_forms::lists_of_array_scalars_and_relations_are_accepted", "collection_version::field_type_forms::lists_of_non_null_array_scalars_are_accepted", "collection_version::field_type_forms::a_non_null_id_is_refused", "collection_version::field_type_forms::a_non_null_relation_is_refused", "collection_version::field_type_forms::a_non_null_scalar_list_is_refused", "collection_version::field_type_forms::a_non_null_list_of_non_null_scalars_is_refused", "collection_version::field_type_forms::a_non_null_relation_list_is_refused", "collection_version::field_type_forms::a_list_of_non_null_ids_is_refused", "collection_version::field_type_forms::a_list_of_non_null_blobs_is_refused", "collection_version::field_type_forms::a_list_of_non_null_json_is_refused", "collection_version::field_type_forms::a_list_of_non_null_relations_is_refused", "collection_version::field_type_forms::a_list_of_ids_is_refused", "collection_version::field_type_forms::a_list_of_blobs_is_refused", "collection_version::field_type_forms::a_list_of_json_is_refused", "collection_version::field_type_forms::a_nested_list_is_refused", "collection_version::field_type_forms::a_refusal_in_a_transaction_keeps_its_code", "collection_version::field_type_forms::an_unknown_type_beside_a_refused_list_keeps_the_code"]
+
+A field declared in SDL takes one of these forms; `Author` stands for any collection (a relation):
+
+| Type | `T` | `T!` | `[T]` | `[T!]` | `[T]!`, `[T!]!` |
+|------|-----|------|-------|--------|-----------------|
+| `String`, `Int`, `Float`, `Float64`, `Float32`, `Boolean`, `DateTime` | accepted | accepted | accepted | accepted | refused (1) |
+| `JSON`, `Blob` | accepted | accepted | refused (3) | refused (2) | refused (1) |
+| `ID` | accepted | refused (1) | refused (3) | refused (2) | refused (1) |
+| `Author` | accepted | refused (1) | accepted | refused (2) | refused (1) |
+
+A list of lists (`[[Int]]`, with or without `!`) is refused with (4), and with (1) when the outer list is non-null. Each refusal fails with Go's text, for a field `value` on `User`:
+
+1. `NonNull fields are not currently supported`
+2. `NonNull variants for type are not supported. Type: ID` (the element type)
+3. `no type found for given name. Field: value, Kind: [ID]` (the element type)
+4. `nested list types are not supported. Object: User, Field: value`
+
+A field of an unknown type beside a list refused with (3) adds its own line (`no type found for given name. Field: a, Kind: NotAType`); the lines are sorted, one per field. A refusal inside an explicit transaction has the same text.
+
+Accepting a form the table refuses, refusing one it accepts, or changing a refusal's text or code (`defra.collection_version.define.field_type_code`) is a breaking change.
+
+# `defra.collection_version.define.field_type_code`: A refused field type declaration carries a code
+
+- **Parents:** ["go.collection_version.define"]
+- **Scenarios:** ["collection_version::field_type_forms::a_non_null_id_is_refused", "collection_version::field_type_forms::a_non_null_relation_is_refused", "collection_version::field_type_forms::a_non_null_scalar_list_is_refused", "collection_version::field_type_forms::a_non_null_list_of_non_null_scalars_is_refused", "collection_version::field_type_forms::a_non_null_relation_list_is_refused", "collection_version::field_type_forms::a_list_of_non_null_ids_is_refused", "collection_version::field_type_forms::a_list_of_non_null_blobs_is_refused", "collection_version::field_type_forms::a_list_of_non_null_json_is_refused", "collection_version::field_type_forms::a_list_of_non_null_relations_is_refused", "collection_version::field_type_forms::a_list_of_ids_is_refused", "collection_version::field_type_forms::a_list_of_blobs_is_refused", "collection_version::field_type_forms::a_list_of_json_is_refused", "collection_version::field_type_forms::a_nested_list_is_refused", "collection_version::field_type_forms::a_refusal_in_a_transaction_keeps_its_code", "collection_version::field_type_forms::an_unknown_type_beside_a_refused_list_keeps_the_code"]
+
+Every refusal in `go.collection_version.define.field_type_forms` reaches an in-process or HTTP client of a Rust node with the code `UNSUPPORTED_FIELD_TYPE` beside Go's text, in autocommit and inside an explicit transaction alike: the in-process error's `code()` (`AddCollectionError::UnsupportedFieldType`), and the `code` member of the HTTP error body (`{"error": "NonNull fields are not currently supported", "code": "UNSUPPORTED_FIELD_TYPE"}`, status 400). An SDL whose fields include such a refusal keeps the code when other fields have unknown types; an SDL whose only bad fields have unknown types fails with no code. `defradb client collection add` prints Go's text alone (`Error: server returned error: <message>`): the refusal is no GraphQL error, and only `client query` prints a GraphQL error's code (`defra.cli.query.error_code`). A Go node sends no code.
 
 # `go.collection_version.define.embeddings`: `@embedding` vector field definitions
 
@@ -342,6 +381,13 @@ Migrations configured before or after the patch are still applied to queries aft
 
 Truncating an empty collection, or the same collection twice, succeeds; truncating while documents are added in parallel deletes every document that existed before the truncate.
 
+# `defra.collection.truncate_isolation`: Truncating preserves other collections
+
+- **Parents:** ["go.collection.truncate"]
+- **Scenarios:** ["collection.truncate.isolation.truncate_preserves_other_collections"]
+
+Truncating an indexed collection removes its documents and leaves the documents, collection definitions and indexes of every other collection intact, including when legacy index prefixes overlap other datastore key families.
+
 # `go.collection.truncate.re_add`: Re-adding documents after truncate
 
 - **Parents:** ["go.collection.truncate"]
@@ -356,3 +402,17 @@ A document re-added after truncate gets the same docID and the same head CID as 
 - **Scope:** "the large-integer test: Go, HTTP, CLI and C clients with collection save/named mutations only"
 
 A truncate limited to certain documents removes only those (idempotently on retry), matches large integers exactly (2^53 vs 2^53+1), works through plain and unique secondary indexes, and frees a unique value so a document with it can be created again.
+
+# `defra.collection.truncate.other_collections`: Truncate leaves other collections intact
+
+- **Parents:** ["go.collection.truncate"]
+- **Scenarios:** ["collection::truncate::other_collections::truncate_leaves_other_collections_indexes_intact"]
+
+Truncating a collection removes only its own documents and index entries: another collection's documents stay, and a filter on its indexed field still returns them, whatever short IDs the two collections have (with `Kept { name: String @index }` holding `{name: "Kept"}`, truncating each of 125 other indexed collections leaves `Kept(filter: {name: {_eq: "Kept"}})` returning that document, while the truncated collection's own indexed filter returns nothing).
+
+# `defra.collection_version.removed_transform_reindex`: Removing a transform reindexes an indexed collection
+
+- **Parents:** ["go.collection_version.migrations"]
+- **Scenarios:** ["collection_version::updates::remove::removed_transform_reindex::remove_source_transform_reindexes_an_indexed_collection", "collection_version::updates::remove::removed_transform_reindex::removing_transform_preserves_old_and_new_documents", "collection_version::updates::remove::removed_transform_reindex::removing_an_inactive_versions_transform_reindexes_the_active_version"]
+
+Removing a collection's source transform by patch (`{"op": "remove", "path": "/Users/PreviousVersion/Transform"}`) reindexes its indexed fields from the stored values, so a filter on an indexed field returns the values reads return, not values the removed transform produced: with `Users { name: String @index }` holding `{name: "Shahzad"}` and a patch whose `set-default` lens sets `name` to `"Fred"`, removing the transform makes `Users(filter: {name: {_eq: "Shahzad"}})` return that document. A document created at the active version keeps its value: with `age: Int @index`, an `increment` lens adding 5, `{name: "old", age: 20}` written before the lens and `{name: "new", age: 40}` after it, removing the transform makes a filter on `age: 20` return `old` and one on `age: 40` return `new`. The transform removed may be an inactive version's that the active version's history passes through: with the `increment` lens on the version that added `level`, and a later version adding `rank` without a lens, removing the `level` version's transform by its version ID makes a filter on `age: 20` return `old`. A value already materialized through the removed transform is retained, because its stored version alone does not tell it from a document created at the active version and a lens need not be reversible.

@@ -9,7 +9,7 @@ for each, the headline equivalence
     a < b  ↔  encode_ascending(a)  <ₗ  encode_ascending(b)
 
 and the inversion law for the descending variant. "Representative" is chosen to cover
-the structurally distinct mechanisms in `crates/storage/src/encoding/`:
+the structurally distinct mechanisms in `crates/engine/storage/src/encoding/`:
 
 * `bool`   — single fixed marker, no payload          (`encoding/bool.rs`)
 * `null`   — single fixed marker                      (`encoding/null.rs`)

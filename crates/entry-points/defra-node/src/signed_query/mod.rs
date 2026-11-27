@@ -1,0 +1,86 @@
+//! Queries the node runs as its own signing identity.
+//!
+//! The node's principal, signing config and batch session travel in the
+//! request's context. A signed query runs as a task of the network runtime
+//! ([`Edge::spawn`]), so it keeps running if its caller stops waiting.
+
+use std::sync::Arc;
+
+use defra_core::signing::SigningConfig;
+use edge::{Edge, EdgeError};
+use query::{QueryExecutor, QueryRequest, QueryResponse, TransactionHandle};
+
+use crate::Admit;
+
+#[cfg(test)]
+mod tests;
+
+/// Runs `request` signed with `signing_config`. `principal` is the identity
+/// the node acts as, which owns the transactions it begins: the node's DID,
+/// or `None` on an identity-only node, whose request keeps its context's own
+/// identity so it matches the owner of the transaction it runs in.
+pub(crate) async fn execute_with_signing_context(
+    edge: &Edge,
+    executor: Arc<dyn QueryExecutor>,
+    request: QueryRequest,
+    txn_handle: Option<TransactionHandle>,
+    signing_config: SigningConfig,
+    principal: Option<String>,
+) -> QueryResponse {
+    execute_signed(
+        Admit::Request,
+        edge,
+        executor,
+        request,
+        txn_handle,
+        signing_config,
+        principal,
+    )
+    .await
+}
+
+/// [`execute_with_signing_context`], admitted on `edge` as `admit` says.
+pub(super) async fn execute_signed(
+    admit: Admit,
+    edge: &Edge,
+    executor: Arc<dyn QueryExecutor>,
+    mut request: QueryRequest,
+    txn_handle: Option<TransactionHandle>,
+    signing_config: SigningConfig,
+    principal: Option<String>,
+) -> QueryResponse {
+    let context = match principal {
+        Some(did) => request.context.with_identity(Some(did)),
+        None => request.context,
+    };
+    request.context = context.with_signing_session(Some(signing_config));
+    let context = request.context.clone();
+    admit
+        .spawn(
+            edge,
+            context.mirror(async move {
+                match txn_handle {
+                    Some(txn_handle) => executor.execute_in_txn(request, &txn_handle).await,
+                    None => super::execute_autocommit_request(executor.as_ref(), request).await,
+                }
+            }),
+        )
+        .within(std::time::Duration::MAX)
+        .await
+        .unwrap_or_else(refused_response)
+}
+
+/// The answer to a query its task never finished: refused because the node
+/// is shutting down, or failed.
+pub(crate) fn refused_response(error: EdgeError) -> QueryResponse {
+    match error {
+        EdgeError::Closed => QueryResponse::error("the node is shutting down"),
+        error => QueryResponse::error(format!("query execution task failed: {error}")),
+    }
+}
+
+pub(crate) fn unavailable_node_signer_response(node_did: &str) -> QueryResponse {
+    QueryResponse::error(format!(
+        "configured node signing identity {node_did} is unavailable"
+    ))
+}

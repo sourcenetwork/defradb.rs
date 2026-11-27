@@ -24,7 +24,7 @@ What must never happen:
   pruning (`forget_keeps_fresh`, `forget_drops_stale`).
 
 Rust anchors: `ProviderHealth::rank`, `record_fast_failure`, `forget_stale` and
-`Cooldown::is_stale` in `crates/p2p/src/sync/coordinator/provider_health.rs`.
+`Cooldown::is_stale` in `crates/database/p2p/src/sync/coordinator/provider_health.rs`.
 Times are whole seconds here; Rust uses `Instant` and `Duration`, which the
 rules below only compare and add.
 -/

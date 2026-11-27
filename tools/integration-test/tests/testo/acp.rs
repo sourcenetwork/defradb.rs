@@ -33,6 +33,14 @@ mod dac {
         mod with_relationship;
     }
     mod count;
+    mod create_gate {
+        mod binding;
+        mod common;
+        mod immutable_relation;
+        mod local_gate;
+        mod not_encrypted;
+        mod policy_section;
+    }
     mod delete_with_index;
     mod index {
         mod new;
@@ -66,6 +74,7 @@ mod dac {
         mod replicator;
         mod replicator_with_doc_actor_relationship;
         mod subscribe;
+        mod subscribe_denied_doc;
         mod subscribe_grant_race;
         mod subscribe_with_doc_actor_relationship;
         mod sync_shared_field;
@@ -120,6 +129,7 @@ mod nac {
     mod add_dac_policy;
     mod add_dac_relationship;
     mod add_document;
+    mod add_document_partial_grants;
     mod add_lens;
     mod add_nac_relationship;
     mod add_p2p_collection;
@@ -131,6 +141,7 @@ mod nac {
     mod dac_access_by_node_owner_nac_on;
     mod dac_access_by_owner_nac_off;
     mod dac_access_by_wrong_user_nac_off;
+    mod delete_collection;
     mod delete_dac_relationship;
     mod delete_document;
     mod delete_encrypted_index;
@@ -145,6 +156,7 @@ mod nac {
     mod get_collection_by_name;
     mod get_collection_by_version;
     mod get_p2p_active_peers;
+    mod get_p2p_peer_info;
     mod list_all_encrypted_index;
     mod list_collection;
     mod list_encrypted_index;
@@ -154,6 +166,7 @@ mod nac {
     mod list_p2p_document;
     mod list_p2p_replicator;
     mod nac_restart;
+    mod nac_restart_enforced;
     mod nac_start;
     mod new_encrypted_index;
     mod new_index;
@@ -185,6 +198,7 @@ mod nac {
         mod get_collection_by_version;
         mod get_nac_status;
         mod get_p2p_active_peers;
+        mod get_p2p_peer_info;
         mod list_all_encrypted_index;
         mod list_collection;
         mod list_encrypted_index;
@@ -205,6 +219,7 @@ mod nac {
         mod update_document;
         mod verify_signature;
     }
+    mod set_active_collection_version;
     mod set_migration;
     mod sync_p2p_branchable_collection;
     mod sync_p2p_collection_versions;

@@ -1,0 +1,202 @@
+//! NAC + DAC policy. Implements the dual-gate split from Go PR #4778.
+//!
+//! Document-scoped DEK release:
+//!   - Collection lookup runs internally (node-level; no actor check at
+//!     this step, mirroring how the serving peer resolves which policy
+//!     to apply).
+//!   - DAC permission check runs as the transport-authenticated peer DID.
+//!
+//! Collection-scoped DEK release:
+//!   - NAC `read-document` check on the actor.
+//!
+//! `node_acp` is held in an `OnceCell` because NAC initializes after the
+//! KMS service in the defra-node assembly (mirrors Go's
+//! `func() NACInfo` getter pattern from PR #4778).
+
+use async_trait::async_trait;
+use identity::Did;
+use regolith::sync::OnceCell;
+use std::sync::Arc;
+
+use crate::error::{Error, Result};
+use crate::policy::{AccessPolicy, DocCollectionInfo, DocCollectionLookup, NodeAcpRead};
+use crate::types::{KeyScope, PolicyDecision};
+
+/// Default `AccessPolicy` impl for `DefraKms`. Combines DAC for
+/// document-scoped keys with NAC for collection-scoped keys, both gated
+/// on the transport-authenticated peer DID.
+pub struct NacDacPolicy {
+    doc_acp: Arc<dyn acp::DocumentACP>,
+    doc_lookup: Arc<dyn DocCollectionLookup>,
+    node_acp: OnceCell<Arc<dyn NodeAcpRead>>,
+}
+
+impl NacDacPolicy {
+    /// Construct a policy. `node_acp` starts unset — call `set_node_acp`
+    /// after NAC has initialized.
+    pub fn new(
+        doc_acp: Arc<dyn acp::DocumentACP>,
+        doc_lookup: Arc<dyn DocCollectionLookup>,
+    ) -> Self {
+        Self {
+            doc_acp,
+            doc_lookup,
+            node_acp: OnceCell::new(),
+        }
+    }
+
+    /// Install the NAC reader. First call wins; subsequent calls are
+    /// silently discarded (matches `OnceCell` semantics). Callers must not
+    /// rely on swapping the NAC reader at runtime. Called by the embedded-
+    /// node layer once NAC is ready.
+    pub fn set_node_acp(&self, nac: Arc<dyn NodeAcpRead>) {
+        let _ = self.node_acp.set(nac);
+    }
+
+    async fn check_document_release(
+        &self,
+        actor: Option<&Did>,
+        doc_id: &str,
+        delegation: Option<Delegation<'_>>,
+    ) -> Result<PolicyDecision> {
+        let Some(info) = self.doc_lookup.collection_for_doc(doc_id).await? else {
+            return Ok(if delegation.is_some() {
+                PolicyDecision::Deny
+            } else {
+                PolicyDecision::Allow
+            });
+        };
+        if delegation.is_some_and(|delegation| !delegation.covers(&info)) {
+            return Ok(PolicyDecision::Deny);
+        }
+
+        let actor_id: acp::Identity = actor.into();
+        let checker = acp::read_access::DirectChecker {
+            acp: self.doc_acp.as_ref(),
+            identity: &actor_id,
+        };
+        let allowed = acp::read_access::check_doc_read_access(
+            &checker,
+            &info.policy_id,
+            &info.resource_name,
+            &info.collection_id,
+            info.is_branchable,
+            doc_id,
+        )
+        .await
+        .map_err(classify_acp_error)?;
+        Ok(if allowed {
+            PolicyDecision::Allow
+        } else {
+            PolicyDecision::Deny
+        })
+    }
+}
+
+/// The collection a delegation is bound to, and the collection of the block it asks a key for.
+#[derive(Clone, Copy)]
+struct Delegation<'a> {
+    collection_id: &'a str,
+    block_collection_id: &'a str,
+}
+
+impl Delegation<'_> {
+    /// A replicator of a collection also carries its chunks, under their own
+    /// collection. A replicator of only a chunk collection gets only its blocks.
+    fn covers(&self, info: &DocCollectionInfo) -> bool {
+        let block = self.block_collection_id;
+        let in_document =
+            block == info.collection_id || info.chunk_collection_ids.iter().any(|c| c == block);
+        in_document && (self.collection_id == info.collection_id || self.collection_id == block)
+    }
+}
+
+/// Map an `acp::Error` to either `AccessDenied` (the backend actively
+/// refused, e.g. permission denied / not owner / not manager / not
+/// registered) or `Internal` (everything else — storage, JSON, cycle
+/// detected, invalid policy, etc. — which are NOT policy denials).
+fn classify_acp_error(e: acp::Error) -> Error {
+    use acp::Error as A;
+    match e {
+        A::PermissionDenied(_)
+        | A::DocumentNotRegistered(_)
+        | A::NotOwner { .. }
+        | A::NotManager { .. } => Error::AccessDenied {
+            reason: e.to_string(),
+        },
+        other => Error::Internal(format!("acp backend: {other}")),
+    }
+}
+
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+impl AccessPolicy for NacDacPolicy {
+    async fn check_release(&self, actor: Option<&Did>, scope: &KeyScope) -> Result<PolicyDecision> {
+        match scope {
+            KeyScope::Document { doc_id, .. } => {
+                // Collection lookup runs internally (no actor check at this
+                // step; mirrors Go's "node-level" resolution).
+                //
+                // `None` means the document's collection has no DAC policy
+                // attached (ACP not configured for it). With no policy there is
+                // no per-document access gate, so the DEK is freely releasable —
+                // matching the legacy decrypt path, which reads the key from the
+                // Encryption block with no policy check at all.
+                self.check_document_release(actor, doc_id, None).await
+            }
+            KeyScope::Collection { .. } => self.check_node_release(actor, scope).await,
+        }
+    }
+
+    async fn check_delegated_release(
+        &self,
+        actor: &Did,
+        scope: &KeyScope,
+        collection_id: &str,
+        block_collection_id: &str,
+    ) -> Result<PolicyDecision> {
+        match scope {
+            KeyScope::Document { doc_id, .. } => {
+                let delegation = Delegation {
+                    collection_id,
+                    block_collection_id,
+                };
+                self.check_document_release(Some(actor), doc_id, Some(delegation))
+                    .await
+            }
+            KeyScope::Collection { .. } => Ok(PolicyDecision::Deny),
+        }
+    }
+
+    async fn check_node_release(
+        &self,
+        actor: Option<&Did>,
+        _scope: &KeyScope,
+    ) -> Result<PolicyDecision> {
+        let Some(nac) = self.node_acp.get() else {
+            // NAC not configured => allow. Mirrors Go's behavior when NAC
+            // is in `NACNotConfigured` state.
+            return Ok(PolicyDecision::Allow);
+        };
+        let Some(did) = actor else {
+            // NAC is configured but the caller is anonymous. NAC grants are
+            // keyed by DID; anonymous cannot satisfy a permission check.
+            // (When NAC is NOT configured, anonymous is allowed at the
+            //  `node_acp.get()` early-return above.)
+            return Ok(PolicyDecision::Deny);
+        };
+        let allowed = nac
+            .check_node_permission(did, "read-document")
+            .await
+            .map_err(classify_acp_error)?;
+        Ok(if allowed {
+            PolicyDecision::Allow
+        } else {
+            PolicyDecision::Deny
+        })
+    }
+}
+
+#[cfg(test)]
+#[path = "nac_dac_policy_tests.rs"]
+mod tests;

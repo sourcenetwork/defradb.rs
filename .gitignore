@@ -13,7 +13,7 @@ target/
 
 # Generated
 defra.h
-crates/ffi/defra.h
+crates/entry-points/ffi/defra.h
 
 # Test artifacts
 *.profraw
@@ -62,3 +62,5 @@ bench-out/
 # mantra (requirements traceability) local output
 mantra.db*
 mantra-report/
+/proofs/tla/tools/tla2tools.jar
+/states/

@@ -36,19 +36,13 @@ impl Op for RefreshViews {
 
     fn run(&self, state: &State) -> Result<Value, Failure> {
         let identity = self.common.client_identity(Self::name())?;
-        if self.txn.is_some() {
-            return Err(Failure::unsupported(format!(
-                "{} argument txn",
-                Self::name()
-            )));
-        }
         let selector = db_selector(self.collection_name.clone());
+        let (node, scope) = (
+            state.node_on(self.common.node())?,
+            state.scope_as(self.txn, identity),
+        );
         state
-            .block_on(
-                state
-                    .node_on(self.common.node())?
-                    .refresh_views_as(&state.context_as(None, identity), selector),
-            )
+            .block_on(async { scope.on(&node).refresh_views(selector).await })
             .map(|()| json!({}))
             .map_err(|e| Failure::operation(e.to_string()))
     }
@@ -73,21 +67,16 @@ impl HttpRun for RefreshViews {
     fn execute_http(&self, state: &mut State) {
         crate::scenario::execute_with(self, state, |action, state| {
             let identity = action.common.client_identity(Self::name())?;
-            if action.txn.is_some() {
-                return Err(Failure::unsupported(format!(
-                    "{} argument txn",
-                    Self::name()
-                )));
-            }
             let selectors = cli::commands::client::http_client::ViewRefreshSelectors {
                 name: action.collection_name.clone(),
                 collection_id: None,
                 version_id: None,
                 get_inactive: false,
             };
+            let txn = state.txn_id(action.txn);
             state
                 .http_as(action.common.node(), identity, |client| async move {
-                    client.view_refresh(&selectors).await
+                    client.view_refresh(txn.as_deref(), &selectors).await
                 })?
                 .map(|()| json!({}))
                 .map_err(|e| Failure::operation(e.to_string()))

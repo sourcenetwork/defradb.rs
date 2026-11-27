@@ -1,4 +1,4 @@
-# Survey: `crates/storage/`
+# Survey: `crates/engine/storage/`
 
 ## Purpose
 The complete storage layer: a `corekv` KV abstraction (Reader/Writer/Txn/Store traits)

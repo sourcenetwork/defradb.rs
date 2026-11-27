@@ -24,7 +24,7 @@
 \* past either, the announcement is dropped and reported as a node event that
 \* names the peer and the root, so the application can resync the document.
 \*
-\* Code it models (crates/p2p/src/sync):
+\* Code it models (crates/database/p2p/src/sync):
 \*   coordinator/event_handler/mod.rs     handle_transport_event, handle_transport_event_with_admission  (rate and saturation refusals)
 \*   event_dispatcher.rs                   run_event_dispatcher  (a saturated head waits for a refusal worker, never dropped)
 \*   coordinator/event_handler/gossip.rs  handle_gossip_message, defer_refused_gossip  (capacity refusal, durable deferral)

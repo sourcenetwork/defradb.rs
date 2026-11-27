@@ -37,18 +37,13 @@ impl Op for NewEncryptedIndex {
 
     fn run(&self, state: &State) -> Result<Value, Failure> {
         let identity = self.common.client_identity(Self::name())?;
-        if self.txn.is_some() {
-            return Err(Failure::unsupported(format!(
-                "{} argument txn",
-                Self::name()
-            )));
-        }
         state
-            .block_on(state.node_on(self.common.node())?.add_encrypted_index_as(
-                &state.context_as(None, identity),
-                &self.collection,
-                &self.field_name,
-            ))
+            .block_on(
+                state
+                    .scope_as(self.txn, identity)
+                    .on(&*state.node_on(self.common.node())?)
+                    .add_encrypted_index(&self.collection, &self.field_name),
+            )
             .map(|index| json!(index))
             .map_err(|e| Failure::operation(e.to_string()))
     }
@@ -66,16 +61,13 @@ impl HttpRun for NewEncryptedIndex {
     fn execute_http(&self, state: &mut State) {
         crate::scenario::execute_with(self, state, |action, state| {
             let identity = action.common.client_identity(Self::name())?;
-            if action.txn.is_some() {
-                return Err(Failure::unsupported(format!(
-                    "{} argument txn",
-                    Self::name()
-                )));
-            }
             let (collection, field) = (action.collection.clone(), action.field_name.clone());
+            let txn = state.txn_id(action.txn);
             state
                 .http_as(action.common.node(), identity, |client| async move {
-                    client.encrypted_index_add(&collection, &field).await
+                    client
+                        .encrypted_index_add(txn.as_deref(), &collection, &field)
+                        .await
                 })?
                 .map(|index| json!(index))
                 .map_err(|e| Failure::operation(e.to_string()))
@@ -87,12 +79,6 @@ impl CliRun for NewEncryptedIndex {
     fn execute_cli(&self, state: &mut State) {
         crate::scenario::execute_with(self, state, |action, state| {
             let identity = action.common.client_identity(Self::name())?;
-            if action.txn.is_some() {
-                return Err(Failure::unsupported(format!(
-                    "{} argument txn",
-                    Self::name()
-                )));
-            }
             let args = [
                 "encrypted-index",
                 "new",

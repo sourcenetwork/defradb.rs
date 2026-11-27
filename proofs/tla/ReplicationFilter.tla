@@ -20,7 +20,7 @@
 \*   - a later commit of a refused document is merged on its own fields;
 \*   - a document of a branchable collection is filtered one by one.
 \*
-\* Code it models (crates/db/src/merge/merge_handler):
+\* Code it models (crates/database/db/src/merge/merge_handler):
 \*   composite_fields.rs process_linked_field_blocks (phase 1 collects the
 \*   values with crate::replication_filter::add_field_values, the filter is
 \*   asked before phase 2 persists, a refusal is a terminal skip, and a

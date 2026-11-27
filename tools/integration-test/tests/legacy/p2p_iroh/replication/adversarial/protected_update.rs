@@ -1,8 +1,10 @@
 use serial_test::serial;
 
-use super::blocks::{aged, author, update, with_creator, Author, Fragment, Parent, Signing};
 use super::protected::{Outcome, ProtectedNode};
 use super::receiver::user_by_id;
+use integration_test::hostile::blocks::{
+    aged, author, update, with_creator, Author, Fragment, Parent, Signing,
+};
 
 /// Push `hostile`, then the owner's own rename; once the node has judged the
 /// hostile root, check the hostile age never landed.

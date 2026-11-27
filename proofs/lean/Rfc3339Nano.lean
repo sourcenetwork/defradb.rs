@@ -12,11 +12,11 @@ padding them back gives the nine digits again, and the time is unchanged),
 an all-zero fraction leaves nothing (so the dot goes), and a fraction with
 any non-zero digit keeps at least one digit (so the dot stays).
 
-Rust owner: crates/document/src/encoding.rs `trim_rfc3339_trailing_zeros`
+Rust owner: crates/building-blocks/document/src/encoding.rs `trim_rfc3339_trailing_zeros`
 (the trim of the digits between the dot and the zone) and
 `format_time_rfc3339_nano` (which skips the fraction when the nanoseconds
 are zero). Mutation responses use it since c41d3bf82; the tests are
-crates/document/tests/encoding_tests.rs and the mutation DateTime scenarios.
+crates/building-blocks/document/tests/encoding_tests.rs and the mutation DateTime scenarios.
 The model works on the fraction digits as a list of characters: it proves the
 trim, not how the Rust code finds the dot and the zone in the string.
 -/

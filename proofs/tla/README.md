@@ -27,7 +27,13 @@ grounded facts for B3 live in [DESIGN.md](DESIGN.md); each later slice has its o
 - **Document materialization status** — delete/update status stays componentwise
   (`DocumentMaterialization.tla`).
 
-Run all configured models at once with `./run-all.sh` (red/green oracle, exits non-zero on mismatch).
+Run all configured models at once with `./run-all.sh` (red/green oracle, exits non-zero
+on mismatch). It discovers every top-level `*.cfg` here and takes each one's module and
+expected verdict from the cfg's first line, a
+`\* run-all: <Module>.tla <GREEN|RED|TRACE:<n>|DEADLOCK:<n>>` header. Every cfg carries
+one, and a cfg without a valid header fails the run. The cfg's name decides nothing, but
+it may not say otherwise: a name with a `Green` word (underscore-separated) needs a GREEN
+or TRACE header and one with a `Red` word a RED or DEADLOCK header, or the run fails.
 
 ---
 
@@ -80,8 +86,8 @@ a metadir collision.)
 
 | Invariant / Property | Plain English | Verdict (run) | Source it abstracts |
 |---|---|---|---|
-| `Converge` | all nodes eventually merge all blocks | GREEN run 1, RED run 2 | `crates/p2p/src/sync/coordinator/dag_fetcher.rs` ancestry walk |
-| `INV_DagComplete` | no merged block lacks a merged parent | holds under `Merge`; relaxed by Model B (by design) | `crates/db/src/merge/merge_handler/` `loadComposites` recursion |
+| `Converge` | all nodes eventually merge all blocks | GREEN run 1, RED run 2 | `crates/database/p2p/src/sync/coordinator/dag_fetcher.rs` ancestry walk |
+| `INV_DagComplete` | no merged block lacks a merged parent | holds under `Merge`; relaxed by Model B (by design) | `crates/database/db/src/merge/merge_handler/` `loadComposites` recursion |
 | `INV_SubsetConverge` | subscribed docs fully converge | GREEN run 3 | Gents watcher DID filter (`watcher/query.rs`) |
 | `INV_RelRefSafe` | dropping a foreign-DID relational ref never blocks a merge | GREEN run 3 | scalar `String` FK; merge never derefs it |
 | `INV_NoSplitOwnership` | at most one DID owns a doc across all nodes | RED run 4 (mutable key), GREEN run 5 (immutable key) | `agent_request.graphql` `agent_did` (unenforced at model time; since `@immutable` + enforced) |
@@ -132,9 +138,9 @@ requiring care: getting convergence right is non-trivial, and the relaxed
    The model abstracts over E1/E2 — it proves immutability is necessary and
    sufficient; the mechanism is an implementation choice for defradb.rs / Gents.
    *[2026-07-27: implemented — `agent_did` is `@immutable` in the Gents schema,
-   and defradb.rs enforces it at update (`crates/db/src/collection/validation.rs`),
-   at merge (E1, `crates/db/src/merge/merge_handler/composite_fields.rs`), and in
-   replication filters (`crates/replication-filter/src/lib.rs`).]*
+   and defradb.rs enforces it at update (`crates/database/db/src/collection/validation.rs`),
+   at merge (E1, `crates/database/db/src/merge/merge_handler/composite_fields.rs`), and in
+   replication filters (`crates/database/replication-filter/src/lib.rs`).]*
 
 4. **Model B only if field-level GraphSync filtering is built.** For today's
    whole-document filtering, Model A suffices. Model B earns its keep only when
@@ -316,7 +322,7 @@ All target `MC_Integrity_Attacks.tla`.
 ## ACP Soundness Runs (Lean + TLA+)
 
 Design notes in [Acp_DESIGN.md](Acp_DESIGN.md). **Lean** (`../lean/Acp/Soundness.lean`,
-`cd ../lean && lake build`) proves the check algebra: `INV_CheckSound`, `INV_NoEscalation`,
+`cd ../lean && lake build -R`) proves the check algebra: `INV_CheckSound`, `INV_NoEscalation`,
 and `INV_PositiveRemovalNoGrant` — plus `buggyDifferenceOverGrants`, a negative theorem
 showing a mishandled exclusion operator over-grants. All `[propext, Quot.sound]`, no `sorry`.
 
@@ -325,8 +331,8 @@ showing a mishandled exclusion operator over-grants. All `[propext, Quot.sound]`
 ```bash
 # GREEN: a revocation propagates; no node grants the revoked permission.
 ./tools/tlc -metadir states/acp_g -config MC_Acp_Green.cfg          MC_Acp_Green.tla
-# RED: a stale policy cache still grants a revoked permission (INV_RevocationConsistent).
-./tools/tlc -metadir states/acp_r -config MC_Acp_StaleCache_Red.cfg MC_Acp_StaleCache_Red.tla
+# RED: a node keeps a revoked tuple in its copy and still grants it (INV_RevocationConsistent).
+./tools/tlc -metadir states/acp_r -config MC_Acp_StaleStore_Red.cfg MC_Acp_StaleStore_Red.tla
 ```
 
 ---
@@ -335,7 +341,7 @@ showing a mishandled exclusion operator over-grants. All `[propext, Quot.sound]`
 
 Design notes in [GovernanceContract_DESIGN.md](GovernanceContract_DESIGN.md) and
 [GovernanceMerge_DESIGN.md](GovernanceMerge_DESIGN.md). `MergeValidator`
-(`crates/db/src/merge/governance/`) lets an application narrow what the
+(`crates/database/db/src/merge/governance/`) lets an application narrow what the
 database merges, with a third verdict, `Defer`, for a composite whose inputs
 have not arrived. **`GovernanceContract.tla` is what a validator may assume of
 the host** and is the base model a plugin author instantiates for their own

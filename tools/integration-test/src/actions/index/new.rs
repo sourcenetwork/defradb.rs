@@ -50,14 +50,28 @@ impl Op for NewIndex {
                 descending: field.descending,
             })
             .collect();
-        state
-            .block_on(state.node_on(self.common.node())?.create_index_as(
-                &state.context_as(None, self.common.identity_seed),
+        let node = state.node_on(self.common.node())?;
+        let scope = state.scope_as(self.txn, self.common.identity_seed);
+        let vector = self.vector_description()?;
+        // Go's NewIndex always returns before the build; its harness waits
+        // for the build unless the scenario sets `async`.
+        let created = match self.r#async {
+            true => state.block_on(scope.on(&node).start_index(
                 &self.collection,
                 self.index_name(),
                 fields,
                 self.unique(),
-            ))
+                vector,
+            )),
+            false => state.block_on(scope.on(&node).create_index(
+                &self.collection,
+                self.index_name(),
+                fields,
+                self.unique(),
+                vector,
+            )),
+        };
+        created
             .map(|_| json!({}))
             .map_err(|e| Failure::operation(e.to_string()))
     }
@@ -82,6 +96,17 @@ impl NewIndex {
                 .unwrap_or_default()
     }
 
+    /// The vector configuration this index requests, read the way the wire
+    /// reads it so the scenario cannot send a shape the API would reject.
+    fn vector_description(&self) -> Result<Option<schema::VectorIndexDescription>, Failure> {
+        match &self.index.vector {
+            None => Ok(None),
+            Some(config) => serde_json::from_value(config.clone())
+                .map(Some)
+                .map_err(|error| Failure::operation(error.to_string())),
+        }
+    }
+
     /// Fails on the arguments no client supports yet.
     fn check_arguments(&self) -> Result<(), Failure> {
         self.common.client_identity(Self::name_of())?;
@@ -102,16 +127,11 @@ impl NewIndex {
                 "index request has more than one kind config".to_owned(),
             ));
         }
-        let unsupported = [
-            ("async", self.r#async),
-            ("txn", self.txn.is_some()),
-            ("index.vector", self.index.vector.is_some()),
-        ];
-        unsupported_argument(&unsupported)
+        Ok(())
     }
 
-    /// [`NewIndex::check_arguments`], plus the descending fields the HTTP and
-    /// CLI clients cannot send.
+    /// [`NewIndex::check_arguments`], plus the arguments the HTTP and CLI
+    /// clients cannot send: descending fields and a vector config.
     fn check_remote_arguments(&self) -> Result<(), Failure> {
         self.check_arguments()?;
         let descending = self.index.fields.iter().any(|field| field.descending);
@@ -153,19 +173,41 @@ impl HttpRun for NewIndex {
             let fields = action.field_names();
             let name = action.index_name().map(str::to_owned);
             let unique = action.unique();
-            let created = collection.clone();
-            state
+            let target = collection.clone();
+            let txn = state.txn_id(action.txn);
+            let in_txn = txn.is_some();
+            if action.r#async && state.client_type() == crate::ClientType::GoHttp {
+                return Err(Failure::unsupported(
+                    "index.new async under GoHttp".to_owned(),
+                ));
+            }
+            let wait_for_build = !action.r#async && !in_txn;
+            let build_in_background = action.r#async && !in_txn;
+            let vector = action.vector_description()?;
+            let created = state
                 .http_as(
                     action.common.node(),
                     action.common.identity_seed,
                     |client| async move {
                         client
-                            .index_create(&created, &fields, name.as_deref(), unique, None)
+                            .index_create_with_build_mode(
+                                txn.as_deref(),
+                                &target,
+                                &fields,
+                                name.as_deref(),
+                                unique,
+                                vector,
+                                build_in_background,
+                            )
                             .await
                     },
                 )?
                 .map_err(|e| Failure::operation(e.to_string()))?;
-            wait_until_built(state, action, &collection)?;
+            // In a transaction the backfill runs once it commits; an async
+            // build is left to the scenario's own wait actions.
+            if wait_for_build {
+                wait_until_built(state, action, &collection, &created.name)?;
+            }
             Ok(json!({}))
         });
     }
@@ -174,12 +216,16 @@ impl HttpRun for NewIndex {
 /// How long a backfill may take before the wait gives up.
 const BUILD_TIMEOUT: Duration = Duration::from_secs(10);
 
-/// Waits until no index of `collection` is still building, as Go's
-/// `NewIndex` action does: Go builds an index in the background, so a
-/// `ListIndexes` straight after the create would see it mid-backfill.
-// ponytail: waits on every index of the collection, not just the new one; the
-// HTTP client refuses `async`, so no other index is left building on purpose.
-fn wait_until_built(state: &State, action: &NewIndex, collection: &str) -> Result<(), Failure> {
+/// Waits until the index `name` of `collection` is no longer building, as
+/// Go's `NewIndex` action does: Go builds an index in the background, so a
+/// `ListIndexes` straight after the create would see it mid-backfill. Another
+/// index of the collection still building in the background does not hold it.
+fn wait_until_built(
+    state: &State,
+    action: &NewIndex,
+    collection: &str,
+    name: &str,
+) -> Result<(), Failure> {
     let deadline = Instant::now() + BUILD_TIMEOUT;
     loop {
         let collection = collection.to_owned();
@@ -189,22 +235,23 @@ fn wait_until_built(state: &State, action: &NewIndex, collection: &str) -> Resul
                 action.common.node(),
                 action.common.identity_seed,
                 |client| async move {
-                    workers::timeout(remaining, client.index_listing(&collection))
+                    workers::timeout(remaining, client.index_listing(None, &collection))
                         .await
                         .map_err(|e| e.to_string())?
                         .map_err(|e| e.to_string())
                 },
             )?
             .map_err(Failure::operation)?;
-        if !indexes
-            .as_array()
-            .is_some_and(|all| all.iter().any(building))
-        {
+        let still_building = indexes.as_array().is_some_and(|all| {
+            all.iter()
+                .any(|index| index["Description"]["Name"] == name && building(index))
+        });
+        if !still_building {
             return Ok(());
         }
         if Instant::now() > deadline {
             return Err(Failure::operation(format!(
-                "{}: an index of {} was still building after {BUILD_TIMEOUT:?}",
+                "{}: index {name} of {} was still building after {BUILD_TIMEOUT:?}",
                 NewIndex::name_of(),
                 action.collection
             )));
@@ -214,7 +261,7 @@ fn wait_until_built(state: &State, action: &NewIndex, collection: &str) -> Resul
 }
 
 /// Go's building state: `BackfillIndexAction` (3) and `InProgressActionStatus` (1).
-fn building(index: &Value) -> bool {
+pub(crate) fn building(index: &Value) -> bool {
     let execution = &index["Execution"];
     execution["Action"] == 3 && execution["Status"] == 1
 }
@@ -223,7 +270,16 @@ impl CliRun for NewIndex {
     fn execute_cli(&self, state: &mut State) {
         crate::scenario::execute_with(self, state, |action, state| {
             action.check_remote_arguments()?;
+            // `index new` has no background flag, here or in Go's CLI.
+            unsupported_argument(&[("async", action.r#async)])?;
             let fields = action.field_names().join(",");
+            // Held here so the borrowed flags below outlive the argument list.
+            let as_json = match action.vector_description()? {
+                Some(vector) => Some(serde_json::to_string(&vector).map_err(|error| {
+                    Failure::operation(format!("cannot send the vector config: {error}"))
+                })?),
+                None => None,
+            };
             let mut args = vec![
                 "index",
                 "new",
@@ -238,10 +294,13 @@ impl CliRun for NewIndex {
             if action.unique() {
                 args.push("--unique");
             }
+            if let Some(as_json) = &as_json {
+                args.extend(["--vector", as_json.as_str()]);
+            }
             state
                 .defra_client_as(
                     action.common.node(),
-                    None,
+                    action.txn,
                     action.common.identity_seed,
                     &args,
                 )

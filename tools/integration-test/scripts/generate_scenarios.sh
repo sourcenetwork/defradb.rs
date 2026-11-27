@@ -20,7 +20,7 @@ go_repo=${DEFRADB_GO_REPO:?set DEFRADB_GO_REPO}
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 
-pin_short=$(sed -nE 's/^pub const GO_COMPAT_COMMIT: &str = "([0-9a-f]+)";/\1/p' "$root/crates/defra-version/src/lib.rs")
+pin_short=$(sed -nE 's/^pub const GO_COMPAT_COMMIT: &str = "([0-9a-f]+)";/\1/p' "$root/crates/foundation/defra-version/src/lib.rs")
 pin=$(git -C "$go_repo" rev-parse "$pin_short^{commit}")
 git -C "$go_repo" diff --name-only 137dc624 "$pin" -- tests/integration >"$work/drift.txt"
 

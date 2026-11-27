@@ -1,0 +1,238 @@
+//! Index HTTP client methods
+
+use std::collections::BTreeMap;
+
+use net::http::Method;
+use serde::{Deserialize, Serialize};
+use urlencoding::encode;
+
+use super::HttpClient;
+use crate::error::Result;
+
+/// Go's index create body (`client.IndexDescriptionCreateRequest`).
+#[derive(Debug, Serialize)]
+struct GoIndexCreateRequest {
+    #[serde(rename = "Name", skip_serializing_if = "Option::is_none")]
+    name: Option<String>,
+    #[serde(rename = "Fields")]
+    fields: Vec<GoIndexedField>,
+    #[serde(rename = "Unique", skip_serializing_if = "std::ops::Not::not")]
+    unique: bool,
+    #[serde(rename = "Vector", skip_serializing_if = "Option::is_none")]
+    vector: Option<schema::VectorIndexDescription>,
+    #[serde(
+        rename = "BuildInBackground",
+        skip_serializing_if = "std::ops::Not::not"
+    )]
+    build_in_background: bool,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct GoIndexedField {
+    #[serde(rename = "Name")]
+    name: String,
+    #[serde(rename = "Descending", default)]
+    descending: bool,
+}
+
+/// Go's index description as `POST /collections/{name}/indexes` returns it.
+#[derive(Debug, Deserialize)]
+struct GoIndexDescription {
+    #[serde(rename = "Name")]
+    name: String,
+    #[serde(rename = "Fields")]
+    fields: Vec<GoIndexedField>,
+    #[serde(rename = "Unique", default)]
+    unique: bool,
+    #[serde(flatten)]
+    kind: schema::IndexKind,
+}
+
+#[derive(Debug, Deserialize)]
+struct GoListIndexesResult {
+    #[serde(rename = "Description")]
+    description: GoIndexDescription,
+}
+
+impl GoIndexDescription {
+    fn into_info(self, collection: &str) -> IndexInfo {
+        let kind = match self.kind {
+            schema::IndexKind::Ordered(_) => None,
+            kind => Some(kind),
+        };
+        IndexInfo {
+            name: self.name,
+            collection: collection.to_string(),
+            fields: self
+                .fields
+                .into_iter()
+                .map(|field| IndexFieldInfo {
+                    name: field.name,
+                    direction: Some(if field.descending { "DESC" } else { "ASC" }.to_string()),
+                })
+                .collect(),
+            unique: self.unique,
+            kind,
+        }
+    }
+}
+
+/// Index info from list/create
+#[derive(Debug, Deserialize, Serialize)]
+pub struct IndexInfo {
+    /// Index name
+    #[serde(rename = "name", alias = "Name")]
+    pub name: String,
+
+    /// Collection name
+    #[serde(rename = "collection", alias = "Collection")]
+    pub collection: String,
+
+    /// Fields in the index
+    #[serde(rename = "fields", alias = "Fields")]
+    pub fields: Vec<IndexFieldInfo>,
+
+    /// Whether the index is unique
+    #[serde(rename = "unique", alias = "Unique", default)]
+    pub unique: bool,
+
+    /// Kind-specific configuration, absent for an ordinary index.
+    ///
+    /// Without this the client parsed the server's response into a struct that
+    /// had nowhere to put it, so `index list` printed a vector index as an
+    /// ordinary one: the same silent downgrade the wire envelope exists to
+    /// prevent, one layer above the wire.
+    #[serde(
+        rename = "kind",
+        alias = "Kind",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub kind: Option<schema::IndexKind>,
+}
+
+/// Index field info
+#[derive(Debug, Deserialize, Serialize)]
+pub struct IndexFieldInfo {
+    /// Field name
+    #[serde(rename = "name", alias = "Name")]
+    pub name: String,
+
+    /// Sort direction (ASC or DESC)
+    #[serde(rename = "direction", alias = "Direction", default)]
+    pub direction: Option<String>,
+}
+
+impl HttpClient {
+    /// Create an index on `collection`, in transaction `txn` when given.
+    pub async fn index_create(
+        &self,
+        txn: Option<&str>,
+        collection: &str,
+        fields: &[String],
+        name: Option<&str>,
+        unique: bool,
+        vector: Option<schema::VectorIndexDescription>,
+    ) -> Result<IndexInfo> {
+        self.index_create_with_build_mode(txn, collection, fields, name, unique, vector, false)
+            .await
+    }
+
+    /// Create an index and optionally return while its backfill runs.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn index_create_with_build_mode(
+        &self,
+        txn: Option<&str>,
+        collection: &str,
+        fields: &[String],
+        name: Option<&str>,
+        unique: bool,
+        vector: Option<schema::VectorIndexDescription>,
+        build_in_background: bool,
+    ) -> Result<IndexInfo> {
+        let request = GoIndexCreateRequest {
+            name: name.map(|s| s.to_string()),
+            fields: fields
+                .iter()
+                .map(|name| GoIndexedField {
+                    name: name.clone(),
+                    descending: false,
+                })
+                .collect(),
+            unique,
+            vector,
+            build_in_background,
+        };
+        let path = format!("collections/{}/indexes", encode(collection));
+        let body = serde_json::to_string(&request)?;
+        let created: GoIndexDescription = self
+            .send(Method::POST, &path, &[], Some(body), txn)
+            .await?
+            .json()
+            .await?;
+        Ok(created.into_info(collection))
+    }
+
+    pub async fn index_list(&self, collection: Option<&str>) -> Result<Vec<IndexInfo>> {
+        match collection {
+            Some(col) => {
+                let url = format!(
+                    "{}/api/v0/collections/{}/indexes",
+                    self.base_url,
+                    encode(col)
+                );
+                let results: Vec<GoListIndexesResult> =
+                    self.request_json("GET", &url, None).await?;
+                Ok(results
+                    .into_iter()
+                    .map(|result| result.description.into_info(col))
+                    .collect())
+            }
+            None => {
+                let url = format!("{}/api/v0/collections/indexes", self.base_url);
+                let grouped: BTreeMap<String, Vec<GoListIndexesResult>> =
+                    self.request_json("GET", &url, None).await?;
+                Ok(grouped
+                    .into_iter()
+                    .flat_map(|(col, results)| {
+                        results
+                            .into_iter()
+                            .map(move |result| result.description.into_info(&col))
+                    })
+                    .collect())
+            }
+        }
+    }
+
+    /// Collection `collection`'s indexes as the node answers: Go's
+    /// `[{Description, Execution}]`, the build state included.
+    pub async fn index_listing(
+        &self,
+        txn: Option<&str>,
+        collection: &str,
+    ) -> Result<serde_json::Value> {
+        let path = format!("collections/{}/indexes", encode(collection));
+        Ok(self
+            .send(Method::GET, &path, &[], None, txn)
+            .await?
+            .json()
+            .await?)
+    }
+
+    /// Delete index `name` of `collection`, in transaction `txn` when given.
+    pub async fn index_delete(
+        &self,
+        txn: Option<&str>,
+        collection: &str,
+        name: &str,
+    ) -> Result<()> {
+        let path = format!(
+            "collections/{}/indexes/{}",
+            encode(collection),
+            encode(name)
+        );
+        self.send(Method::DELETE, &path, &[], None, txn)
+            .await
+            .map(drop)
+    }
+}

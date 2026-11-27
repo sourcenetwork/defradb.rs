@@ -16,7 +16,7 @@
 \* of fast refusals (MaxFree, each costing at most Fast), however many batches
 \* the missing frontier spans.
 \*
-\* Code it models (crates/p2p/src/sync/coordinator):
+\* Code it models (crates/database/p2p/src/sync/coordinator):
 \*   dag_fetcher.rs  fetch_dag_attempt              (stall_budget = providers, free_refusals = MAX_FREE_REFUSALS)
 \*   dag_fetcher.rs  poll_fetch_blocks_rotating     (Ask: budget check, then spend by outcome)
 \*   dag_fetcher.rs  window_outcome                 (Classify: Refused only within FAST_REFUSAL)

@@ -35,13 +35,14 @@ impl Op for TxnBegin {
 
     fn run(&self, state: &State) -> Result<Value, Failure> {
         let identity = self.common.client_identity(Self::name())?;
+        let (node, scope) = (
+            state.node_on(self.common.node())?,
+            state.scope_as(None, identity),
+        );
         let id = state
-            .block_on(
-                state
-                    .node_on(self.common.node())?
-                    .txn_begin(&state.context_as(None, identity), self.read_only),
-            )
-            .map_err(|e| Failure::operation(e.to_string()))?;
+            .block_on(scope.scoped(&node).new_txn(self.read_only))
+            .map_err(|e| Failure::operation(e.to_string()))?
+            .detach();
         state.txns.push(id);
         Ok(json!({}))
     }
@@ -65,7 +66,8 @@ impl HttpRun for TxnBegin {
                     client.tx_begin(read_only).await
                 })?
                 .map_err(|e| Failure::operation(e.to_string()))?;
-            state.txns.push(TxnId(begun.id));
+            let id: TxnId = defra_core::TxnId::from_wire(begun.id);
+            state.txns.push(id);
             Ok(json!({}))
         });
     }
@@ -82,10 +84,13 @@ impl CliRun for TxnBegin {
             let printed = state
                 .defra_client_as(action.common.node(), None, identity, args)
                 .map_err(Failure::operation)?;
-            let id = printed["id"].as_u64().ok_or_else(|| {
-                Failure::operation(format!("defra client tx new printed no ID: {printed}"))
-            })?;
-            state.txns.push(TxnId(id));
+            let Some(encoded) = printed["id"].as_u64() else {
+                return Err(Failure::operation(format!(
+                    "defra client tx new printed no numeric ID: {printed}"
+                )));
+            };
+            let id: TxnId = defra_core::TxnId::from_wire(encoded);
+            state.txns.push(id);
             Ok(json!({}))
         });
     }

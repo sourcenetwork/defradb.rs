@@ -23,11 +23,11 @@ use std::sync::Arc;
 
 use db::DB;
 use defra_perf::emit::{Family, Group, Row};
-use defra_perf::measure::{per_op, CountingAllocator};
+use defra_perf::measure::{per_op, reset, taken, CountingAllocator};
 use document::{Document, NormalValue};
 use query::mutator::DocMutator;
 use query::DocFetcher;
-use schema::{CollectionVersion, FieldDescription, FieldKind};
+use schema::CollectionVersion;
 use storage::RegolithStore;
 
 /// Counts on top of the allocator every other bench runs on
@@ -38,31 +38,36 @@ static ALLOC: CountingAllocator<mimalloc::MiMalloc> = CountingAllocator(mimalloc
 const COLLECTION: &str = "Users";
 const FIELDS: usize = 16;
 const OPS: u64 = 200;
+/// How many collections one transaction loads into its catalog, per row. A
+/// load that copied the whole catalog would grow with this; one that does not
+/// stays flat across the rows.
+const CATALOG_SIZES: [usize; 3] = [10, 50, 200];
 
 fn field_names() -> Vec<String> {
     (0..FIELDS).map(|i| format!("field_{i}")).collect()
 }
 
 fn collection_version() -> CollectionVersion {
-    let mut fields = vec![FieldDescription::new(
-        "1",
-        "_docID",
-        FieldKind::doc_id(),
-        schema::CType::LwwRegister,
-    )];
-    for (index, name) in field_names().iter().enumerate() {
-        fields.push(FieldDescription::new(
-            (index + 2).to_string(),
-            name,
-            FieldKind::string(),
-            schema::CType::LwwRegister,
-        ));
-    }
-    CollectionVersion::new(COLLECTION, "bafkallocs", "allocs", fields)
+    query::parse_sdl(&collection_sdl())
+        .expect("the benchmark schema to parse")
+        .remove(0)
 }
 
-fn document(seq: usize) -> Document {
-    let mut doc = Document::new(collection_version());
+fn collection_sdl() -> String {
+    let fields = field_names()
+        .iter()
+        .map(|name| format!("{name}: String"))
+        .collect::<Vec<_>>()
+        .join(" ");
+    format!("type {COLLECTION} {{ {fields} }}")
+}
+
+fn catalog_sdl(name: &str) -> String {
+    format!("type {name} {{ name: String }}")
+}
+
+fn document(version: &CollectionVersion, seq: usize) -> Document {
+    let mut doc = Document::new(version.clone());
     for name in field_names() {
         doc.set(&name, NormalValue::String(format!("{name}-{seq}")))
             .unwrap();
@@ -87,17 +92,18 @@ fn main() {
 
     let store = Arc::new(RegolithStore::in_memory().expect("an in-memory store"));
     let db = Arc::new(rt.block_on(DB::open_from_arc(store)).expect("a database"));
-    rt.block_on(db.create_collection(collection_version()))
+    rt.block_on(db.add_collection(&defra_core::RequestContext::ambient(), &collection_sdl()))
         .expect("the collection");
     let mutator = db::write::autocommit::AutoCommitMutator::new(db.clone());
     let fetcher = db::AutoCommitFetcher::new(db.clone());
 
     // The document set both the write and the read rows work over. Seeded
     // before any counting starts so its cost lands in neither.
+    let version = collection_version();
     let mut seeded = Vec::new();
     for seq in 0..OPS as usize {
         let created = rt
-            .block_on(mutator.create(COLLECTION, document(seq)))
+            .block_on(mutator.create(COLLECTION, document(&version, seq)))
             .expect("the seed create to succeed");
         seeded.push(created.doc_id.to_string());
     }
@@ -106,7 +112,7 @@ fn main() {
         "document create",
         per_op(OPS, || {
             for seq in 0..OPS as usize {
-                rt.block_on(mutator.create(COLLECTION, document(OPS as usize + seq)))
+                rt.block_on(mutator.create(COLLECTION, document(&version, OPS as usize + seq)))
                     .expect("the create to succeed");
             }
         }),
@@ -124,7 +130,7 @@ fn main() {
 
     // Pure codec paths, with no store under them: these are the ones a change
     // in a serializer moves first.
-    let doc = document(0);
+    let doc = document(&version, 0);
     group = group.row(Row::new(
         "document to map",
         per_op(OPS, || {
@@ -138,7 +144,7 @@ fn main() {
         .expect("a JSON encoding of it");
     // Built once, as real callers share one definition: the row counts the
     // parse, not a definition build per document.
-    let collection = Arc::new(collection_version());
+    let collection = Arc::new(version.clone());
     group = group.row(Row::new(
         "document from json",
         per_op(OPS, || {
@@ -151,6 +157,42 @@ fn main() {
         }),
     ));
 
+    // One transaction loading `size` collections, one at a time, as a request
+    // does on first use of each. Per load, so a row that rises with `size` is
+    // a load whose cost depends on how much the transaction already holds.
+    let names: Vec<String> = (0..CATALOG_SIZES[CATALOG_SIZES.len() - 1])
+        .map(|index| {
+            let name = format!("Catalog{index}");
+            rt.block_on(
+                db.add_collection(&defra_core::RequestContext::ambient(), &catalog_sdl(&name)),
+            )
+            .expect("the catalog collection");
+            name
+        })
+        .collect();
+    let mut catalog_bytes = Group::lower_better("collection load bytes", "bytes/op").note(
+        "Bytes allocated across the whole process per collection a transaction loads into its \
+         catalog, with that many collections loaded into the one transaction.",
+    );
+    for size in CATALOG_SIZES {
+        let load = || {
+            let txn = rt.block_on(db.new_txn(true)).expect("a transaction");
+            for name in &names[..size] {
+                rt.block_on(txn.get_collection(name))
+                    .expect("the load to succeed")
+                    .expect("the collection to exist");
+            }
+            txn.discard().expect("the discard to succeed");
+        };
+        load();
+        reset();
+        load();
+        let counted = taken();
+        let label = format!("collection load, {size} in txn");
+        group = group.row(Row::new(&label, counted.count as f64 / size as f64));
+        catalog_bytes = catalog_bytes.row(Row::new(&label, counted.bytes as f64 / size as f64));
+    }
+
     let family = Family::new(
         "Allocations per operation",
         format!(
@@ -160,10 +202,13 @@ fn main() {
         ),
     )
     .deterministic()
-    .group(group);
+    .group(group)
+    .group(catalog_bytes);
 
-    for row in family.groups.iter().flat_map(|g| &g.rows) {
-        println!("  {:<24} {:>10.1} allocations/op", row.name, row.value);
+    for group in &family.groups {
+        for row in &group.rows {
+            println!("  {:<32} {:>12.1} {}", row.name, row.value, group.unit);
+        }
     }
     family.emit("allocs");
 }

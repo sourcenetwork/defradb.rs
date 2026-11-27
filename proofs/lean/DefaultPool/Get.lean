@@ -27,8 +27,8 @@ registering or closing between them) are the TLA+ model
 `proofs/tla/DefaultPool.tla`; this file proves the choice itself for any
 pools.
 
-Rust anchors: `DefaultPool::get` (`crates/workers/src/pool/default.rs`) and
-`Pool::stop` (`crates/workers/src/pool/mod.rs`, its shutdown before its
+Rust anchors: `DefaultPool::get` (`crates/foundation/workers/src/pool/default.rs`) and
+`Pool::stop` (`crates/foundation/workers/src/pool/mod.rs`, its shutdown before its
 deadline's `timeout`).
 -/
 

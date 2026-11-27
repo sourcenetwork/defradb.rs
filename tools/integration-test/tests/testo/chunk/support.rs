@@ -23,6 +23,31 @@ pub fn body(n: usize, topic: &str) -> String {
         .join("\n\n")
 }
 
+/// The chunk texts of `body`. A chunk keeps the blank line that follows its paragraph.
+pub fn texts(body: &str) -> Vec<Value> {
+    body.split_inclusive("\n\n")
+        .map(|text| json!(text))
+        .collect()
+}
+
+/// `Article__body_chunk` holds exactly the chunks of `bodies`, one set per parent.
+pub fn chunk_texts_are(bodies: &[&str], node: Option<&str>) -> Actions {
+    let rows: Vec<Value> = bodies
+        .iter()
+        .flat_map(|body| texts(body))
+        .map(|text| json!({ "text": text }))
+        .collect();
+    let mut common = on(node);
+    common.unordered = vec![format!("/data/{CHUNKS}")];
+    Request {
+        request: format!("query {{ {CHUNKS} {{ text }} }}").into(),
+        expected_data: json!({ CHUNKS: rows }),
+        common,
+        ..Default::default()
+    }
+    .into()
+}
+
 /// `body` escaped for a GraphQL string.
 pub fn gql(body: &str) -> String {
     body.replace('\n', "\\n")
@@ -63,6 +88,10 @@ pub fn add_article_on(body: &str, capture: &str, node: Option<&str>) -> Actions 
 
 /// Updates the body of the article named `capture` through GraphQL.
 pub fn update_article(capture: &str, body: &str) -> Actions {
+    update_article_on(capture, body, None)
+}
+
+pub fn update_article_on(capture: &str, body: &str, node: Option<&str>) -> Actions {
     Request {
         request: Text::concat([
             Text::from(r#"mutation { update_Article(docID: ""#),
@@ -72,34 +101,35 @@ pub fn update_article(capture: &str, body: &str) -> Actions {
                 gql(body)
             )),
         ]),
+        common: on(node),
         ..Default::default()
     }
     .into()
 }
 
-/// Reads the parent's chunk list, which holds the text's hash and then `n`
-/// chunk hashes, and names them `<prefix>0` to `<prefix><n>`.
-pub fn read_list(prefix: &str, n: usize, node: Option<&str>) -> Actions {
-    let names: Vec<(String, String)> = (0..=n)
+/// Reads the `n` visible chunk hashes in hash order and names them
+/// `<prefix>1` to `<prefix><n>`.
+pub fn read_chunks(prefix: &str, n: usize, node: Option<&str>) -> Actions {
+    let names: Vec<(String, String)> = (1..=n)
         .map(|i| {
             (
                 format!("{prefix}{i}"),
-                format!("/data/Article/0/_body_chunks/{i}"),
+                format!("/data/{CHUNKS}/{}/hash", i - 1),
             )
         })
         .collect();
     let mut common = on(node);
     common.capture = names.into_iter().collect();
     Request {
-        request: "query { Article { _body_chunks } }".into(),
-        expected_data: json!({ "Article": [{ "_body_chunks": integration_test::m::length(n as u64 + 1) }] }),
+        request: format!("query {{ {CHUNKS}(order: {{hash: ASC}}) {{ hash }} }}").into(),
+        expected_data: json!({ CHUNKS: integration_test::m::length(n as u64) }),
         common,
         ..Default::default()
     }
     .into()
 }
 
-/// The visible chunks are exactly the `n` hashes `read_list` named.
+/// The visible chunks are exactly the `n` hashes `read_chunks` named.
 pub fn chunks_are_listed(prefix: &str, n: usize, node: Option<&str>) -> Actions {
     let hashes: Vec<Value> = (1..=n)
         .map(|i| json!({ "hash": integration_test::m::r(&format!("{prefix}{i}")) }))
@@ -125,20 +155,6 @@ pub fn no_chunks(node: Option<&str>) -> Actions {
     .into()
 }
 
-/// The parent's chunk list is the one `read_list` named.
-pub fn list_is(prefix: &str, n: usize, node: Option<&str>) -> Actions {
-    let list: Vec<Value> = (0..=n)
-        .map(|i| integration_test::m::r(&format!("{prefix}{i}")))
-        .collect();
-    Request {
-        request: "query { Article { _body_chunks } }".into(),
-        expected_data: json!({ "Article": [{ "_body_chunks": list }] }),
-        common: on(node),
-        ..Default::default()
-    }
-    .into()
-}
-
 /// Polls a read until the peer has caught up.
 pub fn eventually(action: Actions) -> Actions {
     match action {
@@ -152,6 +168,11 @@ pub fn eventually(action: Actions) -> Actions {
 
 /// Two networked nodes, `db0` pushing `collections` to `db1`, both with the Article collection.
 pub fn replicated_pair(collections: &[&str]) -> Vec<Actions> {
+    replicated_pair_with(SCHEMA.into(), collections)
+}
+
+/// [`replicated_pair`] with the Article collection declared by `sdl`.
+pub fn replicated_pair_with(sdl: Text, collections: &[&str]) -> Vec<Actions> {
     let names: Vec<String> = collections.iter().map(|name| (*name).to_owned()).collect();
     let mut actions: Vec<Actions> = Vec::new();
     for node in ["db0", "db1"] {
@@ -167,7 +188,7 @@ pub fn replicated_pair(collections: &[&str]) -> Vec<Actions> {
     for node in ["db0", "db1"] {
         actions.push(
             AddCollection {
-                sdl: SCHEMA.into(),
+                sdl: sdl.clone(),
                 common: on(Some(node)),
                 ..Default::default()
             }
@@ -211,6 +232,17 @@ pub fn without_default_node(actions: Vec<Actions>) -> TestCase {
     let mut case = TestCase::from_actions(actions);
     case.without_db = true;
     case
+}
+
+/// Runs a request inside explicit transaction `txn`.
+pub fn in_txn(action: Actions, txn: usize) -> Actions {
+    match action {
+        Actions::Request(mut request) => {
+            request.txn = Some(txn);
+            request.into()
+        }
+        other => other,
+    }
 }
 
 /// Runs a read as client identity `seed`.

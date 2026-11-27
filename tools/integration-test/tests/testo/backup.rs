@@ -1,3 +1,7 @@
+mod duplicate_alias;
+mod failed_import;
+mod import_creator;
+mod signed_import;
 mod one_to_many {
     mod export;
     mod import;
@@ -13,4 +17,5 @@ mod self_reference {
 mod simple {
     mod export;
     mod import;
+    mod import_alias;
 }

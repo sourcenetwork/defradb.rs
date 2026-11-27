@@ -1,4 +1,4 @@
-//! Generated from the conformance scenarios of tests/integration/acp/nac/add_nac_relationship_test.go at defradb 137dc624052b.
+//! Generated from the conformance scenarios of tests/integration/acp/nac/add_nac_relationship_test.go at defradb e152b5cab59d.
 //! License: AGPL-3.0-only OR LicenseRef-BSL-tests. Copyright 2026 Democratized Data Foundation.
 
 use integration_test::actions::{AddNACActorRelationship, Close, DisableNAC, GetNACStatus, Start};
@@ -103,6 +103,13 @@ fn nac_add_relationship_still_requires_identity_even_if_all_identities_given_acc
             AddNACActorRelationship {
                 relation: "admin".into(),
                 target_identity_seed: Some(4),
+                expected_error: Some("node acp relationship operation requires identity".into()),
+                ..Default::default()
+            }
+            .into(),
+            AddNACActorRelationship {
+                relation: "admin".into(),
+                target_actor: Some("".into()),
                 expected_error: Some("node acp relationship operation requires identity".into()),
                 ..Default::default()
             }
@@ -261,9 +268,31 @@ fn nac_add_relationship_when_nac_is_enabled_with_invalid_identities_error() {
             AddNACActorRelationship {
                 relation: "admin".into(),
                 target_actor: Some("".into()),
-                expected_error: Some("actor must be a valid did".into()),
+                expected_error: Some("acp relationship target actor must not be empty".into()),
                 common: Common {
                     identity_seed: Some(1),
+                    ..Default::default()
+                },
+                ..Default::default()
+            }
+            .into(),
+            AddNACActorRelationship {
+                relation: "admin".into(),
+                target_identity_seed: Some(2),
+                expected_data: json!({ "existedAlready": false }),
+                common: Common {
+                    identity_seed: Some(1),
+                    ..Default::default()
+                },
+                ..Default::default()
+            }
+            .into(),
+            AddNACActorRelationship {
+                relation: "admin".into(),
+                target_actor: Some("".into()),
+                expected_error: Some("acp relationship target actor must not be empty".into()),
+                common: Common {
+                    identity_seed: Some(2),
                     ..Default::default()
                 },
                 ..Default::default()

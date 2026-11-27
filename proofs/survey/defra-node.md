@@ -1,4 +1,4 @@
-# Survey: `crates/defra-node/`
+# Survey: `crates/entry-points/defra-node/`
 
 ## Purpose
 Reusable **embedded DefraDB node builder**. Wraps the library crates (`db`, `query`,

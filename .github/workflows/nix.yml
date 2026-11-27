@@ -43,10 +43,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
-      - uses: cachix/install-nix-action@448cde739abec1eaf0646249e3d25bb8d9bc7702 # v31.11.2
+      - uses: cachix/install-nix-action@3dc140bfc76c49fbd4dd958429132e3746bcb086 # v31.11.5
       - uses: cachix/cachix-action@38b082610b782e7e93e209c35fd730d399dee866 # v17
         with:
           # fenix publishes the prebuilt toolchains here. Read-only: a public
@@ -85,7 +85,7 @@ jobs:
       - name: Build the dbus-linked crate
         run: >-
           nix develop --command
-          cargo check --manifest-path crates/keyring/Cargo.toml --features system
+          cargo check --manifest-path crates/foundation/keyring/Cargo.toml --features system
 
       # The keyring system tests are all #[ignore]d, but the binary links
       # libdbus-1.so.3 with no rpath for it, so loading it to list its tests is
@@ -93,7 +93,7 @@ jobs:
       - name: Load a dbus-linked test binary
         run: >-
           nix develop --command
-          cargo test --manifest-path crates/keyring/Cargo.toml --features system -- --list
+          cargo test --manifest-path crates/foundation/keyring/Cargo.toml --features system -- --list
 
   workspace:
     name: Nix workspace check (full)
@@ -104,10 +104,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 90
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
-      - uses: cachix/install-nix-action@448cde739abec1eaf0646249e3d25bb8d9bc7702 # v31.11.2
+      - uses: cachix/install-nix-action@3dc140bfc76c49fbd4dd958429132e3746bcb086 # v31.11.5
       - uses: cachix/cachix-action@38b082610b782e7e93e209c35fd730d399dee866 # v17
         with:
           name: fenix

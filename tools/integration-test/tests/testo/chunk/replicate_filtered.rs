@@ -1,65 +1,70 @@
-//! A filtered replicator ships the chunks of the parents it matches (`defra.chunk.replicate.filtered`).
+//! A filtered replicator ships a matching parent with its chunks (`defra.chunk.replicate.filtered`).
 
 use integration_test::actions::{
-    Actions, AddCollection, AddDoc, AddReplicator, DeleteDoc, NewNode, Request, TxnBegin,
-    TxnCommit, UpdateDoc, WaitForPeersEvents,
+    Actions, AddCollection, AddDoc, AddReplicator, Close, ConnectPeers, DeleteDoc, NewNode,
+    Request, Start, TxnBegin, TxnCommit, UpdateDoc, WaitForPeersEvents,
 };
 use integration_test::scenario::{captures, Common, Text};
+use integration_test::test_case::TestCase;
+use integration_test::ClientType;
 use serde_json::{json, Value};
 
-use super::support::{
-    body, chunks_are_listed, eventually, gql, no_chunks, on, without_default_node,
-};
+use super::support::{body, chunk_texts_are, eventually, gql, on, CHUNKS};
 
+// A replicator filter matches immutable fields only.
 const SCHEMA: &str = r#"type Article {
     kind: String @immutable
     body: String @chunk(maxChars: 64)
 }"#;
 
-const PUBLIC: &str = "public";
-const SECRET: &str = "secret";
-/// The name of a public article written last, so that once it arrives every
-/// earlier push has been decided.
-const LATER: &str = "later";
-/// The name the chunk list of an edited article is read under.
-const EDITED: &str = "edited";
-/// The public article's paragraphs, one chunk each.
-const PUBLIC_PARAGRAPHS: usize = 4;
-const SECRET_PARAGRAPHS: usize = 3;
-/// The paragraphs an edit leaves in an article.
-const EDITED_PARAGRAPHS: usize = 2;
-const LATER_PARAGRAPHS: usize = 1;
 /// The first explicit transaction a scenario opens, and the second.
 const TXN: usize = 0;
 const SECOND_TXN: usize = 1;
 
-fn two_nodes() -> Vec<Actions> {
-    let mut actions: Vec<Actions> = Vec::new();
-    for node in ["db0", "db1"] {
-        actions.push(
-            NewNode {
-                network: true,
-                common: on(Some(node)),
-                ..Default::default()
-            }
-            .into(),
-        );
+fn public_body() -> String {
+    body(3, "rivers")
+}
+
+fn secret_body() -> String {
+    body(2, "lakes")
+}
+
+fn edited_body() -> String {
+    body(2, "edited rivers")
+}
+
+/// The body of a public article written last, so that once its chunks
+/// arrive every earlier push has been decided.
+fn later_body() -> String {
+    body(1, "later")
+}
+
+fn node(name: &str, persistent: bool) -> Actions {
+    NewNode {
+        network: true,
+        database_dir: persistent.then(String::new),
+        common: on(Some(name)),
+        ..Default::default()
     }
-    for node in ["db0", "db1"] {
+    .into()
+}
+
+fn two_nodes(persistent: bool) -> Vec<Actions> {
+    let mut actions: Vec<Actions> = Vec::new();
+    for name in ["db0", "db1"] {
+        actions.push(node(name, persistent));
         actions.push(
             AddCollection {
                 sdl: SCHEMA.into(),
-                common: on(Some(node)),
+                common: on(Some(name)),
                 ..Default::default()
             }
             .into(),
         );
-    }
-    for node in ["db0", "db1"] {
         actions.push(
             WaitForPeersEvents {
                 start: true,
-                common: on(Some(node)),
+                common: on(Some(name)),
                 ..Default::default()
             }
             .into(),
@@ -68,28 +73,39 @@ fn two_nodes() -> Vec<Actions> {
     actions
 }
 
-/// `db0` pushes to `db1` only the articles whose kind is public. No node
-/// subscribes to the collection, so nothing else reaches `db1`.
-fn public_only_replicator() -> Actions {
+fn replicator_with(filter: Value) -> Actions {
     AddReplicator {
         target: "db1".into(),
         collections: vec!["Article".into()],
-        filter: json!({ "kind": { "_eq": PUBLIC } }),
+        filter,
         common: on(Some("db0")),
         ..Default::default()
     }
     .into()
 }
 
-/// Adds an article of `kind` on `db0`, naming its docID `name`.
-fn add_article(kind: &str, name: &str, paragraphs: usize) -> Actions {
-    let mut common = on(Some("db0"));
-    common.retry = true;
-    common.capture = captures([(name, "/docID")]);
+/// `db0` pushes to `db1` only the public articles. No node subscribes to the
+/// collection, so nothing else reaches `db1`.
+fn replicator() -> Actions {
+    replicator_with(json!({ "kind": { "_eq": "public" } }))
+}
+
+/// A negative filter: a chunk has no `kind`, so on its own document every
+/// chunk would pass it.
+fn not_secret_replicator() -> Actions {
+    replicator_with(json!({ "kind": { "_ne": "secret" } }))
+}
+
+/// Adds an article of `kind` on `db0`, naming its docID `kind`.
+fn article(kind: &str, text: &str) -> Actions {
     AddDoc {
         collection: "Article".into(),
-        doc_map: Some(json!({ "kind": kind, "body": body(paragraphs, name) })),
-        common,
+        doc_map: Some(json!({ "kind": kind, "body": text })),
+        common: Common {
+            retry: true,
+            capture: captures([(kind, "/docID")]),
+            ..on(Some("db0"))
+        },
         ..Default::default()
     }
     .into()
@@ -107,7 +123,7 @@ fn edit(name: &str, txn: Option<usize>) -> Actions {
     UpdateDoc {
         collection: "Article".into(),
         doc_id: Text::reference(name),
-        doc_map: json!({ "body": body(EDITED_PARAGRAPHS, EDITED) }),
+        doc_map: json!({ "body": edited_body() }),
         txn,
         common: on_db0(txn),
         ..Default::default()
@@ -143,201 +159,246 @@ fn commit(txn: usize) -> Actions {
     .into()
 }
 
-fn list_query(name: &str) -> Text {
-    Text::concat([
-        r#"query { Article(docID: ""#.into(),
-        Text::reference(name),
-        r#"") { _body_chunks } }"#.into(),
-    ])
-}
-
-/// Reads the chunk list of `db0`'s article `name`, the text's hash and then
-/// `n` chunk hashes, and names them `<prefix>0` to `<prefix><n>`.
-fn read_list(name: &str, prefix: &str, n: usize) -> Actions {
-    let mut common = on(Some("db0"));
-    common.capture = (0..=n)
-        .map(|i| {
-            (
-                format!("{prefix}{i}"),
-                format!("/data/Article/0/_body_chunks/{i}"),
-            )
-        })
-        .collect();
-    Request {
-        request: list_query(name),
-        expected_data: json!({ "Article": [{ "_body_chunks": integration_test::m::length(n as u64 + 1) }] }),
-        common,
-        ..Default::default()
-    }
-    .into()
-}
-
-/// `db1`'s article `name` eventually has the list read under `prefix`.
-fn peer_list_is(name: &str, prefix: &str, n: usize) -> Actions {
-    let list: Vec<Value> = (0..=n)
-        .map(|i| integration_test::m::r(&format!("{prefix}{i}")))
-        .collect();
+/// `db1` eventually shows exactly the articles of `kinds`.
+fn peer_articles_are(kinds: &[&str]) -> Actions {
+    let articles: Vec<Value> = kinds.iter().map(|kind| json!({ "kind": kind })).collect();
+    let mut common = on(Some("db1"));
+    common.unordered = vec!["/data/Article".into()];
     eventually(
         Request {
-            request: list_query(name),
-            expected_data: json!({ "Article": [{ "_body_chunks": list }] }),
-            common: on(Some("db1")),
+            request: "query { Article { kind } }".into(),
+            expected_data: json!({ "Article": articles }),
+            common,
             ..Default::default()
         }
         .into(),
     )
 }
 
-/// `db1` shows exactly the articles of `kinds`.
-fn peer_articles_are(kinds: &[&str]) -> Actions {
-    let articles: Vec<Value> = kinds.iter().map(|kind| json!({ "kind": kind })).collect();
-    let mut common = on(Some("db1"));
-    common.unordered = vec!["/data/Article".into()];
-    Request {
-        request: "query { Article { kind } }".into(),
-        expected_data: json!({ "Article": articles }),
-        common,
-        ..Default::default()
+/// `db1` eventually holds exactly the chunks of `bodies`.
+fn peer_chunks_are(bodies: &[&str]) -> Actions {
+    eventually(chunk_texts_are(bodies, Some("db1")))
+}
+
+fn filtered(actions: Vec<Actions>) -> TestCase {
+    let mut case = TestCase::from_actions(actions);
+    case.without_db = true;
+    // Filtered replication is defradb.rs only.
+    case.client_types = Some(&[ClientType::InProcess, ClientType::RustHttp, ClientType::Cli]);
+    case
+}
+
+fn ships_public_chunks(replicator_first: bool) {
+    let (public, secret) = (public_body(), secret_body());
+    let mut actions = two_nodes(false);
+    if replicator_first {
+        actions.push(replicator());
     }
-    .into()
-}
-
-/// `db1` shows article `name` with the list read under `prefix`, and exactly
-/// that list's chunks.
-fn peer_has_chunks(name: &str, prefix: &str, n: usize) -> [Actions; 2] {
-    [
-        peer_list_is(name, prefix, n),
-        eventually(chunks_are_listed(prefix, n, Some("db1"))),
-    ]
-}
-
-/// A later public article reaches `db1`, so every earlier push has been decided.
-fn after_a_later_public_write() -> [Actions; 3] {
-    [
-        add_article(PUBLIC, LATER, LATER_PARAGRAPHS),
-        read_list(LATER, LATER, LATER_PARAGRAPHS),
-        peer_list_is(LATER, LATER, LATER_PARAGRAPHS),
-    ]
+    actions.extend([article("secret", &secret), article("public", &public)]);
+    if !replicator_first {
+        actions.push(replicator());
+    }
+    actions.extend([peer_articles_are(&["public"]), peer_chunks_are(&[&public])]);
+    filtered(actions).execute();
 }
 
 #[test]
 #[mantra_macros::req_test("defra.chunk.replicate.filtered")]
-fn a_filtered_replicator_ships_the_chunks_of_a_matching_parent() {
-    let mut actions = two_nodes();
-    actions.push(public_only_replicator());
-    actions.push(add_article(SECRET, SECRET, SECRET_PARAGRAPHS));
-    actions.push(add_article(PUBLIC, PUBLIC, PUBLIC_PARAGRAPHS));
-    actions.push(read_list(PUBLIC, PUBLIC, PUBLIC_PARAGRAPHS));
-    actions.extend(peer_has_chunks(PUBLIC, PUBLIC, PUBLIC_PARAGRAPHS));
-    actions.extend(after_a_later_public_write());
-    actions.push(peer_articles_are(&[PUBLIC, PUBLIC]));
-    without_default_node(actions).execute();
+fn a_filtered_replicator_ships_the_matching_parents_chunks() {
+    ships_public_chunks(true);
+}
+
+#[test]
+#[mantra_macros::req_test("defra.chunk.replicate.filtered")]
+fn a_filtered_replicator_replays_the_matching_parents_chunks() {
+    ships_public_chunks(false);
 }
 
 #[test]
 #[mantra_macros::req_test("defra.chunk.replicate.filtered")]
 fn a_filtered_replicator_ships_the_new_chunks_of_an_edited_matching_parent() {
-    let mut actions = two_nodes();
-    actions.push(public_only_replicator());
-    actions.push(add_article(PUBLIC, PUBLIC, PUBLIC_PARAGRAPHS));
-    actions.push(read_list(PUBLIC, PUBLIC, PUBLIC_PARAGRAPHS));
-    actions.extend(peer_has_chunks(PUBLIC, PUBLIC, PUBLIC_PARAGRAPHS));
-    actions.push(edit(PUBLIC, None));
-    actions.push(read_list(PUBLIC, EDITED, EDITED_PARAGRAPHS));
-    actions.extend(peer_has_chunks(PUBLIC, EDITED, EDITED_PARAGRAPHS));
-    without_default_node(actions).execute();
-}
-
-#[test]
-#[mantra_macros::req_test("defra.chunk.replicate.filtered")]
-fn a_filtered_replicator_replays_the_chunks_of_existing_matching_parents() {
-    let mut actions = two_nodes();
-    actions.push(add_article(SECRET, SECRET, SECRET_PARAGRAPHS));
-    actions.push(add_article(PUBLIC, PUBLIC, PUBLIC_PARAGRAPHS));
-    actions.push(read_list(PUBLIC, PUBLIC, PUBLIC_PARAGRAPHS));
-    actions.push(public_only_replicator());
-    actions.extend(peer_has_chunks(PUBLIC, PUBLIC, PUBLIC_PARAGRAPHS));
-    actions.extend(after_a_later_public_write());
-    actions.push(peer_articles_are(&[PUBLIC, PUBLIC]));
-    without_default_node(actions).execute();
+    let (public, edited) = (public_body(), edited_body());
+    let mut actions = two_nodes(false);
+    actions.extend([
+        replicator(),
+        article("public", &public),
+        peer_chunks_are(&[&public]),
+        edit("public", None),
+        peer_chunks_are(&[&edited]),
+    ]);
+    filtered(actions).execute();
 }
 
 #[test]
 #[mantra_macros::req_test("defra.chunk.replicate.filtered")]
 fn a_matching_parent_delete_removes_its_chunks_on_the_filtered_peer() {
-    let mut actions = two_nodes();
-    actions.push(public_only_replicator());
-    actions.push(add_article(PUBLIC, PUBLIC, PUBLIC_PARAGRAPHS));
-    actions.push(read_list(PUBLIC, PUBLIC, PUBLIC_PARAGRAPHS));
-    actions.extend(peer_has_chunks(PUBLIC, PUBLIC, PUBLIC_PARAGRAPHS));
-    actions.push(delete(PUBLIC, None));
-    actions.push(eventually(peer_articles_are(&[])));
-    actions.push(no_chunks(Some("db1")));
-    without_default_node(actions).execute();
+    let public = public_body();
+    let mut actions = two_nodes(false);
+    actions.extend([
+        replicator(),
+        article("public", &public),
+        peer_chunks_are(&[&public]),
+        delete("public", None),
+        peer_articles_are(&[]),
+        peer_chunks_are(&[]),
+    ]);
+    filtered(actions).execute();
 }
 
 #[test]
 #[mantra_macros::req_test("defra.chunk.replicate.filtered")]
 fn an_unmatched_parent_edit_and_delete_send_nothing() {
-    let mut actions = two_nodes();
-    actions.push(public_only_replicator());
-    actions.push(add_article(SECRET, SECRET, SECRET_PARAGRAPHS));
-    actions.push(edit(SECRET, None));
-    actions.push(delete(SECRET, None));
-    actions.extend(after_a_later_public_write());
-    actions.push(peer_articles_are(&[PUBLIC]));
-    actions.push(chunks_are_listed(LATER, LATER_PARAGRAPHS, Some("db1")));
-    without_default_node(actions).execute();
+    let (secret, later) = (secret_body(), later_body());
+    let mut actions = two_nodes(false);
+    actions.extend([
+        replicator(),
+        article("secret", &secret),
+        edit("secret", None),
+        delete("secret", None),
+        article("public", &later),
+        peer_chunks_are(&[&later]),
+        peer_articles_are(&["public"]),
+    ]);
+    filtered(actions).execute();
 }
 
 #[test]
 #[mantra_macros::req_test("defra.chunk.replicate.filtered")]
 fn an_explicit_transaction_ships_the_chunks_of_a_matching_parent() {
-    let add_in_txn = |kind: &str, paragraphs: usize| -> Actions {
-        let mut common = on(Some("db0"));
-        common.capture = captures([(kind, "/data/add_Article/0/_docID")]);
+    let add_in_txn = |kind: &str, text: &str| -> Actions {
         Request {
             request: format!(
                 r#"mutation {{ add_Article(input: {{kind: "{kind}", body: "{}"}}) {{ _docID }} }}"#,
-                gql(&body(paragraphs, kind))
+                gql(text)
             )
             .into(),
             txn: Some(TXN),
-            common,
+            common: on(Some("db0")),
             ..Default::default()
         }
         .into()
     };
-    let mut actions = two_nodes();
-    actions.push(public_only_replicator());
-    actions.push(begin());
-    actions.push(add_in_txn(SECRET, SECRET_PARAGRAPHS));
-    actions.push(add_in_txn(PUBLIC, PUBLIC_PARAGRAPHS));
-    actions.push(commit(TXN));
-    actions.push(read_list(PUBLIC, PUBLIC, PUBLIC_PARAGRAPHS));
-    actions.extend(peer_has_chunks(PUBLIC, PUBLIC, PUBLIC_PARAGRAPHS));
-    actions.extend(after_a_later_public_write());
-    actions.push(peer_articles_are(&[PUBLIC, PUBLIC]));
-    without_default_node(actions).execute();
+    let (public, secret) = (public_body(), secret_body());
+    let mut actions = two_nodes(false);
+    actions.extend([
+        replicator(),
+        begin(),
+        add_in_txn("secret", &secret),
+        add_in_txn("public", &public),
+        commit(TXN),
+        peer_articles_are(&["public"]),
+        peer_chunks_are(&[&public]),
+    ]);
+    filtered(actions).execute();
 }
 
 #[test]
 #[mantra_macros::req_test("defra.chunk.replicate.filtered")]
 fn an_explicit_transaction_edit_and_delete_reach_the_filtered_peer() {
-    let mut actions = two_nodes();
-    actions.push(public_only_replicator());
-    actions.push(add_article(PUBLIC, PUBLIC, PUBLIC_PARAGRAPHS));
-    actions.push(read_list(PUBLIC, PUBLIC, PUBLIC_PARAGRAPHS));
-    actions.extend(peer_has_chunks(PUBLIC, PUBLIC, PUBLIC_PARAGRAPHS));
-    actions.push(begin());
-    actions.push(edit(PUBLIC, Some(TXN)));
-    actions.push(commit(TXN));
-    actions.push(read_list(PUBLIC, EDITED, EDITED_PARAGRAPHS));
-    actions.extend(peer_has_chunks(PUBLIC, EDITED, EDITED_PARAGRAPHS));
-    actions.push(begin());
-    actions.push(delete(PUBLIC, Some(SECOND_TXN)));
-    actions.push(commit(SECOND_TXN));
-    actions.push(eventually(peer_articles_are(&[])));
-    actions.push(no_chunks(Some("db1")));
-    without_default_node(actions).execute();
+    let (public, edited) = (public_body(), edited_body());
+    let mut actions = two_nodes(false);
+    actions.extend([
+        replicator(),
+        article("public", &public),
+        peer_chunks_are(&[&public]),
+        begin(),
+        edit("public", Some(TXN)),
+        commit(TXN),
+        peer_chunks_are(&[&edited]),
+        begin(),
+        delete("public", Some(SECOND_TXN)),
+        commit(SECOND_TXN),
+        peer_articles_are(&[]),
+        peer_chunks_are(&[]),
+    ]);
+    filtered(actions).execute();
+}
+
+#[test]
+#[mantra_macros::req_test("defra.chunk.replicate.filtered.negative")]
+fn a_negative_filter_ships_only_the_chunks_of_the_parents_it_matches() {
+    let (public, secret) = (public_body(), secret_body());
+    let mut actions = two_nodes(false);
+    actions.extend([
+        not_secret_replicator(),
+        article("secret", &secret),
+        article("public", &public),
+        peer_articles_are(&["public"]),
+        peer_chunks_are(&[&public]),
+    ]);
+    filtered(actions).execute();
+}
+
+#[test]
+#[mantra_macros::req_test("defra.chunk.replicate.filtered.negative")]
+fn a_negative_filter_replays_only_the_chunks_of_the_parents_it_matches() {
+    let (public, secret) = (public_body(), secret_body());
+    let mut actions = two_nodes(false);
+    actions.extend([
+        article("secret", &secret),
+        article("public", &public),
+        not_secret_replicator(),
+        peer_articles_are(&["public"]),
+        peer_chunks_are(&[&public]),
+    ]);
+    filtered(actions).execute();
+}
+
+#[test]
+#[mantra_macros::req_test("defra.chunk.replicate.filtered.negative")]
+fn a_negative_filter_retries_only_the_chunks_of_the_parents_it_matches() {
+    let (public, secret) = (public_body(), secret_body());
+    let mut actions = two_nodes(true);
+    actions.extend([
+        not_secret_replicator(),
+        Close {
+            keep_data: true,
+            common: on(Some("db1")),
+            ..Default::default()
+        }
+        .into(),
+        article("secret", &secret),
+        article("public", &public),
+        Start {
+            enable_nac: false,
+            common: on(Some("db1")),
+            ..Default::default()
+        }
+        .into(),
+        WaitForPeersEvents {
+            start: true,
+            common: on(Some("db1")),
+            ..Default::default()
+        }
+        .into(),
+        ConnectPeers {
+            target: "db1".into(),
+            common: on(Some("db0")),
+            ..Default::default()
+        }
+        .into(),
+        peer_articles_are(&["public"]),
+        peer_chunks_are(&[&public]),
+    ]);
+    filtered(actions).execute();
+}
+
+#[test]
+#[mantra_macros::req_test("defra.chunk.replicate.filtered.chunk_filter")]
+fn a_replicator_filter_on_a_chunk_collection_is_refused() {
+    let mut actions = two_nodes(false);
+    actions.push(
+        AddReplicator {
+            target: "db1".into(),
+            collections: vec![CHUNKS.into()],
+            filter: json!({ "hash": { "_ne": "" } }),
+            expected_error: Some(format!(
+                "a replicator filter can't name chunk collection '{CHUNKS}': filter its parent 'Article', whose filter decides its chunks"
+            )),
+            common: on(Some("db0")),
+            ..Default::default()
+        }
+        .into(),
+    );
+    filtered(actions).execute();
 }

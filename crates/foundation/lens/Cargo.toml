@@ -1,0 +1,65 @@
+[package]
+name = "lens"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Lens schema migration support for DefraDB"
+
+[features]
+default = ["wasmtime-runtime"]
+wasmtime-runtime = ["dep:wasmtime"]
+
+[lib]
+bench = false
+
+[dependencies]
+# Core
+async-trait.workspace = true
+futures.workspace = true
+
+# Hash maps
+rapidhash.workspace = true
+
+# Lock-free shared state, and the waits a lens call makes
+kovan-map.workspace = true
+regolith.workspace = true
+# Epoch ticks as a job of the worker pool's deadline queue.
+workers = { path = "../../foundation/workers" }
+
+# Serialization
+serde.workspace = true
+serde_json.workspace = true
+
+# Error handling
+thiserror.workspace = true
+
+# Logging
+tracing.workspace = true
+
+# Encoding
+base64.workspace = true
+
+# Hashing for content-based deduplication
+sha2.workspace = true
+hex.workspace = true
+
+# Wasmtime runtime (optional for wasm32). `async` runs a lens call on a fiber
+# its caller polls. `parallel-compilation` stays out, so wasmtime starts no
+# thread of its own.
+wasmtime = { version = "50.0.1", optional = true, default-features = false, features = [
+    "async",
+    "runtime",
+    "cranelift",
+    "std",
+] }
+
+[target.'cfg(not(target_env = "msvc"))'.dependencies]
+sha2 = { workspace = true, features = ["asm"] }
+
+[dev-dependencies]
+
+[lints]
+workspace = true

@@ -35,18 +35,12 @@ impl Op for ListIndexes {
 
     fn run(&self, state: &State) -> Result<Value, Failure> {
         let identity = self.common.client_identity(Self::name())?;
-        if self.txn.is_some() {
-            // The core reads and drops indexes outside any transaction yet.
-            return Err(Failure::unsupported(format!(
-                "{} argument txn",
-                Self::name()
-            )));
-        }
         let indexes = state
             .block_on(
                 state
-                    .node_on(self.common.node())?
-                    .list_indexes_as(&state.context_as(self.txn, identity), &self.collection),
+                    .scope_as(self.txn, identity)
+                    .on(&*state.node_on(self.common.node())?)
+                    .list_indexes(&self.collection),
             )
             .map_err(|e| Failure::operation(e.to_string()))?;
         Ok(json!({ "indexes": indexes }))
@@ -65,16 +59,11 @@ impl HttpRun for ListIndexes {
     fn execute_http(&self, state: &mut State) {
         crate::scenario::execute_with(self, state, |action, state| {
             let identity = action.common.client_identity(Self::name())?;
-            if action.txn.is_some() {
-                return Err(Failure::unsupported(format!(
-                    "{} argument txn",
-                    Self::name()
-                )));
-            }
             let collection = action.collection.clone();
+            let txn = state.txn_id(action.txn);
             let indexes = state
                 .http_as(action.common.node(), identity, |client| async move {
-                    client.index_listing(&collection).await
+                    client.index_listing(txn.as_deref(), &collection).await
                 })?
                 .map_err(|e| Failure::operation(e.to_string()))?;
             Ok(json!({ "indexes": indexes }))
@@ -86,12 +75,6 @@ impl CliRun for ListIndexes {
     fn execute_cli(&self, state: &mut State) {
         crate::scenario::execute_with(self, state, |action, state| {
             let identity = action.common.client_identity(Self::name())?;
-            if action.txn.is_some() {
-                return Err(Failure::unsupported(format!(
-                    "{} argument txn",
-                    Self::name()
-                )));
-            }
             let args = ["index", "list", "--collection", action.collection.as_str()];
             let indexes = state
                 .defra_client_as(action.common.node(), action.txn, identity, &args)

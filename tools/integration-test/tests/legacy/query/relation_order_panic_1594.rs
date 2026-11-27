@@ -1,4 +1,5 @@
 use integration_test::{DefraClient, TestCluster};
+use query::explain_asserter::ExplainAsserter;
 use serde_json::Value;
 
 /// Mirrors the Go fixture from TestDebugExplainRequestWithOrderByRelationFieldWithIndex:
@@ -24,10 +25,19 @@ fn add_collection(node: &DefraClient) {
 
 /// Names of the children of the `sequenceNode` under the `typeIndexJoin`, in order.
 fn sequence_child_names(explain: &Value) -> Vec<String> {
-    let sequence = explain["explain"]["operationNode"][0]["selectTopNode"]["selectNode"]
-        ["typeIndexJoin"]["sequenceNode"]
+    let sequence = ExplainAsserter::new(explain)
+        .path(&[
+            "explain",
+            "operationNode",
+            "0",
+            "selectTopNode",
+            "selectNode",
+            "typeIndexJoin",
+            "sequenceNode",
+        ])
+        .node()
         .as_array()
-        .unwrap_or_else(|| panic!("expected a sequenceNode array, got: {explain}"));
+        .expect("sequenceNode array");
 
     sequence
         .iter()
@@ -44,27 +54,37 @@ fn sequence_child_names(explain: &Value) -> Vec<String> {
 /// Assert the `typeJoinOne` child has Go's shape:
 /// `{root: {scanNode}, subType: {selectTopNode: {selectNode: {scanNode}}}}`.
 fn assert_join_one_shape(explain: &Value) {
-    let sequence = &explain["explain"]["operationNode"][0]["selectTopNode"]["selectNode"]
-        ["typeIndexJoin"]["sequenceNode"];
-    let join = sequence
-        .as_array()
-        .expect("sequenceNode array")
-        .iter()
-        .find_map(|child| child.get("typeJoinOne"))
-        .unwrap_or_else(|| panic!("no typeJoinOne in sequenceNode: {explain}"));
+    ExplainAsserter::new(explain)
+        .path(&[
+            "explain",
+            "operationNode",
+            "0",
+            "selectTopNode",
+            "selectNode",
+            "typeIndexJoin",
+            "sequenceNode",
+            "typeJoinOne",
+            "root",
+            "scanNode",
+        ])
+        .exists();
 
-    assert!(
-        join["root"].get("scanNode").is_some(),
-        "typeJoinOne.root should be a scanNode, got: {}",
-        join["root"]
-    );
-    assert!(
-        join["subType"]["selectTopNode"]["selectNode"]
-            .get("scanNode")
-            .is_some(),
-        "typeJoinOne.subType should be selectTopNode > selectNode > scanNode, got: {}",
-        join["subType"]
-    );
+    ExplainAsserter::new(explain)
+        .path(&[
+            "explain",
+            "operationNode",
+            "0",
+            "selectTopNode",
+            "selectNode",
+            "typeIndexJoin",
+            "sequenceNode",
+            "typeJoinOne",
+            "subType",
+            "selectTopNode",
+            "selectNode",
+            "scanNode",
+        ])
+        .exists();
 }
 
 async fn debug_explain_asc_test(cluster: TestCluster) {

@@ -2,7 +2,7 @@
 
 - **Parents:** ["defra"]
 
-A `@chunk` String field is split into a generated read-only chunk collection, with a `_<field>_chunks` list on the parent.
+A `@chunk` String field is split into a generated read-only chunk collection. The parent gets no generated field: readers cut its text to find the chunks it uses.
 
 # `defra.chunk.declare`: Declaring a chunked field
 
@@ -15,7 +15,7 @@ What `@chunk` generates, and where it is allowed.
 - **Parents:** ["defra.chunk.declare"]
 - **Scenarios:** ["chunk::declare_collection::chunk_generates_a_queryable_collection"]
 
-Adding `type Article { title: String body: String @chunk(maxChars: 64) }` creates the collection `Article__body_chunk`, which is queryable. Before any document is added, `Article__body_chunk { _docID _sourceID text hash }` and `Article { _body_chunks }` both return `[]`.
+Adding `type Article { title: String body: String @chunk(maxChars: 64) }` creates the collection `Article__body_chunk`, which is queryable. Before any document is added, `Article__body_chunk { _docID _sourceID text hash }` returns `[]`.
 
 # `defra.chunk.declare.definition`: The chunk collection is listed with its source
 
@@ -31,12 +31,12 @@ Listing the collections named `Article__body_chunk` returns one active, material
 
 Adding `type Counter { n: Int @chunk }` fails with `@chunk is only allowed on a last-writer-wins String field. Field: Counter.n`.
 
-# `defra.chunk.declare.list_name`: `@chunk` is refused where its list field name would be invalid
+# `defra.chunk.declare.underscore_name`: A field whose name starts with `_` can be chunked
 
 - **Parents:** ["defra.chunk.declare"]
-- **Scenarios:** ["chunk::declare_list_name::chunk_is_refused_on_a_field_whose_list_name_would_start_with_two_underscores"]
+- **Scenarios:** ["chunk::declare_underscore_name::a_field_whose_name_starts_with_an_underscore_is_chunked"]
 
-GraphQL names cannot start with `__`, so a field whose name starts with `_` cannot be chunked. Adding `type Note { _x: String @chunk }` fails with `@chunk is not allowed on a field whose name starts with "_", because its list field __x_chunks would start with "__". Field: Note._x`. Nothing is stored: `type Note { _x: String }` can be added afterwards.
+Adding `type Note { _x: String @chunk }` creates the collection `Note___x_chunk`. Adding a `Note` with `_x` set to `Some text.` gives one chunk whose `text` is `Some text.`.
 
 # `defra.chunk.declare.unknown_argument`: `@chunk` refuses an argument it does not take
 
@@ -77,7 +77,7 @@ Adding the `Article` schema with `body: String @chunk(maxChars: 64)` a second ti
 
 - **Parents:** ["defra.chunk"]
 
-Users cannot write a chunk collection or a chunk list.
+Users cannot write a chunk collection.
 
 # `defra.chunk.protect.no_mutations`: The chunk collection has no mutations
 
@@ -86,53 +86,88 @@ Users cannot write a chunk collection or a chunk list.
 
 The GraphQL mutation type has the mutations of `Article` and none for `Article__body_chunk`.
 
-# `defra.chunk.protect.list_input`: The chunk list is not a mutation input
+# `defra.chunk.protect.api_writes`: The collection API cannot write chunks
 
 - **Parents:** ["defra.chunk.protect"]
-- **Scenarios:** ["chunk::protect_list_input::the_chunk_list_is_not_a_mutation_input"]
+- **Scenarios:** ["chunk::protect_api_writes::the_collection_api_cannot_write_chunks"]
 
-The `ArticleMutationInputArg` type has the input field `body` and no `_body_chunks`.
+Adding a document to `Article__body_chunk` fails with `Article__body_chunk holds the chunks of Article.body and is written only by writes to Article`. After this failure `Article__body_chunk` holds only the chunk of the article's own text `Some text.`.
 
-# `defra.chunk.protect.api_writes`: The collection API cannot write chunks or the chunk list
+# `defra.chunk.protect.admin_ops`: Admin operations cannot change the chunk collection
 
 - **Parents:** ["defra.chunk.protect"]
-- **Scenarios:** ["chunk::protect_api_writes::the_collection_api_cannot_write_chunks_or_the_chunk_list"]
+- **Scenarios:** ["chunk::protect_admin_ops::index_changes_to_the_chunk_collection_are_refused", "chunk::protect_admin_ops::collection_changes_to_the_chunk_collection_are_refused"]
 
-Adding a document to `Article__body_chunk` fails with `Article__body_chunk holds the chunks of Article.body and is written only by writes to Article`. Adding an `Article` with `_body_chunks`, or updating one to set it, fails with `Article._body_chunks is read-only: it is set from body by every write that changes it`. After these failures `Article__body_chunk` holds only the chunk of the article's own text `Some text.`, and the article's `_body_chunks` lists that chunk's hash twice, as the text's hash and as the one chunk.
+Creating an index or an encrypted index on `Article__body_chunk`, or dropping its generated index, fails with `Article__body_chunk holds the chunks of Article.body and is changed only through Article`, and the generated index is still listed. Making its version active and setting a migration from it fail with the same error. An index on `Article` is still created. Truncating `Article__body_chunk` is covered by `defra.chunk.protect.chunk_documents`.
+
+# `defra.chunk.protect.rename`: A patch cannot rename a parent or its chunk collection
+
+- **Parents:** ["defra.chunk.protect"]
+- **Scenarios:** ["chunk::protect_rename::renaming_the_parent_or_the_chunk_collection_is_refused"]
+
+Chunks find their parent by name. A patch that renames `Article` to `Story`, or `Article__body_chunk` to `Story`, fails with an error containing `Changed: the collection name`.
 
 # `defra.chunk.protect.chunk_documents`: Chunk documents and chunk settings cannot be changed
 
 - **Parents:** ["defra.chunk.protect"]
 - **Scenarios:** ["chunk::protect_chunk_documents::chunk_documents_and_settings_are_read_only"]
 
-For a chunk document of an existing article, updating it or deleting it fails with `Article__body_chunk holds the chunks of Article.body and is written only by writes to Article`, and truncating `Article__body_chunk` fails with `Article__body_chunk holds generated chunks and is emptied only with its parent`. The GraphQL mutation `add_Article__body_chunk` fails with `Article__body_chunk holds the chunks of Article.body and is written only by writes to Article`, and `update_Article` with `_body_chunks` in its input fails with `Article._body_chunks is read-only: it is set from body by every write that changes it`. Patching `/Article/ChunkedFields/0/MaxChars` fails with `invalid patch: collection chunk settings cannot be mutated. Collection: Article`. After all of these the chunks, sorted by hash, are exactly as they were.
+For a chunk document of an existing article, updating it or deleting it fails with `Article__body_chunk holds the chunks of Article.body and is written only by writes to Article`, and truncating `Article__body_chunk` fails with `Article__body_chunk holds the chunks of Article.body and is changed only through Article`. The GraphQL mutation `add_Article__body_chunk` fails with `Article__body_chunk holds the chunks of Article.body and is written only by writes to Article`. Patching `/Article/ChunkedFields/0/MaxChars` fails with `invalid patch: collection chunk settings cannot be mutated. Collection: Article`. After all of these the chunks, sorted by hash, are exactly as they were.
 
 # `defra.chunk.write`: Writing a chunked field
 
 - **Parents:** ["defra.chunk"]
 
-Every write to an `Article` writes, replaces or removes its chunks in the same transaction. The parent's `_body_chunks` lists the hash of the whole text and then the hash of each chunk in order, and `Article__body_chunk` holds exactly those chunks.
+Every write to an `Article` writes, replaces or removes its chunks in the same transaction, and `Article__body_chunk` shows exactly the chunks of the current text.
 
 # `defra.chunk.write.graphql`: GraphQL create, update and delete keep the chunks exact
 
 - **Parents:** ["defra.chunk.write"]
 - **Scenarios:** ["chunk::write_graphql::graphql_create_update_and_delete_keep_chunks_exact"]
 
-Creating an `Article` with a six-paragraph body gives a `_body_chunks` list of seven hashes, and `Article__body_chunk` holds exactly the six hashes after the first. Updating the body to four paragraphs gives a list of five hashes and exactly those four chunks. Deleting the article leaves `Article__body_chunk` empty.
+Creating an `Article` with a six-paragraph body gives exactly six chunks, one per paragraph. Updating the body to four paragraphs gives exactly the four chunks of the new text. Deleting the article leaves `Article__body_chunk` empty.
 
 # `defra.chunk.write.transaction`: An explicit transaction writes chunks when it commits
 
 - **Parents:** ["defra.chunk.write"]
-- **Scenarios:** ["chunk::write_transaction::an_explicit_transaction_writes_chunks_on_commit"]
+- **Scenarios:** ["chunk::write_transaction::an_explicit_transaction_writes_chunks_on_commit", "chunk::write_transaction::an_explicit_transaction_replaces_and_deletes_chunks_on_commit", "chunk::write_transaction::a_discarded_transaction_leaves_the_chunks_as_they_were"]
 
-An `add_Article` with a five-paragraph body inside an explicit transaction leaves `Article__body_chunk` empty outside it. After the transaction commits, `_body_chunks` lists six hashes and `Article__body_chunk` holds exactly the five after the first.
+An `add_Article` with a five-paragraph body inside an explicit transaction leaves `Article__body_chunk` empty outside it. After the transaction commits, `Article__body_chunk` holds exactly the five chunks of the text. An update of an existing article to two paragraphs inside a transaction shows the two new chunks inside it and the old four outside it until it commits, and then only the two. A delete inside a transaction shows no chunks inside it and the two outside it until it commits, and then none. An update and a delete in transactions that are discarded leave the original chunks, with the same hashes.
+
+# `defra.chunk.write.graphql_batch`: GraphQL batch writes and upserts keep every parent's chunks exact
+
+- **Parents:** ["defra.chunk.write"]
+- **Scenarios:** ["chunk::write_graphql_batch::graphql_batch_writes_keep_each_parents_chunks_exact"]
+
+An `add_Article` with two articles of three and two paragraphs gives the chunks of both texts. An `update_Article` with an empty filter that sets both bodies to the same two paragraphs gives each parent its own two chunks. A `delete_Article` by filter leaves only the other parent's chunks. An `upsert_Article` that finds an article replaces its chunks, and one that finds none creates an article with its chunks. A `delete_Article` with an empty filter leaves `Article__body_chunk` empty.
 
 # `defra.chunk.write.document_api`: The document API keeps the chunks exact
 
 - **Parents:** ["defra.chunk.write"]
 - **Scenarios:** ["chunk::write_document_api::document_api_writes_keep_chunks_exact"]
 
-Adding an `Article` with a five-paragraph body through the document API gives six hashes in `_body_chunks` and exactly the five chunks after the first. Updating its body to three paragraphs gives four hashes and exactly those three chunks. Deleting the document leaves `Article__body_chunk` empty.
+Adding an `Article` with a five-paragraph body through the document API gives exactly its five chunks. Updating its body to three paragraphs gives exactly the three chunks of the new text. Deleting the document leaves `Article__body_chunk` empty.
+
+# `defra.chunk.write.document_api_batch`: Document API batch writes and saves keep every parent's chunks exact
+
+- **Parents:** ["defra.chunk.write"]
+- **Scenarios:** ["chunk::write_document_api_batch::document_api_batch_writes_keep_each_parents_chunks_exact", "chunk::write_document_api_batch::a_document_api_save_keeps_chunks_exact"]
+
+Adding two articles in one document API call gives the chunks of both texts. An update by filter of one replaces only its chunks, and a delete by filter of each removes only its chunks, until `Article__body_chunk` is empty. A save without a docID creates an article with its chunks, and a save with that docID replaces them. The CLI has no save command, so the save is not checked there.
+
+# `defra.chunk.write.encrypted`: An encrypted text gives encrypted chunks
+
+- **Parents:** ["defra.chunk.write"]
+- **Scenarios:** ["chunk::write_encrypted::an_encrypted_field_gives_encrypted_chunks", "chunk::write_encrypted::an_encrypted_document_gives_encrypted_chunks"]
+
+An article added with `body` encrypted, or with the whole document encrypted, has a chunk whose `text` reads in the clear and whose stored `text` delta in `_commits` is not the plain encoding of the text. After an update of the body without encryption options, the new chunk's stored `text` is still encrypted.
+
+# `defra.chunk.write.events`: A parent write publishes its chunks
+
+- **Parents:** ["defra.chunk.write"]
+- **Scenarios:** ["chunk::write_events::a_parent_create_publishes_its_chunks"]
+
+A GraphQL subscription on `Article__body_chunk { text }` gets one event for each of the three chunks of a new three-paragraph article. The CLI has no subscription stream, so this is not checked there.
 
 # `defra.chunk.write.revert`: Changing a text back shows the original chunks again
 
@@ -151,16 +186,16 @@ With `@chunk(maxChars: 160)` and a 40-paragraph body, changing one word in parag
 # `defra.chunk.write.signed`: A node that signs its blocks keeps the chunks exact
 
 - **Parents:** ["defra.chunk.write"]
-- **Scenarios:** ["chunk::write_signed::a_signing_node_stores_the_list_of_the_first_update", "chunk::write_signed::a_signing_node_stores_the_lists_of_an_array_create", "chunk::write_signed::a_signing_node_stores_the_list_of_an_upsert_create"]
+- **Scenarios:** ["chunk::write_signed::a_signing_node_keeps_the_chunks_of_the_first_update", "chunk::write_signed::a_signing_node_keeps_the_chunks_of_an_array_create", "chunk::write_signed::a_signing_node_keeps_the_chunks_of_an_upsert_create"]
 
-On a node that signs its blocks, creating an `Article` with a six-paragraph body gives a signed `_body_chunks` block. Updating the body to four paragraphs then gives a `_body_chunks` list of five hashes: the whole text's, then the four chunks'. `Article__body_chunk` holds exactly those four. The same update gives a list of five hashes for each article of a two-article `add_Article` and for an article an `upsert_Article` created.
+On a node that signs its blocks, creating an `Article` with a six-paragraph body gives a signed `body` block. Updating the body to four paragraphs then leaves exactly the four chunks of the new text, and the `text` block of a chunk is not signed, so every node gives the chunk of one text the same `_docID`. The same update leaves exactly the new chunks for each article of a two-article `add_Article` and for an article an `upsert_Article` created.
 
 # `defra.chunk.write.concurrent`: Concurrent writes leave the chunks of the winning text
 
 - **Parents:** ["defra.chunk.write"]
 - **Scenarios:** ["chunk::write_concurrent::concurrent_updates_leave_the_chunks_of_the_winning_text", "chunk::write_concurrent::concurrent_updates_and_a_delete_leave_no_stray_chunk"]
 
-After eight updates of one article run at the same time, `body` is the text of one of them, `_body_chunks` has one hash for the text and one per paragraph, and `Article__body_chunk` holds exactly the paragraphs of that text, each with its blank line except the last. After six such updates and a delete run at the same time, either the article and all its chunks are gone, or the state is that of one winning update. The text the article started with never remains.
+After eight updates of one article run at the same time, `body` is the text of one of them, and `Article__body_chunk` holds exactly the paragraphs of that text, each with its blank line except the last. After six such updates and a delete run at the same time, either the article and all its chunks are gone, or the state is that of one winning update. The text the article started with never remains.
 
 # `defra.chunk.purge`: Removing a parent removes its chunks
 
@@ -171,9 +206,16 @@ Chunks live only as long as the parent that has them.
 # `defra.chunk.purge.truncate`: Truncating the parent empties its chunks
 
 - **Parents:** ["defra.chunk.purge"]
-- **Scenarios:** ["chunk::purge_truncate::truncating_the_parent_empties_its_chunks"]
+- **Scenarios:** ["chunk::purge_truncate::truncating_the_parent_empties_its_chunks", "chunk::purge_truncate::a_filtered_truncate_empties_only_the_matching_parents_chunks"]
 
-After truncating `Article`, `Article__body_chunk` is empty.
+After truncating `Article`, `Article__body_chunk` is empty. A truncate filtered on one article's title leaves only the other article's chunks.
+
+# `defra.chunk.purge.docs`: Purging a parent removes its chunks
+
+- **Parents:** ["defra.chunk.purge"]
+- **Scenarios:** ["chunk::purge_docs::purging_a_parent_removes_only_its_chunks"]
+
+Purging one of two articles by docID purges one document and leaves only the other article's chunks.
 
 # `defra.chunk.replicate`: Chunks replicate with the parent
 
@@ -186,7 +228,7 @@ A peer gets the same chunk documents as the node that wrote them.
 - **Parents:** ["defra.chunk.replicate"]
 - **Scenarios:** ["chunk::replicate_chunks::a_peer_has_the_same_chunk_documents"]
 
-With `Article` and `Article__body_chunk` replicated from one node to another, an article created on the first shows the same `_body_chunks` list and the same chunk hashes on the second. After an update to a shorter text, the second node shows the new list and exactly the new chunks.
+With `Article` and `Article__body_chunk` replicated from one node to another, an article created on the first shows the same chunk hashes on the second. After an update to a shorter text, the second node shows exactly the new chunks.
 
 # `defra.chunk.replicate.delete`: A parent delete replicates with its chunks
 
@@ -200,27 +242,62 @@ After an article and its chunks reach the second node, deleting the article on t
 - **Parents:** ["defra.chunk.replicate"]
 - **Scenarios:** ["chunk::replicate_parent_only::a_replicator_of_the_parent_ships_its_chunks"]
 
-A replicator set up for `Article` alone gives the second node the same `_body_chunks` list and exactly the same chunks. The CLI sets the replicator with `--collection Article`.
+A replicator set up for `Article` alone gives the second node exactly the same chunks. The CLI sets the replicator with `--collection Article`.
 
-# `defra.chunk.replicate.filtered`: A filtered replicator ships the chunks of the parents it matches
+# `defra.chunk.replicate.concurrent`: Peers that edit apart end with the chunks of the merged text
 
 - **Parents:** ["defra.chunk.replicate"]
-- **Scenarios:** ["chunk::replicate_filtered::a_filtered_replicator_ships_the_chunks_of_a_matching_parent", "chunk::replicate_filtered::a_filtered_replicator_ships_the_new_chunks_of_an_edited_matching_parent", "chunk::replicate_filtered::a_filtered_replicator_replays_the_chunks_of_existing_matching_parents", "chunk::replicate_filtered::a_matching_parent_delete_removes_its_chunks_on_the_filtered_peer", "chunk::replicate_filtered::an_unmatched_parent_edit_and_delete_send_nothing", "chunk::replicate_filtered::an_explicit_transaction_ships_the_chunks_of_a_matching_parent", "chunk::replicate_filtered::an_explicit_transaction_edit_and_delete_reach_the_filtered_peer"]
+- **Scenarios:** ["chunk::replicate_concurrent::peers_that_edit_apart_end_with_the_chunks_of_the_merged_text", "chunk::replicate_concurrent::a_peer_that_merges_a_newer_text_builds_its_chunks"]
 
-With `type Article { kind: String @immutable body: String @chunk(maxChars: 64) }` and a replicator for `Article` with the filter `{"kind": {"_eq": "public"}}`, a public article written on the first node reaches the second with the same `_body_chunks` list and exactly its chunks, and a secret article never reaches it. After an edit the second node shows the new list and exactly the new chunks, and after a delete it shows no article and no chunks. This holds for single writes, for writes in an explicit transaction, and for articles that existed before the replicator was added. Editing and deleting a secret article sends nothing: once a later public article arrives, the second node shows only the public articles. The CLI sets the filter with `--filter`. Go has no filtered replicators, so a Go node reports these scenarios as unsupported.
+Two unconnected nodes add the same article. One updates its body to three paragraphs about `north`, the other to three about `south`. After they connect and each syncs the article from the other, both show the `south` body and exactly its chunks. A node that syncs a newer body it has no chunks for shows that body and exactly its chunks.
+
+# `defra.chunk.replicate.signed`: Signing peers that write the same text show each chunk once
+
+- **Parents:** ["defra.chunk.replicate"]
+- **Scenarios:** ["chunk::replicate_signed::signing_peers_that_write_the_same_text_show_each_chunk_once"]
+
+Two nodes that sign their blocks share an article. While disconnected, both update its body to the same three paragraphs. After they reconnect and the second syncs the article and the first node's chunk documents, the second shows the body and exactly its three chunks, each once.
+
+# `defra.chunk.replicate.doc_sync`: A document sync brings the parent's chunks
+
+- **Parents:** ["defra.chunk.replicate"]
+- **Scenarios:** ["chunk::replicate_doc_sync::a_document_sync_brings_the_parents_chunks"]
+
+A second node that syncs one article by its docID from the first gets the article and exactly its chunks in `Article__body_chunk`.
+
+# `defra.chunk.replicate.filtered`: A filtered replicator ships a matching parent's chunks
+
+- **Parents:** ["defra.chunk.replicate"]
+- **Scenarios:** ["chunk::replicate_filtered::a_filtered_replicator_ships_the_matching_parents_chunks", "chunk::replicate_filtered::a_filtered_replicator_replays_the_matching_parents_chunks", "chunk::replicate_filtered::a_filtered_replicator_ships_the_new_chunks_of_an_edited_matching_parent", "chunk::replicate_filtered::a_matching_parent_delete_removes_its_chunks_on_the_filtered_peer", "chunk::replicate_filtered::an_unmatched_parent_edit_and_delete_send_nothing", "chunk::replicate_filtered::an_explicit_transaction_ships_the_chunks_of_a_matching_parent", "chunk::replicate_filtered::an_explicit_transaction_edit_and_delete_reach_the_filtered_peer"]
+
+With `type Article { kind: String @immutable body: String @chunk(maxChars: 64) }` and a replicator for `Article` with the filter `{kind: {_eq: "public"}}`, the second node gets the public article and exactly its chunks, and neither the secret article nor its chunks. It holds whether the articles are written after the replicator is added or before, when adding it replays them, and for writes in an explicit transaction. After an edit the second node shows exactly the new text's chunks, and after a delete it shows no article and no chunks. Editing and deleting a secret article sends nothing: once a later public article arrives, the second node shows only it and its chunks. The CLI sets the filter with `--filter`. Go has no filtered replicators, so a Go node reports these scenarios as unsupported.
+
+# `defra.chunk.replicate.filtered.negative`: A negative filter decides a chunk by its parent
+
+- **Parents:** ["defra.chunk.replicate.filtered"]
+- **Scenarios:** ["chunk::replicate_filtered::a_negative_filter_ships_only_the_chunks_of_the_parents_it_matches", "chunk::replicate_filtered::a_negative_filter_replays_only_the_chunks_of_the_parents_it_matches", "chunk::replicate_filtered::a_negative_filter_retries_only_the_chunks_of_the_parents_it_matches"]
+
+A chunk has none of its parent's fields, so with the filter `{kind: {_ne: "secret"}}` every chunk would pass on its own document. The second node still gets only the public article's chunks and none of the secret article's: when the articles are written after the replicator is added, when adding it replays them, and when the second node was offline and the first retries the pushes once it is back.
+
+# `defra.chunk.replicate.filtered.chunk_filter`: A replicator filter on a chunk collection is refused
+
+- **Parents:** ["defra.chunk.replicate.filtered"]
+- **Scenarios:** ["chunk::replicate_filtered::a_replicator_filter_on_a_chunk_collection_is_refused"]
+
+Adding a replicator for `Article__body_chunk` with a filter fails with `a replicator filter can't name chunk collection 'Article__body_chunk': filter its parent 'Article', whose filter decides its chunks`. The parent's filter is the only one that decides a chunk.
 
 # `defra.chunk.backup`: Backups and chunks
 
 - **Parents:** ["defra.chunk"]
 
-A backup holds the parent's text and not its chunks.
+A backup holds the parent's text. It holds the chunks only when they carry vectors (`defra.chunk.embed.backup`), so a restore doesn't embed them again.
 
 # `defra.chunk.backup.round_trip`: A backup round trip rebuilds the chunks
 
 - **Parents:** ["defra.chunk.backup"]
 - **Scenarios:** ["chunk::backup_round_trip::a_backup_round_trip_rebuilds_the_chunks"]
 
-Exporting a database with one article gives exactly `{"Article":[{"_docID":"<id>","_docIDNew":"<id>","body":"<text>","title":"t"}]}`: no chunk collection and no `_body_chunks`. Importing that content into an empty node with the same schema gives the same `_body_chunks` list and exactly the same chunks.
+Exporting a database with one article gives exactly `{"Article":[{"_docID":"<id>","_docIDNew":"<id>","body":"<text>","title":"t"}]}`: no chunk collection. Importing that content into an empty node with the same schema gives exactly the same chunks.
 
 # `defra.chunk.access`: Access to chunks follows the parent
 
@@ -241,3 +318,107 @@ An article created by Alice under a policy shows its chunks to Alice: `Article__
 - **Scenarios:** ["chunk::access_grant::a_reader_of_the_parent_sees_its_chunks_until_it_is_deleted"]
 
 After Alice adds the `reader` relation on her article for Bob, Bob sees the same chunks as Alice and their `_commits`. After Alice deletes the article, she sees no chunks and `_commits` of a chunk is empty.
+
+# `defra.chunk.embed`: Embedding chunks
+
+- **Parents:** ["defra.chunk"]
+
+An `@embedding` of a `@chunk` field gives every chunk its own vector, made from the chunk's text before the write's transaction.
+
+# `defra.chunk.embed.declare`: The embedding lives on the chunks
+
+- **Parents:** ["defra.chunk.embed"]
+- **Scenarios:** ["chunk::embed_declare::the_embedding_moves_from_the_parent_to_its_chunks"]
+
+With `body: String @chunk` and `body_v: [Float32!] @embedding(fields: ["body"], ...) @index(vector: {dimensions: 3})` on `Article`, the field `body_v`, its embedding and its vector index belong to `Article__body_chunk`, embedding the chunk's `text`. `Article__body_chunk { body_v }` returns `[]` before any document is added. `Article` has no `body_v`, so `SIMILARITY(body_v: ...)` on `Article` fails with `Unknown argument "body_v" on field "SIMILARITY" of type "Article"`; a similarity search over passages queries `Article__body_chunk`.
+
+# `defra.chunk.embed.declare_only_field`: The embedding embeds the chunked field alone
+
+- **Parents:** ["defra.chunk.embed"]
+- **Scenarios:** ["chunk::embed_declare::an_embedding_of_a_chunked_field_and_another_is_refused", "chunk::embed_declare::a_template_embedding_of_a_chunked_field_is_refused"]
+
+Adding `Article` with `body_v: [Float32!] @embedding(fields: ["title", "body"], ...)` over the chunked `body` fails with `@embedding over a @chunk field must embed only that field. Field: Article.body_v`. An embedding whose `template` reads the chunked field, like `{{ .body }}`, fails the same way.
+
+# `defra.chunk.embed.patch`: A patch cannot move or change a chunk embedding
+
+- **Parents:** ["defra.chunk.embed"]
+- **Scenarios:** ["chunk::embed_patch::a_patch_cannot_move_or_change_a_chunk_embedding"]
+
+Replacing the model of `/Article__body_chunk/VectorEmbeddings/0`, or removing it, fails with `a generated chunk collection's embeddings cannot be mutated. Collection: Article__body_chunk`. Adding to `/Article/VectorEmbeddings` an embedding whose `Fields` name `body` fails with `an embedding over a chunked field belongs to its chunk collection. Field: Article.title`.
+
+# `defra.chunk.embed.chunks`: Each chunk is embedded on its own text
+
+- **Parents:** ["defra.chunk.embed"]
+- **Scenarios:** ["chunk::embed_chunks::each_chunk_is_embedded_on_its_own_text"]
+
+Creating an article with four paragraphs asks the model to embed each chunk's text, followed by a newline, once. Every chunk of `Article__body_chunk` then holds the vector the model gave for its text. A chunk's `_docID` is derived from its content, its vector included, so the same text embedded by another model gets another `_docID`.
+
+# `defra.chunk.embed.edit`: An edit embeds only the chunks it changes
+
+- **Parents:** ["defra.chunk.embed"]
+- **Scenarios:** ["chunk::embed_chunks::editing_one_paragraph_embeds_only_its_new_chunk"]
+
+After an article with four paragraphs is created, changing its second paragraph sends the model that one new chunk's text. The chunks are then the three unchanged ones with their old vectors and the new one with its own.
+
+# `defra.chunk.embed.transaction`: A create in an explicit transaction embeds its chunks
+
+- **Parents:** ["defra.chunk.embed"]
+- **Scenarios:** ["chunk::embed_transaction::an_explicit_transaction_embeds_its_chunks"]
+
+Creating an article inside an explicit transaction and committing it asks the model for each chunk once, and every chunk holds its vector.
+
+# `defra.chunk.embed.replicate`: A peer gets the vectors with the chunks
+
+- **Parents:** ["defra.chunk.embed"]
+- **Scenarios:** ["chunk::embed_replicate::a_peer_gets_the_vectors_without_calling_the_model"]
+
+With `Article` and `Article__body_chunk` replicated from one node to another, an article created on the first gives the second the same chunks with the same vectors. The model is asked only by the first node, once per chunk. The second node builds none of these chunks itself when it merges the article, so it holds each chunk once.
+
+# `defra.chunk.embed.search`: Passage search ranks chunks across articles
+
+- **Parents:** ["defra.chunk.embed"]
+- **Scenarios:** ["chunk::embed_search::passage_search_ranks_chunks_across_articles"]
+
+With three articles about engines, rivers and music, `Article__body_chunk(order: {_alias: {sim: DESC}}, limit: 2) { text sim: SIMILARITY(body_v: {vector: [1, 0, 0]}) source { title } }` returns the two chunks of the rivers article, each with similarity 1 and `source { title }` `rivers`.
+
+# `defra.chunk.embed.search_access`: Passage search shows only chunks the reader may read
+
+- **Parents:** ["defra.chunk.embed"]
+- **Scenarios:** ["chunk::embed_search::passage_search_shows_only_chunks_of_readable_articles"]
+
+Under a local policy, with Alice's article about rivers and a public article about engines created with no identity, the same search returns Alice's two chunks to Alice, and the public article's two chunks, with similarity 0, to Bob and to a request with no identity.
+
+# `defra.chunk.embed.failure`: A failing model fails the write
+
+- **Parents:** ["defra.chunk.embed"]
+- **Scenarios:** ["chunk::embed_failure::a_failing_model_fails_the_write_and_stores_nothing"]
+
+While the model answers every request with 500, adding an article fails with `embedding error: embedding provider returned 500 Internal Server Error`, and afterwards `Article` and `Article__body_chunk` are both empty.
+
+# `defra.chunk.embed.backup`: A backup keeps the chunk vectors
+
+- **Parents:** ["defra.chunk.embed"]
+- **Scenarios:** ["chunk::embed_backup::importing_a_backup_keeps_the_chunk_vectors"]
+
+A backup of `Article` also holds `Article__body_chunk`: each current chunk's `text` once, with its `body_v`. Importing it into a second node while that node's model answers every request with 500 succeeds and asks the model for nothing. Every chunk there holds the vector from the backup, under the same `_docID` it has on the first node.
+
+# `defra.chunk.embed.backup_reembeds`: A backup without chunk vectors embeds the chunks again
+
+- **Parents:** ["defra.chunk.embed"]
+- **Scenarios:** ["chunk::embed_backup::importing_a_backup_without_vectors_embeds_the_chunks_again", "chunk::embed_backup::importing_a_backup_without_vectors_while_the_model_fails_reports_it"]
+
+Importing a backup whose `Article` has a body and which holds no `Article__body_chunk` asks the node's model for each chunk once, and every chunk holds its vector. While the model answers with 500, the import fails with `embedding error: embedding provider returned 500 Internal Server Error`, and the node has no `Article` and no chunks.
+
+# `defra.chunk.embed.encrypted`: An encrypted article's chunks get their vectors
+
+- **Parents:** ["defra.chunk.embed"]
+- **Scenarios:** ["chunk::embed_writes::an_encrypted_article_gets_its_chunk_vectors"]
+
+Adding an article with `body` encrypted asks the model for each chunk once, and every chunk holds its vector.
+
+# `defra.chunk.embed.upsert`: An upsert embeds the chunks it creates
+
+- **Parents:** ["defra.chunk.embed"]
+- **Scenarios:** ["chunk::embed_writes::an_upsert_embeds_the_chunks_it_creates"]
+
+An `upsert_Article` that finds no article creates one, asks the model for each of its chunks once, and every chunk holds its vector.

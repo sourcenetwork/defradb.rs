@@ -33,7 +33,7 @@ file proves, for any number of pools and calls, the laws one call obeys and
 what a whole sequence of calls leaves behind.
 
 Rust anchors: `DefaultPool::register` and `running` in
-`crates/workers/src/pool/default.rs` (a kovan `Atom` load and
+`crates/foundation/workers/src/pool/default.rs` (a kovan `Atom` load and
 `compare_and_swap`, an `Arc::ptr_eq`, a `Weak::upgrade` and an `is_closing`
 load), modeled here as their sequential meaning. Which pools run is a fixed
 function during the calls: a pool that stopped never runs again.

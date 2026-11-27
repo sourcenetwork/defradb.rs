@@ -1,0 +1,350 @@
+//! Constructor methods for the sync coordinator.
+
+use std::sync::atomic::AtomicU64;
+use std::sync::Arc;
+use std::time::Duration;
+
+use crate::rt::mpsc;
+use blockstore::Blockstore;
+
+#[cfg(feature = "libp2p-transport")]
+use super::authorizer::AccessAuthorizer;
+use super::authorizer::RuntimeAuthorizer;
+use super::{
+    DagFetchLimiter, SyncAccessState, SyncCoordinator, SyncRuntime, SyncSubscriptionState,
+};
+use crate::bitswap::{
+    AccessMode, BlockClassifier, DefaultBlockClassifier, LateBoundServeAcp, ReplicatorRegistry,
+};
+use crate::error::Result;
+use crate::network::Network;
+use crate::replicator::{EqOnlyFilterMatcher, ReplicationFilterMatcher};
+use crate::sync::broadcaster::Broadcaster;
+use crate::sync::collection_store::{MemoryCollectionStorage, P2PCollectionStorage};
+use crate::sync::head_provider::{DocumentHeadProvider, NoOpHeadProvider};
+use crate::sync::manager::{
+    SyncConfig, SyncEventReceiver, SyncManager, DEFAULT_MAX_DOC_SYNC_REQUEST_DOC_IDS,
+    DEFAULT_PUSH_SEND_TIMEOUT,
+};
+use crate::sync::peer_state::PeerStateTracker;
+use crate::sync::rate_limiter::PeerRateLimiter;
+use crate::transport::P2PTransport;
+
+impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
+    /// Create a new sync coordinator with default Open access mode.
+    ///
+    /// Returns the coordinator and a receiver for sync events.
+    pub async fn new(
+        transport: T,
+        blockstore: Arc<B>,
+        network: Network,
+        config: SyncConfig,
+    ) -> Result<(Self, SyncEventReceiver)> {
+        Self::with_access_control(
+            transport,
+            blockstore,
+            network,
+            config,
+            AccessMode::Open,
+            Arc::new(ReplicatorRegistry::new()),
+            Arc::new(MemoryCollectionStorage::default()),
+            Arc::new(EqOnlyFilterMatcher),
+        )
+        .await
+    }
+
+    /// Create a new sync coordinator with a collection store for persistence.
+    ///
+    /// Returns the coordinator and a receiver for sync events.
+    pub async fn with_collection_store(
+        transport: T,
+        blockstore: Arc<B>,
+        network: Network,
+        config: SyncConfig,
+        access_mode: AccessMode,
+        collection_store: Arc<dyn P2PCollectionStorage>,
+    ) -> Result<(Self, SyncEventReceiver)> {
+        Self::with_access_control(
+            transport,
+            blockstore,
+            network,
+            config,
+            access_mode,
+            Arc::new(ReplicatorRegistry::new()),
+            collection_store,
+            Arc::new(EqOnlyFilterMatcher),
+        )
+        .await
+    }
+
+    /// Create a new sync coordinator with access control.
+    ///
+    /// Returns the coordinator and a receiver for sync events.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn with_access_control(
+        transport: T,
+        blockstore: Arc<B>,
+        network: Network,
+        config: SyncConfig,
+        access_mode: AccessMode,
+        replicators: Arc<ReplicatorRegistry>,
+        collection_store: Arc<dyn P2PCollectionStorage>,
+        filter_matcher: Arc<dyn ReplicationFilterMatcher>,
+    ) -> Result<(Self, SyncEventReceiver)> {
+        Self::with_access_control_and_serve_gate(
+            transport,
+            blockstore,
+            network,
+            config,
+            access_mode,
+            replicators,
+            collection_store,
+            filter_matcher,
+            Arc::new(DefaultBlockClassifier),
+            #[cfg_attr(target_arch = "wasm32", allow(clippy::arc_with_non_send_sync))]
+            Arc::new(LateBoundServeAcp::new()),
+        )
+        .await
+    }
+
+    /// Create a new sync coordinator with access control and explicit serve gate.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn with_access_control_and_serve_gate(
+        transport: T,
+        blockstore: Arc<B>,
+        network: Network,
+        config: SyncConfig,
+        access_mode: AccessMode,
+        replicators: Arc<ReplicatorRegistry>,
+        collection_store: Arc<dyn P2PCollectionStorage>,
+        filter_matcher: Arc<dyn ReplicationFilterMatcher>,
+        classifier: Arc<dyn BlockClassifier>,
+        serve_acp: Arc<LateBoundServeAcp>,
+    ) -> Result<(Self, SyncEventReceiver)> {
+        Self::with_head_provider_and_serve_gate(
+            transport,
+            blockstore,
+            network,
+            config,
+            access_mode,
+            replicators,
+            collection_store,
+            Arc::new(NoOpHeadProvider),
+            filter_matcher,
+            classifier,
+            serve_acp,
+        )
+        .await
+    }
+
+    /// Create a new sync coordinator with a document head provider for DocSync.
+    ///
+    /// Returns the coordinator and a receiver for sync events.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn with_head_provider(
+        transport: T,
+        blockstore: Arc<B>,
+        network: Network,
+        config: SyncConfig,
+        access_mode: AccessMode,
+        replicators: Arc<ReplicatorRegistry>,
+        collection_store: Arc<dyn P2PCollectionStorage>,
+        head_provider: Arc<dyn DocumentHeadProvider>,
+        filter_matcher: Arc<dyn ReplicationFilterMatcher>,
+    ) -> Result<(Self, SyncEventReceiver)> {
+        Self::with_head_provider_and_serve_gate(
+            transport,
+            blockstore,
+            network,
+            config,
+            access_mode,
+            replicators,
+            collection_store,
+            head_provider,
+            filter_matcher,
+            Arc::new(DefaultBlockClassifier),
+            #[cfg_attr(target_arch = "wasm32", allow(clippy::arc_with_non_send_sync))]
+            Arc::new(LateBoundServeAcp::new()),
+        )
+        .await
+    }
+
+    /// Create a new sync coordinator with a document head provider and explicit serve gate.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn with_head_provider_and_serve_gate(
+        transport: T,
+        blockstore: Arc<B>,
+        network: Network,
+        config: SyncConfig,
+        access_mode: AccessMode,
+        replicators: Arc<ReplicatorRegistry>,
+        collection_store: Arc<dyn P2PCollectionStorage>,
+        head_provider: Arc<dyn DocumentHeadProvider>,
+        filter_matcher: Arc<dyn ReplicationFilterMatcher>,
+        classifier: Arc<dyn BlockClassifier>,
+        serve_acp: Arc<LateBoundServeAcp>,
+    ) -> Result<(Self, SyncEventReceiver)> {
+        let local_peer_id = transport.local_peer_id().to_string();
+        let broadcaster = Broadcaster::new(transport.clone());
+        let peer_state = Arc::new(PeerStateTracker::new());
+        let max_dag_fetches = config.max_concurrent_dag_fetches.max(1);
+        let max_push_tasks = config.max_concurrent_push_tasks.max(1);
+        let push_backlog = crate::sync::push_backlog::PushBacklog::new(
+            config.push_queue_capacity,
+            config.push_queue_byte_capacity,
+            config.max_active_pushes_per_peer,
+            max_push_tasks,
+            network.edge().clone(),
+        );
+        let broadcast_coalescer =
+            Arc::new(crate::sync::broadcast_coalescer::BroadcastCoalescer::default());
+        #[cfg_attr(target_arch = "wasm32", allow(clippy::arc_with_non_send_sync))]
+        let selective_car_access =
+            Arc::new(super::selective_car_access::SelectiveCarAccess::default());
+        let rate_limit_burst = config.rate_limit_burst;
+        let rate_limit_rate = config.rate_limit_rate;
+        let rate_limit_backoff = config.rate_limit_backoff.clone();
+        let max_doc_sync_request_doc_ids =
+            resolve_max_doc_sync_request_doc_ids(config.max_doc_sync_request_doc_ids);
+        let push_send_timeout = if config.push_send_timeout.is_zero() {
+            DEFAULT_PUSH_SEND_TIMEOUT
+        } else {
+            config.push_send_timeout.max(Duration::from_millis(1))
+        };
+        let broadcast_wait_deadline = config.broadcast_wait_deadline;
+        #[cfg_attr(target_arch = "wasm32", allow(clippy::arc_with_non_send_sync))]
+        let broadcast_room = Arc::new(super::broadcast_room::BroadcastRoom::new(
+            config.broadcast_pending_bytes,
+        ));
+        let (manager, events) =
+            SyncManager::new(Arc::clone(&blockstore), peer_state.clone(), config);
+        manager
+            .diagnostics()
+            .dag_fetch_logs()
+            .use_network(network.clone());
+
+        let authorizer = Arc::new(RuntimeAuthorizer::new(
+            transport.clone(),
+            Arc::clone(&peer_state),
+            Arc::clone(&replicators),
+            access_mode,
+        ));
+        #[cfg(feature = "libp2p-transport")]
+        let pubsub_services = super::pubsub_services::PubsubServices::try_new(
+            &local_peer_id,
+            Arc::clone(&head_provider),
+            Arc::clone(&authorizer) as Arc<dyn AccessAuthorizer>,
+            max_doc_sync_request_doc_ids,
+        );
+
+        let failure_tx: Arc<kovan::AtomOption<mpsc::Sender<super::PushFailure>>> =
+            Arc::new(kovan::AtomOption::none());
+        let shutdown = super::SyncShutdownHandle::new(max_dag_fetches, network);
+        let collections = super::subscriptions::CollectionSubscriptions::new(
+            collection_store,
+            broadcaster.clone(),
+            shutdown.clone(),
+        );
+        super::push_worker::spawn_push_workers(
+            Arc::new(super::push_worker::PushWorkerContext {
+                transport: transport.clone(),
+                backlog: Arc::clone(&push_backlog),
+                selective_car_access: Arc::clone(&selective_car_access),
+                failure_tx: Arc::clone(&failure_tx),
+                send_timeout: push_send_timeout,
+                peer_state: Arc::clone(&peer_state),
+                head_provider: Arc::clone(&head_provider),
+            }),
+            &shutdown,
+        );
+        // The gossip lane is a fixed coordinator task like the push workers,
+        // so it is running before the first write, not started by it.
+        broadcast_room.start(&shutdown);
+
+        Ok((
+            Self {
+                runtime: SyncRuntime {
+                    transport,
+                    broadcaster,
+                    failure_tx,
+                    dag_fetch_limiter: DagFetchLimiter::new(max_dag_fetches),
+                    push_backlog,
+                    broadcast_coalescer,
+                    selective_car_access,
+                    rate_limiter: Arc::new(PeerRateLimiter::with_backoff_steps(
+                        rate_limit_burst,
+                        rate_limit_rate,
+                        rate_limit_backoff,
+                    )),
+                    request_rate_limiter: Arc::new(PeerRateLimiter::new_request_paced(
+                        rate_limit_burst,
+                        rate_limit_rate,
+                    )),
+                    max_doc_sync_request_doc_ids,
+                    broadcast_wait_deadline,
+                    broadcast_room,
+                    shutdown,
+                    dispatch_diagnostics: Arc::new(crate::sync::DispatchDiagnostics::default()),
+                    filter_matcher,
+                },
+                manager,
+                access: SyncAccessState {
+                    peer_state,
+                    local_peer_id,
+                    access_mode,
+                    replicators,
+                    gossip_direction_filtered: AtomicU64::new(0),
+                    followed_documents: Arc::new(super::FollowedDocuments::with_hasher(
+                        rapidhash::fast::RandomState::default(),
+                    )),
+                    gossip_unfollowed_dropped: std::sync::atomic::AtomicU64::new(0),
+                },
+                subscriptions: SyncSubscriptionState {
+                    collections,
+                    head_provider,
+                },
+                authorizer,
+                classifier,
+                serve_acp,
+                rooted_authorization:
+                    crate::sync::car_authorization::RootedAuthorizationProgress::new(),
+                document_acp: regolith::sync::OnceCell::new(),
+                #[cfg(feature = "kms")]
+                kms_transport: regolith::sync::OnceCell::new(),
+                #[cfg(feature = "libp2p-transport")]
+                pubsub_services,
+            },
+            events,
+        ))
+    }
+
+    /// Set the failure channel for reporting push failures to the FFI layer.
+    pub fn set_failure_channel(&mut self, tx: mpsc::Sender<super::PushFailure>) {
+        self.runtime.failure_tx.store_some(tx);
+    }
+
+    /// A bounded channel of `capacity` push failures, installed as this
+    /// coordinator's failure channel; the receiver is the caller's.
+    pub fn attach_failure_channel(&mut self, capacity: usize) -> super::PushFailureReceiver {
+        let (tx, rx) = mpsc::channel(capacity.max(1));
+        self.set_failure_channel(tx);
+        rx
+    }
+}
+
+/// Resolve the effective DocSync request doc-ID limit from a configured value.
+///
+/// A configured `0` means "use the default" across every entry point
+/// (CLI/config, FFI, embedded, mobile), matching the documented default
+/// behavior. Any other value is used as-is.
+fn resolve_max_doc_sync_request_doc_ids(configured: usize) -> usize {
+    if configured == 0 {
+        tracing::warn!(
+            configured = 0,
+            effective = DEFAULT_MAX_DOC_SYNC_REQUEST_DOC_IDS,
+            "max_doc_sync_request_doc_ids of 0 is invalid, using default"
+        );
+        return DEFAULT_MAX_DOC_SYNC_REQUEST_DOC_IDS;
+    }
+    configured
+}

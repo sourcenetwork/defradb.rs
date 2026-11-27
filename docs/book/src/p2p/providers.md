@@ -6,7 +6,7 @@ How do peers find who has what? Nodes publish **service records**: a signed, exp
 statement of what this node offers (collections with roles Replica/Archive/Reader,
 replicator service, searchable-encryption query service, KMS, relay, custom roles),
 published via pkarr, served on query streams, and announced on a discovery topic
-(`crates/p2p/src/iroh/records/`). Readers keep the newest valid record per node in a
+(`crates/database/p2p/src/iroh/records/`). Readers keep the newest valid record per node in a
 book and pick fetch candidates and gossip neighbours from it. Record freshness,
 fan-in of replies, and the alternate-slot rule for the best provider are modelled:
 the provider record family has TLA+ and Lean proofs (see
@@ -14,13 +14,13 @@ the provider record family has TLA+ and Lean proofs (see
 
 ## Admission: who may connect
 
-- **Allowlists** ([`crates/p2p/src/iroh/endpoint_config.rs`](https://github.com/sourcenetwork/defradb.rs/blob/main/crates/p2p/src/iroh/endpoint_config.rs)): `AcceptAll` (default) or an explicit
+- **Allowlists** ([`crates/database/p2p/src/iroh/endpoint_config.rs`](https://github.com/sourcenetwork/defradb.rs/blob/main/crates/database/p2p/src/iroh/endpoint_config.rs)): `AcceptAll` (default) or an explicit
   endpoint set, mutable at runtime. Removing from the allowlist stops *new* admissions;
   **`PeerAdmission::revoke`** is the operation that actually bars a peer, and the
   admission authority makes revoke -> re-admit a lockstep state machine so a revoked
   peer cannot slip back in through a stale allowlist update.
 - **Peer identity challenges** (optional): bind the Defra identity to the connection.
-- **Inbound budgets** ([`crates/p2p/src/iroh/inbound_budget.rs`](https://github.com/sourcenetwork/defradb.rs/blob/main/crates/p2p/src/iroh/inbound_budget.rs)): concurrent inbound streams are
+- **Inbound budgets** ([`crates/database/p2p/src/iroh/inbound_budget.rs`](https://github.com/sourcenetwork/defradb.rs/blob/main/crates/database/p2p/src/iroh/inbound_budget.rs)): concurrent inbound streams are
   bounded; excess is refused, not queued unboundedly.
 
 ## Trust and capability on the sync path
@@ -30,7 +30,7 @@ data requires membership/subscription and explicit-replay authorization for the
 content; gated serving crosses the read gate (ACP) and block checks, while an open
 access mode or an unfiltered registered replicator is served without them. A
 separate capability regime governs *explicit replay* (re-broadcast of previously seen
-pushes), with its own revocation, modelled in [`crates/p2p/src/explicit_replay.rs`](https://github.com/sourcenetwork/defradb.rs/blob/main/crates/p2p/src/explicit_replay.rs).
+pushes), with its own revocation, modelled in [`crates/database/p2p/src/explicit_replay.rs`](https://github.com/sourcenetwork/defradb.rs/blob/main/crates/database/p2p/src/explicit_replay.rs).
 
 ## Budgets, end to end
 

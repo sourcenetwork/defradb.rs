@@ -1,6 +1,6 @@
 ---- MODULE GovernanceContract ----
 \* The merge-governance contract: what a merge validator plugged into
-\* crates/db/src/merge/governance/ may assume of the database, as an abstract
+\* crates/database/db/src/merge/governance/ may assume of the database, as an abstract
 \* specification.
 \*
 \* This is the SPECIFICATION side of a two-module argument:

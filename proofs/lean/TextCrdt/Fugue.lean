@@ -27,13 +27,13 @@ its parents, positions read in the parent version) is the TLA+ model
 `proofs/tla/TextCrdt.tla`; this file carries the tree laws that model checks
 only on small cases.
 
-Rust anchors, in `crates/crdt/src/fugue.rs`: `Tree::apply` hangs a new
+Rust anchors, in `crates/building-blocks/crdt/src/fugue.rs`: `Tree::apply` hangs a new
 character as `Tree.place` does (`place_visible`, `place_root_first`) and marks a
 deleted one dead as `delete_visible` does; `Tree::attach` keeps siblings
 sorted by ID, block CID then offset, as `Tree.attach` and `insSorted` do
 (`attach_comm`); `Tree::traverse` reads the tree as `Tree.trav` does.
-`replay` builds the tree; `crates/crdt/src/field/text.rs` `TextField` replays
-a field's history with it, and `crates/db/src/merge/merge_handler/field_causal.rs`
+`replay` (`crates/building-blocks/crdt/src/fugue_checkpoint.rs`) builds the tree; `crates/building-blocks/crdt/src/field/text.rs` `TextField` replays
+a field's history with it, and `crates/database/db/src/merge/merge_handler/field_causal.rs`
 `merge_field_causal` merges a received block through it.
 -/
 

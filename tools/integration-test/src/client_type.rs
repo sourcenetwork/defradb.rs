@@ -1,5 +1,4 @@
 use std::path::PathBuf;
-use std::process::Command;
 
 use serde::{Deserialize, Serialize};
 use testo::prelude::*;
@@ -24,9 +23,8 @@ pub(crate) enum GoBinaryError {
     #[error("DEFRA_GO_BINARY={path} did not run `version`: {reason}")]
     Configured { path: String, reason: String },
     #[error(
-        "no runnable Go defradb binary found (tried {tried}). Set DEFRA_GO_BINARY, or build the \
-         pinned commit: git clone https://github.com/sourcenetwork/defradb && cd defradb && \
-         git checkout 53f0e76a3 && make build (see .github/workflows/ci.yml)"
+        "no runnable Go defradb binary found (tried {tried}). Set DEFRA_GO_BINARY, or run \
+         `just setup-go-defradb` for the pinned baseline"
     )]
     NotFound { tried: String },
 }
@@ -71,7 +69,8 @@ impl Multiplier<Actions> for ClientType {
     }
 }
 
-/// `DEFRA_GO_BINARY`, else `~/go/bin/defradb`, else `defradb` on the PATH:
+/// `DEFRA_GO_BINARY`, else the pinned baseline in the harness cache, else
+/// `~/go/bin/defradb`, else `defradb` on the PATH:
 /// the first that runs `version`. The version line goes to the test log.
 pub(crate) fn go_binary() -> Result<PathBuf, GoBinaryError> {
     if let Some(path) = std::env::var_os("DEFRA_GO_BINARY") {
@@ -84,10 +83,19 @@ pub(crate) fn go_binary() -> Result<PathBuf, GoBinaryError> {
             }),
         };
     }
-    let home = std::env::var("HOME").unwrap_or_default();
+    let home = PathBuf::from(std::env::var("HOME").unwrap_or_default());
     let path_var = std::env::var_os("PATH").unwrap_or_default();
     let on_path = std::env::split_paths(&path_var).map(|dir| dir.join("defradb"));
-    let candidates = std::iter::once(PathBuf::from(home).join("go/bin/defradb")).chain(on_path);
+    let candidates = [
+        crate::cached_go_compat_binary(
+            &home,
+            defra_version::GO_COMPAT_TAG,
+            defra_version::GO_COMPAT_COMMIT,
+        ),
+        home.join("go/bin/defradb"),
+    ]
+    .into_iter()
+    .chain(on_path);
     let mut tried = Vec::new();
     for path in candidates {
         match version(&path) {
@@ -106,7 +114,7 @@ fn announce(path: PathBuf, line: String) -> PathBuf {
 }
 
 fn version(path: &PathBuf) -> Result<String, String> {
-    let output = Command::new(path)
+    let output = crate::cli_command(path)
         .arg("version")
         .output()
         .map_err(|e| e.to_string())?;

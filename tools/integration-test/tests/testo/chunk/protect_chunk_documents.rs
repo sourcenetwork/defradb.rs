@@ -44,7 +44,7 @@ fn chunk_documents_and_settings_are_read_only() {
         .into(),
         Truncate {
             collection: CHUNKS.into(),
-            expected_error: Some("Article__body_chunk holds generated chunks and is emptied only with its parent".into()),
+            expected_error: Some("Article__body_chunk holds the chunks of Article.body and is changed only through Article".into()),
             ..Default::default()
         }
         .into(),
@@ -61,16 +61,6 @@ fn chunk_documents_and_settings_are_read_only() {
             )
             .into(),
             expected_error: Some("Article__body_chunk holds the chunks of Article.body and is written only by writes to Article".into()),
-            ..Default::default()
-        }
-        .into(),
-        Request {
-            request: Text::concat([
-                Text::from(r#"mutation { update_Article(docID: ""#),
-                Text::reference("article"),
-                Text::from(r#"", input: {_body_chunks: ["forged"]}) { _docID } }"#),
-            ]),
-            expected_error: Some("Article._body_chunks is read-only: it is set from body by every write that changes it".into()),
             ..Default::default()
         }
         .into(),

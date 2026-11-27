@@ -22,8 +22,9 @@ theorem connection_does_not_grant_push : mayPush false = false := rfl
 end PeerConnection
 
 /- endpoint_rpc::remember_connection keys an authenticated handle by its own
-   remote peer. endpoint_streams::handle_incoming publishes that handle before
-   rechecking admission. These rules choose a path; they confer no authority.
+   remote peer. endpoint_streams::adopt_new_connection publishes that handle
+   before rechecking admission, and endpoint_rpc::restore_displaced_connection
+   puts back what a refused publish displaced. These rules choose a path; they confer no authority.
    The cache below names handles, while `usable` separately observes closure. -/
 namespace PeerConnection.SharedRpc
 
@@ -137,5 +138,33 @@ theorem old_failure_preserves_replacement (old fresh : Nat) (different : fresh â
 theorem closed_selected_is_removed (handle : Nat) : evict (some handle) handle = none := by
   -- The selected stable id matches the closed handle, so its entry is retired.
   simp [evict]
+
+-- Evict the refused handle even when nothing was displaced. Restore a
+-- displaced handle only while it is open and only into an empty slot.
+def restore (slot : Option Nat) (refused : Nat) (displaced : Option Nat)
+    (displacedOpen : Bool) : Option Nat :=
+  let remaining := evict slot refused
+  if displacedOpen then remaining.or displaced else remaining
+
+-- An open displaced sibling fills the slot left by the refused handle.
+theorem refusal_restores_sibling (refused sibling : Nat) :
+    restore (some refused) refused (some sibling) true = some sibling := by
+  simp [restore, evict, Option.or]
+
+-- No displaced handle does not leave the refused handle in the cache.
+theorem refusal_without_displaced_evicts (refused : Nat) (isOpen : Bool) :
+    restore (some refused) refused none isOpen = none := by
+  cases isOpen <;> simp [restore, evict, Option.or]
+
+-- A closed displaced sibling is not reinserted.
+theorem closed_sibling_not_restored (refused sibling : Nat) :
+    restore (some refused) refused (some sibling) false = none := by
+  simp [restore, evict]
+
+-- A publish that already replaced the refused handle keeps the slot.
+theorem restore_keeps_a_later_publish (refused fresh : Nat) (displaced : Option Nat)
+    (isOpen : Bool) (different : fresh â‰  refused) :
+    restore (some fresh) refused displaced isOpen = some fresh := by
+  cases isOpen <;> simp [restore, evict, different, Option.or]
 
 end PeerConnection.SharedRpc
