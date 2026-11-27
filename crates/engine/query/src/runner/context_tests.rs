@@ -196,6 +196,7 @@ impl DocumentACP for PolicyAcp {
         _policy_id: &str,
         _resource_name: &str,
         _doc_id: &str,
+        _relationships: &[acp::DerivedRelationship],
     ) -> acp::Result<()> {
         Ok(())
     }
@@ -429,6 +430,7 @@ impl DocumentACP for BearerAcp {
         _policy_id: &str,
         _resource_name: &str,
         _doc_id: &str,
+        _relationships: &[acp::DerivedRelationship],
     ) -> acp::Result<()> {
         Ok(())
     }

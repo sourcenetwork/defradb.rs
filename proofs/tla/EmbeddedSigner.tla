@@ -19,13 +19,14 @@
 \*     match) is the step `Admit`;
 \*   - `Node::admit` and `Node::admitted_caller` in
 \*     crates/entry-points/defra-node/src/ops/request.rs are the boundary every
-\*     `_as` entry calls; `RequestPath::execute` in
+\*     context-taking entry of the node's core calls; `RequestPath::execute` in
 \*     crates/entry-points/defra-node/src/request_path.rs (every request, and
-\*     each write of a backup import), `Node::execute_as` in
-\*     crates/entry-points/defra-node/src/lib.rs and `Node::import_backup_as`
-\*     in crates/entry-points/defra-node/src/ops/backup.rs are members of
+\*     each write of a backup import), `NodeCore::execute_as` in
+\*     crates/entry-points/defra-node/src/node_core/execute.rs and
+\*     `NodeCore::import_backup` in
+\*     crates/entry-points/defra-node/src/node_core/backup.rs are members of
 \*     `Entries`;
-\*   - the node-key fallback in `Node::execute_as` and
+\*   - the node-key fallback in `NodeCore::execute_as` and
 \*     `RequestPath::execute`, which looks up the node's DID only and never the
 \*     request's, is `SigningKey` choosing `NodeKey`.
 \* Each call is decided on its own, so the model runs one call through the
@@ -40,7 +41,7 @@ CONSTANT Bug
 Entries == {"executeRequest", "executeAs", "importBackupAs", "addCollectionAs",
             "truncateCollectionAs", "addViewAs", "refreshViewsAs", "patchCollectionAs"}
 \* The entry point the "Skip" RED plants its bug in: it writes without
-\* admission, as `import_backup_as` did before this change.
+\* admission.
 Skipper == "importBackupAs"
 \* 0 means "nobody": no actor named, or no key brought.
 NoOne == 0

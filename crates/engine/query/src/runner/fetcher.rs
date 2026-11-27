@@ -261,8 +261,11 @@ impl DocFetcher for FetcherWrapper {
     async fn get_document_arrivals(
         &self,
         options: &crate::fetcher::DocumentArrivalOptions,
+        reader: &crate::fetcher::DocumentReader<'_>,
     ) -> Result<crate::fetcher::DocumentArrivalPage> {
-        self.get_fetcher().get_document_arrivals(options).await
+        self.get_fetcher()
+            .get_document_arrivals(options, reader)
+            .await
     }
 
     async fn get_document_updates(

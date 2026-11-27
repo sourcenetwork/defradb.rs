@@ -46,7 +46,8 @@ impl Verified {
 
     async fn report(&self) -> Vec<acp::OwedEntry> {
         self.node
-            .owed_acp_as(&self.caller(), &self.user)
+            .with_identity(identity::Did::new(&self.user).unwrap())
+            .owed_acp(&self.user)
             .await
             .unwrap()
     }
@@ -94,7 +95,7 @@ fn a_registration_that_fails_after_its_commit_is_reported_and_takes_a_fresh_cred
         // Both delegations run out before the commit sends anything. The
         // commit stands all the same.
         on.remote.lapsed.store(true, Ordering::SeqCst);
-        on.node.commit_transaction(&txn).await.unwrap();
+        on.node.with_transaction(txn.parse::<defra_core::TxnId>().unwrap()).commit().await.unwrap();
         assert!(on.remote.owners.get(&doc).is_none());
         assert_eq!(on.records().await, ["owed"]);
 
@@ -130,34 +131,34 @@ fn a_registration_that_fails_after_its_commit_is_reported_and_takes_a_fresh_cred
 
         // The actor and the node's principal read it; nobody else does.
         let node = on.node.node_context();
-        assert_eq!(on.node.owed_acp_as(&node, &on.user).await.unwrap(), owed);
+        assert_eq!(on.node.core().owed_acp(&node, &on.user).await.unwrap(), owed);
         assert!(denied(
-            &on.node.owed_acp_as(&actor(STRANGER), &on.user).await
+            &on.node.with_identity(identity::Did::new(STRANGER).unwrap()).owed_acp(&on.user).await
         ));
         assert!(denied(
             &on.node
-                .owed_acp_as(&defra_core::RequestContext::default(), &on.user)
+                .anonymous().owed_acp(&on.user)
                 .await
         ));
         assert!(on
             .node
-            .owed_acp_as(&actor(STRANGER), STRANGER)
+            .with_identity(identity::Did::new(STRANGER).unwrap()).owed_acp(STRANGER)
             .await
             .unwrap()
             .is_empty());
 
         // The wait says what is left has come to rest, to those who may know.
         assert!(matches!(
-            on.node.await_owed_acp_as(&on.caller(), &txn, WAIT).await.unwrap(),
+            on.node.with_identity(identity::Did::new(&on.user).unwrap()).await_owed_acp(txn.parse::<defra_core::TxnId>().unwrap(), WAIT).await.unwrap(),
             OwedWait::Parked(entries) if entries == owed
         ));
         assert!(matches!(
-            on.node.await_owed_acp_as(&node, &txn, WAIT).await.unwrap(),
+            on.node.core().await_owed_acp(&node, txn.parse::<defra_core::TxnId>().unwrap(), WAIT).await.unwrap(),
             OwedWait::Parked(entries) if entries.len() == 2
         ));
         assert_eq!(
             on.node
-                .await_owed_acp_as(&actor(STRANGER), &txn, WAIT)
+                .with_identity(identity::Did::new(STRANGER).unwrap()).await_owed_acp(txn.parse::<defra_core::TxnId>().unwrap(), WAIT)
                 .await
                 .unwrap(),
             OwedWait::Settled
@@ -170,7 +171,7 @@ fn a_registration_that_fails_after_its_commit_is_reported_and_takes_a_fresh_cred
             let (on, registration) = (&on, &registration);
             async move {
                 on.node
-                    .reauthorize_owed_acp_as(&on.caller(), registration, credential)
+                    .with_identity(identity::Did::new(&on.user).unwrap()).reauthorize_owed_acp(registration, credential)
                     .await
             }
         };
@@ -188,7 +189,7 @@ fn a_registration_that_fails_after_its_commit_is_reported_and_takes_a_fresh_cred
         // To anyone but its actor and the node the entry does not exist.
         assert!(not_found(
             &on.node
-                .reauthorize_owed_acp_as(&actor(STRANGER), &registration, on.registration(&doc))
+                .with_identity(identity::Did::new(STRANGER).unwrap()).reauthorize_owed_acp(&registration, on.registration(&doc))
                 .await
         ));
         // Nothing was recorded or sent. The recorded delegation counts
@@ -219,7 +220,7 @@ fn a_registration_that_fails_after_its_commit_is_reported_and_takes_a_fresh_cred
         assert!(on.report().await.is_empty());
         assert_eq!(
             on.node
-                .await_owed_acp_as(&on.caller(), &txn, WAIT)
+                .with_identity(identity::Did::new(&on.user).unwrap()).await_owed_acp(txn.parse::<defra_core::TxnId>().unwrap(), WAIT)
                 .await
                 .unwrap(),
             OwedWait::Settled
@@ -243,7 +244,7 @@ fn a_change_waiting_for_authority_takes_a_credential_bound_to_it() {
             Ok(RelationshipChange::Staged { .. })
         ));
         on.remote.lapsed.store(true, Ordering::SeqCst);
-        on.node.commit_transaction(&txn).await.unwrap();
+        on.node.with_transaction(txn.parse::<defra_core::TxnId>().unwrap()).commit().await.unwrap();
 
         // The registration went under the plain delegation; the grant's own
         // has run out.
@@ -255,7 +256,7 @@ fn a_change_waiting_for_authority_takes_a_credential_bound_to_it() {
         let change = owed[0].reference();
         assert!(matches!(change, OwedRef::Change { .. }));
         assert!(matches!(
-            on.node.await_owed_acp_as(&on.caller(), &txn, WAIT).await.unwrap(),
+            on.node.with_identity(identity::Did::new(&on.user).unwrap()).await_owed_acp(txn.parse::<defra_core::TxnId>().unwrap(), WAIT).await.unwrap(),
             OwedWait::Parked(entries) if entries.len() == 1
         ));
         on.remote.lapsed.store(false, Ordering::SeqCst);
@@ -265,13 +266,13 @@ fn a_change_waiting_for_authority_takes_a_credential_bound_to_it() {
             unreachable!()
         };
         assert!(matches!(
-            on.node.abandon_owed_acp_change_as(&on.caller(), seq).await,
+            on.node.with_identity(identity::Did::new(&on.user).unwrap()).abandon_owed_acp_change(seq).await,
             Err(crate::Error::Acp(acp::Error::OwedChangeNotRefused { .. }))
         ));
         // The registration's delegation does not name the grant.
         assert!(unavailable(
             &on.node
-                .reauthorize_owed_acp_as(&on.caller(), &change, on.registration(&doc))
+                .with_identity(identity::Did::new(&on.user).unwrap()).reauthorize_owed_acp(&change, on.registration(&doc))
                 .await
         ));
         assert_eq!(on.report().await, owed);
@@ -279,11 +280,7 @@ fn a_change_waiting_for_authority_takes_a_credential_bound_to_it() {
 
         assert_eq!(
             on.node
-                .reauthorize_owed_acp_as(
-                    &on.caller(),
-                    &change,
-                    SignerCredential::RequestBound(granting)
-                )
+                .with_identity(identity::Did::new(&on.user).unwrap()).reauthorize_owed_acp(&change, SignerCredential::RequestBound(granting))
                 .await
                 .unwrap(),
             OwedOutcome::Settled
@@ -303,7 +300,7 @@ fn a_submission_that_fails_for_an_unreachable_provider_is_reported_and_sent_by_t
         let Attempt { doc, txn, response } = on.create("late", |_| on.delegation()).await;
         assert!(!response.has_errors(), "{:?}", response.errors);
         on.remote.down.store(true, Ordering::SeqCst);
-        on.node.commit_transaction(&txn).await.unwrap();
+        on.node.with_transaction(txn.parse::<defra_core::TxnId>().unwrap()).commit().await.unwrap();
 
         let owed = on.report().await;
         assert_eq!(owed.len(), 1, "{owed:?}");
@@ -317,14 +314,14 @@ fn a_submission_that_fails_for_an_unreachable_provider_is_reported_and_sent_by_t
         );
         assert!(owed[0].sendable);
         assert!(matches!(
-            on.node.await_owed_acp_as(&on.caller(), &txn, WAIT).await.unwrap(),
+            on.node.with_identity(identity::Did::new(&on.user).unwrap()).await_owed_acp(txn.parse::<defra_core::TxnId>().unwrap(), WAIT).await.unwrap(),
             OwedWait::Pending { entries, provider_unavailable: true } if entries.len() == 1
         ));
 
         on.remote.down.store(false, Ordering::SeqCst);
         assert_eq!(
             on.node
-                .await_owed_acp_as(&on.caller(), &txn, WAIT)
+                .with_identity(identity::Did::new(&on.user).unwrap()).await_owed_acp(txn.parse::<defra_core::TxnId>().unwrap(), WAIT)
                 .await
                 .unwrap(),
             OwedWait::Settled
@@ -346,7 +343,11 @@ fn a_retry_of_an_owed_registration_never_reads_the_token_the_process_holds() {
         let Attempt { doc, txn, response } = on.create("parked", |doc| on.registration(doc)).await;
         assert!(!response.has_errors(), "{:?}", response.errors);
         on.remote.lapsed.store(true, Ordering::SeqCst);
-        on.node.commit_transaction(&txn).await.unwrap();
+        on.node
+            .with_transaction(txn.parse::<defra_core::TxnId>().unwrap())
+            .commit()
+            .await
+            .unwrap();
         assert!(on.remote.owners.get(&doc).is_none());
 
         // The process holds a delegation the provider would take for the
@@ -365,7 +366,8 @@ fn a_retry_of_an_owed_registration_never_reads_the_token_the_process_holds() {
         for caller in [on.user.as_str(), STRANGER] {
             let touched = on
                 .node
-                .add_dac_actor_relationship(caller, "Record", &doc, "reader", READER)
+                .with_identity(identity::Did::new(caller).unwrap())
+                .add_dac_actor_relationship("Record", &doc, "reader", READER)
                 .await;
             assert!(touched.is_err(), "{touched:?}");
             assert!(on.remote.owners.get(&doc).is_none(), "as {caller}");
@@ -421,7 +423,8 @@ fn only_the_actor_that_staged_a_refused_revocation_abandons_it() {
             .committed(on.create("shared", |_| on.delegation()).await)
             .await;
         on.node
-            .add_dac_actor_relationship_as(&on.delegating(), "Record", &doc, "reader", READER)
+            .core()
+            .add_dac_actor_relationship(&on.delegating(), "Record", &doc, "reader", READER)
             .await
             .unwrap();
         on.remote.take_writes();
@@ -429,22 +432,29 @@ fn only_the_actor_that_staged_a_refused_revocation_abandons_it() {
 
         // The user revokes in a transaction. Before the provider is sent the
         // revocation it gives the document to somebody else, and refuses.
-        let txn = on.node.begin_transaction(false).await.unwrap();
+        let txn = on
+            .node
+            .new_txn(false)
+            .await
+            .map(|txn| txn.detach())
+            .unwrap();
         assert!(matches!(
             on.node
-                .delete_dac_actor_relationship_change_for_in_txn(
-                    &txn,
+                .core()
+                .change_dac_actor_relationship_for(
+                    txn,
                     &on.delegating(),
                     "Record",
                     &doc,
                     "reader",
-                    READER
+                    READER,
+                    true
                 )
                 .await,
             Ok(RelationshipChange::Staged { .. })
         ));
         on.remote.owners.insert(doc.clone(), STRANGER.to_string());
-        on.node.commit_transaction(&txn).await.unwrap();
+        on.node.with_transaction(txn).commit().await.unwrap();
 
         let owed = on.report().await;
         assert_eq!(owed.len(), 1, "{owed:?}");
@@ -456,7 +466,7 @@ fn only_the_actor_that_staged_a_refused_revocation_abandons_it() {
             unreachable!()
         };
         assert!(matches!(
-            on.node.await_owed_acp_as(&on.caller(), &txn, WAIT).await.unwrap(),
+            on.node.with_identity(identity::Did::new(&on.user).unwrap()).await_owed_acp(txn, WAIT).await.unwrap(),
             OwedWait::Parked(entries) if entries.len() == 1
         ));
         // The provider holds the relationship, and the refused revocation
@@ -468,18 +478,16 @@ fn only_the_actor_that_staged_a_refused_revocation_abandons_it() {
         // what it staged itself: to both the change does not exist.
         for other in [actor(READER), on.node.node_context()] {
             assert!(not_found(
-                &on.node.abandon_owed_acp_change_as(&other, seq).await
+                &on.node.core().abandon_owed_acp_change(&other, seq).await
             ));
         }
         assert!(denied(
-            &on.node
-                .abandon_owed_acp_change_as(&defra_core::RequestContext::default(), seq)
-                .await
+            &on.node.anonymous().abandon_owed_acp_change(seq).await
         ));
         assert!(on.read_by(READER).await.is_empty());
 
         on.node
-            .abandon_owed_acp_change_as(&on.caller(), seq)
+            .with_identity(identity::Did::new(&on.user).unwrap()).abandon_owed_acp_change(seq)
             .await
             .unwrap();
         // What is left says the provider does not hold the revocation, and
@@ -488,7 +496,7 @@ fn only_the_actor_that_staged_a_refused_revocation_abandons_it() {
         assert_eq!(left.len(), 1, "{left:?}");
         assert!(left[0].discarded);
         assert!(matches!(
-            on.node.await_owed_acp_as(&on.caller(), &txn, WAIT).await.unwrap(),
+            on.node.with_identity(identity::Did::new(&on.user).unwrap()).await_owed_acp(txn, WAIT).await.unwrap(),
             OwedWait::Parked(entries) if entries.len() == 1 && entries[0].discarded
         ));
         assert!(on.report().await.is_empty());
@@ -526,22 +534,29 @@ fn the_node_abandons_a_refused_change_it_staged_itself() {
             .unwrap()
             .to_owned();
         on.node
-            .add_dac_actor_relationship_as(&node, "Record", &doc, "reader", READER)
+            .core()
+            .add_dac_actor_relationship(&node, "Record", &doc, "reader", READER)
             .await
             .unwrap();
 
-        let txn = on.node.begin_transaction(false).await.unwrap();
+        let txn = on
+            .node
+            .new_txn(false)
+            .await
+            .map(|txn| txn.detach())
+            .unwrap();
         assert!(matches!(
             on.node
-                .delete_dac_actor_relationship_change_for_in_txn(
-                    &txn, &node, "Record", &doc, "reader", READER
+                .core()
+                .change_dac_actor_relationship_for(
+                    txn, &node, "Record", &doc, "reader", READER, true
                 )
                 .await,
             Ok(RelationshipChange::Staged { .. })
         ));
         on.remote.owners.insert(doc.clone(), STRANGER.to_string());
-        on.node.commit_transaction(&txn).await.unwrap();
-        let owed = on.node.owed_acp_as(&node, &principal).await.unwrap();
+        on.node.with_transaction(txn).commit().await.unwrap();
+        let owed = on.node.core().owed_acp(&node, &principal).await.unwrap();
         assert_eq!(owed.len(), 1, "{owed:?}");
         assert!(matches!(owed[0].state, OwedState::Refused { .. }));
         let OwedRef::Change { seq } = owed[0].reference() else {
@@ -550,7 +565,8 @@ fn the_node_abandons_a_refused_change_it_staged_itself() {
         assert!(on.read_by(READER).await.is_empty());
 
         on.node
-            .abandon_owed_acp_change_as(&node, seq)
+            .core()
+            .abandon_owed_acp_change(&node, seq)
             .await
             .unwrap();
         assert_eq!(on.read_by(READER).await, ["own"]);
@@ -570,7 +586,11 @@ fn a_fresh_credential_the_provider_cannot_verify_is_not_recorded() {
         let Attempt { doc, txn, response } = on.create("owed", |_| SignerCredential::None).await;
         assert!(!response.has_errors(), "{:?}", response.errors);
         on.remote.down.store(true, Ordering::SeqCst);
-        on.node.commit_transaction(&txn).await.unwrap();
+        on.node
+            .with_transaction(txn.parse::<defra_core::TxnId>().unwrap())
+            .commit()
+            .await
+            .unwrap();
         on.remote.down.store(false, Ordering::SeqCst);
         on.remote.keys.remove(&on.user);
         let registration = on.report().await[0].reference();
@@ -585,7 +605,8 @@ fn a_fresh_credential_the_provider_cannot_verify_is_not_recorded() {
         ] {
             assert!(unavailable(
                 &on.node
-                    .reauthorize_owed_acp_as(&on.caller(), &registration, unverified)
+                    .with_identity(identity::Did::new(&on.user).unwrap())
+                    .reauthorize_owed_acp(&registration, unverified)
                     .await
             ));
         }
@@ -596,7 +617,8 @@ fn a_fresh_credential_the_provider_cannot_verify_is_not_recorded() {
         on.remote.keys.insert(on.user.clone(), ());
         assert_eq!(
             on.node
-                .reauthorize_owed_acp_as(&on.caller(), &registration, SignerCredential::None)
+                .with_identity(identity::Did::new(&on.user).unwrap())
+                .reauthorize_owed_acp(&registration, SignerCredential::None)
                 .await
                 .unwrap(),
             OwedOutcome::Settled
@@ -626,7 +648,11 @@ fn a_wait_sends_a_parked_registration_that_its_changes_delegation_serves() {
             Ok(RelationshipChange::Staged { .. })
         ));
         on.remote.down.store(true, Ordering::SeqCst);
-        on.node.commit_transaction(&txn).await.unwrap();
+        on.node
+            .with_transaction(txn.parse::<defra_core::TxnId>().unwrap())
+            .commit()
+            .await
+            .unwrap();
         on.remote.down.store(false, Ordering::SeqCst);
 
         // The registration's own delegation runs out, and a retry that
@@ -646,7 +672,8 @@ fn a_wait_sends_a_parked_registration_that_its_changes_delegation_serves() {
 
         assert_eq!(
             on.node
-                .await_owed_acp_as(&on.caller(), &txn, WAIT)
+                .with_identity(identity::Did::new(&on.user).unwrap())
+                .await_owed_acp(txn.parse::<defra_core::TxnId>().unwrap(), WAIT)
                 .await
                 .unwrap(),
             OwedWait::Settled
@@ -703,7 +730,8 @@ fn a_request_that_carries_no_bearer_registers_nothing_under_a_token_the_process_
             .await;
         let granted = on
             .node
-            .add_dac_actor_relationship(&on.user, "Record", &doc, "reader", READER)
+            .with_identity(identity::Did::new(&on.user).unwrap())
+            .add_dac_actor_relationship("Record", &doc, "reader", READER)
             .await;
         assert!(granted.is_err(), "{granted:?}");
         assert!(on.remote.owners.get(&doc).is_none());
@@ -713,7 +741,8 @@ fn a_request_that_carries_no_bearer_registers_nothing_under_a_token_the_process_
         // A credential handed in for it settles it.
         assert_eq!(
             on.node
-                .reauthorize_owed_acp_as(&on.caller(), &owed[0].reference(), on.delegation())
+                .with_identity(identity::Did::new(&on.user).unwrap())
+                .reauthorize_owed_acp(&owed[0].reference(), on.delegation())
                 .await
                 .unwrap(),
             OwedOutcome::Settled
@@ -743,19 +772,30 @@ fn a_pass_sends_a_registration_with_whichever_owed_delegation_the_report_found()
         ));
         assert!(matches!(
             on.node
-                .add_dac_actor_relationship_change_for_in_txn(
-                    &txn,
+                .core()
+                .change_dac_actor_relationship_for(
+                    txn.parse::<defra_core::TxnId>().unwrap(),
                     &on.delegating(),
                     "Record",
                     &doc,
                     "reader",
-                    STRANGER
+                    STRANGER,
+                    false
                 )
                 .await,
             Ok(RelationshipChange::Staged { .. })
         ));
+        // The node's drainer passes by itself after the commit and after
+        // each back-off, and would send the registration before the report
+        // below looks at it: the provider holds every registration it takes
+        // until the report is read.
+        on.remote.hold_registrations.store(true, Ordering::SeqCst);
         on.remote.down.store(true, Ordering::SeqCst);
-        on.node.commit_transaction(&txn).await.unwrap();
+        on.node
+            .with_transaction(txn.parse::<defra_core::TxnId>().unwrap())
+            .commit()
+            .await
+            .unwrap();
         on.remote.down.store(false, Ordering::SeqCst);
 
         // Both bound delegations run out: the registration's and the first
@@ -770,13 +810,18 @@ fn a_pass_sends_a_registration_with_whichever_owed_delegation_the_report_found()
         assert_eq!(owed.len(), 3, "{owed:?}");
         assert_eq!(owed[0].state, OwedState::AwaitingAuthority);
         assert!(owed[0].sendable, "{owed:?}");
+        on.remote.release_registrations();
 
         // What the report calls sendable a pass sends: the registration
         // goes with the second grant's delegation, that grant follows, and
         // the first is parked on its own account.
         let waited = on
             .node
-            .await_owed_acp_as(&on.caller(), &txn, Duration::from_secs(3))
+            .with_identity(identity::Did::new(&on.user).unwrap())
+            .await_owed_acp(
+                txn.parse::<defra_core::TxnId>().unwrap(),
+                Duration::from_secs(3),
+            )
             .await
             .unwrap();
         assert_eq!(

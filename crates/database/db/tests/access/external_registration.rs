@@ -327,6 +327,7 @@ impl DocumentACP for RemoteAcp {
         _policy_id: &str,
         _resource_name: &str,
         doc_id: &str,
+        _relationships: &[acp::DerivedRelationship],
     ) -> acp::Result<()> {
         self.submissions.fetch_add(1, Ordering::SeqCst);
         self.reachable()?;
@@ -374,6 +375,7 @@ impl DocumentACP for RemoteAcp {
                     object.policy_id,
                     object.resource,
                     object.object_id,
+                    &[],
                 )
                 .await
                 .map_err(|error| acp::RegistrationFailure::new(index, error))?;
@@ -416,6 +418,7 @@ impl DocumentACP for RemoteAcp {
                 object.policy_id,
                 object.resource,
                 object.object_id,
+                &[],
             )
             .await
             .map_err(|error| acp::RegistrationFailure::new(index, error))?;

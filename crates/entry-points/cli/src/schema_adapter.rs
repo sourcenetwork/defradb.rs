@@ -6,7 +6,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use defra_core::RequestContext;
 
-use defra_http::router::CollectionOperations;
+use defra_http::router::{CollectionOperations, CollectionRefusal};
 use schema::CollectionVersion;
 use storage::corekv::Store;
 
@@ -46,11 +46,11 @@ impl<S: Store + 'static> SchemaAdapter<S> {
         Arc::new(Self::new(database))
     }
 
-    async fn add_collection_inner(&self, sdl: &str) -> Result<Vec<CollectionVersion>, String> {
-        self.database
-            .add_collection(&self.context(), sdl)
-            .await
-            .map_err(|e| e.to_string())
+    async fn add_collection_inner(
+        &self,
+        sdl: &str,
+    ) -> Result<Vec<CollectionVersion>, db::AddCollectionError> {
+        self.database.add_collection(&self.context(), sdl).await
     }
 }
 
@@ -63,8 +63,8 @@ impl<S: Store + 'static> CollectionOperations for SchemaAdapter<S> {
         }))
     }
 
-    async fn add_collection(&self, sdl: &str) -> Result<Vec<CollectionVersion>, String> {
-        self.add_collection_inner(sdl).await
+    async fn add_collection(&self, sdl: &str) -> Result<Vec<CollectionVersion>, CollectionRefusal> {
+        Ok(self.add_collection_inner(sdl).await?)
     }
 }
 
@@ -72,7 +72,9 @@ impl<S: Store + 'static> CollectionOperations for SchemaAdapter<S> {
 #[async_trait]
 impl<S: Store + 'static> pg_compat::SchemaManager for SchemaAdapter<S> {
     async fn add_collection(&self, sdl: &str) -> Result<(), String> {
-        self.add_collection_inner(sdl).await?;
+        self.add_collection_inner(sdl)
+            .await
+            .map_err(|e| e.to_string())?;
         Ok(())
     }
 }

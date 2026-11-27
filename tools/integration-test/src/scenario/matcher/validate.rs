@@ -88,7 +88,7 @@ fn validate_matcher(kind: &Value, map: &Map<String, Value>) -> Result<(), Scenar
                     .and_then(Value::as_str)
                     .is_some_and(|name| !name.trim().is_empty())
         }
-        "optional" => match map.get("value") {
+        "optional" | "not" => match map.get("value") {
             Some(child) if len == 2 => {
                 validate(child)?;
                 true

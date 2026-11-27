@@ -1,8 +1,8 @@
 use serial_test::serial;
 
-use super::blocks::{author, delete, with_creator};
 use super::protected::{Outcome, ProtectedNode};
 use super::receiver::user_by_id;
+use integration_test::hostile::blocks::{author, delete, with_creator};
 
 #[nuclei::test]
 #[serial]

@@ -3,6 +3,7 @@ mod chunk_access;
 mod chunk_support;
 mod command_kinds;
 mod compartments;
+mod create_gate;
 mod embedded;
 mod encryption_acp;
 mod helpers;

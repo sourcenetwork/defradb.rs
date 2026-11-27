@@ -19,15 +19,20 @@ use super::directives::{
     known_directive_arguments, IndexConfig, IndexDirection, ParsedDirectives,
     KNOWN_FIELD_DIRECTIVES, KNOWN_TYPE_DIRECTIVES,
 };
+use super::field_type_refusal::refusal;
 use super::helpers::{
-    graphql_schema_value_to_json, normalize_datetime_string, parse_governed_directive,
-    parse_graphql_type, parse_policy_directive,
+    graphql_schema_value_to_json, normalize_datetime_string, parse_field_policy_directive,
+    parse_governed_directive, parse_graphql_type, parse_policy_directive,
 };
 use super::parser::{CompositeIndex, ParsedField, ParsedTypeDirectives, SdlParser};
 use super::warnings::{DirectiveLocation, ParseWarning};
 
 impl<'a> SdlParser<'a> {
     pub(super) fn parse_field(&mut self, field: &Field<'_, String>) -> Result<ParsedField> {
+        let object = self.current_type.as_deref().unwrap_or_default();
+        if let Some(refused) = refusal(object, &field.name, &field.field_type) {
+            return Err(QueryError::UnsupportedFieldType(refused.into()));
+        }
         let field_type = parse_graphql_type(&field.field_type);
         let directives =
             self.parse_field_directives(&field.directives, &field.name, &field_type.base_type)?;
@@ -126,12 +131,17 @@ impl<'a> SdlParser<'a> {
                     });
                 }
                 "policy" => {
-                    // Known but not yet implemented - emit warning so users know
-                    self.warnings.push(ParseWarning::UnimplementedDirective {
-                        directive_name: directive.name.clone(),
-                        type_name: type_name.clone(),
-                        field_name: Some(field_name.to_string()),
-                    });
+                    let owner = format!("{type_name}.{field_name}");
+                    match parse_field_policy_directive(directive, &owner)? {
+                        Some(relation) => result.policy_relation = Some(relation),
+                        // Without `relation:` the directive does nothing on a
+                        // field, as before bindings existed.
+                        None => self.warnings.push(ParseWarning::UnimplementedDirective {
+                            directive_name: directive.name.clone(),
+                            type_name: type_name.clone(),
+                            field_name: Some(field_name.to_string()),
+                        }),
+                    }
                 }
                 _ => {
                     // Unknown directive - emit warning for forward compatibility

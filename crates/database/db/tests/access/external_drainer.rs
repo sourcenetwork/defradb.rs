@@ -249,8 +249,6 @@ impl OwedJournal for Journal {
     fn refusal(&self, _change: &OwedChange, reason: String) -> Submission {
         Submission::Refused { reason }
     }
-
-    fn applied(&self, _change: &OwedChange) {}
 }
 
 /// Every refusal the gate told of: the change's sequence, and whether it

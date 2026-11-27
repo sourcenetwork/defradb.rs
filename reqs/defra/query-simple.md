@@ -1,9 +1,9 @@
 # `go.query.simple.select.unknown-field`: Selecting an undefined field is rejected
 
 - **Parents:** ["go.query.simple.select"]
-- **Scenarios:** ["query.simple.with-similarity-on-query-should-error", "query.simple.with-undefined-field"]
+- **Scenarios:** ["query.simple.with-similarity-on-query-should-error", "query.simple.with-undefined-field", "query.simple.with-commits-field-on-collection", "query.simple.with-undefined-object-field"]
 
-Selecting a field the type does not define fails validation with `Cannot query field "ThisFieldDoesNotExists" on type "Users".`; `query { SIMILARITY }` at the root fails with `Cannot query field "SIMILARITY" on type "Query".`.
+Selecting a field the type does not define fails validation with `Cannot query field "ThisFieldDoesNotExists" on type "Users".`; `query { SIMILARITY }` at the root fails with `Cannot query field "SIMILARITY" on type "Query".`. A field the type does not define given a sub-selection fails the same way, naming the field and the type: `Book { _commits { cid } }` fails with `Cannot query field "_commits" on type "Book".` (a document's commits are its `_version` field), and `Book { author { name } }` on a `Book` with no `author` fails with `Cannot query field "author" on type "Book".`.
 
 # `go.query.simple.select.collection-isolation`: A collection query sees only its own documents
 

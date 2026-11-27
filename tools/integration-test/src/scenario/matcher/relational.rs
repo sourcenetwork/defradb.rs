@@ -145,6 +145,17 @@ impl Engine<'_> {
                     )
                 })
             }),
+            "not" => {
+                !self.visit(
+                    &w["value"],
+                    got,
+                    path,
+                    documents,
+                    force_unordered,
+                    current.clone(),
+                    &|_| true,
+                ) && next(current)
+            }
             "explainPattern" | "explainTarget" => match_explain_graph(w, got) && next(current),
             "similarityScore" => match_similarity(w, got) && next(current),
             "currentTimestamp" => match_current_timestamp(got, Utc::now()) && next(current),

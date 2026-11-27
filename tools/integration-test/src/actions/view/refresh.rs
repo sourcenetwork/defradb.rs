@@ -37,12 +37,12 @@ impl Op for RefreshViews {
     fn run(&self, state: &State) -> Result<Value, Failure> {
         let identity = self.common.client_identity(Self::name())?;
         let selector = db_selector(self.collection_name.clone());
+        let (node, scope) = (
+            state.node_on(self.common.node())?,
+            state.scope_as(self.txn, identity),
+        );
         state
-            .block_on(
-                state
-                    .node_on(self.common.node())?
-                    .refresh_views_as(&state.context_as(self.txn, identity), selector),
-            )
+            .block_on(async { scope.on(&node).refresh_views(selector).await })
             .map(|()| json!({}))
             .map_err(|e| Failure::operation(e.to_string()))
     }

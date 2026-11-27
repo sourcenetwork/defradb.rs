@@ -2051,3 +2051,79 @@ fn test_unknown_ordered_member_names_the_ordered_block() {
         "got: {error}"
     );
 }
+
+#[test]
+fn a_relation_field_binding_and_immutability_go_to_its_id_field() {
+    let sdl = r#"
+        type Book {
+            title: String
+            author: Author @immutable @policy(relation: "author")
+        }
+        type Author { name: String }
+    "#;
+    let output = parse_sdl_with_warnings(sdl).unwrap();
+    assert!(output.warnings.is_empty(), "{:?}", output.warnings);
+    let book = output
+        .collections
+        .iter()
+        .find(|c| c.name == "Book")
+        .unwrap();
+    let author = book.field_by_name("author").unwrap();
+    assert!(!author.immutable);
+    assert_eq!(author.policy_relation, None);
+    let author_id = book.field_by_name("_authorID").unwrap();
+    assert!(author_id.immutable);
+    assert!(author_id.is_primary);
+    assert_eq!(author_id.policy_relation.as_deref(), Some("author"));
+    for field in &book.fields {
+        field.validate().unwrap();
+    }
+}
+
+#[test]
+fn a_binding_off_a_single_object_relation_is_refused() {
+    for (sdl, field) in [
+        (
+            r#"type Book { title: String @policy(relation: "author") }"#,
+            "Book.title",
+        ),
+        (
+            r#"type Book { name: String authors: [Author] @policy(relation: "author") }
+               type Author { name: String book: Book @primary }"#,
+            "Book.authors",
+        ),
+    ] {
+        let err = parse_sdl(sdl).unwrap_err().to_string();
+        assert!(
+            err.contains(&format!(
+                "@policy(relation:) requires a single-object relation field. Field: {field}"
+            )),
+            "{err}"
+        );
+    }
+}
+
+#[test]
+fn a_malformed_field_policy_directive_is_refused() {
+    for (sdl, expected) in [
+        (
+            r#"type Book { author: Author @policy(relation: "") } type Author { name: String }"#,
+            "@policy relation must not be empty. Field: Book.author",
+        ),
+        (
+            r#"type Book { author: Author @policy(relation: "author", id: "p1") } type Author { name: String }"#,
+            "@policy on a field takes only the relation argument; the policy is the collection's. Field: Book.author",
+        ),
+        (
+            r#"type Book { author: Author @policy(relation: 3) } type Author { name: String }"#,
+            "Argument \"relation\" has invalid value 3",
+        ),
+        (
+            r#"type Book @policy(id: "p1", resource: "book", relation: "author") { name: String }"#,
+            "@policy(relation:) binds a field and is not allowed on a type",
+        ),
+    ] {
+        let err = parse_sdl(sdl).unwrap_err().to_string();
+        assert!(err.contains(expected), "expected {expected:?}, got {err}");
+    }
+}

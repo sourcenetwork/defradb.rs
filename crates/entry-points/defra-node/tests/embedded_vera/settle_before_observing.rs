@@ -114,18 +114,17 @@ fn creates_updated_at_once_under_load_project_without_refusal() {
             .await
             .expect("policy");
         drop(vera);
-        node.add_collection(&defra_core::RequestContext::ambient(), &users(&policy))
+        node.add_collection(&users(&policy))
             .await
             .expect("collection");
-        let admin_context =
-            defra_core::RequestContext::default().with_identity(Some(admin.to_string()));
         for permission in [
             NodePermission::DocumentUpdate,
             NodePermission::DocumentRead,
             NodePermission::CollectionGet,
             NodePermission::DacRelationAdd,
         ] {
-            node.add_nac_actor_relationship_as(&admin_context, permission.as_str(), actor.as_str())
+            node.with_identity(identity::Did::new(admin.to_string()).unwrap())
+                .add_nac_actor_relationship(permission.as_str(), actor.as_str())
                 .await
                 .expect("node permission");
         }

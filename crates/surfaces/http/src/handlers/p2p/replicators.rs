@@ -96,6 +96,11 @@ pub async fn remove_replicator(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::identity_extractor::ExtractIdentity;
+    use crate::mock::{MockP2POperations, MockQueryExecutor};
+    use crate::router::AppStateBuilder;
+    use query::executor::QueryExecutor;
+    use std::sync::Arc;
 
     #[test]
     fn test_replicator_request_deserialize() {
@@ -137,6 +142,37 @@ mod tests {
         assert_eq!(
             json,
             r#"{"ID":"replicator-123","Addresses":["/ip4/127.0.0.1/tcp/9000"],"CollectionIDs":["Users"],"Status":0,"LastStatusChange":"0001-01-01T00:00:00Z"}"#
+        );
+    }
+
+    #[nuclei::test]
+    async fn list_replicators_serves_go_field_names() {
+        let p2p = MockP2POperations::new().with_replicator(
+            vec!["Users".to_string()],
+            Some("/ip4/127.0.0.1/tcp/9000".to_string()),
+        );
+        let state = AppStateBuilder::new(
+            Arc::new(MockQueryExecutor::new()) as Arc<dyn QueryExecutor>,
+            edge::testing::edge(),
+        )
+        .with_p2p(Arc::new(p2p) as Arc<dyn crate::router::P2POperations>)
+        .with_dev_mode(true)
+        .build();
+
+        let result = list_replicators(State(state), ExtractIdentity::anonymous())
+            .await
+            .unwrap();
+        let replicators = serde_json::to_value(&result.0).unwrap();
+
+        assert_eq!(
+            replicators,
+            serde_json::json!([{
+                "ID": "12D3KooWReplicator",
+                "Addresses": ["/ip4/127.0.0.1/tcp/9000"],
+                "CollectionIDs": ["Users"],
+                "Status": 0,
+                "LastStatusChange": "0001-01-01T00:00:00Z"
+            }])
         );
     }
 }

@@ -163,7 +163,8 @@ impl Served {
     /// Everything `did` still owes the provider, as the node reports it.
     async fn owed_by(&self, did: &str) -> usize {
         self.node
-            .owed_acp_as(&crate::staged_relationship_tests::actor(did), did)
+            .core()
+            .owed_acp(&crate::staged_relationship_tests::actor(did), did)
             .await
             .unwrap()
             .len()
@@ -321,7 +322,8 @@ fn an_identity_token_for_a_did_whose_key_the_node_holds_stages_under_the_node_ke
         assert_eq!(served.finish(&auth, &tx, true).await, 200);
         let owed = served
             .node
-            .owed_acp_as(
+            .core()
+            .owed_acp(
                 &crate::staged_relationship_tests::actor(&owner_did),
                 &owner_did,
             )

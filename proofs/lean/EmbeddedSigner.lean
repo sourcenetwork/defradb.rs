@@ -14,11 +14,12 @@ Rust owner: `EmbeddedSigner::from_config` (key type, local key, key check) and
  `admitted_signer` (actor match, bypass) in
  `crates/entry-points/defra-node/src/embedded_signer.rs`. Two callers run it:
  `RequestPath::execute` in `crates/entry-points/defra-node/src/request_path.rs`,
- for requests (`execute_request`, `execute_request_in_txn`,
- `execute_request_as`, a backup import's writes), and `Node::admit` in
- `crates/entry-points/defra-node/src/ops/request.rs`, which every other `_as`
- entry (`execute_as`, `import_backup_as`, and the rest through
- `Node::admitted_caller`) runs before it writes. `outcome` is what both decide.
+ for requests (`Node::execute_request`, `TxnNode::execute_request`,
+ `ScopedNode::execute_request`, a backup import's writes), and `Node::admit` in
+ `crates/entry-points/defra-node/src/ops/request.rs`, which every other
+ context-taking entry of the node's core (`NodeCore::execute_as`,
+ `NodeCore::import_backup`, and the rest through `Node::admitted_caller`)
+ runs before it writes. `outcome` is what both decide.
  That every entry point calls one of them is the TLA+ model's
  (`proofs/tla/EmbeddedSigner.tla`); this file proves what the check decides.
 -/

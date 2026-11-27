@@ -44,11 +44,11 @@ fn doc_id_restrictions_fill_vector_pages_after_offset() {
     let expected = &expected["Note"].as_array().unwrap()[2..6];
     for in_transaction in [false, true] {
         let response = if in_transaction {
-            let handle = node.begin_transaction(true).await.unwrap();
+            let handle = node.new_txn(true).await.map(|txn| txn.detach()).unwrap();
             let result = node
-                .execute_request_in_txn(QueryRequest::new(&query), &handle)
+                .with_transaction(handle).execute_request(QueryRequest::new(&query))
                 .await;
-            node.discard_transaction(&handle).await.unwrap();
+            node.with_transaction(handle).discard().await.unwrap();
             result
         } else {
             node.execute(&query).await
@@ -67,15 +67,15 @@ fn protected_similarity_pages_count_only_authorized_documents() {
     let node = Node::builder().build().await.unwrap();
     let owner = "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK";
     let reader = "did:key:z6MkfXG2FkNy3u7Eg3jm8e2YQpGz7Z1JqWgHDAP1hLk9r2bR";
-    let owner_context = defra_core::RequestContext::ambient().with_identity(Some(owner.to_owned()));
-    let policy = node
-        .add_dac_policy_as(
-            &owner_context,
+    let owner_node = node.with_identity(identity::Did::new(owner.to_owned()).unwrap());
+    let policy = owner_node
+        .add_dac_policy(
             "name: Notes\nresources:\n  - name: notes\n    relations:\n      - name: reader\n    permissions:\n      - name: read\n        expr: reader\n      - name: update\n      - name: delete\n",
+            None,
         )
         .await
         .unwrap();
-    node.add_collection(&owner_context, &format!(
+    node.with_identity(identity::Did::new(owner.to_owned()).unwrap()).add_collection(&format!(
         "type Note @policy(id: \"{policy}\", resource: \"notes\") {{
             title: String
             embedding: [Float32!] @index(vector: {{dimensions: 2, flat: {{metric: DOT}}}})
@@ -97,9 +97,9 @@ fn protected_similarity_pages_count_only_authorized_documents() {
         let request =
             QueryRequest::new(query).with_identity(Some(identity::Did::new(reader).unwrap()));
         let response = if in_transaction {
-            let handle = node.begin_transaction(true).await.unwrap();
-            let result = node.execute_request_in_txn(request, &handle).await;
-            node.discard_transaction(&handle).await.unwrap();
+            let handle = node.new_txn(true).await.map(|txn| txn.detach()).unwrap();
+            let result = node.with_transaction(handle).execute_request(request).await;
+            node.with_transaction(handle).discard().await.unwrap();
             result
         } else {
             node.execute_request(request).await
@@ -238,7 +238,7 @@ fn vector_index(explain: &Value) -> Option<String> {
 
 async fn node_with(algorithm: &str) -> Node {
     let node = Node::builder().build().await.unwrap();
-    node.add_collection(&defra_core::RequestContext::ambient(), &schema(algorithm))
+    node.add_collection(&schema(algorithm))
         .await
         .unwrap_or_else(|e| panic!("add schema for {algorithm:?}: {e}"));
     node
@@ -262,7 +262,7 @@ async fn assert_routes(node: &Node, query: &str, context: &str) {
 fn nested_vector_pages_are_scoped_to_each_parent() {
     workers::block_on(async {
     let node = Node::builder().build().await.unwrap();
-    node.add_collection(&defra_core::RequestContext::ambient(), "type Owner { name: String notes: [Note] }
+    node.add_collection("type Owner { name: String notes: [Note] }
         type Note { title: String owner: Owner embedding: [Float32!] @index(vector: {dimensions: 4, flat: {metric: DOT}}) }")
         .await.unwrap();
     for (name, base) in [("a", 100), ("b", 0)] {
@@ -341,15 +341,17 @@ fn similarity_reaches_the_index_inside_a_transaction() {
         seed(&node).await;
 
         let handle = node
-            .begin_transaction(true)
+            .new_txn(true)
             .await
+            .map(|txn| txn.detach())
             .expect("begin read transaction");
         let query = format!(
             "query @explain(type: execute) {}",
             similarity_query(&vector_for(3), 5, None)
         );
         let response = node
-            .execute_request_in_txn(QueryRequest::new(&query), &handle)
+            .with_transaction(handle)
+            .execute_request(QueryRequest::new(&query))
             .await;
         assert!(
             !response.has_errors(),
@@ -446,7 +448,7 @@ fn a_filtered_similarity_query_returns_a_full_page() {
 fn a_cosine_index_routes_and_agrees_with_the_exhaustive_scan() {
     workers::block_on(async {
     let node = Node::builder().build().await.unwrap();
-    node.add_collection(&defra_core::RequestContext::ambient(), &format!(
+    node.add_collection(&format!(
         "type Note {{ title: String  tag: String  embedding: [Float32!] @index(vector: {{dimensions: {DIMENSIONS}, hnsw: {{metric: COSINE}}}}) }}"
     ))
     .await
@@ -522,7 +524,7 @@ fn a_cosine_index_routes_and_agrees_with_the_exhaustive_scan() {
 fn a_scalar_filter_takes_the_exhaustive_path() {
     workers::block_on(async {
     let node = Node::builder().build().await.unwrap();
-    node.add_collection(&defra_core::RequestContext::ambient(), &format!(
+    node.add_collection(&format!(
         "type Note {{ title: String  tag: String @index  embedding: [Float32!] @index(vector: {{dimensions: {DIMENSIONS}, hnsw: {{metric: DOT}}}}) }}"
     ))
     .await
@@ -592,7 +594,7 @@ fn every_combination_agrees_with_an_exhaustive_scan() {
                         "tag: String"
                     };
                     let node = Node::builder().build().await.unwrap();
-                    node.add_collection(&defra_core::RequestContext::ambient(), &format!(
+                    node.add_collection(&format!(
                         "type Note {{ title: String  {tag_field}  embedding: [Float32!] {} }}",
                         vector_index_sdl(*algorithm, *metric)
                     ))
@@ -623,11 +625,10 @@ fn every_combination_agrees_with_an_exhaustive_scan() {
 
                     let data = if in_transaction {
                         let handle = node
-                            .begin_transaction(true)
-                            .await
+                            .new_txn(true).await.map(|txn| txn.detach())
                             .unwrap_or_else(|e| panic!("{case}: begin txn: {e}"));
                         let response = node
-                            .execute_request_in_txn(QueryRequest::new(&query), &handle)
+                            .with_transaction(handle).execute_request(QueryRequest::new(&query))
                             .await;
                         assert!(!response.has_errors(), "{case}: {:?}", response.errors);
                         response.data.unwrap_or(Value::Null)
@@ -706,7 +707,7 @@ fn dimensions_are_required_when_the_schema_is_written() {
         ] {
             let node = Node::builder().build().await.unwrap();
             let error = node
-                .add_collection(&defra_core::RequestContext::ambient(), &sdl)
+                .add_collection(&sdl)
                 .await
                 .expect_err(&format!("must be refused: {sdl}"))
                 .to_string();
@@ -731,13 +732,10 @@ fn an_unsupported_metric_is_refused_when_the_schema_is_written() {
                 }
                 let node = Node::builder().build().await.unwrap();
                 let result = node
-                    .add_collection(
-                        &defra_core::RequestContext::ambient(),
-                        &format!(
-                            "type Note {{ embedding: [Float32!] {} }}",
-                            vector_index_sdl(*algorithm, *metric)
-                        ),
-                    )
+                    .add_collection(&format!(
+                        "type Note {{ embedding: [Float32!] {} }}",
+                        vector_index_sdl(*algorithm, *metric)
+                    ))
                     .await;
                 let error = result.expect_err(&format!(
                     "{} must refuse {}",
@@ -764,8 +762,7 @@ fn an_unsupported_metric_is_refused_when_the_schema_is_written() {
 fn a_relation_filter_above_the_scan_still_fills_the_page() {
     workers::block_on(async {
     let node = Node::builder().build().await.unwrap();
-    node.add_collection(&defra_core::RequestContext::ambient(),
-        "type Owner { name: String  notes: [Note] }
+    node.add_collection("type Owner { name: String  notes: [Note] }
          type Note { title: String  owner: Owner  embedding: [Float32!] @index(vector: {dimensions: 4, hnsw: {metric: DOT}}) }",
     )
     .await
@@ -1059,7 +1056,7 @@ fn ascending_order_warns_vector_index_unused() {
 fn a_metric_no_index_carries_scans_and_warns() {
     workers::block_on(async {
     let node = Node::builder().build().await.unwrap();
-    node.add_collection(&defra_core::RequestContext::ambient(), &format!(
+    node.add_collection(&format!(
         "type Note {{ title: String  tag: String  embedding: [Float32!] @index(vector: {{dimensions: {DIMENSIONS}, hnsw: {{metric: COSINE}}}}) }}"
     ))
     .await
@@ -1142,7 +1139,7 @@ fn a_metric_no_index_carries_scans_and_warns() {
 fn a_field_without_a_vector_index_never_warns() {
     workers::block_on(async {
     let node = Node::builder().build().await.unwrap();
-    node.add_collection(&defra_core::RequestContext::ambient(), &format!(
+    node.add_collection(&format!(
         "type Note {{ title: String  tag: String  embedding: [Float32!] @index(vector: {{dimensions: {DIMENSIONS}}})  plainEmbedding: [Float32!] }}"
     ))
     .await
@@ -1183,7 +1180,7 @@ fn a_field_without_a_vector_index_never_warns() {
 fn a_named_metric_reaches_its_own_index_among_several() {
     workers::block_on(async {
     let node = Node::builder().build().await.unwrap();
-    node.add_collection(&defra_core::RequestContext::ambient(), &format!(
+    node.add_collection(&format!(
         "type Note {{ title: String  tag: String  embedding: [Float32!] \
          @index(name: \"by_cosine\", vector: {{dimensions: {DIMENSIONS}, hnsw: {{metric: COSINE}}}}) \
          @index(name: \"by_dot\", vector: {{dimensions: {DIMENSIONS}, hnsw: {{metric: DOT}}}}) }}"
@@ -1251,7 +1248,7 @@ fn a_named_metric_reaches_its_own_index_among_several() {
 fn several_indexes_without_a_metric_warn_ambiguous() {
     workers::block_on(async {
     let node = Node::builder().build().await.unwrap();
-    node.add_collection(&defra_core::RequestContext::ambient(), &format!(
+    node.add_collection(&format!(
         "type Note {{ title: String  tag: String  embedding: [Float32!] \
          @index(name: \"by_cosine\", vector: {{dimensions: {DIMENSIONS}, hnsw: {{metric: COSINE}}}}) \
          @index(name: \"by_dot\", vector: {{dimensions: {DIMENSIONS}, hnsw: {{metric: DOT}}}}) }}"

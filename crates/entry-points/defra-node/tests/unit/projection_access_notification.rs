@@ -93,16 +93,15 @@ fn exercise_projected_access_notifications() -> Vec<bool> {
         let node = Node::builder().enable_signing().with_node_acp_owner(user_did.clone())
             .with_document_projector(projector.clone()).build().await.unwrap();
         let node_did = node.node_identity_did().unwrap().to_owned();
-        let admin = defra_core::RequestContext::default().with_identity(Some(user_did.clone()));
         for permission in [acp::nac::NodePermission::DacBypass, acp::nac::NodePermission::DacRelationAdd,
             acp::nac::NodePermission::DacRelationDelete] {
-            node.add_nac_actor_relationship_as(&admin, permission.as_str(), &node_did).await.unwrap();
+            node.with_identity(identity::Did::new(user_did.clone()).unwrap()).add_nac_actor_relationship(permission.as_str(), &node_did).await.unwrap();
         }
         for permission in [acp::nac::NodePermission::DocumentRead, acp::nac::NodePermission::CollectionGet] {
-            node.add_nac_actor_relationship_as(&admin, permission.as_str(), observer_did.as_str()).await.unwrap();
+            node.with_identity(identity::Did::new(user_did.clone()).unwrap()).add_nac_actor_relationship(permission.as_str(), observer_did.as_str()).await.unwrap();
         }
-        let policy = node.add_dac_policy_as(&admin, "name: Projected access\nresources:\n  - name: children\n    relations:\n      - name: reader\n        types: [actor]\n    permissions:\n      - name: read\n        expr: reader\n      - name: update\n      - name: delete\n").await.unwrap();
-        node.add_collection(&admin, &format!("type AccessChild @policy(id: \"{policy}\", resource: \"children\") {{ name: String }}\ntype AccessParent {{ value: Boolean }}")).await.unwrap();
+        let policy = node.with_identity(identity::Did::new(user_did.clone()).unwrap()).add_dac_policy("name: Projected access\nresources:\n  - name: children\n    relations:\n      - name: reader\n        types: [actor]\n    permissions:\n      - name: read\n        expr: reader\n      - name: update\n      - name: delete\n", None).await.unwrap();
+        node.with_identity(identity::Did::new(user_did.clone()).unwrap()).add_collection(&format!("type AccessChild @policy(id: \"{policy}\", resource: \"children\") {{ name: String }}\ntype AccessParent {{ value: Boolean }}")).await.unwrap();
         let request = |query: &str| QueryRequest::new(query).with_identity(Some(user.did().unwrap()));
         let child = node.execute_request(signer.attach(request("mutation { create_AccessChild(input:{name:\"child\"}) {_docID} }"))).await;
         assert!(!child.has_errors(), "{:?}", child.errors);
@@ -117,11 +116,11 @@ fn exercise_projected_access_notifications() -> Vec<bool> {
         let visible = |response: query::QueryResponse| response.data.unwrap()["AccessChild"].as_array().unwrap().len();
         assert_eq!(visible(node.execute_request(observe()).await), 0);
         let update = |value| format!("mutation {{ update_AccessParent(docID:\"{parent_id}\", input:{{value:{value}}}) {{_docID}} }}");
-        let txn = node.begin_transaction(false).await.unwrap();
-        let result = node.execute_request_in_txn(signer.attach(request(&update(true))), &txn).await;
+        let txn = node.new_txn(false).await.map(|txn| txn.detach()).unwrap();
+        let result = node.with_transaction(txn).execute_request(signer.attach(request(&update(true)))).await;
         assert!(!result.has_errors(), "{:?}", result.errors);
         assert!(changes.try_recv().is_err());
-        node.discard_transaction(&txn).await.unwrap();
+        node.with_transaction(txn).discard().await.unwrap();
         let aborted = changes.try_recv().is_ok();
         assert!(!aborted);
         assert_eq!(visible(node.execute_request(observe()).await), 0);

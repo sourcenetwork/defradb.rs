@@ -117,7 +117,10 @@ impl RetryAttemptFn for Prepare {
                 .as_ref()
                 .map(|info| info.collections.iter().cloned().collect())
                 .unwrap_or_default();
-            let existing_filters = existing.map(|info| info.filters).unwrap_or_default();
+            let existing_filters = existing
+                .as_ref()
+                .map(|info| info.filters.clone())
+                .unwrap_or_default();
             let changed = self
                 .request
                 .info
@@ -163,11 +166,13 @@ impl RetryAttemptFn for Prepare {
                 error: None,
                 _owner: Some(Arc::clone(&self.owner)),
             };
-            txn.set(
-                &row_key,
-                &self.request.info.to_bytes().map_err(storage_error)?,
-            )
-            .await?;
+            let mut info = self.request.info.clone();
+            if let Some(existing) = &existing {
+                info.status = existing.status;
+                info.last_status_change = existing.last_status_change;
+            }
+            txn.set(&row_key, &info.to_bytes().map_err(storage_error)?)
+                .await?;
             txn.set(&incarnation_key, &encode_retry_marker_generation(self.id))
                 .await?;
             txn.set(
