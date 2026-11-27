@@ -17,7 +17,7 @@ use futures::FutureExt as _;
 use vera_domain::{PublicKey, TermCertificate, TermChange};
 use vera_node::{Contest, DiscardedSubmission, EmbedError, EmbeddedNode, SoloDeployment, SoloKeys};
 
-use super::held::Slot;
+use super::held::{Replacing, Slot};
 use super::{device, Bounded, HostConfig, HostDevice, HostError, HostedNode};
 
 /// A switch made on the node: a future that borrows it to replace it.
@@ -198,16 +198,17 @@ impl HostedNode {
         if self.stopping.is_set() {
             return Err(HostError::NotRunning);
         }
-        let mut held = self.held.replace().await;
-        let target = heading(&held.device);
+        let replaced = self.held.replace().await;
+        let target = heading(&replaced.device);
+        let mut held = Settling::new(replaced, target);
         let node = held.node.as_mut().ok_or(HostError::NotRunning)?;
         // A stop that began, also before the slot was free, drops the switch
         // where it stands, as Vera recovers an interruption: the stop, or
         // the reaper it leaves at its deadline, takes whatever is left once
         // this call lets go.
         let ended = self.unless_stopped(switch(node)).await;
-        let switched = matches!(ended, Bounded::Done(Ok(_)));
-        let running = settle(&mut held, target, switched);
+        held.switched = matches!(ended, Bounded::Done(Ok(_)));
+        let running = held.settle();
         match ended {
             Bounded::Done(Ok(value)) => {
                 // The transports reach the node the switch started, unless a
@@ -224,6 +225,52 @@ impl HostedNode {
             }),
             Bounded::Stopped => Err(HostError::NotRunning),
             Bounded::Runtime(error) => Err(HostError::Runtime(error)),
+        }
+    }
+}
+
+/// The slot a switch writes, settled even when its caller drops the switch.
+struct Settling<'held> {
+    slot: Replacing<'held>,
+    target: HostDevice,
+    switched: bool,
+    settled: bool,
+}
+
+impl<'held> Settling<'held> {
+    fn new(slot: Replacing<'held>, target: HostDevice) -> Self {
+        Self {
+            slot,
+            target,
+            switched: false,
+            settled: false,
+        }
+    }
+
+    fn settle(&mut self) -> bool {
+        self.settled = true;
+        settle(&mut self.slot, self.target.clone(), self.switched)
+    }
+}
+
+impl std::ops::Deref for Settling<'_> {
+    type Target = Slot;
+
+    fn deref(&self) -> &Self::Target {
+        &self.slot
+    }
+}
+
+impl std::ops::DerefMut for Settling<'_> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.slot
+    }
+}
+
+impl Drop for Settling<'_> {
+    fn drop(&mut self) {
+        if !self.settled {
+            self.settle();
         }
     }
 }

@@ -24,6 +24,8 @@
 \*     bounded by the start deadline, and abandoned where it stands once a
 \*     stop begins: a thread Vera was waiting for, or had just spawned, then
 \*     runs on with nobody waiting for it, though it has been told to stop.
+\*     The caller may also drop the switch future before it returns; the
+\*     host then settles whatever node is left in the slot.
 \*     A switch that left no node behind is started again by a restart
 \*     (HostedNode::complete_switch, HostedNode::restart), which launches
 \*     the node the switch was heading to once no thread holds the
@@ -82,9 +84,9 @@
 \*                  event drops that future before it takes another step;
 \*   SwitchDeadline the same function's start deadline, which drops a hung
 \*                  switch or restart;
-\*   ClearsHalted   crates/engine/vera-embedded/src/host/switch.rs settle,
-\*                  which takes a halted node out of the slot, and records the
-\*                  device the switch was heading to;
+\*   ClearsHalted   crates/engine/vera-embedded/src/host/switch.rs settle and
+\*                  Settling::drop, which take a halted node out of the slot,
+\*                  and record the device the switch was heading to;
 \*   RecordsTarget  the same function, which records that device too when
 \*                  the switch succeeded and its node runs;
 \*   Restarts       crates/engine/vera-embedded/src/host/restart.rs
@@ -324,11 +326,11 @@ LaunchHangs ==
   /\ UNCHANGED <<slot, running, told, device, link, stopping, asking, readers,
                  writer, mode, lateStart, st, taken, wa, rc, rp, dropped>>
 
-\* The switch is dropped where it stands, by a stop or the deadline. A node
-\* not yet halted runs on in the slot. Past that the slot is left as a
-\* failed launch leaves it, and whatever thread Vera was waiting for runs
-\* on with nobody waiting for it: the old node, already told to stop, or
-\* the new one, told to stop as its stop sender is dropped.
+\* The switch is dropped where it stands, by a stop, the deadline or its
+\* caller. A node not yet halted runs on in the slot. Past that the slot is
+\* left as a failed launch leaves it, and whatever thread Vera was waiting
+\* for runs on with nobody waiting for it: the old node, already told to
+\* stop, or the new one, told to stop as its stop sender is dropped.
 Interrupted ==
   /\ IF sw = "holding"
        THEN UNCHANGED <<slot, device>>            \* nothing was stopped
@@ -349,6 +351,12 @@ SwitchAborted ==
 \* The start deadline passes first.
 SwitchElapses ==
   /\ SwitchDeadline                               \* the code bounds it
+  /\ sw \in Interruptible                         \* while it runs
+  /\ Interrupted                                  \* it is dropped
+
+\* The caller drops the switch future before it returns. The host's drop
+\* guard leaves the slot as an interruption does, so a restart can recover.
+SwitchCancelled ==
   /\ sw \in Interruptible                         \* while it runs
   /\ Interrupted                                  \* it is dropped
 
@@ -561,7 +569,7 @@ StopWaits == StopJoined \/ StopReleased \/ StopElapses
 Next ==
   \/ SwitchBegin \/ RestartBegin \/ SwitchAcquire                       \* asking
   \/ SwitchRefused \/ SwitchHalt \/ HaltJoined \/ Launch                \* switching
-  \/ SwitchAborted \/ SwitchElapses \/ SwitchRelease                    \* ending
+  \/ SwitchAborted \/ SwitchElapses \/ SwitchCancelled \/ SwitchRelease \* ending
   \/ StopBegin \/ StopAcquire \/ StopTake \/ StopWaits                  \* stop
   \/ ReaperTakes \/ ReaperGivesUp \/ HostDrop                           \* after it
   \/ \E n \in Nodes : NodeEnds(n)                                       \* threads end

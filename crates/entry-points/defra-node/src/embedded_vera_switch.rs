@@ -16,7 +16,8 @@ impl Node {
     /// starts ([`vera_embedded::HostedNode::take_over`]), then send every
     /// registration and relationship change the node owes, whoever's they
     /// are, each with the authority recorded with it. What the provider
-    /// does not take stays owed, as [`Node::owed_acp`] reports.
+    /// does not take stays owed, as [`Node::owed_acp`] reports. A failure to
+    /// send it is logged rather than reported as a failed take-over.
     ///
     /// A switch that failed with the Vera node stopped is completed by
     /// [`Node::complete_embedded_vera_switch`].
@@ -26,17 +27,23 @@ impl Node {
         certificate: TermCertificate,
     ) -> Result<()> {
         self.hosted_vera()?.take_over(keys, certificate).await?;
-        self.core().send_all_owed_acp().await
+        if let Err(error) = self.core().send_all_owed_acp().await {
+            tracing::warn!(%error, "the Vera take-over completed; owed ACP work remains");
+        }
+        Ok(())
     }
 
     /// Start the Vera node again in the role the last switch was heading to
     /// ([`vera_embedded::HostedNode::complete_switch`]), and send what the
-    /// node owes once it is the active device.
+    /// node owes once it is the active device. A failure to send it is logged
+    /// rather than reported as a failed switch.
     pub async fn complete_embedded_vera_switch(&self) -> Result<()> {
         let hosted = self.hosted_vera()?;
         hosted.complete_switch().await?;
         if hosted.is_active().await {
-            self.core().send_all_owed_acp().await?;
+            if let Err(error) = self.core().send_all_owed_acp().await {
+                tracing::warn!(%error, "the Vera switch completed; owed ACP work remains");
+            }
         }
         Ok(())
     }
