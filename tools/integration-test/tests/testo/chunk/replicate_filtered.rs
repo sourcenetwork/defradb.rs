@@ -11,6 +11,9 @@ use serde_json::{json, Value};
 
 use super::support::{body, chunk_texts_are, eventually, gql, on, CHUNKS};
 
+mod relay;
+mod remove;
+
 // A replicator filter matches immutable fields only.
 const SCHEMA: &str = r#"type Article {
     kind: String @immutable
@@ -50,27 +53,61 @@ fn node(name: &str, persistent: bool) -> Actions {
 }
 
 fn two_nodes(persistent: bool) -> Vec<Actions> {
-    let mut actions: Vec<Actions> = Vec::new();
-    for name in ["db0", "db1"] {
-        actions.push(node(name, persistent));
-        actions.push(
-            AddCollection {
-                sdl: SCHEMA.into(),
-                common: on(Some(name)),
-                ..Default::default()
-            }
-            .into(),
-        );
-        actions.push(
-            WaitForPeersEvents {
-                start: true,
-                common: on(Some(name)),
-                ..Default::default()
-            }
-            .into(),
-        );
+    [("db0", persistent), ("db1", persistent)]
+        .into_iter()
+        .flat_map(|(name, persistent)| node_with(name, persistent, SCHEMA))
+        .collect()
+}
+
+/// A started node named `name` that declares `sdl`.
+fn node_with(name: &str, persistent: bool, sdl: &str) -> Vec<Actions> {
+    vec![
+        node(name, persistent),
+        AddCollection {
+            sdl: sdl.into(),
+            common: on(Some(name)),
+            ..Default::default()
+        }
+        .into(),
+        started(name),
+    ]
+}
+
+fn started(name: &str) -> Actions {
+    WaitForPeersEvents {
+        start: true,
+        common: on(Some(name)),
+        ..Default::default()
     }
-    actions
+    .into()
+}
+
+/// Stops `name` and starts it again on the same data.
+fn restart(name: &str) -> Vec<Actions> {
+    vec![
+        Close {
+            keep_data: true,
+            common: on(Some(name)),
+            ..Default::default()
+        }
+        .into(),
+        Start {
+            enable_nac: false,
+            common: on(Some(name)),
+            ..Default::default()
+        }
+        .into(),
+        started(name),
+    ]
+}
+
+fn connect(from: &str, to: &str) -> Actions {
+    ConnectPeers {
+        target: to.into(),
+        common: on(Some(from)),
+        ..Default::default()
+    }
+    .into()
 }
 
 fn replicator_with(filter: Value) -> Actions {
@@ -98,17 +135,27 @@ fn not_secret_replicator() -> Actions {
 
 /// Adds an article of `kind` on `db0`, naming its docID `kind`.
 fn article(kind: &str, text: &str) -> Actions {
+    article_on("db0", kind, kind, text)
+}
+
+/// Adds an article of `kind` on `node`, naming its docID `name`.
+fn article_on(node: &str, name: &str, kind: &str, text: &str) -> Actions {
     AddDoc {
         collection: "Article".into(),
         doc_map: Some(json!({ "kind": kind, "body": text })),
         common: Common {
             retry: true,
-            capture: captures([(kind, "/docID")]),
-            ..on(Some("db0"))
+            capture: captures([(name, "/docID")]),
+            ..on(Some(node))
         },
         ..Default::default()
     }
     .into()
+}
+
+/// The public article written last on `db0`; see [`later_body`].
+fn later_article() -> Actions {
+    article_on("db0", "later", "public", &later_body())
 }
 
 fn on_db0(txn: Option<usize>) -> Common {
@@ -161,8 +208,13 @@ fn commit(txn: usize) -> Actions {
 
 /// `db1` eventually shows exactly the articles of `kinds`.
 fn peer_articles_are(kinds: &[&str]) -> Actions {
+    articles_are("db1", kinds)
+}
+
+/// `node` eventually shows exactly the articles of `kinds`.
+fn articles_are(node: &str, kinds: &[&str]) -> Actions {
     let articles: Vec<Value> = kinds.iter().map(|kind| json!({ "kind": kind })).collect();
-    let mut common = on(Some("db1"));
+    let mut common = on(Some(node));
     common.unordered = vec!["/data/Article".into()];
     eventually(
         Request {
@@ -177,7 +229,12 @@ fn peer_articles_are(kinds: &[&str]) -> Actions {
 
 /// `db1` eventually holds exactly the chunks of `bodies`.
 fn peer_chunks_are(bodies: &[&str]) -> Actions {
-    eventually(chunk_texts_are(bodies, Some("db1")))
+    chunks_are("db1", bodies)
+}
+
+/// `node` eventually holds exactly the chunks of `bodies`.
+fn chunks_are(node: &str, bodies: &[&str]) -> Actions {
+    eventually(chunk_texts_are(bodies, Some(node)))
 }
 
 fn filtered(actions: Vec<Actions>) -> TestCase {
@@ -198,7 +255,11 @@ fn ships_public_chunks(replicator_first: bool) {
     if !replicator_first {
         actions.push(replicator());
     }
-    actions.extend([peer_articles_are(&["public"]), peer_chunks_are(&[&public])]);
+    actions.extend([
+        later_article(),
+        peer_chunks_are(&[&public, &later_body()]),
+        peer_articles_are(&["public", "public"]),
+    ]);
     filtered(actions).execute();
 }
 
@@ -286,8 +347,9 @@ fn an_explicit_transaction_ships_the_chunks_of_a_matching_parent() {
         add_in_txn("secret", &secret),
         add_in_txn("public", &public),
         commit(TXN),
-        peer_articles_are(&["public"]),
-        peer_chunks_are(&[&public]),
+        later_article(),
+        peer_chunks_are(&[&public, &later_body()]),
+        peer_articles_are(&["public", "public"]),
     ]);
     filtered(actions).execute();
 }
@@ -323,8 +385,9 @@ fn a_negative_filter_ships_only_the_chunks_of_the_parents_it_matches() {
         not_secret_replicator(),
         article("secret", &secret),
         article("public", &public),
-        peer_articles_are(&["public"]),
-        peer_chunks_are(&[&public]),
+        later_article(),
+        peer_chunks_are(&[&public, &later_body()]),
+        peer_articles_are(&["public", "public"]),
     ]);
     filtered(actions).execute();
 }
@@ -338,8 +401,9 @@ fn a_negative_filter_replays_only_the_chunks_of_the_parents_it_matches() {
         article("secret", &secret),
         article("public", &public),
         not_secret_replicator(),
-        peer_articles_are(&["public"]),
-        peer_chunks_are(&[&public]),
+        later_article(),
+        peer_chunks_are(&[&public, &later_body()]),
+        peer_articles_are(&["public", "public"]),
     ]);
     filtered(actions).execute();
 }
@@ -365,20 +429,11 @@ fn a_negative_filter_retries_only_the_chunks_of_the_parents_it_matches() {
             ..Default::default()
         }
         .into(),
-        WaitForPeersEvents {
-            start: true,
-            common: on(Some("db1")),
-            ..Default::default()
-        }
-        .into(),
-        ConnectPeers {
-            target: "db1".into(),
-            common: on(Some("db0")),
-            ..Default::default()
-        }
-        .into(),
-        peer_articles_are(&["public"]),
-        peer_chunks_are(&[&public]),
+        started("db1"),
+        connect("db0", "db1"),
+        later_article(),
+        peer_chunks_are(&[&public, &later_body()]),
+        peer_articles_are(&["public", "public"]),
     ]);
     filtered(actions).execute();
 }

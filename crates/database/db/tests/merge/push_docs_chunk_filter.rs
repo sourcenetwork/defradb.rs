@@ -259,9 +259,7 @@ async fn retry(node: &Node, chunk: &str) -> RapidHashSet<String> {
     requests.into_iter().map(|request| request.doc_id).collect()
 }
 
-/// Retries `chunk`'s marker through `transport`, for the node's replicator
-/// with only `replicated` collections (all of its own when empty), and returns
-/// its result and the requests it sent, in order.
+/// Retries `chunk`'s marker for a replicator of `replicated`, every collection when empty.
 async fn retry_through(
     node: &Node,
     chunk: &str,

@@ -71,41 +71,6 @@ fn a_chunk_of_a_filtered_parent_counts_as_filtered() {
 }
 
 #[test]
-fn a_chunk_never_passes_on_its_own_document() {
-    let own_document = json!({"kind": "public", "text": "t"});
-
-    assert!(!public_articles_peer().matches_filter(&EqOnlyFilterMatcher, CHUNKS, &own_document));
-    assert_eq!(
-        chunk_admission(&public_articles_peer(), CHUNKS, Some(own_document)),
-        Admission::NoDocument
-    );
-}
-
-#[test]
-fn a_chunk_of_a_matching_parent_is_admitted() {
-    assert_eq!(
-        chunk_admission(
-            &public_articles_peer(),
-            ARTICLES,
-            Some(json!({"kind": "public"}))
-        ),
-        Admission::Admit
-    );
-}
-
-#[test]
-fn a_chunk_of_an_unmatched_parent_is_refused() {
-    assert_eq!(
-        chunk_admission(
-            &public_articles_peer(),
-            ARTICLES,
-            Some(json!({"kind": "secret"}))
-        ),
-        Admission::FilterMiss
-    );
-}
-
-#[test]
 fn a_chunk_without_its_parents_document_is_refused() {
     assert_eq!(
         chunk_admission(&public_articles_peer(), ARTICLES, None),
@@ -134,15 +99,4 @@ fn a_filtered_document_without_its_document_is_refused() {
         public_articles_peer().admission(&EqOnlyFilterMatcher, ARTICLES, ARTICLES, None),
         Admission::NoDocument
     );
-}
-
-#[test]
-fn removing_the_parent_takes_its_chunk_collection() {
-    let mut info = public_articles_peer();
-
-    info.remove_collection(ARTICLES);
-
-    assert!(info.collections.is_empty());
-    assert!(info.filters.is_empty());
-    assert!(info.chunk_sources.is_empty());
 }
