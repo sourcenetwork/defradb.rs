@@ -8,6 +8,7 @@
 //! next step. A reload that never finishes (an error, a cancelled search)
 //! hands its claim back on drop, so the next search reloads.
 
+use std::ops::ControlFlow;
 use std::sync::Arc;
 
 use super::cache::{Claim, CodeCache, Codes, Loaded};
@@ -32,6 +33,7 @@ pub struct Reload<'a> {
 
 impl<'a> Reload<'a> {
     pub(super) fn begin(cache: &'a CodeCache, generation: u64) -> Option<Self> {
+        let update = cache.pending.begin_update()?;
         let claim = Claim {
             generation,
             ticket: cache.next_ticket(),
@@ -53,7 +55,10 @@ impl<'a> Reload<'a> {
                 Some(claim),
             ))
         });
-        dropped?.release();
+        let dropped = dropped?;
+        dropped.release();
+        cache.pending.clear_current();
+        drop(update);
         kovan::flush();
         Some(Self {
             cache,
@@ -67,20 +72,21 @@ impl<'a> Reload<'a> {
     /// Adds a code, unless the budget has no room for it. Each time the
     /// reload takes more room it first checks it still holds its claim: one
     /// taken over stops and gives its room back.
-    pub fn insert(&mut self, id: NodeId, code: &[u8]) -> Result<()> {
+    pub fn insert(&mut self, id: NodeId, code: &[u8]) -> Result<ControlFlow<()>> {
         if self.full {
-            return Ok(());
+            return Ok(ControlFlow::Break(()));
         }
         let bound = self.codes.bound_with_one_more(code.len());
         if self.charge.bytes() < bound && !self.owned() {
             self.stop();
-            return Ok(());
+            return Ok(ControlFlow::Break(()));
         }
         if !self.charge.cover(bound, LOAD_STEP) {
             self.full = true;
-            return Ok(());
+            return Ok(ControlFlow::Break(()));
         }
-        self.codes.insert(id, code)
+        self.codes.insert(id, code)?;
+        Ok(ControlFlow::Continue(()))
     }
 
     /// Whether this reload still holds its claim.

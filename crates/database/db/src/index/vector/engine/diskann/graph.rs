@@ -123,7 +123,7 @@ impl<S: VectorNodeStore> DiskAnn<S> {
             return Ok(());
         };
         self.store()
-            .iterate_aux(codec::CODE, b"", |key, code| {
+            .iterate_aux_while(codec::CODE, b"", |key, code| {
                 reload.insert(codec::id_from_key(key)?, code)
             })
             .await?;
@@ -436,7 +436,7 @@ impl<S: VectorNodeStore> DiskAnn<S> {
                     if let Some(added) = self.read_pending_log(m, tag.position, head).await? {
                         let next = Arc::new(copy.caught_up(head, added));
                         next.for_each_latest_through(head, m, latest);
-                        cache.publish(next);
+                        codes.publish_pending(next);
                         return Ok(());
                     }
                 }
@@ -454,7 +454,7 @@ impl<S: VectorNodeStore> DiskAnn<S> {
             generation,
             position: head,
         };
-        cache.publish(Arc::new(Copy::loaded(tag, segment)));
+        codes.publish_pending(Arc::new(Copy::loaded(tag, segment)));
         Ok(())
     }
 

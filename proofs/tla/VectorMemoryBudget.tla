@@ -43,7 +43,13 @@
 \*     same generation (INV_ClaimLostOnlyToNewer);
 \*   MC_VectorMemoryBudget_Red_StaleFinish: a reload that was taken over still
 \*     publishes its older codes, wiping the newer reload's claim
-\*     (INV_ClaimLostOnlyToNewer).
+\*     (INV_ClaimLostOnlyToNewer);
+\*   MC_VectorMemoryBudget_Red_StepAfterLoss: a reload that was taken over
+\*     keeps taking codes instead of stopping (INV_NoTakeAfterLoss);
+\*   MC_VectorMemoryBudget_Red_StaleAbandon: an older search's cancellation
+\*     clears a newer reload's claim (INV_NoClaimClearedByStaleAbandon);
+\*   MC_VectorMemoryBudget_Red_PendingWhileLoading: a pending-list copy is
+\*     published while a reload runs and takes its room (INV_FullLoad).
 \*
 \* Correspondence with the Rust code (crates/database/db/src/index/vector/):
 \*   used, Limit     budget.rs MemoryBudget (`used`, `limit`), MemoryBudget::take
@@ -60,9 +66,9 @@
 \*   Abandon         engine/diskann/reload.rs Drop for Reload, budget.rs Drop
 \*                   for Charge
 \*   Fill            engine/diskann/cache.rs CodeCache::insert
-\* The pending-list copies (engine/diskann/pending_cache.rs PendingCache::publish)
-\* take room through the same Charge and are refused the same way; they are a
-\* holder like the misses here and are not modeled apart.
+\* The pending-list copy (engine/diskann/pending_cache.rs PendingCache::publish)
+\* is the one-code `pending` holder. It is cleared when a reload begins, and a
+\* publish waits for the reload, so it cannot take the room codes need.
 \*
 \* Abstractions: one index, one unit per code. A miss filled at the very moment
 \* a reload swaps the codes out is charged to the old copy and held until that
@@ -91,11 +97,19 @@ CONSTANTS
     \* Guard: only one search reloads a generation.
     SingleFlight,
     \* Guard: a reload publishes only while it still owns its generation.
-    OwnedFinish
+    OwnedFinish,
+    \* Guard: a reload that was taken over stops taking codes.
+    OwnedStep,
+    \* Guard: a search that does not own the claim cannot clear it on abandon.
+    OwnedAbandon,
+    \* Guard: a pending-list copy is not published while a reload runs.
+    NoPendingWhileLoading
 
 VARIABLES
     \* The bytes (codes) the budget counter says are held.
     used,
+    \* The bytes the one pending-list copy holds.
+    pending,
     \* The newest generation merged.
     gen,
     \* The codes in memory: the generation they belong to, the generation a
@@ -106,19 +120,21 @@ VARIABLES
     load,
     \* The last reload that published: its generation, how many codes it
     \* published, and whether an older reload took room while it ran.
-    published
+    published,
+    \* A stale search cleared another reload's claim when it was abandoned.
+    staleAbandon
 
 \* Every variable, for stuttering steps.
-vars == <<used, gen, cache, load, published>>
+vars == <<used, pending, gen, cache, load, published, staleAbandon>>
 
 \* Stands for no search: the reload claim nobody holds.
 NoOne == "none"
 
 \* A search doing nothing: no generation, nothing held, nothing scanned, no
-\* refusal excused, and no claim lost (`lost` is the generation of whatever
-\* took its claim, 0 while it has lost none).
+\* refusal excused, no claim lost (`lost` is the generation of whatever took
+\* its claim, 0 while it has lost none), and no code taken after that loss.
 Idle == [phase |-> "idle", g |-> 0, have |-> 0, scanned |-> 0,
-         full |-> FALSE, excused |-> FALSE, lost |-> 0]
+         full |-> FALSE, excused |-> FALSE, lost |-> 0, late |-> FALSE]
 
 \* The smaller of two numbers.
 Min(a, b) == IF a < b THEN a ELSE b
@@ -160,6 +176,8 @@ LoseClaim(l, g) == IF cache.by \in Searches /\ Loading(cache.by)
 Init ==
     \* The budget counter starts empty.
     /\ used = 0
+    \* No pending-list copy is held.
+    /\ pending = 0
     \* The first graph exists.
     /\ gen = 1
     \* No codes are loaded yet: generation 0 is older than any search's.
@@ -169,6 +187,8 @@ Init ==
     /\ load = [s \in Searches |-> Idle]
     \* No reload has published; a full one stands in so the invariant holds.
     /\ published = [g |-> 0, have |-> Min(Codes, Limit), excused |-> FALSE]
+    \* No stale search has cleared another reload's claim.
+    /\ staleAbandon = FALSE
 
 \* A merge makes a newer generation, so the codes in memory are out of date.
 Merge ==
@@ -177,7 +197,7 @@ Merge ==
     \* the graph moves on to it.
     /\ gen' = gen + 1
     \* Nothing else changes.
-    /\ UNCHANGED <<used, cache, load, published>>
+    /\ UNCHANGED <<used, pending, cache, load, published, staleAbandon>>
 
 \* Search s, reading generation g, finds the codes out of date and reloads.
 Begin(s, g) ==
@@ -190,17 +210,19 @@ Begin(s, g) ==
     \* With the old codes dropped first, their room goes back now and the
     \* cache holds nothing while the reload runs; without, they stay.
     /\ IF DropOldFirst
-       THEN /\ used' = used - cache.codes - cache.misses
+       THEN /\ used' = used - cache.codes - cache.misses - pending
+            /\ pending' = 0
             /\ cache' = [generation |-> cache.generation, loading |-> g,
                          by |-> s, codes |-> 0, misses |-> 0]
        ELSE /\ used' = used
+            /\ pending' = pending
             /\ cache' = [cache EXCEPT !.loading = g, !.by = s]
     \* The search starts loading g with nothing held and nothing scanned.
     \* and whoever held the claim loses it to this reload.
     /\ load' = [LoseClaim(load, g) EXCEPT
                    ![s] = [Idle EXCEPT !.phase = "loading", !.g = g]]
     \* The generation and the last publish are unchanged.
-    /\ UNCHANGED <<gen, published>>
+    /\ UNCHANGED <<gen, published, staleAbandon>>
 
 \* The reload gives up its room (when it releases on drop) and becomes idle.
 StopReload(s) ==
@@ -219,9 +241,21 @@ Step(s) ==
        THEN /\ load' = [load EXCEPT ![s].scanned = @ + 1]
             /\ UNCHANGED <<used, cache>>
        ELSE IF ~Owns(s)
-       \* Another reload took the generation over: this one lets go now.
-       THEN /\ StopReload(s)
-            /\ UNCHANGED cache
+       \* Another reload took the generation over. With the guard this one
+       \* lets go now; without it, it keeps taking codes (the stale-step RED).
+       THEN IF OwnedStep
+            THEN /\ StopReload(s)
+                 /\ UNCHANGED cache
+            ELSE IF used + 1 <= Limit
+                 THEN /\ used' = used + 1
+                      /\ load' = [load EXCEPT ![s].have = @ + 1,
+                                           ![s].scanned = @ + 1,
+                                           ![s].late = TRUE]
+                      /\ UNCHANGED cache
+                 ELSE /\ load' = [load EXCEPT ![s].full = TRUE,
+                                           ![s].scanned = @ + 1,
+                                           ![s].late = TRUE]
+                      /\ UNCHANGED <<used, cache>>
        ELSE IF used + 1 <= Limit
        \* There is room: take it (in one step), or remember the check and
        \* take it in a later step (the split RED).
@@ -237,7 +271,7 @@ Step(s) ==
                                     ![s].excused = @ \/ StaleHolds(s)]
             /\ UNCHANGED <<used, cache>>
     \* The generation and the last publish are unchanged.
-    /\ UNCHANGED <<gen, published>>
+    /\ UNCHANGED <<gen, pending, published, staleAbandon>>
 
 \* The split RED's second half: take the room the earlier check saw.
 Add(s) ==
@@ -249,7 +283,7 @@ Add(s) ==
     /\ load' = [load EXCEPT ![s].phase = "loading", ![s].have = @ + 1,
                             ![s].scanned = @ + 1]
     \* Nothing else changes.
-    /\ UNCHANGED <<gen, cache, published>>
+    /\ UNCHANGED <<gen, pending, cache, published, staleAbandon>>
 
 \* Search s has scanned every code and publishes what it loaded.
 Finish(s) ==
@@ -277,7 +311,7 @@ Finish(s) ==
           ELSE /\ StopReload(s)
                /\ UNCHANGED <<cache, published>>
     \* The generation is unchanged.
-    /\ UNCHANGED gen
+    /\ UNCHANGED <<pending, gen, staleAbandon>>
 
 \* Search s's reload stops half way: an error, or the search was cancelled.
 Abandon(s) ==
@@ -287,10 +321,32 @@ Abandon(s) ==
     /\ StopReload(s)
     \* If it still owns its generation, it hands it back, so the next search
     \* reloads it.
-    /\ cache' = IF Owns(s) THEN [cache EXCEPT !.loading = 0, !.by = NoOne]
+    /\ cache' = IF Owns(s) \/ ~OwnedAbandon
+                THEN [cache EXCEPT !.loading = 0, !.by = NoOne]
                 ELSE cache
+    \* Without the guard, abandoning a stale search can clear a newer claim.
+    /\ staleAbandon' = (staleAbandon \/
+         (~OwnedAbandon /\ ~Owns(s) /\
+          cache.by \in Searches /\ Loading(cache.by)))
     \* The generation and the last publish are unchanged.
-    /\ UNCHANGED <<gen, published>>
+    /\ UNCHANGED <<pending, gen, published>>
+
+\* A search publishes one pending-list copy, if the budget has room and no
+\* reload is running. It is a holder just like a missed code.
+Publish(s) ==
+    \* The search reads through the cache between reloads,
+    /\ load[s].phase = "idle"
+    \* it has no pending copy yet,
+    /\ pending = 0
+    \* with the guard, no reload is running,
+    /\ NoPendingWhileLoading => cache.loading = 0
+    \* and the budget has room, taken in the same step.
+    /\ used + 1 <= Limit
+    /\ used' = used + 1
+    \* The cache keeps the pending copy.
+    /\ pending' = 1
+    \* Nothing else changes.
+    /\ UNCHANGED <<gen, cache, load, published, staleAbandon>>
 
 \* An idle search keeps a code it read on a miss, if the budget has room.
 Fill(s) ==
@@ -306,7 +362,7 @@ Fill(s) ==
     \* The cache keeps one more missed code.
     /\ cache' = [cache EXCEPT !.misses = @ + 1]
     \* Nothing else changes.
-    /\ UNCHANGED <<gen, load, published>>
+    /\ UNCHANGED <<pending, gen, load, published, staleAbandon>>
 
 \* One thing happens: a merge, or a search acts.
 Next ==
@@ -319,6 +375,7 @@ Next ==
         \/ Finish(s)
         \/ Abandon(s)
         \/ Fill(s)
+        \/ Publish(s)
 
 \* Start in Init and take steps of Next forever.
 Spec == Init /\ [][Next]_vars
@@ -328,7 +385,7 @@ INV_BudgetHolds == used <= Limit
 
 \* Promise: the counter is exactly what the codes, the misses and every
 \* running reload hold.
-INV_Accounted == used = cache.codes + cache.misses + HeldBy(Searches)
+INV_Accounted == used = pending + cache.codes + cache.misses + HeldBy(Searches)
 
 \* Promise: a published reload holds every code that fits in the budget,
 \* unless a reload that was taken over still held room when it was refused.
@@ -339,6 +396,14 @@ INV_FullLoad == published.excused \/ published.have >= Min(Codes, Limit)
 INV_ClaimLostOnlyToNewer == \A s \in Searches :
     \* Either it lost no claim, or what took it is newer than it.
     Loading(s) => (load[s].lost = 0 \/ load[s].lost > load[s].g)
+
+\* Promise: a reload that lost its claim takes no later code.
+INV_NoTakeAfterLoss == \A s \in Searches :
+    \* A running reload has never taken a code after losing its claim.
+    Loading(s) => ~load[s].late
+
+\* Promise: abandoning a search that no longer owns the claim leaves it alone.
+INV_NoClaimClearedByStaleAbandon == staleAbandon = FALSE
 
 \* Searches are interchangeable.
 Symmetry == Permutations(Searches)

@@ -511,27 +511,37 @@ impl Run {
             done.push(
                 pool.submit(workers::Target::Worker(worker), move || async move {
                     let mut txn = store.new_txn(true).await.unwrap();
+                    let mut latencies = Vec::with_capacity(queries.len());
                     with_engine!(engine.as_str(), &mut txn, codes, e => {
                         for query in queries.iter() {
+                            let start = Instant::now();
                             e.search(query.as_slice(), K, effort).await.unwrap();
+                            latencies.push(start.elapsed().as_nanos());
                         }
                     });
                     txn.discard();
+                    latencies
                 })
                 .await
                 .unwrap(),
             );
         }
+        let mut latencies = Vec::with_capacity(threads * self.queries.len());
         for completion in done {
-            completion.await.unwrap();
+            latencies.extend(completion.await.unwrap());
         }
         let qps = (threads * self.queries.len()) as f64 / start.elapsed().as_secs_f64();
+        latencies.sort();
+        let q = latencies.len();
+        let ms = |nanos: u128| nanos as f64 / 1e6;
         pool.stop().await.unwrap();
         eprintln!(
-            "QPS {} effort={} threads={threads}: {qps:.0}",
+            "QPS {} effort={} threads={threads}: {qps:.0} p50={:.2}ms p99={:.2}ms",
             self.label,
             self.effort
                 .map_or_else(|| "default".to_string(), |e| e.to_string()),
+            ms(latencies[q / 2]),
+            ms(latencies[q * 99 / 100]),
         );
     }
 }

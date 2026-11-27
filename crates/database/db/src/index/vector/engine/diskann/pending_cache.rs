@@ -66,10 +66,6 @@ pub struct Segment {
     /// An entry broke the run (a gap, or past `u32` entries): the segment
     /// cannot be kept.
     broken: bool,
-    /// The room the segment holds in the node's budget, taken when a copy
-    /// holding it is first published. Copies share segments, so each is
-    /// charged once, and given back when the last copy holding it goes.
-    charge: OnceCell<Charge>,
 }
 
 /// What an entry costs besides its code: its id and marker, and a slot in
@@ -138,6 +134,8 @@ pub struct Copy {
     tag: Option<Tag>,
     segments: Vec<Arc<Segment>>,
     bytes: usize,
+    /// The room this copy holds in the node's budget while it is current.
+    charge: OnceCell<Charge>,
     /// The pending list at `tag` was past [`MAX_PENDING_CACHE_BYTES`]: nothing
     /// is held, and searches at that generation scan without copying.
     oversized: bool,
@@ -151,6 +149,7 @@ impl Copy {
             tag: Some(tag),
             segments: vec![Arc::new(segment)],
             bytes,
+            charge: OnceCell::new(),
             oversized: false,
         }
     }
@@ -191,12 +190,25 @@ impl Copy {
             tag: self.tag.map(|tag| Tag { position, ..tag }),
             segments,
             bytes,
+            charge: OnceCell::new(),
             oversized: false,
         }
     }
 
     pub fn is_oversized(&self) -> bool {
         self.oversized
+    }
+
+    /// The bytes this copy charges to the node's budget.
+    pub fn resident_bytes(&self) -> usize {
+        self.bytes
+    }
+
+    /// Gives back the room this copy holds.
+    fn release(&self) {
+        if let Some(charge) = self.charge.get() {
+            charge.release();
+        }
     }
 
     /// Whether `entries` more inserts of `code_len`-byte codes still fit
@@ -256,6 +268,17 @@ impl Copy {
 pub struct PendingCache {
     current: Atom<Arc<Copy>>,
     budget: Arc<MemoryBudget>,
+    /// One copy is being published or cleared. Other publishers leave their
+    /// copy to a later search rather than overlap budget transfers.
+    updating: AtomicBool,
+}
+
+pub(super) struct PendingUpdate<'a>(&'a AtomicBool);
+
+impl Drop for PendingUpdate<'_> {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::Release);
+    }
 }
 
 /// A cache nothing is refused from, for an index used outside a node.
@@ -271,41 +294,49 @@ impl PendingCache {
         Self {
             current: Atom::default(),
             budget,
+            updating: AtomicBool::new(false),
         }
     }
 
-    /// Charges every segment of `copy` not charged yet, and says whether the
-    /// budget had room for them all. A segment charged here and never
-    /// published gives its room back when it is dropped.
-    fn charge(&self, copy: &Copy) -> bool {
-        copy.segments.iter().all(|segment| {
-            if segment.charge.get().is_some() {
-                return true;
-            }
-            match self.budget.charge(segment.bytes() as u64) {
-                Some(charge) => {
-                    let _ = segment.charge.set(charge);
-                    true
-                }
-                None => false,
-            }
-        })
+    pub(super) fn begin_update(&self) -> Option<PendingUpdate<'_>> {
+        self.updating
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .ok()
+            .map(|_| PendingUpdate(&self.updating))
     }
 
     pub fn load(&self) -> Arc<Copy> {
         self.current.load().clone()
     }
 
+    /// Drops the current copy and gives its room back.
+    pub fn clear(&self) {
+        let Some(_update) = self.begin_update() else {
+            return;
+        };
+        self.clear_current();
+    }
+
+    /// Drops the current copy while `_update` excludes a concurrent publish.
+    pub(super) fn clear_current(&self) {
+        let old = self.current.swap(Arc::new(Copy::default()));
+        old.release();
+    }
+
     /// Publishes `next` if it is newer than the current copy: a later
     /// generation, or the same one caught up further. A copy past
-    /// [`MAX_PENDING_CACHE_BYTES`], or one the node's budget has no room
-    /// for, is published as an oversized marker instead, so searches at its
-    /// generation scan without building a copy to discard.
+    /// [`MAX_PENDING_CACHE_BYTES`] is published as an oversized marker, so
+    /// searches at its generation scan without building a copy to discard. A
+    /// copy that fits the cap but not the budget is not published, leaving the
+    /// current copy and a later search free to try again once room frees.
     pub fn publish(&self, next: Arc<Copy>) {
+        let Some(_update) = self.begin_update() else {
+            return;
+        };
         let Some(tag) = next.tag else {
             return;
         };
-        let next = if next.fits() && self.charge(&next) {
+        let next = if next.fits() {
             next
         } else {
             Arc::new(Copy {
@@ -314,14 +345,31 @@ impl PendingCache {
                 ..Copy::default()
             })
         };
-        self.current.rcu(|current| match current.tag {
-            Some(held)
-                if held.generation > tag.generation
-                    || (held.generation == tag.generation && held.position >= tag.position) =>
-            {
-                current.clone()
+        let current = self.current.load();
+        if matches!(current.tag, Some(held)
+            if held.generation > tag.generation
+                || (held.generation == tag.generation && held.position >= tag.position))
+        {
+            return;
+        }
+        let released = current.charge.get().map_or(0, Charge::bytes);
+        if !self.budget.replace(released, next.bytes as u64) {
+            return;
+        }
+        let reserved = Charge::reserved(&self.budget, next.bytes as u64);
+        let _ = next.charge.set(reserved);
+        match self.current.compare_and_swap(&current, next.clone()) {
+            Ok(_) => {
+                if let Some(charge) = current.charge.get() {
+                    charge.renounce();
+                }
             }
-            _ => next.clone(),
-        });
+            Err(_) => {
+                if let Some(charge) = next.charge.get() {
+                    charge.release();
+                }
+                self.budget.restore(released);
+            }
+        }
     }
 }

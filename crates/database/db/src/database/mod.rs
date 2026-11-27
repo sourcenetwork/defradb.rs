@@ -67,8 +67,8 @@ pub struct DbOptions {
     /// Documents an index backfill may index in one transaction. `None` uses
     /// the built-in page size.
     pub backfill_batch_size: Option<usize>,
-    /// Bytes vector indexes may keep in memory between searches, across
-    /// every index on the node. `None` is
+    /// The steady-state bytes vector indexes may keep in memory between
+    /// searches, across every index on the node. `None` is
     /// [`DEFAULT_VECTOR_MEMORY_BUDGET`](crate::index::vector::budget::DEFAULT_VECTOR_MEMORY_BUDGET).
     pub vector_memory_budget: Option<u64>,
 }
@@ -121,13 +121,15 @@ impl DbOptions {
         self
     }
 
-    /// Sets the bytes vector indexes may keep in memory between searches.
+    /// Sets the steady-state bytes vector indexes may keep in memory between
+    /// searches.
     pub fn with_vector_memory_budget(mut self, bytes: u64) -> Self {
         self.vector_memory_budget = Some(bytes);
         self
     }
 
-    /// The bytes vector indexes may keep in memory between searches.
+    /// The steady-state bytes vector indexes may keep in memory between
+    /// searches.
     pub fn vector_memory_budget(&self) -> u64 {
         self.vector_memory_budget
             .unwrap_or(crate::index::vector::budget::DEFAULT_VECTOR_MEMORY_BUDGET)

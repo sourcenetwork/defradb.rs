@@ -9,7 +9,7 @@ use crate::diskann_engine::{corpus, params, CORPUS, K, SEED};
 use db::index::vector::budget::{Charge, MemoryBudget};
 use db::index::vector::engine::ann::{Neighbor, VectorIndexEngine};
 use db::index::vector::engine::diskann::{
-    CodeCache, Codes, Copy, DiskAnn, DiskAnnParams, PendingCache, Segment, Tag,
+    CodeCache, CodeCaches, Codes, Copy, DiskAnn, DiskAnnParams, PendingCache, Segment, Tag,
 };
 use db::index::vector::store::{MemoryNodeStore, NodeId};
 use defra_core::vector::Metric;
@@ -46,6 +46,7 @@ fn a_charge_past_the_limit_is_refused_and_a_dropped_one_given_back() {
     let budget = MemoryBudget::new(100);
     let held = budget.charge(60).unwrap();
     assert!(budget.charge(41).is_none(), "41 more do not fit beside 60");
+    assert_eq!(budget.refusals(), 1);
     let rest = budget.charge(40).unwrap();
     assert_eq!(budget.used(), 100);
 
@@ -81,6 +82,7 @@ fn settling_gives_back_the_excess_or_takes_what_is_missing() {
     assert!(charge.settle(100));
     assert!(!charge.settle(101));
     assert_eq!(budget.used(), 100);
+    assert_eq!(budget.refusals(), 2);
 }
 
 /// Every worker shares one budget: charges taken at once from many threads
@@ -223,6 +225,56 @@ fn one_search_reloads_a_generation_at_a_time() {
     );
 }
 
+/// A code reload gives back the index's pending-copy room before it takes its
+/// own codes.
+#[test]
+fn a_code_reload_clears_the_pending_copy() {
+    let budget = MemoryBudget::new(1 << 20);
+    let cache = CodeCache::with_budget(budget.clone());
+    cache.pending.publish(Arc::new(Copy::loaded(
+        Tag {
+            generation: 1,
+            position: 10,
+        },
+        segment(1, 10),
+    )));
+    assert!(budget.used() > 0);
+
+    let reload = cache.begin_reload(2).unwrap();
+    assert_eq!(cache.pending.load().tag(), None);
+    assert_eq!(budget.used(), 0);
+    reload.finish();
+}
+
+/// Concurrent misses for one code charge it once and leave one code resident.
+#[test]
+fn concurrent_misses_charge_a_code_once() {
+    const THREADS: usize = 16;
+    const INSERTS: usize = 10_000;
+
+    let budget = MemoryBudget::new(1 << 20);
+    let cache = Arc::new(CodeCache::with_budget(budget.clone()));
+    let start = Arc::new(regolith::sync::Barrier::new(THREADS));
+    std::thread::scope(|scope| {
+        for _ in 0..THREADS {
+            let cache = Arc::clone(&cache);
+            let start = Arc::clone(&start);
+            scope.spawn(move || {
+                workers::block_on(start.wait()).unwrap();
+                for _ in 0..INSERTS {
+                    cache.insert(NodeId(1), vec![1; 8]);
+                }
+            });
+        }
+    });
+
+    let expected = MemoryBudget::new(1 << 20);
+    let expected_cache = CodeCache::with_budget(expected.clone());
+    expected_cache.insert(NodeId(1), vec![1; 8]);
+    assert_eq!(budget.used(), expected.used());
+    assert_eq!(cache.get(NodeId(1)), Some(vec![1; 8]));
+}
+
 /// A reload of a newer generation takes the claim over; the older one's codes
 /// are never published over it, and its room comes back.
 #[test]
@@ -230,14 +282,14 @@ fn a_reload_taken_over_does_not_publish() {
     let budget = MemoryBudget::unlimited();
     let cache = CodeCache::with_budget(budget.clone());
     let mut older = cache.begin_reload(1).unwrap();
-    older.insert(NodeId(1), &[1; 8]).unwrap();
+    let _ = older.insert(NodeId(1), &[1; 8]).unwrap();
     let mut newer = cache
         .begin_reload(2)
         .expect("a newer generation takes over");
 
     older.finish();
     assert!(!cache.is_current(1), "the older reload published nothing");
-    newer.insert(NodeId(1), &[2; 8]).unwrap();
+    let _ = newer.insert(NodeId(1), &[2; 8]).unwrap();
     newer.finish();
 
     assert!(cache.is_current(2));
@@ -291,9 +343,8 @@ fn segment(base: u64, count: u64) -> Segment {
     segment
 }
 
-/// A copy of a pending list the budget has no room for is kept as a marker,
-/// and its searches scan the log; a copy caught up shares its segments, each
-/// charged once.
+/// A copy of a pending list the budget has no room for is left unpublished so
+/// a later search can try again; a copy caught up shares its segments.
 #[test]
 fn a_pending_copy_is_kept_only_where_the_budget_has_room() {
     let tag = |position| Tag {
@@ -302,7 +353,8 @@ fn a_pending_copy_is_kept_only_where_the_budget_has_room() {
     };
     let refused = PendingCache::with_budget(MemoryBudget::new(0));
     refused.publish(Arc::new(Copy::loaded(tag(10), segment(1, 10))));
-    assert!(refused.load().is_oversized());
+    assert!(!refused.load().is_oversized());
+    assert_eq!(refused.load().tag(), None);
 
     let budget = MemoryBudget::unlimited();
     let cache = PendingCache::with_budget(budget.clone());
@@ -318,4 +370,80 @@ fn a_pending_copy_is_kept_only_where_the_budget_has_room() {
     cache.publish(Arc::new(caught_up));
     kovan::flush();
     assert_eq!(budget.used(), first_bytes + added_bytes);
+}
+
+/// A caught-up pending copy replaces the current copy's charge, so folding a
+/// full set of segments does not need room for both copies at once.
+#[test]
+fn a_folded_pending_copy_replaces_the_room_it_held() {
+    let tag = |position| Tag {
+        generation: 1,
+        position,
+    };
+    let current = Arc::new(Copy::loaded(tag(33), segment(1, 33)));
+    let next = Arc::new(current.caught_up(34, segment(34, 1)));
+    let limit = current.resident_bytes().max(next.resident_bytes()) as u64;
+    assert!((current.resident_bytes() + next.resident_bytes()) as u64 > limit);
+
+    let budget = MemoryBudget::new(limit);
+    let cache = PendingCache::with_budget(budget.clone());
+    cache.publish(Arc::clone(&current));
+    cache.publish(Arc::clone(&next));
+
+    assert!(!cache.load().is_oversized());
+    assert_eq!(cache.load().tag(), Some(tag(34)));
+    assert_eq!(budget.used(), next.resident_bytes() as u64);
+}
+
+/// A temporary budget refusal does not mark the generation oversized and stop
+/// every later search from trying to build a copy.
+#[test]
+fn a_pending_copy_refused_by_the_budget_does_not_poison_the_generation() {
+    let cache = PendingCache::with_budget(MemoryBudget::new(0));
+    cache.publish(Arc::new(Copy::loaded(
+        Tag {
+            generation: 1,
+            position: 10,
+        },
+        segment(1, 10),
+    )));
+
+    assert!(!cache.load().is_oversized());
+    assert_eq!(cache.load().tag(), None);
+}
+
+/// Evicting an index, or every index of a collection, gives its budget back.
+#[test]
+fn evicting_vector_caches_returns_their_room() {
+    let budget = MemoryBudget::new(1 << 20);
+    let caches = CodeCaches::new(budget.clone());
+    let first = caches.get(1, 1);
+    first.replace(1, codes(100));
+    let second = caches.get(2, 1);
+    second.replace(1, codes(100));
+    assert!(budget.used() > 0);
+
+    drop(first);
+    caches.evict(1, 1);
+    kovan::flush();
+    let after_index = budget.used();
+    assert!(after_index > 0);
+
+    drop(second);
+    caches.evict_collection(2);
+    kovan::flush();
+    assert_eq!(budget.used(), 0);
+}
+
+/// Dropping the last handle to an index cache releases its charges.
+#[test]
+fn dropping_an_index_cache_returns_its_room() {
+    let budget = MemoryBudget::new(1 << 20);
+    let cache = CodeCaches::new(budget.clone()).get(1, 1);
+    cache.replace(1, codes(100));
+    assert!(budget.used() > 0);
+
+    drop(cache);
+    kovan::flush();
+    assert_eq!(budget.used(), 0);
 }

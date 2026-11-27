@@ -128,6 +128,22 @@ impl VectorNodeStore for MemoryNodeStore {
         Ok(())
     }
 
+    async fn iterate_aux_while<F>(&self, kind: u8, key_prefix: &[u8], mut visit: F) -> Result<()>
+    where
+        F: FnMut(&[u8], &[u8]) -> Result<ControlFlow<()>> + MaybeSend,
+    {
+        let start = (kind, key_prefix.to_vec());
+        for ((entry_kind, key), value) in self.aux.range(start..) {
+            if *entry_kind != kind || !key.starts_with(key_prefix) {
+                break;
+            }
+            if visit(key, value)?.is_break() {
+                break;
+            }
+        }
+        Ok(())
+    }
+
     /// One writer and no transactions: every append is committed at once, so
     /// a store never has appends of its own to hand back.
     async fn pending_log_head(&self) -> Result<u64> {

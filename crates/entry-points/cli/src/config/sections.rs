@@ -285,9 +285,11 @@ pub struct DatastoreConfig {
     #[serde(default)]
     pub at_rest_encryption: bool,
     /// Bytes vector indexes may keep in memory between searches, across every
-    /// index on the node: DiskANN's resident codes and pending copies. What
-    /// does not fit is read from storage, so searches slow down, mostly at
-    /// the tail, but return the same results. Default: 256 MiB.
+    /// index on the node: DiskANN's resident codes and pending copies. This is
+    /// a steady-state bound; a reload can briefly overlap generations while
+    /// in-flight searches finish. What does not fit is read from storage, so
+    /// searches slow down, mostly at the tail, but return the same results.
+    /// Room is first-come. Default: 256 MiB.
     #[serde(default = "default_vector_memory_budget")]
     pub vector_memory_budget: u64,
 }

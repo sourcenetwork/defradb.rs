@@ -1,4 +1,5 @@
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Weak;
 
 #[cfg(feature = "otlp")]
 use std::sync::Arc;
@@ -6,7 +7,7 @@ use std::sync::Arc;
 #[cfg(feature = "otlp")]
 use kovan::Atom;
 #[cfg(feature = "otlp")]
-use opentelemetry::metrics::{Counter, MeterProvider as _};
+use opentelemetry::metrics::{Counter, MeterProvider as _, ObservableGauge};
 #[cfg(feature = "otlp")]
 use opentelemetry::KeyValue;
 #[cfg(feature = "otlp")]
@@ -168,6 +169,65 @@ pub fn storage_background_error_count() -> u64 {
     STORAGE_BACKGROUND_ERRORS.load(Ordering::Relaxed)
 }
 
+/// A vector memory budget's current values, for telemetry.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct VectorMemoryBudgetSnapshot {
+    /// Bytes the vector caches hold now.
+    pub used: u64,
+    /// Bytes they may hold.
+    pub limit: u64,
+    /// Charge attempts refused because the budget was full.
+    pub refusals: u64,
+}
+
+/// A source of one node's vector memory budget values.
+pub trait VectorMemoryBudgetSource: Send + Sync {
+    fn vector_memory_budget_snapshot(&self) -> VectorMemoryBudgetSnapshot;
+}
+
+#[cfg(feature = "otlp")]
+static NEXT_VECTOR_BUDGET: AtomicU64 = AtomicU64::new(1);
+#[cfg(feature = "otlp")]
+type VectorBudgetRegistry = Atom<Vec<(u64, Weak<dyn VectorMemoryBudgetSource>)>>;
+#[cfg(feature = "otlp")]
+static VECTOR_BUDGETS: OnceCell<VectorBudgetRegistry> = OnceCell::new();
+
+/// Registers a vector memory budget for observable telemetry gauges.
+pub fn register_vector_memory_budget(source: Weak<dyn VectorMemoryBudgetSource>) -> u64 {
+    #[cfg(feature = "otlp")]
+    {
+        let id = NEXT_VECTOR_BUDGET.fetch_add(1, Ordering::Relaxed);
+        let budgets = VECTOR_BUDGETS.get_or_init_racy(|| Atom::new(Vec::new()));
+        budgets.rcu(|current| {
+            let mut next = current.clone();
+            next.push((id, source.clone()));
+            next
+        });
+        id
+    }
+    #[cfg(not(feature = "otlp"))]
+    {
+        let _ = source;
+        0
+    }
+}
+
+#[cfg(feature = "otlp")]
+fn vector_memory_budget_snapshots() -> Vec<(u64, VectorMemoryBudgetSnapshot)> {
+    let Some(budgets) = VECTOR_BUDGETS.get() else {
+        return Vec::new();
+    };
+    budgets
+        .load()
+        .iter()
+        .filter_map(|(id, source)| {
+            source
+                .upgrade()
+                .map(|source| (*id, source.vector_memory_budget_snapshot()))
+        })
+        .collect()
+}
+
 /// Something the storage engine, or the store around it, reports: what the
 /// engine did in the background, how each transaction ended, and post-commit
 /// work that failed after its commit was durable (the commit stands).
@@ -326,6 +386,9 @@ struct Instruments {
     retry_successes: Counter<u64>,
     retry_exhaustions: Counter<u64>,
     escaped_conflicts: Counter<u64>,
+    _vector_memory_used: ObservableGauge<u64>,
+    _vector_memory_limit: ObservableGauge<u64>,
+    _vector_memory_refusals: ObservableGauge<u64>,
 }
 
 #[cfg(feature = "otlp")]
@@ -338,6 +401,36 @@ static INSTRUMENTS: OnceCell<InstrumentRegistry> = OnceCell::new();
 #[cfg(feature = "otlp")]
 pub(crate) fn install(provider: &opentelemetry_sdk::metrics::SdkMeterProvider) -> u64 {
     let meter = provider.meter("defradb");
+    let vector_memory_used = meter
+        .u64_observable_gauge("defradb.vector.memory.used")
+        .with_description("Bytes held by vector index caches")
+        .with_callback(|observer| {
+            for (budget, snapshot) in vector_memory_budget_snapshots() {
+                let labels = [KeyValue::new("budget", budget.to_string())];
+                observer.observe(snapshot.used, &labels);
+            }
+        })
+        .build();
+    let vector_memory_limit = meter
+        .u64_observable_gauge("defradb.vector.memory.limit")
+        .with_description("Bytes vector index caches may hold")
+        .with_callback(|observer| {
+            for (budget, snapshot) in vector_memory_budget_snapshots() {
+                let labels = [KeyValue::new("budget", budget.to_string())];
+                observer.observe(snapshot.limit, &labels);
+            }
+        })
+        .build();
+    let vector_memory_refusals = meter
+        .u64_observable_gauge("defradb.vector.memory.refusals")
+        .with_description("Vector cache charge attempts refused by the memory budget")
+        .with_callback(|observer| {
+            for (budget, snapshot) in vector_memory_budget_snapshots() {
+                let labels = [KeyValue::new("budget", budget.to_string())];
+                observer.observe(snapshot.refusals, &labels);
+            }
+        })
+        .build();
     let instruments = Arc::new(Instruments {
         storage_conflicts: meter
             .u64_counter("defradb.storage.conflicts")
@@ -371,6 +464,9 @@ pub(crate) fn install(provider: &opentelemetry_sdk::metrics::SdkMeterProvider) -
             .u64_counter("defradb.transaction.conflicts.escaped")
             .with_description("Transaction conflicts returned to clients")
             .build(),
+        _vector_memory_used: vector_memory_used,
+        _vector_memory_limit: vector_memory_limit,
+        _vector_memory_refusals: vector_memory_refusals,
     });
 
     crate::engine_tickers::register(&meter);

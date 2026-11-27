@@ -91,6 +91,7 @@ acp = { path = "../../engine/acp", default-features = false }
 crdt = { path = "../../building-blocks/crdt" }
 events = { path = "../../foundation/events", default-features = false }
 lens = { path = "../../foundation/lens", default-features = false }
+telemetry = { path = "../../building-blocks/telemetry" }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 p2p = { path = "../../database/p2p", default-features = false }
@@ -112,8 +113,6 @@ defra-core = { path = "../../foundation/defra-core", features = ["ambient"] }
 edge = { path = "../../foundation/edge", features = ["testing"] }
 proptest.workspace = true
 futures-lite.workspace = true
-# Counts the store's commit conflicts in the deferred index tests.
-telemetry = { path = "../../building-blocks/telemetry" }
 blst = "0.3"
 getrandom = "0.2"
 tempfile = "3"

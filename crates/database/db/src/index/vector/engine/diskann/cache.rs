@@ -265,8 +265,9 @@ impl CodeCache {
         if loaded.loading.is_some() || loaded.misses.contains_key(&id) {
             return;
         }
-        if loaded.misses_charge.grow(code.len() as u64 + MISS_OVERHEAD) {
-            loaded.misses.insert(id, code);
+        let bytes = code.len() as u64 + MISS_OVERHEAD;
+        if loaded.misses_charge.grow(bytes) && loaded.misses.insert_if_absent(id, code).is_some() {
+            loaded.misses_charge.shrink(bytes);
         }
     }
 
@@ -275,6 +276,14 @@ impl CodeCache {
     /// dropped first, so their room goes to the new ones.
     pub fn begin_reload(&self, generation: u64) -> Option<Reload<'_>> {
         Reload::begin(self, generation)
+    }
+
+    /// Publishes a pending-list copy unless a code reload is running, so the
+    /// pending copy cannot take the room that reload reserved.
+    pub fn publish_pending(&self, next: Arc<super::pending_cache::Copy>) {
+        if self.loaded.load().loading.is_none() {
+            self.pending.publish(next);
+        }
     }
 
     /// Whether the codes are at least as new as `generation`.

@@ -13,7 +13,10 @@ What must never happen:
   `give_conserves`, `give_all_restores`);
 * a refused take changes anything (`take_refused`);
 * a reload's `cover` or `settle` leaves its charge short of what it asked for
-  while claiming success (`cover_reaches`, `settle_exact`).
+  while claiming success (`cover_reaches`, `settle_exact`);
+* replacing a current charge with a larger one changes the counter by exactly
+  the difference and never passes the limit (`replace_within_limit`,
+  `replace_conserves`).
 
 The last section shows why the take is one step: checking for room and adding
 in two steps lets two takers through the same room (`split_check_overshoots`).
@@ -43,6 +46,16 @@ def take (limit used n : Nat) : Option Nat :=
 
 -- Give `n` bytes back.
 def give (used n : Nat) : Nat := used - n
+
+-- Replace `released` bytes held by a current copy with `bytes` held by its
+-- replacement: the new count if they fit, nothing otherwise. One step, as the
+-- Rust compare-and-swap is.
+def replace (limit used released bytes : Nat) : Option Nat :=
+  -- The room the old copy held goes back, and the new copy takes its room.
+  if released ≤ used ∧ used - released + bytes ≤ limit then
+    some (used - released + bytes)
+  -- Either the old charge is not held, or the new one does not fit.
+  else none
 
 -- Promise: after a successful take the counter is still within the limit.
 theorem take_within_limit (limit used n used' : Nat)
@@ -114,6 +127,31 @@ theorem give_all_restores (used : Nat) (charges : List Nat)
     apply ih
     -- That is give_conserves for the first charge.
     exact give_conserves used n rest hinv
+
+-- Promise: a replacement never passes the limit.
+theorem replace_within_limit (limit used released bytes used' : Nat)
+    -- Given the replacement succeeded with new count `used'`,
+    (h : replace limit used released bytes = some used') :
+    -- the new count is at most the limit.
+    used' ≤ limit := by
+  -- Unfold and split on the replacement condition.
+  unfold replace at h
+  split at h
+  -- The fitted branch returns the bounded count.
+  · cases h; omega
+  -- The refused branch contradicts success.
+  · cases h
+
+-- Promise: replacing a charge conserves the counter.
+theorem replace_conserves (limit used released bytes used' : Nat)
+    (heldOld : released ≤ used) (heldNew : used - released + bytes ≤ limit)
+    (h : replace limit used released bytes = some used') :
+    used' = used - released + bytes := by
+  -- Unfold and take the fitted branch; the side conditions exclude refusal.
+  unfold replace at h
+  rw [if_pos ⟨heldOld, heldNew⟩] at h
+  cases h
+  rfl
 
 -- A reload's cover: hold at least `target` bytes, taking a whole `step` where
 -- it fits and only what is missing otherwise. Returns the charge's new size
