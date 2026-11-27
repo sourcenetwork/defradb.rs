@@ -35,3 +35,13 @@ testo query::relation_order_with_filter::selected_relation_id::indexed
 testo query::relation_order_with_filter::selected_relation_id_unfiltered::indexed
 testo query::relation_order_with_filter::selected_relation_id_unfiltered_with_limit::indexed
 testo query::relation_order_with_filter::selected_relation_id_with_limit::indexed
+# Go's parity pin refuses a filtered truncate of a branchable collection.
+testo collection::truncate::branchable_filter::filtered_truncate_of_a_branchable_collection_removes_only_the_matches
+# Go's parity pin refuses a filtered truncate of a branchable collection.
+testo collection::truncate::branchable_filter::filtered_truncate_of_a_branchable_collection_keeps_its_history
+# Go's parity pin refuses a filtered truncate of a branchable collection.
+testo collection::truncate::branchable_filter::a_document_truncated_from_a_branchable_collection_can_be_added_again
+# Go's parity pin refuses a filtered truncate of a branchable collection.
+testo collection::truncate::branchable_filter::a_peer_update_restores_a_document_truncated_from_a_branchable_collection
+# Go's parity pin refuses a filtered truncate of a branchable collection.
+testo collection::truncate::branchable_filter::a_fresh_peer_sync_restores_a_document_truncated_from_a_branchable_collection

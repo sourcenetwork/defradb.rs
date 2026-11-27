@@ -83,21 +83,23 @@ EXTENDS Naturals, FiniteSets   \* numbers to compare, and Cardinality to count d
 
 CONSTANTS
   Docs,      \* the documents in the collection
-  Enforced   \* which checks and steps the database really runs (a subset of the eleven)
+  Enforced   \* which checks and steps the database really runs (a subset of the twelve)
 
 \* At least two documents, so a filter can match some and not others.
 ASSUME Cardinality(Docs) >= 2
-\* Only the five named checks, the filtered-page reread, the view cache clear,
-\* the retry progress guard, the two search-record steps and the cleanup's
-\* error report can be enforced:
-\* "reread" chooses a filtered page's matches again just before purge,
+\* These twelve checks and steps can be enforced:
+\* "nac", "chunk", "txn" and "shape" are the named refusals the code runs;
+\* "allowbranchable" skips Go's refusal of a filtered truncate of a branchable
+\* collection; "reread" chooses a filtered page's matches again just before
+\* purge; "viewcache" clears a view's cached rows; and "progress" keeps the
+\* documents committed before a retry budget runs out.
 \* "seprefix" deletes the collection's `/se/` prefix on an unfiltered truncate,
 \* and "sesamespace" stores received records under that same datastore prefix
 \* rather than in the raw root store. "metaerror" returns the error of a
-\* metadata cleanup that ran out of retries to the caller.
-\* "keephistory" keeps the history of the documents a filtered truncate of a
-\* branchable collection removes.
-ASSUME Enforced \subseteq {"nac", "chunk", "branchable", "txn", "shape", "reread",
+\* metadata cleanup that ran out of retries to the caller. "keephistory" keeps
+\* the history of the documents a filtered truncate of a branchable collection
+\* removes.
+ASSUME Enforced \subseteq {"nac", "chunk", "allowbranchable", "txn", "shape", "reread",
                             "viewcache", "progress", "seprefix", "sesamespace",
                             "metaerror", "keephistory"}
 
@@ -198,7 +200,7 @@ OtherRefuse ==
 \* truncate of a branchable collection.
 Refuse ==
   \/ OtherRefuse
-  \/ filtered /\ "branchable" \notin Enforced /\ branchable
+  \/ filtered /\ "allowbranchable" \notin Enforced /\ branchable
 
 \* The documents the delete takes. Without a filter, all of them. A filter that
 \* is not one, let through, is read as no conditions and matches everything. A

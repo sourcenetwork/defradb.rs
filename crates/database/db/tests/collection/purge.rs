@@ -500,6 +500,7 @@ fn purge_keeps_a_branchable_collections_history() {
                 "purge" => db
                     .purge_by_doc_ids("Users", std::slice::from_ref(&alice), None)
                     .await
+                    .map(Some)
                     .unwrap(),
                 "filtered truncate" => {
                     let mut conditions = serde_json::Map::new();
@@ -511,7 +512,18 @@ fn purge_keeps_a_branchable_collections_history() {
                     )
                     .await
                     .unwrap();
-                    1
+                    let txn = db.new_txn(true).await.unwrap();
+                    assert!(
+                        db::docid::map::get_doc_ref(
+                            &txn.systemstore().unwrap(),
+                            &alice.to_string()
+                        )
+                        .await
+                        .unwrap()
+                        .is_none(),
+                        "the truncated document no longer resolves ({mode})"
+                    );
+                    None
                 }
                 _ => {
                     let registry = db::txn::registry::DbTransactionRegistry::new(db.clone());
@@ -523,11 +535,13 @@ fn purge_keeps_a_branchable_collections_history() {
                         .await
                         .unwrap();
                     registry.commit(&handle).await.unwrap();
-                    purged
+                    Some(purged)
                 }
             };
 
-            assert_eq!(purged, 1);
+            if let Some(purged) = purged {
+                assert_eq!(purged, 1);
+            }
             for cid in &blocks {
                 assert!(
                     held(&db, cid).await,
