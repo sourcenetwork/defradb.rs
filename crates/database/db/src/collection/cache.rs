@@ -32,7 +32,7 @@ const RECENT: usize = 16;
 /// load must not copy what the transaction already holds. The entries sit in
 /// two layers: `folded`, a map every snapshot shares, and `recent`, the last
 /// few loads in one small slice that shadows it. A load copies only
-/// `recent`; once it holds [`RECENT`] entries the next load folds them into
+/// `recent`; once it holds `RECENT` entries the next load folds them into
 /// a new `folded`. A load therefore copies at most `RECENT` entries, plus
 /// the whole map once every `RECENT` loads, never a name or a collection
 /// (`proofs/lean/CollectionCacheLayers.lean`).

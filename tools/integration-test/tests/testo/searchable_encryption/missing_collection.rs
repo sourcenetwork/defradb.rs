@@ -101,7 +101,7 @@ fn a_transaction_cannot_list_encrypted_indexes_for_a_deleted_collection() {
             ListEncryptedIndexes {
                 txn: Some(0),
                 collection: "User".into(),
-                expected_error: Some("collection not found. Name: User".into()),
+                expected_error: Some(MISSING.into()),
                 ..Default::default()
             }
             .into(),

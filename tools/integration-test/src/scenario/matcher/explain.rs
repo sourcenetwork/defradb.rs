@@ -263,9 +263,15 @@ fn metrics_at<'a>(
         .find_map(|key| object(object(object(current, key)?, "root")?, "scanNode"))
 }
 
+/// A counter the plan leaves out counts as zero, as it did before floors; a
+/// counter that is there must be an unsigned count.
 fn count_matches(value: Option<&Value>, expected: &Value) -> bool {
-    let Some(count) = value.and_then(Value::as_u64) else {
-        return false;
+    let count = match value {
+        None => 0,
+        Some(value) => match value.as_u64() {
+            Some(count) => count,
+            None => return false,
+        },
     };
     match metric_floor(expected) {
         Some(floor) => count >= floor,
@@ -341,7 +347,8 @@ mod tests {
             Some(&json!(1)),
             &json!({"$match": "positive"})
         ));
-        assert!(!count_matches(None, &json!(0)));
+        assert!(count_matches(None, &json!(0)));
+        assert!(!count_matches(None, &json!({"$match": "positive"})));
         assert!(!count_matches(Some(&json!(-1)), &json!(0)));
         assert!(!count_matches(
             Some(&json!(-1)),
