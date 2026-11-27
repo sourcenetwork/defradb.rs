@@ -127,8 +127,70 @@ pub(super) async fn descends_from(
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
+    use acp_light_client::{HeaderStream, TransportError};
+    use futures::FutureExt as _;
+    use serde_json::Value;
+    use vera_domain::testing::TestDeployment;
+
     use super::*;
     use crate::vera_rs::client::tests::TRUSTED_KEY;
+
+    /// A trusted revision and the ancestry proof its node serves for it.
+    #[derive(Clone)]
+    struct Source {
+        light: LightBlock,
+        proof: AncestryProof,
+    }
+
+    impl AcpTransport for Source {
+        fn call(
+            &self,
+            method: &'static str,
+            _params: Value,
+            _max_bytes: usize,
+        ) -> futures::future::BoxFuture<'_, Result<Value, TransportError>> {
+            let answer = match method {
+                "vera_getAncestryProof" => serde_json::to_value(&self.proof),
+                "vera_getLightBlock" => serde_json::to_value(&self.light),
+                _ => return async move { Err(TransportError::other(method)) }.boxed(),
+            };
+            async move { answer.map_err(TransportError::other) }.boxed()
+        }
+
+        fn subscribe_headers(
+            &self,
+        ) -> futures::future::BoxFuture<'_, Result<HeaderStream, TransportError>> {
+            async { Err(TransportError::other("headers are not used by this test")) }.boxed()
+        }
+    }
+
+    fn source(
+        deployment: &TestDeployment,
+        light: &vera_domain::Block,
+        proof: AncestryProof,
+    ) -> (Arc<Source>, SyncState) {
+        let state = SyncState {
+            height: light.height,
+            timestamp: light.timestamp,
+            term: light.term,
+            module_state_root: light.module_state_root,
+            block_hash: light.id().0,
+        };
+        (
+            Arc::new(Source {
+                light: deployment.light_block(light),
+                proof,
+            }),
+            state,
+        )
+    }
+
+    fn proof_client(deployment: &TestDeployment, source: Arc<Source>) -> ProofClient {
+        let key = hex::encode(commonware_codec::Encode::encode(&deployment.key()));
+        ProofClient::with_transport(source, &key).expect("proof client")
+    }
 
     fn unproven(height: u64) -> LightBlock {
         LightBlock {
@@ -159,5 +221,67 @@ mod tests {
             genesis_of(&unproven(2), &trusted),
             Err(ProviderError::Query(message)) if message.contains("block 2")
         ));
+    }
+
+    /// A finalized revision is accepted only when the ancestry proof served
+    /// for it reaches the configured genesis. A different, validly finalized
+    /// history under the same consensus key is refused, and a reconnect to
+    /// the configured history remains valid.
+    #[nuclei::test]
+    #[mantra_macros::req_test("defra.acp.foreign_policy")]
+    async fn a_revision_is_read_only_when_its_ancestry_reaches_the_configured_genesis() {
+        let deployment = TestDeployment::new(7);
+        let trusted = deployment.key();
+        let configured = deployment.chain(2, 0x11);
+        let configured_id = configured[0].id();
+        let configured_genesis = configured_id.0 .0;
+        let configured_proof = configured[0]
+            .ancestry
+            .prove(0, &[configured[0].id(), configured[1].id()], 0)
+            .expect("configured ancestry proof");
+        let (configured_source, configured_state) =
+            source(&deployment, &configured[2], configured_proof.clone());
+        let proofs = proof_client(&deployment, Arc::clone(&configured_source));
+        assert!(descends_from(
+            &proofs,
+            configured_source.as_ref(),
+            &trusted,
+            configured_genesis,
+            &configured_state,
+        )
+        .await
+        .expect("configured ancestry"));
+
+        let reconnected = Arc::new(Source {
+            light: configured_source.light.clone(),
+            proof: configured_proof,
+        });
+        assert!(descends_from(
+            &proof_client(&deployment, Arc::clone(&reconnected)),
+            reconnected.as_ref(),
+            &trusted,
+            configured_genesis,
+            &configured_state,
+        )
+        .await
+        .expect("reconnected ancestry"));
+
+        let foreign_genesis = deployment.block(0, B256::ZERO, 0, B256::repeat_byte(0x22));
+        let foreign_parent = deployment.child(&foreign_genesis, 0, B256::repeat_byte(0x33));
+        let foreign_tip = deployment.child(&foreign_parent, 0, B256::repeat_byte(0x44));
+        let foreign_proof = foreign_genesis
+            .ancestry
+            .prove(0, &[foreign_genesis.id(), foreign_parent.id()], 0)
+            .expect("foreign ancestry proof");
+        let (foreign_source, foreign_state) = source(&deployment, &foreign_tip, foreign_proof);
+        assert!(!descends_from(
+            &proof_client(&deployment, Arc::clone(&foreign_source)),
+            foreign_source.as_ref(),
+            &trusted,
+            configured_genesis,
+            &foreign_state,
+        )
+        .await
+        .expect("foreign ancestry is a valid answer, not a withdrawal"));
     }
 }

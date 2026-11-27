@@ -4,6 +4,7 @@
 //! the other.
 
 use acp::DocumentACP as _;
+use std::sync::Arc;
 
 use super::tests::{acp_over, route, route_at, Answers, ACTOR, OWN, SHARED, YAML};
 use crate::provider::{ProviderError, VeraProvider};
@@ -142,4 +143,47 @@ async fn a_route_is_refused_while_a_retained_create_can_still_land() {
         "{refused:?}"
     );
     assert!(!node.is_foreign_policy(&predicted));
+}
+
+/// When a pool worker's caller stops waiting after the create was handed to
+/// the network, the handed-off work keeps the create's in-flight mark until
+/// it lands. A route taken in that window is refused.
+#[test]
+#[mantra_macros::req_test("defra.acp.foreign_policy")]
+fn a_cancelled_caller_keeps_the_handed_off_creates_mark() {
+    let nonce = acp::PolicyNonce([6; 32]);
+    let predicted = crate::vera_rs::predict_policy_id(YAML, nonce, ACTOR).expect("ID");
+    let own = Answers::gated_create(ACTOR);
+    let node = acp_over(Arc::clone(&own));
+    let pool = workers::Pool::start(workers::Config {
+        workers: workers::Workers::Count(1),
+        placement: workers::Placement::Unpinned,
+        ..workers::Config::default()
+    })
+    .expect("worker pool");
+    let creating = Arc::clone(&node);
+    let caller = workers::block_on(pool.submit(workers::Target::Worker(0), move || async move {
+        creating.add_policy(ACTOR, YAML, Some(nonce)).await
+    }))
+    .expect("submitted create");
+    workers::block_on(own.create_started()).expect("create started");
+    drop(caller);
+
+    let refused = workers::block_on(route_at(
+        &node,
+        &predicted,
+        "home",
+        "http://home",
+        acp_over(Answers::new(Some(true), "")),
+    ))
+    .expect("route");
+    assert!(
+        matches!(&refused, Err(ProviderError::PolicyBeingCreated { policy }) if *policy == predicted),
+        "{refused:?}"
+    );
+    assert!(!node.is_foreign_policy(&predicted));
+
+    own.release_create();
+    workers::block_on(own.create_finished()).expect("create finished");
+    pool.shutdown_blocking().expect("pool shutdown");
 }

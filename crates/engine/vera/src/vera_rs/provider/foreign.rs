@@ -90,7 +90,7 @@ impl ForeignProvider {
         let served = Arc::new(AtomicU8::new(UNCHECKED));
         let _observer = edge.spawn_service(edge::compat(observe(
             light_client.clone(),
-            trusted.clone(),
+            trusted,
             genesis_id,
             served.clone(),
             listener,

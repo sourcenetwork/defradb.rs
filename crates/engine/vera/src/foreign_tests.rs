@@ -32,6 +32,14 @@ pub(super) struct Answers {
     yields: bool,
     /// A create this provider's journal still holds, if any.
     pending_create: Option<String>,
+    /// Holds a create before it reaches the provider's journal, when set.
+    create_gate: Option<CreateGate>,
+}
+
+struct CreateGate {
+    started: regolith::sync::Event,
+    release: regolith::sync::Event,
+    finished: regolith::sync::Event,
 }
 
 impl Answers {
@@ -51,6 +59,7 @@ impl Answers {
             created: AtomicUsize::new(0),
             yields: false,
             pending_create: None,
+            create_gate: None,
         }
     }
 
@@ -97,6 +106,46 @@ impl Answers {
         })
     }
 
+    /// The node's own provider, holding each create before it lands until the
+    /// test lets it continue.
+    pub(super) fn gated_create(actor: &'static str) -> Arc<Self> {
+        Arc::new(Self {
+            actor: Some(actor),
+            create_gate: Some(CreateGate {
+                started: regolith::sync::Event::new(),
+                release: regolith::sync::Event::new(),
+                finished: regolith::sync::Event::new(),
+            }),
+            ..Self::answering(Some(true), "did:key:z6Mkowner")
+        })
+    }
+
+    pub(super) async fn create_started(&self) {
+        self.create_gate
+            .as_ref()
+            .expect("gated create")
+            .started
+            .wait()
+            .await;
+    }
+
+    pub(super) fn release_create(&self) {
+        self.create_gate
+            .as_ref()
+            .expect("gated create")
+            .release
+            .set();
+    }
+
+    pub(super) async fn create_finished(&self) {
+        self.create_gate
+            .as_ref()
+            .expect("gated create")
+            .finished
+            .wait()
+            .await;
+    }
+
     pub(super) fn created(&self) -> usize {
         self.created.load(Ordering::Relaxed)
     }
@@ -138,12 +187,19 @@ impl VeraProvider for Answers {
         if self.yields {
             yield_once().await;
         }
+        if let Some(gate) = &self.create_gate {
+            gate.started.set();
+            gate.release.wait().await;
+        }
         let id = match (self.actor, nonce) {
             (Some(actor), Some(nonce)) => crate::vera_rs::predict_policy_id(yaml, nonce, actor)?,
             (Some(_), None) => panic!("a create the node sent with no nonce"),
             (None, _) => self.creates.clone().expect("a provider that creates"),
         };
         self.held.lock().expect("held").push(id.clone());
+        if let Some(gate) = &self.create_gate {
+            gate.finished.set();
+        }
         Ok(id)
     }
 

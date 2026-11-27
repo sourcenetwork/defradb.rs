@@ -12731,6 +12731,7 @@ dependencies = [
  "vera-light-client",
  "vera-modules 0.2.0 (git+https://github.com/sourcenetwork/vera.rs?rev=f51f4de9c459982c704bf0b95640121dbbca5cba)",
  "vera-permission 0.2.0 (git+https://github.com/sourcenetwork/vera.rs?rev=f51f4de9c459982c704bf0b95640121dbbca5cba)",
+ "workers",
  "zanzibar",
 ]
 
