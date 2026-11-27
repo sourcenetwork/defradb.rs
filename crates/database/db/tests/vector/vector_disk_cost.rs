@@ -14,6 +14,9 @@
 //!   vector_disk_cost --ignored --nocapture
 //! ```
 //!
+//! For a DiskANN build with `RESIDENT_BUILD=1`, query with `ENGINE=resident`.
+//! That build writes only the resident layout.
+//!
 //! On macOS, copy the store with `ditto --nocache` instead of dropping caches.
 //! Pass 0 of a query process is cold, and for resident codes it includes
 //! loading them; later passes are warm. `EFFORT` is the engine's own knob: `L`
@@ -211,7 +214,8 @@ async fn snapshot(mem: &MemoryNodeStore) -> (Vec<Node>, Aux, Vec<Vec<u8>>, Optio
 ///
 /// `RESIDENT_BUILD=1` grows the graph with resident codes instead, `CACHE=1`
 /// with the shared code cache a node's engine carries, and writes it into
-/// `resident_store` as built. It prints the time spent merging and a digest
+/// `resident_store` as built. Query this layout with `ENGINE=resident`.
+/// It prints the time spent merging and a digest
 /// of every record and code, so two builds can be compared.
 async fn build_diskann(
     vectors: &[Vec<f32>],

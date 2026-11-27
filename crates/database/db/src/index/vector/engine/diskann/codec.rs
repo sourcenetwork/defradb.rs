@@ -278,16 +278,18 @@ pub fn add_edges(
 
 /// A resident-codes record: the neighbours' ids, their codes left behind.
 pub fn encode_ids(neighbors: &[(NodeId, Vec<u8>)]) -> Vec<u8> {
-    let mut buf = Vec::with_capacity(4 + neighbors.len() * 8);
-    buf.extend_from_slice(&(neighbors.len() as u32).to_le_bytes());
-    for (id, _) in neighbors {
-        buf.extend_from_slice(&id.0.to_le_bytes());
-    }
-    buf
+    encode_resident_ids(neighbors.iter().map(|(id, _)| *id))
 }
 
 /// A resident-codes record of these ids.
 pub fn encode_id_list(ids: &[NodeId]) -> Vec<u8> {
+    encode_resident_ids(ids.iter().copied())
+}
+
+fn encode_resident_ids<I>(ids: I) -> Vec<u8>
+where
+    I: ExactSizeIterator<Item = NodeId>,
+{
     let mut buf = Vec::with_capacity(4 + ids.len() * 8);
     buf.extend_from_slice(&(ids.len() as u32).to_le_bytes());
     for id in ids {
