@@ -96,7 +96,7 @@ impl<S: VectorNodeStore> DiskAnn<S> {
             .await
     }
 
-    async fn code(&self, id: NodeId) -> Result<Option<Vec<u8>>> {
+    pub(super) async fn code(&self, id: NodeId) -> Result<Option<Vec<u8>>> {
         if let Some(code) = self.codes.as_ref().and_then(|codes| codes.get(id)) {
             return Ok(Some(code));
         }
@@ -257,50 +257,6 @@ impl<S: VectorNodeStore> DiskAnn<S> {
         )
         .await?;
         Ok(neighbors)
-    }
-
-    /// Adds `edges` to `target`'s record, replacing the code of an edge it
-    /// already has, and prunes it back to `R` only once it passes the slack
-    /// limit. A target consolidated away meanwhile is skipped.
-    pub(super) async fn add_back_edges(
-        &mut self,
-        pq: &ProductQuantizer,
-        target: NodeId,
-        edges: Vec<(NodeId, Vec<u8>)>,
-    ) -> Result<()> {
-        let m = pq.code_len();
-        let mut record = if self.params.resident_codes {
-            let Some(mut record) = self.record(m, target).await? else {
-                return Ok(());
-            };
-            for (id, code) in edges {
-                if id == target {
-                    continue;
-                }
-                match record.neighbors.iter_mut().find(|(n, _)| *n == id) {
-                    Some(edge) => edge.1 = code,
-                    None => record.neighbors.push((id, code)),
-                }
-            }
-            record
-        } else {
-            // Most back-edges leave the record under its slack, and decoding
-            // it to add one edge copies every neighbour's code.
-            let key = codec::record_key(target);
-            let Some(bytes) = self.store().get_aux(codec::GRAPH, &key).await? else {
-                return Ok(());
-            };
-            let mut bytes = bytes.to_vec();
-            if codec::add_edges(&mut bytes, m, target, &edges)? <= self.params.slack_limit() {
-                return self.store_mut().put_aux(codec::GRAPH, &key, &bytes).await;
-            }
-            codec::decode_record(&bytes, m)?
-        };
-        if record.neighbors.len() > self.params.slack_limit() {
-            let base = decode(pq, &record.code);
-            record.neighbors = self.prune(pq, &base, std::mem::take(&mut record.neighbors));
-        }
-        self.put_record(target, &record).await
     }
 
     /// Insert (paper Algorithm 2), back-edges applied at once: how training
