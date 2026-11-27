@@ -31,6 +31,7 @@ mod add {
             mod with_txn;
         }
     }
+    mod signed_duplicate;
     mod simple;
     mod simple_add_many;
     mod txn_discard;
@@ -42,6 +43,7 @@ mod add {
     mod with_version;
 }
 mod delete_relation_filter;
+mod error_code;
 mod delete {
     mod with_filter_unknown;
     mod field_kinds {

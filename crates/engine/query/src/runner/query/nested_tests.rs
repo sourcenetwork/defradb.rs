@@ -371,6 +371,7 @@ impl DocumentACP for MockDocumentAcp {
         _policy_id: &str,
         _resource_name: &str,
         _doc_id: &str,
+        _relationships: &[acp::DerivedRelationship],
     ) -> acp::Result<()> {
         Ok(())
     }

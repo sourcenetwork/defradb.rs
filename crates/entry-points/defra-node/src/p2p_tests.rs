@@ -1589,7 +1589,7 @@ fn filtered_p2p_replicator_metadata_survives_embedded_restart() {
             .expect("replicator restored into live registry");
 
         assert_eq!(restored.collections, expected.collections);
-        assert_eq!(restored.address, expected.address);
+        assert_eq!(restored.addresses, expected.addresses);
         assert_eq!(
             restored.filters, expected.filters,
             "startup must preserve filters so an idempotent add does not trigger full replay"
@@ -2481,7 +2481,8 @@ async fn wait_for_projector_peer(node: &Node, context: &defra_core::RequestConte
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
         if !node
-            .active_peers_as(context)
+            .core()
+            .active_peers(context)
             .await
             .expect("active peers")
             .is_empty()
@@ -2575,22 +2576,22 @@ fn accepted_replicated_document_runs_transactional_projector() {
         let context0 = defra_core::RequestContext::default().with_identity(Some(node0.node_identity_did().unwrap().to_owned()));
         let context1 = defra_core::RequestContext::default().with_identity(Some(node1.node_identity_did().unwrap().to_owned()));
         let yaml = "name: P2P projection\nresources:\n  - name: records\n    relations:\n      - name: reader\n        types: [actor]\n    permissions:\n      - name: read\n        expr: reader\n      - name: update\n      - name: delete\n";
-        let policy = node0.add_dac_policy_with_counter_as(&context0, yaml, 1).await.unwrap();
-        let policy1 = node1.add_dac_policy_with_counter_as(&context1, yaml, 1).await.unwrap();
+        let policy = node0.with_identity(identity::Did::new(node0.node_identity_did().unwrap().to_owned()).unwrap()).add_dac_policy_with_counter(yaml, 1).await.unwrap();
+        let policy1 = node1.with_identity(identity::Did::new(node1.node_identity_did().unwrap().to_owned()).unwrap()).add_dac_policy_with_counter(yaml, 1).await.unwrap();
         assert_eq!(policy, policy1);
         let schema = format!("type ProjectedPeerDoc @policy(id: \"{policy}\", resource: \"records\") {{ name: String, age: Int }}");
-        node0.add_collection_as(&context0, &schema).await.unwrap();
-        node1.add_collection_as(&context1, &schema).await.unwrap();
+        node0.with_identity(identity::Did::new(node0.node_identity_did().unwrap().to_owned()).unwrap()).add_collection(&schema).await.unwrap();
+        node1.with_identity(identity::Did::new(node1.node_identity_did().unwrap().to_owned()).unwrap()).add_collection(&schema).await.unwrap();
         let addr0 = wait_for_listen_addr(&node0).await;
         let addr1 = wait_for_listen_addr(&node1).await;
-        node0.connect_as(&context0, std::slice::from_ref(&addr1)).await.unwrap();
+        node0.with_identity(identity::Did::new(node0.node_identity_did().unwrap().to_owned()).unwrap()).connect(std::slice::from_ref(&addr1)).await.unwrap();
         wait_for_projector_peer(&node0, &context0).await;
         wait_for_projector_peer(&node1, &context1).await;
         let collections = vec!["ProjectedPeerDoc".to_owned()];
-        node0.add_p2p_collections_as(&context0, &collections).await.unwrap();
-        node1.add_p2p_collections_as(&context1, &collections).await.unwrap();
-        node1.add_replicator_as(&context1, std::slice::from_ref(&addr0), &collections, Default::default()).await.unwrap();
-        node0.add_replicator_as(&context0, std::slice::from_ref(&addr1), &collections, Default::default()).await.unwrap();
+        node0.with_identity(identity::Did::new(node0.node_identity_did().unwrap().to_owned()).unwrap()).add_p2p_collections(&collections).await.unwrap();
+        node1.with_identity(identity::Did::new(node1.node_identity_did().unwrap().to_owned()).unwrap()).add_p2p_collections(&collections).await.unwrap();
+        node1.with_identity(identity::Did::new(node1.node_identity_did().unwrap().to_owned()).unwrap()).add_replicator(std::slice::from_ref(&addr0), &collections, Default::default()).await.unwrap();
+        node0.with_identity(identity::Did::new(node0.node_identity_did().unwrap().to_owned()).unwrap()).add_replicator(std::slice::from_ref(&addr1), &collections, Default::default()).await.unwrap();
         let response = node0.execute("mutation { add_ProjectedPeerDoc(input: {name:\"one\", age:37}) { _docID } }").await;
         assert!(response.errors.is_empty(), "{:?}", response.errors);
         let id = extract_created_doc_id(&response, "add_ProjectedPeerDoc");

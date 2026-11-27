@@ -12,8 +12,13 @@
 //! on the least-loaded worker: the storage engine validates every commit
 //! wherever it runs. Called on a worker, a merge runs there; without a pool
 //! (a test, a one-shot tool) where it is called.
+//!
+//! At most [`ADMISSION_PERMITS`] merges are handed to the pool at once. A
+//! merge waits for a slot no longer than [`ADMISSION_WAIT`], then fails with
+//! the retryable `workers::Error::TimedOut`; a dropped wait leaves the queue.
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use async_trait::async_trait;
 use bytes::Bytes;
@@ -23,20 +28,39 @@ use defra_core::merge::{
     MergeOutcome, RecoveredBlockMetadata,
 };
 
+/// How many merges may be on the pool at once.
+pub const ADMISSION_PERMITS: usize = 64;
+
+/// How long a merge waits for an admission slot before it is retried later.
+pub const ADMISSION_WAIT: Duration = Duration::from_secs(30);
+
 /// `inner`'s merges, run on the pool's workers.
 pub struct PooledMergeHandler<H> {
     inner: Arc<H>,
     pool: Option<workers::Pool>,
     admission: regolith::sync::Semaphore,
+    admission_wait: Duration,
 }
 
 impl<H> PooledMergeHandler<H> {
     /// Runs `inner`'s merges on `pool`; where they are called without one.
     pub fn new(inner: Arc<H>, pool: Option<workers::Pool>) -> Self {
+        Self::with_admission(inner, pool, ADMISSION_PERMITS, ADMISSION_WAIT)
+    }
+
+    /// Like [`new`](Self::new), with `permits` admission slots and a slot
+    /// wait of at most `wait`.
+    pub fn with_admission(
+        inner: Arc<H>,
+        pool: Option<workers::Pool>,
+        permits: usize,
+        wait: Duration,
+    ) -> Self {
         Self {
             inner,
             pool,
-            admission: regolith::sync::Semaphore::new(64),
+            admission: regolith::sync::Semaphore::new(permits),
+            admission_wait: wait,
         }
     }
 }
@@ -122,6 +146,14 @@ where
         self.pool.as_ref().filter(|_| !workers::on_worker())
     }
 
+    /// An admission slot, or `TimedOut` once the wait reaches its deadline.
+    async fn admit(
+        &self,
+        pool: &workers::Pool,
+    ) -> Result<regolith::sync::SemaphorePermit<'_>, workers::Error> {
+        workers::timeout_on(Some(pool), self.admission_wait, self.admission.acquire(1)).await
+    }
+
     /// Runs `merge` on `inner` on the worker `target` names.
     async fn on_pool<T, F, Fut>(
         &self,
@@ -160,7 +192,7 @@ where
         let Some(pool) = self.off_the_pool() else {
             return self.inner.handle_block(cid, block_data, metadata).await;
         };
-        let _admission = self.admission.acquire(1).await;
+        let _admission = self.admit(pool).await?;
         let target = document_target(metadata.collection_id, metadata.doc_id);
         let (cid, data, metadata) = (
             *cid,
@@ -218,7 +250,10 @@ where
         let Some(pool) = self.off_the_pool() else {
             return self.inner.handle_block_batch(blocks).await;
         };
-        let _admission = self.admission.acquire(1).await;
+        let _admission = match self.admit(pool).await {
+            Ok(permit) => permit,
+            Err(error) => return outcomes(blocks.len(), Err(error)),
+        };
         let documents = by_document(blocks);
         if documents.len() < 2 {
             let (count, blocks) = (blocks.len(), blocks.to_vec());
@@ -275,6 +310,10 @@ fn outcomes<E: From<workers::Error>>(
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod batch_tests;
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+#[path = "../../tests/merge/pooled_admission.rs"]
+mod admission_tests;
 
 #[cfg(test)]
 mod tests {

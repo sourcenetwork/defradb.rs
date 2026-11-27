@@ -68,7 +68,7 @@ impl User {
 /// One verified create handed to the node.
 pub(super) struct Attempt {
     pub(super) doc: String,
-    pub(super) txn: defra_node::TransactionHandle,
+    pub(super) txn: defra_core::TxnId,
     pub(super) response: QueryResponse,
 }
 
@@ -201,10 +201,16 @@ impl Deployed {
         .with_identity(Some(user.did.clone()));
         let doc = graph.doc_id().to_owned();
         let credential = credential(doc.clone()).await;
-        let txn = self.node.begin_transaction(false).await.unwrap();
+        let txn = self
+            .node
+            .new_txn(false)
+            .await
+            .map(|txn| txn.detach())
+            .unwrap();
         let response = self
             .node
-            .execute_verified_create_in_txn(request, &txn, &graph, credential)
+            .with_transaction(txn)
+            .execute_verified_create(request, &graph, credential)
             .await;
         Attempt { doc, txn, response }
     }
@@ -293,7 +299,7 @@ impl Deployed {
             "{:?}",
             response.errors
         );
-        assert!(self.node.commit_transaction(&txn).await.is_err());
+        assert!(self.node.with_transaction(txn).commit().await.is_err());
         assert_eq!(self.owner_on_chain(&doc).await, None);
     }
 }
@@ -352,7 +358,11 @@ fn a_verified_create_under_the_signers_delegation_registers_the_signer() {
             .await;
         assert!(!response.has_errors(), "{:?}", response.errors);
         assert_eq!(on.owner_on_chain(&doc).await, None);
-        on.node.commit_transaction(&txn).await.expect("commit");
+        on.node
+            .with_transaction(txn)
+            .commit()
+            .await
+            .expect("commit");
         assert_eq!(
             on.owner_on_chain(&doc).await.as_deref(),
             Some(user.did.as_str())
@@ -361,7 +371,7 @@ fn a_verified_create_under_the_signers_delegation_registers_the_signer() {
         assert!(
             !chain_reads(
                 &on.node,
-                &identity::Did::new(STRANGER).unwrap(),
+                &identity::Did::new(STRANGER.to_string()).unwrap(),
                 &on.policy,
                 &doc
             )
@@ -432,7 +442,11 @@ fn a_verified_create_under_a_request_bound_delegation_registers_the_signer() {
             })
             .await;
         assert!(!response.has_errors(), "{:?}", response.errors);
-        on.node.commit_transaction(&txn).await.expect("commit");
+        on.node
+            .with_transaction(txn)
+            .commit()
+            .await
+            .expect("commit");
         assert_eq!(
             on.owner_on_chain(&doc).await.as_deref(),
             Some(user.did.as_str())
@@ -454,18 +468,17 @@ fn a_verified_create_under_a_request_bound_delegation_registers_the_signer() {
             knocked.status()
         );
         // And it grants nothing on the document it registered.
-        let granting = defra_core::RequestContext::default()
-            .with_identity(Some(user.did.to_string()))
-            .with_request_delegation(user.did.to_string(), presented);
         let refused = on
             .node
-            .add_dac_actor_relationship_as(&granting, "Users", &doc, "reader", STRANGER)
+            .with_identity(user.did.clone())
+            .with_request_delegation(presented)
+            .add_dac_actor_relationship("Users", &doc, "reader", STRANGER)
             .await;
         assert!(refused.is_err(), "{refused:?}");
         assert!(
             !chain_reads(
                 &on.node,
-                &identity::Did::new(STRANGER).unwrap(),
+                &identity::Did::new(STRANGER.to_string()).unwrap(),
                 &on.policy,
                 &doc
             )
@@ -483,7 +496,7 @@ fn a_grant_staged_in_a_verified_transaction_lands_after_the_registration() {
     workers::block_on(async {
         let on = Deployed::start(9413).await;
         let user = User::new();
-        let reader = identity::Did::new(STRANGER).unwrap();
+        let reader = identity::Did::new(STRANGER.to_string()).unwrap();
         let subject = SubjectRef::Actor(reader.to_string());
         let grant = |relation: &'static str| PolicyAction::SetRelationship {
             relation,
@@ -501,23 +514,14 @@ fn a_grant_staged_in_a_verified_transaction_lands_after_the_registration() {
             })
             .await;
         assert!(!response.has_errors(), "{:?}", response.errors);
-        let acting = |token: String| {
-            defra_core::RequestContext::default()
-                .with_identity(Some(user.did.to_string()))
-                .with_request_delegation(user.did.to_string(), token)
-        };
-        let stage = |context: defra_core::RequestContext| {
-            let (on, txn, doc, reader) = (&on, &txn, &doc, &reader);
+        let stage = |token: String| {
+            let (on, txn, doc, reader, user) = (&on, &txn, &doc, &reader, &user);
             async move {
                 on.node
-                    .add_dac_actor_relationship_change_for_in_txn(
-                        txn,
-                        &context,
-                        "Users",
-                        doc,
-                        "reader",
-                        reader.as_str(),
-                    )
+                    .with_transaction(*txn)
+                    .acting_for(user.did.clone())
+                    .with_request_delegation(token)
+                    .change_dac_actor_relationship("Users", doc, "reader", reader.as_str(), false)
                     .await
             }
         };
@@ -525,12 +529,12 @@ fn a_grant_staged_in_a_verified_transaction_lands_after_the_registration() {
         // the node, and nothing is staged.
         let writer = on.bound(&user, &doc, grant("writer"), 2).await;
         assert!(matches!(
-            stage(acting(writer)).await,
+            stage(writer).await,
             Err(defra_node::Error::Acp(
                 acp::Error::OwedAuthorityUnavailable { .. }
             ))
         ));
-        let staged = stage(acting(on.bound(&user, &doc, grant("reader"), 3).await)).await;
+        let staged = stage(on.bound(&user, &doc, grant("reader"), 3).await).await;
         assert!(
             matches!(
                 staged,
@@ -542,7 +546,11 @@ fn a_grant_staged_in_a_verified_transaction_lands_after_the_registration() {
             "{staged:?}"
         );
         assert_eq!(on.owner_on_chain(&doc).await, None);
-        on.node.commit_transaction(&txn).await.expect("commit");
+        on.node
+            .with_transaction(txn)
+            .commit()
+            .await
+            .expect("commit");
 
         // The chain takes a grant from an object's owner only, so the
         // registration was there when the grant arrived.
@@ -575,15 +583,13 @@ fn owed_commands_take_fresh_delegations_bound_to_them() {
     workers::block_on(async {
         let on = Deployed::start(9414).await;
         let user = User::new();
-        let reader = identity::Did::new(STRANGER).unwrap();
+        let reader = identity::Did::new(STRANGER.to_string()).unwrap();
         let subject = SubjectRef::Actor(reader.to_string());
         let grant = || PolicyAction::SetRelationship {
             relation: "reader",
             subject: PolicySubject::Actor(&subject),
         };
         let brief = Duration::from_secs(2);
-        let caller =
-            defra_core::RequestContext::default().with_identity(Some(user.did.to_string()));
 
         let Attempt { doc, txn, response } = on
             .create(&user, "owed", |doc| {
@@ -600,28 +606,27 @@ fn owed_commands_take_fresh_delegations_bound_to_them() {
         let granting = on.bound_for(&user, &doc, grant(), 2, brief).await;
         let staged = on
             .node
-            .add_dac_actor_relationship_change_for_in_txn(
-                &txn,
-                &caller
-                    .clone()
-                    .with_request_delegation(user.did.to_string(), granting),
-                "Users",
-                &doc,
-                "reader",
-                reader.as_str(),
-            )
+            .with_transaction(txn)
+            .acting_for(user.did.clone())
+            .with_request_delegation(granting)
+            .change_dac_actor_relationship("Users", &doc, "reader", reader.as_str(), false)
             .await;
         assert!(
             matches!(staged, Ok(RelationshipChange::Staged { .. })),
             "{staged:?}"
         );
         edge::testing::edge().sleep(Duration::from_secs(4)).await;
-        on.node.commit_transaction(&txn).await.expect("commit");
+        on.node
+            .with_transaction(txn)
+            .commit()
+            .await
+            .expect("commit");
         assert_eq!(on.owner_on_chain(&doc).await, None);
 
         let owed = on
             .node
-            .owed_acp_as(&caller, user.did.as_str())
+            .with_identity(identity::Did::new(user.did.to_string()).unwrap())
+            .owed_acp(user.did.as_str())
             .await
             .expect("report");
         assert_eq!(owed.len(), 2, "{owed:?}");
@@ -632,16 +637,16 @@ fn owed_commands_take_fresh_delegations_bound_to_them() {
         assert_eq!(owed[1].held_by, Some(acp::OwedHold::Registration));
         assert!(matches!(
             on.node
-                .await_owed_acp_as(&caller, &txn, Duration::from_secs(30))
+                .with_identity(user.did.clone())
+                .await_owed_acp(txn, Duration::from_secs(30))
                 .await
                 .expect("wait"),
             acp::OwedWait::Parked(entries) if entries.len() == 2
         ));
-        let stranger =
-            defra_core::RequestContext::default().with_identity(Some(STRANGER.to_string()));
         assert!(on
             .node
-            .owed_acp_as(&stranger, user.did.as_str())
+            .with_identity(identity::Did::new(STRANGER.to_string()).unwrap())
+            .owed_acp(user.did.as_str())
             .await
             .is_err());
 
@@ -651,11 +656,8 @@ fn owed_commands_take_fresh_delegations_bound_to_them() {
         let misfiled = on.bound(&user, &doc, grant(), 3).await;
         assert!(matches!(
             on.node
-                .reauthorize_owed_acp_as(
-                    &caller,
-                    &registration,
-                    SignerCredential::RequestBound(misfiled)
-                )
+                .with_identity(identity::Did::new(user.did.to_string()).unwrap())
+                .reauthorize_owed_acp(&registration, SignerCredential::RequestBound(misfiled))
                 .await,
             Err(defra_node::Error::Acp(
                 acp::Error::OwedAuthorityUnavailable { .. }
@@ -665,11 +667,8 @@ fn owed_commands_take_fresh_delegations_bound_to_them() {
         let fresh = on.bound(&user, &doc, PolicyAction::RegisterObject, 4).await;
         assert_eq!(
             on.node
-                .reauthorize_owed_acp_as(
-                    &caller,
-                    &registration,
-                    SignerCredential::RequestBound(fresh)
-                )
+                .with_identity(identity::Did::new(user.did.to_string()).unwrap())
+                .reauthorize_owed_acp(&registration, SignerCredential::RequestBound(fresh))
                 .await
                 .expect("registration"),
             acp::OwedOutcome::Settled
@@ -683,7 +682,8 @@ fn owed_commands_take_fresh_delegations_bound_to_them() {
         // run out, and now waits on its own account.
         let owed = on
             .node
-            .owed_acp_as(&caller, user.did.as_str())
+            .with_identity(identity::Did::new(user.did.to_string()).unwrap())
+            .owed_acp(user.did.as_str())
             .await
             .expect("report");
         assert_eq!(owed.len(), 1, "{owed:?}");
@@ -693,11 +693,8 @@ fn owed_commands_take_fresh_delegations_bound_to_them() {
         let fresh = on.bound(&user, &doc, grant(), 5).await;
         assert_eq!(
             on.node
-                .reauthorize_owed_acp_as(
-                    &caller,
-                    &owed[0].reference(),
-                    SignerCredential::RequestBound(fresh)
-                )
+                .with_identity(identity::Did::new(user.did.to_string()).unwrap())
+                .reauthorize_owed_acp(&owed[0].reference(), SignerCredential::RequestBound(fresh))
                 .await
                 .expect("grant"),
             acp::OwedOutcome::Settled
@@ -705,7 +702,8 @@ fn owed_commands_take_fresh_delegations_bound_to_them() {
         assert!(chain_reads(&on.node, &reader, &on.policy, &doc).await);
         assert_eq!(
             on.node
-                .await_owed_acp_as(&caller, &txn, Duration::from_secs(30))
+                .with_identity(user.did.clone())
+                .await_owed_acp(txn, Duration::from_secs(30))
                 .await
                 .expect("wait"),
             acp::OwedWait::Settled
@@ -774,7 +772,11 @@ fn a_client_binds_its_delegation_to_the_audience_the_node_reports() {
             })
             .await;
         assert!(!response.has_errors(), "{:?}", response.errors);
-        on.node.commit_transaction(&txn).await.expect("commit");
+        on.node
+            .with_transaction(txn)
+            .commit()
+            .await
+            .expect("commit");
         assert_eq!(
             on.owner_on_chain(&doc).await.as_deref(),
             Some(user.did.as_str())

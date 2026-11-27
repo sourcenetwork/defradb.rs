@@ -8,6 +8,8 @@ use std::time::Duration;
 use crate::assemble::check_access_hooks;
 use crate::assemble::{assemble, Extras};
 use crate::config::{NodeConfig, NodeSigning, Persistence, SigningKey, TransportConfig};
+#[cfg(feature = "vera")]
+use crate::DocumentAcpConfig;
 #[cfg(feature = "http")]
 use crate::HttpConfig;
 use crate::Node;
@@ -15,8 +17,6 @@ use crate::Node;
 use crate::TelemetryHandle;
 #[cfg(feature = "p2p")]
 use crate::{AccessHooks, P2PConfig};
-#[cfg(feature = "vera")]
-use crate::{DocumentAcpConfig, VeraConfig};
 use crate::{Error, QueryLimits, Result};
 
 /// Selects which persistent storage backend to use when `data_path` is set.
@@ -242,37 +242,18 @@ impl NodeBuilder {
         self
     }
 
-    /// Configure the node to use Vera-backed document ACP.
-    ///
-    /// Requires the `vera` feature (on by default).
-    #[cfg(feature = "vera")]
-    pub fn with_vera(mut self, config: VeraConfig) -> Self {
-        self.config.document_acp = DocumentAcpConfig::Vera(config);
-        self
-    }
-
-    /// Configure Vera ACP when LCD and gRPC use distinct endpoints.
-    #[cfg(feature = "vera")]
-    pub fn with_vera_lcd(mut self, config: VeraConfig, lcd_address: impl Into<String>) -> Self {
-        self.config.document_acp = DocumentAcpConfig::VeraWithLcd {
-            config,
-            lcd_address: lcd_address.into(),
-        };
-        self
-    }
-
     /// Configure the node to use document ACP backed by a vera.rs node.
     ///
     /// Requires the `vera` feature (on by default).
     #[cfg(feature = "vera")]
-    pub fn with_vera_rs(mut self, config: crate::VeraRsConfig) -> Self {
-        self.config.document_acp = DocumentAcpConfig::VeraRs(config);
+    pub fn with_vera(mut self, config: crate::VeraConfig) -> Self {
+        self.config.document_acp = DocumentAcpConfig::Vera(config);
         self
     }
 
     /// Use a document ACP provider the host built, for example one over a
     /// Vera node it runs itself. The node wires it as it wires
-    /// [`with_vera_rs`](Self::with_vera_rs): verified access decisions without
+    /// [`with_vera`](Self::with_vera): verified access decisions without
     /// a cache, remote policies mirrored locally, owed registrations gated.
     ///
     /// Requires the `vera` feature (on by default).
@@ -364,6 +345,12 @@ impl NodeBuilder {
         self
     }
 
+    /// Indexes at most `docs` documents per backfill transaction.
+    pub fn with_backfill_batch_docs(mut self, docs: usize) -> Self {
+        self.config.backfill_batch_docs = Some(docs.max(1));
+        self
+    }
+
     /// Hold every explicit transaction commit at `gate` before it is handed
     /// to its owner, so a test can prove a commit whose HTTP answer passed its
     /// bound still lands.
@@ -398,6 +385,13 @@ impl NodeBuilder {
     #[cfg(feature = "p2p")]
     pub fn with_p2p(mut self, config: P2PConfig) -> Self {
         self.config.transport = TransportConfig::Iroh(config);
+        self
+    }
+
+    /// Enable P2P replication over pinc: direct connections, no gossip.
+    #[cfg(feature = "pinc")]
+    pub fn with_pinc(mut self, config: crate::PincConfig) -> Self {
+        self.config.transport = TransportConfig::Pinc(config);
         self
     }
 
@@ -515,7 +509,7 @@ impl NodeBuilder {
     /// with `EnableSigning` off.
     ///
     /// The node's own calls ([`Node::execute`], [`Node::add_collection`],
-    /// [`Node::begin_transaction`] and the rest that take no identity) then act
+    /// [`Node::new_txn`] and the rest of the unscoped node) then act
     /// as no one. With node access control enabled they are checked as
     /// anonymous, as Go checks a call that names no identity; a request that
     /// names the node's DID keeps the node's full access. The transactions the
@@ -688,7 +682,7 @@ impl NodeBuilder {
             .with_pool(node.pool.clone())
             .with_dev_mode(http_cfg.dev_mode)
             .with_schema_arc(Arc::new(crate::HttpSchemaOps {
-                schema_ops: Arc::clone(&node.schema_ops),
+                schema_ops: node.schema_ops.clone(),
                 context: None,
             }));
             let ops = crate::ops::HttpNodeOps::new(node.ops());

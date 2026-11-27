@@ -54,8 +54,8 @@ replayed identically for later attempts. Failures of the provider fail closed
 
 The same bridge carries a relationship change made inside a transaction
 (`acp::outbox`). The in-transaction relationship call (`relationship_in_txn`, behind
-`Node::add_dac_actor_relationship_change_for_in_txn`, its delete counterpart and
-`Node::change_dac_actor_relationship_as`) does not refuse on an external provider: it
+`TxnNode::acting_for(actor).add_dac_actor_relationship`, its delete counterpart and
+`TxnNode::change_dac_actor_relationship`) does not refuse on an external provider: it
 *stages* the change, a record written in the transaction that commits or rolls back with
 its rows, and the provider is sent the change after the commit.
 
@@ -124,8 +124,8 @@ with no HTTP route.
     registration is still owed is checked without the provider, so it can revoke on that
     document during an outage.
 - **Subjects the provider cannot be sent.** A change whose subject is of a kind the
-  provider cannot take (a userset or cross-object subject on the Cosmos provider, a typed
-  wildcard on either) fails with `UnsupportedSubject` and records nothing. It could never
+  provider cannot take (a userset or cross-object subject on a provider that takes none, a typed
+  wildcard on any) fails with `UnsupportedSubject` and records nothing. It could never
   be submitted, and a delete of it would deny for ever.
 - **One spelling.** The acting DID and an actor subject are stored in the provider's one
   spelling of the key (for vera.rs, the uncompressed `did:key` DefraDB derives), and the
@@ -184,7 +184,7 @@ with no HTTP route.
   `acp-owed-change-refused`, with the change, the provider's words and whether it stays
   parked. A change the provider cannot take at all is removed and counted in
   `discarded`, and is not published: the provider was asked nothing. A provider
-  without a journal (Cosmos, a host's own) is sent each change on its own with no
+  without a journal (a host's own) is sent each change on its own with no
   mark, as below. A change a node finds marked once it runs on such a provider has its
   mark cleared and is sent again: no journal is left to ask about its request, and it
   can take effect twice.
@@ -220,8 +220,7 @@ with no HTTP route.
   the later change only after the earlier one, and both providers take one signer's
   requests in order. vera.rs keeps one journaled request per worker and prepares the
   next only once that one has a verified receipt, so while the earlier submission is in
-  flight nothing else is sent; Cosmos orders one signer's transactions by account
-  sequence. A provider supplied by a host has to give the same guarantee
+  flight nothing else is sent. A provider supplied by a host has to give the same guarantee
   (`DocumentACP::submit_owed_change`). Two nodes that change one relationship through
   different workers are ordered by the provider alone, as they are for changes made
   outside a transaction.
@@ -342,8 +341,8 @@ with no HTTP route.
 
 ### Verified writes on an external provider
 
-A verified write (`Node::execute_verified_create_in_txn`,
-`Node::execute_verified_mutation_in_txn`) is one create, update or delete an embedder has
+A verified write (`TxnNode::execute_verified_create`,
+`TxnNode::execute_verified_mutation`) is one create, update or delete an embedder has
 checked against its signer's signature, run in a transaction the node owns. On a local
 ACP its authority is *bound*: decided inside the transaction and validated at the
 commit. An external provider cannot be bound that way. There its authority counts as
@@ -398,7 +397,8 @@ order:
    (`acp_light_client::FreshnessPolicy::default().max_age`, 30 seconds, with 15 seconds
    of allowed clock skew; set in `VeraRsProvider::connect`). It is never a local guess:
    the read path, the replicated-merge path and this one ask the same
-   `VeraDocumentACP::check_doc_access`, and the node's access cache is off for vera.rs
+   `VeraDocumentACP::check_doc_access`, which keeps no decision cache of its own: only
+   a decision read at a verified state is reused, keyed by that state
    (`DocumentACP::proves_decisions`). A provider that cannot be reached, or whose newest
    verified revision is older than that limit, gives no decision and the write is
    refused: it fails closed.
@@ -406,8 +406,8 @@ order:
 A user without the permission, a reader who may read but not update, and a revoked
 writer are refused, and nothing is written; the refusal is the one an ordinary update or
 delete gets (the document is not found, or not authorized), or the provider's
-unavailability, not `WRITE_AUTHORITY_UNAVAILABLE`. On the Cosmos provider, which proves no
-decisions and keeps an access cache, `None` still needs a key the node holds.
+unavailability, not `WRITE_AUTHORITY_UNAVAILABLE`. On a provider that proves no
+decisions, `None` still needs a key the node holds.
 
 **Freshness and revocations.** The guarantee is the permission at the proof's revision,
 not at the moment of admission. A decision is read at the light client's newest verified
@@ -424,8 +424,8 @@ of its call: `RequestContext::with_bearer` for a plain delegation, or
 `RequestContext::with_request_delegation` for one bound to that one change. A
 request-bound delegation covers one command, so a create and a grant beside it need two.
 
-A provider that gives the node nothing to check a delegation against (the Cosmos
-provider, which is passed its caller's token as it is) admits a verified write with a key
+A provider that gives the node nothing to check a delegation against (a host's own,
+which is passed its caller's token as it is) admits a verified write with a key
 the node holds and with nothing else: `Delegation(token)` is refused there.
 
 What is recorded. The staged relationship change keeps its token in its record and is
@@ -439,14 +439,15 @@ sends nothing.
 
 A commit on an external provider returns before the provider holds what the transaction
 owes it, and stands whatever the submission comes to. Four node calls say what it came
-to and act on it. Each takes the context of an authenticated caller.
+to and act on it. Each runs as the caller its scope names (`Node::with_identity`), and
+the unscoped `Node` calls it as the node's principal.
 
 | Call | What it does | Who may call |
 |---|---|---|
-| `Node::owed_acp_as(context, actor)` | lists what `actor` owes: the registrations of documents it created and the changes it staged | `actor`, and the node's principal (`Node::node_context`) |
-| `Node::await_owed_acp_as(context, handle, deadline)` | waits until what one committed transaction owes is settled or has come to rest, and says which | anyone authenticated; the node's principal waits for every entry of the transaction, an actor for its own, and another actor's entries neither show in its wait nor keep it |
-| `Node::reauthorize_owed_acp_as(context, entry, credential)` | records a fresh credential with one owed registration or change and submits it | the entry's actor, and the node's principal |
-| `Node::abandon_owed_acp_change_as(context, seq)` | deletes the record of a change the provider refused | the actor that staged it, and nobody else; the node's principal for the changes it staged itself |
+| `ScopedNode::owed_acp(actor)` | lists what `actor` owes: the registrations of documents it created and the changes it staged | `actor`, and the node's principal (the unscoped `Node`) |
+| `ScopedNode::await_owed_acp(txn, deadline)` | waits until what one committed transaction owes is settled or has come to rest, and says which | anyone authenticated; the node's principal waits for every entry of the transaction, an actor for its own, and another actor's entries neither show in its wait nor keep it |
+| `ScopedNode::reauthorize_owed_acp(entry, credential)` | records a fresh credential with one owed registration or change and submits it | the entry's actor, and the node's principal |
+| `ScopedNode::abandon_owed_acp_change(seq)` | deletes the record of a change the provider refused | the actor that staged it, and nobody else; the node's principal for the changes it staged itself |
 
 To a caller who may not see an entry it does not exist (`OwedEntryNotFound`). No call
 returns a recorded credential.
@@ -514,7 +515,7 @@ returns a recorded credential.
 
   Every fresh credential is checked as a verified write's is, whatever write the entry
   came from: it will be used when no request is there to vouch for it. A provider that
-  gives the node nothing to check a delegation against (the Cosmos provider) therefore
+  gives the node nothing to check a delegation against (a host's own) therefore
   takes no delegation here. An entry there is sent again with a key the node holds
   (`SignerCredential::None`), or by a later request that itself carries the actor's
   bearer.
@@ -577,7 +578,7 @@ returns a recorded credential.
   - a create whose request carries no bearer for its creator, by a creator whose key
     the node does not hold, commits, sends nothing at its commit and records no
     authority. Its registration is `awaiting_authority` in the report and takes a
-    credential through `reauthorize_owed_acp_as`, or settles when a later request
+    credential through `reauthorize_owed_acp`, or settles when a later request
     carries the creator's bearer;
   - no later submission finds one either: not the pass at start, not the settlement of
     an owed change, not a wait, and not another request that touches the document;
@@ -632,46 +633,48 @@ public only when the node's configuration says so.
 > race. That symmetry is the entire trick, and the TLA+ models for ACP soundness and
 > the deferred-ACP overlay pin it.
 
-## Parent-authorized document creation
+## Gated document creation
 
-A resource can declare which parent admits a new document. In this policy
-fragment, registering a job requires the creator to own the named node.
+A resource can restrict who adds documents to its collection with a
+`collection` section. Here a book may be created only by someone who may
+`publish` for the book's author:
 
 ```yaml
-- name: jobs
-  permissions: [{name: read}, {name: update}, {name: delete}]
-  relations: [{name: parent, types: [nodes]}]
-  create: {parent: parent, requires: owner}
+- name: book
+  permissions:
+    - name: read
+      expr: author->read
+  relations:
+    - name: author
+      types: [author]
+  collection:
+    create: author->publish
 ```
 
-Bind the child collection to the document field that carries the parent's ID.
+The collection binds the relation to an immutable relation field. Only a
+governed collection may bind one; the related collection uses the same policy.
 
 ```graphql
-type Job @policy(id: "POLICY_ID", resource: "jobs", parentField: "nodeID") {
-  nodeID: String!
+type Book @governed(root: "library") @policy(id: "POLICY_ID", resource: "book") {
+  title: String
+  author: Author @immutable @policy(relation: "author")
 }
 ```
 
-The policy supplies the parent resource type. The field supplies one object ID.
-Local registration checks the creator against that parent and writes the owner
-and parent relationship in the document transaction. With Vera, the pending
-registration keeps both parent identifiers across a restart. A delegation
-bound to the registration covers both as well. Vera checks the acting identity
-when it executes the command. A later grant on the parent relation requires
-permission on the proposed target.
-
-A registered document keeps a parent. Local ACP refuses to delete its last
-parent relationship; the relationship goes when the document is deleted. An
-update that writes another value into the parent field is refused, so the
-document always names the parent it was admitted under.
+At create the node derives `book:<docID>#author@author:<_authorID>` from the
+bound field and registers the document with it. Vera checks `create` over the
+stored relationships plus the derived ones and stores the owner and the derived
+relationships in one execution. The local engine accepts the section and gates
+nothing with it. Under Vera a create without an identity in a gated collection
+is refused before anything is written. The registration runs after the commit:
+until Vera holds it the document is hidden from everyone, and a registration Vera
+refuses is final, its document stays unregistered and hidden, its creator
+included. After creation the bound relation is discretionary: the owner may
+change it through the relationship API like any other.
 
 A receiver sharing the creator's Vera deployment waits for the object's
-registration. An embedder that enables foreign replica registration for the
-collection can register a signed genesis on its own deployment. The receiving
-node submits under its own identity, with the parent ID from the signed
-document. While parent admission is pending, ACP reports registration as
-unavailable and grants the submitter no owner access. Creator grants are
-delivered after the provider accepts the registration.
+registration. A replicated genesis is registered with the relationships derived
+from its merged fields.
 
 An embedder with changing device membership can implement
 `ReplicaOwnership::allows_foreign_registration` to query the provider before

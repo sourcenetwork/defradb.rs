@@ -2,7 +2,6 @@ use super::*;
 use acp::{DocumentPermission, Identity};
 use identity::Did;
 use regolith::sync::Atom;
-use schema::{CollectionVersion, FieldDescription, FieldKind, PolicyDescription};
 
 const DID: &str = "did:key:autocommit-hook-test";
 const TOKEN: &str = "bearer-captured-when-staged";
@@ -33,6 +32,7 @@ impl acp::DocumentACP for TokenObserver {
         _policy_id: &str,
         _resource_name: &str,
         _doc_id: &str,
+        _relationships: &[acp::DerivedRelationship],
     ) -> acp::Result<()> {
         assert_eq!(identity.as_str(), DID);
         self.record();
@@ -101,25 +101,12 @@ impl acp::DocumentACP for TokenObserver {
 fn deferred_registration_hook_uses_bearer_captured_before_commit() {
     workers::block_on(async {
         let db = Arc::new(DB::new(storage::RegolithStore::in_memory().unwrap()).unwrap());
-        let mut schema = CollectionVersion::new(
-            "BearerHookDoc",
-            "v1",
-            "bearer-hook-doc",
-            vec![
-                FieldDescription::new(
-                    "1",
-                    "_docID",
-                    FieldKind::doc_id(),
-                    schema::CType::LwwRegister,
-                ),
-                FieldDescription::new("2", "name", FieldKind::string(), schema::CType::LwwRegister),
-            ],
-        );
-        schema.policy = Some(PolicyDescription::new(
-            "bearer-hook-policy",
-            "BearerHookDoc",
-        ));
-        db.create_collection(schema).await.unwrap();
+        db.add_collection(
+            &defra_core::RequestContext::ambient(),
+            r#"type BearerHookDoc @policy(id: "bearer-hook-policy", resource: "BearerHookDoc") { name: String }"#,
+        )
+        .await
+        .unwrap();
         let collection = db.get_collection("BearerHookDoc").unwrap().unwrap();
         let observer = Arc::new(TokenObserver::default());
         db.set_document_acp(Arc::new(acp::ExternalDocumentAcp::new(
@@ -207,25 +194,12 @@ fn create_retry_callback_uses_bearer_captured_before_commit() {
 fn deferred_unregistration_hook_uses_bearer_captured_before_commit() {
     workers::block_on(async {
         let db = Arc::new(DB::new(storage::RegolithStore::in_memory().unwrap()).unwrap());
-        let mut schema = CollectionVersion::new(
-            "BearerHookDeleteDoc",
-            "v1",
-            "bearer-hook-delete-doc",
-            vec![
-                FieldDescription::new(
-                    "1",
-                    "_docID",
-                    FieldKind::doc_id(),
-                    schema::CType::LwwRegister,
-                ),
-                FieldDescription::new("2", "name", FieldKind::string(), schema::CType::LwwRegister),
-            ],
-        );
-        schema.policy = Some(PolicyDescription::new(
-            "bearer-hook-delete-policy",
-            "BearerHookDeleteDoc",
-        ));
-        db.create_collection(schema).await.unwrap();
+        db.add_collection(
+            &defra_core::RequestContext::ambient(),
+            r#"type BearerHookDeleteDoc @policy(id: "bearer-hook-delete-policy", resource: "BearerHookDeleteDoc") { name: String }"#,
+        )
+        .await
+        .unwrap();
         let collection = db.get_collection("BearerHookDeleteDoc").unwrap().unwrap();
         let observer = Arc::new(TokenObserver::default());
         db.set_document_acp(observer.clone());

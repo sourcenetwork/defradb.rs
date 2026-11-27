@@ -98,6 +98,16 @@ impl<S: Store + 'static> DocumentAcpAdapter<S> {
 
 #[async_trait]
 impl<S: Store + 'static> DocumentAcpOperations for DocumentAcpAdapter<S> {
+    /// A delegation authenticates the caller the node's document ACP
+    /// verifies it for, as on an in-process node, so a caller whose key this
+    /// server does not hold acts under its own delegation.
+    fn caller_of_delegation(
+        &self,
+        token: &str,
+    ) -> Option<Result<acp::AuthenticatedCaller, String>> {
+        self.acp.caller_of_delegation(token)
+    }
+
     fn bind_request(&self, context: &RequestContext) -> Option<Arc<dyn DocumentAcpOperations>> {
         Some(Arc::new(Self {
             database: Arc::clone(&self.database),

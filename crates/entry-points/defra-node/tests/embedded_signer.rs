@@ -76,26 +76,26 @@ fn selected_actor_signs_create_update_and_respects_transaction_finality() {
         assert_eq!(node.verified_block_signer_did(&cid).await.unwrap(), actor);
 
         let update = format!(r#"mutation {{ update_SignedFact(docID: "{doc}", input: {{value: "two"}}) {{ _docID }} }}"#);
-        let tx = node.begin_transaction_guard(false).await.unwrap();
-        let result = node.execute_request_in_txn(signer.attach(request(&update, &actor)), tx.handle()).await;
+        let tx = node.new_txn(false).await.unwrap();
+        let result = tx.execute_request(signer.attach(request(&update, &actor))).await;
         assert!(!result.has_errors(), "{:?}", result.errors);
-        let commits = node.execute_request_in_txn(QueryRequest::new(&commits_query), tx.handle()).await;
+        let commits = tx.execute_request(QueryRequest::new(&commits_query)).await;
         let cids: Vec<String> = commits.data.unwrap()["_commits"].as_array().unwrap().iter().map(|c| c["cid"].as_str().unwrap().to_owned()).collect();
         let updated = cids.iter().find(|candidate| **candidate != cid).unwrap();
-        assert_eq!(node.verified_block_signer_did_in_txn(updated, tx.handle()).await.unwrap(), actor);
-        let other_create = node.execute_request_in_txn(other_signer.attach(request(r#"mutation { add_SignedFact(input: {value: "other"}) { _docID } }"#, &other)), tx.handle()).await;
+        assert_eq!(tx.verified_block_signer_did(updated).await.unwrap(), actor);
+        let other_create = tx.execute_request(other_signer.attach(request(r#"mutation { add_SignedFact(input: {value: "other"}) { _docID } }"#, &other))).await;
         assert!(!other_create.has_errors(), "{:?}", other_create.errors);
         let other_doc = other_create.data.unwrap()["add_SignedFact"][0]["_docID"].as_str().unwrap().to_owned();
         let other_query = format!(r#"{{ _commits(docID: "{other_doc}", filter: {{fieldName: {{_eq: "_C"}}}}) {{ cid }} }}"#);
-        let other_commits = node.execute_request_in_txn(QueryRequest::new(other_query), tx.handle()).await;
+        let other_commits = tx.execute_request(QueryRequest::new(other_query)).await;
         let other_cid = other_commits.data.unwrap()["_commits"][0]["cid"].as_str().unwrap().to_owned();
-        assert_eq!(node.verified_block_signer_did_in_txn(&other_cid, tx.handle()).await.unwrap(), other);
+        assert_eq!(tx.verified_block_signer_did(&other_cid).await.unwrap(), other);
         tx.commit().await.unwrap();
         assert_eq!(node.verified_block_signer_did(updated).await.unwrap(), actor);
         assert_eq!(node.verified_block_signer_did(&other_cid).await.unwrap(), other);
 
-        let tx = node.begin_transaction_guard(false).await.unwrap();
-        let discard = node.execute_request_in_txn(signer.attach(request(update.replace("two", "three"), &actor)), tx.handle()).await;
+        let tx = node.new_txn(false).await.unwrap();
+        let discard = tx.execute_request(signer.attach(request(update.replace("two", "three"), &actor))).await;
         assert!(!discard.has_errors(), "{:?}", discard.errors);
         tx.discard().await.unwrap();
         let rows = node.execute("{ SignedFact { value } }").await;
@@ -112,7 +112,7 @@ fn selected_actor_signs_create_update_and_respects_transaction_finality() {
         assert!(wrong_signer.has_errors());
         let foreign_context = defra_core::RequestContext::default().with_identity(Some(other));
         let foreign = node.runner().begin_txn_as(&foreign_context, false).await.unwrap();
-        let denied = node.execute_request_in_txn(signer.attach(request(&update, &actor)), &foreign).await;
+        let denied = node.with_transaction(foreign.parse::<defra_core::TxnId>().unwrap()).execute_request(signer.attach(request(&update, &actor))).await;
         assert!(denied.has_errors());
         node.runner().discard_txn_as(&foreign_context, &foreign).await.unwrap();
         node.shutdown().await.unwrap();
@@ -136,18 +136,13 @@ fn a_context_carrying_a_callers_key_signs_as_that_actor() {
         node.add_collection("type SignedFact { value: String }")
             .await
             .unwrap();
-        let context = defra_core::RequestContext::default()
-            .with_identity(Some(actor.clone()))
-            .with_signing(Some(actor_key));
         let create = node
-            .execute_request_as(
-                &context,
-                QueryRequest::new(
-                    r#"mutation { add_SignedFact(input: {value: "one"}) { _docID } }"#,
-                ),
-            )
-            .await
-            .unwrap();
+            .with_identity(identity::Did::new(actor.clone()).unwrap())
+            .with_signing(actor_key)
+            .execute_request(QueryRequest::new(
+                r#"mutation { add_SignedFact(input: {value: "one"}) { _docID } }"#,
+            ))
+            .await;
         assert!(!create.has_errors(), "{:?}", create.errors);
         let doc = create.data.unwrap()["add_SignedFact"][0]["_docID"]
             .as_str()
@@ -273,11 +268,12 @@ fn selected_signer_does_not_bypass_document_acp() {
         let (other, other_key) = key();
         defra_core::signing::store_identity(&node_did, node_key).expect("the store takes the identity");
         let node = Node::builder().with_node_identity_did(&node_did).build().await.unwrap();
-        let policy = node.add_dac_policy_as(
-            &defra_core::RequestContext::default().with_identity(Some(owner.clone())),
+        let owner_node = node.with_identity(identity::Did::new(owner.clone()).unwrap());
+        let policy = owner_node.add_dac_policy(
             "name: Rows\nresources:\n  - name: rows\n    relations:\n      - name: reader\n    permissions:\n      - name: read\n        expr: reader\n      - name: update\n      - name: delete\n",
+            None,
         ).await.unwrap();
-        node.add_collection(&format!("type Protected @policy(id: \"{policy}\", resource: \"rows\") {{ value: String }}")).await.unwrap();
+        owner_node.add_collection(&format!("type Protected @policy(id: \"{policy}\", resource: \"rows\") {{ value: String }}")).await.unwrap();
         let signer = EmbeddedSigner::from_config(owner_key).unwrap();
         let other_signer = EmbeddedSigner::from_config(other_key).unwrap();
         let create = node.execute_request(signer.attach(request(r#"mutation { add_Protected(input: {value: "one"}) { _docID } }"#, &owner))).await;
@@ -290,8 +286,8 @@ fn selected_signer_does_not_bypass_document_acp() {
         let mutation = format!(r#"mutation {{ update_Protected(docID: "{doc}", input: {{value: "stolen"}}) {{ _docID }} }}"#);
         let rejected = node.execute_request(other_signer.attach(request(&mutation, &other).with_context(bypass.clone()))).await;
         assert!(rejected.has_errors(), "explicit signing must reject a DAC bypass request");
-        let tx = node.begin_transaction_guard(false).await.unwrap();
-        let rejected = node.execute_request_in_txn(other_signer.attach(request(&mutation, &other).with_context(bypass)), tx.handle()).await;
+        let tx = node.new_txn(false).await.unwrap();
+        let rejected = tx.execute_request(other_signer.attach(request(&mutation, &other).with_context(bypass))).await;
         assert!(rejected.has_errors(), "transactional explicit signing must reject a DAC bypass request");
         tx.discard().await.unwrap();
         let read = node.execute_request(request("{ Protected { value } }", &owner)).await;
@@ -316,7 +312,8 @@ fn native_admission_matches_executed_lean_model() {
             .build()
             .await
             .unwrap();
-        node.add_collection("type ModelFact { value: String }")
+        node.add_collection("type ModelFact { value: String }"
+        )
             .await
             .unwrap();
         let (secp_actor, secp_key) = secp256k1_key();
@@ -472,18 +469,20 @@ fn an_identity_only_node_runs_requests_in_the_transactions_it_begins() {
             format!(r#"mutation {{ add_TxnFact(input: {{value: "{value}"}}) {{ _docID }} }}"#)
         };
 
-        let handle = node.begin_transaction(false).await.unwrap();
+        let handle = node.new_txn(false).await.map(|txn| txn.detach()).unwrap();
         let unsigned = node
-            .execute_request_in_txn(QueryRequest::new(add("node")), &handle)
+            .with_transaction(handle)
+            .execute_request(QueryRequest::new(add("node")))
             .await;
         assert!(!unsigned.has_errors(), "{:?}", unsigned.errors);
         let signed = node
-            .execute_request_in_txn(signer.attach(request(add("caller"), &actor)), &handle)
+            .with_transaction(handle)
+            .execute_request(signer.attach(request(add("caller"), &actor)))
             .await;
         assert!(!signed.has_errors(), "{:?}", signed.errors);
-        node.commit_transaction(&handle).await.unwrap();
+        node.with_transaction(handle).commit().await.unwrap();
 
-        let txn = node.begin_transaction_guard(false).await.unwrap();
+        let txn = node.new_txn(false).await.unwrap();
         let guarded = txn.execute(&add("guard")).await;
         assert!(!guarded.has_errors(), "{:?}", guarded.errors);
         txn.commit().await.unwrap();

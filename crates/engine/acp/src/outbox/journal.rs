@@ -94,7 +94,4 @@ pub trait OwedJournal: MaybeSendSync {
     /// ([`Submission::AwaitingAuthority`]), or the provider refused it
     /// ([`Submission::Refused`]).
     fn refusal(&self, change: &OwedChange, reason: String) -> Submission;
-
-    /// `change` took effect on the provider.
-    fn applied(&self, change: &OwedChange);
 }

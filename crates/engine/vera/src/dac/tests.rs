@@ -1,0 +1,635 @@
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+
+use kovan::AtomOption;
+use kovan_queue::seg_queue::SegQueue;
+
+use super::*;
+
+mod owed;
+mod registration_batch;
+
+/// Which relationship-emitting provider method a routing test drove, plus
+/// the structured-subject codec tuple for the EntitySet path. Each field
+/// stands alone: tests only ever read one after its own call completes, so
+/// there is no compound state that needs a single shared guard.
+struct MockProvider {
+    verify_gate: Option<(Arc<regolith::sync::Notify>, Arc<regolith::sync::Semaphore>)>,
+    public_unregistered: bool,
+    archive_on_document_delete: bool,
+    archive_error: bool,
+    registered: bool,
+    owner_error: bool,
+    decisions: SegQueue<bool>,
+    created_decision: AtomOption<String>,
+    verify_calls: AtomicUsize,
+    owner_queries: AtomicUsize,
+    archive_calls: AtomicUsize,
+    set_relationship_called: AtomicBool,
+    delete_relationship_called: AtomicBool,
+    set_subject_call: AtomOption<(u8, String, String, String)>,
+    delete_subject_call: AtomOption<(u8, String, String, String)>,
+    /// The token the last structured-subject command was sent under.
+    subject_token: AtomOption<String>,
+}
+
+impl MockProvider {
+    fn new(decisions: Vec<bool>) -> Self {
+        let queue = SegQueue::new();
+        for decision in decisions {
+            queue.push(decision);
+        }
+        Self {
+            verify_gate: None,
+            public_unregistered: false,
+            archive_on_document_delete: true,
+            archive_error: false,
+            registered: true,
+            owner_error: false,
+            decisions: queue,
+            created_decision: AtomOption::none(),
+            verify_calls: AtomicUsize::new(0),
+            owner_queries: AtomicUsize::new(0),
+            archive_calls: AtomicUsize::new(0),
+            set_relationship_called: AtomicBool::new(false),
+            delete_relationship_called: AtomicBool::new(false),
+            set_subject_call: AtomOption::none(),
+            delete_subject_call: AtomOption::none(),
+            subject_token: AtomOption::none(),
+        }
+    }
+
+    fn verify_calls(&self) -> usize {
+        self.verify_calls.load(Ordering::Relaxed)
+    }
+
+    fn owner_queries(&self) -> usize {
+        self.owner_queries.load(Ordering::Relaxed)
+    }
+
+    fn archive_calls(&self) -> usize {
+        self.archive_calls.load(Ordering::Relaxed)
+    }
+
+    fn created_decision(&self) -> Option<String> {
+        self.created_decision.load().map(|g| (*g).clone())
+    }
+}
+
+#[async_trait]
+impl VeraProvider for MockProvider {
+    fn unregistered_documents_are_public(&self) -> bool {
+        self.public_unregistered
+    }
+
+    fn archive_object_on_document_delete(&self) -> bool {
+        self.archive_on_document_delete
+    }
+
+    fn authorized_account(&self) -> String {
+        "0x0".to_string()
+    }
+
+    async fn create_bearer_token(&self, did: &str) -> std::result::Result<String, ProviderError> {
+        Ok(format!("mock.bearer.token.{did}"))
+    }
+
+    fn self_did(&self) -> Option<String> {
+        None
+    }
+
+    async fn create_policy(
+        &self,
+        _policy_yaml: &str,
+        _nonce: Option<acp::PolicyNonce>,
+    ) -> std::result::Result<String, ProviderError> {
+        unreachable!("create_policy is not used in this test")
+    }
+
+    async fn register_object(
+        &self,
+        _bearer_token: &str,
+        _policy_id: &str,
+        _resource: &str,
+        _object_id: &str,
+        _relationships: &[acp::DerivedRelationship],
+    ) -> std::result::Result<(), ProviderError> {
+        Ok(())
+    }
+
+    async fn archive_object(
+        &self,
+        _bearer_token: &str,
+        _policy_id: &str,
+        _resource: &str,
+        _object_id: &str,
+    ) -> std::result::Result<(), ProviderError> {
+        self.archive_calls.fetch_add(1, Ordering::Relaxed);
+        if self.archive_error {
+            return Err(ProviderError::Transaction("archive rejected".into()));
+        }
+        Ok(())
+    }
+
+    async fn set_relationship(
+        &self,
+        _bearer_token: &str,
+        _policy_id: &str,
+        _resource: &str,
+        _object_id: &str,
+        _relation: &str,
+        _subject: &SubjectRef,
+    ) -> std::result::Result<bool, ProviderError> {
+        self.set_relationship_called.store(true, Ordering::Relaxed);
+        Ok(true)
+    }
+
+    async fn delete_relationship(
+        &self,
+        _bearer_token: &str,
+        _policy_id: &str,
+        _resource: &str,
+        _object_id: &str,
+        _relation: &str,
+        _subject: &SubjectRef,
+    ) -> std::result::Result<bool, ProviderError> {
+        self.delete_relationship_called
+            .store(true, Ordering::Relaxed);
+        Ok(true)
+    }
+
+    async fn set_relationship_subject_as(
+        &self,
+        bearer_token: &str,
+        _policy_id: &str,
+        _resource: &str,
+        _object_id: &str,
+        _relation: &str,
+        kind: u8,
+        subject_resource: &str,
+        subject_object_id: &str,
+        subject_relation: &str,
+    ) -> std::result::Result<bool, ProviderError> {
+        self.subject_token.store_some(bearer_token.to_string());
+        self.set_subject_call.store_some((
+            kind,
+            subject_resource.to_string(),
+            subject_object_id.to_string(),
+            subject_relation.to_string(),
+        ));
+        Ok(true)
+    }
+
+    async fn delete_relationship_subject_as(
+        &self,
+        bearer_token: &str,
+        _policy_id: &str,
+        _resource: &str,
+        _object_id: &str,
+        _relation: &str,
+        kind: u8,
+        subject_resource: &str,
+        subject_object_id: &str,
+        subject_relation: &str,
+    ) -> std::result::Result<bool, ProviderError> {
+        self.subject_token.store_some(bearer_token.to_string());
+        self.delete_subject_call.store_some((
+            kind,
+            subject_resource.to_string(),
+            subject_object_id.to_string(),
+            subject_relation.to_string(),
+        ));
+        Ok(true)
+    }
+
+    async fn query_policy(
+        &self,
+        _policy_id: &str,
+    ) -> std::result::Result<Option<crate::provider::ProviderPolicyInfo>, ProviderError> {
+        unreachable!("query_policy is not used in this test")
+    }
+
+    async fn query_object_owner(
+        &self,
+        _policy_id: &str,
+        _resource: &str,
+        _object_id: &str,
+    ) -> std::result::Result<(bool, String), ProviderError> {
+        self.owner_queries.fetch_add(1, Ordering::Relaxed);
+        if self.owner_error {
+            return Err(ProviderError::Query("invalid owner proof".into()));
+        }
+        Ok((
+            self.registered,
+            "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK".to_string(),
+        ))
+    }
+
+    async fn verify_access(
+        &self,
+        _policy_id: &str,
+        _resource: &str,
+        _object_id: &str,
+        _permission: &str,
+        _actor_did: &str,
+    ) -> std::result::Result<bool, ProviderError> {
+        let call = self.verify_calls.fetch_add(1, Ordering::Relaxed);
+        let decision = self.decisions.pop().expect("mock verify_access decision");
+        if call == 0 {
+            if let Some((started, resume)) = &self.verify_gate {
+                started.notify_one();
+                resume.acquire(1).await.forget();
+            }
+        }
+        Ok(decision)
+    }
+
+    async fn create_access_decision(
+        &self,
+        _policy_id: &str,
+        _resource: &str,
+        _object_id: &str,
+        _permission: &str,
+        actor_did: &str,
+    ) -> std::result::Result<Option<String>, ProviderError> {
+        let decision_id = format!("decision-for-{actor_did}");
+        self.created_decision.store_some(decision_id.clone());
+        Ok(Some(decision_id))
+    }
+}
+
+#[nuclei::test]
+async fn local_tombstone_preserves_shared_authorization_state() {
+    let mut provider = MockProvider::new(vec![true]);
+    provider.archive_on_document_delete = false;
+    let provider = Arc::new(provider);
+    let acp = VeraDocumentACP::new(provider.clone());
+
+    acp.unregister_doc_object("policy-1", "users", "doc-1")
+        .await
+        .expect("local tombstone does not archive a shared object");
+
+    assert_eq!(provider.owner_queries(), 0);
+    assert_eq!(provider.archive_calls(), 0);
+    let identity = Identity::from(requestor());
+    assert!(acp
+        .check_doc_access(
+            &identity,
+            DocumentPermission::Read,
+            "policy-1",
+            "users",
+            "doc-1",
+        )
+        .await
+        .expect("the existing shared grant remains queryable"));
+    assert_eq!(provider.verify_calls(), 1);
+}
+
+#[nuclei::test]
+async fn configured_shared_archive_still_runs_and_surfaces_provider_errors() {
+    let mut provider = MockProvider::new(vec![]);
+    provider.archive_error = true;
+    let provider = Arc::new(provider);
+    let acp = VeraDocumentACP::new(provider.clone());
+
+    let error = acp
+        .unregister_doc_object("policy-1", "users", "doc-1")
+        .await
+        .expect_err("provider archive errors are not suppressed");
+
+    assert!(error.to_string().contains("archive rejected"));
+    assert_eq!(provider.owner_queries(), 1);
+    assert_eq!(provider.archive_calls(), 1);
+}
+
+#[nuclei::test]
+async fn check_doc_access_does_not_cache_remote_denials() {
+    let provider = Arc::new(MockProvider::new(vec![false, true]));
+    let acp = VeraDocumentACP::new(provider.clone());
+    let did = Did::new("did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK").unwrap();
+    let identity = Identity::from(did);
+
+    let denied = acp
+        .check_doc_access(
+            &identity,
+            DocumentPermission::Read,
+            "policy-1",
+            "users",
+            "doc-1",
+        )
+        .await
+        .expect("initial denial");
+    assert!(!denied);
+
+    let allowed = acp
+        .check_doc_access(
+            &identity,
+            DocumentPermission::Read,
+            "policy-1",
+            "users",
+            "doc-1",
+        )
+        .await
+        .expect("fresh remote decision");
+    assert!(allowed);
+    assert_eq!(provider.verify_calls(), 2);
+}
+
+#[nuclei::test]
+async fn create_access_decision_delegates_to_provider() {
+    let provider = Arc::new(MockProvider::new(vec![]));
+    let acp = VeraDocumentACP::new(provider.clone());
+    let did = Did::new("did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK").unwrap();
+    let identity = Identity::from(did.clone());
+
+    let decision_id = acp
+        .create_access_decision(&identity, "policy-1", "transcript", "transcript", "writer")
+        .await
+        .expect("create access decision should succeed");
+
+    assert_eq!(decision_id, Some(format!("decision-for-{}", did.as_str())));
+    assert_eq!(provider.created_decision(), decision_id);
+}
+
+fn requestor() -> Did {
+    Did::new("did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK").unwrap()
+}
+
+#[nuclei::test]
+async fn add_relationship_routes_actor_to_set_relationship() {
+    let provider = Arc::new(MockProvider::new(vec![]));
+    let acp = VeraDocumentACP::new(provider.clone());
+    let target = Subject::Entity(zanzibar::Did::new_unchecked(
+        "did:key:zActorTarget".to_string(),
+    ));
+
+    let result = acp
+        .add_relationship(
+            &requestor(),
+            target,
+            "policy-1",
+            "users",
+            "doc-1",
+            "reader",
+            &[],
+        )
+        .await
+        .expect("actor relationship should route to set_relationship");
+    assert!(result);
+
+    assert!(
+        provider.set_relationship_called.load(Ordering::Relaxed),
+        "actor must hit set_relationship"
+    );
+    assert!(
+        provider.set_subject_call.is_none(),
+        "actor must not hit subject path"
+    );
+}
+
+#[nuclei::test]
+async fn add_relationship_routes_object_edge_to_subject_kind_2() {
+    let provider = Arc::new(MockProvider::new(vec![]));
+    let acp = VeraDocumentACP::new(provider.clone());
+    let target = Subject::entity_set("directory", "d1", "");
+
+    let result = acp
+        .add_relationship(
+            &requestor(),
+            target,
+            "policy-1",
+            "users",
+            "doc-1",
+            "reader",
+            &[],
+        )
+        .await
+        .expect("object edge should route to set_relationship_subject_as");
+    assert!(result);
+
+    assert!(
+        !provider.set_relationship_called.load(Ordering::Relaxed),
+        "object edge must not hit actor path"
+    );
+    assert_eq!(
+        provider.set_subject_call.load().map(|g| (*g).clone()),
+        Some((2, "directory".to_string(), "d1".to_string(), String::new()))
+    );
+}
+
+#[nuclei::test]
+async fn add_relationship_routes_userset_to_subject_kind_3() {
+    let provider = Arc::new(MockProvider::new(vec![]));
+    let acp = VeraDocumentACP::new(provider.clone());
+    let target = Subject::entity_set("directory", "d1", "member");
+
+    acp.add_relationship(
+        &requestor(),
+        target,
+        "policy-1",
+        "users",
+        "doc-1",
+        "reader",
+        &[],
+    )
+    .await
+    .expect("userset should route to set_relationship_subject_as");
+    assert_eq!(
+        provider.subject_token.load().map(|g| (*g).clone()),
+        Some(format!("mock.bearer.token.{}", requestor())),
+        "the command carries the requestor's token"
+    );
+
+    assert_eq!(
+        provider.set_subject_call.load().map(|g| (*g).clone()),
+        Some((
+            3,
+            "directory".to_string(),
+            "d1".to_string(),
+            "member".to_string()
+        ))
+    );
+}
+
+#[nuclei::test]
+async fn delete_relationship_routes_object_edge_to_subject_kind_2() {
+    let provider = Arc::new(MockProvider::new(vec![]));
+    let acp = VeraDocumentACP::new(provider.clone());
+    let target = Subject::entity_set("directory", "d1", "");
+
+    acp.delete_relationship(
+        &requestor(),
+        target,
+        "policy-1",
+        "users",
+        "doc-1",
+        "reader",
+        &[],
+    )
+    .await
+    .expect("object edge delete should route to delete_relationship_subject_as");
+    assert_eq!(
+        provider.subject_token.load().map(|g| (*g).clone()),
+        Some(format!("mock.bearer.token.{}", requestor())),
+        "the command carries the requestor's token"
+    );
+
+    assert!(!provider.delete_relationship_called.load(Ordering::Relaxed));
+    assert_eq!(
+        provider.delete_subject_call.load().map(|g| (*g).clone()),
+        Some((2, "directory".to_string(), "d1".to_string(), String::new()))
+    );
+}
+
+/// A provider that omits the structured-subject overrides, so the trait
+/// default (`Unsupported`) is exercised on the EntitySet path.
+struct NoSubjectProvider;
+
+#[async_trait]
+impl VeraProvider for NoSubjectProvider {
+    fn authorized_account(&self) -> String {
+        "0x0".to_string()
+    }
+    async fn create_bearer_token(&self, _did: &str) -> std::result::Result<String, ProviderError> {
+        Ok("mock.bearer.token".to_string())
+    }
+    fn self_did(&self) -> Option<String> {
+        None
+    }
+    async fn create_policy(
+        &self,
+        _policy_yaml: &str,
+        _nonce: Option<acp::PolicyNonce>,
+    ) -> std::result::Result<String, ProviderError> {
+        unreachable!()
+    }
+    async fn register_object(
+        &self,
+        _bearer_token: &str,
+        _policy_id: &str,
+        _resource: &str,
+        _object_id: &str,
+        _relationships: &[acp::DerivedRelationship],
+    ) -> std::result::Result<(), ProviderError> {
+        unreachable!()
+    }
+    async fn archive_object(
+        &self,
+        _bearer_token: &str,
+        _policy_id: &str,
+        _resource: &str,
+        _object_id: &str,
+    ) -> std::result::Result<(), ProviderError> {
+        unreachable!()
+    }
+    async fn set_relationship(
+        &self,
+        _bearer_token: &str,
+        _policy_id: &str,
+        _resource: &str,
+        _object_id: &str,
+        _relation: &str,
+        _subject: &SubjectRef,
+    ) -> std::result::Result<bool, ProviderError> {
+        unreachable!()
+    }
+    async fn delete_relationship(
+        &self,
+        _bearer_token: &str,
+        _policy_id: &str,
+        _resource: &str,
+        _object_id: &str,
+        _relation: &str,
+        _subject: &SubjectRef,
+    ) -> std::result::Result<bool, ProviderError> {
+        unreachable!()
+    }
+    async fn query_policy(
+        &self,
+        _policy_id: &str,
+    ) -> std::result::Result<Option<crate::provider::ProviderPolicyInfo>, ProviderError> {
+        unreachable!()
+    }
+    async fn query_object_owner(
+        &self,
+        _policy_id: &str,
+        _resource: &str,
+        _object_id: &str,
+    ) -> std::result::Result<(bool, String), ProviderError> {
+        unreachable!()
+    }
+    async fn verify_access(
+        &self,
+        _policy_id: &str,
+        _resource: &str,
+        _object_id: &str,
+        _permission: &str,
+        _actor_did: &str,
+    ) -> std::result::Result<bool, ProviderError> {
+        unreachable!()
+    }
+}
+
+#[nuclei::test]
+async fn add_relationship_subject_default_is_unsupported() {
+    let provider = Arc::new(NoSubjectProvider);
+    let acp = VeraDocumentACP::new(provider);
+    let target = Subject::entity_set("directory", "d1", "");
+
+    let err = acp
+        .add_relationship(
+            &requestor(),
+            target,
+            "policy-1",
+            "users",
+            "doc-1",
+            "reader",
+            &[],
+        )
+        .await
+        .expect_err("provider without subject support must fail");
+    let message = err.to_string();
+    assert!(
+        message.contains("unsupported"),
+        "expected Unsupported error, got: {message}"
+    );
+}
+
+#[nuclei::test]
+async fn unregistered_read_rules_follow_provider_and_preserve_proof_errors() {
+    use acp::read_access::{check_doc_read_access, DirectChecker, ObjectAccessChecker};
+    for public in [false, true] {
+        let mut provider = MockProvider::new(vec![]);
+        provider.public_unregistered = public;
+        provider.registered = false;
+        let acp = VeraDocumentACP::new(Arc::new(provider));
+        assert_eq!(acp.unregistered_documents_are_public(), public);
+        let checker = DirectChecker {
+            acp: &acp,
+            identity: &Identity::Anonymous,
+        };
+        let access = checker
+            .object_access("policy", "users", "doc")
+            .await
+            .unwrap();
+        assert_eq!(access.has_access, public);
+        assert!(!access.explicit);
+        assert_eq!(
+            check_doc_read_access(&checker, "policy", "users", "collection", false, "doc")
+                .await
+                .unwrap(),
+            public
+        );
+    }
+    let mut provider = MockProvider::new(vec![]);
+    provider.owner_error = true;
+    let acp = VeraDocumentACP::new(Arc::new(provider));
+    let checker = DirectChecker {
+        acp: &acp,
+        identity: &Identity::Anonymous,
+    };
+    assert!(
+        check_doc_read_access(&checker, "policy", "users", "collection", false, "doc")
+            .await
+            .is_err()
+    );
+}

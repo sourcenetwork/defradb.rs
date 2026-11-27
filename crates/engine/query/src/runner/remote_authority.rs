@@ -39,7 +39,6 @@ pub(super) async fn remote_write_authority(
     collections: &dyn CollectionProvider,
     request: &QueryRequest,
     mutations: &[Mutation],
-    inputs: &crate::prepared::PreparedInputMemo,
 ) -> Result<()> {
     // The handle is dropped at once: a savepoint needs every view of the
     // transaction gone.
@@ -74,35 +73,15 @@ pub(super) async fn remote_write_authority(
                         "the verified write names no document".into(),
                     )
                 })?;
-                let mut registration = acp::PendingRegistration::new(
+                let relationships =
+                    derived_relationships(collections, &collection, mutation).await?;
+                let registration = acp::PendingRegistration::new(
                     signer.clone(),
                     &policy.id,
                     &policy.resource_name,
                     object,
-                );
-                if let Some(field) = &policy.parent_field {
-                    let [input] = mutation.create_input.as_slice() else {
-                        return Err(QueryError::WriteAuthorityUnavailable(
-                            "a verified registration must name one child".into(),
-                        ));
-                    };
-                    let id = input
-                        .get(field)
-                        .and_then(|value| value.as_str())
-                        .filter(|id| !id.is_empty())
-                        .ok_or_else(|| {
-                            QueryError::WriteAuthorityUnavailable(format!(
-                                "missing parent document ID in '{field}'"
-                            ))
-                        })?;
-                    registration.parent = Some(inputs.registration_parent(
-                        signer,
-                        &request.context,
-                        &policy.id,
-                        &policy.resource_name,
-                        id,
-                    )?);
-                }
+                )
+                .with_relationships(relationships);
                 provider
                     .command_authority(signer, registration.command())
                     .map(drop)
@@ -115,6 +94,90 @@ pub(super) async fn remote_write_authority(
         authority.map_err(refused)?;
     }
     Ok(())
+}
+
+/// The relationships the one document a verified create names carries
+/// through its collection's `@policy(relation:)` fields: what its
+/// registration is sent with, so what a delegation bound to it must name.
+/// The related resource is the related collection's, which the collection
+/// add checked is the one the bound relation admits.
+async fn derived_relationships(
+    collections: &dyn CollectionProvider,
+    collection: &schema::CollectionVersion,
+    mutation: &Mutation,
+) -> Result<Vec<acp::DerivedRelationship>> {
+    if collection.policy_bindings().next().is_none() {
+        return Ok(Vec::new());
+    }
+    let [input] = mutation.create_input.as_slice() else {
+        return Err(QueryError::WriteAuthorityUnavailable(
+            "a verified registration must name one document".into(),
+        ));
+    };
+    let mut targets = rapidhash::RapidHashMap::default();
+    for binding in collection.policy_bindings() {
+        let target = target_resource(collections, collection, &binding).await?;
+        targets.insert(binding.id_field.name.clone(), target);
+    }
+    crate::derived_relationships::derived_relationships(
+        collection,
+        |binding| {
+            input
+                .get(&binding.id_field.name)
+                .or_else(|| {
+                    binding
+                        .relation_field
+                        .and_then(|field| input.get(&field.name))
+                })
+                .and_then(|value| value.as_str())
+                .map(str::to_owned)
+        },
+        |binding| {
+            targets
+                .get(&binding.id_field.name)
+                .cloned()
+                .flatten()
+                .ok_or_else(|| {
+                    QueryError::WriteAuthorityUnavailable(format!(
+                        "the collection {} bound by {} is unavailable",
+                        collection.name,
+                        binding.declared_name()
+                    ))
+                })
+        },
+    )
+}
+
+/// The resource of the collection `binding` points to: the one the bound
+/// relation admits, which the collection add checked. Looked up by name
+/// where the field's kind names it, so a create reads one collection.
+async fn target_resource(
+    collections: &dyn CollectionProvider,
+    collection: &schema::CollectionVersion,
+    binding: &schema::PolicyBinding<'_>,
+) -> Result<Option<String>> {
+    let Some(field) = binding.relation_field else {
+        return Ok(None);
+    };
+    let target = match &field.kind {
+        schema::FieldKind::Named { name, .. } => collections.get_collection(name).await?,
+        kind => {
+            let mut known = Vec::new();
+            for name in collections.list_collections().await? {
+                if let Some(found) = collections.get_collection(&name).await? {
+                    known.push(found.as_ref().clone());
+                }
+            }
+            schema::related_collection(collection, kind, &known)
+                .map(|found| Arc::new(found.clone()))
+        }
+    };
+    Ok(target.and_then(|target| {
+        target
+            .policy
+            .as_ref()
+            .map(|policy| policy.resource_name.clone())
+    }))
 }
 
 /// The query error for a refused authority: a delegation that does not hold

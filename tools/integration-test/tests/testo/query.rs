@@ -106,6 +106,7 @@ mod json {
 }
 mod many_to_many {
     mod simple;
+    mod with_aggregates;
     mod with_nested_query;
 }
 mod non_finite_float;
@@ -131,6 +132,7 @@ mod one_to_many {
     mod with_id_field;
     mod with_limit;
     mod with_limit_aggregate;
+    mod with_limited_selection_aggregates;
     mod with_max;
     mod with_min;
     mod with_order_filter;
@@ -214,6 +216,7 @@ mod simple {
     mod with_doc_id_filter;
     mod with_doc_ids;
     mod with_filter_unknown;
+    mod with_unknown_object_field;
     mod with_filter {
         mod with_alias;
         mod with_and;

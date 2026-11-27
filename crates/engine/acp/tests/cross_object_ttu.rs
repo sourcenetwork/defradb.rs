@@ -84,10 +84,10 @@ async fn fs_acp() -> (ZanzibarDocumentACP<MemoryZanzibarStore>, String) {
     let acp = ZanzibarDocumentACP::new(store.clone());
 
     let owner = did_owner();
-    acp.register_doc_object(&owner, &policy_id, "directory", "teamdir")
+    acp.register_doc_object(&owner, &policy_id, "directory", "teamdir", &[])
         .await
         .unwrap();
-    acp.register_doc_object(&owner, &policy_id, "file", "report")
+    acp.register_doc_object(&owner, &policy_id, "file", "report", &[])
         .await
         .unwrap();
     (acp, policy_id)
@@ -268,7 +268,7 @@ fn local_backend_rejects_cross_object_delete() {
         // edge; it must reject a delete of one with a typed UnsupportedSubject error.
         let acp = LocalDocumentACP::new(Arc::new(MemoryAcpStore::new()));
         let owner = did_owner();
-        acp.register_doc_object(&owner, "policy1", "file", "report")
+        acp.register_doc_object(&owner, "policy1", "file", "report", &[])
             .await
             .unwrap();
 
@@ -300,7 +300,7 @@ fn local_backend_rejects_cross_object_subjects() {
         // edge; it must reject one with a typed UnsupportedSubject error.
         let acp = LocalDocumentACP::new(Arc::new(MemoryAcpStore::new()));
         let owner = did_owner();
-        acp.register_doc_object(&owner, "policy1", "file", "report")
+        acp.register_doc_object(&owner, "policy1", "file", "report", &[])
             .await
             .unwrap();
 

@@ -30,6 +30,9 @@ p2p = [
 ]
 # The iroh transport under its former `embedded` name.
 iroh = ["p2p"]
+# The pinc transport beside iroh (opt-in). It rides the managed-P2P plumbing
+# the `p2p` feature gates, so it brings iroh with it until iroh goes.
+pinc = ["p2p", "p2p/pinc-transport", "defra-p2p-adapter/pinc"]
 # libp2p transport. Off by default: the default node's graph has no libp2p.
 libp2p = [
     "native",
@@ -47,9 +50,8 @@ libp2p = [
 system-keyring = ["keyring/system"]
 # Native host (event channel). Default-on.
 native = ["db/native", "defra-p2p-adapter?/native"]
-# Vera / vera.rs on-chain document ACP. Default-on; omit for local-only ACP.
+# Vera document ACP. Default-on; omit for local-only ACP.
 vera = ["dep:vera"]
-sourcehub = ["vera"]
 # Run a single-validator Vera node in this process for document ACP. Native
 # only. The Vera node builds a runtime of its own; see AGENTS.md.
 embedded-vera = ["vera", "native", "dep:vera-embedded"]

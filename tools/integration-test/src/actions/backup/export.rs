@@ -38,11 +38,12 @@ impl Op for ExportBackup {
     fn run(&self, state: &State) -> Result<Value, Failure> {
         let identity = self.common.client_identity(Self::name())?;
         let content = state
-            .block_on(state.node_on(self.common.node())?.export_backup_as(
-                &state.context_as(None, identity),
-                &self.collections,
-                self.pretty,
-            ))
+            .block_on(
+                state
+                    .scope_as(None, identity)
+                    .scoped(&*state.node_on(self.common.node())?)
+                    .export_backup(&self.collections, self.pretty),
+            )
             .map_err(|e| Failure::operation(e.to_string()))?;
         self.through_file(&content)
     }

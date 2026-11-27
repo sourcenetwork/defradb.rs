@@ -14,7 +14,10 @@ use defra_core::merge::{MergeBlock, MergeHandler, MergeOutcome};
 use regolith::sync::Atom;
 use storage::RegolithStore;
 
-use super::replicated::{log, logs, merge, stored, Handler};
+use super::replicated::{
+    log, log_collection_id, log_version_id, logs, merge, stored, Handler, BRANCHABLE_LOG_SDL,
+    LOG_SDL,
+};
 
 /// Keeps a Log only above `cutoff`, and every Log with no `blockNumber`; it
 /// remembers the last collection and fields it was given.
@@ -46,7 +49,7 @@ impl ReplicationFilter for Cutoff {
 }
 
 async fn node(
-    schema: schema::CollectionVersion,
+    sdl: &str,
     cutoff: i64,
 ) -> (Handler, Arc<DefraBlockstore<RegolithStore>>, Arc<Cutoff>) {
     let filter = Arc::new(Cutoff {
@@ -57,7 +60,9 @@ async fn node(
     let store = Arc::new(RegolithStore::in_memory().unwrap());
     let options = DbOptions::new().with_replication_filter(filter.clone());
     let db = Arc::new(DB::from_arc_with_options(store.clone(), options).unwrap());
-    db.create_collection(schema).await.unwrap();
+    db.add_collection(&defra_core::RequestContext::ambient(), sdl)
+        .await
+        .unwrap();
     let blockstore = Arc::new(DefraBlockstore::new(store, false));
     (
         DbMergeHandler::new(db, blockstore.clone()),
@@ -74,8 +79,8 @@ fn refused() -> MergeOutcome {
 #[mantra_macros::req_test("defra.replication_filter.field_values")]
 fn the_filter_is_given_the_values_the_commit_writes() {
     workers::block_on(async {
-        let schema = logs("col-log");
-        let (handler, blockstore, filter) = node(schema.clone(), -1).await;
+        let schema = logs();
+        let (handler, blockstore, filter) = node(LOG_SDL, -1).await;
         let block = log(&blockstore, &schema, "0xabc", Some(25951718)).await;
 
         assert_eq!(merge(&handler, &block).await, MergeOutcome::Merged);
@@ -89,7 +94,7 @@ fn the_filter_is_given_the_values_the_commit_writes() {
         assert_eq!(seen["address"], ciborium::Value::Text("0xabc".into()));
         assert_eq!(
             (*filter.collection.load()).clone(),
-            Some(("col-log".to_owned(), "Log".to_owned())),
+            Some((log_collection_id().to_string().to_owned(), "Log".to_owned())),
             "the filter is given the collection's ID and the name a Go filter keys on"
         );
     })
@@ -101,7 +106,7 @@ fn field_block(data: Vec<u8>) -> Block {
         CrdtDelta::Lww(LwwDeltaPayload {
             field_name: "blockNumber".into(),
             priority: 1,
-            collection_version_id: "v1".into(),
+            collection_version_id: log_version_id().to_string(),
             data,
         }),
         vec![],
@@ -130,16 +135,16 @@ fn an_encrypted_or_undecodable_value_is_left_out() {
 #[mantra_macros::req_test("defra.replication_filter.refusal")]
 fn a_refused_document_is_not_stored() {
     workers::block_on(async {
-        let schema = logs("col-log");
-        let (handler, blockstore, filter) = node(schema.clone(), 100).await;
+        let schema = logs();
+        let (handler, blockstore, filter) = node(LOG_SDL, 100).await;
         let at = log(&blockstore, &schema, "at", Some(100)).await;
         assert_eq!(merge(&handler, &at).await, refused());
-        assert!(!stored(&handler, "col-log", &at.doc_id).await);
+        assert!(!stored(&handler, log_collection_id(), &at.doc_id).await);
 
         filter.cutoff.store(99, Ordering::SeqCst);
         let above = log(&blockstore, &schema, "above", Some(100)).await;
         assert_eq!(merge(&handler, &above).await, MergeOutcome::Merged);
-        assert!(stored(&handler, "col-log", &above.doc_id).await);
+        assert!(stored(&handler, log_collection_id(), &above.doc_id).await);
 
         let unset = log(&blockstore, &schema, "unset", None).await;
         assert_eq!(merge(&handler, &unset).await, MergeOutcome::Merged);
@@ -151,8 +156,8 @@ fn a_refused_document_is_not_stored() {
 #[mantra_macros::req_test("defra.replication_filter.refusal")]
 fn a_refusal_in_a_batch_refuses_only_that_document() {
     workers::block_on(async {
-        let schema = logs("col-log");
-        let (handler, blockstore, _) = node(schema.clone(), 100).await;
+        let schema = logs();
+        let (handler, blockstore, _) = node(LOG_SDL, 100).await;
         let blocks = [
             log(&blockstore, &schema, "a", Some(101)).await,
             log(&blockstore, &schema, "b", Some(100)).await,
@@ -170,9 +175,9 @@ fn a_refusal_in_a_batch_refuses_only_that_document() {
             outcomes,
             [MergeOutcome::Merged, refused(), MergeOutcome::Merged]
         );
-        assert!(stored(&handler, "col-log", &blocks[0].doc_id).await);
-        assert!(!stored(&handler, "col-log", &blocks[1].doc_id).await);
-        assert!(stored(&handler, "col-log", &blocks[2].doc_id).await);
+        assert!(stored(&handler, log_collection_id(), &blocks[0].doc_id).await);
+        assert!(!stored(&handler, log_collection_id(), &blocks[1].doc_id).await);
+        assert!(stored(&handler, log_collection_id(), &blocks[2].doc_id).await);
     })
     .unwrap()
 }
@@ -181,8 +186,8 @@ fn a_refusal_in_a_batch_refuses_only_that_document() {
 #[mantra_macros::req_test("defra.replication_filter.branchable")]
 fn a_branchable_collection_is_not_filtered() {
     workers::block_on(async {
-        let schema = logs("col-log").as_branchable();
-        let (handler, blockstore, _) = node(schema.clone(), 100).await;
+        let schema = crate::common::schema::parsed(BRANCHABLE_LOG_SDL);
+        let (handler, blockstore, _) = node(BRANCHABLE_LOG_SDL, 100).await;
         let block = log(&blockstore, &schema, "low", Some(1)).await;
         assert_eq!(merge(&handler, &block).await, MergeOutcome::Merged);
     })
@@ -210,7 +215,7 @@ async fn readdress(
         CrdtDelta::Lww(LwwDeltaPayload {
             field_name: "address".into(),
             priority: 2,
-            collection_version_id: "v1".into(),
+            collection_version_id: log_version_id().to_string(),
             data,
         }),
         vec![previous],
@@ -223,7 +228,7 @@ async fn readdress(
         .unwrap();
     let composite = Block::new(
         CrdtDelta::Composite(CompositeDeltaPayload {
-            collection_version_id: "v1".into(),
+            collection_version_id: log_version_id().to_string(),
             priority: 2,
             status: 1,
         }),
@@ -244,13 +249,13 @@ async fn readdress(
 #[mantra_macros::req_test("defra.replication_filter.refusal")]
 fn a_commit_after_a_refused_one_is_refused_in_the_same_walk() {
     workers::block_on(async {
-        let schema = logs("col-log");
-        let (handler, blockstore, _) = node(schema.clone(), 100).await;
+        let schema = logs();
+        let (handler, blockstore, _) = node(LOG_SDL, 100).await;
         let create = log(&blockstore, &schema, "low", Some(1)).await;
         let update = readdress(&blockstore, &create, "moved").await;
 
         assert_eq!(merge(&handler, &update).await, refused());
-        assert!(!stored(&handler, "col-log", &update.doc_id).await);
+        assert!(!stored(&handler, log_collection_id(), &update.doc_id).await);
     })
     .unwrap()
 }
@@ -259,14 +264,14 @@ fn a_commit_after_a_refused_one_is_refused_in_the_same_walk() {
 #[mantra_macros::req_test("defra.replication_filter.refusal")]
 fn a_commit_after_a_refused_one_is_refused_when_pushed_later() {
     workers::block_on(async {
-        let schema = logs("col-log");
-        let (handler, blockstore, _) = node(schema.clone(), 100).await;
+        let schema = logs();
+        let (handler, blockstore, _) = node(LOG_SDL, 100).await;
         let create = log(&blockstore, &schema, "low", Some(1)).await;
         assert_eq!(merge(&handler, &create).await, refused());
 
         let update = readdress(&blockstore, &create, "moved").await;
         assert_eq!(merge(&handler, &update).await, refused());
-        assert!(!stored(&handler, "col-log", &update.doc_id).await);
+        assert!(!stored(&handler, log_collection_id(), &update.doc_id).await);
     })
     .unwrap()
 }
@@ -275,14 +280,14 @@ fn a_commit_after_a_refused_one_is_refused_when_pushed_later() {
 #[mantra_macros::req_test("defra.replication_filter.refusal")]
 fn a_commit_after_a_kept_one_is_merged() {
     workers::block_on(async {
-        let schema = logs("col-log");
-        let (handler, blockstore, _) = node(schema.clone(), 100).await;
+        let schema = logs();
+        let (handler, blockstore, _) = node(LOG_SDL, 100).await;
         let create = log(&blockstore, &schema, "high", Some(101)).await;
         assert_eq!(merge(&handler, &create).await, MergeOutcome::Merged);
 
         let update = readdress(&blockstore, &create, "moved").await;
         assert_eq!(merge(&handler, &update).await, MergeOutcome::Merged);
-        assert!(stored(&handler, "col-log", &update.doc_id).await);
+        assert!(stored(&handler, log_collection_id(), &update.doc_id).await);
     })
     .unwrap()
 }

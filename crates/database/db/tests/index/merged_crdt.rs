@@ -2,6 +2,7 @@
 //! merged total, not the increment a write carries, locally and when a
 //! peer's increments merge in.
 
+use crate::common::schema::parsed;
 use std::sync::Arc;
 
 use blockstore::{Blockstore as _, DefraBlockstore};
@@ -18,8 +19,8 @@ use query::runner::DocFetcher;
 use query::DocMutator;
 use rapidhash::{HashSetExt, RapidHashSet};
 use schema::{
-    CType, CollectionVersion, CrdtName, FieldDescription, FieldKind, IndexKind,
-    IndexedFieldDescription, OrderedIndexDescription,
+    CType, CollectionVersion, CrdtName, FieldDescription, IndexKind, IndexedFieldDescription,
+    OrderedIndexDescription,
 };
 use storage::corekv::Key as _;
 use storage::keys::datastore::{IndexDataStoreKey, IndexedField};
@@ -29,7 +30,6 @@ use super::create::index_entries;
 
 const NAME: &str = "tally";
 const COLLECTION: &str = "Tallies";
-const COLLECTION_ID: &str = "col-tallies";
 
 fn name() -> CrdtName {
     CrdtName::new(NAME).unwrap()
@@ -223,16 +223,14 @@ impl FieldCrdt for InlineTally {
     }
 }
 
+fn collection_id() -> String {
+    collection().collection_id
+}
+
+const COLLECTION_SDL: &str = r#"type Tallies { count: Int @crdt(custom: "tally") }"#;
+
 fn collection() -> CollectionVersion {
-    CollectionVersion::new(
-        COLLECTION,
-        "v1",
-        COLLECTION_ID,
-        vec![
-            FieldDescription::new("1", "_docID", FieldKind::doc_id(), CType::LwwRegister),
-            FieldDescription::new("2", "count", FieldKind::int(), CType::Custom(name())),
-        ],
-    )
+    parsed(COLLECTION_SDL)
 }
 
 /// How many index entries hold `value`.
@@ -313,7 +311,9 @@ impl Node {
         let store = Arc::new(store);
         let (db, index_id) = if fresh {
             let db = Arc::new(DB::open_from_arc(store.clone()).await.unwrap());
-            db.create_collection(collection()).await.unwrap();
+            db.add_collection(&defra_core::RequestContext::ambient(), COLLECTION_SDL)
+                .await
+                .unwrap();
             let index = db
                 .create_index(
                     COLLECTION,
@@ -389,9 +389,10 @@ impl Node {
     async fn receive(&self, from: &Node, doc_id: &document::DocID, head: &(Cid, Bytes)) {
         self.copy(from, head).await;
         let doc_id = doc_id.to_string();
+        let collection_id = collection_id();
         let metadata = BlockMetadata::normal(
             &doc_id,
-            COLLECTION_ID,
+            &collection_id,
             "did:key:z6MkrMergedCrdt",
             Some("peer"),
             false,
@@ -412,7 +413,7 @@ impl Node {
                 cid: head.0,
                 block_data: head.1.clone(),
                 doc_id: doc_id.to_string(),
-                collection_id: COLLECTION_ID.to_string(),
+                collection_id: collection_id(),
                 creator: "did:key:z6MkrMergedCrdt".to_string(),
                 sender_peer: Some("peer".to_string()),
                 is_explicit_replicator: false,
@@ -711,7 +712,7 @@ async fn stop_backfill_after_first(node: &Node, first: &document::DocID, second:
     systemstore
         .set(
             &storage::keys::systemstore::ActionStatusKey::with_subject(
-                COLLECTION_ID,
+                collection_id(),
                 defra_core::Action::BACKFILL_INDEX,
                 subject.clone(),
             )
@@ -723,7 +724,7 @@ async fn stop_backfill_after_first(node: &Node, first: &document::DocID, second:
     systemstore
         .set(
             &storage::keys::systemstore::ActionProgressKey::new(
-                COLLECTION_ID,
+                collection_id(),
                 defra_core::Action::BACKFILL_INDEX,
                 subject,
             )
@@ -831,7 +832,7 @@ async fn stop_inline_rebuild_after_first(
     for (prefix, value) in [("/reindex/owed/", owed), ("/reindex/progress/", progress)] {
         systemstore
             .set(
-                format!("{prefix}{COLLECTION_ID}").as_bytes(),
+                format!("{prefix}{}", collection_id()).as_bytes(),
                 &serde_json::to_vec(&value).unwrap(),
             )
             .await

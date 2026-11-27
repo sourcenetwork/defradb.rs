@@ -8,7 +8,6 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use cli::commands::client::http_client::HttpClient;
-use defra_core::RequestContext;
 use defra_node::{HttpConfig, Node};
 use events::{EventName, Message, MessageData};
 use rapidhash::{HashMapExt, RapidHashMap, RapidHashSet};
@@ -17,6 +16,7 @@ use tempfile::TempDir;
 
 use crate::actions::shared::KeyType;
 use crate::client_type::{go_binary, network_edge, ClientType};
+use crate::crash::NodeProcess;
 use crate::go_node::{GoNode, GoOptions};
 
 mod action_events;
@@ -42,6 +42,8 @@ pub struct NodeSpec {
     pub nac_owner: Option<u64>,
     /// The node's admission limits, if not the defaults.
     pub admission: Option<crate::actions::AdmissionSpec>,
+    /// The node's connection manager, if not the default.
+    pub connection_manager: Option<crate::actions::ConnectionManagerSpec>,
     /// The `resolv.conf` text the node's libp2p DNS layers read in place of
     /// the host's file.
     pub resolv_conf: Option<String>,
@@ -50,6 +52,9 @@ pub struct NodeSpec {
     /// The node was configured from a Go-written `config.yaml` through the
     /// Rust CLI's loader, so it is a Rust node under every client.
     pub go_config: bool,
+    /// The node starts on a directory holding Go DefraDB's Badger store,
+    /// which only a Rust node's refusal is checked against.
+    pub go_datastore: bool,
     /// The node's own identity, Go's `NodeIdentity(seed)`; the node signs as it.
     pub node_identity: Option<u64>,
     /// The node takes `node_identity` from the process's signing registry,
@@ -71,6 +76,8 @@ pub struct NodeSpec {
     /// The gate the node's index backfills pass before each batch; it lives
     /// across a restart, as Go's package-level hook does.
     pub index_gate: Option<Arc<crate::index_gate::TestIndexGate>>,
+    /// Documents an index backfill may index in one transaction.
+    pub backfill_batch_docs: Option<usize>,
     /// The gate explicit commits pass before they begin, for a real-node
     /// scenario that holds a commit past its HTTP bound.
     pub commit_gate: Option<Arc<crate::commit_gate::TestCommitGate>>,
@@ -79,6 +86,9 @@ pub struct NodeSpec {
     /// An in-process iroh node serving these stream protocols, in place of
     /// the libp2p one `network` starts.
     pub iroh: Option<crate::actions::stream::IrohSpec>,
+    /// A Rust node in a process of its own, which a test can kill
+    /// (`crate::crash`), under the HTTP and CLI clients.
+    pub own_process: bool,
 }
 
 /// A running node: the node itself for the in-process client, or the URL the
@@ -89,6 +99,8 @@ pub struct TestNode {
     pub spec: NodeSpec,
     /// The Rust node behind any client, for its events and its shutdown.
     embedded: Option<Arc<Node>>,
+    /// The process of a Rust node that runs in one of its own.
+    process: Option<Arc<NodeProcess>>,
     _held: Vec<Arc<dyn Any + Send + Sync>>,
     events: Atom<Option<Arc<Events>>>,
     /// The node's collection action events, once a `ListActions { listen }`
@@ -119,19 +131,24 @@ impl TestNode {
         if spec.iroh.is_some() {
             return Self::start_iroh(spec);
         }
+        if spec.own_process && matches!(client_type, ClientType::RustHttp | ClientType::Cli) {
+            return Self::start_process(spec);
+        }
         let listen = match spec.listen.first() {
             Some(address) => address.clone(),
             None => "/ip4/127.0.0.1/tcp/0".to_owned(),
         };
-        // Admission limits, iroh, a resolv.conf and a loaded Go config are a
-        // Rust node's options: under go-http the node is a Rust node reached
-        // over HTTP, as rust-http does.
+        // Admission limits, a connection manager, iroh, a resolv.conf and a
+        // loaded Go config are a Rust node's options: under go-http the node
+        // is a Rust node reached over HTTP, as rust-http does.
         let client_type = match client_type {
             ClientType::GoHttp
                 if spec.admission.is_some()
+                    || spec.connection_manager.is_some()
                     || spec.iroh_network
                     || spec.resolv_conf.is_some()
-                    || spec.go_config =>
+                    || spec.go_config
+                    || spec.go_datastore =>
             {
                 ClientType::RustHttp
             }
@@ -195,6 +212,18 @@ impl TestNode {
         }
     }
 
+    /// Start a Rust node in a process of its own, on `spec.dir`.
+    fn start_process(spec: NodeSpec) -> Result<Self, String> {
+        let dir = spec
+            .dir
+            .clone()
+            .ok_or("a node in its own process keeps its data in a directory")?;
+        let process = Arc::new(NodeProcess::start(dir.path())?);
+        let mut node = Self::new(None, Some(process.url().to_owned()), spec, None, Vec::new());
+        node.process = Some(process);
+        Ok(node)
+    }
+
     fn new(
         node: Option<Arc<Node>>,
         url: Option<String>,
@@ -207,6 +236,7 @@ impl TestNode {
             url,
             spec,
             embedded,
+            process: None,
             _held: held,
             events: Atom::new(None),
             actions: Atom::new(None),
@@ -215,7 +245,12 @@ impl TestNode {
 
     /// The node runs Go's defradb in another process.
     pub fn is_go(&self) -> bool {
-        self.embedded.is_none()
+        self.embedded.is_none() && self.process.is_none()
+    }
+
+    /// The process of a Rust node that runs in one of its own.
+    pub fn process(&self) -> Option<&Arc<NodeProcess>> {
+        self.process.as_ref()
     }
 
     /// The Rust node behind any client; `None` for a Go node.
@@ -229,9 +264,15 @@ impl TestNode {
         if let Some(node) = &self.embedded {
             node.shutdown().await.unwrap();
         }
+        if let Some(process) = &self.process {
+            process
+                .stop()
+                .unwrap_or_else(|error| panic!("stop the node: {error}"));
+        }
     }
 
-    /// Start recording the node's update, merge and topic events.
+    /// Start recording the node's update, merge, topic and peer
+    /// disconnection events.
     pub fn watch(&self) -> Result<(), String> {
         let node = self
             .embedded
@@ -241,6 +282,7 @@ impl TestNode {
             EventName::Update,
             EventName::MergeComplete,
             EventName::TopicPeerEvent,
+            EventName::PeerConnection,
             EventName::P2PGossipHeadDropped,
             EventName::SEArtifactReceived,
         ]);
@@ -310,12 +352,14 @@ impl TestNode {
         let owner = self.spec.nac_owner;
         match (&self.embedded, &self.url) {
             (Some(node), _) => {
-                let context = match owner {
-                    Some(seed) => RequestContext::ambient()
-                        .with_identity(Some(crate::scenario::identity::did(seed))),
-                    None => RequestContext::ambient(),
+                let scoped = match owner {
+                    Some(seed) => node.with_identity(
+                        ::identity::Did::new(crate::scenario::identity::did(seed))
+                            .map_err(|e| e.to_string())?,
+                    ),
+                    None => node.anonymous(),
                 };
-                workers::block_on(node.peer_info_as(&context))
+                workers::block_on(scoped.peer_info())
                     .map_err(|e| e.to_string())?
                     .map_err(|e| e.to_string())
             }
@@ -360,27 +404,42 @@ fn build(spec: &NodeSpec, listen: &str, http: Option<HttpConfig>) -> Result<Node
     } else if spec.network {
         builder = builder.with_libp2p(listen);
     }
-    if let (true, false, Some(limits)) = (spec.network, spec.iroh_network, &spec.admission) {
-        let mut sync = defra_node::SyncTuning {
-            max_pending_dags: limits.max_pending_dags,
-            rate_limit_burst: limits.rate_limit_burst,
-            rate_limit_rate: limits.rate_limit_rate,
+    if spec.network
+        && !spec.iroh_network
+        && (spec.admission.is_some() || spec.connection_manager.is_some())
+    {
+        let mut libp2p = defra_node::Libp2pConfig {
+            listen_addrs: vec![listen.to_owned()],
             ..Default::default()
         };
-        if let Some(bytes) = limits.deferral_peer_bytes {
-            sync.gossip_deferral_peer_bytes = bytes;
+        if let Some(limits) = &spec.admission {
+            libp2p.sync.max_pending_dags = limits.max_pending_dags;
+            libp2p.sync.rate_limit_burst = limits.rate_limit_burst;
+            libp2p.sync.rate_limit_rate = limits.rate_limit_rate;
+            if let Some(bytes) = limits.deferral_peer_bytes {
+                libp2p.sync.gossip_deferral_peer_bytes = bytes;
+            }
         }
-        builder = builder.with_transport(defra_node::TransportConfig::Libp2p(
-            defra_node::Libp2pConfig {
-                listen_addrs: vec![listen.to_owned()],
-                sync,
-                ..Default::default()
-            },
-        ));
+        if let Some(manager) = &spec.connection_manager {
+            libp2p.connection_manager_low_water = manager.low_water;
+            libp2p.connection_manager_high_water = manager.high_water;
+            libp2p.connection_manager_grace_period = Duration::from_millis(manager.grace_period_ms);
+        }
+        builder = builder.with_transport(defra_node::TransportConfig::Libp2p(libp2p));
     }
     #[cfg(unix)]
     if let Some(text) = &spec.resolv_conf {
         builder = builder.with_resolver_source(p2p::ResolverSource::ResolvConf(text.clone()));
+    }
+    // A scenario that picks iroh tests iroh itself (its gossip size limit),
+    // so DEFRA_TRANSPORT=pinc replaces only the default transport. It also
+    // replaces libp2p, so a `resolv_conf` scenario runs on pinc here and its
+    // libp2p DNS fallback goes untested under DEFRA_TRANSPORT=pinc.
+    if spec.network
+        && !spec.iroh_network
+        && crate::transport_choice::TransportChoice::from_env().is_pinc()
+    {
+        builder = pinc_transport(builder, spec, listen);
     }
     if let Some(config) = http {
         builder = builder.with_http(config);
@@ -392,6 +451,9 @@ fn build(spec: &NodeSpec, listen: &str, http: Option<HttpConfig>) -> Result<Node
     }
     if let Some(gate) = &spec.index_gate {
         builder = builder.with_index_build_gate(gate.clone());
+    }
+    if let Some(docs) = spec.backfill_batch_docs {
+        builder = builder.with_backfill_batch_docs(docs);
     }
     if let Some(gate) = &spec.commit_gate {
         builder = builder.with_commit_gate(gate.clone());
@@ -425,6 +487,65 @@ fn build(spec: &NodeSpec, listen: &str, http: Option<HttpConfig>) -> Result<Node
         })?;
     }
     Ok(node)
+}
+
+/// Run `builder`'s node over pinc on loopback, `DEFRA_TRANSPORT=pinc`. A node
+/// restarted on its old address binds the port that address names; its key
+/// lives in its store, so a restart keeps its peer id.
+#[cfg(feature = "pinc")]
+fn pinc_transport(
+    builder: defra_node::NodeBuilder,
+    spec: &NodeSpec,
+    listen: &str,
+) -> defra_node::NodeBuilder {
+    let bind = listen
+        .split_once('@')
+        .and_then(|(_, addrs)| addrs.split(',').next())
+        .and_then(|addr| addr.parse().ok())
+        .unwrap_or_else(|| std::net::SocketAddr::from(([127, 0, 0, 1], 0)));
+    let mut config = defra_node::PincConfig {
+        bind,
+        peer_key: defra_node::PeerKeySource::Store,
+        max_connections: 16,
+        hubs: vec![PINC_HUB.clone()],
+        ..Default::default()
+    };
+    if let Some(limits) = &spec.admission {
+        config.sync.max_pending_dags = limits.max_pending_dags;
+        config.sync.rate_limit_burst = limits.rate_limit_burst;
+        config.sync.rate_limit_rate = limits.rate_limit_rate;
+        if let Some(bytes) = limits.deferral_peer_bytes {
+            config.sync.gossip_deferral_peer_bytes = bytes;
+        }
+    }
+    builder.with_pinc(config)
+}
+
+/// The pinc hub every node of this test process names, as a gossip mesh's
+/// stand-in: pinc topics run through a hub.
+#[cfg(feature = "pinc")]
+static PINC_HUB: regolith::sync::Lazy<String> = regolith::sync::Lazy::new(|| {
+    let edge = edge::testing::edge();
+    let bind = std::net::SocketAddr::from(([127, 0, 0, 1], 0));
+    let (ticket, task) = workers::block_on(
+        edge.clone()
+            .spawn(async move { defra_node::spawn_pinc_hub([0x48; 32], bind, edge).await }),
+    )
+    .expect("the test thread waits")
+    .expect("the hub task runs")
+    .expect("the pinc hub binds");
+    // ponytail: the hub lives as long as the process; nothing stops it.
+    std::mem::forget(task);
+    ticket
+});
+
+#[cfg(not(feature = "pinc"))]
+fn pinc_transport(
+    _builder: defra_node::NodeBuilder,
+    _spec: &NodeSpec,
+    _listen: &str,
+) -> defra_node::NodeBuilder {
+    panic!("DEFRA_TRANSPORT=pinc needs integration-test built with --features pinc")
 }
 
 /// The key a node signs with: its node identity's, or, for a node that only
@@ -536,6 +657,8 @@ struct EventLog {
     heads: RapidHashMap<String, String>,
     /// Topic events not yet awaited: (topic, peer, JOINED or LEFT).
     topics: VecDeque<(String, String, String)>,
+    /// Peers whose last connection closed, not yet awaited, oldest first.
+    disconnected: VecDeque<String>,
     /// Gossip heads the node dropped past a deferral budget, not yet awaited.
     gossip_dropped: VecDeque<events::P2PGossipHeadDroppedData>,
     /// Every document a searchable-encryption artifact arrived for.
@@ -605,6 +728,9 @@ impl Events {
                     log.topics
                         .push_back((event.topic, event.peer_id, event.event_type))
                 });
+            }
+            MessageData::PeerConnection(event) if !event.connected => {
+                self.update(|log| log.disconnected.push_back(event.peer_id))
             }
             MessageData::P2PGossipHeadDropped(event) => {
                 self.update(|log| log.gossip_dropped.push_back(event))
@@ -711,6 +837,30 @@ impl Events {
         Ok(dropped)
     }
 
+    /// Wait until every peer in `wanted` has lost its last connection to the
+    /// node, consuming the disconnection events before it.
+    pub async fn disconnected(
+        &self,
+        mut wanted: RapidHashSet<String>,
+        deadline: Duration,
+    ) -> Result<(), String> {
+        let end = std::time::Instant::now() + deadline;
+        loop {
+            let mut log = self.log.load_clone();
+            while let Some(peer) = log.disconnected.pop_front() {
+                wanted.remove(&peer);
+            }
+            self.log.store(log);
+            if wanted.is_empty() {
+                return Ok(());
+            }
+            let left = end.saturating_duration_since(std::time::Instant::now());
+            self.receive(left)
+                .await
+                .map_err(|reason| format!("missing disconnections {wanted:?}: {reason}"))?;
+        }
+    }
+
     /// Wait until every (topic, peer) in `wanted` has an event of `kind`,
     /// consuming the topic events before it.
     pub async fn topics(
@@ -739,7 +889,9 @@ impl Events {
     }
 }
 
-/// The peer ID at the end of a `/p2p/<ID>` address.
+/// The peer ID of an address: the end of a libp2p `/p2p/<ID>` address, or
+/// the start of a pinc `<ID>@<ip:port>` one.
 pub fn peer_id(address: &str) -> &str {
-    address.rsplit("/p2p/").next().unwrap_or(address)
+    let id = address.rsplit("/p2p/").next().unwrap_or(address);
+    id.split('@').next().unwrap_or(id)
 }

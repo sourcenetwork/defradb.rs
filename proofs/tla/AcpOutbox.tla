@@ -118,7 +118,19 @@
 \*   recording it in the create transaction crates/database/db/src/write/autocommit/
 \*                                          helpers.rs register_created_doc;
 \*   creator-only until settled             crates/engine/acp/src/external.rs
-\*                                          ExternalDocumentAcp::check_doc_access;
+\*                                          ExternalDocumentAcp::check_doc_access,
+\*                                          for a collection that does not gate
+\*                                          creates. A gated one is hidden from
+\*                                          its creator too until settled, a
+\*                                          refusal of its create is final and
+\*                                          never resent, and a replica refused
+\*                                          as a create is parked after a bound:
+\*                                          proofs/tla/CreateGate.tla models
+\*                                          those (PendingRegistration::hidden,
+\*                                          create_refused, note_failure,
+\*                                          parked_create). Hidden is narrower
+\*                                          than creator-only, so
+\*                                          INV_OwedDocumentNarrow holds for it;
 \*   register, then clear                   settle, clear in crates/engine/acp/src/
 \*                                          external/registration.rs;
 \*   settling after the commit              DbTxn::owe_acp_registration in
@@ -160,7 +172,7 @@
 \*                                          crates/engine/acp/src/outbox/ops.rs
 \*                                          reauthorize and settle, behind the
 \*                                          node calls in
-\*                                          crates/entry-points/defra-node/src/owed.rs;
+\*                                          crates/entry-points/defra-node/src/node_core/owed.rs;
 \*   the drainer task, woken by commits     crates/entry-points/defra-node/src/
 \*   and backing off while the provider     owed_drainer.rs drain, started by
 \*   is away                                gate_external_acp;
@@ -192,7 +204,7 @@
 \* the provider at start and every other command that finds the request
 \* still journaled, JDrop for a commit that stops waiting, and JAdopt and
 \* JDecide for a change found marked: the configurations with
-\* Journaled = TRUE. Through a provider without one (Cosmos, the test
+\* Journaled = TRUE. Through a provider without one (a host's own, the test
 \* providers) a pass that submits a change and reads the provider's answer
 \* is Mark, Land and Lookup taken together with nothing stored in between,
 \* which is the model with Marker = FALSE: MC_AcpOutbox_Green_NoMarker holds

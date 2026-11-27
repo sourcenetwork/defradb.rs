@@ -1,6 +1,6 @@
 //! The OpenAPI document generated from [`ROUTES`].
 //!
-//! Go's pinned document (`handlers/openapi-go-e152b5cab.json`) is the base:
+//! Go's pinned document (`handlers::openapi::OPENAPI_GO`) is the base:
 //! every operation it describes is carried verbatim, so a client generated
 //! from this document still gets Go's request and response schemas. On top of
 //! that, every route in [`ROUTES`] that Go does not document gets an
@@ -25,15 +25,12 @@
 
 use serde_json::{json, Map, Value};
 
+use crate::handlers::openapi::OPENAPI_GO;
 use crate::route_permissions::{Route, RoutePermission, ROUTES};
 
 /// The version the document declares: the same as Go's, because the operations
 /// it carries are Go's own and its schemas are written in that dialect.
 pub const OPENAPI_VERSION: &str = "3.0.3";
-
-/// Go's document, carried as the base. Refreshed with the Go baseline, which
-/// `handlers/openapi.rs` pins.
-const PINNED_GO_DOCUMENT: &str = include_str!("handlers/openapi-go-e152b5cab.json");
 
 /// The document: Go's operations where Go documents the path, `ROUTES`
 /// everywhere else.
@@ -42,8 +39,7 @@ const PINNED_GO_DOCUMENT: &str = include_str!("handlers/openapi-go-e152b5cab.jso
 /// not on a data path, so a parse of the pinned document is cheaper than the
 /// shared cache that holding it would need.
 pub fn document() -> Value {
-    let mut doc: Value =
-        serde_json::from_str(PINNED_GO_DOCUMENT).expect("the pinned Go document parses");
+    let mut doc: Value = serde_json::from_str(OPENAPI_GO).expect("the pinned Go document parses");
     let mut paths = doc["paths"].take();
     {
         let paths = paths
@@ -336,6 +332,7 @@ mod tests {
     /// Every route this server serves is in the document. This is what #3263 is
     /// about: the document used to describe Go and not this server.
     #[test]
+    #[mantra_macros::req_test("defra.http.openapi")]
     fn every_route_in_the_table_is_documented() {
         let document = document();
         let listed = documented(&document);
@@ -372,7 +369,7 @@ mod tests {
     /// come out identical.
     #[test]
     fn gos_operations_are_carried_verbatim() {
-        let pinned: Value = serde_json::from_str(PINNED_GO_DOCUMENT).expect("pinned");
+        let pinned: Value = serde_json::from_str(OPENAPI_GO).expect("pinned");
         let document = document();
         let mut compared = 0;
         for (path, item) in pinned["paths"].as_object().expect("paths") {
@@ -436,7 +433,7 @@ mod tests {
     /// base URL are unchanged.
     #[test]
     fn the_envelope_and_the_mounts_are_gos() {
-        let pinned: Value = serde_json::from_str(PINNED_GO_DOCUMENT).expect("pinned");
+        let pinned: Value = serde_json::from_str(OPENAPI_GO).expect("pinned");
         let document = document();
         assert_eq!(document["openapi"], OPENAPI_VERSION);
         assert_eq!(document["info"], pinned["info"]);
@@ -479,6 +476,7 @@ mod tests {
     /// so it is optional for the same reason. Only a handler that rejects a
     /// caller it cannot identify declares the scheme required.
     #[test]
+    #[mantra_macros::req_test("defra.http.openapi")]
     fn security_matches_what_the_edge_actually_requires() {
         let document = document();
         assert_eq!(

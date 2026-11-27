@@ -27,7 +27,13 @@ grounded facts for B3 live in [DESIGN.md](DESIGN.md); each later slice has its o
 - **Document materialization status** — delete/update status stays componentwise
   (`DocumentMaterialization.tla`).
 
-Run all configured models at once with `./run-all.sh` (red/green oracle, exits non-zero on mismatch).
+Run all configured models at once with `./run-all.sh` (red/green oracle, exits non-zero
+on mismatch). It discovers every top-level `*.cfg` here and takes each one's module and
+expected verdict from the cfg's first line, a
+`\* run-all: <Module>.tla <GREEN|RED|TRACE:<n>|DEADLOCK:<n>>` header. Every cfg carries
+one, and a cfg without a valid header fails the run. The cfg's name decides nothing, but
+it may not say otherwise: a name with a `Green` word (underscore-separated) needs a GREEN
+or TRACE header and one with a `Red` word a RED or DEADLOCK header, or the run fails.
 
 ---
 
@@ -316,7 +322,7 @@ All target `MC_Integrity_Attacks.tla`.
 ## ACP Soundness Runs (Lean + TLA+)
 
 Design notes in [Acp_DESIGN.md](Acp_DESIGN.md). **Lean** (`../lean/Acp/Soundness.lean`,
-`cd ../lean && lake build`) proves the check algebra: `INV_CheckSound`, `INV_NoEscalation`,
+`cd ../lean && lake build -R`) proves the check algebra: `INV_CheckSound`, `INV_NoEscalation`,
 and `INV_PositiveRemovalNoGrant` — plus `buggyDifferenceOverGrants`, a negative theorem
 showing a mishandled exclusion operator over-grants. All `[propext, Quot.sound]`, no `sorry`.
 
@@ -325,8 +331,8 @@ showing a mishandled exclusion operator over-grants. All `[propext, Quot.sound]`
 ```bash
 # GREEN: a revocation propagates; no node grants the revoked permission.
 ./tools/tlc -metadir states/acp_g -config MC_Acp_Green.cfg          MC_Acp_Green.tla
-# RED: a stale policy cache still grants a revoked permission (INV_RevocationConsistent).
-./tools/tlc -metadir states/acp_r -config MC_Acp_StaleCache_Red.cfg MC_Acp_StaleCache_Red.tla
+# RED: a node keeps a revoked tuple in its copy and still grants it (INV_RevocationConsistent).
+./tools/tlc -metadir states/acp_r -config MC_Acp_StaleStore_Red.cfg MC_Acp_StaleStore_Red.tla
 ```
 
 ---

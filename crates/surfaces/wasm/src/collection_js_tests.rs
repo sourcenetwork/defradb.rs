@@ -160,11 +160,7 @@ fn every_optional_value_is_gos_encoding() {
     view.query = Some(QuerySource::new(serde_json::json!({"Name": "User"})));
     view.previous_version = Some(CollectionSource::new("v1"));
     view.encrypted_indexes = vec![EncryptedIndexDescription::new("points")];
-    view.policy = Some(PolicyDescription {
-        id: "policy".to_string(),
-        resource_name: "users".to_string(),
-        parent_field: Some("owner".to_string()),
-    });
+    view.policy = Some(PolicyDescription::new("policy", "users"));
     view.vector_embeddings = vec![VectorEmbeddingDescription {
         field_name: "points".to_string(),
         fields: vec!["name".to_string()],

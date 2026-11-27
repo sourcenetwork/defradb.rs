@@ -27,7 +27,7 @@ fn downsample_view_refreshes_without_a_manual_refresh() {
     node.add_collection("type Metric { label: String  ts: DateTime  value: Int }")
         .await
         .unwrap();
-    node.add_view("Metric { label ts value }", ROLLUP_SDL)
+    node.add_view("Metric { label ts value }", ROLLUP_SDL, None)
         .await
         .unwrap();
 

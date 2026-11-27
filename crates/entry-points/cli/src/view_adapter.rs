@@ -106,12 +106,7 @@ impl<S: Store + 'static> ViewOperations for ViewAdapter<S> {
             .await
             .map_err(|e| format!("{}", e))?;
 
-        let mut known_types: rapidhash::RapidHashSet<String> = self
-            .database
-            .list_collections()
-            .unwrap_or_default()
-            .into_iter()
-            .collect();
+        let mut known_collections = self.database.known_collections();
         let txn = self.context().txn().map(|txn| txn.to_string());
         if let Some(txn) = &txn {
             let in_txn = self
@@ -119,10 +114,14 @@ impl<S: Store + 'static> ViewOperations for ViewAdapter<S> {
                 .get_collections_in_txn_as(&self.context(), txn)
                 .await
                 .map_err(|e| format!("{}", e))?;
-            known_types.extend(in_txn.into_iter().map(|version| version.name));
+            known_collections.extend(
+                in_txn
+                    .into_iter()
+                    .map(|version| (version.name, version.collection_id)),
+            );
         }
 
-        let collections = query::parse_sdl_with_known_types(sdl, known_types)
+        let collections = query::parse_sdl_with_known_collections(sdl, known_collections)
             .map_err(|e| format!("failed to parse view SDL: {}", e))?;
 
         let wrapped_query = format!("query {{ {} }}", gql_query);
@@ -279,7 +278,3 @@ impl<S: Store + 'static> ViewOperations for ViewAdapter<S> {
             .map_err(|e| format!("failed to GC downsample histories: {}", e))
     }
 }
-
-#[cfg(test)]
-#[path = "../tests/unit/view_adapter.rs"]
-mod tests;

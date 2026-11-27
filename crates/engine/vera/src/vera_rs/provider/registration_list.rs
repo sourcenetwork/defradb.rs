@@ -5,7 +5,7 @@
 use alloy_primitives::Bytes;
 
 use super::{policy_cmd, ProviderError};
-use crate::cosmos::MAX_OWED_REQUEST_BYTES;
+use crate::dac::MAX_OWED_REQUEST_BYTES;
 use crate::provider::MAX_REGISTRATIONS_PER_REQUEST;
 use crate::{PolicyAction, PolicyCommand};
 
@@ -29,7 +29,7 @@ pub(super) fn calldata(
             policy_id: object.policy_id,
             resource: object.resource,
             object_id: object.object_id,
-            action: PolicyAction::RegisterObject,
+            action: PolicyAction::register(object.relationships),
         })?;
         let policy = vera_client::parse_policy_id(object.policy_id)
             .map_err(|error| ProviderError::Query(error.to_string()))?;
@@ -60,6 +60,7 @@ mod tests {
     fn objects(ids: &[String]) -> Vec<acp::AcpObject<'_>> {
         ids.iter()
             .map(|id| acp::AcpObject {
+                relationships: &[],
                 policy_id: POLICY,
                 resource: "users",
                 object_id: id,

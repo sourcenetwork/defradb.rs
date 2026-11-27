@@ -16,12 +16,10 @@ bench = false
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [features]
-default = ["native", "wasmtime-runtime", "vera", "libp2p"]
+default = ["native", "wasmtime-runtime", "libp2p"]
 native = ["db/native", "defra-node/native"]
 iroh = ["defra-node/p2p", "p2p/iroh-transport"]
 libp2p = ["db/p2p", "p2p/libp2p-transport", "defra-node/libp2p"]
-vera = ["defra-node/vera"]
-sourcehub = ["vera"]
 wasmtime-runtime = [
     "db/wasmtime-runtime",
     

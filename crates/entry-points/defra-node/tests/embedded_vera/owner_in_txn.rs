@@ -83,7 +83,8 @@ impl Home {
     ) -> (bool, Option<Did>) {
         let rows = self
             .node
-            .observe_document_owners_in_txn(txn, "Users", &[doc.to_owned()], Some(asker.clone()))
+            .with_transaction(txn.parse::<defra_core::TxnId>().unwrap())
+            .observe_document_owners("Users", &[doc.to_owned()], Some(asker.clone()))
             .await
             .expect("owner observation");
         (rows[0].visible, rows[0].owner.clone())
@@ -117,7 +118,7 @@ impl Home {
             .unwrap();
         assert!(response.status().is_success(), "{}", response.status());
         let body: Value = response.json().await.unwrap();
-        body["id"].as_u64().unwrap().to_string()
+        body["id"].to_string()
     }
 
     async fn is_owner(&self, caller: &RawIdentity, tx: &str, doc: &str) -> Value {
@@ -237,31 +238,31 @@ fn an_owner_lookup_in_a_transaction_answers_on_an_embedded_vera_node() {
         );
         let owed = home.owed_by(&creator).await;
 
-        let txn = home.node.begin_transaction(false).await.unwrap();
+        let txn = home.node.new_txn(false).await.map(|txn| txn.detach()).unwrap();
         let fresh = created(
             home.node
-                .execute_request_in_txn(create_user("fresh", &owner), &txn)
+                .with_transaction(txn).execute_request(create_user("fresh", &owner))
                 .await,
         );
-        assert_eq!(home.owner_in(&txn, &owner, &registered).await, (true, Some(owner.clone())));
-        assert_eq!(home.owner_in(&txn, &owner, &fresh).await, (true, Some(owner.clone())));
+        assert_eq!(home.owner_in(&query::TransactionHandle::new(txn.to_string()), &owner, &registered).await, (true, Some(owner.clone())));
+        assert_eq!(home.owner_in(&query::TransactionHandle::new(txn.to_string()), &owner, &fresh).await, (true, Some(owner.clone())));
         assert_eq!(
-            home.owner_in(&txn, &did(&creator), &owed).await,
+            home.owner_in(&query::TransactionHandle::new(txn.to_string()), &did(&creator), &owed).await,
             (true, Some(did(&creator)))
         );
-        home.node.commit_transaction(&txn).await.expect("commit");
+        home.node.with_transaction(txn).commit().await.expect("commit");
 
-        let txn = home.node.begin_transaction(false).await.unwrap();
-        assert_eq!(home.owner_in(&txn, &owner, &registered).await, (true, Some(owner.clone())));
+        let txn = home.node.new_txn(false).await.map(|txn| txn.detach()).unwrap();
+        assert_eq!(home.owner_in(&query::TransactionHandle::new(txn.to_string()), &owner, &registered).await, (true, Some(owner.clone())));
         created(
             home.node
-                .execute_request_in_txn(create_user("decided", &owner), &txn)
+                .with_transaction(txn).execute_request(create_user("decided", &owner))
                 .await,
         );
         home.archive(&registered).await;
-        let error = home.node.commit_transaction(&txn).await.unwrap_err();
+        let error = home.node.with_transaction(txn).commit().await.unwrap_err();
         assert!(
-            matches!(error, query::TransactionError::Conflict(ref message) if message.contains("owner changed")),
+            matches!(error, defra_node::Error::TransactionConflict(query::TransactionError::Conflict(ref message)) if message.contains("owner changed")),
             "{error:?}"
         );
         home.node.shutdown().await.expect("shutdown");

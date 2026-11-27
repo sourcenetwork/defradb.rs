@@ -37,7 +37,12 @@ impl Op for DeleteCollectionSubscription {
         let names = self.collections.clone();
         let node = state.node_on(self.common.node())?;
         state
-            .block_on(node.delete_p2p_collections_as(&state.context_as(None, identity), &names))
+            .block_on(
+                state
+                    .scope_as(None, identity)
+                    .scoped(&node)
+                    .delete_p2p_collections(&names),
+            )
             .map_err(failed)?;
         Ok(json!({}))
     }

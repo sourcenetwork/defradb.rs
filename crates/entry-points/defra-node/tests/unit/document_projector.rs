@@ -102,7 +102,7 @@ fn raw_document_mutations_stage_sources_in_the_same_transaction() {
             .with_document_projector(Arc::new(Projector))
             .build().await.unwrap();
         let owner = defra_core::RequestContext::default().with_identity(Some(node.node_identity_did().unwrap().to_owned()));
-        node.add_collection_as(&owner, "type ProjectedTool { enabled: Boolean, name: String }").await.unwrap();
+        node.with_identity(identity::Did::new(node.node_identity_did().unwrap().to_owned()).unwrap()).add_collection("type ProjectedTool { enabled: Boolean, name: String }").await.unwrap();
         let created = node.execute_request(request("mutation { create_ProjectedTool(input:{enabled:true, name:\"one\"}) { _docID } }".into())).await;
         assert!(!created.has_errors(), "{:?}", created.errors);
         let id = created.data.unwrap()["add_ProjectedTool"][0]["_docID"].as_str().unwrap().to_owned();
@@ -112,23 +112,23 @@ fn raw_document_mutations_stage_sources_in_the_same_transaction() {
         assert!(allowed(&node).await);
 
         let tx = node.runner().begin_txn_as(&owner, false).await.unwrap();
-        let disabled = node.execute_request_in_txn(request(format!("mutation {{ update_ProjectedTool(docID:\"{id}\", input:{{enabled:false}}) {{ _docID }} }}")), &tx).await;
+        let disabled = node.with_transaction(tx.parse::<defra_core::TxnId>().unwrap()).execute_request(request(format!("mutation {{ update_ProjectedTool(docID:\"{id}\", input:{{enabled:false}}) {{ _docID }} }}"))).await;
         assert!(!disabled.has_errors(), "{:?}", disabled.errors);
         assert!(allowed(&node).await);
         node.runner().discard_txn_as(&owner, &tx).await.unwrap();
         assert!(allowed(&node).await);
 
-        node.add_nac_actor_relationship_as(&owner, NodePermission::CollectionPatch.as_str(), AGENT).await.unwrap();
+        node.with_identity(identity::Did::new(node.node_identity_did().unwrap().to_owned()).unwrap()).add_nac_actor_relationship(NodePermission::CollectionPatch.as_str(), AGENT).await.unwrap();
         let disabled = node.execute_request(request(format!("mutation {{ update_ProjectedTool(docID:\"{id}\", input:{{enabled:false}}) {{ _docID }} }}"))).await;
         assert!(!disabled.has_errors(), "{:?}", disabled.errors);
         assert!(allowed(&node).await);
-        node.delete_nac_actor_relationship_as(&owner, NodePermission::CollectionPatch.as_str(), AGENT).await.unwrap();
+        node.with_identity(identity::Did::new(node.node_identity_did().unwrap().to_owned()).unwrap()).delete_nac_actor_relationship(NodePermission::CollectionPatch.as_str(), AGENT).await.unwrap();
         assert!(allowed(&node).await, "the other tool source remains");
-        node.add_nac_actor_relationship_as(&owner, NodePermission::CollectionPatch.as_str(), AGENT).await.unwrap();
+        node.with_identity(identity::Did::new(node.node_identity_did().unwrap().to_owned()).unwrap()).add_nac_actor_relationship(NodePermission::CollectionPatch.as_str(), AGENT).await.unwrap();
         let disabled = node.execute_request(request(format!("mutation {{ update_ProjectedTool(docID:\"{second_id}\", input:{{enabled:false}}) {{ _docID }} }}"))).await;
         assert!(!disabled.has_errors(), "{:?}", disabled.errors);
         assert!(allowed(&node).await, "the direct grant remains");
-        node.delete_nac_actor_relationship_as(&owner, NodePermission::CollectionPatch.as_str(), AGENT).await.unwrap();
+        node.with_identity(identity::Did::new(node.node_identity_did().unwrap().to_owned()).unwrap()).delete_nac_actor_relationship(NodePermission::CollectionPatch.as_str(), AGENT).await.unwrap();
         assert!(!allowed(&node).await);
         node.shutdown().await.unwrap();
     }).unwrap();
@@ -297,15 +297,13 @@ fn scoped_projection_uses_owner_authority_without_read_bypass() {
             .await
             .unwrap();
         let node_did = node.node_identity_did().unwrap().to_owned();
-        let admin = defra_core::RequestContext::default()
-            .with_identity(Some(owner.did().unwrap().to_string()));
         for permission in [NodePermission::DocumentUpdate, NodePermission::DocumentRead,
             NodePermission::CollectionGet, NodePermission::DacRelationAdd] {
-            node.add_nac_actor_relationship_as(&admin, permission.as_str(), &node_did).await.unwrap();
+            node.with_identity(identity::Did::new(owner.did().unwrap().to_string()).unwrap()).add_nac_actor_relationship(permission.as_str(), &node_did).await.unwrap();
         }
         assert!(!node.nac_manager().check_permission(&Did::new(&node_did).unwrap(), NodePermission::DacBypass).await.unwrap());
-        let policy = node.add_dac_policy_as(&admin, "name: Scoped projection\nresources:\n  - name: records\n    relations:\n      - name: reader\n        types: [actor]\n      - name: reader_manager\n        types: [actor]\n        manages: [reader]\n    permissions:\n      - name: read\n        expr: reader\n      - name: update\n      - name: delete\n").await.unwrap();
-        node.add_collection_as(&admin, &format!("type ScopedProjected @policy(id: \"{policy}\", resource: \"records\") {{ name: String }}")).await.unwrap();
+        let policy = node.with_identity(identity::Did::new(owner.did().unwrap().to_string()).unwrap()).add_dac_policy("name: Scoped projection\nresources:\n  - name: records\n    relations:\n      - name: reader\n        types: [actor]\n      - name: reader_manager\n        types: [actor]\n        manages: [reader]\n    permissions:\n      - name: read\n        expr: reader\n      - name: update\n      - name: delete\n", None).await.unwrap();
+        node.with_identity(identity::Did::new(owner.did().unwrap().to_string()).unwrap()).add_collection(&format!("type ScopedProjected @policy(id: \"{policy}\", resource: \"records\") {{ name: String }}")).await.unwrap();
         let result = node.execute_request(crate::EmbeddedSigner::from_config(signing).unwrap().attach(
             QueryRequest::new("mutation { create_ScopedProjected(input:{name:\"one\"}) { _docID } }")
                 .with_identity(Some(Did::new(&node_did).unwrap())))).await;
@@ -332,7 +330,7 @@ fn scoped_projection_uses_owner_authority_without_read_bypass() {
         reconcile_docs.store(vec![foreign_doc.clone()]);
         assert!(node.database().reconcile_document_projector().await.is_err());
         assert!(!node.document_acp().check_named_permission(&Did::new("did:key:reconciled").unwrap(), "read", &policy, "records", &foreign_doc).await.unwrap());
-        node.add_dac_actor_relationship_as(&admin, "ScopedProjected", &foreign_doc, "reader_manager", &node_did).await.unwrap();
+        node.with_identity(identity::Did::new(owner.did().unwrap().to_string()).unwrap()).add_dac_actor_relationship("ScopedProjected", &foreign_doc, "reader_manager", &node_did).await.unwrap();
         node.database().reconcile_document_projector().await.unwrap();
         assert!(node.document_acp().check_named_permission(&Did::new("did:key:reconciled").unwrap(), "read", &policy, "records", &foreign_doc).await.unwrap());
         node.shutdown().await.unwrap();
@@ -421,12 +419,11 @@ fn local_signed_foreign_creator_is_registered_before_projector_admin_grant() {
         let node = Node::builder().enable_signing().with_node_acp_enabled()
             .with_document_projector(Arc::new(ForeignOwnerProjector)).build().await.unwrap();
         let node_did = node.node_identity_did().unwrap().to_owned();
-        let owner = defra_core::RequestContext::default().with_identity(Some(node_did));
         for permission in [NodePermission::DocumentUpdate, NodePermission::DocumentRead, NodePermission::CollectionGet] {
-            node.add_nac_actor_relationship_as(&owner, permission.as_str(), user_did.as_str()).await.unwrap();
+            node.with_identity(identity::Did::new(node_did.clone()).unwrap()).add_nac_actor_relationship(permission.as_str(), user_did.as_str()).await.unwrap();
         }
-        let policy = node.add_dac_policy_as(&owner, "name: Projection fixture\nresources:\n  - name: records\n    relations:\n      - name: reader\n        types: [actor]\n    permissions:\n      - name: read\n        expr: reader\n      - name: update\n      - name: delete\n").await.unwrap();
-        node.add_collection_as(&owner, &format!("type ForeignProjected @policy(id: \"{policy}\", resource: \"records\") {{ name: String }}")).await.unwrap();
+        let policy = node.with_identity(identity::Did::new(node_did.clone()).unwrap()).add_dac_policy("name: Projection fixture\nresources:\n  - name: records\n    relations:\n      - name: reader\n        types: [actor]\n    permissions:\n      - name: read\n        expr: reader\n      - name: update\n      - name: delete\n", None).await.unwrap();
+        node.with_identity(identity::Did::new(node_did).unwrap()).add_collection(&format!("type ForeignProjected @policy(id: \"{policy}\", resource: \"records\") {{ name: String }}")).await.unwrap();
         let response = node.execute_request(crate::EmbeddedSigner::from_config(signing).unwrap().attach(QueryRequest::new("mutation { create_ForeignProjected(input:{name:\"one\"}) { _docID } }")
                 .with_identity(Some(user_did.clone())))).await;
         assert!(!response.has_errors(), "{:?}", response.errors);
@@ -459,11 +456,10 @@ fn foreign_owner_projection_without_node_bypass_is_refused() {
             .with_node_acp_owner(user_did.to_string())
             .with_document_projector(Arc::new(ForeignOwnerProjector))
             .build().await.unwrap();
-        let admin = defra_core::RequestContext::default().with_identity(Some(user_did.to_string()));
         let node_did = Did::new(node.node_identity_did().unwrap()).unwrap();
         assert!(!node.nac_manager().check_permission(&node_did, NodePermission::DacBypass).await.unwrap());
-        let policy = node.add_dac_policy_as(&admin, "name: Projection fixture\nresources:\n  - name: records\n    relations:\n      - name: reader\n        types: [actor]\n    permissions:\n      - name: read\n        expr: reader\n      - name: update\n      - name: delete\n").await.unwrap();
-        node.add_collection_as(&admin, &format!("type ForeignProjected @policy(id: \"{policy}\", resource: \"records\") {{ name: String }}")).await.unwrap();
+        let policy = node.with_identity(identity::Did::new(user_did.to_string()).unwrap()).add_dac_policy("name: Projection fixture\nresources:\n  - name: records\n    relations:\n      - name: reader\n        types: [actor]\n    permissions:\n      - name: read\n        expr: reader\n      - name: update\n      - name: delete\n", None).await.unwrap();
+        node.with_identity(identity::Did::new(user_did.to_string()).unwrap()).add_collection(&format!("type ForeignProjected @policy(id: \"{policy}\", resource: \"records\") {{ name: String }}")).await.unwrap();
         let response = node.execute_request(crate::EmbeddedSigner::from_config(signing).unwrap().attach(
             QueryRequest::new("mutation { create_ForeignProjected(input:{name:\"one\"}) { _docID } }")
                 .with_identity(Some(user_did)))).await;
@@ -594,9 +590,9 @@ fn source_projection_authorizes_the_actual_mutation_actor_atomically() {
         let owner = defra_core::RequestContext::default()
             .with_identity(Some(node.node_identity_did().unwrap().to_owned()));
         for permission in [NodePermission::DocumentUpdate, NodePermission::DocumentRead, NodePermission::CollectionGet] {
-            node.add_nac_actor_relationship_as(&owner, permission.as_str(), user.as_str()).await.unwrap();
+            node.with_identity(identity::Did::new(node.node_identity_did().unwrap().to_owned()).unwrap()).add_nac_actor_relationship(permission.as_str(), user.as_str()).await.unwrap();
         }
-        node.add_collection_as(&owner, "type ActorProjectedTool { enabled: Boolean, name: String }").await.unwrap();
+        node.with_identity(identity::Did::new(node.node_identity_did().unwrap().to_owned()).unwrap()).add_collection("type ActorProjectedTool { enabled: Boolean, name: String }").await.unwrap();
         let created = node.execute_request(request("mutation { create_ActorProjectedTool(input:{enabled:false,name:\"before\"}) {_docID} }".into())).await;
         assert!(!created.has_errors(), "{:?}", created.errors);
         let id = created.data.unwrap()["add_ActorProjectedTool"][0]["_docID"].as_str().unwrap().to_owned();
@@ -609,10 +605,10 @@ fn source_projection_authorizes_the_actual_mutation_actor_atomically() {
         let before = node.execute_request(request(format!("{{ ActorProjectedTool(docID:\"{id}\") {{ enabled }} }}"))).await;
         assert_eq!(before.data.unwrap()["ActorProjectedTool"][0]["enabled"], false);
         let handle = node.runner().begin_txn_as(&owner, false).await.unwrap();
-        let enabled = node.execute_request_in_txn(request(update(true)), &handle).await;
+        let enabled = node.with_transaction(handle.parse::<defra_core::TxnId>().unwrap()).execute_request(request(update(true))).await;
         assert!(!enabled.has_errors(), "{:?}", enabled.errors);
         assert!(!allowed(&node).await);
-        let denied = node.execute_request_in_txn(signer.attach(user_request(update(false))), &handle).await;
+        let denied = node.with_transaction(handle.parse::<defra_core::TxnId>().unwrap()).execute_request(signer.attach(user_request(update(false)))).await;
         assert!(denied.has_errors(), "non-admin source removal must be rejected");
         assert_eq!(denied.errors[0].code(), Some(query::executor::PERMISSION_DENIED_ERROR_CODE));
         node.runner().commit_txn_as(&owner, &handle).await.unwrap();
@@ -650,20 +646,20 @@ fn revoked_source_manager_conflicts_with_the_staged_document_and_grant() {
         let owner = defra_core::RequestContext::default()
             .with_identity(Some(node.node_identity_did().unwrap().to_owned()));
         for permission in [NodePermission::DocumentUpdate, NodePermission::DocumentRead, NodePermission::CollectionGet] {
-            node.add_nac_actor_relationship_as(&owner, permission.as_str(), actor.as_str()).await.unwrap();
+            node.with_identity(identity::Did::new(node.node_identity_did().unwrap().to_owned()).unwrap()).add_nac_actor_relationship(permission.as_str(), actor.as_str()).await.unwrap();
         }
-        node.add_nac_actor_relationship_as(&owner, "admin", actor.as_str()).await.unwrap();
-        node.add_collection_as(&owner, "type ActorProjectedTool { enabled: Boolean, name: String }").await.unwrap();
+        node.with_identity(identity::Did::new(node.node_identity_did().unwrap().to_owned()).unwrap()).add_nac_actor_relationship("admin", actor.as_str()).await.unwrap();
+        node.with_identity(identity::Did::new(node.node_identity_did().unwrap().to_owned()).unwrap()).add_collection("type ActorProjectedTool { enabled: Boolean, name: String }").await.unwrap();
         let created = node.execute_request(request("mutation { create_ActorProjectedTool(input:{enabled:false,name:\"before\"}) {_docID} }".into())).await;
         assert!(!created.has_errors(), "{:?}", created.errors);
         let id = created.data.unwrap()["add_ActorProjectedTool"][0]["_docID"].as_str().unwrap().to_owned();
         let handle = node.runner().begin_txn_as(&owner, false).await.unwrap();
         let mutation = QueryRequest::new(format!("mutation {{ update_ActorProjectedTool(docID:\"{id}\",input:{{enabled:true}}) {{_docID}} }}"))
             .with_identity(Some(actor.clone()));
-        let staged = node.execute_request_in_txn(signer.attach(mutation), &handle).await;
+        let staged = node.with_transaction(handle.parse::<defra_core::TxnId>().unwrap()).execute_request(signer.attach(mutation)).await;
         assert!(!staged.has_errors(), "{:?}", staged.errors);
         assert!(!allowed(&node).await);
-        assert!(node.delete_nac_actor_relationship_as(&owner, "admin", actor.as_str()).await.unwrap());
+        assert!(node.with_identity(identity::Did::new(node.node_identity_did().unwrap().to_owned()).unwrap()).delete_nac_actor_relationship("admin", actor.as_str()).await.unwrap());
         assert!(node.runner().commit_txn_as(&owner, &handle).await.is_err(), "revoked source authority must conflict at commit");
         assert!(!allowed(&node).await);
         let current = node.execute_request(request(format!("{{ ActorProjectedTool(docID:\"{id}\") {{ enabled }} }}"))).await;

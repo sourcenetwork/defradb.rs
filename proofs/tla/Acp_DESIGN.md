@@ -5,7 +5,7 @@ Zanzibar.  It has two independent halves:
 
 - Lean: algebraic soundness of the check evaluator against rewrite-closure
   semantics.
-- TLA+: replicated tuple revocation and stale positive decision caches.
+- TLA+: replicated tuple revocation.
 
 ## Source Anchors
 
@@ -27,7 +27,7 @@ The Lean model is grounded in the Zanzibar expression and evaluator code:
 - `crates/building-blocks/zanzibar/src/store/traits.rs:34-57`: store interface for relationship
   presence and direct permission checks.
 
-The TLA model is grounded in ACP tuple storage and Vera cache behavior:
+The TLA model is grounded in ACP tuple storage and Vera access checks:
 
 - `crates/engine/acp/src/store.rs:42-130`: ACP tuple store operations, including put,
   delete, relation scans, and document registration.
@@ -39,16 +39,12 @@ The TLA model is grounded in ACP tuple storage and Vera cache behavior:
   write and delete tuples.
 - `crates/engine/acp/src/local.rs:390-439`: local P2P export/replace reconciles
   document-scoped relationships while preserving owner.
-- `crates/engine/vera/src/access_cache.rs:10-16`: positive access decisions are
-  cached by actor/policy/resource/doc/permission.
-- `crates/engine/vera/src/access_cache.rs:46-61`: cache hits return unexpired
-  allowed decisions.
-- `crates/engine/vera/src/access_cache.rs:85-95`: object invalidation clears cached
-  decisions for a document.
-- `crates/engine/vera/src/cosmos/dac.rs:186-223`: Vera ACP checks read from
-  cache first, then calls `verify_access`, and caches only successful results.
-- `crates/engine/vera/src/cosmos/dac.rs:250-307`: Vera relationship grant and
-  revoke invalidate cached access for the object.
+- `crates/engine/vera/src/dac.rs` `VeraDocumentACP::check_doc_access`: a Vera ACP
+  check asks the provider through `decisions` every time; it keeps no decision cache.
+- `crates/engine/vera/src/decisions.rs` `RemoteDecisions`: a decision is reused only
+  under the verified state it was read at, so a revocation that moves the state is a
+  new key. The model therefore has no cache: a node grants exactly what its tuple
+  view holds.
 
 ## Brainstorming Outcome
 
@@ -107,9 +103,9 @@ Main theorems:
 - `Acp.check_deterministic` and `Acp.eval_terminates`: executable checks are
   deterministic and return a finite Boolean result for every budget.
 
-The existing lakefile only declares `lean_lib DefraConvergence`; it was not
-edited.  Integrator action: add `lean_lib Acp` if ACP should be included in
-`lake build`.
+The lakefile builds every top-level `.lean` file as a root of one library, so
+ACP is included automatically; no lakefile edit is needed (build with
+`lake build -R`).
 
 Lean command run:
 
@@ -132,16 +128,15 @@ No theorem uses `sorry` or custom axioms.
 New files:
 
 - `proofs/tla/Acp.tla`: base tuple-replication and revocation model.
-- `proofs/tla/MC_Acp_Green.tla` + `.cfg`: cache invalidated on revoke
-  propagation.
-- `proofs/tla/MC_Acp_StaleCache_Red.tla` + `.cfg`: stale positive cache remains
-  after revoke propagation.
+- `proofs/tla/MC_Acp_Green.tla` + `.cfg`: a revocation that reaches a node removes
+  the tuple from its view.
+- `proofs/tla/MC_Acp_StaleStore_Red.tla` + `.cfg`: a node records the revocation but
+  keeps the tuple in its view.
 
 State variables:
 
 - `authority`: authoritative live tuple set.
 - `known`: each node's replicated local tuple view.
-- `cache`: each node's cached positive access decisions.
 - `revoked`: tuples revoked by the authority.
 - `seenRevoke`: per-node revoke propagation marker.
 - `checked`: allowed checks recorded by the model.
@@ -160,7 +155,7 @@ TLA+ commands run:
 ```bash
 cd proofs/tla
 ./tools/tlc -metadir states/acp_green -config MC_Acp_Green.cfg MC_Acp_Green.tla
-./tools/tlc -metadir states/acp_red -config MC_Acp_StaleCache_Red.cfg MC_Acp_StaleCache_Red.tla
+./tools/tlc -metadir states/acp_red -config MC_Acp_StaleStore_Red.cfg MC_Acp_StaleStore_Red.tla
 rm -rf states/acp_green states/acp_red
 ```
 
@@ -168,20 +163,19 @@ Results:
 
 - GREEN: `MC_Acp_Green.cfg` completed with no errors.  TLC explored 20 distinct
   states and checked the liveness property.
-- RED: `MC_Acp_StaleCache_Red.cfg` violated `INV_RevocationConsistent`.  The
-  counterexample is: initial cached allow on `replica`; authority revokes
-  `doc1#reader@alice`; revocation propagates to `replica`; local tuple is removed
-  but the stale cache still grants.
+- RED: `MC_Acp_StaleStore_Red.cfg` violated `INV_RevocationConsistent`.  The
+  counterexample is: authority revokes `doc1#reader@alice`; revocation propagates
+  to `owner`; `owner` keeps the tuple in its view and still grants.
 
 ## Interpretation
 
 Lean proves the local checker does not invent permissions: for the modeled
 rewrite fragment, Boolean acceptance is exactly membership in the rewrite
-closure.  TLA+ proves the replicated tuple/cached-decision model has the desired
-post-propagation revocation behavior only when revoke propagation invalidates
-positive decision caches.
+closure.  TLA+ proves the replicated tuple model has the desired
+post-propagation revocation behavior only when revoke propagation removes the
+tuple from each node's view.
 
 The combined result is source-anchored but not an automated conformance proof.
-The Rust code must keep cache invalidation coupled to relationship mutation and
-replication paths, and ACP policy changes that use `Difference` must not be
+The Rust code must keep tuple removal coupled to relationship mutation and
+replication paths, must not add a decision cache that outlives a revocation, and ACP policy changes that use `Difference` must not be
 summarized as globally monotone under tuple deletion.

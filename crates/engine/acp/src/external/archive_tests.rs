@@ -26,17 +26,30 @@ struct Recording {
     unreachable: AtomicBool,
     /// Nothing lets the node sign for an actor.
     no_credential: AtomicBool,
+    /// Every actor the node asked for authority to send a command as.
+    asked: SegQueue<String>,
 }
 
 impl Recording {
     fn writes(&self) -> Vec<String> {
         std::iter::from_fn(|| self.writes.pop()).collect()
     }
+
+    fn asked(&self) -> Vec<String> {
+        std::iter::from_fn(|| self.asked.pop()).collect()
+    }
 }
 
 #[async_trait]
 impl DocumentACP for Recording {
-    async fn register_doc_object(&self, _: &Did, _: &str, _: &str, _: &str) -> Result<()> {
+    async fn register_doc_object(
+        &self,
+        _: &Did,
+        _: &str,
+        _: &str,
+        _: &str,
+        _: &[crate::DerivedRelationship],
+    ) -> Result<()> {
         Ok(())
     }
 
@@ -71,6 +84,7 @@ impl DocumentACP for Recording {
         actor: &Did,
         _: crate::ProviderCommand<'_>,
     ) -> Result<crate::outbox::OwedAuthority> {
+        self.asked.push(actor.to_string());
         if self.no_credential.load(Ordering::Relaxed) {
             return Err(Error::OwedAuthorityUnavailable {
                 actor: actor.to_string(),
@@ -221,31 +235,235 @@ fn a_deleted_documents_archive_denies_everyone_until_it_settles() {
 }
 
 #[test]
-fn a_delete_by_anyone_but_the_owner_is_refused_and_nothing_is_staged() {
+fn a_permitted_non_owners_delete_is_archived_as_the_owner_under_the_owners_authority() {
     workers::block_on(async {
         let (provider, gate) = gate();
         let writer = &did(WRITER);
-        let refused = in_transaction(&gate, |outbox| async move {
+        in_transaction(&gate, |outbox| async move {
             outbox.stage_archive(archive(writer)).await
         })
-        .await;
-        assert!(
-            matches!(refused, Err(Error::NotOwner { .. })),
-            "{refused:?}"
-        );
-        assert!(gate.owed_changes_after(None).await.unwrap().is_empty());
+        .await
+        .expect("a permitted non-owner's delete commits");
+        let owed = gate.owed_changes_after(None).await.unwrap();
+        assert_eq!(owed.len(), 1, "{owed:?}");
+        assert_eq!((owed[0].op, &owed[0].actor), (OwedOp::Archive, &did(OWNER)));
+        assert_eq!(owed[0].state, crate::outbox::OwedState::Staged);
+        assert_eq!(provider.asked(), vec![OWNER.to_owned()]);
+        for who in [
+            Identity::Authenticated(did(OWNER)),
+            Identity::Authenticated(did(WRITER)),
+            Identity::Authenticated(did(READER)),
+            Identity::Anonymous,
+        ] {
+            assert!(
+                !reads(&gate, who).await,
+                "a deleted document grants nothing"
+            );
+        }
 
-        provider.unreachable.store(true, Ordering::Relaxed);
+        gate.settle_owed_changes_once(OwedScope::All).await.unwrap();
+        assert_eq!(provider.writes(), vec![format!("archive bae-1 as {OWNER}")]);
+        assert!(gate.owed_changes_after(None).await.unwrap().is_empty());
+        assert!(
+            provider.asked().iter().all(|actor| actor == OWNER),
+            "nothing is sent under the writer's authority"
+        );
+    })
+    .unwrap()
+}
+
+#[test]
+fn a_non_owners_archive_waits_for_the_owners_authority_and_settles_once_it_is_handed_in() {
+    workers::block_on(async {
+        let (provider, gate) = gate();
+        provider.no_credential.store(true, Ordering::Relaxed);
+        let writer = &did(WRITER);
+        let staged = in_transaction(&gate, |outbox| async move {
+            outbox.stage_archive(archive(writer)).await
+        })
+        .await
+        .expect("a permitted non-owner's delete commits");
+        let owed = gate.owed_changes_after(None).await.unwrap();
+        assert_eq!(owed.len(), 1);
+        assert_eq!((owed[0].op, &owed[0].actor), (OwedOp::Archive, &did(OWNER)));
+        assert_eq!(owed[0].state, crate::outbox::OwedState::AwaitingAuthority);
+        for who in [
+            Identity::Authenticated(did(OWNER)),
+            Identity::Authenticated(did(WRITER)),
+            Identity::Authenticated(did(READER)),
+        ] {
+            assert!(!reads(&gate, who).await, "a parked archive denies too");
+        }
+        gate.settle_owed_changes_once(OwedScope::All).await.unwrap();
+        assert!(
+            provider.writes().is_empty(),
+            "nothing is sent without authority"
+        );
+
+        provider.no_credential.store(false, Ordering::Relaxed);
+        let entry = crate::outbox::OwedRef::Change { seq: staged.seq };
+        assert!(
+            matches!(
+                gate.reauthorize_owed(writer, &entry).await,
+                Err(Error::OwedEntryNotFound { .. })
+            ),
+            "the writer owes nothing: the archive is the owner's"
+        );
+        gate.reauthorize_owed(&did(OWNER), &entry)
+            .await
+            .expect("the owner hands in its authority");
+        gate.settle_owed_changes_once(OwedScope::All).await.unwrap();
+        assert_eq!(provider.writes(), vec![format!("archive bae-1 as {OWNER}")]);
+        assert!(gate.owed_changes_after(None).await.unwrap().is_empty());
+        assert!(provider.asked().iter().all(|actor| actor == OWNER));
+    })
+    .unwrap()
+}
+
+#[test]
+fn a_non_owners_deletes_leave_the_owners_admission_untouched() {
+    workers::block_on(async {
+        let (provider, gate) = gate();
+        provider.no_credential.store(true, Ordering::Relaxed);
+        let writer = &did(WRITER);
+        let limit = crate::outbox::MAX_UNSETTLED_OWED_CHANGES_PER_ACTOR;
+        let objects: Vec<String> = (0..limit).map(|n| format!("bae-gone-{n}")).collect();
+        for object in &objects {
+            in_transaction(&gate, |outbox| async move {
+                outbox
+                    .stage_archive(StageArchive {
+                        object,
+                        ..archive(writer)
+                    })
+                    .await
+            })
+            .await
+            .expect("a permitted non-owner's delete commits");
+        }
+        let parked = gate.owed_changes_after(None).await.unwrap();
+        assert!(parked.iter().all(|change| change.op == OwedOp::Archive
+            && change.actor == did(OWNER)
+            && change.state == crate::outbox::OwedState::AwaitingAuthority));
+        provider.no_credential.store(false, Ordering::Relaxed);
         let owner = &did(OWNER);
-        let unknown = in_transaction(&gate, |outbox| async move {
+        in_transaction(
+            &gate,
+            |outbox| async move { outbox.stage(grant(owner)).await },
+        )
+        .await
+        .expect("the writer's deletes count against nobody's admission");
+        in_transaction(&gate, |outbox| async move {
             outbox.stage_archive(archive(owner)).await
         })
-        .await;
-        assert!(
-            matches!(unknown, Err(Error::OwedCheckUnavailable { .. })),
-            "{unknown:?}"
+        .await
+        .expect("the owner's own delete is not refused either");
+    })
+    .unwrap()
+}
+
+#[test]
+fn a_node_full_of_parked_archives_still_admits_new_changes() {
+    workers::block_on(async {
+        let (provider, gate) = gate();
+        provider.no_credential.store(true, Ordering::Relaxed);
+        let writer = &did(WRITER);
+        let limit = crate::outbox::MAX_UNSETTLED_OWED_CHANGES;
+        for n in 0..limit {
+            let object = &format!("bae-gone-{n}");
+            in_transaction(&gate, |outbox| async move {
+                outbox
+                    .stage_archive(StageArchive {
+                        object,
+                        ..archive(writer)
+                    })
+                    .await
+            })
+            .await
+            .expect("a permitted non-owner's delete commits");
+        }
+        let txn = gate.begin(true).await.unwrap();
+        let view = txn.acpstore();
+        let changes = gate.owed_changes(&view, StagedCount::new());
+        assert_eq!(
+            changes.unsettled().await.unwrap(),
+            0,
+            "parked archives are not in the node's admission count"
         );
-        assert!(gate.owed_changes_after(None).await.unwrap().is_empty());
+        drop(view);
+        txn.discard().unwrap();
+        provider.no_credential.store(false, Ordering::Relaxed);
+        let owner = &did(OWNER);
+        in_transaction(
+            &gate,
+            |outbox| async move { outbox.stage(grant(owner)).await },
+        )
+        .await
+        .expect("the node's bound does not count the writer's archives");
+        in_transaction(&gate, |outbox| async move {
+            outbox.stage_archive(archive(owner)).await
+        })
+        .await
+        .expect("the owner's own delete is not refused either");
+    })
+    .unwrap()
+}
+
+#[test]
+fn a_transactions_deletes_leave_its_own_staging_bound_untouched() {
+    workers::block_on(async {
+        let (_provider, gate) = gate();
+        let writer = &did(WRITER);
+        let owner = &did(OWNER);
+        let limit = crate::outbox::MAX_OWED_CHANGES_PER_TRANSACTION;
+        in_transaction(&gate, |outbox| async move {
+            for n in 0..limit {
+                let object = &format!("bae-gone-{n}");
+                outbox
+                    .stage_archive(StageArchive {
+                        object,
+                        ..archive(writer)
+                    })
+                    .await?;
+            }
+            assert_eq!(outbox.staged(), 0, "archives are not counted as staged");
+            for n in 0..limit {
+                let object = &format!("bae-kept-{n}");
+                outbox
+                    .stage(StageRelationship {
+                        object,
+                        ..grant(owner)
+                    })
+                    .await?;
+            }
+            assert!(matches!(
+                outbox.stage(grant(owner)).await,
+                Err(Error::OwedChangesPerTransaction { limit: bound }) if bound == limit
+            ));
+            Ok(())
+        })
+        .await
+        .expect("a transaction's deletes leave it its whole bound of changes");
+    })
+    .unwrap()
+}
+
+#[test]
+fn a_delete_is_refused_and_nothing_is_staged_while_the_owner_cannot_be_learned() {
+    workers::block_on(async {
+        let (provider, gate) = gate();
+        provider.unreachable.store(true, Ordering::Relaxed);
+        for deleter in [did(OWNER), did(WRITER)] {
+            let deleter = &deleter;
+            let unknown = in_transaction(&gate, |outbox| async move {
+                outbox.stage_archive(archive(deleter)).await
+            })
+            .await;
+            assert!(
+                matches!(unknown, Err(Error::OwedCheckUnavailable { .. })),
+                "{unknown:?}"
+            );
+            assert!(gate.owed_changes_after(None).await.unwrap().is_empty());
+        }
     })
     .unwrap()
 }
@@ -393,6 +611,32 @@ fn a_parked_archive_names_its_owner_for_history_visibility() {
         let (provider, gate) = (provider, gate);
         assert_eq!(provider.writes(), Vec::<String>::new());
         assert!(!gate.owed_changes_after(None).await.unwrap().is_empty());
+    })
+    .unwrap()
+}
+
+#[test]
+fn an_archive_for_someone_elses_delete_names_nobody_for_history_visibility() {
+    workers::block_on(async {
+        let (_provider, gate) = gate();
+        let writer = &did(WRITER);
+        let txn = gate.begin(false).await.unwrap();
+        let view = txn.acpstore();
+        let outbox = gate
+            .transaction_outbox(&view, StagedCount::new())
+            .expect("the gate keeps an outbox");
+        outbox.stage_archive(archive(writer)).await.unwrap();
+        assert_eq!(
+            OwedDenials::new(&view)
+                .archive_actor("policy", "users", "bae-1")
+                .await
+                .unwrap(),
+            None,
+            "neither the writer nor the owner keeps the history"
+        );
+        drop(view);
+        drop(outbox);
+        txn.discard().unwrap();
     })
     .unwrap()
 }

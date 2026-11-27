@@ -37,11 +37,12 @@ impl Op for DeleteIndex {
     fn run(&self, state: &State) -> Result<Value, Failure> {
         let identity = self.common.client_identity(Self::name())?;
         state
-            .block_on(state.node_on(self.common.node())?.delete_index_as(
-                &state.context_as(self.txn, identity),
-                &self.collection,
-                &self.index_name,
-            ))
+            .block_on(
+                state
+                    .scope_as(self.txn, identity)
+                    .on(&*state.node_on(self.common.node())?)
+                    .delete_index(&self.collection, &self.index_name),
+            )
             .map(|()| json!({}))
             .map_err(|e| Failure::operation(e.to_string()))
     }

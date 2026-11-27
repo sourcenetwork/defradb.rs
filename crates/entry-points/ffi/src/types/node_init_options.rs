@@ -106,26 +106,29 @@ pub struct NodeInitOptions {
     /// HTTP idle timeout in milliseconds. Not supported yet.
     pub http_idle_timeout_ms: i64,
 
-    /// Document ACP: "local" (default) or "remote" (Vera, configured by the
-    /// `remote_dac_` and `vera_` fields).
+    /// Document ACP: "local" (default). Go's "remote" is not supported, and
+    /// neither are the `remote_dac_` and `vera_` fields that configure it.
+    /// Those fields stay because fields are only ever appended: callers
+    /// built against this layout, Go's rustffi test client among them, name
+    /// them, and setting one fails `defra_node_new`.
     pub document_acp_type: *const c_char,
     /// Separate document ACP store path. Not supported: document ACP lives
     /// in the node's store.
     pub document_acp_path: *const c_char,
-    /// SourceHub log ID. Not supported: remote document ACP is Vera.
+    /// Remote document ACP log ID. Not supported.
     pub remote_dac_log_id: *const c_char,
-    /// Vera gRPC/LCD address.
+    /// Remote document ACP gRPC address. Not supported.
     pub remote_dac_grpc_address: *const c_char,
-    /// Vera CometBFT RPC address.
+    /// Remote document ACP CometBFT RPC address. Not supported.
     pub remote_dac_comet_rpc_address: *const c_char,
 
     /// Separate node ACP store path. Not supported: node ACP lives in the
     /// node's store.
     pub node_acp_path: *const c_char,
 
-    /// Vera chain ID (e.g., "vera-test").
+    /// Remote document ACP chain ID. Not supported.
     pub vera_chain_id: *const c_char,
-    /// Vera secp256k1 signer key bytes (raw 32-byte private key).
+    /// Remote document ACP signer key bytes. Not supported.
     pub vera_signer_key: *const u8,
     /// Length of `vera_signer_key` in bytes.
     pub vera_signer_key_len: c_int,

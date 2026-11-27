@@ -1,14 +1,11 @@
-mod access_cache;
-mod circuit_breaker;
-pub mod cosmos;
+mod dac;
 mod decisions;
-mod policy_cache;
 mod provider;
 mod tuning;
 pub mod vera_rs;
 
 pub use acp::PolicyNonce;
-pub use cosmos::{CosmosProvider, VeraDocumentACP};
+pub use dac::VeraDocumentACP;
 pub use provider::{
     owed_request_digest, AcpLightClientStatus, ActorRelationshipQuery, AssignmentPosition,
     AssignmentQuery, CertifiedAssignments, OwedCall, OwedRequestOutcome, ProviderError,

@@ -1,6 +1,6 @@
 use crate::common::fixture::make_test_db_with_bus;
 use crate::common::owned::in_txn;
-use crate::common::schema::test_collection;
+use crate::common::schema::{parsed, test_collection, TEST_COLLECTION_SDL};
 use acp::DocumentACP;
 use acp::LocalDocumentACP;
 use acp::MemoryAcpStore;
@@ -17,32 +17,16 @@ use query::mutator::DocMutator;
 use query::runner::DocFetcher;
 use query::txn::TransactionRegistry;
 use rapidhash::HashSetExt;
-use schema::CType;
 use schema::CollectionVersion;
-use schema::FieldDescription;
-use schema::FieldKind;
-use schema::PolicyDescription;
 use std::sync::Arc;
 use storage::corekv::OnCommit;
 use storage::index::IndexIterator;
 use storage::RegolithStore;
 
+const BRANCHABLE_SDL: &str = "type Branchable @branchable { x: Int }";
+
 fn branchable_collection() -> CollectionVersion {
-    CollectionVersion::new(
-        "Branchable",
-        "branchable-v1",
-        "col-branchable",
-        vec![
-            FieldDescription::new(
-                "1",
-                "_docID",
-                FieldKind::doc_id(),
-                schema::CType::LwwRegister,
-            ),
-            FieldDescription::new("2", "x", FieldKind::int(), schema::CType::LwwRegister),
-        ],
-    )
-    .as_branchable()
+    parsed(BRANCHABLE_SDL)
 }
 
 struct FailingCollectionSigner;
@@ -77,7 +61,9 @@ fn failing_collection_signing_config() -> defra_core::signing::SigningConfig {
 fn branchable_create_rolls_back_when_collection_block_fails() {
     workers::block_on(async {
         let (db, _bus) = make_test_db_with_bus().await;
-        db.create_collection(branchable_collection()).await.unwrap();
+        db.add_collection(&defra_core::RequestContext::ambient(), BRANCHABLE_SDL)
+            .await
+            .unwrap();
         let mutator = db::AutoCommitMutator::new(Arc::clone(&db));
 
         defra_core::signing::set_signing_config(Some(failing_collection_signing_config()));
@@ -104,7 +90,9 @@ fn branchable_create_rolls_back_when_collection_block_fails() {
 fn branchable_update_rolls_back_when_collection_block_fails() {
     workers::block_on(async {
         let (db, _bus) = make_test_db_with_bus().await;
-        db.create_collection(branchable_collection()).await.unwrap();
+        db.add_collection(&defra_core::RequestContext::ambient(), BRANCHABLE_SDL)
+            .await
+            .unwrap();
         let mutator = db::AutoCommitMutator::new(Arc::clone(&db));
         let created = mutator
             .create(
@@ -145,45 +133,17 @@ fn branchable_update_rolls_back_when_collection_block_fails() {
     .unwrap()
 }
 
+const COUNTER_SDL: &str = r#"type Counters { count: Int @crdt(type: "pncounter") }"#;
+
 fn counter_collection() -> CollectionVersion {
-    CollectionVersion::new(
-        "Counters",
-        "cv1",
-        "col-counters",
-        vec![
-            FieldDescription::new(
-                "1",
-                "_docID",
-                FieldKind::doc_id(),
-                schema::CType::LwwRegister,
-            ),
-            FieldDescription::new("2", "count", FieldKind::int(), schema::CType::LwwRegister)
-                .with_crdt_type(CType::PnCounter),
-        ],
-    )
+    parsed(COUNTER_SDL)
 }
 
+const FLOAT32_COUNTER_SDL: &str =
+    r#"type FloatCounters { points: Float32 @crdt(type: "pncounter") }"#;
+
 fn float32_counter_collection() -> CollectionVersion {
-    CollectionVersion::new(
-        "FloatCounters",
-        "fcv1",
-        "col-float-counters",
-        vec![
-            FieldDescription::new(
-                "1",
-                "_docID",
-                FieldKind::doc_id(),
-                schema::CType::LwwRegister,
-            ),
-            FieldDescription::new(
-                "2",
-                "points",
-                FieldKind::float32(),
-                schema::CType::LwwRegister,
-            )
-            .with_crdt_type(CType::PnCounter),
-        ],
-    )
+    parsed(FLOAT32_COUNTER_SDL)
 }
 
 /// Read a counter's committed value: its part of the document value, the
@@ -203,7 +163,7 @@ async fn read_counter_store(
 fn auto_commit_float32_counter_accumulates_with_float32_precision() {
     workers::block_on(async {
         let (db, _bus) = make_test_db_with_bus().await;
-        db.create_collection(float32_counter_collection())
+        db.add_collection(&defra_core::RequestContext::ambient(), FLOAT32_COUNTER_SDL)
             .await
             .unwrap();
         let mutator = db::AutoCommitMutator::new(Arc::clone(&db));
@@ -249,7 +209,9 @@ fn auto_commit_float32_counter_accumulates_with_float32_precision() {
 fn alias_reads_and_mutations_use_the_canonical_doc_id() {
     workers::block_on(async {
         let (db, _bus) = make_test_db_with_bus().await;
-        db.create_collection(test_collection()).await.unwrap();
+        db.add_collection(&defra_core::RequestContext::ambient(), TEST_COLLECTION_SDL)
+            .await
+            .unwrap();
         let mutator = db::AutoCommitMutator::new(db.clone());
         let mut doc = Document::new(test_collection());
         doc.set("x", NormalValue::Int(1)).unwrap();
@@ -317,7 +279,7 @@ fn explicit_txn_counter_increment_advances_the_counter() {
         // reach the counter's committed value, driven through the registry commit.
 
         let (db, _bus) = make_test_db_with_bus().await;
-        db.create_collection(counter_collection())
+        db.add_collection(&defra_core::RequestContext::ambient(), COUNTER_SDL)
             .await
             .expect("schema");
         let registry = DbTransactionRegistry::new(Arc::clone(&db));
@@ -383,24 +345,12 @@ fn explicit_txn_counter_increment_advances_the_counter() {
     .unwrap()
 }
 
+const PCOUNTER_SDL: &str = r#"type PCounters { count: Int @crdt(type: "pcounter") }"#;
+
 /// PCounter (increment-only) collection: an increment must be applied once,
 /// whatever value the caller's copy of the document carries (#1044 BUG 1).
 fn pcounter_collection() -> CollectionVersion {
-    CollectionVersion::new(
-        "PCounters",
-        "pcv1",
-        "col-pcounters",
-        vec![
-            FieldDescription::new(
-                "1",
-                "_docID",
-                FieldKind::doc_id(),
-                schema::CType::LwwRegister,
-            ),
-            FieldDescription::new("2", "count", FieldKind::int(), schema::CType::LwwRegister)
-                .with_crdt_type(CType::PCounter),
-        ],
-    )
+    parsed(PCOUNTER_SDL)
 }
 
 /// Regression for #1044 BUG 1 (PCounter explicit-txn double-apply): create a
@@ -410,7 +360,7 @@ fn pcounter_collection() -> CollectionVersion {
 fn explicit_txn_pcounter_increment_no_double_apply() {
     workers::block_on(async {
         let (db, _bus) = make_test_db_with_bus().await;
-        db.create_collection(pcounter_collection())
+        db.add_collection(&defra_core::RequestContext::ambient(), PCOUNTER_SDL)
             .await
             .expect("schema");
         let registry = DbTransactionRegistry::new(Arc::clone(&db));
@@ -482,7 +432,7 @@ fn explicit_txn_pcounter_increment_no_double_apply() {
 fn explicit_txn_multi_doc_counter_increments_advance_both() {
     workers::block_on(async {
         let (db, _bus) = make_test_db_with_bus().await;
-        db.create_collection(counter_collection())
+        db.add_collection(&defra_core::RequestContext::ambient(), COUNTER_SDL)
             .await
             .expect("schema");
         let registry = DbTransactionRegistry::new(Arc::clone(&db));
@@ -615,7 +565,7 @@ async fn read_committed_doc(
 fn explicit_txn_pcounter_create_then_update_same_txn() {
     workers::block_on(async {
         let (db, _bus) = make_test_db_with_bus().await;
-        db.create_collection(pcounter_collection())
+        db.add_collection(&defra_core::RequestContext::ambient(), PCOUNTER_SDL)
             .await
             .expect("schema");
         let registry = DbTransactionRegistry::new(Arc::clone(&db));
@@ -671,7 +621,7 @@ fn explicit_txn_pcounter_create_then_update_same_txn() {
 fn an_increment_lands_on_a_directly_written_counter_value() {
     workers::block_on(async {
         let (db, _bus) = make_test_db_with_bus().await;
-        db.create_collection(counter_collection())
+        db.add_collection(&defra_core::RequestContext::ambient(), COUNTER_SDL)
             .await
             .expect("schema");
 
@@ -770,7 +720,7 @@ fn an_increment_lands_on_a_directly_written_counter_value() {
 fn explicit_txn_pncounter_create_then_decrement_same_txn() {
     workers::block_on(async {
         let (db, _bus) = make_test_db_with_bus().await;
-        db.create_collection(counter_collection())
+        db.add_collection(&defra_core::RequestContext::ambient(), COUNTER_SDL)
             .await
             .expect("schema");
         let registry = DbTransactionRegistry::new(Arc::clone(&db));
@@ -826,7 +776,7 @@ fn explicit_txn_pncounter_create_then_decrement_same_txn() {
 fn explicit_txn_discard_drops_pending_counter_ops() {
     workers::block_on(async {
         let (db, _bus) = make_test_db_with_bus().await;
-        db.create_collection(counter_collection())
+        db.add_collection(&defra_core::RequestContext::ambient(), COUNTER_SDL)
             .await
             .expect("schema");
         let registry = DbTransactionRegistry::new(Arc::clone(&db));
@@ -886,7 +836,7 @@ fn explicit_txn_discard_drops_pending_counter_ops() {
 fn explicit_txn_multiple_updates_same_field_sum_once() {
     workers::block_on(async {
         let (db, _bus) = make_test_db_with_bus().await;
-        db.create_collection(counter_collection())
+        db.add_collection(&defra_core::RequestContext::ambient(), COUNTER_SDL)
             .await
             .expect("schema");
         let registry = DbTransactionRegistry::new(Arc::clone(&db));
@@ -971,26 +921,13 @@ fn explicit_txn_multiple_updates_same_field_sum_once() {
     .unwrap()
 }
 
+const INDEXED_COUNTER_SDL: &str =
+    r#"type IdxCounters { count: Int @crdt(type: "pncounter") @index(name: "idx_count") }"#;
+
 /// Counter collection with an @index on the counter field, exercising
 /// `update_with_indexes` index maintenance for an increment.
 fn indexed_counter_collection() -> CollectionVersion {
-    let mut col = CollectionVersion::new(
-        "IdxCounters",
-        "icv1",
-        "col-idx-counters",
-        vec![
-            FieldDescription::new(
-                "1",
-                "_docID",
-                FieldKind::doc_id(),
-                schema::CType::LwwRegister,
-            ),
-            FieldDescription::new("2", "count", FieldKind::int(), schema::CType::LwwRegister)
-                .with_crdt_type(CType::PnCounter),
-        ],
-    );
-    col.indexes = vec![schema::IndexDescription::new("idx_count").with_field("count", false)];
-    col
+    parsed(INDEXED_COUNTER_SDL)
 }
 
 /// Indexed counter: increment in an interactive txn, commit, then assert the
@@ -1002,7 +939,7 @@ fn explicit_txn_indexed_counter_index_reflects_the_incremented_value() {
     workers::block_on(async {
         let (db, _bus) = make_test_db_with_bus().await;
         let col_version = indexed_counter_collection();
-        db.create_collection(col_version.clone())
+        db.add_collection(&defra_core::RequestContext::ambient(), INDEXED_COUNTER_SDL)
             .await
             .expect("schema");
         let registry = DbTransactionRegistry::new(Arc::clone(&db));
@@ -1111,7 +1048,7 @@ fn explicit_txn_indexed_counter_index_reflects_the_incremented_value() {
 fn create_in_tx_publishes_event_on_commit() {
     workers::block_on(async {
         let (db, bus) = make_test_db_with_bus().await;
-        db.create_collection(test_collection())
+        db.add_collection(&defra_core::RequestContext::ambient(), TEST_COLLECTION_SDL)
             .await
             .expect("schema");
 
@@ -1153,8 +1090,9 @@ fn create_in_tx_publishes_event_on_commit() {
 fn auto_commit_create_registers_acp_before_publishing_update() {
     workers::block_on(async {
         let (db, bus) = make_test_db_with_bus().await;
-        db.create_collection(
-            test_collection().with_policy(PolicyDescription::new("policy1", "test-docs")),
+        db.add_collection(
+            &defra_core::RequestContext::ambient(),
+            r#"type TestDoc @policy(id: "policy1", resource: "test-docs") { x: Int }"#,
         )
         .await
         .expect("schema");
@@ -1205,7 +1143,7 @@ fn auto_commit_create_registers_acp_before_publishing_update() {
 fn create_in_tx_publishes_no_event_on_discard() {
     workers::block_on(async {
         let (db, bus) = make_test_db_with_bus().await;
-        db.create_collection(test_collection())
+        db.add_collection(&defra_core::RequestContext::ambient(), TEST_COLLECTION_SDL)
             .await
             .expect("schema");
 
@@ -1236,7 +1174,7 @@ fn delete_missing_doc_publishes_no_event_and_writes_no_block() {
         // DeleteNode treats existed==false as a no-op; the mutator must not
         // create a tombstone commit or fire an Update event for a missing doc.
         let (db, bus) = make_test_db_with_bus().await;
-        db.create_collection(test_collection())
+        db.add_collection(&defra_core::RequestContext::ambient(), TEST_COLLECTION_SDL)
             .await
             .expect("schema");
 
@@ -1303,7 +1241,7 @@ impl db::merge::governance::LocalCommitRelease for CapturingRelease {
 fn transactional_broadcasts_and_releases_follow_commit_receipts() {
     workers::block_on(async {
         let (db, _bus) = make_test_db_with_bus().await;
-        db.create_collection(test_collection())
+        db.add_collection(&defra_core::RequestContext::ambient(), TEST_COLLECTION_SDL)
             .await
             .expect("schema");
         let captured: Arc<SegQueue<db::event::emission::TxnBroadcastEvent>> =
@@ -1404,7 +1342,7 @@ fn create_in_tx_forwards_to_broadcaster_on_commit() {
         // broadcast_update for each committed mutation so P2P peers see
         // transactional writes (Go: db.sendUpdate → p2p.SendUpdate).
         let (db, _bus) = make_test_db_with_bus().await;
-        db.create_collection(test_collection())
+        db.add_collection(&defra_core::RequestContext::ambient(), TEST_COLLECTION_SDL)
             .await
             .expect("schema");
 
@@ -1458,7 +1396,7 @@ fn create_in_tx_forwards_to_broadcaster_on_commit() {
 fn create_in_tx_does_not_broadcast_on_discard() {
     workers::block_on(async {
         let (db, _bus) = make_test_db_with_bus().await;
-        db.create_collection(test_collection())
+        db.add_collection(&defra_core::RequestContext::ambient(), TEST_COLLECTION_SDL)
             .await
             .expect("schema");
 

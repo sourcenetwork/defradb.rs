@@ -58,6 +58,12 @@ pub const ACCESS_CHECK_UNAVAILABLE_ERROR_CODE: &str = "ACCESS_CHECK_UNAVAILABLE"
 /// A strict read met a document whose access check failed for another reason
 /// and returned nothing; reading again does not help until the cause is fixed.
 pub const ACCESS_CHECK_FAILED_ERROR_CODE: &str = "ACCESS_CHECK_FAILED";
+/// A create's document ID is already stored: its genesis block, and so its
+/// ID, is the stored document's (`a document with the given ID already exists`).
+pub const DOCUMENT_ALREADY_EXISTS_ERROR_CODE: &str = "DOCUMENT_ALREADY_EXISTS";
+/// A create or save named a document that has been deleted; it is not added
+/// again (`a document with the given ID has been deleted`).
+pub const DOCUMENT_DELETED_ERROR_CODE: &str = "DOCUMENT_DELETED";
 /// A subscription sent without `Accept: text/event-stream`; HTTP answers it with 406.
 pub const SUBSCRIPTION_NEEDS_SSE_ERROR_CODE: &str = "SUBSCRIPTION_NEEDS_SSE";
 
@@ -113,6 +119,11 @@ pub struct QueryRequest {
     /// client cannot turn filter input validation off.
     #[serde(skip)]
     pub filter_origin: FilterOrigin,
+
+    /// Inputs the caller already holds, such as a backup's chunk vectors.
+    /// Never read from the wire, so a client cannot plant an answer.
+    #[serde(skip)]
+    pub known_inputs: Option<crate::prepared::KnownInputs>,
 }
 
 /// Who wrote a request's filters, which decides whether they are checked
@@ -139,7 +150,14 @@ impl QueryRequest {
             context: RequestContext::default(),
             parsed: None,
             filter_origin: FilterOrigin::Request,
+            known_inputs: None,
         }
+    }
+
+    /// Attach answers the request's attempts use instead of asking for them.
+    pub fn with_known_inputs(mut self, inputs: crate::prepared::KnownInputs) -> Self {
+        self.known_inputs = Some(inputs);
+        self
     }
 
     /// Set who wrote the request's filters.
@@ -464,8 +482,11 @@ impl QueryResponseError {
             _ => None,
         };
         let invalid_request = error.is_invalid_request();
+        let document_code = error.code();
         let response_error = Self::new(error.to_string());
-        let mut response_error = if is_transaction_conflict {
+        let mut response_error = if let Some(code) = document_code {
+            response_error.with_code(code)
+        } else if is_transaction_conflict {
             response_error.with_code(TXN_CONFLICT_ERROR_CODE)
         } else if is_transaction_retry_exhausted {
             response_error.with_code(TXN_RETRY_EXHAUSTED_ERROR_CODE)
@@ -741,6 +762,20 @@ pub trait QueryExecutor: MaybeSendSync {
         handle: &TransactionHandle,
     ) -> std::result::Result<(), TransactionError> {
         context.mirror(self.discard_txn(handle)).await
+    }
+
+    /// Ask whether an explicit transaction's lost commit landed. Only its
+    /// owner gets a state; any other caller gets the same `unknown` answer as
+    /// an ID that does not exist.
+    async fn txn_outcome_as(
+        &self,
+        context: &RequestContext,
+        handle: &TransactionHandle,
+    ) -> std::result::Result<crate::txn::TransactionOutcome, TransactionError> {
+        let _ = (context, handle);
+        Err(TransactionError::not_supported(
+            "transaction outcomes are not supported by this executor",
+        ))
     }
 
     /// [`TransactionRegistry::add_collection_as`](crate::txn::TransactionRegistry::add_collection_as).

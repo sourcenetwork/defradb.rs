@@ -11,7 +11,7 @@
 //! - `native` — native host (event channel). Default-on.
 //! - `vera` — on-chain document ACP. Default-on. Omit for local-only ACP.
 //! - `wasmtime-runtime` — Lens WASM execution. Default-on. Without it,
-//!   [`Node::set_migration_as`] returns an explicit error.
+//!   [`Node::set_migration`] returns an explicit error.
 //! - `p2p` — Iroh/QUIC replication. Implies `native`. Does **not** compile libp2p.
 //!   `iroh` is the same feature under its former name.
 //! - `libp2p` — libp2p replication. Implies `native`. Off by default, so the
@@ -19,6 +19,23 @@
 //! - `system-keyring` — the OS keyring backend for the peer keyring.
 //! - `http` — GraphQL HTTP server.
 //! - `otel` — OpenTelemetry exporter.
+//!
+//! ## Who a call acts as, and in which transaction
+//!
+//! [`Node`] acts as the node's own principal. [`Node::with_identity`] and
+//! [`Node::anonymous`] scope it to a caller, and [`Node::new_txn`] or
+//! [`Node::with_transaction`] to an explicit transaction, which offers only
+//! the operations that run in one:
+//!
+//! ```no_run
+//! # async fn example(node: &defra_node::Node, user: identity::Did) -> defra_node::Result<()> {
+//! node.add_collection("type User { name: String }").await?;
+//! let txn = node.with_identity(user).new_txn(false).await?;
+//! txn.add_view("User { name }", "type UserView { name: String }", None)
+//!     .await?;
+//! txn.commit().await
+//! # }
+//! ```
 
 #[cfg(feature = "p2p")]
 mod access_hooks;
@@ -56,30 +73,34 @@ mod managed_p2p;
 mod network;
 mod node_acp;
 mod node_builder;
+mod node_core;
 mod node_identity;
 #[cfg(test)]
 mod node_query_identity_tests;
 #[cfg(test)]
 mod on_pool_tests;
 mod ops;
-mod owed;
 #[cfg(feature = "vera")]
 mod owed_drainer;
 #[cfg(test)]
 mod storage_open_tests;
-pub use ops::{EncryptedIndexListing, IndexListing};
+pub use node_core::IndexListing;
+pub use ops::EncryptedIndexListing;
 #[cfg(any(feature = "p2p", feature = "libp2p"))]
 mod p2p_runtime;
 #[cfg(any(feature = "p2p", feature = "libp2p"))]
 mod peer_key;
 mod peer_keyring;
+#[cfg(feature = "pinc")]
+mod pinc_runtime;
 mod request_path;
+mod scope;
 mod signed_query;
 mod signer_credential;
 mod start_peer_key;
 mod transaction;
 #[cfg(feature = "vera")]
-mod vera_rs_config;
+mod vera_config;
 pub mod version;
 
 use std::sync::Arc;
@@ -108,10 +129,10 @@ pub use coding_search::{
 pub use config::HttpConfig;
 #[cfg(feature = "libp2p")]
 pub use config::Libp2pConfig;
+#[cfg(feature = "pinc")]
+pub use config::PincConfig;
 #[cfg(any(feature = "p2p", feature = "libp2p"))]
 pub use config::SyncTuning;
-#[cfg(feature = "vera")]
-pub use config::VeraConfig;
 pub use config::{
     CommitGateHandle, DocumentAcpConfig, IndexBuildGateHandle, NodeConfig, NodeSigning,
     Persistence, ReplicationFilterHandle, SigningKey, TransportConfig,
@@ -141,69 +162,29 @@ pub use lens::{LensConfig, LensModule, TransformId};
 #[cfg(feature = "managed-p2p")]
 pub use managed_p2p::{ManagedP2PSystem, ShutdownHandle, TransportKind};
 pub use node_builder::{NodeBuilder, StorageBackend, StoreProfile};
+/// Runs a pinc hub, which pinc topics travel through.
+#[cfg(feature = "pinc")]
+pub use p2p::pinc::spawn_hub as spawn_pinc_hub;
 pub use peer_keyring::PeerKeyring;
 pub use query::owners::{DocumentAccessDecision, DocumentAccessMode};
 pub use query::QueryLimits;
 pub use query::{QueryExecutor, QueryRequest, QueryResponse, TransactionHandle};
 pub use schema::CollectionVersion;
+pub use scope::{ActingFor, ScopedNode, TxnNode};
 pub use signer_credential::SignerCredential;
 pub use start_peer_key::StartPeerKey;
 pub use telemetry::{ConflictMetricsSnapshot, RetryLayerSnapshot};
 #[cfg(feature = "otel")]
 pub use telemetry::{TelemetryConfig, TelemetryHandle};
-pub use transaction::NodeTransaction;
 #[cfg(feature = "vera")]
-pub use vera_rs_config::{VeraRsActor, VeraRsConfig};
+pub use vera_config::{VeraActor, VeraConfig};
 pub use zeroize::Zeroizing;
 
 use network::NodeEdge;
-#[cfg(not(target_arch = "wasm32"))]
-use signed_query::{execute_with_signing_context, unavailable_node_signer_response};
-
-/// Type-erased schema operations so we can store `DB<S>` without leaking the `Store` generic.
-#[async_trait::async_trait]
-trait SchemaOps: Send + Sync {
-    async fn add_collection(
-        &self,
-        context: &RequestContext,
-        sdl: &str,
-    ) -> Result<Vec<CollectionVersion>>;
-    async fn ensure_ordinary_index(
-        &self,
-        context: &RequestContext,
-        collection: &str,
-        name: &str,
-        fields: Vec<schema::IndexedFieldDescription>,
-    ) -> Result<schema::IndexDescription>;
-    async fn add_view(
-        &self,
-        context: &RequestContext,
-        source_query: &str,
-        target_sdl: &str,
-        transform: Option<&str>,
-    ) -> Result<Vec<CollectionVersion>>;
-    async fn refresh_views(
-        &self,
-        context: &RequestContext,
-        selector: db::CollectionSelector,
-    ) -> Result<()>;
-    async fn materialize_collection(
-        &self,
-        context: &RequestContext,
-        collection_name: &str,
-    ) -> Result<usize>;
-    fn list_collections(&self) -> Result<Vec<String>>;
-    fn get_collection(&self, name: &str) -> Result<Option<CollectionVersion>>;
-    async fn get_collection_by_version_id(
-        &self,
-        version_id: &str,
-    ) -> Result<Option<CollectionVersion>>;
-    async fn get_all_collection_versions(&self) -> Result<Vec<CollectionVersion>>;
-}
 
 #[cfg(feature = "http")]
 struct HttpSchemaOps {
-    schema_ops: Arc<dyn SchemaOps>,
+    schema_ops: db_impls::DbSchemaOps,
     /// The request these operations serve, for ones bound to it.
     context: Option<RequestContext>,
 }
@@ -216,36 +197,26 @@ impl defra_http::router::CollectionOperations for HttpSchemaOps {
         context: &RequestContext,
     ) -> Option<Arc<dyn defra_http::router::CollectionOperations>> {
         Some(Arc::new(Self {
-            schema_ops: Arc::clone(&self.schema_ops),
+            schema_ops: self.schema_ops.clone(),
             context: Some(context.clone()),
         }))
     }
 
-    async fn add_collection(&self, sdl: &str) -> Result<Vec<CollectionVersion>, String> {
+    async fn add_collection(
+        &self,
+        sdl: &str,
+    ) -> Result<Vec<CollectionVersion>, defra_http::router::CollectionRefusal> {
         self.schema_ops
             .add_collection(
                 &RequestContext::bound_or_ambient(self.context.as_ref()),
                 sdl,
             )
             .await
-            .map_err(|error| error.to_string())
+            .map_err(|error| match error {
+                Error::AddCollection(refused) => refused.into(),
+                other => other.to_string().into(),
+            })
     }
-}
-
-#[async_trait::async_trait]
-trait BlockOps: Send + Sync {
-    async fn signed_block_bytes(
-        &self,
-        cid: &str,
-        caller_did: Option<&str>,
-    ) -> Result<(Vec<u8>, Vec<u8>)>;
-    async fn verified_signer_did(&self, cid: &str) -> Result<String>;
-    async fn verified_signer_did_in_txn(
-        &self,
-        context: &RequestContext,
-        cid: &str,
-        transaction: &TransactionHandle,
-    ) -> Result<String>;
 }
 
 /// An embedded DefraDB node with query execution and event subscription.
@@ -261,8 +232,8 @@ pub struct Node {
     #[cfg(feature = "http")]
     rest: Arc<dyn query::rest::RestOperations>,
     event_bus: Arc<dyn events::Bus>,
-    schema_ops: Arc<dyn SchemaOps>,
-    block_ops: Arc<dyn BlockOps>,
+    schema_ops: db_impls::DbSchemaOps,
+    block_ops: db_impls::DbBlockOps,
     acp_ops: Arc<dyn acp_ops::AcpOps>,
     document_acp: Arc<dyn acp::DocumentACP>,
     embedding_config: db::EmbeddingClientConfig,
@@ -417,195 +388,6 @@ impl Node {
         self.execute_prepared_request(request, None).await
     }
 
-    /// Execute a prepared query request within an existing transaction.
-    ///
-    /// The node identity context and explicit request identity are applied
-    /// the same way as [`Self::execute_request`].
-    pub async fn execute_request_in_txn(
-        &self,
-        request: QueryRequest,
-        handle: &TransactionHandle,
-    ) -> QueryResponse {
-        self.execute_prepared_request(request, Some(handle.clone()))
-            .await
-    }
-
-    /// Stage one verified client create in a node-owned transaction. Native ACP
-    /// still authorizes the graph's signer as the request actor; signature
-    /// evidence is not an authorization grant.
-    ///
-    /// A document ACP provider that cannot join the transaction is owed the
-    /// document's registration, which the node sends after the commit as the
-    /// signer. `credential` is what lets it: without a key the node holds
-    /// for the signer and without a credential the provider takes for that
-    /// registration, the create is refused with
-    /// [`WRITE_AUTHORITY_UNAVAILABLE_ERROR_CODE`](query::executor::WRITE_AUTHORITY_UNAVAILABLE_ERROR_CODE)
-    /// before anything is written. A delegation that does not hold at the
-    /// provider's time, because its signer's clock is off or it was held too
-    /// long, is refused instead with
-    /// [`DELEGATION_OUTSIDE_WINDOW_ERROR_CODE`](query::executor::DELEGATION_OUTSIDE_WINDOW_ERROR_CODE)
-    /// and that time, at which a new delegation is taken. A local document
-    /// ACP reads no credential.
-    pub async fn execute_verified_create_in_txn(
-        &self,
-        request: QueryRequest,
-        handle: &TransactionHandle,
-        graph: &db::block::builder::VerifiedClientCreate,
-        credential: SignerCredential,
-    ) -> QueryResponse {
-        self.execute_verified_graph_in_txn(request, handle, graph, credential)
-            .await
-    }
-
-    /// Stage one verified client update or delete under native ACP in the
-    /// node-owned transaction. A changed state requires an unapproved wave and
-    /// causes the transaction to be discarded.
-    ///
-    /// A document ACP provider that cannot join the transaction is owed
-    /// nothing by an update or a delete. The write is staged when the
-    /// signer holds the `update` (or `delete`) permission on the document,
-    /// decided before anything is written as every update and delete
-    /// decides it: a registration still owed on this node admits only the
-    /// document's creator, a revocation still owed refuses its subject, and
-    /// otherwise the provider's decision, which vera.rs proves against its
-    /// finalized state at a revision within the light client's freshness
-    /// limit, and which fails closed when no such revision can be read. The
-    /// guarantee is the permission at that revision: a revocation finalized
-    /// after it can be passed until a newer revision is verified or the
-    /// proof ages out, and one finalized after admission does not undo the
-    /// write.
-    ///
-    /// `credential` only says who is asking, and the permission decides for
-    /// every form: [`SignerCredential::None`] where the provider proves its
-    /// decisions (elsewhere the node must hold the signer's key), or a
-    /// [`SignerCredential::Delegation`] the provider takes as the signer's.
-    /// A [`SignerCredential::RequestBound`] names a command, and these
-    /// writes send none: it is refused with
-    /// [`WRITE_AUTHORITY_UNAVAILABLE_ERROR_CODE`](query::executor::WRITE_AUTHORITY_UNAVAILABLE_ERROR_CODE).
-    pub async fn execute_verified_mutation_in_txn(
-        &self,
-        request: QueryRequest,
-        handle: &TransactionHandle,
-        graph: &db::block::builder::VerifiedClientMutation,
-        credential: SignerCredential,
-    ) -> QueryResponse {
-        self.execute_verified_graph_in_txn(request, handle, graph, credential)
-            .await
-    }
-
-    async fn execute_verified_graph_in_txn<G>(
-        &self,
-        mut request: QueryRequest,
-        handle: &TransactionHandle,
-        graph: &G,
-        credential: SignerCredential,
-    ) -> QueryResponse
-    where
-        G: VerifiedClientGraph,
-    {
-        if request.parsed.is_some()
-            || request.context.dac_bypass()
-            || request
-                .identity
-                .as_ref()
-                .map(ToString::to_string)
-                .as_deref()
-                != Some(graph.signer_did())
-        {
-            let _ = self.discard_transaction(handle).await;
-            return QueryResponse::error("verified create actor or DAC context does not match");
-        }
-        let variables = match &request.variables {
-            Some(serde_json::Value::Object(values)) => Some(
-                values
-                    .iter()
-                    .map(|(key, value)| (key.clone(), value.clone()))
-                    .collect(),
-            ),
-            None => None,
-            _ => {
-                let _ = self.discard_transaction(handle).await;
-                return QueryResponse::error("verified create variables must be an object");
-            }
-        };
-        let Ok(query::query_parse::ParsedOperation::Mutation {
-            mutations,
-            explain: None,
-            ..
-        }) = query::query_parse::parse_request_with_limits(
-            &request.query,
-            variables.as_ref(),
-            request.operation_name.as_deref(),
-            query::QueryLimits::default(),
-        )
-        else {
-            let _ = self.discard_transaction(handle).await;
-            return QueryResponse::error("verified create requires one matching mutation");
-        };
-        if mutations.len() != 1 || !graph.matches_mutation(&mutations[0]) {
-            let _ = self.discard_transaction(handle).await;
-            return QueryResponse::error("verified create requires one matching mutation");
-        }
-        let key = mutations[0].output_name();
-        // The graph supplies signatures only; no caller context may carry a
-        // separate actor, encryption, bearer, or transaction authority. The
-        // one credential is the signer's own, for the document the graph
-        // names (proofs/tla/VerifiedRemoteWrite.tla).
-        request.context = credential.carried_by(
-            defra_core::RequestContext::default()
-                .with_transactional_authority_required()
-                .with_verified_document(Some(graph.doc_id().to_owned())),
-            graph.signer_did(),
-        );
-        let Some(node_did) = self.node_identity_did.as_deref() else {
-            let _ = self.discard_transaction(handle).await;
-            return QueryResponse::error("verified create requires a configured node identity");
-        };
-        #[cfg(target_arch = "wasm32")]
-        {
-            let _ = (node_did, key);
-            let _ = self.discard_transaction(handle).await;
-            QueryResponse::error("verified create is unavailable on wasm32")
-        }
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            let Some(network) = self.network.as_ref() else {
-                let _ = self.discard_transaction(handle).await;
-                return unavailable_node_signer_response(node_did);
-            };
-            let (signing_config, receipt) = graph.signing_config_for_execution();
-            let response = execute_with_signing_context(
-                network.requests(),
-                self.runner.clone(),
-                request,
-                Some(handle.clone()),
-                signing_config,
-                self.node_principal(),
-            )
-            .await;
-            if response.has_errors() {
-                let _ = self.discard_transaction(handle).await;
-                return response;
-            }
-            let matches = response
-                .data
-                .as_ref()
-                .and_then(|data| data.get(&key))
-                .and_then(serde_json::Value::as_array)
-                .is_some_and(|rows| {
-                    rows.len() == 1
-                        && rows[0].get("_docID").and_then(serde_json::Value::as_str)
-                            == Some(graph.doc_id())
-                });
-            if !matches || !receipt.is_complete() {
-                // A failed or unconfirmed stage must not leave partial writes available to commit.
-                let _ = self.discard_transaction(handle).await;
-                return QueryResponse::error("verified create was not confirmed");
-            }
-            response
-        }
-    }
-
     async fn execute_request_once(&self, request: QueryRequest) -> QueryResponse {
         self.execute_prepared_request(request, None).await
     }
@@ -717,9 +499,9 @@ impl Node {
     /// and NAC checks the node's own operations as anonymous, as Go's node
     /// checks a call that names no identity.
     ///
-    /// An embedder reads node-ACP-gated P2P information as the node with
-    /// `node.p2p_system()?.ops_for(&node.node_context())`.
-    pub fn node_context(&self) -> RequestContext {
+    /// An embedder reads node-ACP-gated P2P information as the node through
+    /// the unscoped node, as with [`Node::peer_info`].
+    pub(crate) fn node_context(&self) -> RequestContext {
         let context = RequestContext::ambient();
         match self.node_principal() {
             Some(did) => context.with_identity(Some(did)),
@@ -741,56 +523,6 @@ impl Node {
         self.node_identity_did.as_deref()
     }
 
-    /// Cryptographically verify a committed block and return its signer DID.
-    ///
-    /// This reads the signature linked by `cid`, verifies it over the
-    /// canonical DAG-CBOR block bytes, and derives the DID from the verified
-    /// public key. Unsigned, malformed, missing, or invalid blocks fail closed.
-    pub async fn verified_block_signer_did(&self, cid: &str) -> Result<String> {
-        let (ops, cid) = (Arc::clone(&self.block_ops), cid.to_owned());
-        self.on_pool(move || async move { ops.verified_signer_did(&cid).await })
-            .await
-    }
-
-    /// Load canonical signed-block material after applying document ACP for
-    /// the supplied caller. The caller must independently verify both CIDs and
-    /// the detached signature before trusting the returned signer.
-    pub async fn authorized_signed_block_bytes(
-        &self,
-        cid: &str,
-        caller_did: Option<&str>,
-    ) -> Result<(Vec<u8>, Vec<u8>)> {
-        let (ops, cid) = (Arc::clone(&self.block_ops), cid.to_owned());
-        let caller = caller_did.map(str::to_owned);
-        self.on_pool(move || async move { ops.signed_block_bytes(&cid, caller.as_deref()).await })
-            .await
-    }
-
-    /// Cryptographically verify a block visible inside an active transaction.
-    ///
-    /// This variant can verify uncommitted blocks before the caller commits or
-    /// rolls back the transaction.
-    pub async fn verified_block_signer_did_in_txn(
-        &self,
-        cid: &str,
-        transaction: &TransactionHandle,
-    ) -> Result<String> {
-        self.block_ops
-            .verified_signer_did_in_txn(&self.node_context(), cid, transaction)
-            .await
-    }
-
-    /// Add a schema from a GraphQL SDL type definition.
-    pub async fn add_collection(&self, sdl: &str) -> Result<()> {
-        let (ops, sdl, context) = (
-            Arc::clone(&self.schema_ops),
-            sdl.to_owned(),
-            self.node_context(),
-        );
-        self.on_pool(move || async move { ops.add_collection(&context, &sdl).await.map(|_| ()) })
-            .await
-    }
-
     /// Ensure a named nonunique ordinary index, preserving the collection's
     /// version and documents. Readiness is reported only after backfill; an
     /// existing unfinished or failed backfill returns an error.
@@ -800,7 +532,7 @@ impl Node {
         name: &str,
         fields: Vec<schema::IndexedFieldDescription>,
     ) -> Result<schema::IndexDescription> {
-        let (ops, context) = (Arc::clone(&self.schema_ops), self.node_context());
+        let (ops, context) = (self.schema_ops.clone(), self.node_context());
         let (collection, name) = (collection.to_owned(), name.to_owned());
         self.on_pool(move || async move {
             ops.ensure_ordinary_index(&context, &collection, &name, fields)
@@ -809,64 +541,10 @@ impl Node {
         .await
     }
 
-    /// Create a materialized view from a source query and target SDL.
-    ///
-    /// `source_query` format: `"SourceType { field1 field2 ... }"`
-    /// `target_sdl` is the SDL for the view collection (may include directives
-    /// like `@downsample` that are forward-declared for future defradb.rs support).
-    pub async fn add_view(&self, source_query: &str, target_sdl: &str) -> Result<()> {
-        self.add_view_as(&self.node_context(), source_query, target_sdl, None)
-            .await
-            .map(drop)
-    }
-
-    /// [`Self::add_view`] as `context`'s identity, which node access control
-    /// checks, its documents run through the stored lens `transform` when it
-    /// names one; the view collections it created (Go: `client.Store::AddView`).
-    pub async fn add_view_as(
-        &self,
-        context: &RequestContext,
-        source_query: &str,
-        target_sdl: &str,
-        transform: Option<&str>,
-    ) -> Result<Vec<CollectionVersion>> {
-        self.ops()
-            .add_view(
-                &self.admitted_caller(context)?,
-                source_query,
-                target_sdl,
-                transform,
-            )
-            .await
-    }
-
-    /// Refresh the materialized views `selector` names, every one when it
-    /// names none (Go: `client.Store::RefreshViews`).
-    pub async fn refresh_views_as(
-        &self,
-        context: &RequestContext,
-        selector: db::CollectionSelector,
-    ) -> Result<()> {
-        self.ops()
-            .refresh_views(&self.admitted_caller(context)?, selector)
-            .await
-    }
-
-    /// Eagerly migrate and cache every known-version document in a collection.
-    ///
-    /// Returns the number of documents advanced to the active version. This is a
-    /// datastore-only operation and does not create or broadcast document commits.
-    pub async fn materialize_collection(&self, collection_name: &str) -> Result<usize> {
-        let (ops, context) = (Arc::clone(&self.schema_ops), self.node_context());
-        let name = collection_name.to_owned();
-        self.on_pool(move || async move { ops.materialize_collection(&context, &name).await })
-            .await
-    }
-
     /// List the names of every active collection known to the node.
     ///
     /// Useful for idempotent schema-bootstrap flows that need to decide whether
-    /// to call [`Self::add_collection`] (create) or [`Self::patch_collection_as`] (evolve).
+    /// to call [`Self::add_collection`] (create) or [`Self::patch_collection`] (evolve).
     pub fn list_collections(&self) -> Result<Vec<String>> {
         self.schema_ops.list_collections()
     }
@@ -887,14 +565,14 @@ impl Node {
         &self,
         version_id: &str,
     ) -> Result<Option<CollectionVersion>> {
-        let (ops, version) = (Arc::clone(&self.schema_ops), version_id.to_owned());
+        let (ops, version) = (self.schema_ops.clone(), version_id.to_owned());
         self.on_pool(move || async move { ops.get_collection_by_version_id(&version).await })
             .await
     }
 
     /// Return every collection version known to the node, active and inactive.
     pub async fn get_all_collection_versions(&self) -> Result<Vec<CollectionVersion>> {
-        let ops = Arc::clone(&self.schema_ops);
+        let ops = self.schema_ops.clone();
         self.on_pool(move || async move { ops.get_all_collection_versions().await })
             .await
     }
@@ -922,19 +600,6 @@ impl Node {
             .subscribe_collection_changes(collection_ids.into_iter().collect())
     }
 
-    /// Begin a manually finalized transaction. Dropping its handle does not
-    /// roll it back; use [`Self::begin_transaction_guard`] for scope ownership.
-    ///
-    /// Begun as a request (see [`Self::shutdown`]).
-    pub async fn begin_transaction(
-        &self,
-        readonly: bool,
-    ) -> Result<TransactionHandle, query::TransactionError> {
-        self.begin_owned_transaction(self.node_context(), readonly)
-            .await?
-            .into_handle()
-    }
-
     async fn begin_owned_transaction(
         &self,
         context: RequestContext,
@@ -949,38 +614,11 @@ impl Node {
         .unwrap_or_else(|error| Err(refused_transaction(error, "begun")))
     }
 
-    /// Commit a transaction owned by this node.
-    ///
-    /// The commit is admitted as a request (see [`Self::shutdown`]): once
-    /// shutdown stops admitting requests it is refused, uncommitted, rather
-    /// than committing after P2P stopped recording its head markers.
-    pub async fn commit_transaction(
-        &self,
-        transaction: &TransactionHandle,
-    ) -> Result<(), query::TransactionError> {
-        let runner = Arc::clone(&self.runner);
-        let context = self.node_context();
-        let transaction = transaction.clone();
-        self.as_request(async move { runner.commit_txn_as(&context, &transaction).await })
-            .await
-            .unwrap_or_else(|error| Err(refused_transaction(error, "committed")))
-    }
-
-    /// Roll back a transaction owned by this node.
-    pub async fn discard_transaction(
-        &self,
-        transaction: &TransactionHandle,
-    ) -> Result<(), query::TransactionError> {
-        self.runner
-            .discard_txn_as(&self.node_context(), transaction)
-            .await
-    }
-
     /// Access the raw query executor for advanced use.
     ///
     /// Calling `execute` or `execute_in_txn` on this executor bypasses the
     /// node's signing context and default ACP identity. Use [`Self::execute`]
-    /// or [`Self::execute_request_in_txn`] for document reads and writes.
+    /// or [`TxnNode::execute_request`] for document reads and writes.
     pub fn runner(&self) -> &Arc<dyn QueryExecutor> {
         &self.runner
     }
@@ -990,83 +628,11 @@ impl Node {
         &self.event_bus
     }
 
-    /// Grant `target` the `relation` on a document (Go: client.Store::AddDACActorRelationship).
-    ///
-    /// `identity` is the requesting actor's DID; it must own the document or
-    /// hold a relation that manages `relation`. `target` is an actor DID, the
-    /// all-actors wildcard `*`, or a structured subject.
-    ///
-    /// Returns `existed_already`: `true` means the relationship was already
-    /// present and the call was a no-op, `false` means it was newly added. A new
-    /// grant also publishes a document-update event.
-    pub async fn add_dac_actor_relationship(
-        &self,
-        identity: &str,
-        collection: &str,
-        doc_id: &str,
-        relation: &str,
-        target: &str,
-    ) -> Result<bool> {
-        let ops = self.ops().acp_ops;
-        let owned = |value: &str| value.to_owned();
-        let (identity, collection, doc_id) = (owned(identity), owned(collection), owned(doc_id));
-        let (relation, target) = (owned(relation), owned(target));
-        self.on_acp(move || async move {
-            let context =
-                defra_core::RequestContext::default().with_identity(Some(identity.clone()));
-            ops.add_dac_actor_relationship(
-                &context,
-                &identity,
-                &collection,
-                &doc_id,
-                &relation,
-                &target,
-            )
-            .await
-        })
-        .await
-    }
-
-    /// Revoke `target`'s `relation` on a document (Go: client.Store::DeleteDACActorRelationship).
-    ///
-    /// `identity` is the requesting actor's DID; it must own the document or
-    /// hold a relation that manages `relation`.
-    ///
-    /// Returns `record_found`: `true` means the relationship existed and was
-    /// deleted, `false` means there was nothing to delete.
-    pub async fn delete_dac_actor_relationship(
-        &self,
-        identity: &str,
-        collection: &str,
-        doc_id: &str,
-        relation: &str,
-        target: &str,
-    ) -> Result<bool> {
-        let ops = self.ops().acp_ops;
-        let owned = |value: &str| value.to_owned();
-        let (identity, collection, doc_id) = (owned(identity), owned(collection), owned(doc_id));
-        let (relation, target) = (owned(relation), owned(target));
-        self.on_acp(move || async move {
-            let context =
-                defra_core::RequestContext::default().with_identity(Some(identity.clone()));
-            ops.delete_dac_actor_relationship(
-                &context,
-                &identity,
-                &collection,
-                &doc_id,
-                &relation,
-                &target,
-            )
-            .await
-        })
-        .await
-    }
-
     /// Access the raw document ACP handle (Go: `node.DB.DocumentACP()`).
     ///
     /// This is an escape hatch for policy and relationship operations the node
     /// does not wrap. It bypasses node access control and the collection-policy
-    /// lookup, so standard flows belong on [`Self::add_dac_policy_as`],
+    /// lookup, so standard flows belong on [`Self::add_dac_policy`],
     /// [`Self::add_dac_actor_relationship`], and
     /// [`Self::delete_dac_actor_relationship`].
     pub fn document_acp(&self) -> Arc<dyn acp::DocumentACP> {
@@ -1171,78 +737,6 @@ impl Node {
     pub fn is_shutdown(&self) -> bool {
         self.shutdown_started
             .load(std::sync::atomic::Ordering::SeqCst)
-    }
-
-    /// [`Self::execute`] as `context` serves, rather than as the node.
-    /// Admitted as a request (see [`Self::shutdown`]).
-    pub async fn execute_as(&self, context: &RequestContext, query_str: &str) -> QueryResponse {
-        // A caller's key signs only once admitted. Without one the node signs
-        // with its own key, looked up by the node's DID alone: a key the
-        // process holds for the request's DID is not the caller's to use.
-        let caller_signer = match self.admit(context) {
-            Ok(signer) => signer,
-            Err(error) => return QueryResponse::error(error.to_string()),
-        };
-        let runner = Arc::clone(&self.runner);
-        let mut request = QueryRequest::new(query_str).with_context(context.clone());
-        let override_flag = request.context.signing_override();
-        let node_signs = self.node_identity_did.is_some()
-            && override_flag != Some(false)
-            && (self.node_signs || override_flag == Some(true));
-        let signing_config = match caller_signer {
-            Some(config) => Some(config),
-            None if node_signs => {
-                let node_key = defra_core::signing::resolve_signing_config_with_flag(
-                    None,
-                    self.node_identity_did.as_deref(),
-                    true,
-                );
-                if node_key.is_none() {
-                    return unavailable_node_signer_response(
-                        self.node_identity_did.as_deref().unwrap_or("node"),
-                    );
-                }
-                node_key
-            }
-            None => None,
-        };
-        match signing_config {
-            Some(signing_config) => {
-                request.context = request
-                    .context
-                    .with_signing_session(Some(signing_config.clone()));
-                match self.network.as_ref() {
-                    Some(network) => {
-                        signed_query::execute_with_signing_context(
-                            network.requests(),
-                            runner,
-                            request,
-                            None,
-                            signing_config,
-                            None,
-                        )
-                        .await
-                    }
-                    None => self
-                        .as_request(async move { runner.execute(request).await })
-                        .await
-                        .unwrap_or_else(signed_query::refused_response),
-                }
-            }
-            None => self
-                .as_request(async move { runner.execute(request).await })
-                .await
-                .unwrap_or_else(signed_query::refused_response),
-        }
-    }
-
-    /// Add an equality encrypted (searchable-encryption) index on `field_name`
-    /// of `collection`, so the node can write SE artifacts and act as an SE
-    /// query owner (#976).
-    pub async fn add_encrypted_index(&self, collection: &str, field_name: &str) -> Result<()> {
-        self.add_encrypted_index_as(&self.node_context(), collection, field_name)
-            .await
-            .map(drop)
     }
 
     /// Authorize a peer to open an inbound P2P connection to this node while
@@ -1499,7 +993,7 @@ pub(crate) enum Admit {
     /// A request of its own: refused once shutdown stops admitting.
     Request,
     /// Work of a request already admitted, such as a backup import's writes
-    /// ([`Node::import_backup_as`]): still
+    /// ([`Node::import_backup`]): still
     /// admitted while that request is in flight, so shutdown drains it.
     Continuation,
 }

@@ -75,7 +75,7 @@ pub enum ProviderError {
     #[error("config error: {0}")]
     Config(String),
 
-    /// Vera is temporarily unreachable (circuit breaker open or timeout).
+    /// Vera is temporarily unreachable (a timeout or a failed connection).
     /// All access decisions must fail-closed when this is returned.
     #[error("Vera unavailable: {0}")]
     Unavailable(String),
@@ -159,8 +159,8 @@ pub trait VeraProvider: MaybeSendSync {
     }
 
     /// Whether a document's delete archives its object on this provider as
-    /// an owed change staged in the delete's transaction, refused before
-    /// commit unless the caller owns the object
+    /// an owed change staged in the delete's transaction and made as the
+    /// object's owner, whoever deletes
     /// (`acp::TransactionOutbox::stage_archive`). Such a provider archives
     /// nothing after the commit ([`Self::archive_object_on_document_delete`]
     /// is `false` for it).
@@ -276,26 +276,18 @@ pub trait VeraProvider: MaybeSendSync {
         nonce: Option<acp::PolicyNonce>,
     ) -> Result<String, ProviderError>;
 
+    /// Register `object_id` with the token's actor as its owner, together
+    /// with `relationships`, what the document carries through its
+    /// `@policy(relation:)` fields: the provider checks the collection's
+    /// `create` over them and stores them with the owner.
     async fn register_object(
         &self,
         bearer_token: &str,
         policy_id: &str,
         resource: &str,
         object_id: &str,
+        relationships: &[acp::DerivedRelationship],
     ) -> Result<(), ProviderError>;
-
-    async fn register_under_parent(
-        &self,
-        _bearer_token: &str,
-        _policy_id: &str,
-        _resource: &str,
-        _object_id: &str,
-        _parent: &acp::RegistrationParent,
-    ) -> Result<(), ProviderError> {
-        Err(ProviderError::Unsupported(
-            "parent-authorized registration".into(),
-        ))
-    }
 
     /// Register each of `objects` under `bearer_token` in one request the
     /// provider applies in order, all or none, at most

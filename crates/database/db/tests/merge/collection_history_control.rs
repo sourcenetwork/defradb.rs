@@ -2,8 +2,26 @@ use super::super::hook::CompositeMergeHook;
 use super::*;
 use blockstore::{Blockstore as _, DefraBlockstore};
 use defra_core::block::{CollectionDeltaPayload, CompositeDeltaPayload, DAGLink};
-use schema::{CollectionVersion, FieldDescription, FieldKind};
+use schema::CollectionVersion;
 use storage::RegolithStore;
+
+const USERS_SDL: &str = "type Users { name: String }";
+
+fn users_collection() -> schema::CollectionVersion {
+    query::parse_sdl(USERS_SDL).unwrap().remove(0)
+}
+
+fn users_version_id() -> &'static str {
+    static ID: regolith::sync::Lazy<String> =
+        regolith::sync::Lazy::new(|| users_collection().version_id);
+    &ID
+}
+
+fn users_collection_id() -> &'static str {
+    static ID: regolith::sync::Lazy<String> =
+        regolith::sync::Lazy::new(|| users_collection().collection_id);
+    &ID
+}
 
 struct DriverFailure {
     kind: u8,
@@ -41,24 +59,14 @@ fn standalone_collection_preserves_linked_driver_errors() {
         for kind in [1, 0, 2, 3] {
             let store = Arc::new(RegolithStore::in_memory().unwrap());
             let db = Arc::new(DB::from_arc(store.clone()).unwrap());
-            db.create_collection(CollectionVersion::new(
-                "Users",
-                "v1",
-                "col-users",
-                vec![FieldDescription::new(
-                    "1",
-                    "_docID",
-                    FieldKind::doc_id(),
-                    schema::CType::LwwRegister,
-                )],
-            ))
-            .await
-            .unwrap();
+            db.add_collection(&defra_core::RequestContext::ambient(), USERS_SDL)
+                .await
+                .unwrap();
             let blocks = Arc::new(DefraBlockstore::new(store, true));
             let handler = DbMergeHandler::new(db, blocks.clone());
             let composite = Block::new(
                 CrdtDelta::Composite(CompositeDeltaPayload {
-                    collection_version_id: "v1".into(),
+                    collection_version_id: users_version_id().to_string(),
                     priority: 1,
                     status: 1,
                 }),
@@ -72,7 +80,7 @@ fn standalone_collection_preserves_linked_driver_errors() {
                 .unwrap();
             handler.set_composite_merge_hook(Arc::new(DriverFailure { kind, root }));
             let payload = CollectionDeltaPayload {
-                collection_version_id: "v1".into(),
+                collection_version_id: users_version_id().to_string(),
                 priority: 1,
             };
             let carrier = Block::new(
@@ -82,7 +90,8 @@ fn standalone_collection_preserves_linked_driver_errors() {
             );
             let cid = carrier.generate_cid().unwrap();
             let doc = crate::block::builder::derive_doc_id(&root);
-            let metadata = BlockMetadata::normal(&doc, "col-users", "peer", Some("peer"), false);
+            let metadata =
+                BlockMetadata::normal(&doc, users_collection_id(), "peer", Some("peer"), false);
             let error = handler
                 .process_collection_delta(&cid, &carrier, &payload, &metadata, 0)
                 .await

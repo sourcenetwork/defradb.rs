@@ -58,6 +58,7 @@ UNIT_NAMES = (
     "delegation_parity::a_policy_identifier_parses_as_vera_rs_client_parses_it",
     "delegation_parity::the_acp_precompile_is_the_one_vera_rs_client_names",
     "follow::effect::policy_creation_tests::a_lost_policy_creation_names_its_derived_id",
+    "follow::effect::tests::a_registration_with_relationships_is_owed_again_with_them",
     "follow::effect::tests::a_voided_batch_keeps_every_archive_it_carried_and_counts_the_rest",
     "follow::effect::tests::an_archive_and_other_requests_are_told_apart",
     "follow::effect::tests::registrations_and_relationship_changes_are_read_back_with_their_delegation",
@@ -154,7 +155,7 @@ LIVE_CASES = (
     ("revoked-delete", "policy_generations::strict_replication::native_replicated_delete_rejects_revoked_writer"),
     ("writer-update", "policy_generations::strict_replication::native_replicated_update_accepts_granted_writer"),
     ("writer-delete", "policy_generations::strict_replication::native_replicated_delete_accepts_granted_writer"),
-    ("node-builder", "node_builder::node_built_with_vera_rs_enforces_verified_document_access"),
+    ("node-builder", "node_builder::node_built_with_vera_enforces_verified_document_access"),
     ("node-provider", "node_builder::node_built_with_a_host_provider_enforces_verified_document_access"),
     ("actor-spelling", "actor_spelling::either_spelling_of_a_secp256k1_actor_is_one_vera_actor"),
     ("archived-record", "verified_records::archived_owner_record_does_not_authorize_access"),
@@ -168,10 +169,10 @@ LIVE_CASES = (
     ("in-process-request-bound", "request_bound::the_chain_executes_a_request_bound_delegation_for_its_command_only"),
     ("in-process-owed-note", "owed_note::a_command_that_resolves_a_journaled_request_with_its_bytes_notes_the_outcome"),
     ("in-process-owed-order", "owed_order::a_grant_still_in_flight_cannot_land_after_the_revocation_that_follows_it"),
-    ("smoke", "smoke::rust_verars_smoke"),
-    ("policy-administration", "policy_lifecycle::rust_verars_policy_lifecycle"),
-    ("compartments", "compartments::rust_verars_compartments"),
-    ("p2p-replication", "p2p_acp::rust_verars_p2p_acp"),
+    ("smoke", "smoke::rust_vera_smoke"),
+    ("policy-administration", "policy_lifecycle::rust_vera_policy_lifecycle"),
+    ("compartments", "compartments::rust_vera_compartments"),
+    ("p2p-replication", "p2p_acp::rust_vera_p2p_acp"),
 )
 CARGO = ["cargo", "+1.99.1"]
 BUILD = ["--release", "--frozen"]
@@ -501,13 +502,13 @@ def qualify(runner):
     runner.env["DEFRA_VERA_BINARY"] = runner.env["DEFRA_RUST_BINARY"]
     log = runner.run("compile-provider", CARGO + ["test", *BUILD, "-p", "vera", "--lib", "--no-run", "--message-format=json"])
     provider = runner.stage(log, "vera", "provider-tests")
-    log = runner.run("compile-native", CARGO + ["test", *BUILD, "-p", "integration-test", "--test", "verars", "--no-run", "--message-format=json"])
-    native = runner.stage(log, "verars", "native-tests")
+    log = runner.run("compile-native", CARGO + ["test", *BUILD, "-p", "integration-test", "--test", "vera", "--no-run", "--message-format=json"])
+    native = runner.stage(log, "vera", "native-tests")
     runner.test("provider-units", provider, ["vera_rs::"], UNIT_TESTS)
     for phase, selector in LIVE_CASES:
         runner.test(phase, native, [selector, "--exact"], [selector])
     runner.run("lint-provider", CARGO + ["clippy", *BUILD, "-p", "vera", "-p", "cli", "--features", "cli/vera", "--lib", "--tests", "--", "-D", "warnings"])
-    runner.run("lint-native", CARGO + ["clippy", *BUILD, "-p", "integration-test", "--test", "verars", "--", "-D", "warnings"])
+    runner.run("lint-native", CARGO + ["clippy", *BUILD, "-p", "integration-test", "--test", "vera", "--", "-D", "warnings"])
 
 
 def main():

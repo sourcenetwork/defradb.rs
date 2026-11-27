@@ -12,39 +12,15 @@ use db::{DEFAULT_TRANSACTION_CLEANUP_INTERVAL, DEFAULT_TRANSACTION_IDLE_TIMEOUT}
 pub enum DocumentAcpConfig {
     #[default]
     Local,
-    /// On-chain document ACP via Vera.
-    ///
-    /// Requires the `vera` feature (on by default).
-    #[cfg(feature = "vera")]
-    Vera(VeraConfig),
-    /// On-chain document ACP via Vera with distinct LCD and gRPC
-    /// endpoints.
-    #[cfg(feature = "vera")]
-    VeraWithLcd {
-        config: VeraConfig,
-        lcd_address: String,
-    },
     /// Document ACP via a vera.rs node.
     #[cfg(feature = "vera")]
-    VeraRs(crate::VeraRsConfig),
+    Vera(crate::VeraConfig),
     /// Document ACP via a provider the host built.
     #[cfg(feature = "vera")]
     Provider(crate::DocumentAcpProvider),
     /// Document ACP via a Vera node this node runs in its own process.
     #[cfg(feature = "embedded-vera")]
     EmbeddedVera(crate::EmbeddedVeraConfig),
-}
-
-/// Vera document ACP configuration.
-///
-/// Requires the `vera` feature (on by default).
-#[cfg(feature = "vera")]
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct VeraConfig {
-    pub grpc_address: String,
-    pub comet_rpc_address: String,
-    pub chain_id: String,
-    pub signer_key: Vec<u8>,
 }
 
 /// Configuration for the optional HTTP GraphQL server.
@@ -216,6 +192,49 @@ pub enum TransportConfig {
     Libp2p(Libp2pConfig),
     #[cfg(feature = "p2p")]
     Iroh(P2PConfig),
+    #[cfg(feature = "pinc")]
+    Pinc(PincConfig),
+}
+
+/// The pinc transport's configuration: direct connections, and topics through
+/// the hubs it names.
+#[cfg(feature = "pinc")]
+#[derive(Debug, Clone, PartialEq)]
+pub struct PincConfig {
+    /// The UDP address the endpoint binds; port 0 picks one.
+    pub bind: std::net::SocketAddr,
+    /// Who may connect in. Defaults to every peer.
+    pub allowlist: p2p::pinc::PincAllowlistConfig,
+    /// Path of a key file, read as [`P2PConfig::secret_key_path`] is, so a
+    /// node keeps the peer id it has on iroh.
+    pub secret_key_path: Option<std::path::PathBuf>,
+    /// Where the secret key lives.
+    pub peer_key: PeerKeySource,
+    /// The most sessions at once.
+    pub max_connections: usize,
+    /// The pinc hubs topics run through, as `<peer id>@<udp address>`. With
+    /// none, gossip and the KMS key exchange reach no one.
+    pub hubs: Vec<String>,
+    /// Reload collection subscriptions persisted in the local store.
+    pub load_persisted_collections: bool,
+    /// Sync limits and the replicator retry ladder.
+    pub sync: SyncTuning,
+}
+
+#[cfg(feature = "pinc")]
+impl Default for PincConfig {
+    fn default() -> Self {
+        Self {
+            bind: std::net::SocketAddr::from(([0, 0, 0, 0], 0)),
+            allowlist: p2p::pinc::PincAllowlistConfig::default(),
+            secret_key_path: None,
+            peer_key: PeerKeySource::default(),
+            max_connections: p2p::pinc::PincEndpointConfig::DEFAULT_MAX_CONNECTIONS,
+            hubs: Vec::new(),
+            load_persisted_collections: true,
+            sync: SyncTuning::default(),
+        }
+    }
 }
 
 /// libp2p transport configuration.
@@ -244,11 +263,20 @@ pub struct Libp2pConfig {
     /// Where the DNS layers read the resolver configuration; the system's by
     /// default.
     pub resolver: p2p::ResolverSource,
+    /// The connection manager's low watermark: a trim closes peers until
+    /// the host is back at it.
+    pub connection_manager_low_water: u32,
+    /// The connection manager's high watermark: the host trims once it holds
+    /// more connections than this.
+    pub connection_manager_high_water: u32,
+    /// How long a new connection is safe from a trim.
+    pub connection_manager_grace_period: std::time::Duration,
 }
 
 #[cfg(feature = "libp2p")]
 impl Default for Libp2pConfig {
     fn default() -> Self {
+        let host = p2p::P2PHostConfig::default();
         Self {
             listen_addrs: Vec::new(),
             bootstrap_peers: Vec::new(),
@@ -259,6 +287,9 @@ impl Default for Libp2pConfig {
             orphan_sweep: db::block::orphan_gc::OrphanSweepConfig::default(),
             resource_limits: p2p::ResourceLimits::default(),
             resolver: p2p::ResolverSource::System,
+            connection_manager_low_water: host.connection_manager_low_water,
+            connection_manager_high_water: host.connection_manager_high_water,
+            connection_manager_grace_period: host.connection_manager_grace_period,
         }
     }
 }
@@ -453,6 +484,9 @@ pub struct NodeConfig {
     pub replication_filter: Option<ReplicationFilterHandle>,
     /// The gate index backfills pass before each batch; `None` holds none.
     pub index_build_gate: Option<IndexBuildGateHandle>,
+    /// Documents an index backfill may index in one transaction; `None`
+    /// uses the built-in page size.
+    pub backfill_batch_docs: Option<usize>,
     /// The gate explicit transaction commits pass before they are handed to
     /// their owner.
     pub commit_gate: Option<CommitGateHandle>,

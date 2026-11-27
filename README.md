@@ -19,7 +19,7 @@ Compatible with Go DefraDB v1.0.0-rc1. Full feature parity across CLI, HTTP API,
 
 - **GraphQL query engine** — queries, mutations, subscriptions, aggregates, explain - full coverage of the defradb test suite
 - **P2P replication** — `libp2p` (primary, go compatable) and [`iroh`](https://github.com/n0-computer/iroh) (optional) transports
-- **Access control** — local Zanzibar engine, on-chain via [Vera](https://github.com/sourcenetwork/vera) (Cosmos/EVM) and [`vera.rs`](https://github.com/sourcenetwork/vera.rs) (Commonware/EVM)
+- **Access control** — local Zanzibar engine, and remote via [`vera.rs`](https://github.com/sourcenetwork/vera.rs) (Commonware)
 - **Full-text search** — (rust only) BM25 ranking with language-aware tokenization
 - **Schema migration** — non-destructive evolution via WASM transforms (Lens)
 - **Searchable encryption** — encrypted indexes with ACP integration
@@ -100,10 +100,9 @@ just ci                # Reproduce the CI pipeline locally
 ### FFI release variants
 
 Every release ships three FFI families: **full** (`defra-ffi_*`), carrying the
-libp2p transport, Lens migrations, and Vera ACP; **iroh**
+libp2p transport and Lens migrations; **iroh**
 (`defra-ffi-iroh_*`), an iOS XCFramework that adds the iroh transport on top of
-libp2p; and **lean** (`defra-ffi-lean_*`), libp2p-only with no Lens migrations
-and no Vera ACP. Iroh ships in that XCFramework alone, so no single
+libp2p; and **lean** (`defra-ffi-lean_*`), libp2p-only with no Lens migrations. Iroh ships in that XCFramework alone, so no single
 artifact carries every capability. All of them expose the same `defra.h`
 and the same mobile JSON schema, so the choice is a size tradeoff and not an API
 one: configuring a capability the build does not carry fails with an explicit
@@ -220,15 +219,13 @@ cargo nextest run -p integration-test --test query                # A testo area
 cargo nextest run -p integration-test --test legacy -- acp::negative:: # A legacy module (tests/legacy/)
 ```
 
-Areas: `basic`, `query`, `acp`, `nac`, `p2p`, `fts`, `encryption`, `identity`, `backup`, `vera`, `verars`
+Areas: `basic`, `query`, `acp`, `nac`, `p2p`, `fts`, `encryption`, `identity`, `backup`, `vera`
 
-Vera integration uses the `vera` crate, Cargo feature, and test suite. Select it
-with `--document-acp-type vera` and configure endpoints with `--vera-*` flags,
-`DEFRA_VERA_*` environment variables, or `vera_*` configuration fields. Older
-`--source-hub-*` flags, `DEFRA_SOURCE_HUB_*` environment variables,
-`sourcehub_*` configuration fields, and the `source-hub` ACP selector remain
-accepted. Mobile JSON uses `vera` (`sourcehub` is an alias). The `sourcehub`
-Cargo feature remains an alias for `vera`.
+Vera integration uses the `vera` crate and Cargo feature, and the `vera` test
+suite. Select it with `--document-acp-type vera` and configure it with the
+`--vera-address`, `--vera-consensus-key` and `--vera-deployment-id` flags,
+their `DEFRA_VERA_*` environment variables, or the `vera_*` configuration
+fields (see `crates/engine/vera/README.md`).
 
 ### Go Compatibility Tests
 

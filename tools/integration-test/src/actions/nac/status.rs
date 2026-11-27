@@ -35,8 +35,9 @@ impl Op for GetNACStatus {
         state
             .block_on(
                 state
-                    .node_on(self.common.node())?
-                    .nac_status_as(&state.context_as(None, identity)),
+                    .scope_as(None, identity)
+                    .scoped(&*state.node_on(self.common.node())?)
+                    .nac_status(),
             )
             .map(|status| json!({ "status": status.to_string() }))
             .map_err(|e| Failure::operation(e.to_string()))
