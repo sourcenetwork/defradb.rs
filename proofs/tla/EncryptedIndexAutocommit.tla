@@ -30,10 +30,11 @@
 \*                                                 each), rewrite_definition_in,
 \*                                                 definition_in (the validated read)
 \*   crates/database/db/src/txn/attempt.rs                 DB::transact_db (the re-run)
-\*   crates/entry-points/defra-node/src/ops/encrypted_index.rs NodeOps::add_encrypted_index,
-\*                                                 NodeOps::delete_encrypted_index
-\*   crates/entry-points/cli/src/encrypted_index_adapter.rs    EncryptedIndexAdapter (the
-\*                                                 `defradb start` HTTP path)
+\*   crates/database/db/src/collection/encrypted_index/client/mod.rs
+\*                                                 DbTransactionRegistry::add_encrypted_index_as,
+\*                                                 DbTransactionRegistry::delete_encrypted_index_as
+\*                                                 (the one entry every client takes: the
+\*                                                 embedded node, FFI, both HTTP servers, the CLI)
 EXTENDS Naturals, FiniteSets
 
 CONSTANTS

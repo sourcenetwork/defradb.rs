@@ -1,6 +1,7 @@
 mod add;
 mod delete;
 mod list;
+mod missing_collection;
 mod patch;
 mod peer_acp;
 mod peer_add;

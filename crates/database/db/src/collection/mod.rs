@@ -35,6 +35,7 @@ pub mod map;
 pub mod name;
 pub(crate) mod ops;
 mod series;
+pub use encrypted_index::EncryptedIndexError;
 pub use map::{Cached, CollectionMap};
 pub(crate) mod provider;
 pub mod retriever;

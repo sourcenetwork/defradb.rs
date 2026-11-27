@@ -5,6 +5,10 @@
 //! transaction it is given, so in an explicit transaction the change is
 //! visible to it at once and to others once it commits.
 
+mod client;
+
+pub use client::EncryptedIndexError;
+
 use std::sync::Arc;
 
 use schema::{CollectionVersion, EncryptedIndexDescription};
