@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "ayu";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-c8faf4f7.js";
+            window.path_to_searchindex_js = "../searchindex-fbeb199c.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-8198d451.js"></script>
@@ -848,37 +848,40 @@ guarantee: if anything it rested on changed, the commit loses, exactly like a da
 race. That symmetry is the entire trick, and the TLA+ models for ACP soundness and
 the deferred-ACP overlay pin it.</p>
 </blockquote>
-<h2 id="parent-authorized-document-creation"><a class="header" href="#parent-authorized-document-creation">Parent-authorized document creation</a></h2>
-<p>A resource can declare which parent admits a new document. In this policy
-fragment, registering a job requires the creator to own the named node.</p>
-<pre><code class="language-yaml">- name: jobs
-  permissions: [{name: read}, {name: update}, {name: delete}]
-  relations: [{name: parent, types: [nodes]}]
-  create: {parent: parent, requires: owner}
+<h2 id="gated-document-creation"><a class="header" href="#gated-document-creation">Gated document creation</a></h2>
+<p>A resource can restrict who adds documents to its collection with a
+<code>collection</code> section. Here a book may be created only by someone who may
+<code>publish</code> for the book’s author:</p>
+<pre><code class="language-yaml">- name: book
+  permissions:
+    - name: read
+      expr: author-&gt;read
+  relations:
+    - name: author
+      types: [author]
+  collection:
+    create: author-&gt;publish
 </code></pre>
-<p>Bind the child collection to the document field that carries the parent’s ID.</p>
-<pre><code class="language-graphql">type Job @policy(id: "POLICY_ID", resource: "jobs", parentField: "nodeID") {
-  nodeID: String!
+<p>The collection binds the relation to an immutable relation field. Only a
+governed collection may bind one; the related collection uses the same policy.</p>
+<pre><code class="language-graphql">type Book @governed(root: "library") @policy(id: "POLICY_ID", resource: "book") {
+  title: String
+  author: Author @immutable @policy(relation: "author")
 }
 </code></pre>
-<p>The policy supplies the parent resource type. The field supplies one object ID.
-Local registration checks the creator against that parent and writes the owner
-and parent relationship in the document transaction. With Vera, the pending
-registration keeps both parent identifiers across a restart. A delegation
-bound to the registration covers both as well. Vera checks the acting identity
-when it executes the command. A later grant on the parent relation requires
-permission on the proposed target.</p>
-<p>A registered document keeps a parent. Local ACP refuses to delete its last
-parent relationship; the relationship goes when the document is deleted. An
-update that writes another value into the parent field is refused, so the
-document always names the parent it was admitted under.</p>
+<p>At create the node derives <code>book:&lt;docID&gt;#author@author:&lt;_authorID&gt;</code> from the
+bound field and registers the document with it. Vera checks <code>create</code> over the
+stored relationships plus the derived ones and stores the owner and the derived
+relationships in one execution. The local engine accepts the section and gates
+nothing with it. Under Vera a create without an identity in a gated collection
+is refused before anything is written. The registration runs after the commit:
+until Vera holds it the document is hidden from everyone, and a registration Vera
+refuses is final, its document stays unregistered and hidden, its creator
+included. After creation the bound relation is discretionary: the owner may
+change it through the relationship API like any other.</p>
 <p>A receiver sharing the creator’s Vera deployment waits for the object’s
-registration. An embedder that enables foreign replica registration for the
-collection can register a signed genesis on its own deployment. The receiving
-node submits under its own identity, with the parent ID from the signed
-document. While parent admission is pending, ACP reports registration as
-unavailable and grants the submitter no owner access. Creator grants are
-delivered after the provider accepts the registration.</p>
+registration. A replicated genesis is registered with the relationships derived
+from its merged fields.</p>
 <p>An embedder with changing device membership can implement
 <code>ReplicaOwnership::allows_foreign_registration</code> to query the provider before
 registering or adopting a replica. For a known local signer or an unavailable
