@@ -35,8 +35,9 @@ impl Op for ReEnableNAC {
         state
             .block_on(
                 state
-                    .node_on(self.common.node())?
-                    .re_enable_nac_as(&state.context_as(None, identity)),
+                    .scope_as(None, identity)
+                    .scoped(&*state.node_on(self.common.node())?)
+                    .re_enable_nac(),
             )
             .map(|()| json!({}))
             .map_err(|e| Failure::operation(e.to_string()))

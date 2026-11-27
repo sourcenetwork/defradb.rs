@@ -38,7 +38,12 @@ impl Op for DeleteDocumentSubscription {
         let ids = self.ids();
         let node = state.node_on(self.common.node())?;
         state
-            .block_on(node.delete_p2p_documents_as(&state.context_as(None, identity), &ids))
+            .block_on(
+                state
+                    .scope_as(None, identity)
+                    .scoped(&node)
+                    .delete_p2p_documents(&ids),
+            )
             .map_err(failed)?;
         Ok(json!({}))
     }

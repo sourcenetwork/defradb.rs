@@ -58,6 +58,12 @@ pub const ACCESS_CHECK_UNAVAILABLE_ERROR_CODE: &str = "ACCESS_CHECK_UNAVAILABLE"
 /// A strict read met a document whose access check failed for another reason
 /// and returned nothing; reading again does not help until the cause is fixed.
 pub const ACCESS_CHECK_FAILED_ERROR_CODE: &str = "ACCESS_CHECK_FAILED";
+/// A create's document ID is already stored: its genesis block, and so its
+/// ID, is the stored document's (`a document with the given ID already exists`).
+pub const DOCUMENT_ALREADY_EXISTS_ERROR_CODE: &str = "DOCUMENT_ALREADY_EXISTS";
+/// A create or save named a document that has been deleted; it is not added
+/// again (`a document with the given ID has been deleted`).
+pub const DOCUMENT_DELETED_ERROR_CODE: &str = "DOCUMENT_DELETED";
 /// A subscription sent without `Accept: text/event-stream`; HTTP answers it with 406.
 pub const SUBSCRIPTION_NEEDS_SSE_ERROR_CODE: &str = "SUBSCRIPTION_NEEDS_SSE";
 
@@ -476,8 +482,11 @@ impl QueryResponseError {
             _ => None,
         };
         let invalid_request = error.is_invalid_request();
+        let document_code = error.code();
         let response_error = Self::new(error.to_string());
-        let mut response_error = if is_transaction_conflict {
+        let mut response_error = if let Some(code) = document_code {
+            response_error.with_code(code)
+        } else if is_transaction_conflict {
             response_error.with_code(TXN_CONFLICT_ERROR_CODE)
         } else if is_transaction_retry_exhausted {
             response_error.with_code(TXN_RETRY_EXHAUSTED_ERROR_CODE)

@@ -181,13 +181,13 @@ pub(crate) async fn register_created_doc(
             .await
             .map_err(|e| query::error::QueryError::execution(e.to_string()))?;
         if is_deleted {
-            return Err(query::error::QueryError::execution(format!(
-                "a document with the given ID has been deleted. DocID: {doc_id_str}"
-            )));
+            return Err(query::error::QueryError::DocumentDeleted(
+                doc_id_str.to_string(),
+            ));
         }
-        return Err(query::error::QueryError::execution(format!(
-            "a document with the given ID already exists. DocID: {doc_id_str}"
-        )));
+        return Err(query::error::QueryError::DocumentAlreadyExists(
+            doc_id_str.to_string(),
+        ));
     }
 
     crate::docid::map::set_doc_id_mapping(

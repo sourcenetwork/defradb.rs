@@ -64,16 +64,17 @@ async fn exercise_http_relationships() -> Vec<Value> {
         .build()
         .await
         .unwrap();
-    let context = defra_core::RequestContext::default().with_identity(Some(owner_did.to_string()));
-    let policy = node.add_dac_policy_as(&context, POLICY).await.unwrap();
-    node.add_collection(
-        &context,
-        &format!(
+    let policy = node
+        .with_identity(identity::Did::new(owner_did.to_string()).unwrap())
+        .add_dac_policy(POLICY, None)
+        .await
+        .unwrap();
+    node.with_identity(identity::Did::new(owner_did.to_string()).unwrap())
+        .add_collection(&format!(
             "type Record @policy(id: \"{policy}\", resource: \"records\") {{ value: String }}"
-        ),
-    )
-    .await
-    .unwrap();
+        ))
+        .await
+        .unwrap();
     let created = node
         .execute_request(
             query::QueryRequest::new(
@@ -104,7 +105,8 @@ async fn exercise_http_relationships() -> Vec<Value> {
         acp::nac::NodePermission::DocumentRead,
         acp::nac::NodePermission::CollectionGet,
     ] {
-        node.add_nac_actor_relationship_as(&context, permission.as_str(), target_did.as_str())
+        node.with_identity(identity::Did::new(owner_did.to_string()).unwrap())
+            .add_nac_actor_relationship(permission.as_str(), target_did.as_str())
             .await
             .unwrap();
     }
@@ -132,13 +134,8 @@ async fn exercise_http_relationships() -> Vec<Value> {
     let url = format!("http://{address}/api/v0/acp/document/relationship");
     let body = json!({"collection":"Record", "doc_id":doc, "relation":"reader", "target_actor":target_did.as_str()});
     let native_denied = node
-        .add_dac_actor_relationship(
-            stranger_did.as_str(),
-            "Record",
-            &native_doc,
-            "reader",
-            target_did.as_str(),
-        )
+        .with_identity(identity::Did::new(stranger_did.as_str()).unwrap())
+        .add_dac_actor_relationship("Record", &native_doc, "reader", target_did.as_str())
         .await;
     assert!(native_denied.is_err());
     let denied = client
@@ -162,13 +159,8 @@ async fn exercise_http_relationships() -> Vec<Value> {
     assert_eq!(before.data.unwrap()["Record"].as_array().unwrap().len(), 0);
     for existed in [false, true] {
         let native_existed = node
-            .add_dac_actor_relationship(
-                owner_did.as_str(),
-                "Record",
-                &native_doc,
-                "reader",
-                target_did.as_str(),
-            )
+            .with_identity(identity::Did::new(owner_did.as_str()).unwrap())
+            .add_dac_actor_relationship("Record", &native_doc, "reader", target_did.as_str())
             .await
             .unwrap();
         let response = client
@@ -257,16 +249,17 @@ async fn exercise_transactional_http_relationships() -> Vec<Value> {
         .build()
         .await
         .unwrap();
-    let context = defra_core::RequestContext::default().with_identity(Some(owner_did.to_string()));
-    let policy = node.add_dac_policy_as(&context, POLICY).await.unwrap();
-    node.add_collection(
-        &context,
-        &format!(
+    let policy = node
+        .with_identity(identity::Did::new(owner_did.to_string()).unwrap())
+        .add_dac_policy(POLICY, None)
+        .await
+        .unwrap();
+    node.with_identity(identity::Did::new(owner_did.to_string()).unwrap())
+        .add_collection(&format!(
             "type Record @policy(id: \"{policy}\", resource: \"records\") {{ value: String }}"
-        ),
-    )
-    .await
-    .unwrap();
+        ))
+        .await
+        .unwrap();
     let created = node
         .execute_request(
             query::QueryRequest::new(
@@ -894,12 +887,9 @@ fn embedded_events_require_node_permission() {
                 .build()
                 .await
                 .unwrap();
-            node.add_collection(
-                &defra_core::RequestContext::ambient(),
-                "type Note { text: String }",
-            )
-            .await
-            .unwrap();
+            node.add_collection("type Note { text: String }")
+                .await
+                .unwrap();
             let client = http_client();
             let events = format!("http://{address}/api/v0/events?event=update");
             let anonymous = client.get(&events).send().await.unwrap();
@@ -1022,17 +1012,17 @@ fn embedded_encrypted_index_list_refusal_is_unauthorized() {
                 .build()
                 .await
                 .unwrap();
-            let owner = defra_core::RequestContext::default().with_identity(Some(owner_did));
-            node.add_collection(&owner, "type Note { text: String }")
+            node.with_identity(identity::Did::new(owner_did.clone()).unwrap())
+                .add_collection("type Note { text: String }")
                 .await
                 .unwrap();
-            node.add_nac_actor_relationship_as(
-                &owner,
-                acp::nac::NodePermission::CollectionGet.as_str(),
-                reader_did.as_str(),
-            )
-            .await
-            .unwrap();
+            node.with_identity(identity::Did::new(owner_did.clone()).unwrap())
+                .add_nac_actor_relationship(
+                    acp::nac::NodePermission::CollectionGet.as_str(),
+                    reader_did.as_str(),
+                )
+                .await
+                .unwrap();
             let response = http_client()
                 .get(format!(
                     "http://{address}/api/v0/collections/Note/encrypted-indexes"
@@ -1067,8 +1057,10 @@ fn a_stranger_cannot_enable_a_disabled_nac_over_http() {
                 .build()
                 .await
                 .unwrap();
-            let owner = defra_core::RequestContext::default().with_identity(Some(owner_did));
-            node.disable_nac_as(&owner).await.unwrap();
+            node.with_identity(identity::Did::new(owner_did.clone()).unwrap())
+                .disable_nac()
+                .await
+                .unwrap();
 
             let response = http_client()
                 .post(format!("http://{address}/api/v0/acp/node/enable"))
@@ -1082,7 +1074,10 @@ fn a_stranger_cannot_enable_a_disabled_nac_over_http() {
             assert!(body.contains("re-enable it instead"), "{body}");
 
             assert_eq!(
-                node.nac_status_as(&owner).await.unwrap(),
+                node.with_identity(identity::Did::new(owner_did.clone()).unwrap())
+                    .nac_status()
+                    .await
+                    .unwrap(),
                 acp::nac::NacStatus::DisabledTemporarily,
                 "NAC stays disabled"
             );

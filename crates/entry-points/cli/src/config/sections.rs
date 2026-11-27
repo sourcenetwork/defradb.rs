@@ -404,6 +404,12 @@ pub struct NetConfig {
     /// name a collection.
     #[serde(default)]
     pub iroh_allowed_peers: Vec<String>,
+    /// The pinc hubs topics run through, as `<peer id>@<udp address>`, at
+    /// most four, with `net.transport: pinc`. Topic broadcasts and the KMS
+    /// key exchange reach peers only through a hub, so a node that names
+    /// none syncs only over direct requests.
+    #[serde(default)]
+    pub pinc_hubs: Vec<String>,
     /// Host an iroh relay server on this node. Unset hosts none.
     #[serde(default)]
     pub iroh_relay_server: Option<IrohRelayServerConfig>,
@@ -554,6 +560,7 @@ impl Default for NetConfig {
             iroh_bind_port: None,
             iroh_bind_addr: None,
             iroh_allowed_peers: Vec::new(),
+            pinc_hubs: Vec::new(),
             iroh_relay_server: None,
             iroh_max_concurrent_multipath_paths: None,
             iroh_network_secret: None,

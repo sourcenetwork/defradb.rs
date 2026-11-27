@@ -8,7 +8,6 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use cli::commands::client::http_client::HttpClient;
-use defra_core::RequestContext;
 use defra_node::{HttpConfig, Node};
 use events::{EventName, Message, MessageData};
 use rapidhash::{HashMapExt, RapidHashMap, RapidHashSet};
@@ -321,12 +320,14 @@ impl TestNode {
         let owner = self.spec.nac_owner;
         match (&self.embedded, &self.url) {
             (Some(node), _) => {
-                let context = match owner {
-                    Some(seed) => RequestContext::ambient()
-                        .with_identity(Some(crate::scenario::identity::did(seed))),
-                    None => RequestContext::ambient(),
+                let scoped = match owner {
+                    Some(seed) => node.with_identity(
+                        ::identity::Did::new(crate::scenario::identity::did(seed))
+                            .map_err(|e| e.to_string())?,
+                    ),
+                    None => node.anonymous(),
                 };
-                workers::block_on(node.peer_info_as(&context))
+                workers::block_on(scoped.peer_info())
                     .map_err(|e| e.to_string())?
                     .map_err(|e| e.to_string())
             }
@@ -398,6 +399,16 @@ fn build(spec: &NodeSpec, listen: &str, http: Option<HttpConfig>) -> Result<Node
     if let Some(text) = &spec.resolv_conf {
         builder = builder.with_resolver_source(p2p::ResolverSource::ResolvConf(text.clone()));
     }
+    // A scenario that picks iroh tests iroh itself (its gossip size limit),
+    // so DEFRA_TRANSPORT=pinc replaces only the default transport. It also
+    // replaces libp2p, so a `resolv_conf` scenario runs on pinc here and its
+    // libp2p DNS fallback goes untested under DEFRA_TRANSPORT=pinc.
+    if spec.network
+        && !spec.iroh_network
+        && crate::transport_choice::TransportChoice::from_env().is_pinc()
+    {
+        builder = pinc_transport(builder, spec, listen);
+    }
     if let Some(config) = http {
         builder = builder.with_http(config);
     } else if let Some((ttl, tick)) = spec.txn_ttl {
@@ -444,6 +455,65 @@ fn build(spec: &NodeSpec, listen: &str, http: Option<HttpConfig>) -> Result<Node
         })?;
     }
     Ok(node)
+}
+
+/// Run `builder`'s node over pinc on loopback, `DEFRA_TRANSPORT=pinc`. A node
+/// restarted on its old address binds the port that address names; its key
+/// lives in its store, so a restart keeps its peer id.
+#[cfg(feature = "pinc")]
+fn pinc_transport(
+    builder: defra_node::NodeBuilder,
+    spec: &NodeSpec,
+    listen: &str,
+) -> defra_node::NodeBuilder {
+    let bind = listen
+        .split_once('@')
+        .and_then(|(_, addrs)| addrs.split(',').next())
+        .and_then(|addr| addr.parse().ok())
+        .unwrap_or_else(|| std::net::SocketAddr::from(([127, 0, 0, 1], 0)));
+    let mut config = defra_node::PincConfig {
+        bind,
+        peer_key: defra_node::PeerKeySource::Store,
+        max_connections: 16,
+        hubs: vec![PINC_HUB.clone()],
+        ..Default::default()
+    };
+    if let Some(limits) = &spec.admission {
+        config.sync.max_pending_dags = limits.max_pending_dags;
+        config.sync.rate_limit_burst = limits.rate_limit_burst;
+        config.sync.rate_limit_rate = limits.rate_limit_rate;
+        if let Some(bytes) = limits.deferral_peer_bytes {
+            config.sync.gossip_deferral_peer_bytes = bytes;
+        }
+    }
+    builder.with_pinc(config)
+}
+
+/// The pinc hub every node of this test process names, as a gossip mesh's
+/// stand-in: pinc topics run through a hub.
+#[cfg(feature = "pinc")]
+static PINC_HUB: regolith::sync::Lazy<String> = regolith::sync::Lazy::new(|| {
+    let edge = edge::testing::edge();
+    let bind = std::net::SocketAddr::from(([127, 0, 0, 1], 0));
+    let (ticket, task) = workers::block_on(
+        edge.clone()
+            .spawn(async move { defra_node::spawn_pinc_hub([0x48; 32], bind, edge).await }),
+    )
+    .expect("the test thread waits")
+    .expect("the hub task runs")
+    .expect("the pinc hub binds");
+    // ponytail: the hub lives as long as the process; nothing stops it.
+    std::mem::forget(task);
+    ticket
+});
+
+#[cfg(not(feature = "pinc"))]
+fn pinc_transport(
+    _builder: defra_node::NodeBuilder,
+    _spec: &NodeSpec,
+    _listen: &str,
+) -> defra_node::NodeBuilder {
+    panic!("DEFRA_TRANSPORT=pinc needs integration-test built with --features pinc")
 }
 
 /// The key a node signs with: its node identity's, or, for a node that only
@@ -787,7 +857,9 @@ impl Events {
     }
 }
 
-/// The peer ID at the end of a `/p2p/<ID>` address.
+/// The peer ID of an address: the end of a libp2p `/p2p/<ID>` address, or
+/// the start of a pinc `<ID>@<ip:port>` one.
 pub fn peer_id(address: &str) -> &str {
-    address.rsplit("/p2p/").next().unwrap_or(address)
+    let id = address.rsplit("/p2p/").next().unwrap_or(address);
+    id.split('@').next().unwrap_or(id)
 }

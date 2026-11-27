@@ -30,7 +30,7 @@ pub(super) const PROPERTIES: &[Property] = &[
         family: "Schema-evolution operations in the core",
         name: "INV_NoEffectWithoutPermission / INV_TxnNeverAutocommits / INV_PatchInTxnChangesNothing",
         axis: Tla,
-        anchor: "crates/database/db/src/txn/registry/lifecycle.rs get_collections_as, patch_collection_as, set_active_collection_version_as, set_migration_as, add_lens_as, list_lenses_as; crates/entry-points/defra-node/src/ops/collection.rs; crates/surfaces/http/src/handlers/{collections,lens}.rs",
+        anchor: "crates/database/db/src/txn/registry/lifecycle.rs get_collections_as, patch_collection_as, set_active_collection_version_as, set_migration_as, add_lens_as, list_lenses_as; crates/entry-points/defra-node/src/node_core/collection.rs; crates/surfaces/http/src/handlers/{collections,lens}.rs",
         model_ref: "MC_CoreDispatch_{Green,Red_NoNac,Red_IgnoreTxn}.cfg",
         tiers: &[Boundary],
         bound_by: "",

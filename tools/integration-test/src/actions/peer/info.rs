@@ -42,7 +42,12 @@ impl Op for PeerInfo {
         }
         let node = state.node_on(self.common.node())?;
         let addresses = state
-            .block_on(node.peer_info_as(&state.context_as(None, self.common.identity_seed)))
+            .block_on(
+                state
+                    .scope_as(None, self.common.identity_seed)
+                    .scoped(&node)
+                    .peer_info(),
+            )
             .map_err(failed)?;
         Ok(self.shape(addresses))
     }

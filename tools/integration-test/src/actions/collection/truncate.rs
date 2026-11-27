@@ -40,12 +40,17 @@ impl Op for Truncate {
     fn run(&self, state: &State) -> Result<Value, Failure> {
         let identity = self.common.client_identity(Self::name())?;
         let filter = self.filter.as_ref().map(Filter::to_core);
+        let (node, scope) = (
+            state.node_on(self.common.node())?,
+            state.scope_as(self.txn, identity),
+        );
         state
-            .block_on(state.node_on(self.common.node())?.truncate_collection_as(
-                &state.context_as(self.txn, identity),
-                &self.collection,
-                filter.as_ref(),
-            ))
+            .block_on(async {
+                scope
+                    .on(&node)
+                    .truncate_collection(&self.collection, filter.as_ref())
+                    .await
+            })
             .map(|()| json!({}))
             .map_err(|e| Failure::operation(e.to_string()))
     }
