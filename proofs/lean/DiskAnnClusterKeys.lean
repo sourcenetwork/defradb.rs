@@ -22,7 +22,9 @@ What must never happen:
   (`graph_cluster_key`);
 * two different nodes share a key (`graph_key_injective`);
 * a code value does not decode back to its code and cluster
-  (`decode_encode_code`);
+  (`decode_encode_code`, `decode_encode_founder`);
+* a code value with a tag no founder can have decodes, where Rust refuses
+  it (`decode_rejects_impossible_tag`);
 * a real tag collides with the "no cluster" marker, turning a clustered node
   into an old-layout one in memory (`tag_ne_none`, `slot_round_trip`).
 
@@ -114,18 +116,24 @@ def encodeCode (code : List Nat) : Option Nat → List Nat
   | some tag => code ++ t4.enc tag
 
 -- Decode a code value of a code `m` bytes long: `none` when the length is
--- neither `m` nor `m + 4` (Rust: an error).
+-- neither `m` nor `m + 4`, or when the tag is above `0x7fff_ffff`, which no
+-- founder can have (Rust: an error, `CLUSTER_TAG_MASK` bounds the tag).
 def decodeCode (m : Nat) (bytes : List Nat) : Option (List Nat × Option Nat) :=
   -- just the code: the old layout
   if bytes.length = m then some (bytes, none)
-  -- the code and a tag: the clustered layout
-  else if bytes.length = m + 4 then some (bytes.take m, some (t4.dec (bytes.drop m)))
+  -- the code and a tag no founder can have: corrupt
+  else if bytes.length = m + 4 then
+    -- the tag a founder can have: the clustered layout
+    if t4.dec (bytes.drop m) ≤ 0x7fff_ffff then some (bytes.take m, some (t4.dec (bytes.drop m)))
+    -- a tag with its top bit set: corrupt
+    else none
   -- anything else is corrupt
   else none
 
--- Promise: a code value decodes back to the code and cluster it was built from.
+-- Promise: a code value decodes back to the code and cluster it was built
+-- from, for every tag below `2^31`, which is every tag a founder can have.
 theorem decode_encode_code (code : List Nat) (c : Option Nat)
-    (htag : ∀ t, c = some t → t < 2 ^ 32) :
+    (htag : ∀ t, c = some t → t < 2 ^ 31) :
     decodeCode t4 code.length (encodeCode t4 code c) = some (code, c) := by
   -- one case per layout
   cases c with
@@ -133,9 +141,26 @@ theorem decode_encode_code (code : List Nat) (c : Option Nat)
     -- the value is the code, whose length is `m`
     simp [encodeCode, decodeCode]
   | some tag =>
-    -- the value is the code and four tag bytes: `m + 4`, not `m`
+    -- the tag is below `2^31`, so it also fits the four bytes it is given
     have h := htag tag rfl
-    simp [encodeCode, decodeCode, t4.enc_len, t4.dec_enc tag h]
+    -- and so it is at most `0x7fff_ffff`, which the decoder admits
+    have hfit : tag < 2 ^ (8 * 4) := Nat.lt_trans h (by decide)
+    -- the bound the decoder checks, in its own form
+    have hle : tag ≤ 0x7fff_ffff := by omega
+    -- the value is the code and four tag bytes: `m + 4`, not `m`
+    simp [encodeCode, decodeCode, t4.enc_len, t4.dec_enc tag hfit, hle]
+
+-- Promise: a code value whose tag is above `0x7fff_ffff` decodes to nothing,
+-- as Rust's `decode_code` refuses it.
+theorem decode_rejects_impossible_tag (code : List Nat) (tag : Nat)
+    (hfit : tag < 2 ^ 32) (hbig : 0x7fff_ffff < tag) :
+    decodeCode t4 code.length (encodeCode t4 code (some tag)) = none := by
+  -- the four tag bytes decode back to the tag
+  have hdec : t4.dec (t4.enc tag) = tag := t4.dec_enc tag hfit
+  -- which is not at most `0x7fff_ffff`
+  have hnot : ¬ tag ≤ 0x7fff_ffff := by omega
+  -- the value is `m + 4` long and its tag fails the check
+  simp [encodeCode, decodeCode, t4.enc_len, hdec, hnot]
 
 /-! ## Tags and the "no cluster" slot marker -/
 
@@ -152,6 +177,19 @@ theorem tag_fits (founder : Nat) : clusterTag founder < 2 ^ 32 := by
   have h : founder % 2 ^ 31 < 2 ^ 31 := Nat.mod_lt _ (by decide)
   -- and `2^31 < 2^32`
   exact Nat.lt_trans h (by decide)
+
+-- Promise: every tag is below `2^31`, the bound `decodeCode` admits.
+theorem tag_below_bound (founder : Nat) : clusterTag founder < 2 ^ 31 := by
+  -- a remainder mod `2^31` is below `2^31`
+  exact Nat.mod_lt _ (by decide)
+
+-- Promise: a code value with a founder's tag decodes back to its code and
+-- that tag.
+theorem decode_encode_founder (code : List Nat) (founder : Nat) :
+    decodeCode t4 code.length (encodeCode t4 code (some (clusterTag founder))) =
+      some (code, some (clusterTag founder)) := by
+  -- the founder's tag is below `2^31`, so the round trip applies
+  exact decode_encode_code t4 code _ (by intro t h; cases h; exact tag_below_bound founder)
 
 -- Promise: no tag is the "no cluster" marker.
 theorem tag_ne_none (founder : Nat) : clusterTag founder ≠ noCluster := by
