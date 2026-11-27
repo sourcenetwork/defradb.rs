@@ -1,0 +1,217 @@
+//! The parent scan of a routed chunked `SIMILARITY`: parents come from the chunk index.
+
+use std::sync::Arc;
+
+use async_trait::async_trait;
+use document::Document;
+use schema::CollectionVersion;
+use serde_json::Value as JsonValue;
+
+use super::listed::best_listed_score;
+use super::search::{ChunkSearch, GaveUp, ParentCheck, Searched};
+use super::target::{ChunkTarget, Reads};
+use crate::doc_stream::DocStream;
+use crate::document::{document_to_plan_doc, DocumentMapping};
+use crate::error::Result;
+use crate::fetcher::DocFetcher;
+use crate::planner::{Doc, ExecInfo, PlanNode};
+
+/// The parent scan of a routed chunked similarity, scoring each parent by its best chunk.
+pub struct ChunkSimilarityScanNode {
+    collection: CollectionVersion,
+    mapping: DocumentMapping,
+    target: ChunkTarget,
+    index_id: u32,
+    k: usize,
+    similarity_index: usize,
+    fetcher: Arc<dyn DocFetcher>,
+    ranked: std::vec::IntoIter<Doc>,
+    fallback: Option<Box<dyn DocStream>>,
+    searched: bool,
+    gave_up: Option<GaveUp>,
+    current: Doc,
+    exec_info: ExecInfo,
+}
+
+/// Drops deleted parents. The planner routes only a query with no filter and no docID.
+struct Accepts;
+
+impl ParentCheck for Accepts {
+    fn accepts(&self, parent: &Document) -> Result<bool> {
+        Ok(!parent.is_deleted())
+    }
+}
+
+impl ChunkSimilarityScanNode {
+    pub(crate) fn new(
+        collection: CollectionVersion,
+        mapping: DocumentMapping,
+        target: ChunkTarget,
+        index_id: u32,
+        k: usize,
+        similarity_index: usize,
+        fetcher: Arc<dyn DocFetcher>,
+    ) -> Self {
+        target.warn_without_splitter();
+        Self {
+            collection,
+            mapping,
+            target,
+            index_id,
+            k,
+            similarity_index,
+            fetcher,
+            ranked: Vec::new().into_iter(),
+            fallback: None,
+            searched: false,
+            gave_up: None,
+            current: Doc::default(),
+            exec_info: ExecInfo::default(),
+        }
+    }
+
+    fn scored(&self, parent: &Document, score: Option<f64>) -> Result<Doc> {
+        let mut row = document_to_plan_doc(parent, &self.mapping)?;
+        let score = score
+            .and_then(serde_json::Number::from_f64)
+            .map_or(JsonValue::Null, JsonValue::Number);
+        row.set(self.similarity_index, score);
+        Ok(row)
+    }
+
+    fn count(&mut self, reads: Reads) {
+        self.exec_info.docs_fetched += reads.docs;
+        self.exec_info.fields_fetched += reads.fields;
+        self.exec_info.indexes_fetched += reads.index_lookups;
+    }
+}
+
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+impl PlanNode for ChunkSimilarityScanNode {
+    async fn init(&mut self) -> Result<()> {
+        self.exec_info = ExecInfo::default();
+        let search = ChunkSearch {
+            fetcher: self.fetcher.as_ref(),
+            target: &self.target,
+            index_id: self.index_id,
+            k: self.k,
+        }
+        .run(&Accepts)
+        .await?;
+        self.searched = search.searches > 0;
+        self.exec_info.indexes_fetched += search.searches;
+        self.count(search.reads);
+        match search.searched {
+            Searched::Ranked(parents) => {
+                let mut rows = Vec::with_capacity(parents.len());
+                for (parent, score) in &parents {
+                    rows.push(self.scored(parent, Some(*score))?);
+                }
+                self.ranked = rows.into_iter();
+                self.fallback = None;
+                self.gave_up = None;
+            }
+            Searched::Exhausted(gave_up) => {
+                self.gave_up = Some(gave_up);
+                self.ranked = Vec::new().into_iter();
+                self.fallback = Some(
+                    self.fetcher
+                        .stream_all_with_deleted(&self.collection.name, false)
+                        .await?,
+                );
+            }
+        }
+        Ok(())
+    }
+
+    async fn start(&mut self) -> Result<()> {
+        Ok(())
+    }
+
+    async fn next(&mut self) -> Result<bool> {
+        self.exec_info.iterations += 1;
+        if let Some(row) = self.ranked.next() {
+            self.current = row;
+            return Ok(true);
+        }
+        loop {
+            let pulled = match self.fallback.as_mut() {
+                Some(stream) => stream.next().await?,
+                None => None,
+            };
+            let Some((parent, _)) = pulled else {
+                return Ok(false);
+            };
+            let mut reads = Reads::default();
+            reads.count(&parent);
+            if !Accepts.accepts(&parent)? {
+                self.count(reads);
+                continue;
+            }
+            let score =
+                best_listed_score(self.fetcher.as_ref(), &self.target, &parent, &mut reads).await?;
+            self.count(reads);
+            self.current = self.scored(&parent, score)?;
+            return Ok(true);
+        }
+    }
+
+    fn value(&self) -> &Doc {
+        &self.current
+    }
+
+    async fn close(&mut self) -> Result<()> {
+        if let Some(mut stream) = self.fallback.take() {
+            stream.close().await?;
+        }
+        Ok(())
+    }
+
+    fn source(&self) -> Option<&dyn PlanNode> {
+        None
+    }
+
+    fn document_map(&self) -> &DocumentMapping {
+        &self.mapping
+    }
+
+    fn kind(&self) -> &'static str {
+        // The parent scan, narrowed by the chunk index, like a routed `scanNode`.
+        "scanNode"
+    }
+
+    fn explain_inner(&self) -> JsonValue {
+        serde_json::json!({
+            "filter": JsonValue::Null,
+            "collectionName": self.collection.name,
+            "collectionID": self.collection.version_id,
+            "prefixes": [format!("/{}", self.collection.resolved_root_id())],
+        })
+    }
+
+    fn exec_info(&self) -> ExecInfo {
+        self.exec_info.clone()
+    }
+
+    fn explain_execute_inner(&self) -> JsonValue {
+        let mut obj = serde_json::json!({
+            "iterations": self.exec_info.iterations,
+            "docFetches": self.exec_info.docs_fetched,
+            "fieldFetches": self.exec_info.fields_fetched,
+            "indexFetches": self.exec_info.indexes_fetched,
+        });
+        if let Some(name) = self
+            .searched
+            .then(|| self.target.vector_index_name(self.index_id))
+            .flatten()
+        {
+            obj["vectorIndex"] = JsonValue::String(name.to_string());
+        }
+        // A search that gave up scored every parent, so the index did not answer.
+        if let Some(gave_up) = self.gave_up {
+            obj["fallback"] = JsonValue::String(gave_up.name().to_string());
+        }
+        obj
+    }
+}

@@ -337,24 +337,48 @@ impl Planner {
             &child_scope_path,
         )?;
 
-        child_plan = self.add_similarity_nodes(
-            child_plan,
-            nested_select,
-            &child_scan_mapping,
-            &target_collection.indexes,
-        )?;
-
-        // Now wrap with SelectNode if there's a filter (deferred from earlier).
-        // At this point, relation sub-joins are in place so the filter can evaluate
-        // conditions on joined relation data (e.g., publisher.yearOpened).
-        if let Some(ref filter) = combined_filter {
+        // Filter and check access before scoring, so a hidden child is never scored.
+        let (row_filter, alias_filter) = match &combined_filter {
+            Some(filter) => filter.split_for_scores(),
+            None => (None, None),
+        };
+        if let Some(filter) = row_filter {
             child_plan = Box::new(
-                SelectNode::new(child_plan, child_scan_mapping.clone()).with_filter(filter.clone()),
+                SelectNode::new(child_plan, child_scan_mapping.clone()).with_filter(filter),
             );
         }
 
         // Insert ACP permission filter for the child collection (if ACP-protected).
         child_plan = self.maybe_wrap_with_acp_filter(child_plan, &target_collection);
+
+        child_plan = self.add_similarity_nodes(
+            child_plan,
+            nested_select,
+            &child_scan_mapping,
+            &target_collection,
+        )?;
+        child_plan = self.add_chunk_similarity_nodes(
+            child_plan,
+            nested_select,
+            &child_scan_mapping,
+            &target_collection,
+        )?;
+        // Explain shows the user's whole filter on the top select, as when it ran there.
+        let scores = nested_select
+            .fields
+            .iter()
+            .any(|field| matches!(field, Requestable::Similarity(_)));
+        let shown = combined_filter.filter(|_| scores);
+        if alias_filter.is_some() || shown.is_some() {
+            let mut top = SelectNode::new(child_plan, child_scan_mapping.clone());
+            if let Some(filter) = alias_filter {
+                top = top.with_filter(filter);
+            }
+            if let Some(filter) = shown {
+                top = top.with_explain_filter(filter);
+            }
+            child_plan = Box::new(top);
+        }
 
         // Update parent mapping with the final child mapping (after sub-joins)
         // This ensures the nested relation mappings are included

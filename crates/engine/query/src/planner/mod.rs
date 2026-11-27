@@ -13,6 +13,7 @@
 mod aggregates;
 mod builder;
 mod cached_view_builder;
+mod chunk_similarity;
 pub mod index_selection;
 mod joins;
 mod mapping;

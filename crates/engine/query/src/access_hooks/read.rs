@@ -36,6 +36,14 @@ pub struct AppReadCheck {
     retry_inputs: Option<crate::prepared::PreparedInputMemo>,
 }
 
+impl std::fmt::Debug for AppReadCheck {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AppReadCheck")
+            .field("collection", &self.collection.name)
+            .finish_non_exhaustive()
+    }
+}
+
 impl AppReadCheck {
     /// `None` when no validator is installed or it does not govern the
     /// collection, so ungoverned reads pay nothing.

@@ -303,6 +303,7 @@ mod simple {
     mod with_order_filter;
     mod with_restart;
     mod with_similarity;
+    mod with_similarity_or_alias;
     mod with_similarity_vector_index;
     mod with_sum;
     mod with_sum_filter;
