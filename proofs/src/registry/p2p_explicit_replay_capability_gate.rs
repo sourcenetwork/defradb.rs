@@ -44,7 +44,7 @@ pub(super) const PROPERTIES: &[Property] = &[
     },
     Property {
         family: "P2P explicit-replay capability gate",
-        name: "PushLogOffer.go_verifies_go_protocol / go_protocol_has_no_capability / rust_protocol_keeps_capability / rust_verifies_either / same_message_id",
+        name: "PushLogOffer.go_verifies_go_protocol / go_protocol_has_no_capability / go_protocol_has_only_go_fields / rust_protocol_keeps_capability / rust_verifies_either / same_message_id",
         axis: Lean,
         anchor: "crates/database/p2p/src/two_stream/push_offer.rs PushLogOffer::sign, PushLogOffer::for_protocol",
         model_ref: "PushLogOffer.lean",

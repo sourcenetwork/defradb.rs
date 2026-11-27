@@ -8,7 +8,8 @@ fields it knows, so a request whose signature covers the capability fails
 Go's check. The sender therefore signs two forms: one without the
 capability for Go's protocol, and one with it for Rust's. What must never
 happen: Go is handed a form it cannot verify, or Rust is handed a form that
-lost the capability.
+lost the capability. The two iroh stream flags are Rust-only in the same
+way; libp2p leaves them false, and Go's signed form clears them too.
 
 Rust: `PushLogOffer::sign` and `PushLogOffer::for_protocol` in
 `crates/database/p2p/src/two_stream/push_offer.rs`.
@@ -16,26 +17,28 @@ Rust: `PushLogOffer::sign` and `PushLogOffer::for_protocol` in
 namespace PushLogOffer
 
 -- A request: the fields Go knows (one number stands for all of them), the
--- message ID, and the optional Rust-only capability.
+-- message ID, and the three Rust-only fields.
 structure Request where
   goFields : Nat
   messageId : Nat
   cap : Option Nat
+  sameStreamReply : Bool
+  retryAfter : Bool
 deriving DecidableEq
 
 -- What a signature covers: Rust encodes every field the request carries.
-def rustEncoding (r : Request) : Nat × Nat × Option Nat :=
-  (r.goFields, r.messageId, r.cap)
+def rustEncoding (r : Request) : Nat × Nat × Option Nat × Bool × Bool :=
+  (r.goFields, r.messageId, r.cap, r.sameStreamReply, r.retryAfter)
 
 -- What Go re-encodes to check a signature: only its own fields, as if the
--- capability were absent.
-def goEncoding (r : Request) : Nat × Nat × Option Nat :=
-  (r.goFields, r.messageId, none)
+-- three Rust-only fields were absent.
+def goEncoding (r : Request) : Nat × Nat × Option Nat × Bool × Bool :=
+  (r.goFields, r.messageId, none, false, false)
 
 -- A signed request: the request and the encoding its signature covers.
 structure Signed where
   request : Request
-  signedOver : Nat × Nat × Option Nat
+  signedOver : Nat × Nat × Option Nat × Bool × Bool
 
 -- Signing covers the request exactly as it is sent.
 def sign (r : Request) : Signed := ⟨r, rustEncoding r⟩
@@ -46,15 +49,16 @@ def goVerifies (s : Signed) : Prop := s.signedOver = goEncoding s.request
 -- Rust accepts a signature over what it received.
 def rustVerifies (s : Signed) : Prop := s.signedOver = rustEncoding s.request
 
--- The two forms: Go's has the capability removed before signing; Rust's
--- exists only when there is a capability to carry.
+-- The two forms: Go's has every Rust-only field cleared before signing;
+-- Rust's exists only when there is a capability to carry and retains the
+-- other Rust-only fields as well.
 structure Offer where
   goCompatible : Signed
   extended : Option Signed
 
 -- Build both forms from one request, so they share its message ID.
 def offer (r : Request) : Offer :=
-  { goCompatible := sign { r with cap := none }
+  { goCompatible := sign { r with cap := none, sameStreamReply := false, retryAfter := false }
     extended := r.cap.map fun _ => sign r }
 
 -- The form written once the protocol is known: Rust's form on Rust's
@@ -72,6 +76,12 @@ theorem go_verifies_go_protocol (r : Request) :
 -- Go's protocol never carries the capability.
 theorem go_protocol_has_no_capability (r : Request) :
     (forProtocol (offer r) false).request.cap = none := by
+  cases h : r.cap <;> simp [forProtocol, offer, sign, h]
+
+-- Go's protocol never carries any of the Rust-only fields.
+theorem go_protocol_has_only_go_fields (r : Request) :
+    (forProtocol (offer r) false).request.sameStreamReply = false
+      ∧ (forProtocol (offer r) false).request.retryAfter = false := by
   cases h : r.cap <;> simp [forProtocol, offer, sign, h]
 
 -- Rust's protocol keeps the capability the request had.

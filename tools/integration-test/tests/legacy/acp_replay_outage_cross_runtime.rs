@@ -309,8 +309,8 @@ async fn b_go_to_rust_outage_replay() {
     .await;
 }
 
-/// C: Rust writer, Go replicator. 124's repro with a Go receiver: the public
-/// document is expected to be refused on the Rust side before it is sent.
+/// C: Rust writer, Go replicator. 124's repro with a Go receiver: after the
+/// outage, both the identity's document and the public document arrive.
 #[nuclei::test]
 #[mantra_macros::req_test("defra.p2p.replicator.go_wire")]
 async fn c_rust_to_go_outage_replay() {
