@@ -2,7 +2,8 @@
 //! transaction owner identity.
 
 use integration_test::actions::{
-    AddCollection, Close, NewEncryptedIndex, Start, TxnBegin, TxnDiscard,
+    AddCollection, Close, DeleteEncryptedIndex, ListAllEncryptedIndexes, ListEncryptedIndexes,
+    NewEncryptedIndex, Start, TxnBegin, TxnDiscard,
 };
 use integration_test::scenario::Common;
 use integration_test::test_case::TestCase;
@@ -57,6 +58,30 @@ fn an_anonymous_caller_cannot_use_the_signing_nodes_identity_in_a_transaction() 
             }
             .into(),
             refused(Some(0)).into(),
+            ListEncryptedIndexes {
+                txn: Some(0),
+                collection: "Users".into(),
+                expected_error: Some(REFUSED.into()),
+                ..Default::default()
+            }
+            .into(),
+            ListAllEncryptedIndexes {
+                txn: Some(0),
+                expected_error: Some(
+                    "not authorized to perform operation. Permission: list-all-encrypted-index"
+                        .into(),
+                ),
+                ..Default::default()
+            }
+            .into(),
+            DeleteEncryptedIndex {
+                txn: Some(0),
+                collection: "Users".into(),
+                field_name: "name".into(),
+                expected_error: Some(REFUSED.into()),
+                ..Default::default()
+            }
+            .into(),
             TxnDiscard {
                 txn: 0,
                 ..Default::default()
