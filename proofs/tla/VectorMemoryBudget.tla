@@ -66,9 +66,11 @@
 \*   Abandon         engine/diskann/reload.rs Drop for Reload, budget.rs Drop
 \*                   for Charge
 \*   Fill            engine/diskann/cache.rs CodeCache::insert
-\* The pending-list copy (engine/diskann/pending_cache.rs PendingCache::publish)
-\* is the one-code `pending` holder. It is cleared when a reload begins, and a
-\* publish waits for the reload, so it cannot take the room codes need.
+\* The pending-list copy (engine/diskann/pending_cache.rs PendingCache::publish_if,
+\* called by engine/diskann/cache.rs CodeCache::publish_pending) is the
+\* one-code `pending` holder. It is cleared when a reload begins, and the
+\* publish and its no-reload check share one exclusive update, so it cannot
+\* take the room codes need.
 \*
 \* Abstractions: one index, one unit per code. A miss filled at the very moment
 \* a reload swaps the codes out is charged to the old copy and held until that

@@ -7,7 +7,7 @@ use std::sync::Arc;
 #[cfg(feature = "otlp")]
 use kovan::Atom;
 #[cfg(feature = "otlp")]
-use opentelemetry::metrics::{Counter, MeterProvider as _, ObservableGauge};
+use opentelemetry::metrics::{Counter, MeterProvider as _, ObservableCounter, ObservableGauge};
 #[cfg(feature = "otlp")]
 use opentelemetry::KeyValue;
 #[cfg(feature = "otlp")]
@@ -199,7 +199,11 @@ pub fn register_vector_memory_budget(source: Weak<dyn VectorMemoryBudgetSource>)
         let id = NEXT_VECTOR_BUDGET.fetch_add(1, Ordering::Relaxed);
         let budgets = VECTOR_BUDGETS.get_or_init_racy(|| Atom::new(Vec::new()));
         budgets.rcu(|current| {
-            let mut next = current.clone();
+            let mut next: Vec<_> = current
+                .iter()
+                .filter(|(_, source)| source.strong_count() > 0)
+                .cloned()
+                .collect();
             next.push((id, source.clone()));
             next
         });
@@ -388,7 +392,7 @@ struct Instruments {
     escaped_conflicts: Counter<u64>,
     _vector_memory_used: ObservableGauge<u64>,
     _vector_memory_limit: ObservableGauge<u64>,
-    _vector_memory_refusals: ObservableGauge<u64>,
+    _vector_memory_refusals: ObservableCounter<u64>,
 }
 
 #[cfg(feature = "otlp")]
@@ -422,7 +426,7 @@ pub(crate) fn install(provider: &opentelemetry_sdk::metrics::SdkMeterProvider) -
         })
         .build();
     let vector_memory_refusals = meter
-        .u64_observable_gauge("defradb.vector.memory.refusals")
+        .u64_observable_counter("defradb.vector.memory.refusals")
         .with_description("Vector cache charge attempts refused by the memory budget")
         .with_callback(|observer| {
             for (budget, snapshot) in vector_memory_budget_snapshots() {
@@ -540,5 +544,135 @@ mod tests {
             record_storage_event(event, 3);
             assert!(storage_event_count(event) > before);
         }
+    }
+
+    #[cfg(feature = "otlp")]
+    #[test]
+    fn vector_budget_metrics_report_the_registered_values_and_prune_dead_budgets() {
+        use opentelemetry_sdk::metrics::data::{AggregatedMetrics, MetricData, ResourceMetrics};
+        use opentelemetry_sdk::metrics::reader::MetricReader;
+        use opentelemetry_sdk::metrics::{
+            InstrumentKind, ManualReader, Pipeline, SdkMeterProvider, Temporality,
+        };
+
+        #[derive(Clone, Debug)]
+        struct SharedReader(Arc<ManualReader>);
+
+        impl MetricReader for SharedReader {
+            fn register_pipeline(&self, pipeline: Weak<Pipeline>) {
+                self.0.register_pipeline(pipeline);
+            }
+
+            fn collect(
+                &self,
+                metrics: &mut ResourceMetrics,
+            ) -> opentelemetry_sdk::error::OTelSdkResult {
+                self.0.collect(metrics)
+            }
+
+            fn force_flush(&self) -> opentelemetry_sdk::error::OTelSdkResult {
+                self.0.force_flush()
+            }
+
+            fn shutdown_with_timeout(
+                &self,
+                timeout: std::time::Duration,
+            ) -> opentelemetry_sdk::error::OTelSdkResult {
+                self.0.shutdown_with_timeout(timeout)
+            }
+
+            fn temporality(&self, kind: InstrumentKind) -> Temporality {
+                self.0.temporality(kind)
+            }
+        }
+
+        #[derive(Default)]
+        struct TestBudget {
+            used: AtomicU64,
+            limit: AtomicU64,
+            refusals: AtomicU64,
+        }
+
+        impl VectorMemoryBudgetSource for TestBudget {
+            fn vector_memory_budget_snapshot(&self) -> VectorMemoryBudgetSnapshot {
+                VectorMemoryBudgetSnapshot {
+                    used: self.used.load(Ordering::Relaxed),
+                    limit: self.limit.load(Ordering::Relaxed),
+                    refusals: self.refusals.load(Ordering::Relaxed),
+                }
+            }
+        }
+
+        let dead: Arc<dyn VectorMemoryBudgetSource> = Arc::new(TestBudget::default());
+        let dead_id = register_vector_memory_budget(Arc::downgrade(&dead));
+        drop(dead);
+
+        let live: Arc<dyn VectorMemoryBudgetSource> = Arc::new(TestBudget {
+            used: AtomicU64::new(17),
+            limit: AtomicU64::new(101),
+            refusals: AtomicU64::new(3),
+        });
+        let live_id = register_vector_memory_budget(Arc::downgrade(&live));
+        let budgets = VECTOR_BUDGETS.get().unwrap().load();
+        assert!(
+            !budgets.iter().any(|(id, _)| *id == dead_id),
+            "registration drops a budget that no longer exists"
+        );
+        assert!(budgets.iter().any(|(id, _)| *id == live_id));
+
+        let reader = SharedReader(Arc::new(ManualReader::builder().build()));
+        let provider = SdkMeterProvider::builder()
+            .with_reader(reader.clone())
+            .build();
+        let installation = install(&provider);
+        let mut metrics = ResourceMetrics::default();
+        reader.collect(&mut metrics).unwrap();
+
+        let metric = |name: &str| {
+            metrics
+                .scope_metrics()
+                .flat_map(|scope| scope.metrics())
+                .find(|metric| metric.name() == name)
+                .unwrap_or_else(|| panic!("missing metric {name}"))
+        };
+        let gauge = |name: &str| {
+            let metric = metric(name);
+            let AggregatedMetrics::U64(MetricData::Gauge(gauge)) = metric.data() else {
+                panic!("{name} is not a u64 gauge")
+            };
+            gauge
+                .data_points()
+                .find(|point| {
+                    point.attributes().any(|attribute| {
+                        attribute.key.as_str() == "budget"
+                            && attribute.value.to_string() == live_id.to_string()
+                    })
+                })
+                .unwrap_or_else(|| panic!("missing {name} for budget {live_id}"))
+                .value()
+        };
+        let counter = |name: &str| {
+            let metric = metric(name);
+            let AggregatedMetrics::U64(MetricData::Sum(counter)) = metric.data() else {
+                panic!("{name} is not a u64 counter")
+            };
+            counter
+                .data_points()
+                .find(|point| {
+                    point.attributes().any(|attribute| {
+                        attribute.key.as_str() == "budget"
+                            && attribute.value.to_string() == live_id.to_string()
+                    })
+                })
+                .unwrap_or_else(|| panic!("missing {name} for budget {live_id}"))
+                .value()
+        };
+
+        assert_eq!(gauge("defradb.vector.memory.used"), 17);
+        assert_eq!(gauge("defradb.vector.memory.limit"), 101);
+        assert_eq!(counter("defradb.vector.memory.refusals"), 3);
+
+        uninstall(installation);
+        provider.shutdown().unwrap();
     }
 }

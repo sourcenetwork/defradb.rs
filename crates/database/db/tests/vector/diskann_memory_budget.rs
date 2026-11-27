@@ -8,10 +8,11 @@ use std::sync::Arc;
 use crate::diskann_engine::{corpus, params, CORPUS, K, SEED};
 use db::index::vector::budget::{Charge, MemoryBudget};
 use db::index::vector::engine::ann::{Neighbor, VectorIndexEngine};
+use db::index::vector::engine::diskann::codec;
 use db::index::vector::engine::diskann::{
     CodeCache, CodeCaches, Codes, Copy, DiskAnn, DiskAnnParams, PendingCache, Segment, Tag,
 };
-use db::index::vector::store::{MemoryNodeStore, NodeId};
+use db::index::vector::store::{MemoryNodeStore, NodeId, VectorNodeStore};
 use defra_core::vector::Metric;
 
 async fn resident(vectors: &[Vec<f32>]) -> DiskAnn<MemoryNodeStore> {
@@ -190,6 +191,59 @@ fn a_reload_gets_the_room_the_old_codes_held() {
             resident_codes(&cache),
             CORPUS,
             "the new generation is whole"
+        );
+        assert!(budget.used() <= budget.limit());
+    })
+    .unwrap()
+}
+
+/// A reload stops reading the index after the one code that first does not
+/// fit, rather than visiting every code in storage to discard them.
+#[test]
+fn a_reload_stops_reading_codes_when_the_budget_is_full() {
+    workers::block_on(async {
+        let (vectors, queries) = corpus();
+        let unlimited = Arc::new(CodeCache::default());
+        let params = DiskAnnParams {
+            resident_codes: true,
+            ..params()
+        };
+        let mut index = DiskAnn::try_new(
+            super::diskann_engine::Counting::new(),
+            Metric::Cosine,
+            params,
+            SEED,
+        )
+        .unwrap()
+        .with_codes(unlimited.clone());
+        for (i, vector) in vectors.iter().enumerate() {
+            index.insert(NodeId(i as u64 + 1), vector).await.unwrap();
+        }
+        index.build().await.unwrap();
+        index.search(queries[0].as_slice(), K, None).await.unwrap();
+        let everything = unlimited.resident_bytes();
+
+        let budget = MemoryBudget::new(everything / 2);
+        let cache = Arc::new(CodeCache::with_budget(budget.clone()));
+        let before = index.store().code_visits();
+        let mut reload = cache.begin_reload(1).expect("the cache starts empty");
+        let mut id = 0;
+        index
+            .store()
+            .iterate_aux_while(codec::CODE, b"", |_key, code| {
+                id += 1;
+                reload.insert(NodeId(id), code)
+            })
+            .await
+            .unwrap();
+        reload.finish();
+        let visited = index.store().code_visits() - before;
+        let kept = resident_codes(&cache);
+
+        assert!(kept > 0 && kept < CORPUS, "kept {kept} of {CORPUS}");
+        assert!(
+            visited <= kept + 1,
+            "reload visited {visited} codes with room for {kept}"
         );
         assert!(budget.used() <= budget.limit());
     })

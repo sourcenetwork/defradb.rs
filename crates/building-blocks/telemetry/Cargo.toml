@@ -28,6 +28,7 @@ otlp = [
     "dep:tracing-opentelemetry",
     "opentelemetry_sdk/trace",
     "opentelemetry_sdk/metrics",
+    "opentelemetry_sdk/experimental_metrics_custom_reader",
     "opentelemetry-otlp/trace",
     "opentelemetry-otlp/metrics",
     # `internal-logs` is a default feature of both crates that

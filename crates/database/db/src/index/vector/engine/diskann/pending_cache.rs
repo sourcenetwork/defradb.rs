@@ -330,9 +330,22 @@ impl PendingCache {
     /// copy that fits the cap but not the budget is not published, leaving the
     /// current copy and a later search free to try again once room frees.
     pub fn publish(&self, next: Arc<Copy>) {
+        self.publish_if(next, || true);
+    }
+
+    /// [`publish`](Self::publish) when `allowed` passes while publication is
+    /// exclusive. A code reload and this check therefore cannot overlap: a
+    /// reload either owns the update first or sees the published copy.
+    pub fn publish_if<F>(&self, next: Arc<Copy>, allowed: F)
+    where
+        F: FnOnce() -> bool,
+    {
         let Some(_update) = self.begin_update() else {
             return;
         };
+        if !allowed() {
+            return;
+        }
         let Some(tag) = next.tag else {
             return;
         };

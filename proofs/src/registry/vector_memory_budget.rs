@@ -17,10 +17,10 @@ pub(super) const PROPERTIES: &[Property] = &[
         family: "Vector memory budget",
         name: "INV_FullLoad — a reload publishes every code that fits in the budget: the codes it replaces, missed codes and pending copies never take its room",
         axis: Tla,
-        anchor: "crates/database/db/src/index/vector/engine/diskann/reload.rs Reload::begin, Reload::stop; crates/database/db/src/index/vector/engine/diskann/cache.rs CodeCache::insert, CodeCache::publish_pending; crates/database/db/src/index/vector/engine/diskann/pending_cache.rs PendingCache::clear; crates/database/db/src/index/vector/engine/diskann/graph.rs refresh_codes",
+        anchor: "crates/database/db/src/index/vector/engine/diskann/reload.rs Reload::begin, Reload::stop; crates/database/db/src/index/vector/engine/diskann/cache.rs CodeCache::insert, CodeCache::publish_pending; crates/database/db/src/index/vector/engine/diskann/pending_cache.rs PendingCache::clear, PendingCache::publish_if; crates/database/db/src/index/vector/engine/diskann/graph.rs refresh_codes",
         model_ref: "MC_VectorMemoryBudget_Green.cfg (GREEN) / MC_VectorMemoryBudget_Red_KeepOld.cfg / MC_VectorMemoryBudget_Red_MissesWhileLoading.cfg / MC_VectorMemoryBudget_Red_PendingWhileLoading.cfg (RED)",
         tiers: &[Contract],
-        bound_by: "crates/database/db/tests/vector/diskann_memory_budget.rs a_reload_gets_the_room_the_old_codes_held, a_miss_is_kept_only_with_room_and_no_reload_running",
+        bound_by: "crates/database/db/tests/vector/diskann_memory_budget.rs a_reload_gets_the_room_the_old_codes_held, a_reload_stops_reading_codes_when_the_budget_is_full, a_miss_is_kept_only_with_room_and_no_reload_running",
     },
     Property {
         family: "Vector memory budget",

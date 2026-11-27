@@ -281,9 +281,8 @@ impl CodeCache {
     /// Publishes a pending-list copy unless a code reload is running, so the
     /// pending copy cannot take the room that reload reserved.
     pub fn publish_pending(&self, next: Arc<super::pending_cache::Copy>) {
-        if self.loaded.load().loading.is_none() {
-            self.pending.publish(next);
-        }
+        self.pending
+            .publish_if(next, || self.loaded.load().loading.is_none());
     }
 
     /// Whether the codes are at least as new as `generation`.

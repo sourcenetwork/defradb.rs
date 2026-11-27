@@ -304,10 +304,25 @@ fn a_dot_product_metric_is_refused() {
     assert!(err.to_string().contains("squared distance"), "got: {err}");
 }
 
-/// Counts graph-record reads: one per node a walk expands.
-struct Counting {
+/// Counts graph-record reads and code-reload visits.
+pub(super) struct Counting {
     inner: MemoryNodeStore,
     record_reads: std::sync::atomic::AtomicUsize,
+    code_visits: std::sync::atomic::AtomicUsize,
+}
+
+impl Counting {
+    pub(super) fn new() -> Self {
+        Self {
+            inner: MemoryNodeStore::new(),
+            record_reads: std::sync::atomic::AtomicUsize::new(0),
+            code_visits: std::sync::atomic::AtomicUsize::new(0),
+        }
+    }
+
+    pub(super) fn code_visits(&self) -> usize {
+        self.code_visits.load(std::sync::atomic::Ordering::Relaxed)
+    }
 }
 
 #[async_trait::async_trait]
@@ -414,6 +429,23 @@ impl VectorNodeStore for Counting {
     {
         self.inner.iterate_aux(kind, key_prefix, visit).await
     }
+    async fn iterate_aux_while<F>(
+        &self,
+        kind: u8,
+        key_prefix: &[u8],
+        mut visit: F,
+    ) -> db::index::error::Result<()>
+    where
+        F: FnMut(&[u8], &[u8]) -> db::index::error::Result<std::ops::ControlFlow<()>> + Send,
+    {
+        self.inner
+            .iterate_aux_while(kind, key_prefix, |key, value| {
+                self.code_visits
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                visit(key, value)
+            })
+            .await
+    }
 }
 
 /// A walk's memory must not grow with the corpus. Rewire the graph into a
@@ -427,10 +459,7 @@ fn a_walk_is_bounded_even_along_an_ever_closer_chain() {
         use std::sync::atomic::Ordering;
 
         let (vectors, queries) = corpus();
-        let store = Counting {
-            inner: MemoryNodeStore::new(),
-            record_reads: Default::default(),
-        };
+        let store = Counting::new();
         let mut index = DiskAnn::try_new(store, Metric::Cosine, params(), SEED).unwrap();
         for (i, vector) in vectors.iter().enumerate() {
             index.insert(NodeId(i as u64 + 1), vector).await.unwrap();
