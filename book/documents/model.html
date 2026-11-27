@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "ayu";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-6b3400d0.js";
+            window.path_to_searchindex_js = "../searchindex-771176c0.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-8198d451.js"></script>
@@ -210,7 +210,7 @@ backup import and the store-upgrade re-key of legacy documents (below). Requirem
 <tbody>
 <tr><td>Node-signed, autocommit</td><td>the mutation response</td><td>stored under the ID it returned</td><td><code>txn::signed_doc_id::an_autocommit_node_signed_create_stores_the_id_it_returned</code></td></tr>
 <tr><td>Node-signed, explicit transaction</td><td>the mutation response, before commit</td><td>the commit keeps it</td><td><code>txn::signed_doc_id::a_node_signed_create_in_a_txn_commits_the_id_it_returned_{ed25519,secp256k1}</code></td></tr>
-<tr><td>Client-signed, embedded</td><td><code>graph.doc_id()</code>, before sending</td><td><code>execute_verified_graph_in_txn</code> commits <code>graph.doc_id()</code> or discards the transaction</td><td><code>signature::client_signed::*</code> (in-process)</td></tr>
+<tr><td>Client-signed, embedded</td><td><code>graph.doc_id()</code>, before sending</td><td><code>TxnNode::execute_verified_create</code> commits <code>graph.doc_id()</code> or discards the transaction</td><td><code>signature::client_signed::*</code> (in-process)</td></tr>
 <tr><td>Client-signed, rust-http</td><td><code>graph.doc_id()</code>, before sending</td><td>the Rust client refuses an out-of-graph wave and a different <code>_docID</code></td><td><code>signature::client_signed::*</code> (rust-http)</td></tr>
 <tr><td>P2P merge</td><td>the creator’s response</td><td>the peer keeps a block only when it hashes to the CID it arrived under (<code>verify_block_cid</code> on a replicator push, gossip, block sync and CAR fetch; <code>verify_hash</code> on a bitswap fetch) and derives the ID from that CID</td><td><code>signature::doc_id_determinism::a_peer_shows_the_creators_doc_id</code>, <code>signature::peer::*</code></td></tr>
 <tr><td>Lens migration</td><td>unchanged</td><td>a migration rewrites field values, never the genesis, so the document is read under its ID</td><td><code>collection_version::migrations::query::with_doc_id::collection_migration_query_by_doc_id</code> (unsigned)</td></tr>
@@ -262,7 +262,7 @@ cli prints the text alone, as Go’s CLI does, and a Go node sends no code. Test
 leaving a field signature or the composite signature out of the CID (or adding one in);
 leaving the collection version ID out of the genesis; any path that re-signs a genesis or
 commits a document under an ID other than its precomputed one; removing the committed-ID
-check of <code>execute_verified_graph_in_txn</code> or of the Rust client’s signing conversation.</p>
+check of <code>TxnNode::execute_verified_create</code> or of the Rust client’s signing conversation.</p>
 <p>There are two documented exceptions. Backup import is a stopgap: it creates each
 document again on the importing node, so the document gets its new genesis’s ID, and
 the ID the file names is kept as an alias of it (<code>set_doc_id_alias</code>). The ID is the

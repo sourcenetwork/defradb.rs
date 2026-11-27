@@ -37,7 +37,7 @@
             const path_to_root = "";
             const default_light_theme = "ayu";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-6b3400d0.js";
+            window.path_to_searchindex_js = "searchindex-771176c0.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-8198d451.js"></script>
@@ -1286,7 +1286,7 @@ backup import and the store-upgrade re-key of legacy documents (below). Requirem
 <tbody>
 <tr><td>Node-signed, autocommit</td><td>the mutation response</td><td>stored under the ID it returned</td><td><code>txn::signed_doc_id::an_autocommit_node_signed_create_stores_the_id_it_returned</code></td></tr>
 <tr><td>Node-signed, explicit transaction</td><td>the mutation response, before commit</td><td>the commit keeps it</td><td><code>txn::signed_doc_id::a_node_signed_create_in_a_txn_commits_the_id_it_returned_{ed25519,secp256k1}</code></td></tr>
-<tr><td>Client-signed, embedded</td><td><code>graph.doc_id()</code>, before sending</td><td><code>execute_verified_graph_in_txn</code> commits <code>graph.doc_id()</code> or discards the transaction</td><td><code>signature::client_signed::*</code> (in-process)</td></tr>
+<tr><td>Client-signed, embedded</td><td><code>graph.doc_id()</code>, before sending</td><td><code>TxnNode::execute_verified_create</code> commits <code>graph.doc_id()</code> or discards the transaction</td><td><code>signature::client_signed::*</code> (in-process)</td></tr>
 <tr><td>Client-signed, rust-http</td><td><code>graph.doc_id()</code>, before sending</td><td>the Rust client refuses an out-of-graph wave and a different <code>_docID</code></td><td><code>signature::client_signed::*</code> (rust-http)</td></tr>
 <tr><td>P2P merge</td><td>the creator’s response</td><td>the peer keeps a block only when it hashes to the CID it arrived under (<code>verify_block_cid</code> on a replicator push, gossip, block sync and CAR fetch; <code>verify_hash</code> on a bitswap fetch) and derives the ID from that CID</td><td><code>signature::doc_id_determinism::a_peer_shows_the_creators_doc_id</code>, <code>signature::peer::*</code></td></tr>
 <tr><td>Lens migration</td><td>unchanged</td><td>a migration rewrites field values, never the genesis, so the document is read under its ID</td><td><code>collection_version::migrations::query::with_doc_id::collection_migration_query_by_doc_id</code> (unsigned)</td></tr>
@@ -1338,7 +1338,7 @@ cli prints the text alone, as Go’s CLI does, and a Go node sends no code. Test
 leaving a field signature or the composite signature out of the CID (or adding one in);
 leaving the collection version ID out of the genesis; any path that re-signs a genesis or
 commits a document under an ID other than its precomputed one; removing the committed-ID
-check of <code>execute_verified_graph_in_txn</code> or of the Rust client’s signing conversation.</p>
+check of <code>TxnNode::execute_verified_create</code> or of the Rust client’s signing conversation.</p>
 <p>There are two documented exceptions. Backup import is a stopgap: it creates each
 document again on the importing node, so the document gets its new genesis’s ID, and
 the ID the file names is kept as an alias of it (<code>set_doc_id_alias</code>). The ID is the
@@ -1940,8 +1940,8 @@ replayed identically for later attempts. Failures of the provider fail closed
 <h3 id="owed-relationship-changes"><a class="header" href="#owed-relationship-changes">Owed relationship changes</a></h3>
 <p>The same bridge carries a relationship change made inside a transaction
 (<code>acp::outbox</code>). The in-transaction relationship call (<code>relationship_in_txn</code>, behind
-<code>Node::add_dac_actor_relationship_change_for_in_txn</code>, its delete counterpart and
-<code>Node::change_dac_actor_relationship_as</code>) does not refuse on an external provider: it
+<code>TxnNode::acting_for(actor).add_dac_actor_relationship</code>, its delete counterpart and
+<code>TxnNode::change_dac_actor_relationship</code>) does not refuse on an external provider: it
 <em>stages</em> the change, a record written in the transaction that commits or rolls back with
 its rows, and the provider is sent the change after the commit.</p>
 <p>The node’s HTTP relationship routes (<code>POST</code> and <code>DELETE /api/v0/acp/document/relationship</code>,
@@ -2264,8 +2264,8 @@ never does, and one the read did not see only denies more.</p>
 </li>
 </ul>
 <h3 id="verified-writes-on-an-external-provider"><a class="header" href="#verified-writes-on-an-external-provider">Verified writes on an external provider</a></h3>
-<p>A verified write (<code>Node::execute_verified_create_in_txn</code>,
-<code>Node::execute_verified_mutation_in_txn</code>) is one create, update or delete an embedder has
+<p>A verified write (<code>TxnNode::execute_verified_create</code>,
+<code>TxnNode::execute_verified_mutation</code>) is one create, update or delete an embedder has
 checked against its signer’s signature, run in a transaction the node owns. On a local
 ACP its authority is <em>bound</em>: decided inside the transaction and validated at the
 commit. An external provider cannot be bound that way. There its authority counts as
@@ -2359,17 +2359,18 @@ sends nothing.</p>
 <h3 id="what-is-owed-after-the-commit"><a class="header" href="#what-is-owed-after-the-commit">What is owed after the commit</a></h3>
 <p>A commit on an external provider returns before the provider holds what the transaction
 owes it, and stands whatever the submission comes to. Four node calls say what it came
-to and act on it. Each takes the context of an authenticated caller.</p>
+to and act on it. Each runs as the caller its scope names (<code>Node::with_identity</code>), and
+the unscoped <code>Node</code> calls it as the node’s principal.</p>
 <div class="table-wrapper">
 <table>
 <thead>
 <tr><th>Call</th><th>What it does</th><th>Who may call</th></tr>
 </thead>
 <tbody>
-<tr><td><code>Node::owed_acp_as(context, actor)</code></td><td>lists what <code>actor</code> owes: the registrations of documents it created and the changes it staged</td><td><code>actor</code>, and the node’s principal (<code>Node::node_context</code>)</td></tr>
-<tr><td><code>Node::await_owed_acp_as(context, handle, deadline)</code></td><td>waits until what one committed transaction owes is settled or has come to rest, and says which</td><td>anyone authenticated; the node’s principal waits for every entry of the transaction, an actor for its own, and another actor’s entries neither show in its wait nor keep it</td></tr>
-<tr><td><code>Node::reauthorize_owed_acp_as(context, entry, credential)</code></td><td>records a fresh credential with one owed registration or change and submits it</td><td>the entry’s actor, and the node’s principal</td></tr>
-<tr><td><code>Node::abandon_owed_acp_change_as(context, seq)</code></td><td>deletes the record of a change the provider refused</td><td>the actor that staged it, and nobody else; the node’s principal for the changes it staged itself</td></tr>
+<tr><td><code>ScopedNode::owed_acp(actor)</code></td><td>lists what <code>actor</code> owes: the registrations of documents it created and the changes it staged</td><td><code>actor</code>, and the node’s principal (the unscoped <code>Node</code>)</td></tr>
+<tr><td><code>ScopedNode::await_owed_acp(txn, deadline)</code></td><td>waits until what one committed transaction owes is settled or has come to rest, and says which</td><td>anyone authenticated; the node’s principal waits for every entry of the transaction, an actor for its own, and another actor’s entries neither show in its wait nor keep it</td></tr>
+<tr><td><code>ScopedNode::reauthorize_owed_acp(entry, credential)</code></td><td>records a fresh credential with one owed registration or change and submits it</td><td>the entry’s actor, and the node’s principal</td></tr>
+<tr><td><code>ScopedNode::abandon_owed_acp_change(seq)</code></td><td>deletes the record of a change the provider refused</td><td>the actor that staged it, and nobody else; the node’s principal for the changes it staged itself</td></tr>
 </tbody>
 </table>
 </div>
@@ -2505,7 +2506,7 @@ is presented by no request:</p>
 <li>a create whose request carries no bearer for its creator, by a creator whose key
 the node does not hold, commits, sends nothing at its commit and records no
 authority. Its registration is <code>awaiting_authority</code> in the report and takes a
-credential through <code>reauthorize_owed_acp_as</code>, or settles when a later request
+credential through <code>reauthorize_owed_acp</code>, or settles when a later request
 carries the creator’s bearer;</li>
 <li>no later submission finds one either: not the pass at start, not the settlement of
 an owed change, not a wait, and not another request that touches the document;</li>
@@ -2618,7 +2619,7 @@ and submitted through a worker, and the chain state verified by a light client
 nonce the creator picks: <code>SHA-256("acp/policy-id/v2" || policy hash || nonce || u64be(len(creator)) || creator)</code>. One definition by two creators gets two IDs, and one
 creator gets a new ID for each nonce. The node’s actor is the creator, so a nonce from a
 caller that is not that actor is refused: its ID would come from the actor’s DID. A caller that
-supplies the nonce (<code>Node::add_dac_policy_with_nonce_as</code>, <code>?nonce=&lt;64 hex&gt;</code> on
+supplies the nonce (<code>ScopedNode::add_dac_policy(policy, Some(nonce))</code>, <code>?nonce=&lt;64 hex&gt;</code> on
 <code>POST /api/v0/acp/document/policy</code>, <code>defradb client acp document policy add --nonce</code>)
 knows the ID before the policy exists (<code>vera::vera_rs::predict_policy_id</code>,
 <code>VeraRsProvider::predict_policy_id</code>), and a create sent again with the same nonce
@@ -2628,9 +2629,9 @@ owner and nonce are the ones asked for. Without a nonce the provider draws one f
 the operating system for each request, once, so its own sends again reuse it, but a
 caller that repeats the request makes a second policy. A local ACP numbers its
 policies as Go’s does and refuses a nonce; vera.rs refuses a counter
-(<code>add_dac_policy_with_counter_as</code>). An embedded deployment is seeded with
+(<code>add_dac_policy_with_counter</code>). An embedded deployment is seeded with
 <code>EmbeddedVeraPolicy { definition, nonce, creator }</code>; <code>EmbeddedVeraPolicy::id</code> gives the
-ID, which any node of the deployment reads (<code>get_dac_policy_as</code>) and the creator’s own
+ID, which any node of the deployment reads (<code>get_dac_policy</code>) and the creator’s own
 node adopts by creating the definition under the seed’s nonce. A collection names its
 policy’s ID, so deployments that replicate one collection to each other seed the policy
 under one creator and one nonce. Modeled by
@@ -2751,9 +2752,9 @@ provider that is not vera.rs reports none.</p>
 <li><strong>Taken</strong> beside a verified write
 (<a href="#verified-writes-on-an-external-provider">Verified writes on an external provider</a>),
 as <code>SignerCredential::RequestBound</code> for the registration a create owes, in the
-context of a relationship call (<code>RequestContext::with_request_delegation</code>) for that one
+scope of a relationship call (<code>ScopedNode::with_request_delegation</code>) for that one
 change, and as the fresh credential of one owed registration or change
-(<code>Node::reauthorize_owed_acp_as</code>), whose command it must name.</li>
+(<code>ScopedNode::reauthorize_owed_acp</code>), whose command it must name.</li>
 <li><strong>Not taken</strong> as a caller’s credential. <code>caller_of_delegation</code> refuses it, so an HTTP
 request that presents one is not authenticated. Presented as a plain bearer it admits
 no verified write and stages no change.</li>

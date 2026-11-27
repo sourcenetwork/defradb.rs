@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "ayu";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-6b3400d0.js";
+            window.path_to_searchindex_js = "../searchindex-771176c0.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-8198d451.js"></script>
@@ -224,8 +224,8 @@ replayed identically for later attempts. Failures of the provider fail closed
 <h3 id="owed-relationship-changes"><a class="header" href="#owed-relationship-changes">Owed relationship changes</a></h3>
 <p>The same bridge carries a relationship change made inside a transaction
 (<code>acp::outbox</code>). The in-transaction relationship call (<code>relationship_in_txn</code>, behind
-<code>Node::add_dac_actor_relationship_change_for_in_txn</code>, its delete counterpart and
-<code>Node::change_dac_actor_relationship_as</code>) does not refuse on an external provider: it
+<code>TxnNode::acting_for(actor).add_dac_actor_relationship</code>, its delete counterpart and
+<code>TxnNode::change_dac_actor_relationship</code>) does not refuse on an external provider: it
 <em>stages</em> the change, a record written in the transaction that commits or rolls back with
 its rows, and the provider is sent the change after the commit.</p>
 <p>The node’s HTTP relationship routes (<code>POST</code> and <code>DELETE /api/v0/acp/document/relationship</code>,
@@ -548,8 +548,8 @@ never does, and one the read did not see only denies more.</p>
 </li>
 </ul>
 <h3 id="verified-writes-on-an-external-provider"><a class="header" href="#verified-writes-on-an-external-provider">Verified writes on an external provider</a></h3>
-<p>A verified write (<code>Node::execute_verified_create_in_txn</code>,
-<code>Node::execute_verified_mutation_in_txn</code>) is one create, update or delete an embedder has
+<p>A verified write (<code>TxnNode::execute_verified_create</code>,
+<code>TxnNode::execute_verified_mutation</code>) is one create, update or delete an embedder has
 checked against its signer’s signature, run in a transaction the node owns. On a local
 ACP its authority is <em>bound</em>: decided inside the transaction and validated at the
 commit. An external provider cannot be bound that way. There its authority counts as
@@ -643,17 +643,18 @@ sends nothing.</p>
 <h3 id="what-is-owed-after-the-commit"><a class="header" href="#what-is-owed-after-the-commit">What is owed after the commit</a></h3>
 <p>A commit on an external provider returns before the provider holds what the transaction
 owes it, and stands whatever the submission comes to. Four node calls say what it came
-to and act on it. Each takes the context of an authenticated caller.</p>
+to and act on it. Each runs as the caller its scope names (<code>Node::with_identity</code>), and
+the unscoped <code>Node</code> calls it as the node’s principal.</p>
 <div class="table-wrapper">
 <table>
 <thead>
 <tr><th>Call</th><th>What it does</th><th>Who may call</th></tr>
 </thead>
 <tbody>
-<tr><td><code>Node::owed_acp_as(context, actor)</code></td><td>lists what <code>actor</code> owes: the registrations of documents it created and the changes it staged</td><td><code>actor</code>, and the node’s principal (<code>Node::node_context</code>)</td></tr>
-<tr><td><code>Node::await_owed_acp_as(context, handle, deadline)</code></td><td>waits until what one committed transaction owes is settled or has come to rest, and says which</td><td>anyone authenticated; the node’s principal waits for every entry of the transaction, an actor for its own, and another actor’s entries neither show in its wait nor keep it</td></tr>
-<tr><td><code>Node::reauthorize_owed_acp_as(context, entry, credential)</code></td><td>records a fresh credential with one owed registration or change and submits it</td><td>the entry’s actor, and the node’s principal</td></tr>
-<tr><td><code>Node::abandon_owed_acp_change_as(context, seq)</code></td><td>deletes the record of a change the provider refused</td><td>the actor that staged it, and nobody else; the node’s principal for the changes it staged itself</td></tr>
+<tr><td><code>ScopedNode::owed_acp(actor)</code></td><td>lists what <code>actor</code> owes: the registrations of documents it created and the changes it staged</td><td><code>actor</code>, and the node’s principal (the unscoped <code>Node</code>)</td></tr>
+<tr><td><code>ScopedNode::await_owed_acp(txn, deadline)</code></td><td>waits until what one committed transaction owes is settled or has come to rest, and says which</td><td>anyone authenticated; the node’s principal waits for every entry of the transaction, an actor for its own, and another actor’s entries neither show in its wait nor keep it</td></tr>
+<tr><td><code>ScopedNode::reauthorize_owed_acp(entry, credential)</code></td><td>records a fresh credential with one owed registration or change and submits it</td><td>the entry’s actor, and the node’s principal</td></tr>
+<tr><td><code>ScopedNode::abandon_owed_acp_change(seq)</code></td><td>deletes the record of a change the provider refused</td><td>the actor that staged it, and nobody else; the node’s principal for the changes it staged itself</td></tr>
 </tbody>
 </table>
 </div>
@@ -789,7 +790,7 @@ is presented by no request:</p>
 <li>a create whose request carries no bearer for its creator, by a creator whose key
 the node does not hold, commits, sends nothing at its commit and records no
 authority. Its registration is <code>awaiting_authority</code> in the report and takes a
-credential through <code>reauthorize_owed_acp_as</code>, or settles when a later request
+credential through <code>reauthorize_owed_acp</code>, or settles when a later request
 carries the creator’s bearer;</li>
 <li>no later submission finds one either: not the pass at start, not the settlement of
 an owed change, not a wait, and not another request that touches the document;</li>
