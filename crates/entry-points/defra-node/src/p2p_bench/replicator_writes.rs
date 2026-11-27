@@ -15,6 +15,11 @@
 //!
 //! Override with DEFRA_REPLICATOR_BENCH_WRITERS, DEFRA_REPLICATOR_BENCH_REPLICATORS
 //! (comma-separated) and DEFRA_REPLICATOR_BENCH_WRITES (writes per row).
+//!
+//! DEFRA_REPLICATOR_BENCH_DOWN=<n> stops the first `n` receivers of each row
+//! before the writes, and gives the sender a one-second retry ladder, so its
+//! retry pass replays and reschedules those peers' markers every sweep while
+//! the writes register and acknowledge theirs.
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -50,13 +55,17 @@ fn engine(statistics: &Statistics) -> Engine {
     }
 }
 
-async fn build_sender(dir: &std::path::Path, statistics: &Arc<Statistics>) -> Node {
+async fn build_sender(dir: &std::path::Path, statistics: &Arc<Statistics>, down: usize) -> Node {
     let mut options = storage::RegolithStoreOptions::new();
     options.engine = options.engine.statistics(Some(Arc::clone(statistics)));
+    let mut config = bench_p2p_config();
+    if down > 0 {
+        config.sync.replicator_retry_intervals = Some(vec![1]);
+    }
     let node = Node::builder()
         .data_path(dir)
         .with_regolith_options(options)
-        .with_p2p(bench_p2p_config())
+        .with_p2p(config)
         .build()
         .await
         .expect("build the sender");
@@ -132,10 +141,11 @@ fn percentile(sorted: &[Duration], p: f64) -> f64 {
     sorted[rank - 1].as_secs_f64() * 1e3
 }
 
-async fn measure(replicators: usize, writers: usize, writes: usize) {
+async fn measure(replicators: usize, writers: usize, writes: usize, down: usize) {
+    let down = down.min(replicators);
     let dir = tempfile::tempdir().expect("a temporary directory");
     let statistics = Arc::new(Statistics::with_level(StatsLevel::ExceptHistogramOrTimers));
-    let sender = build_sender(dir.path(), &statistics).await;
+    let sender = build_sender(dir.path(), &statistics, down).await;
     sender
         .p2p()
         .expect("sender P2P")
@@ -148,6 +158,9 @@ async fn measure(replicators: usize, writers: usize, writes: usize) {
         let receiver = build_receiver().await;
         replicate_to(&sender, &sender_addr, &receiver).await;
         receivers.push(receiver);
+    }
+    for receiver in receivers.drain(..down) {
+        receiver.shutdown().await.unwrap();
     }
 
     let per_writer = writes.div_ceil(writers);
@@ -180,7 +193,7 @@ async fn measure(replicators: usize, writers: usize, writes: usize) {
     latencies.sort_unstable();
     let per_write = |count: u64| count as f64 / total as f64;
     println!(
-        "{{\"replicators\":{replicators},\"writers\":{writers},\"writes\":{total},\
+        "{{\"replicators\":{replicators},\"down\":{down},\"writers\":{writers},\"writes\":{total},\
          \"commits_per_sec\":{:.1},\"p50_ms\":{:.2},\"p99_ms\":{:.2},\
          \"syncs_per_write\":{:.2},\"settled_syncs_per_write\":{:.2},\
          \"engine_commits_per_write\":{:.2},\"conflicts_per_commit\":{:.4}}}",
@@ -206,11 +219,12 @@ fn bench_replicator_writes() {
     let writers = counts("DEFRA_REPLICATOR_BENCH_WRITERS", "1,4,16,64");
     let replicators = counts("DEFRA_REPLICATOR_BENCH_REPLICATORS", "0,1,4");
     let writes = counts("DEFRA_REPLICATOR_BENCH_WRITES", "256")[0];
+    let down = counts("DEFRA_REPLICATOR_BENCH_DOWN", "0")[0];
     edge::testing::edge()
         .block_on(async {
             for &replicators in &replicators {
                 for &writers in &writers {
-                    measure(replicators, writers, writes).await;
+                    measure(replicators, writers, writes, down).await;
                 }
             }
         })
