@@ -15,7 +15,8 @@ use storage::RegolithStore;
 struct Bookkeeping {
     finished: bool,
     top: u64,
-    accounted: u64,
+    accounted: Option<u64>,
+    keys_known: bool,
     stored: u64,
     skipped: u64,
 }
@@ -61,7 +62,8 @@ async fn bookkeeping(handler: &Handler, root: &cid::Cid) -> Option<Bookkeeping> 
     Some(Bookkeeping {
         finished: !state["outcome"].is_null(),
         top: state["top"].as_u64().unwrap(),
-        accounted: state["keys"].as_u64().unwrap(),
+        accounted: state["keys"].as_u64(),
+        keys_known: state["keys_known"].as_bool().unwrap_or(false),
         stored,
         skipped,
     })
@@ -81,7 +83,8 @@ async fn walk_accounted(handler: &Handler, root: &MergeBlock, only_open: bool) -
             continue;
         };
         assert_eq!(
-            state.accounted, state.stored,
+            state.accounted.unwrap(),
+            state.stored,
             "the root's progress must account every bookkeeping key it holds"
         );
         let open = if state.finished { 0 } else { state.top + 1 };
@@ -208,7 +211,7 @@ fn a_terminal_skip_retains_its_mark_and_remains_accounted() {
             let Some(state) = bookkeeping(&handler, &root.cid).await else {
                 continue;
             };
-            assert_eq!(state.accounted, state.stored);
+            assert_eq!(state.accounted.unwrap(), state.stored);
             saw_skipped |= state.skipped > 0;
         }
         assert!(saw_skipped, "the filter must terminally skip one ancestor");
@@ -241,7 +244,9 @@ fn a_state_without_the_key_count_restarts_instead_of_resuming_from_zero() {
         let key = format!("/merge-history/v1/{}/state", root.cid).into_bytes();
         let mut state: serde_json::Value =
             serde_json::from_slice(&store.get(&key).await.unwrap().unwrap()).unwrap();
-        state.as_object_mut().unwrap().remove("keys");
+        let state = state.as_object_mut().unwrap();
+        state.remove("keys");
+        state.remove("keys_known");
         store
             .set(&key, &serde_json::to_vec(&state).unwrap())
             .await
@@ -249,7 +254,30 @@ fn a_state_without_the_key_count_restarts_instead_of_resuming_from_zero() {
         drop(store);
         txn.force_commit().await.unwrap();
 
-        converge(&handler, root, false).await;
+        let mut restarted = false;
+        for _ in 0..1024 {
+            let outcome = merge_turn(&handler, root, false).await;
+            if outcome.is_merged() {
+                break;
+            }
+            assert_eq!(outcome, MergeOutcome::Yielded);
+            let Some(state) = bookkeeping(&handler, &root.cid).await else {
+                continue;
+            };
+            if !state.keys_known {
+                continue;
+            }
+            restarted = true;
+            assert_eq!(
+                state.accounted.unwrap(),
+                state.stored,
+                "the restarted walk must account every bookkeeping key it holds"
+            );
+        }
+        assert!(
+            restarted,
+            "the walk must restart and resume with a known key count"
+        );
         assert_eq!(
             read_document(&handler, root).await.unwrap().get("score"),
             Some(&NormalValue::Int(64))
