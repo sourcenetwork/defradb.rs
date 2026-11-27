@@ -7,6 +7,7 @@ mod conditions;
 mod empty_array;
 mod estimate;
 mod filter_to_scan;
+mod json_empty_array;
 mod path_bounds;
 mod types;
 pub(crate) mod values;
@@ -15,6 +16,8 @@ pub(crate) mod values;
 mod empty_array_tests;
 #[cfg(test)]
 mod json_empty_array_tests;
+#[cfg(test)]
+mod json_exact_scan_tests;
 #[cfg(test)]
 mod tests;
 

@@ -77,10 +77,10 @@ impl ExactMatchIterator {
         let key_prefix =
             IndexDataStoreKey::new(collection_short_id, desc.id, fields).try_bytes()?;
 
-        // Check if any value is nil - if so, use prefix scan like SimpleIndex
-        let has_nil = super::skips_uniqueness(values);
+        // A nil or empty-array entry is shared, so scan its prefix like SimpleIndex
+        let never_unique = values.iter().any(NormalValue::is_never_unique);
 
-        if has_nil {
+        if never_unique {
             // NULL values: use prefix scan (multiple documents can have NULL)
             let opts = IterOptions::default().with_prefix(key_prefix.clone());
             let inner = txn.iterator(opts).await?;

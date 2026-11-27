@@ -1,6 +1,6 @@
 //! Integration tests for NormalValue
 
-use document::{JsonLeafValue, JsonPath, JsonScalarValue, NormalValue};
+use document::{json_index_leaves, JsonLeafValue, JsonPath, JsonScalarValue, NormalValue};
 
 #[test]
 fn test_is_nil() {
@@ -168,31 +168,8 @@ fn test_json_leaves_empty_object() {
 #[test]
 fn test_json_leaves_empty_array() {
     let json = NormalValue::Json(serde_json::json!([]));
-    assert_eq!(
-        json.json_leaves(),
-        vec![NormalValue::JsonLeaf(JsonLeafValue::new(
-            JsonPath::new(),
-            JsonScalarValue::EmptyArray
-        ))]
-    );
-}
-
-#[test]
-fn test_json_leaves_nested_empty_array() {
-    let json = NormalValue::Json(serde_json::json!({ "a": [], "b": [[]], "c": {} }));
-    assert_eq!(
-        json.json_leaves(),
-        vec![
-            NormalValue::JsonLeaf(JsonLeafValue::new(
-                JsonPath::new().append_property("a"),
-                JsonScalarValue::EmptyArray
-            )),
-            NormalValue::JsonLeaf(JsonLeafValue::new(
-                JsonPath::new().append_property("b").append_index(),
-                JsonScalarValue::EmptyArray
-            )),
-        ]
-    );
+    let leaves = json.json_leaves();
+    assert!(leaves.is_empty());
 }
 
 #[test]
@@ -200,4 +177,30 @@ fn test_json_leaves_non_json() {
     let val = NormalValue::Int(42);
     let leaves = val.json_leaves();
     assert!(leaves.is_empty());
+}
+
+#[test]
+fn json_index_leaves_finds_values_and_empty_array_markers_in_one_walk() {
+    let leaves = json_index_leaves(&serde_json::json!({
+        "a": [1],
+        "b": [],
+        "nested": {"c": null}
+    }));
+
+    assert_eq!(leaves.len(), 3);
+    assert!(leaves.iter().any(|leaf| {
+        leaf.path == JsonPath::new().append_property("a").append_index()
+            && leaf.value == JsonScalarValue::Number(1.0)
+    }));
+    assert!(leaves.iter().any(|leaf| {
+        leaf.path == JsonPath::new().append_property("b").append_index()
+            && leaf.is_empty_array_marker()
+    }));
+    assert!(leaves.iter().any(|leaf| {
+        leaf.path
+            == JsonPath::new()
+                .append_property("nested")
+                .append_property("c")
+            && leaf.value == JsonScalarValue::Null
+    }));
 }

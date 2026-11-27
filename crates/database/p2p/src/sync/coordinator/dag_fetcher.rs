@@ -30,7 +30,9 @@ use super::rooted_request::rooted_request;
 use super::DagFetchLimiter;
 use crate::sync::arbitration::AttemptSample;
 use crate::sync::car::MAX_HAVE_CIDS;
-use crate::sync::manager::links::{find_all_missing_links, frontier_or_unknown};
+use crate::sync::manager::links::{
+    find_all_missing_links, frontier_or_unknown, walk_missing_links, WalkEnd,
+};
 use crate::sync::manager::SyncEvent;
 use crate::sync::manager::{FetchCompletion, SyncDiagnostics};
 use crate::transport::{FetchFailureCause, P2PTransport, PeerId};
@@ -181,7 +183,7 @@ pub async fn poll_fetch_dag<B: Blockstore + 'static, T: P2PTransport>(
     // between the clock claim and this task starting. Do not require a live
     // provider for local terminal progress.
     if let Ok(Some(root_data)) = blockstore.get(&root_cid).await {
-        if find_all_missing_links(blockstore.as_ref(), &root_data)
+        if find_all_missing_links(blockstore.as_ref(), &root_data, diagnostics.as_ref())
             .await
             .is_ok_and(|missing| missing.is_empty())
         {
@@ -585,7 +587,7 @@ async fn fetch_dag_attempt<B: Blockstore + 'static, T: P2PTransport>(
     state.providers.begin_attempt();
     let car_missing_watch = match blockstore.get(&root_cid).await {
         Ok(Some(root_data)) => {
-            match find_all_missing_links(blockstore.as_ref(), &root_data).await {
+            match find_all_missing_links(blockstore.as_ref(), &root_data, state.diagnostics).await {
                 Ok(missing) => Some(missing).filter(|missing| !missing.is_empty()),
                 Err(e) => {
                     state.diagnostics.record_missing_link_walk_error();
@@ -670,11 +672,18 @@ async fn fetch_dag_attempt<B: Blockstore + 'static, T: P2PTransport>(
         if let Ok(Some(root_data)) = blockstore.get(&root_cid).await {
             // A failed walk leaves the frontier unknown: the selective walk
             // below reads it again and ends the attempt incomplete.
-            let missing = frontier_or_unknown(
-                root_cid,
-                find_all_missing_links(blockstore.as_ref(), &root_data).await,
+            let walk = walk_missing_links(
+                blockstore.as_ref(),
+                &root_data,
                 state.diagnostics,
-            );
+                state.walk_deadline(),
+            )
+            .await;
+            let missing = match walk {
+                Ok(WalkEnd::Preempted) => return FetchAttemptOutcome::Preempted,
+                Ok(WalkEnd::Frontier(missing)) => missing,
+                Err(e) => frontier_or_unknown(root_cid, Err(e), state.diagnostics),
+            };
             if missing.is_empty() {
                 info!(root_cid = %root_cid, doc_id = %context.doc_id, "DAG fetch complete via rooted CAR");
                 return FetchAttemptOutcome::Complete(root_data);
@@ -741,8 +750,16 @@ async fn fetch_dag_attempt<B: Blockstore + 'static, T: P2PTransport>(
             }
         };
 
-        let missing = match find_all_missing_links(blockstore.as_ref(), &root_data).await {
-            Ok(m) => m,
+        let walk = walk_missing_links(
+            blockstore.as_ref(),
+            &root_data,
+            state.diagnostics,
+            state.walk_deadline(),
+        )
+        .await;
+        let missing = match walk {
+            Ok(WalkEnd::Frontier(m)) => m,
+            Ok(WalkEnd::Preempted) => return FetchAttemptOutcome::Preempted,
             Err(e) => {
                 state.diagnostics.record_missing_link_walk_error();
                 warn!(root_cid = %root_cid, error = %e, "find_all_missing_links failed");
@@ -807,8 +824,16 @@ async fn fetch_dag_attempt<B: Blockstore + 'static, T: P2PTransport>(
         Ok(Some(data)) => data,
         _ => return FetchAttemptOutcome::Incomplete(1, attempt_failures),
     };
-    let remaining = match find_all_missing_links(blockstore.as_ref(), &root_data).await {
-        Ok(remaining) => remaining,
+    let walk = walk_missing_links(
+        blockstore.as_ref(),
+        &root_data,
+        state.diagnostics,
+        state.walk_deadline(),
+    )
+    .await;
+    let remaining = match walk {
+        Ok(WalkEnd::Frontier(remaining)) => remaining,
+        Ok(WalkEnd::Preempted) => return FetchAttemptOutcome::Preempted,
         Err(e) => {
             frontier_or_unknown(root_cid, Err(e), state.diagnostics);
             return FetchAttemptOutcome::Incomplete(1, attempt_failures);
@@ -1176,6 +1201,15 @@ impl<'a> ProviderFetchState<'a> {
         self.quantum_ends =
             clock_owned.then(|| crate::rt::time::Instant::now() + CLOCK_ATTEMPT_QUANTUM);
         self
+    }
+
+    /// The deadline a walk may stop at: the quantum, once this attempt has
+    /// fetched a block. Before that a walk runs whole, so every dispatch does
+    /// at least one complete walk and one productive window, and a DAG whose
+    /// walk outlasts the quantum still converges.
+    fn walk_deadline(&self) -> Option<crate::rt::time::Instant> {
+        self.quantum_ends
+            .filter(|_| self.providers.attempt_progressed())
     }
 
     fn quantum_spent(&self) -> bool {

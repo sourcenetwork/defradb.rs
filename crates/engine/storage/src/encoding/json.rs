@@ -10,16 +10,30 @@
 use document::{JsonLeafValue, JsonPath, JsonPathPart, JsonScalarValue};
 
 use super::{
-    decode_bool_ascending, decode_bytes_ascending, decode_float64_ascending, decode_if_empty_array,
-    decode_if_null, decode_uvarint_ascending, encode_bool_ascending, encode_bytes_ascending,
-    encode_empty_array_ascending, encode_empty_array_descending, encode_float64_ascending,
-    encode_null_ascending, encode_uvarint_ascending, peek_type, EncodedType, EMPTY_ARRAY_DESC,
-    ESCAPED_TERM, INT_ZERO, JSON_MARKER,
+    decode_bool_ascending, decode_bytes_ascending, decode_float64_ascending, decode_if_null,
+    decode_uvarint_ascending, encode_bool_ascending, encode_bytes_ascending,
+    encode_float64_ascending, encode_null_ascending, encode_uvarint_ascending, peek_type,
+    EncodedType, ESCAPED_TERM, INT_ZERO, JSON_MARKER,
 };
 use crate::corekv::{Error, Result};
 
 /// Path terminator after all path parts, before value
 pub const JSON_PATH_END: u8 = b'/'; // 0x2F - matches Go's jsonPathEnd
+
+/// The empty-array marker in ascending order. No JSON value's encoding starts
+/// with it, and it sorts after every one, so a scan below the top of a path
+/// never meets it.
+pub const JSON_EMPTY_ARRAY: u8 = 0xfe;
+
+/// The empty-array marker in descending order: the complement of the
+/// ascending one, so it sorts before every descending value. No descending
+/// JSON value starts with it, since a JSON number is never NaN and a
+/// descending NaN is `FLOAT64_NAN_DESC` anyway.
+pub const JSON_EMPTY_ARRAY_DESC: u8 = !JSON_EMPTY_ARRAY;
+
+/// An array index in a path: uvarint 0. Both directions write the path
+/// ascending, and no UTF-8 name starts with this continuation byte.
+const JSON_INDEX: u8 = INT_ZERO;
 
 /// Encode a JSON leaf value with path in ascending order.
 ///
@@ -142,7 +156,11 @@ fn encode_scalar_ascending(buf: Vec<u8>, value: &JsonScalarValue) -> Vec<u8> {
         JsonScalarValue::Bool(b) => encode_bool_ascending(buf, *b),
         JsonScalarValue::Number(n) => encode_float64_ascending(buf, *n),
         JsonScalarValue::String(s) => encode_bytes_ascending(buf, s.as_bytes()),
-        JsonScalarValue::EmptyArray => encode_empty_array_ascending(buf),
+        JsonScalarValue::EmptyArray => {
+            let mut buf = buf;
+            buf.push(JSON_EMPTY_ARRAY);
+            buf
+        }
         // PathMin/PathMax are handled specially in encode_json_ascending
         JsonScalarValue::PathMin | JsonScalarValue::PathMax | _ => buf,
     }
@@ -155,7 +173,11 @@ fn encode_scalar_descending(buf: Vec<u8>, value: &JsonScalarValue) -> Vec<u8> {
         JsonScalarValue::Bool(value) => super::encode_bool_descending(buf, *value),
         JsonScalarValue::Number(value) => super::encode_float64_descending(buf, *value),
         JsonScalarValue::String(value) => super::encode_bytes_descending(buf, value.as_bytes()),
-        JsonScalarValue::EmptyArray => encode_empty_array_descending(buf),
+        JsonScalarValue::EmptyArray => {
+            let mut buf = buf;
+            buf.push(JSON_EMPTY_ARRAY_DESC);
+            buf
+        }
         JsonScalarValue::PathMin | JsonScalarValue::PathMax | _ => buf,
     }
 }
@@ -186,13 +208,11 @@ pub fn decode_json_ascending(buf: &[u8]) -> Result<(&[u8], JsonLeafValue)> {
             break;
         }
 
-        // Check if this is an array index (uvarint) or property (string)
-        // Array paths use the zero index marker; other bytes start a property.
-        if rest[0] == INT_ZERO {
-            // Array index - decode uvarint
-            let (remaining, _idx) = decode_uvarint_ascending(rest)?;
+        // An index is always written as uvarint 0, one byte no UTF-8 name
+        // can start with.
+        if rest[0] == JSON_INDEX {
             path = path.append_index();
-            rest = remaining;
+            rest = &rest[1..];
         } else {
             // Property name - decode as escaped string
             let (remaining, name) = decode_path_string_ascending(rest)?;
@@ -235,11 +255,10 @@ pub fn decode_json_descending(buf: &[u8]) -> Result<(&[u8], JsonLeafValue)> {
             break;
         }
 
-        if rest[0] == INT_ZERO {
-            // Array index - decode ascending uvarint
-            let (remaining, _idx) = decode_uvarint_ascending(rest)?;
+        // The path is ascending here too, so an index is the same one byte.
+        if rest[0] == JSON_INDEX {
             path = path.append_index();
-            rest = remaining;
+            rest = &rest[1..];
         } else {
             // Property name - decode as ascending escaped string
             let (remaining, name) = decode_path_string_ascending(rest)?;
@@ -303,6 +322,9 @@ fn decode_path_string_ascending(buf: &[u8]) -> Result<(&[u8], String)> {
 
 /// Decode a JSON scalar value (ascending).
 fn decode_scalar_ascending(buf: &[u8]) -> Result<(&[u8], JsonScalarValue)> {
+    if let Some((&JSON_EMPTY_ARRAY, rest)) = buf.split_first() {
+        return Ok((rest, JsonScalarValue::EmptyArray));
+    }
     let typ = peek_type(buf);
     match typ {
         EncodedType::Null => {
@@ -328,10 +350,6 @@ fn decode_scalar_ascending(buf: &[u8]) -> Result<(&[u8], JsonScalarValue)> {
                 .map_err(|e| Error::Other(format!("invalid utf-8 in JSON string: {}", e)))?;
             Ok((rest, JsonScalarValue::String(s)))
         }
-        EncodedType::EmptyArray => {
-            let (rest, _) = decode_if_empty_array(buf);
-            Ok((rest, JsonScalarValue::EmptyArray))
-        }
         _ => Err(Error::Other(format!(
             "cannot decode JSON scalar: unknown type {:?} (marker 0x{:02x})",
             typ,
@@ -342,6 +360,9 @@ fn decode_scalar_ascending(buf: &[u8]) -> Result<(&[u8], JsonScalarValue)> {
 
 /// Decode a JSON scalar value (descending).
 fn decode_scalar_descending(buf: &[u8]) -> Result<(&[u8], JsonScalarValue)> {
+    if let Some((&JSON_EMPTY_ARRAY_DESC, rest)) = buf.split_first() {
+        return Ok((rest, JsonScalarValue::EmptyArray));
+    }
     if buf.is_empty() {
         return Err(Error::Other("empty buffer for JSON scalar".into()));
     }
@@ -360,7 +381,6 @@ fn decode_scalar_descending(buf: &[u8]) -> Result<(&[u8], JsonScalarValue)> {
                 .map_err(|error| Error::Other(format!("invalid utf-8 in JSON string: {error}")))?;
             Ok((rest, JsonScalarValue::String(value)))
         }
-        EMPTY_ARRAY_DESC => Ok((&buf[1..], JsonScalarValue::EmptyArray)),
         marker => Err(Error::Other(format!(
             "cannot decode descending JSON scalar: marker 0x{marker:02x}"
         ))),

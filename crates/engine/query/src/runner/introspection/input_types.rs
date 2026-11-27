@@ -203,16 +203,11 @@ pub(super) fn field_kind_to_input_type_ref(kind: &FieldKind) -> TypeRef {
             let element_type = scalar_to_gql_name(&array.element_kind());
             TypeRef::named_list(element_type)
         }
-        FieldKind::Relation { .. } | FieldKind::SelfRef { .. } => {
-            // For relations, mutation input takes ID
+        // A relation takes the related document's ID. That holds for a
+        // relation left Named too: its name is an object type, which no input
+        // may hold, and one such field fails the schema of the whole node.
+        FieldKind::Relation { .. } | FieldKind::SelfRef { .. } | FieldKind::Named { .. } => {
             TypeRef::named("ID")
-        }
-        FieldKind::Named { name, is_array } => {
-            if *is_array {
-                TypeRef::named_list(name)
-            } else {
-                TypeRef::named(name)
-            }
         }
         _ => TypeRef::named("String"),
     }

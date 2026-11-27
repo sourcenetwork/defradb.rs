@@ -279,9 +279,11 @@ impl NormalValue {
         self.classification().is_nil
     }
 
-    /// Whether this is the index entry of an empty array at a JSON path.
-    pub fn is_empty_array_entry(&self) -> bool {
-        matches!(self, NormalValue::JsonLeaf(leaf) if leaf.value == JsonScalarValue::EmptyArray)
+    /// Whether an index entry holding this value is outside every unique
+    /// check: a nil, as Go's `hasIndexKeyNilField`, or the JSON empty-array
+    /// marker, which any number of documents may hold.
+    pub fn is_never_unique(&self) -> bool {
+        self.is_nil() || matches!(self, NormalValue::JsonLeaf(leaf) if leaf.is_empty_array_marker())
     }
 
     /// Returns true if this value type can be nil.
@@ -408,7 +410,16 @@ impl NormalValue {
 
     /// Extract all indexable leaf values from a JSON value.
     ///
-    /// An empty array gets a leaf too, so an `_all` scan can find it.
+    /// JSON values are traversed to find all leaf scalars (null, bool, number, string).
+    /// Each leaf is returned as a JsonLeaf variant with its path through the JSON structure.
+    ///
+    /// # Behavior
+    ///
+    /// - Scalar JSON (null, bool, number, string): Returns single JsonLeaf with empty path
+    /// - Nested objects: Returns JsonLeaf for each leaf with path through properties
+    /// - Arrays: Returns JsonLeaf for each element with Index marker in path
+    /// - Empty objects/arrays: Returns empty vec (no index entries)
+    /// - Null JSON field: Returns single Null entry
     pub fn json_leaves(&self) -> Vec<NormalValue> {
         match self {
             NormalValue::Json(json) => {
@@ -425,21 +436,12 @@ impl NormalValue {
 /// Extract all leaf values from a JSON value for indexing.
 fn extract_json_leaves(json: &serde_json::Value) -> Vec<NormalValue> {
     let mut leaves = Vec::new();
-    let options = crate::json_traverse::TraverseOptions {
-        only_leaves: false,
-        ..index_traverse_options()
-    };
+    let options = index_traverse_options();
 
     let _ = traverse_json(
         json,
         |path, value| {
-            let scalar = match value {
-                serde_json::Value::Array(arr) if arr.is_empty() => {
-                    Some(JsonScalarValue::EmptyArray)
-                }
-                _ => JsonScalarValue::from_json_value(value),
-            };
-            if let Some(scalar) = scalar {
+            if let Some(scalar) = JsonScalarValue::from_json_value(value) {
                 leaves.push(NormalValue::JsonLeaf(JsonLeafValue::new(
                     path.clone(),
                     scalar,

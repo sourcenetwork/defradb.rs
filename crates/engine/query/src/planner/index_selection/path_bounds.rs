@@ -1,6 +1,6 @@
 //! Scan bounds and key order for JSON paths.
 
-use document::{JsonLeafValue, JsonPath, JsonScalarValue, NormalValue};
+use document::{JsonLeafValue, JsonPath, JsonPathPart, JsonScalarValue, NormalValue};
 use rapidhash::RapidHashSet;
 use schema::ScalarKind;
 use storage::index::Bound;
@@ -10,33 +10,39 @@ use super::values::normalize_for_index_field;
 use crate::mapper::FilterOp;
 
 /// A bound below every value at `path`. A descending index inverts the
-/// bytes, so `PathMax` is its low end.
-pub(super) fn path_low_end(path: &JsonPath, descending: bool) -> Bound {
-    let sentinel = if descending {
-        JsonScalarValue::PathMax
+/// bytes, so its low end is the top of the path, where the empty-array
+/// markers sit next to `PathMax`.
+pub(super) fn path_low_end(path: &JsonPath, descending: bool, markers: bool) -> Bound {
+    if descending {
+        path_top(path, markers, Bound::Inclusive)
     } else {
-        JsonScalarValue::PathMin
-    };
-    Bound::Inclusive(NormalValue::JsonLeaf(JsonLeafValue::new(
-        path.clone(),
-        sentinel,
-    )))
+        Bound::Inclusive(at_path(path, JsonScalarValue::PathMin))
+    }
 }
 
 /// A bound above every value at `path`. On a descending index `PathMin`
 /// sorts after the nulls, the last values of the path.
-pub(super) fn path_high_end(path: &JsonPath, descending: bool) -> Bound {
+pub(super) fn path_high_end(path: &JsonPath, descending: bool, markers: bool) -> Bound {
     if descending {
-        Bound::Inclusive(NormalValue::JsonLeaf(JsonLeafValue::new(
-            path.clone(),
-            JsonScalarValue::PathMin,
-        )))
+        Bound::Inclusive(at_path(path, JsonScalarValue::PathMin))
     } else {
-        Bound::Exclusive(NormalValue::JsonLeaf(JsonLeafValue::new(
-            path.clone(),
-            JsonScalarValue::PathMax,
-        )))
+        path_top(path, markers, Bound::Exclusive)
     }
+}
+
+/// The top end of `path`. Without `markers` it stops before the empty-array
+/// markers, which only element paths hold, so a scan that cannot match them
+/// never reads them.
+fn path_top(path: &JsonPath, markers: bool, past_max: fn(NormalValue) -> Bound) -> Bound {
+    if markers || path.0.last() != Some(&JsonPathPart::Index) {
+        past_max(at_path(path, JsonScalarValue::PathMax))
+    } else {
+        Bound::Exclusive(at_path(path, JsonScalarValue::EmptyArray))
+    }
+}
+
+fn at_path(path: &JsonPath, value: JsonScalarValue) -> NormalValue {
+    NormalValue::JsonLeaf(JsonLeafValue::new(path.clone(), value))
 }
 
 /// Each value once, in index key order when the scan's order is relied on.

@@ -122,7 +122,7 @@ fn paired(filters: &[(&str, &[&str])]) {
 }
 
 #[test]
-#[mantra_macros::req_test("defra.index.empty_array")]
+#[mantra_macros::req_test("defra.index.json.matches-scan")]
 fn ne_under_all_matches_a_full_scan() {
     paired(&[
         (
@@ -145,7 +145,7 @@ fn ne_under_all_matches_a_full_scan() {
 }
 
 #[test]
-#[mantra_macros::req_test("defra.index.empty_array")]
+#[mantra_macros::req_test("defra.index.json.matches-scan")]
 fn nested_array_operators_match_a_full_scan() {
     paired(&[
         (
@@ -164,7 +164,7 @@ fn nested_array_operators_match_a_full_scan() {
 }
 
 #[test]
-#[mantra_macros::req_test("defra.index.empty_array")]
+#[mantra_macros::req_test("defra.index.json.matches-scan")]
 fn bare_negatives_match_a_full_scan() {
     paired(&[
         (
@@ -209,7 +209,7 @@ fn bare_negatives_match_a_full_scan() {
 }
 
 #[test]
-#[mantra_macros::req_test("defra.index.empty_array")]
+#[mantra_macros::req_test("defra.index.json.matches-scan")]
 fn positive_all_and_any_match_a_full_scan() {
     paired(&[
         ("{custom: {_all: {_eq: 1}}}", &["Empty", "One"]),
@@ -220,7 +220,7 @@ fn positive_all_and_any_match_a_full_scan() {
 }
 
 #[test]
-#[mantra_macros::req_test("defra.index.empty_array")]
+#[mantra_macros::req_test("defra.index.json.matches-scan")]
 fn array_operators_on_a_path_match_a_full_scan() {
     paired(&[(
         "{custom: {tags: {_all: {_eq: 1}}}}",
@@ -229,7 +229,7 @@ fn array_operators_on_a_path_match_a_full_scan() {
 }
 
 #[test]
-#[mantra_macros::req_test("defra.index.empty_array")]
+#[mantra_macros::req_test("defra.index.json.matches-scan")]
 fn an_object_filter_under_all_fails_with_and_without_the_index() {
     let mut actions = collections(
         "type Idx { name: String  custom: JSON @index }",
@@ -264,7 +264,7 @@ fn an_object_filter_under_all_fails_with_and_without_the_index() {
 }
 
 #[test]
-#[mantra_macros::req_test("defra.index.empty_array")]
+#[mantra_macros::req_test("defra.index.json.matches-scan")]
 fn the_index_serves_positive_all_and_not_negative_all() {
     let mut actions = collections(
         "type Idx { name: String  custom: JSON @index }",
@@ -307,7 +307,7 @@ const TAGS_FILTERS: &[(&str, &[&str])] = &[
 ];
 
 #[test]
-#[mantra_macros::req_test("defra.index.empty_array")]
+#[mantra_macros::req_test("defra.index.json.matches-scan")]
 fn a_composite_json_index_matches_a_full_scan() {
     paired_with(
         r#"type Idx @index(includes: [{field: "custom"}, {field: "name"}]) { name: String  custom: JSON }"#,
@@ -325,7 +325,7 @@ fn a_composite_json_index_matches_a_full_scan() {
 }
 
 #[test]
-#[mantra_macros::req_test("defra.index.empty_array")]
+#[mantra_macros::req_test("defra.index.json.matches-scan")]
 fn a_descending_json_index_matches_a_full_scan() {
     paired_with(
         "type Idx { name: String  custom: JSON @index(direction: DESC) }",
@@ -340,7 +340,7 @@ fn a_descending_json_index_matches_a_full_scan() {
 }
 
 #[test]
-#[mantra_macros::req_test("defra.index.empty_array")]
+#[mantra_macros::req_test("defra.index.json.matches-scan")]
 fn a_unique_json_index_matches_a_full_scan() {
     paired_with(
         "type Idx { name: String  custom: JSON @index(unique: true) }",
@@ -352,13 +352,13 @@ fn a_unique_json_index_matches_a_full_scan() {
 }
 
 #[test]
-#[mantra_macros::req_test("defra.index.empty_array")]
+#[mantra_macros::req_test("defra.index.json.matches-scan")]
 fn updates_and_deletes_keep_the_index_matching_a_full_scan() {
     updates_and_deletes_match_a_full_scan("type Idx { name: String  custom: JSON @index }");
 }
 
 #[test]
-#[mantra_macros::req_test("defra.index.empty_array")]
+#[mantra_macros::req_test("defra.index.json.matches-scan")]
 fn updates_and_deletes_keep_a_unique_json_index_matching_a_full_scan() {
     updates_and_deletes_match_a_full_scan(
         "type Idx { name: String  custom: JSON @index(unique: true) }",
@@ -480,7 +480,7 @@ fn a_pattern_from_another_any_clause_on_a_typed_array_matches_a_full_scan() {
 }
 
 #[test]
-#[mantra_macros::req_test("defra.index.empty_array")]
+#[mantra_macros::req_test("defra.index.json.matches-scan")]
 fn an_in_listing_an_object_matches_a_full_scan() {
     paired_with(
         "type Idx { name: String  custom: JSON @index }",
@@ -509,7 +509,7 @@ const COMPOSITE_AGE_IDX: &str = r#"type Idx @index(includes: [{field: "age"}, {f
 const COMPOSITE_AGE_RAW: &str = "type Raw { name: String  age: Int  custom: JSON }";
 
 #[test]
-#[mantra_macros::req_test("defra.index.empty_array")]
+#[mantra_macros::req_test("defra.index.json.matches-scan")]
 fn a_json_field_second_in_a_composite_index_matches_a_full_scan() {
     paired_fields(
         COMPOSITE_AGE_IDX,
@@ -562,7 +562,7 @@ fn a_json_field_second_in_a_composite_index_matches_a_full_scan() {
 }
 
 #[test]
-#[mantra_macros::req_test("defra.index.empty_array")]
+#[mantra_macros::req_test("defra.index.json.matches-scan")]
 fn null_checks_at_a_path_match_a_full_scan() {
     paired_with(
         "type Idx { name: String  custom: JSON @index }",
@@ -594,7 +594,7 @@ fn null_checks_at_a_path_match_a_full_scan() {
 }
 
 #[test]
-#[mantra_macros::req_test("defra.index.empty_array")]
+#[mantra_macros::req_test("defra.index.json.matches-scan")]
 fn the_index_serves_positive_filters_and_not_its_fallbacks() {
     let mut actions = collections(
         "type Idx { name: String  custom: JSON @index }",
@@ -623,7 +623,7 @@ fn the_index_serves_positive_filters_and_not_its_fallbacks() {
 }
 
 #[test]
-#[mantra_macros::req_test("defra.index.empty_array")]
+#[mantra_macros::req_test("defra.index.json.matches-scan")]
 fn all_with_a_page_matches_a_full_scan() {
     let docs = vec![
         ("A", json!({ "tags": [] })),
@@ -656,7 +656,7 @@ fn all_with_a_page_matches_a_full_scan() {
 }
 
 #[test]
-#[mantra_macros::req_test("defra.index.empty_array")]
+#[mantra_macros::req_test("defra.index.json.matches-scan")]
 fn any_beside_all_on_one_path_matches_a_full_scan() {
     let mut docs = tags_docs();
     docs.push(("OneTwo", json!({ "tags": [1, 2] })));

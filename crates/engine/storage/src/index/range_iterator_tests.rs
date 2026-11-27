@@ -523,12 +523,12 @@ where
 }
 
 #[test]
-fn a_range_reads_one_empty_array_entry_not_each() {
+fn a_range_stopping_below_the_markers_reads_none_of_them() {
     use document::{JsonLeafValue, JsonPath, JsonScalarValue};
 
     let at = |value| {
         NormalValue::JsonLeaf(JsonLeafValue::new(
-            JsonPath::new().append_property("tags"),
+            JsonPath::new().append_property("tags").append_index(),
             value,
         ))
     };
@@ -554,16 +554,13 @@ fn a_range_reads_one_empty_array_entry_not_each() {
             txn.commit().await.unwrap();
             let txn = store.new_txn(true).await.unwrap();
             let m = Bound::Exclusive(at(JsonScalarValue::String("m".into())));
-            // The empty arrays sort after the strings ascending and before the
-            // nulls descending, so each range runs through them.
-            let (lower, upper, expected) = if descending {
-                (m, Bound::Inclusive(at(JsonScalarValue::PathMin)), vec![21])
+            // The markers sit at the top of the path, past every value, so
+            // the planner's `_gt` stops just below them.
+            let markers = Bound::Exclusive(at(JsonScalarValue::EmptyArray));
+            let (lower, upper) = if descending {
+                (markers, m)
             } else {
-                (
-                    m,
-                    Bound::Exclusive(at(JsonScalarValue::PathMax)),
-                    vec![22, 23],
-                )
+                (m, markers)
             };
             for reverse in [false, true] {
                 let reads = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
@@ -591,9 +588,13 @@ fn a_range_reads_one_empty_array_entry_not_each() {
                     .map(|entry| entry.doc_short_id)
                     .collect();
                 ids.sort_unstable();
-                assert_eq!(ids, expected, "descending {descending} reverse {reverse}");
+                assert_eq!(
+                    ids,
+                    vec![22, 23],
+                    "descending {descending} reverse {reverse}"
+                );
                 assert!(
-                    reads.load(std::sync::atomic::Ordering::Relaxed) <= 4,
+                    reads.load(std::sync::atomic::Ordering::Relaxed) <= 3,
                     "descending {descending} reverse {reverse}: {} reads",
                     reads.load(std::sync::atomic::Ordering::Relaxed)
                 );

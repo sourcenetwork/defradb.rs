@@ -16,11 +16,6 @@ testo collection_version::updates::add::simple::collection_version_updates_add_s
 # Defra.rs should return an error for a view source query with more than one top-level selection; Go silently keeps the first selection
 # and creates the view (undesirable).
 testo view::simple::with_multiple_sources::add_view_with_two_source_selections_fails_and_creates_no_view
-# Go's JSON index has no entry for an empty array, so `_all` misses it; Rust finds it, as without the index.
-testo index::empty_array::a_unique_json_index_holds_two_empty_arrays
-testo index::empty_array::all_on_a_nested_json_array_finds_the_empty_array
-testo index::empty_array::an_update_moves_the_empty_array_entry
-testo index::empty_array::other_filters_on_a_top_level_json_array_skip_the_empty_array
 # Rust stamps a migrated document only when every transition on its path ran a transform; Go stamps a partial read, so the
 # field a later lens sets comes back null (sourcenetwork/defradb#4736).
 testo issues::t_3044::indexed_collection_query_after_two_lenses_returns_migrated_fields
@@ -54,8 +49,8 @@ testo index::json_range_paths::like_and_a_range_on_two_paths
 testo index::json_range_paths::eq_and_like_on_two_paths
 testo index::json_range_paths::nin_and_like_with_a_missing_nin_path
 # Go's JSON index has no entry for an empty array, and Go refuses `_ne` on a JSON field; Rust finds the empty arrays at either path, as without the index.
-testo index::empty_array::like_under_all_on_two_json_paths_finds_the_empty_array
-testo index::empty_array::ne_under_all_on_two_json_paths_finds_the_empty_array
+testo index::json_range_paths::like_under_all_on_two_paths_finds_the_empty_array
+testo index::json_range_paths::ne_under_all_on_two_paths_finds_the_empty_array
 # Go writes no entry for an empty array in a JSON index and refuses `_ne` on a JSON field; Rust answers each filter as a full scan does.
 testo index::json_index_matches_scan::ne_under_all_matches_a_full_scan
 testo index::json_index_matches_scan::nested_array_operators_match_a_full_scan

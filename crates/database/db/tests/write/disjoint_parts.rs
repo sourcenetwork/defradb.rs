@@ -276,15 +276,14 @@ type MetricRollup @downsample(interval: "1000ms", timeField: "ts") {
 fn updates_of_a_downsample_source_both_commit() {
     workers::block_on(async {
     let node = Node::new(METRIC).await;
-    let known: rapidhash::RapidHashSet<String> =
-        node.db.list_collections().unwrap().into_iter().collect();
+    let known = node.db.known_collections();
     let source = query::parse_query_with_limits(
         "query { Metric { label ts value } }",
         None,
         query::QueryLimits::default(),
     )
     .unwrap();
-    for mut rollup in query::parse_sdl_with_known_types(ROLLUP, known).unwrap() {
+    for mut rollup in query::parse_sdl_with_known_collections(ROLLUP, known).unwrap() {
         rollup.downsample_source = Some(schema::QuerySource::new(query::select_to_go_json(
             &source[0],
         )));

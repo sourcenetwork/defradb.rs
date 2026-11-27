@@ -215,3 +215,31 @@ fn two_bounds_in_one_any_clause() {
         &["In"],
     );
 }
+
+#[test]
+#[mantra_macros::req_test("defra.index.json.matches-scan")]
+fn ne_under_all_on_two_paths_finds_the_empty_array() {
+    run(
+        &[
+            json!({ "name": "EmptyB", "custom": { "a": [1], "b": [] } }),
+            json!({ "name": "EmptyA", "custom": { "a": [], "b": [1] } }),
+            json!({ "name": "Equal", "custom": { "a": [1], "b": [25] } }),
+        ],
+        "{custom: {a: {_all: {_ne: 25}}, b: {_all: {_ne: 25}}}}",
+        &["EmptyA", "EmptyB"],
+    );
+}
+
+#[test]
+#[mantra_macros::req_test("defra.index.json.matches-scan")]
+fn like_under_all_on_two_paths_finds_the_empty_array() {
+    run(
+        &[
+            json!({ "name": "EmptyB", "custom": { "a": ["xa"], "b": [] } }),
+            json!({ "name": "EmptyA", "custom": { "a": [], "b": ["xb"] } }),
+            json!({ "name": "Other", "custom": { "a": ["xa"], "b": ["yb"] } }),
+        ],
+        "{custom: {a: {_all: {_like: \"x%\"}}, b: {_all: {_like: \"x%\"}}}}",
+        &["EmptyA", "EmptyB"],
+    );
+}

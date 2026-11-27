@@ -81,7 +81,7 @@ fn simple_schema() -> CollectionVersion {
 #[test]
 fn older_index_formats_are_upgraded() {
     workers::block_on(async {
-        for format in [None, Some(1u32), Some(2), Some(3), Some(4), Some(5)] {
+        for format in [None, Some(1u32), Some(2), Some(3)] {
             let store = RegolithStore::in_memory().unwrap();
             let db = db::DB::open(store.clone()).await.unwrap();
             db.add_collection(&defra_core::RequestContext::ambient(), SIMPLE_SDL)
@@ -378,108 +378,6 @@ fn rebuilds_a_descending_json_index_stamped(stored: u32, stale_walk: bool) {
             reopened.stored_index_format().await.unwrap(),
             Some(CURRENT_INDEX_FORMAT)
         );
-    })
-    .unwrap();
-}
-
-/// A format-5 store wrote no entry for an empty array inside a JSON value, so
-/// `_all` through the index missed it until the open rebuilds the index.
-#[test]
-fn a_format_five_json_empty_array_is_rebuilt_on_open() {
-    use std::sync::Arc;
-
-    use db::{AutoCommitMutator, LensedAutoCommitFetcher, DB};
-    use document::{Document, JsonLeafValue, JsonPath, JsonScalarValue, NormalValue};
-    use query::mutator::DocMutator;
-    use query::{QueryExecutor, QueryRequest, QueryRunner};
-    use storage::corekv::{IterOptions, Iterator as _};
-    use storage::keys::IndexDataStoreKey;
-
-    let request =
-        "query { User(filter: {custom: {tags: {_all: {_eq: 1}}}}, order: {name: ASC}) { name } }";
-    let expected = serde_json::json!({"User": [{"name": "Empty"}, {"name": "One"}]});
-    let query = |db: Arc<DB<RegolithStore>>| async move {
-        let schema = db.require_collection("User").unwrap().schema().clone();
-        QueryRunner::new(LensedAutoCommitFetcher::new(db), vec![schema])
-            .execute(QueryRequest::new(request))
-            .await
-    };
-
-    workers::block_on(async {
-        let store = RegolithStore::in_memory().unwrap();
-        let db = Arc::new(DB::open(store.clone()).await.unwrap());
-        db.add_collection(
-            &defra_core::RequestContext::ambient(),
-            "type User { name: String, custom: JSON @index }",
-        )
-        .await
-        .unwrap();
-        let collection = db.require_collection("User").unwrap();
-        let schema = collection.schema_arc();
-        for doc in [
-            r#"{"name":"Empty","custom":{"tags":[]}}"#,
-            r#"{"name":"One","custom":{"tags":[1]}}"#,
-        ] {
-            let document = Document::from_json_str(doc, schema.clone()).unwrap();
-            AutoCommitMutator::new(db.clone())
-                .create("User", document)
-                .await
-                .unwrap();
-        }
-
-        let empty = storage::field_value::encode_field_value(
-            Vec::new(),
-            &NormalValue::JsonLeaf(JsonLeafValue::new(
-                JsonPath::new().append_property("tags"),
-                JsonScalarValue::EmptyArray,
-            )),
-            false,
-        )
-        .unwrap();
-        let prefix =
-            IndexDataStoreKey::index_prefix(collection.resolved_root_id(), schema.indexes[0].id);
-        let txn = db.new_txn(false).await.unwrap();
-        let datastore = txn.datastore().unwrap();
-        let mut iter = datastore
-            .iterator(
-                IterOptions::new()
-                    .with_prefix(prefix.clone())
-                    .with_keys_only(true),
-            )
-            .await
-            .unwrap();
-        let mut keys = Vec::new();
-        while let Some(pair) = iter.next().await.unwrap() {
-            if pair.key[prefix.len()..].starts_with(&empty) {
-                keys.push(pair.key);
-            }
-        }
-        iter.close().await.unwrap();
-        drop(iter);
-        assert_eq!(keys.len(), 1, "the empty array has one entry");
-        for key in keys {
-            datastore.delete(&key).await.unwrap();
-        }
-        drop(datastore);
-        txn.systemstore()
-            .unwrap()
-            .set(INDEX_FORMAT_KEY, &5u32.to_be_bytes())
-            .await
-            .unwrap();
-        txn.commit().await.unwrap();
-
-        let result = query(db.clone()).await;
-        assert_ne!(result.data, Some(expected.clone()), "format 5 misses it");
-        drop(db);
-
-        let reopened = Arc::new(DB::open(store).await.unwrap());
-        assert_eq!(
-            reopened.stored_index_format().await.unwrap(),
-            Some(CURRENT_INDEX_FORMAT)
-        );
-        let result = query(reopened).await;
-        assert!(result.errors.is_empty(), "{:?}", result.errors);
-        assert_eq!(result.data, Some(expected));
     })
     .unwrap();
 }

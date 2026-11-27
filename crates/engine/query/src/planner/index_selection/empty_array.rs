@@ -6,7 +6,7 @@
 //! its own. The residual filter, the whole filter, drops the null arrays and
 //! the null elements again.
 
-use document::{JsonLeafValue, JsonPath, JsonPathPart, JsonScalarValue, NormalValue};
+use document::NormalValue;
 use schema::FieldKind;
 use storage::index::Bound;
 
@@ -40,60 +40,18 @@ pub(super) fn with_empty_arrays(
     {
         return scan;
     }
-    with_entry(scan, NormalValue::Null, is_composite)
-}
-
-/// `scan` widened to the empty-array marker at `path` of a JSON field, unless
-/// an `_any` on that same array makes every empty array fail.
-pub(super) fn with_json_empty_arrays(
-    scan: IndexScanType,
-    path: JsonPath,
-    conditions: &[FieldCondition],
-    is_composite: bool,
-) -> IndexScanType {
-    let any_on_path = conditions.iter().any(|c| {
-        c.array_op == Some(FilterOp::Any)
-            && c.json_path.as_ref().map(array_path) == Some(path.clone())
-    });
-    if any_on_path {
-        return scan;
-    }
-    let marker = NormalValue::JsonLeaf(JsonLeafValue::new(path, JsonScalarValue::EmptyArray));
-    with_entry(scan, marker, is_composite)
-}
-
-/// The JSON array path of an `_all` condition: `None` for any other condition.
-pub(super) fn all_path(cond: &FieldCondition, is_json: bool) -> Option<JsonPath> {
-    if !is_json || cond.array_op != Some(FilterOp::All) {
-        return None;
-    }
-    Some(array_path(&cond.json_path.clone().unwrap_or_default()))
-}
-
-/// The path of the array an element path reads: everything before its last
-/// `Index`, where the marker of an empty array is stored.
-fn array_path(path: &JsonPath) -> JsonPath {
-    let end = path
-        .0
-        .iter()
-        .rposition(|part| matches!(part, JsonPathPart::Index))
-        .unwrap_or(path.len());
-    JsonPath(path.0[..end].to_vec())
-}
-
-fn with_entry(scan: IndexScanType, entry: NormalValue, is_composite: bool) -> IndexScanType {
-    let lookup = if is_composite {
+    let empty = if is_composite {
         IndexScanType::PrefixScan {
-            prefix_values: vec![entry],
+            prefix_values: vec![NormalValue::Null],
             reverse: false,
         }
     } else {
         IndexScanType::ExactMatch {
-            values: vec![entry],
+            values: vec![NormalValue::Null],
         }
     };
     IndexScanType::OrScan {
-        branches: vec![scan, lookup],
+        branches: vec![scan, empty],
     }
 }
 

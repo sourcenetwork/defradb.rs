@@ -12,6 +12,7 @@ mod map;
 mod name;
 mod part_ids;
 mod purge;
+mod relation_identity;
 mod retriever;
 mod schema_publication;
 mod schema_write_conflicts;

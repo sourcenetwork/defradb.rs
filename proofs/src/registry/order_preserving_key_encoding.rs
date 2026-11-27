@@ -19,6 +19,19 @@ pub(super) const PROPERTIES: &[Property] = &[
         bound_by: "",
     },
     Property {
+        // #3245: a JSON index writes a marker under each empty array so `_all`
+        // finds it; the marker must start like no value, keep the values'
+        // order, stay inside its path and read back as itself. The unit tests
+        // pin the marker bytes the model uses.
+        family: "Order-preserving key encoding",
+        name: "JsonEmptyArray.marker_distinct_* / value_lt_marker_asc / marker_lt_value_desc / marker_inside_path_* / decode_marker_* / decode_value_* — the JSON empty-array marker",
+        axis: Lean,
+        anchor: "crates/engine/storage/src/encoding/json.rs JSON_EMPTY_ARRAY, JSON_EMPTY_ARRAY_DESC, encode_scalar_ascending, encode_scalar_descending, decode_scalar_ascending, decode_scalar_descending, decode_json_ascending, decode_json_descending; crates/building-blocks/document/src/json_leaf.rs json_index_leaves",
+        model_ref: "OrderEncoding.JsonEmptyArray (lake build)",
+        tiers: &[Boundary, Contract],
+        bound_by: "crates/engine/storage/src/encoding/json_empty_array_tests.rs the_markers_match_the_lean_model, the_marker_round_trips_both_ways, the_marker_sorts_after_every_value_ascending_and_before_descending, the_marker_stays_inside_its_path, every_value_still_decodes_as_itself, nested_array_paths_round_trip_descending, names_that_look_like_an_index_round_trip; tools/integration-test/tests/testo/index/json_all_empty_array.rs",
+    },
+    Property {
         family: "Order-preserving key encoding",
         name: "JsonPathMarker.PropertyIsNotIndex / IndexIsIndex",
         axis: Tla,
@@ -48,17 +61,5 @@ pub(super) const PROPERTIES: &[Property] = &[
         model_ref: "OrderEncoding.InLookup (lake build)",
         tiers: &[Boundary],
         bound_by: "",
-    },
-    Property {
-        // The marker constants are `pub(crate)`; the storage unit tests check
-        // they differ from null and from each other, and that an empty array
-        // round-trips between its path's sentinels. Boundary.
-        family: "Order-preserving key encoding",
-        name: "markers_empty_array_band / markers_empty_array_fresh / cross_type_empty_array / empty_array_desc_not_flipped / descending_empty_array_bracketed / ascending_empty_array_bracketed: the empty array markers are free bytes below the integers, the descending one not the flipped ascending one, and a JSON empty array entry sits between its path's sentinels",
-        axis: Lean,
-        anchor: "crates/engine/storage/src/encoding/mod.rs EMPTY_ARRAY, EMPTY_ARRAY_DESC; crates/engine/storage/src/encoding/empty_array.rs encode_empty_array_ascending, encode_empty_array_descending; crates/engine/storage/src/encoding/json.rs encode_scalar_ascending, encode_scalar_descending",
-        model_ref: "OrderEncoding.Markers / OrderEncoding.CrossType / OrderEncoding.JsonPath (lake build)",
-        tiers: &[Boundary],
-        bound_by: "crates/engine/storage/src/encoding/empty_array.rs empty_array_is_not_null; crates/engine/storage/src/encoding/json_array_path_tests.rs an_empty_array_round_trips_between_its_path_sentinels",
     },
 ];

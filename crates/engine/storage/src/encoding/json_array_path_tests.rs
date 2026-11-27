@@ -115,26 +115,3 @@ fn ascending_json_unicode_property_and_array_path_round_trip() {
     assert_eq!(decoded.path, path);
     assert_eq!(decoded.value, leaf.value);
 }
-
-#[test]
-fn an_empty_array_round_trips_between_its_path_sentinels() {
-    let path = JsonPath::new().append_property("tags");
-    let at = |value| JsonLeafValue::new(path.clone(), value);
-    let leaf = at(JsonScalarValue::EmptyArray);
-
-    let ascending = encode_json_ascending(Vec::new(), &leaf);
-    assert_eq!(
-        decode_json_ascending(&ascending).unwrap(),
-        (&[][..], leaf.clone())
-    );
-    assert!(encode_json_ascending(Vec::new(), &at(JsonScalarValue::PathMin)) < ascending);
-    assert!(ascending < encode_json_ascending(Vec::new(), &at(JsonScalarValue::PathMax)));
-
-    let descending = encode_json_descending(Vec::new(), &leaf);
-    assert_eq!(
-        decode_json_descending(&descending).unwrap(),
-        (&[][..], leaf)
-    );
-    assert!(encode_json_descending(Vec::new(), &at(JsonScalarValue::PathMax)) < descending);
-    assert!(descending < encode_json_descending(Vec::new(), &at(JsonScalarValue::PathMin)));
-}

@@ -10,7 +10,8 @@ use super::conditions::{
     accepts_missing, can_be_ordered_by_filtered_index, can_use_index, extract_field_conditions,
     filtered_index_order_prefix, is_full_scan, should_fallback_to_full_scan,
 };
-use super::empty_array::{all_path, with_empty_arrays, with_json_empty_arrays};
+use super::empty_array::with_empty_arrays;
+use super::json_empty_array::with_json_empty_arrays;
 use super::path_bounds::{composite_range, order_in_values, path_high_end, path_low_end};
 use super::types::{
     ConditionValue, FieldCondition, IndexScanParams, IndexScanType, ScanValueFilter,
@@ -122,11 +123,6 @@ pub fn filter_to_index_scan(
         .iter()
         .position(|cond| is_full_scan(cond) && !accepts_missing(cond))
         .or_else(|| first_field_conditions.iter().position(is_full_scan));
-    // The `_all` paths behind each kind of scan, whose empty arrays it must add.
-    let mut eq_all = None;
-    let mut in_all = None;
-    let mut range_all = None;
-    let mut scan_all_all = None;
 
     for (at, cond) in first_field_conditions.iter().enumerate() {
         // Skip _none operators (they don't use index)
@@ -141,7 +137,6 @@ pub fn filter_to_index_scan(
                     eq_value = Some(v.clone());
                     eq_cond = Some(cond);
                     eq_json_path = cond.json_path.clone();
-                    eq_all = all_path(cond, first_field_is_json);
                 }
             }
             FilterOp::In if !has_in => {
@@ -150,39 +145,34 @@ pub fn filter_to_index_scan(
                     in_values = Some(vs.clone());
                     in_cond = Some(cond);
                     in_json_path = cond.json_path.clone();
-                    in_all = all_path(cond, first_field_is_json);
                 }
             }
             FilterOp::Gt if in_range(cond) => {
                 if let ConditionValue::Single(v) = &cond.value {
                     lower_bound = Bound::Exclusive(v.clone());
                     range_json_path = cond.json_path.clone();
-                    range_all = range_all.or(all_path(cond, first_field_is_json));
                 }
             }
             FilterOp::Gte if in_range(cond) => {
                 if let ConditionValue::Single(v) = &cond.value {
                     lower_bound = Bound::Inclusive(v.clone());
                     range_json_path = cond.json_path.clone();
-                    range_all = range_all.or(all_path(cond, first_field_is_json));
                 }
             }
             FilterOp::Lt if in_range(cond) => {
                 if let ConditionValue::Single(v) = &cond.value {
                     upper_bound = Bound::Exclusive(v.clone());
                     range_json_path = cond.json_path.clone();
-                    range_all = range_all.or(all_path(cond, first_field_is_json));
                 }
             }
             FilterOp::Lte if in_range(cond) => {
                 if let ConditionValue::Single(v) = &cond.value {
                     upper_bound = Bound::Inclusive(v.clone());
                     range_json_path = cond.json_path.clone();
-                    range_all = range_all.or(all_path(cond, first_field_is_json));
                 }
             }
-            // One condition pins the scan path, so its value filter and
-            // empty-array lookup read the same path; the filter checks the others.
+            // One condition pins the scan path and its value filter; the
+            // filter checks the others.
             FilterOp::Ne
             | FilterOp::Nin
             | FilterOp::Like
@@ -194,14 +184,10 @@ pub fn filter_to_index_scan(
             // For JSON fields, we still need to track the path to constrain the scan
             FilterOp::Ne | FilterOp::Nin => {
                 has_scan_all = true;
-                scan_all_all = all_path(cond, first_field_is_json);
-                if cond.json_path.is_some() || scan_all_all.is_some() {
-                    scan_json_path = cond.json_path.clone();
-                }
+                scan_json_path = cond.json_path.clone();
             }
             FilterOp::Like | FilterOp::Nlike | FilterOp::Ilike | FilterOp::Nilike => {
                 has_scan_all = true;
-                scan_all_all = all_path(cond, first_field_is_json);
                 if let ConditionValue::Pattern(pattern) = &cond.value {
                     scan_value_filter = Some(match cond.op {
                         FilterOp::Like => ScanValueFilter::Like(pattern.clone()),
@@ -212,9 +198,7 @@ pub fn filter_to_index_scan(
                     });
                     value_filter_cond = Some(cond);
                 }
-                if cond.json_path.is_some() || scan_all_all.is_some() {
-                    scan_json_path = cond.json_path.clone();
-                }
+                scan_json_path = cond.json_path.clone();
             }
             _ => {}
         }
@@ -289,6 +273,13 @@ pub fn filter_to_index_scan(
     // instead of ExactMatch because ExactMatchIterator expects the doc_id right
     // after the encoded values, but composite index keys have additional fields.
     let ranged = !lower_bound.is_unbounded() || !upper_bound.is_unbounded();
+    // Only an `_all` scan wants the empty-array markers at the top of its path.
+    let wants_markers = |cond: Option<&FieldCondition>| {
+        cond.is_some_and(|cond| cond.array_op == Some(FilterOp::All))
+    };
+    let range_markers = wants_markers(first_range);
+    let scan_all_markers =
+        wants_markers(full_scan_at.and_then(|at| first_field_conditions.get(at)));
     let scan_type = if has_eq {
         let wrapped_value = wrap_value_for_json_path(eq_value.unwrap(), eq_json_path.as_ref());
         if all_fields_matched {
@@ -361,7 +352,9 @@ pub fn filter_to_index_scan(
                 // For empty paths (top-level JSON), leave unbounded to match Go behavior:
                 // Go scans from value to end of entire index, counting all keys.
                 match &range_json_path {
-                    Some(path) if !path.is_empty() => path_low_end(path, first_field_descending),
+                    Some(path) if !path.is_empty() => {
+                        path_low_end(path, first_field_descending, range_markers)
+                    }
                     _ => Bound::Unbounded,
                 }
             }
@@ -375,7 +368,9 @@ pub fn filter_to_index_scan(
                 Bound::Exclusive(wrap_value_for_json_path(v, range_json_path.as_ref()))
             }
             Bound::Unbounded => match &range_json_path {
-                Some(path) if !path.is_empty() => path_high_end(path, first_field_descending),
+                Some(path) if !path.is_empty() => {
+                    path_high_end(path, first_field_descending, range_markers)
+                }
                 _ => Bound::Unbounded,
             },
             _ => Bound::Unbounded,
@@ -393,8 +388,8 @@ pub fn filter_to_index_scan(
         match &scan_json_path {
             Some(path) if !path.is_empty() => IndexScanType::RangeScan {
                 prefix_values: vec![],
-                lower: path_low_end(path, first_field_descending),
-                upper: path_high_end(path, first_field_descending),
+                lower: path_low_end(path, first_field_descending, scan_all_markers),
+                upper: path_high_end(path, first_field_descending, scan_all_markers),
                 reverse,
             },
             _ => IndexScanType::PrefixScan {
@@ -435,39 +430,24 @@ pub fn filter_to_index_scan(
         scan_value_filter = None;
     }
 
-    let all = if has_eq {
-        eq_all
-    } else if has_in {
-        in_all
-    } else if ranged {
-        range_all
+    let scan_type = if first_field_is_json {
+        with_json_empty_arrays(
+            scan_type,
+            &first_field_conditions,
+            first_field,
+            is_composite,
+        )
     } else {
-        scan_all_all
-    };
-    let scan_type = match all {
-        Some(path) => {
-            let merged =
-                with_json_empty_arrays(scan_type, path, &first_field_conditions, is_composite);
-            if matches!(merged, IndexScanType::OrScan { .. }) {
-                return Some(IndexScanParams {
-                    index_name: index.name.clone(),
-                    scan_type: merged,
-                    limit: None,
-                    offset: 0,
-                    value_filter: None,
-                    cursor_seek: None,
-                });
-            }
-            merged
-        }
-        None => scan_type,
+        scan_type
     };
 
     // Only pass limit/offset if the index provides ordering
     // (otherwise the limit needs to be applied after sorting)
-    let index_provides_ordering = order_by
-        .map(|o| can_be_ordered_by_filtered_index(o, index, filter).0)
-        .unwrap_or(false);
+    // A merge of scans is in no index order.
+    let index_provides_ordering = !matches!(scan_type, IndexScanType::OrScan { .. })
+        && order_by
+            .map(|o| can_be_ordered_by_filtered_index(o, index, filter).0)
+            .unwrap_or(false);
 
     Some(IndexScanParams {
         index_name: index.name.clone(),

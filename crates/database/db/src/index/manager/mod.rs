@@ -137,8 +137,7 @@ pub struct IndexManager {
 
 impl IndexManager {
     /// The first of a unique index's `value_sets` that repeats an earlier
-    /// one, which the document cannot index twice. Nil values and empty
-    /// arrays never repeat.
+    /// one, which the document cannot index twice. Nil values never repeat.
     fn duplicate_value_set<'v>(
         index: &IndexType,
         value_sets: &'v [Vec<document::NormalValue>],
@@ -150,7 +149,7 @@ impl IndexManager {
             .iter()
             .enumerate()
             .find(|(position, values)| {
-                !storage::index::skips_uniqueness(values)
+                !values.iter().any(document::NormalValue::is_never_unique)
                     && value_sets[..*position].contains(values)
             })
             .map(|(_, values)| values.as_slice())

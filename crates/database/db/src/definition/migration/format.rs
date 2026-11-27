@@ -4,6 +4,7 @@
 //! document keys. Rebuilding into the separate current namespace avoids
 //! deleting keys whose ownership cannot be determined from their bytes.
 
+use schema::{CollectionVersion, IndexDescription, ScalarKind};
 use storage::corekv::{IterOptions, Iterator as _, Store};
 use storage::keys::systemstore::CollectionKey;
 use tracing::{info, warn};
@@ -17,8 +18,13 @@ use crate::DB;
 /// check at every open does for the deferred indexes alone; version 4 tags the
 /// index keyspace so collection short IDs cannot collide with another family;
 /// version 5 moves descending JSON paths back into ascending order; version 6
-/// gives each empty array in a JSON value an entry of its own at its path.
+/// adds an entry under each empty array in a JSON index, which only the JSON
+/// indexes of a version 5 store lack.
 pub const CURRENT_INDEX_FORMAT: u32 = 6;
+
+/// The format before JSON indexes held empty-array entries. A store stamped
+/// with it rebuilds only its JSON indexes; every other index is current.
+const FORMAT_WITHOUT_JSON_EMPTY_ARRAYS: u32 = 5;
 
 /// Systemstore key holding the format the indexes on disk were written with.
 pub use storage::keys::systemstore::INDEX_FORMAT_KEY;
@@ -65,6 +71,19 @@ pub(crate) async fn ensure_index_format_for_collection_creation(
         .map_err(Error::Storage)
 }
 
+/// Whether `index` covers a JSON field, whose entries changed in version 6.
+fn has_json_field(index: &IndexDescription, schema: &CollectionVersion) -> bool {
+    index.fields.iter().any(|indexed| {
+        schema.fields.iter().any(|field| {
+            field.name == indexed.name
+                && field
+                    .kind
+                    .as_scalar()
+                    .is_some_and(|kind| kind.base_kind() == ScalarKind::NillableJson)
+        })
+    })
+}
+
 impl<S: Store> DB<S> {
     /// Refuse a newer index layout before any startup migration writes.
     pub(crate) async fn check_index_format(&self) -> Result<()>
@@ -91,20 +110,18 @@ impl<S: Store> DB<S> {
     {
         let stored = self.stored_index_format().await?;
         self.check_index_format().await?;
-        if stored == Some(CURRENT_INDEX_FORMAT) {
-            self.rebuild_indexes_kept_the_other_way().await?;
-        } else {
-            self.rebuild_every_index(stored).await?;
-        }
-        if stored == Some(CURRENT_INDEX_FORMAT) {
-            return Ok(());
+        match stored {
+            Some(CURRENT_INDEX_FORMAT) => return self.rebuild_indexes_owed(false).await,
+            Some(FORMAT_WITHOUT_JSON_EMPTY_ARRAYS) => self.rebuild_indexes_owed(true).await?,
+            _ => self.rebuild_every_index(stored).await?,
         }
         self.stamp_index_format().await
     }
 
     /// Rebuilds each index whose stored state belongs to the other way of
-    /// keeping it than this start's types give it, and only those.
-    async fn rebuild_indexes_kept_the_other_way(&self) -> Result<()>
+    /// keeping it than this start's types give it, and with `json` every
+    /// index holding a JSON field too, and only those.
+    async fn rebuild_indexes_owed(&self, json: bool) -> Result<()>
     where
         S: 'static,
     {
@@ -121,6 +138,10 @@ impl<S: Store> DB<S> {
             {
                 let datastore = txn.datastore()?;
                 for index in collection.write_indexes() {
+                    if json && has_json_field(index, collection.schema()) {
+                        changed.push(index.id);
+                        continue;
+                    }
                     let deferred =
                         crdt::deferred_index(index, collection.schema(), collection.crdts());
                     if crate::index::deferred::kept_in_other_mode(
@@ -139,7 +160,8 @@ impl<S: Store> DB<S> {
             info!(
                 collection = %schema.name,
                 indexes = ?changed,
-                "rebuilding indexes kept the other way on an earlier start"
+                "rebuilding indexes kept the other way on an earlier start or owing JSON \
+                 empty-array entries"
             );
             if let Err(error) = self.reindex_indexes(&schema.name, changed).await {
                 warn!(collection = %schema.name, error = %error, "index rebuild failed");

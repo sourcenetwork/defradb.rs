@@ -15,8 +15,8 @@ so it matches (Go's `allSlice` over nothing is true); a null array does not.
 The index scan for `_all` looks up the entries whose value passes the
 condition, so it never saw the empty arrays.
 
-The fix gives an empty array an entry of its own at its path, the empty
-marker, and the `_all` scan also looks the marker up. A scan of a positive
+The fix gives an empty array an entry of its own, the empty marker, at the
+path its elements would have, and the `_all` scan also looks the marker up. A scan of a positive
 condition (`_eq`, `_in`, a range, `_like`, `_ilike`) skips the marker: no
 element of an empty array passes `_any`, `_eq`, a range or a `_like`. A
 negative condition (`_ne`, `_nin`, `_nlike`, `_nilike`) is different in two
@@ -93,11 +93,12 @@ index misses `[{"x": 1}]` (`neg_in_object_member_misses`). A property under
 (`neg_property_under_all_answers`).
 
 Rust anchors:
-- the writer: `extract_json_leaves` (`crates/building-blocks/document/src/normal.rs`);
+- the writer: `json_index_leaves` (`crates/building-blocks/document/src/json_leaf.rs`);
 - the `_all` scan: `filter_to_index_scan`
   (`crates/engine/query/src/planner/index_selection/filter_to_scan.rs`), with
-  `all_path` and `with_json_empty_arrays`
-  (`crates/engine/query/src/planner/index_selection/empty_array.rs`);
+  `with_json_empty_arrays`
+  (`crates/engine/query/src/planner/index_selection/json_empty_array.rs`),
+  which skips a path an `_any` on the same array rules out;
 - the bare negative scan: `filter_to_index_scan`, where a top-level one is a
   `PrefixScan` that reads every entry, markers included, and `is_full_scan`
   (`crates/engine/query/src/planner/index_selection/conditions.rs`), which
@@ -108,8 +109,10 @@ Rust anchors:
   with `FieldCondition::nested_array_op` and `FieldCondition::non_scalar_member`
   (`types.rs`), applied to the later fields of a composite index by
   `suffix_eq_values` (`filter_to_scan.rs`);
-- the skip: `RangeIterator::next` (`crates/engine/storage/src/index/range_iterator.rs`),
-  which drops the marker from every bounded scan;
+- the skip: `path_low_end` and `path_high_end`
+  (`crates/engine/query/src/planner/index_selection/path_bounds.rs`), which
+  stop a range or `_like` scan that no `_all` drives below the markers at the
+  top of an array path;
 - the pinned path: `filter_to_index_scan`, where the first `_like`-family
   condition (or a top-level `_ne` or `_nin`) gives the scan both its path and its value filter, and
   a narrowing scan keeps the value filter only when it names the scan's path
@@ -118,7 +121,8 @@ Rust anchors:
   `is_full_scan` and `accepts_missing` (`conditions.rs`), which skip a bare `_nin` while
   another condition can pin the scan, and `in_range`, which joins bounds only
   within one `_any` clause (`FieldCondition::clause`);
-- the unique exemption: `skips_uniqueness` (`crates/engine/storage/src/index/mod.rs`).
+- the unique exemption: `NormalValue::is_never_unique`
+  (`crates/building-blocks/document/src/normal.rs`).
 -/
 
 namespace AllScanEmptyArray
@@ -338,7 +342,7 @@ theorem empty_all {V : Type} (p : Option V → Bool) :
   rfl
 
 -- Two documents clash in a unique index when they share an entry that is a real
--- value. Null entries and the empty marker never clash, as `skips_uniqueness` says.
+-- value. Null entries and the empty marker never clash, as `is_never_unique` says.
 def clash {V : Type} [DecidableEq V] (a b : List (Entry V)) : Bool :=
   -- a shared scalar entry
   a.any fun e => match e with
