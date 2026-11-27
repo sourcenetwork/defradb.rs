@@ -95,10 +95,9 @@ fn named(command: &PolicyCommand<'_>) -> String {
     let object = command.object_id;
     match &command.action {
         PolicyAction::RegisterObject => format!("register {object}"),
-        PolicyAction::RegisterUnderParent {
-            resource,
-            object_id,
-        } => format!("register {object} under {resource}:{object_id}"),
+        PolicyAction::RegisterObjectWithRelationships { relationships } => {
+            format!("register {object} with {}", relationships.len())
+        }
         PolicyAction::SetRelationship {
             relation,
             subject: on,
@@ -372,6 +371,7 @@ impl VeraProvider for Remote {
         policy_id: &str,
         resource: &str,
         object_id: &str,
+        _relationships: &[acp::DerivedRelationship],
     ) -> Result<(), ProviderError> {
         self.reachable()?;
         self.executes(

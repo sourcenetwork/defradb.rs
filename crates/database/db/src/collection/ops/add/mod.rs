@@ -1,5 +1,6 @@
 //! Adding collections from SDL: the one implementation every edge calls.
 
+mod bindings;
 mod error;
 
 pub use error::AddCollectionError;
@@ -31,6 +32,7 @@ where
         schema::definition_validation::validate_new_collections(&collections)
             .map_err(|e| AddCollectionError::Validation(format!("schema error: {e}")))?;
         self.check_policies(&collections).await?;
+        self.check_policy_bindings(&collections).await?;
         Ok(collections)
     }
 
@@ -42,7 +44,7 @@ where
             return Ok(());
         }
         for policy in collections.iter().filter_map(|c| c.policy.as_ref()) {
-            self.validate_collection_policy(policy)
+            self.validate_resource_interface(&policy.id, &policy.resource_name)
                 .await
                 .map_err(|e| AddCollectionError::Policy(e.to_string()))?;
         }

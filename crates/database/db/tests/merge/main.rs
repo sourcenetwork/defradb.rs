@@ -62,6 +62,7 @@ mod se_storage;
 mod se_validate;
 mod signature_blocks;
 mod single_root_batch;
+mod synced_binding_guard;
 mod synced_definition_cache;
 mod text_merge;
 mod update_journal;

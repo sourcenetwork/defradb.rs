@@ -83,7 +83,7 @@ fn hidden_updates_advance_page_without_disclosing_identity_or_cid() {
         mutator.update("Users", doc, ["name".to_string()].into_iter().collect()).await.unwrap();
         let acp = Arc::new(acp::LocalDocumentACP::new(Arc::new(acp::MemoryAcpStore::new())));
         let owner = identity::Did::new("did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK").unwrap();
-        acp.register_doc_object(&owner, "update-policy", "users", &id.to_string()).await.unwrap();
+        acp.register_doc_object(&owner, "update-policy", "users", &id.to_string(), &[]).await.unwrap();
         let runner = query::QueryRunner::with_provider(
             LensedAutoCommitFetcher::new(db.clone()),
             db::DbCollectionProvider::new_arc(db),
@@ -163,7 +163,7 @@ fn hidden_arrivals_advance_page_without_disclosing_document_ids() {
         )));
         let owner =
             identity::Did::new("did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK").unwrap();
-        acp.register_doc_object(&owner, "arrival-policy", "users", &id)
+        acp.register_doc_object(&owner, "arrival-policy", "users", &id, &[])
             .await
             .unwrap();
         let runner = query::QueryRunner::with_provider(

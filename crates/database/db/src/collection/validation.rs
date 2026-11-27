@@ -128,14 +128,12 @@ impl Collection {
     where
         F: Fn(&str) -> bool,
     {
-        let parent = self
+        for field_def in self
             .def
-            .policy
-            .as_ref()
-            .and_then(|p| p.parent_field.as_deref());
-        for field_def in self.def.fields.iter().filter(|field| {
-            (field.immutable || parent == Some(field.name.as_str())) && checked(&field.name)
-        }) {
+            .fields
+            .iter()
+            .filter(|field| field.immutable && checked(&field.name))
+        {
             // Values compare by the state a register stores for them.
             let stored = |doc: &Document| {
                 let value = doc.get(&field_def.name).unwrap_or(&NormalValue::Null);
@@ -149,14 +147,6 @@ impl Collection {
                         field_def.name
                     ))
                 })?;
-            if parent == Some(field_def.name.as_str())
-                && (!unchanged || new_doc.pending_op(&field_def.name).is_some())
-            {
-                return Err(Error::InvalidDocument(format!(
-                    "parent field '{}' of a registered document cannot change",
-                    field_def.name
-                )));
-            }
             if !unchanged {
                 return Err(Error::InvalidDocument(format!(
                     "immutable field '{}' cannot be changed",

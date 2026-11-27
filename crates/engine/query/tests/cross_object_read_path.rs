@@ -90,10 +90,10 @@ fn query_gate_honours_cross_object_read_inheritance() {
         store.store_policy(&policy).await.unwrap();
         let acp = ZanzibarDocumentACP::new(store);
 
-        acp.register_doc_object(&owner, &policy_id, "directory", "teamdir")
+        acp.register_doc_object(&owner, &policy_id, "directory", "teamdir", &[])
             .await
             .unwrap();
-        acp.register_doc_object(&owner, &policy_id, "file", "report")
+        acp.register_doc_object(&owner, &policy_id, "file", "report", &[])
             .await
             .unwrap();
         acp.add_relationship(
@@ -146,7 +146,7 @@ fn overlay_checker_applies_branchable_collection_fallback() {
         let acp = LocalDocumentACP::new(Arc::new(MemoryAcpStore::new()));
         let identity = Identity::Authenticated(alice.clone());
 
-        acp.register_doc_object(&owner, "policy1", "users", "col1")
+        acp.register_doc_object(&owner, "policy1", "users", "col1", &[])
             .await
             .unwrap();
         let checker = OverlayChecker {
@@ -165,7 +165,7 @@ fn overlay_checker_applies_branchable_collection_fallback() {
         "public doc in a protected branchable collection must fall back to the collection object"
     );
 
-        acp.register_doc_object(&owner, "policy1", "users", "shared-doc")
+        acp.register_doc_object(&owner, "policy1", "users", "shared-doc", &[])
             .await
             .unwrap();
         acp.add_actor_relationship(

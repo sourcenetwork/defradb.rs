@@ -327,7 +327,7 @@ async fn a_provider_follows_a_confirmed_takeover_and_sends_again_what_it_voided(
     let delegation = named.create_bearer_token(&owner).await.unwrap();
     let policy = named.create_policy(POLICY, None).await.unwrap();
     named
-        .register_object(&delegation, &policy, "document", "kept")
+        .register_object(&delegation, &policy, "document", "kept", &[])
         .await
         .unwrap();
     // The phone holds everything so far.
@@ -354,7 +354,7 @@ async fn a_provider_follows_a_confirmed_takeover_and_sends_again_what_it_voided(
         .await
         .unwrap();
     named
-        .register_object(&delegation, &policy, "document", "lost")
+        .register_object(&delegation, &policy, "document", "lost", &[])
         .await
         .unwrap();
     assert!(named

@@ -90,7 +90,7 @@ async fn a_remembered_decision_is_not_given_past_the_freshness_limit() {
         .expect("delegation");
     for document in ["asked", "never-asked"] {
         provider
-            .register_object(&delegation, &policy, "users", document)
+            .register_object(&delegation, &policy, "users", document, &[])
             .await
             .expect("registration");
     }
