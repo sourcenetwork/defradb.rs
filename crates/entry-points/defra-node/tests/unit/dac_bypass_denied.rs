@@ -42,7 +42,8 @@ async fn fixture() -> (Node, String, String) {
         .await
         .unwrap();
     let owner = actor(NAC_OWNER);
-    node.add_nac_actor_relationship_as(&owner, "admin", ADMIN)
+    node.with_identity(identity::Did::new(NAC_OWNER).unwrap())
+        .add_nac_actor_relationship("admin", ADMIN)
         .await
         .unwrap();
     for permission in [
@@ -51,19 +52,22 @@ async fn fixture() -> (Node, String, String) {
         acp::NodePermission::DocumentUpdate,
         acp::NodePermission::DocumentDelete,
     ] {
-        node.add_nac_actor_relationship_as(&owner, permission.as_str(), READER)
+        node.with_identity(identity::Did::new(NAC_OWNER).unwrap())
+            .add_nac_actor_relationship(permission.as_str(), READER)
             .await
             .unwrap();
     }
-    let policy = node.add_dac_policy_as(&owner, POLICY).await.unwrap();
-    node.add_collection(
-        &owner,
-        &format!(
+    let policy = node
+        .with_identity(identity::Did::new(NAC_OWNER).unwrap())
+        .add_dac_policy(POLICY, None)
+        .await
+        .unwrap();
+    node.with_identity(identity::Did::new(NAC_OWNER).unwrap())
+        .add_collection(&format!(
             "type Record @policy(id: \"{policy}\", resource: \"rows\") {{ pending: Boolean }}"
-        ),
-    )
-    .await
-    .unwrap();
+        ))
+        .await
+        .unwrap();
     let added = run(
         &node,
         &owner,
@@ -81,7 +85,8 @@ async fn fixture() -> (Node, String, String) {
 
 async fn run(node: &Node, context: &RequestContext, query: &str) -> Value {
     let response = node
-        .execute_request_as(context, QueryRequest::new(query))
+        .core()
+        .execute_request(context, QueryRequest::new(query))
         .await
         .unwrap();
     assert!(response.errors.is_empty(), "{query}: {:?}", response.errors);
@@ -236,7 +241,8 @@ fn an_identity_without_bypass_dac_is_unaffected_by_the_denial() {
         assert_eq!(reads(&node, &actor(READER), &doc, &cid).await, [0; 4]);
         assert_eq!(reads(&node, &denied(READER), &doc, &cid).await, [0; 4]);
 
-        node.add_dac_actor_relationship_as(&actor(NAC_OWNER), "Record", &doc, "reader", READER)
+        node.with_identity(identity::Did::new(NAC_OWNER).unwrap())
+            .add_dac_actor_relationship("Record", &doc, "reader", READER)
             .await
             .unwrap();
         let [query, commits, count, subscribed] = reads(&node, &denied(READER), &doc, &cid).await;

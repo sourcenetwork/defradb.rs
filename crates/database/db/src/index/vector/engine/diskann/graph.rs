@@ -11,11 +11,11 @@ use super::pending_cache::{Copy, Segment, Tag, MAX_PENDING_CACHE_BYTES};
 use super::DiskAnn;
 use crate::index::error::{Error, Result};
 use crate::index::vector::engine::ann::{Admit, Candidate, Neighbor, VectorIndexEngine};
-use crate::index::vector::engine::select::{EdgeSelector, RobustPrune};
+use crate::index::vector::engine::select::RobustPrune;
 use crate::index::vector::quantize::{ProductQuantizer, Quantizer};
 use crate::index::vector::store::{NodeId, VectorNodeStore};
 use defra_core::thread_bounds::MaybeSend;
-use defra_core::vector::Element;
+use defra_core::vector::{squared_euclidean, Element};
 
 /// A node the walk reached, ranked by its code.
 #[derive(Debug, Clone)]
@@ -336,16 +336,16 @@ impl<S: VectorNodeStore> DiskAnn<S> {
         let candidates: Vec<Candidate> = edges
             .into_iter()
             .filter_map(|(id, code)| {
-                let vector = decode(pq, &code);
+                let vector = decode_shared(pq, &code);
                 codes.insert(id, code).is_none().then(|| Candidate {
                     id,
-                    distance: self.metric.distance_stored(base, &vector),
-                    vector: Arc::from(vector),
+                    distance: squared_euclidean(base, &vector),
+                    vector,
                 })
             })
             .collect();
         RobustPrune::new(self.params.alpha())
-            .select(self.metric, base, &candidates, self.params.r as usize)
+            .select_ranked(&candidates, self.params.r as usize)
             .into_iter()
             .filter_map(|kept| codes.remove(&kept.id).map(|code| (kept.id, code)))
             .collect()
@@ -578,5 +578,13 @@ impl<S: VectorNodeStore> DiskAnn<S> {
 pub(super) fn decode(pq: &ProductQuantizer, code: &[u8]) -> Vec<f32> {
     let mut vector = vec![0.0f32; pq.dimensions()];
     pq.decode(code, &mut vector);
+    vector
+}
+
+/// [`decode`] into a shared vector, written where it is allocated.
+fn decode_shared(pq: &ProductQuantizer, code: &[u8]) -> Arc<[f32]> {
+    let mut vector: Arc<[f32]> = std::iter::repeat_n(0.0, pq.dimensions()).collect();
+    let slot = Arc::get_mut(&mut vector).expect("a vector just allocated has no other owner");
+    pq.decode(code, slot);
     vector
 }

@@ -115,6 +115,41 @@ impl CollectionVersion {
         Ok(Some(index))
     }
 
+    /// Move `@immutable` and `@policy(relation:)` from each single-object
+    /// relation field to its existing `_xID` field, which holds the value
+    /// both apply to. The object field stores nothing, so it keeps neither.
+    ///
+    /// An array relation keeps them, so field validation refuses them there.
+    fn carry_relation_bindings(&mut self) {
+        let carried: Vec<(String, bool, Option<String>)> = self
+            .fields
+            .iter()
+            .filter(|f| f.kind.is_relation() && !f.kind.is_array())
+            .filter(|f| f.immutable || f.policy_relation.is_some())
+            .map(|f| {
+                (
+                    Self::relation_id_field_name(&f.name),
+                    f.immutable,
+                    f.policy_relation.clone(),
+                )
+            })
+            .collect();
+        for (id_field_name, immutable, policy_relation) in carried {
+            let Some(id_field) = self.fields.iter_mut().find(|f| f.name == id_field_name) else {
+                continue;
+            };
+            id_field.immutable |= immutable;
+            if policy_relation.is_some() {
+                id_field.policy_relation = policy_relation;
+            }
+            let object_name = &id_field_name[1..id_field_name.len() - 2];
+            if let Some(object) = self.fields.iter_mut().find(|f| f.name == object_name) {
+                object.immutable = false;
+                object.policy_relation = None;
+            }
+        }
+    }
+
     /// Add `_id` fields for all non-array relation fields that don't already have one
     ///
     /// This matches Go's behavior in `fieldsFromAST()` and `finalizeRelations()`.
@@ -129,6 +164,7 @@ impl CollectionVersion {
         &mut self,
         mut next_field_id: impl FnMut() -> String,
     ) -> Result<()> {
+        self.carry_relation_bindings();
         let existing_ids: RapidHashSet<&str> = self.fields.iter().map(|f| f.id.as_str()).collect();
         let mut fields_to_add = Vec::new();
         let mut new_ids = RapidHashSet::new();
@@ -168,17 +204,27 @@ impl CollectionVersion {
                 id_field
             };
 
-            let id_field = if field.is_primary {
+            let mut id_field = if field.is_primary {
                 id_field.as_primary()
             } else {
                 id_field
             };
+            id_field.immutable = field.immutable;
+            id_field.policy_relation = field.policy_relation.clone();
 
             fields_to_add.push((field.name.clone(), id_field));
         }
 
         // Insert each _id field immediately after its corresponding relation field
         for (relation_field_name, id_field) in fields_to_add {
+            if let Some(relation_field) = self
+                .fields
+                .iter_mut()
+                .find(|f| f.name == relation_field_name)
+            {
+                relation_field.immutable = false;
+                relation_field.policy_relation = None;
+            }
             let pos = self
                 .fields
                 .iter()

@@ -360,7 +360,7 @@ fn test_zanzibar_document_acp_basic() {
         let owner_id = to_idid(&owner);
 
         // Register document
-        acp.register_doc_object(&owner_id, "policy1", "documents", "doc1")
+        acp.register_doc_object(&owner_id, "policy1", "documents", "doc1", &[])
             .await
             .unwrap();
 
@@ -419,7 +419,7 @@ fn test_zanzibar_document_acp_sharing() {
         let reader_id = to_idid(&reader);
 
         // Register document (use collection1 as policy_id for simplicity)
-        acp.register_doc_object(&owner_id, "collection1", "collection1", "doc1")
+        acp.register_doc_object(&owner_id, "collection1", "collection1", "doc1", &[])
             .await
             .unwrap();
 
@@ -490,7 +490,7 @@ fn test_local_document_acp_still_works() {
         let owner_id = to_idid(&owner);
 
         // Register document
-        acp.register_doc_object(&owner_id, "policy1", "documents", "doc1")
+        acp.register_doc_object(&owner_id, "policy1", "documents", "doc1", &[])
             .await
             .unwrap();
 

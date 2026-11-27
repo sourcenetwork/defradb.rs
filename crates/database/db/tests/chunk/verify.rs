@@ -68,6 +68,7 @@ async fn author() -> (Arc<DB<RegolithStore>>, CreateResult, Arc<LocalDocumentACP
         "policy",
         "users",
         &created.doc_id.to_string(),
+        &[],
     )
     .await
     .unwrap();

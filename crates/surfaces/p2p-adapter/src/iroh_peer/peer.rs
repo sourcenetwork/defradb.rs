@@ -345,7 +345,7 @@ impl<S: Store + 'static> IrohPeer<S> {
             transport.clone(),
         );
         let restored_doc_ids =
-            crate::restore_iroh_p2p_state(Arc::clone(&store), &transport, &coordinator).await;
+            crate::restore_p2p_state(Arc::clone(&store), &transport, &coordinator).await;
         p2p::model_trace!(RestoreReplicators);
         let mut adapter = IrohP2PAdapter::with_full_context(
             transport.clone(),

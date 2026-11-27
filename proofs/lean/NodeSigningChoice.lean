@@ -53,7 +53,7 @@ inductive Outcome where
   | asCaller
   -- The request acts as the node's DID, and its blocks are signed with it.
   | asNodeSigned
-  -- `Node::execute_as` signs with the node's key but leaves the request
+  -- `ScopedNode::execute` signs with the node's key but leaves the request
   -- acting as its caller.
   | signedAsCaller
   -- The node should sign but its signer is missing: the request is refused.
@@ -115,7 +115,7 @@ structure Caller where
   dacBypass : Bool
   deriving DecidableEq
 
--- What `Node::execute_as` does for a request that carries no signing config
+-- What `ScopedNode::execute` does for a request that carries no signing config
 -- of its own. A node without an identity, or one told not to sign, leaves the
 -- request unsigned. A signing node signs with its node key. Without that key
 -- it refuses; it never falls back to an unsigned write.
@@ -194,7 +194,7 @@ def principal (n : Node) : Principal :=
   -- Only a node with an identity that is not identity-only acts as itself.
   if n.hasIdentity && !n.identityOnly then .node else .noOne
 
--- The owner of a transaction the node begins: `begin_transaction` and
+-- The owner of a transaction the node begins: `Node::new_txn` and
 -- `txn_owner` begin it in `node_context`, whose identity is the principal.
 def txnOwner (n : Node) : Principal :=
   -- The node's principal, nothing more.

@@ -279,6 +279,13 @@ impl NormalValue {
         self.classification().is_nil
     }
 
+    /// Whether an index entry holding this value is outside every unique
+    /// check: a nil, as Go's `hasIndexKeyNilField`, or the JSON empty-array
+    /// marker, which any number of documents may hold.
+    pub fn is_never_unique(&self) -> bool {
+        self.is_nil() || matches!(self, NormalValue::JsonLeaf(leaf) if leaf.is_empty_array_marker())
+    }
+
     /// Returns true if this value type can be nil.
     pub fn is_nillable(&self) -> bool {
         self.classification().is_nillable

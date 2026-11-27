@@ -34,11 +34,11 @@ fn registrations_share_the_document_commit_and_have_one_winner() {
         let first_acp = acp.bind_transaction(first.acpstore()).unwrap();
         let second_acp = acp.bind_transaction(second.acpstore()).unwrap();
         first_acp
-            .register_doc_object(&did("alice"), "p", "items", "doc")
+            .register_doc_object(&did("alice"), "p", "items", "doc", &[])
             .await
             .unwrap();
         second_acp
-            .register_doc_object(&did("bob"), "p", "items", "doc")
+            .register_doc_object(&did("bob"), "p", "items", "doc", &[])
             .await
             .unwrap();
         first.datastore().set(b"document", b"body").await.unwrap();
@@ -54,12 +54,12 @@ fn registrations_share_the_document_commit_and_have_one_winner() {
         let retry = BasicTxn::new(store.as_ref(), 3, false).await.unwrap();
         let retry_acp = acp.bind_transaction(retry.acpstore()).unwrap();
         retry_acp
-            .register_doc_object(&did("alice"), "p", "items", "doc")
+            .register_doc_object(&did("alice"), "p", "items", "doc", &[])
             .await
             .unwrap();
         assert!(matches!(
             retry_acp
-                .register_doc_object(&did("bob"), "p", "items", "doc")
+                .register_doc_object(&did("bob"), "p", "items", "doc", &[])
                 .await,
             Err(acp::Error::DocumentAlreadyRegistered(_))
         ));
@@ -76,7 +76,7 @@ fn revocation_invalidates_writer_but_read_only_authorization_keeps_its_snapshot(
         let store = Arc::new(RegolithStore::in_memory().unwrap());
         let persistent = Arc::new(PersistentZanzibarStore::from_store(store.clone()));
         let acp = ZanzibarDocumentACP::new(persistent.clone());
-        acp.register_doc_object(&did("alice"), "p", "items", "doc")
+        acp.register_doc_object(&did("alice"), "p", "items", "doc", &[])
             .await
             .unwrap();
         let grant = Relationship::with_entity("items", "doc", "updater", did("bob"));
@@ -160,7 +160,7 @@ fn bound_transactions_share_one_policy_snapshot() {
         .await
         .unwrap();
         let acp = ZanzibarDocumentACP::new(persistent);
-        acp.register_doc_object(&did("alice"), "p", "items", "doc")
+        acp.register_doc_object(&did("alice"), "p", "items", "doc", &[])
             .await
             .unwrap();
         let alice = Identity::Authenticated(did("alice"));
@@ -237,7 +237,7 @@ async fn exclusion_fixture() -> (
     let persistent = Arc::new(PersistentZanzibarStore::from_store(store.clone()));
     persistent.store_policy(&exclusion_policy()).await.unwrap();
     let acp = ZanzibarDocumentACP::new(persistent.clone());
-    acp.register_doc_object(&did("alice"), "p", "items", "doc")
+    acp.register_doc_object(&did("alice"), "p", "items", "doc", &[])
         .await
         .unwrap();
     (store, persistent, acp)
@@ -451,7 +451,13 @@ fn no_snapshot_ever_shows_a_created_document_without_its_owner() {
                         .unwrap();
                     acp.bind_transaction(txn.acpstore())
                         .unwrap()
-                        .register_doc_object(&did("alice"), "p", "items", &format!("doc-{index}"))
+                        .register_doc_object(
+                            &did("alice"),
+                            "p",
+                            "items",
+                            &format!("doc-{index}"),
+                            &[],
+                        )
                         .await
                         .unwrap();
                     txn.datastore()

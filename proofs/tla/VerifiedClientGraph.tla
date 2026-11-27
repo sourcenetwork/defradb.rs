@@ -15,7 +15,7 @@
 \* VerifiedRemoteWrite.tla models.
 \*
 \* Rust owners: crates/database/db/src/block/builder/verified_client_{create,mutation}.rs,
-\* crates/entry-points/defra-node/src/lib.rs execute_verified_graph_in_txn,
+\* crates/entry-points/defra-node/src/node_core/execute.rs NodeCore::execute_verified_graph,
 \* crates/engine/query/src/runner/turn.rs lent, and the native transaction commit.
 EXTENDS Naturals
 

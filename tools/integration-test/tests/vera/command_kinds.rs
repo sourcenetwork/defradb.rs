@@ -16,6 +16,7 @@ resources:
   - name: file
     relations:
       - name: reader
+        types: [\"*\"]
     permissions:
       - name: read
         expr: reader
@@ -69,7 +70,7 @@ async fn every_command_and_subject_kind(provider: Arc<VeraRsProvider>) {
     let bearer = provider.create_bearer_token(&owner).await.unwrap();
     for (resource, object) in [("file", "report"), ("group", "editors")] {
         provider
-            .register_object(&bearer, &policy, resource, object)
+            .register_object(&bearer, &policy, resource, object, &[])
             .await
             .expect("register object");
     }

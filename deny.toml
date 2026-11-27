@@ -97,6 +97,13 @@ allow = [
     "OpenSSL",
     "CDLA-Permissive-2.0",
 ]
+# BUSL-1.1 crates vera.rs depends on (acp-rs, its Zanzibar engine and Orbis
+# reporting), pinned to the versions vera.rs's own deny.toml allows.
+exceptions = [
+    { name = "sourcenetwork-acp", version = "=0.0.1", allow = ["BUSL-1.1"] },
+    { name = "orbis-reporting", version = "=0.0.3", allow = ["BUSL-1.1"] },
+    { name = "sourcenetwork-zanzi", version = "=0.0.1", allow = ["BUSL-1.1"] },
+]
 
 [bans]
 multiple-versions = "warn"

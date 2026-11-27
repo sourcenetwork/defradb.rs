@@ -108,9 +108,7 @@ impl OwedAcpRegistration {
                             && schema.collection_id == query.child
                             && creator.as_str() == query.device
                             && schema.policy.as_ref().is_some_and(|policy| {
-                                policy.id == query.policy
-                                    && policy.resource_name == query.resource
-                                    && policy.parent_field.is_some()
+                                policy.id == query.policy && policy.resource_name == query.resource
                             });
                         if !matching || !acp.verify_transport_sentinel(query).await? {
                             return Err(acp::Error::PermissionDenied(
@@ -986,11 +984,9 @@ impl<S: Store> DbTxn<S> {
                 .await?,
             );
         let persisted = if exact {
-            let statuses = crate::collection::IndexStatuses::load_actions_for(
-                &systemstore,
-                collection.schema(),
-            )
-            .await?;
+            let statuses =
+                crate::collection::IndexStatuses::load_for(&systemstore, collection.schema())
+                    .await?;
             Collection::with_index_actions_reusing_schema(collection, &statuses)
         } else {
             let mut persisted_schema: CollectionVersion = serde_json::from_slice(&schema_bytes)
@@ -1017,8 +1013,7 @@ impl<S: Store> DbTxn<S> {
                 )));
             }
             let statuses =
-                crate::collection::IndexStatuses::load_actions_for(&systemstore, &persisted_schema)
-                    .await?;
+                crate::collection::IndexStatuses::load_for(&systemstore, &persisted_schema).await?;
             Collection::with_index_actions_unwired(
                 persisted_schema,
                 &statuses,

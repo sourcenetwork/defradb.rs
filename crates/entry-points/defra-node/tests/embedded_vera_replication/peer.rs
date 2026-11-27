@@ -121,18 +121,16 @@ impl Peer {
             Provider::Shared { rpc, trust } => (shared(&spec, *rpc, trust).await, None),
         };
         let policy = seed().id().expect("policy ID");
-        node.get_dac_policy_as(&defra_core::RequestContext::default(), &policy)
+        node.anonymous()
+            .get_dac_policy(&policy)
             .await
             .expect("policy read")
             .expect("seeded policy");
         if node.get_collection("Users").expect("collections").is_none() {
-            node.add_collection(
-                &defra_core::RequestContext::ambient(),
-                &format!(
-                    "type Users @policy(id: \"{policy}\", resource: \"users\") {{ \
+            node.add_collection(&format!(
+                "type Users @policy(id: \"{policy}\", resource: \"users\") {{ \
                  name: String points: Int @crdt(type: pcounter) }}"
-                ),
-            )
+            ))
             .await
             .expect("collection");
         }

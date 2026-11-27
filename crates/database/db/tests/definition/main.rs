@@ -6,6 +6,7 @@ mod committed_lenses;
 mod counter_migration;
 mod document_parts;
 mod format;
+mod format_json;
 mod helpers;
 mod keyspace;
 mod loader;
