@@ -35,7 +35,7 @@ fn an_anonymous_caller_cannot_use_the_signing_nodes_identity_in_a_transaction() 
             Start {
                 enable_nac: true,
                 enable_signing: Some(true),
-                node_identity_seed: Some(0),
+                node_identity_seed: Some(1),
                 common: Common {
                     identity_seed: Some(1),
                     ..Default::default()

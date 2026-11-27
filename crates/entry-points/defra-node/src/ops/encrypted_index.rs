@@ -33,19 +33,21 @@ impl NodeOps {
         let (registry, owner, caller) = (self.txn_registry.clone(), owner.clone(), caller.clone());
         let (collection, field) = (collection.to_owned(), field_name.to_owned());
         self.encrypted(owner.txn().is_some(), move || async move {
-            Ok(match owner.txn() {
+            match owner.txn() {
                 Some(txn) => {
                     let txn = txn.to_string();
                     registry
                         .add_encrypted_index_in_txn_for(&owner, &caller, &txn, &collection, &field)
-                        .await?
+                        .await
+                        .map_err(db::EncryptedIndexError::from)?;
                 }
                 None => {
                     registry
                         .add_encrypted_index_as(&caller, &collection, &field)
-                        .await?
+                        .await?;
                 }
-            })
+            }
+            Ok(())
         })
         .await?;
         Ok(listing(field_name))
@@ -67,7 +69,8 @@ impl NodeOps {
                         let txn = txn.to_string();
                         registry
                             .encrypted_indexes_in_txn_for(&owner, &caller, &txn, &collection)
-                            .await?
+                            .await
+                            .map_err(db::EncryptedIndexError::from)?
                     }
                     None => registry.encrypted_indexes_as(&caller, &collection).await?,
                 })
@@ -91,7 +94,8 @@ impl NodeOps {
                         let txn = txn.to_string();
                         registry
                             .all_encrypted_indexes_in_txn_for(&owner, &caller, &txn)
-                            .await?
+                            .await
+                            .map_err(db::EncryptedIndexError::from)?
                     }
                     None => registry.all_encrypted_indexes_as(&caller).await?,
                 })
@@ -114,7 +118,7 @@ impl NodeOps {
         let (registry, owner, caller) = (self.txn_registry.clone(), owner.clone(), caller.clone());
         let (collection, field) = (collection.to_owned(), field_name.to_owned());
         self.encrypted(owner.txn().is_some(), move || async move {
-            Ok(match owner.txn() {
+            match owner.txn() {
                 Some(txn) => {
                     let txn = txn.to_string();
                     registry
@@ -125,14 +129,16 @@ impl NodeOps {
                             &collection,
                             &field,
                         )
-                        .await?
+                        .await
+                        .map_err(db::EncryptedIndexError::from)?;
                 }
                 None => {
                     registry
                         .delete_encrypted_index_as(&caller, &collection, &field)
-                        .await?
+                        .await?;
                 }
-            })
+            }
+            Ok(())
         })
         .await
     }

@@ -233,6 +233,11 @@ where
         collection: &str,
     ) -> Result<Vec<String>> {
         let found = definition_in(txn, collection).await?;
+        if self.is_collection_forbidden(found.collection_id())?
+            && !txn.was_collection_created(found.collection_id())
+        {
+            return Err(Error::CollectionNotFound(collection.to_owned()));
+        }
         Ok(found
             .schema()
             .encrypted_indexes
