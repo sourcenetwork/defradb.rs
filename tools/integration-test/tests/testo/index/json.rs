@@ -507,7 +507,9 @@ fn json_index_with_eq_filter_on_null_field_should_use_index() {
                         }
                 "#
                 .into(),
-                expected_data: json!({ "User": [{ "name": "Islam" }, { "name": "John" }] }),
+                expected_data: json!({
+                    "User": [{ "name": "Islam" }, { "name": "John" }, { "name": "Shahzad" }],
+                }),
                 common: Common {
                     unordered_documents: vec!["/data/User".into()],
                     ..Default::default()
@@ -524,7 +526,7 @@ fn json_index_with_eq_filter_on_null_field_should_use_index() {
                         }
                 "#
                 .into(),
-                expected_data: json!(m::explain_scan(json!({ "indexFetches": 2 }))),
+                expected_data: json!(m::explain_scan(json!({ "indexFetches": 0 }))),
                 ..Default::default()
             }
             .into(),

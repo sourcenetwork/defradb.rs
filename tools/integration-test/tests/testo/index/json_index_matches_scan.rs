@@ -24,21 +24,30 @@ fn stored() -> Vec<(&'static str, Value)> {
 }
 
 fn add(collection: &str, name: &str, custom: Value) -> Actions {
+    add_fields(collection, name, json!({ "custom": custom }))
+}
+
+fn add_fields(collection: &str, name: &str, fields: Value) -> Actions {
+    let mut doc = json!({ "name": name });
+    if let (Some(doc), Some(fields)) = (doc.as_object_mut(), fields.as_object()) {
+        doc.extend(fields.clone());
+    }
     AddDoc {
         collection: collection.into(),
-        doc_map: Some(json!({ "name": name, "custom": custom })),
+        doc_map: Some(doc),
         ..Default::default()
     }
     .into()
 }
 
 fn query(collection: &str, filter: &str, names: &[&str]) -> Actions {
+    query_with(collection, filter, "order: {name: ASC}", names)
+}
+
+fn query_with(collection: &str, filter: &str, args: &str, names: &[&str]) -> Actions {
     let names: Vec<Value> = names.iter().map(|name| json!({ "name": name })).collect();
     Request {
-        request: format!(
-            "query {{ {collection}(filter: {filter}, order: {{name: ASC}}) {{ name }} }}"
-        )
-        .into(),
+        request: format!("query {{ {collection}(filter: {filter}, {args}) {{ name }} }}").into(),
         expected_data: json!({ collection: names }),
         ..Default::default()
     }
@@ -75,10 +84,24 @@ fn paired_with(
     filters: &[(&str, &[&str])],
     extra: Vec<Actions>,
 ) {
+    let docs = docs
+        .into_iter()
+        .map(|(name, custom)| (name, json!({ "custom": custom })))
+        .collect();
+    paired_fields(sdl_idx, sdl_raw, docs, filters, extra);
+}
+
+fn paired_fields(
+    sdl_idx: &str,
+    sdl_raw: &str,
+    docs: Vec<(&'static str, Value)>,
+    filters: &[(&str, &[&str])],
+    extra: Vec<Actions>,
+) {
     let mut actions = collections(sdl_idx, sdl_raw);
-    for (name, custom) in docs {
-        actions.push(add("Idx", name, custom.clone()));
-        actions.push(add("Raw", name, custom));
+    for (name, fields) in docs {
+        actions.push(add_fields("Idx", name, fields.clone()));
+        actions.push(add_fields("Raw", name, fields));
     }
     actions.extend(extra);
     for (filter, names) in filters {
@@ -212,12 +235,18 @@ fn an_object_filter_under_all_fails_with_and_without_the_index() {
         "type Idx { name: String  custom: JSON @index }",
         "type Raw { name: String  custom: JSON }",
     );
+    // No element holds `a`, so only the empty array would come back.
+    let docs: Vec<_> = stored()
+        .into_iter()
+        .filter(|(name, _)| *name != "TagsObj")
+        .collect();
     for collection in ["Idx", "Raw"] {
-        for (name, custom) in stored() {
+        for (name, custom) in docs.clone() {
             actions.push(add(collection, name, custom));
         }
         for filter in [
             "{custom: {tags: {_all: {a: {_eq: 1}}}}}",
+            "{custom: {tags: {_any: {a: {_eq: 1}}}}}",
             "{custom: {_all: {a: {_eq: 1}}}}",
         ] {
             actions.push(
@@ -262,6 +291,19 @@ fn tags_docs() -> Vec<(&'static str, Value)> {
 const TAGS_FILTERS: &[(&str, &[&str])] = &[
     ("{custom: {tags: {_all: {_eq: 1}}}}", &["Empty", "One"]),
     ("{custom: {tags: {_ne: 5}}}", &["Empty", "One", "Two"]),
+    ("{custom: {tags: {_all: {_gt: 1}}}}", &["Empty", "Two"]),
+    ("{custom: {tags: {_all: {_lte: 1}}}}", &["Empty", "One"]),
+    ("{custom: {tags: {_all: {_in: [2, 3]}}}}", &["Empty", "Two"]),
+    ("{custom: {tags: {_any: {_lt: 2}}}}", &["One"]),
+    ("{custom: {tags: {_any: {_in: [1, 2]}}}}", &["One", "Two"]),
+    (
+        "{custom: {tags: {_all: {_eq: 1}}}, name: {_eq: \"One\"}}",
+        &["One"],
+    ),
+    (
+        "{custom: {tags: {_all: {_eq: 1}}}, name: {_eq: \"Empty\"}}",
+        &["Empty"],
+    ),
 ];
 
 #[test]
@@ -272,7 +314,13 @@ fn a_composite_json_index_matches_a_full_scan() {
         "type Raw { name: String  custom: JSON }",
         tags_docs(),
         TAGS_FILTERS,
-        vec![],
+        vec![
+            explain(
+                "{custom: {tags: {_all: {_eq: 1}}}, name: {_eq: \"One\"}}",
+                2,
+            ),
+            explain("{custom: {tags: {_all: {_gt: 1}}}}", 2),
+        ],
     );
 }
 
@@ -284,7 +332,10 @@ fn a_descending_json_index_matches_a_full_scan() {
         "type Raw { name: String  custom: JSON }",
         tags_docs(),
         TAGS_FILTERS,
-        vec![],
+        vec![
+            explain("{custom: {tags: {_all: {_gt: 1}}}}", 2),
+            explain("{custom: {tags: {_all: {_in: [2, 3]}}}}", 2),
+        ],
     );
 }
 
@@ -303,10 +354,19 @@ fn a_unique_json_index_matches_a_full_scan() {
 #[test]
 #[mantra_macros::req_test("defra.index.empty_array")]
 fn updates_and_deletes_keep_the_index_matching_a_full_scan() {
-    let mut actions = collections(
-        "type Idx { name: String  custom: JSON @index }",
-        "type Raw { name: String  custom: JSON }",
+    updates_and_deletes_match_a_full_scan("type Idx { name: String  custom: JSON @index }");
+}
+
+#[test]
+#[mantra_macros::req_test("defra.index.empty_array")]
+fn updates_and_deletes_keep_a_unique_json_index_matching_a_full_scan() {
+    updates_and_deletes_match_a_full_scan(
+        "type Idx { name: String  custom: JSON @index(unique: true) }",
     );
+}
+
+fn updates_and_deletes_match_a_full_scan(sdl_idx: &str) {
+    let mut actions = collections(sdl_idx, "type Raw { name: String  custom: JSON }");
     let docs = [
         ("Grows", json!({ "tags": [] })),
         ("Shrinks", json!({ "tags": [1] })),
@@ -371,4 +431,269 @@ fn updates_and_deletes_keep_the_index_matching_a_full_scan() {
 
 fn key(collection: &str, name: &str) -> &'static str {
     Box::leak(format!("{collection}{name}").into_boxed_str())
+}
+
+#[test]
+#[mantra_macros::req_test("defra.index.json_range_paths")]
+fn a_pattern_from_another_any_clause_matches_a_full_scan() {
+    paired_with(
+        "type Idx { name: String  custom: JSON @index }",
+        "type Raw { name: String  custom: JSON }",
+        vec![
+            ("Mixed", json!({ "tags": [5, "xa"] })),
+            ("Five", json!({ "tags": [5] })),
+            ("Xa", json!({ "tags": ["xa"] })),
+        ],
+        &[
+            (
+                "{_and: [{custom: {tags: {_any: {_eq: 5}}}}, {custom: {tags: {_any: {_like: \"x%\"}}}}]}",
+                &["Mixed"],
+            ),
+            (
+                "{_and: [{custom: {tags: {_any: {_lt: 100}}}}, {custom: {tags: {_any: {_like: \"x%\"}}}}]}",
+                &["Mixed"],
+            ),
+        ],
+        vec![explain(
+            "{_and: [{custom: {tags: {_any: {_eq: 5}}}}, {custom: {tags: {_any: {_like: \"x%\"}}}}]}",
+            2,
+        )],
+    );
+}
+
+#[test]
+#[mantra_macros::req_test("defra.index.json_range_paths")]
+fn a_pattern_from_another_any_clause_on_a_typed_array_matches_a_full_scan() {
+    paired_fields(
+        "type Idx { name: String  tags: [String] @index }",
+        "type Raw { name: String  tags: [String] }",
+        vec![
+            ("Mixed", json!({ "tags": ["a", "xa"] })),
+            ("A", json!({ "tags": ["a"] })),
+        ],
+        &[(
+            "{_and: [{tags: {_any: {_eq: \"a\"}}}, {tags: {_any: {_like: \"x%\"}}}]}",
+            &["Mixed"],
+        )],
+        vec![],
+    );
+}
+
+#[test]
+#[mantra_macros::req_test("defra.index.empty_array")]
+fn an_in_listing_an_object_matches_a_full_scan() {
+    paired_with(
+        "type Idx { name: String  custom: JSON @index }",
+        "type Raw { name: String  custom: JSON }",
+        vec![
+            ("Elem", json!({ "tags": [{ "x": 1 }] })),
+            ("One", json!({ "tags": [1] })),
+            ("Bare", json!({ "tags": { "x": 1 } })),
+        ],
+        &[
+            (
+                "{custom: {tags: {_all: {_in: [1, {x: 1}]}}}}",
+                &["Elem", "One"],
+            ),
+            (
+                "{custom: {tags: {_any: {_in: [1, {x: 1}]}}}}",
+                &["Elem", "One"],
+            ),
+            ("{custom: {tags: {_in: [1, {x: 1}]}}}", &["Bare"]),
+        ],
+        vec![explain("{custom: {tags: {_all: {_in: [1, {x: 1}]}}}}", 0)],
+    );
+}
+
+const COMPOSITE_AGE_IDX: &str = r#"type Idx @index(includes: [{field: "age"}, {field: "custom"}]) { name: String  age: Int  custom: JSON }"#;
+const COMPOSITE_AGE_RAW: &str = "type Raw { name: String  age: Int  custom: JSON }";
+
+#[test]
+#[mantra_macros::req_test("defra.index.empty_array")]
+fn a_json_field_second_in_a_composite_index_matches_a_full_scan() {
+    paired_fields(
+        COMPOSITE_AGE_IDX,
+        COMPOSITE_AGE_RAW,
+        vec![
+            ("Deep", json!({ "age": 25, "custom": { "tags": [[2]] } })),
+            ("Title", json!({ "age": 25, "custom": { "title": "Dr" } })),
+            ("Other", json!({ "age": 30, "custom": { "tags": [[2]] } })),
+        ],
+        &[
+            (
+                "{age: {_eq: 25}, custom: {tags: {_none: {_any: {_eq: 1}}}}}",
+                &["Deep"],
+            ),
+            (
+                "{age: {_eq: 25}, custom: {tags: {_all: {_any: {_eq: 2}}}}}",
+                &["Deep"],
+            ),
+            ("{age: {_eq: 25}, custom: {title: {_eq: null}}}", &["Deep"]),
+        ],
+        vec![
+            explain(
+                "{age: {_eq: 25}, custom: {tags: {_none: {_any: {_eq: 1}}}}}",
+                0,
+            ),
+            explain("{age: {_eq: 25}, custom: {title: {_eq: null}}}", 0),
+        ],
+    );
+    paired_fields(
+        COMPOSITE_AGE_IDX,
+        COMPOSITE_AGE_RAW,
+        vec![
+            ("Three", json!({ "age": 25, "custom": 3 })),
+            ("ArrThree", json!({ "age": 25, "custom": [3] })),
+            ("Other", json!({ "age": 30, "custom": 3 })),
+        ],
+        &[
+            ("{age: {_eq: 25}, custom: {_eq: 3}}", &["Three"]),
+            ("{age: {_eq: 25}, custom: {_any: {_eq: 3}}}", &["ArrThree"]),
+            (
+                "{age: {_in: [25, 30]}, custom: {_eq: 3}}",
+                &["Other", "Three"],
+            ),
+        ],
+        vec![
+            explain("{age: {_eq: 25}, custom: {_eq: 3}}", 1),
+            explain("{age: {_eq: 25}, custom: {_any: {_eq: 3}}}", 1),
+        ],
+    );
+}
+
+#[test]
+#[mantra_macros::req_test("defra.index.empty_array")]
+fn null_checks_at_a_path_match_a_full_scan() {
+    paired_with(
+        "type Idx { name: String  custom: JSON @index }",
+        "type Raw { name: String  custom: JSON }",
+        vec![
+            ("Null", json!({ "title": null })),
+            ("Missing", json!({ "other": 1 })),
+            ("Dr", json!({ "title": "Dr" })),
+            ("Top", Value::Null),
+        ],
+        &[
+            (
+                "{custom: {title: {_eq: null}}}",
+                &["Missing", "Null", "Top"],
+            ),
+            (
+                "{custom: {title: {_in: [null, \"Dr\"]}}}",
+                &["Dr", "Missing", "Null", "Top"],
+            ),
+            ("{custom: {_in: [null, 5]}}", &["Top"]),
+            ("{custom: {_eq: null}}", &["Top"]),
+        ],
+        vec![
+            explain("{custom: {title: {_eq: null}}}", 0),
+            explain("{custom: {title: {_in: [null, \"Dr\"]}}}", 0),
+            explain("{custom: {_in: [null, 5]}}", 1),
+        ],
+    );
+}
+
+#[test]
+#[mantra_macros::req_test("defra.index.empty_array")]
+fn the_index_serves_positive_filters_and_not_its_fallbacks() {
+    let mut actions = collections(
+        "type Idx { name: String  custom: JSON @index }",
+        "type Raw { name: String  custom: JSON }",
+    );
+    let mut docs = stored();
+    docs.push(("TagsXa", json!({ "tags": ["xa"] })));
+    for (name, custom) in docs {
+        actions.push(add("Idx", name, custom));
+    }
+    for (filter, fetches) in [
+        ("{custom: {_any: {_eq: 1}}}", 1),
+        ("{custom: {tags: {_any: {_eq: 1}}}}", 1),
+        // The range reaches the strings, which sort after the numbers.
+        ("{custom: {tags: {_any: {_gt: 0}}}}", 2),
+        ("{custom: {tags: {_any: {_like: \"x%\"}}}}", 2),
+        ("{custom: {tags: {_any: {_in: [1, 5]}}}}", 1),
+        ("{custom: {_any: {_in: [5, 1]}}}", 2),
+        ("{custom: {tags: {_all: {_in: [1, {x: 1}]}}}}", 0),
+        ("{custom: {title: {_eq: null}}}", 0),
+        ("{custom: {_all: {_any: {_eq: 1}}}}", 0),
+    ] {
+        actions.push(explain(filter, fetches));
+    }
+    TestCase::from_actions(actions).execute();
+}
+
+#[test]
+#[mantra_macros::req_test("defra.index.empty_array")]
+fn all_with_a_page_matches_a_full_scan() {
+    let docs = vec![
+        ("A", json!({ "tags": [] })),
+        ("B", json!({ "tags": [1] })),
+        ("C", json!({ "tags": [1, 1] })),
+        ("D", json!({ "tags": [2] })),
+        ("E", json!({ "tags": [], "z": 1 })),
+    ];
+    let filter = "{custom: {tags: {_all: {_eq: 1}}}}";
+    let mut actions = collections(
+        "type Idx { name: String  custom: JSON @index }",
+        "type Raw { name: String  custom: JSON }",
+    );
+    for (name, custom) in docs {
+        actions.push(add("Idx", name, custom.clone()));
+        actions.push(add("Raw", name, custom));
+    }
+    for collection in ["Idx", "Raw"] {
+        let pages: [(&str, &[&str]); 4] = [
+            ("order: {name: ASC}, limit: 2, offset: 1", &["B", "C"]),
+            ("order: {name: DESC}, limit: 2", &["E", "C"]),
+            ("order: {custom: ASC}, limit: 3", &["C", "B", "E"]),
+            ("order: {custom: DESC}, limit: 2, offset: 1", &["E", "B"]),
+        ];
+        for (args, names) in pages {
+            actions.push(query_with(collection, filter, args, names));
+        }
+    }
+    TestCase::from_actions(actions).execute();
+}
+
+#[test]
+#[mantra_macros::req_test("defra.index.empty_array")]
+fn any_beside_all_on_one_path_matches_a_full_scan() {
+    let mut docs = tags_docs();
+    docs.push(("OneTwo", json!({ "tags": [1, 2] })));
+    paired_with(
+        "type Idx { name: String  custom: JSON @index }",
+        "type Raw { name: String  custom: JSON }",
+        docs,
+        &[
+            (
+                "{custom: {tags: {_all: {_eq: 1}, _any: {_eq: 1}}}}",
+                &["One"],
+            ),
+            (
+                "{custom: {tags: {_all: {_gt: 0}, _any: {_lt: 2}}}}",
+                &["One", "OneTwo"],
+            ),
+            (
+                "{_and: [{custom: {tags: {_any: {_eq: 1}}}}, {custom: {tags: {_all: {_eq: 1}}}}]}",
+                &["One"],
+            ),
+        ],
+        vec![
+            // The marker of `[]` is not read: `_any` fails an empty array.
+            explain("{custom: {tags: {_all: {_eq: 1}, _any: {_eq: 1}}}}", 2),
+        ],
+    );
+    paired_with(
+        "type Idx { name: String  custom: JSON @index }",
+        "type Raw { name: String  custom: JSON }",
+        vec![
+            ("AEmpty", json!({ "a": [], "b": [2] })),
+            ("BEmpty", json!({ "a": [1], "b": [] })),
+        ],
+        &[(
+            "{custom: {a: {_all: {_eq: 1}}, b: {_any: {_eq: 2}}}}",
+            &["AEmpty"],
+        )],
+        vec![],
+    );
 }

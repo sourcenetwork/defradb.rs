@@ -67,6 +67,17 @@ testo index::json_index_matches_scan::a_composite_json_index_matches_a_full_scan
 testo index::json_index_matches_scan::a_descending_json_index_matches_a_full_scan
 testo index::json_index_matches_scan::a_unique_json_index_matches_a_full_scan
 testo index::json_index_matches_scan::updates_and_deletes_keep_the_index_matching_a_full_scan
+testo index::json_index_matches_scan::updates_and_deletes_keep_a_unique_json_index_matching_a_full_scan
+testo index::json_index_matches_scan::all_with_a_page_matches_a_full_scan
+# Go serves a property under `_all`, a null check at a JSON path and an `_in` listing an object from its JSON index, which has no entry for them; Rust reads every document, so it fails or returns the documents as without the index.
+testo index::json_index_matches_scan::an_object_filter_under_all_fails_with_and_without_the_index
+testo index::json_index_matches_scan::null_checks_at_a_path_match_a_full_scan
+testo index::json_index_matches_scan::an_in_listing_an_object_matches_a_full_scan
+testo index::json_index_matches_scan::the_index_serves_positive_filters_and_not_its_fallbacks
+testo index::json_index_matches_scan::a_json_field_second_in_a_composite_index_matches_a_full_scan
+# Go tests a `_like` pattern from another `_any` clause on the element its scan matched and misses a match whose elements differ; Rust leaves the pattern to the filter.
+testo index::json_index_matches_scan::a_pattern_from_another_any_clause_matches_a_full_scan
+testo index::json_index_matches_scan::a_pattern_from_another_any_clause_on_a_typed_array_matches_a_full_scan
 # With `_in` on an indexed field Go ignores `order` on that field and returns the rows as the filter lists them; Rust applies it.
 testo index::composite_in_order::in_on_descending_first_field_ordered_ascending_follows_the_order
 testo index::composite_in_order::in_on_descending_first_field_ordered_descending_follows_the_order
@@ -110,5 +121,7 @@ testo index::json::json_index_with_ne_filter_on_bool_field_should_use_index
 testo index::json::json_index_with_ne_filter_on_null_nested_field_should_use_index
 testo index::json::json_index_with_ne_filter_on_number_field_should_use_index
 testo index::json::json_index_with_nin_filter_should_use_index
+# Rust reads every document for `_eq: null` at a path inside a JSON value, because a document without the path passes it and has no entry; Go's index returns only explicit nulls.
+testo index::json::json_index_with_eq_filter_on_null_field_should_use_index
 # An execute explain whose plan fails while it runs: Go reports the error as two `executionErrors` entries; Rust reports it once.
 testo explain::simple::with_invalid_request::execute_explain_reports_a_run_time_failure_in_execution_errors
