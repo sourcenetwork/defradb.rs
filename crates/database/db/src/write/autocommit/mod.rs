@@ -198,7 +198,7 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
         let fetcher = Arc::new(LensedDocFetcher::lent(
             self.db.clone(),
             &txn,
-            self.db.lens_store.clone(),
+            self.db.lens_store().clone(),
             Default::default(),
         ));
         let batch = Arc::new(BatchMutator::new_with_prepared_inputs(

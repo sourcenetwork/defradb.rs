@@ -9,4 +9,5 @@ mod format;
 mod format_json;
 mod helpers;
 mod keyspace;
+mod lens_commit_window;
 mod loader;

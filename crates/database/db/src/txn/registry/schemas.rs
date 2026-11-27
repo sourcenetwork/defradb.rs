@@ -42,6 +42,7 @@ impl<S: Store + 'static> DbTransactionRegistry<S> {
         self.in_txn(context, txn_id, move |owned| {
             Box::pin(async move {
                 let txn_lens_store = owned.lens_store();
+                let lens_registrations = owned.lens_registrations();
                 let caches = owned.caches();
                 let txn = owned.alone()?;
 
@@ -59,6 +60,12 @@ impl<S: Store + 'static> DbTransactionRegistry<S> {
                 // derived from its schema.
                 caches.invalidate();
 
+                db.owe_lens_on_commit(
+                    txn,
+                    transform_id.clone(),
+                    config.clone(),
+                    lens_registrations,
+                )?;
                 let db = db.clone();
                 let cache_db = db.clone();
                 let cache_destination = updated_destination;

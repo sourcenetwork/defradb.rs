@@ -353,7 +353,7 @@ where
                 crate::LensedDocFetcher::lent(
                     self.db.clone(),
                     &txn,
-                    self.db.lens_store.clone(),
+                    self.db.lens_store().clone(),
                     Default::default(),
                 )
                 .with_prepared_inputs(self.prepared_inputs.clone()),
