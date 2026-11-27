@@ -33,6 +33,15 @@ pub(super) const PROPERTIES: &[Property] = &[
     },
     Property {
         family: "Text chunking",
+        name: "INV_NothingUnmatched: a replicator record in memory, on disk or loaded after a restart never lets a document of an unmatched article or its chunks through",
+        axis: Tla,
+        anchor: "crates/surfaces/p2p-adapter/src/pinc.rs add_replicator, resolve_collections_for_remove; crates/surfaces/p2p-adapter/src/lib.rs set_chunk_sources, pair_chunk_sources, collections_to_remove; crates/surfaces/p2p-adapter/src/replicator_persist.rs narrow, narrowed; crates/surfaces/p2p-adapter/src/transport_doc_pusher.rs retry_doc; crates/surfaces/p2p-adapter/src/restore.rs restore_p2p_state; crates/database/p2p/src/replicator.rs ReplicatorInfo::admission, remove_collection",
+        model_ref: "MC_FilteredChunkPushRecord_Green.cfg / MC_FilteredChunkPushRecord_{Red_AddWithoutPairs,Red_RemoveKeepsChunks,Red_DropPairOnFailedLookup,Red_PersistTwoTxns,Red_PersistAddsCollections,Red_BadRecordUnfiltered}.cfg",
+        tiers: &[Boundary],
+        bound_by: "tools/integration-test/tests/testo/chunk/replicate_filtered/relay.rs a_restarted_relay_still_forwards_no_chunks; tools/integration-test/tests/testo/chunk/replicate_filtered/remove.rs removing_the_parent_by_name_removes_its_chunks, removing_the_parent_by_id_removes_its_chunks",
+    },
+    Property {
+        family: "Text chunking",
         name: "covers / bounded / pickPre_capped / deterministic / units_edit / local_edit / heading_keeps_text / unit_break_reads_only_headings / long_unit_fences",
         axis: Lean,
         anchor: "crates/building-blocks/chunk-split/src/split/mod.rs split, split_v1; version.rs SplitterVersion; segments.rs units, fence_before, segments; atoms.rs atoms, sentence_ends; pack.rs pack; overlap.rs with_overlap, borrow, REPEAT_SHARE",
