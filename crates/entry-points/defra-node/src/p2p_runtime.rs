@@ -137,6 +137,7 @@ where
     );
     peer_config.strict_replicated_doc_access = strict_replicated_doc_access;
     peer_config.sync = config.sync.sync_config();
+    peer_config.governance_sweep_interval = config.sync.governance_sweep_interval;
     peer_config.retry_schedule = retry_schedule.clone();
     peer_config.rebroadcast_on_merge = config.rebroadcast_on_merge;
     peer_config.load_persisted_collections = config.load_persisted_collections;

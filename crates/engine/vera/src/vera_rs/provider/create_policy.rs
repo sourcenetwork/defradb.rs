@@ -6,7 +6,7 @@
 
 use alloy_sol_types::{SolCall, SolEvent};
 use vera_client::random_policy_nonce;
-use vera_domain::{RefusalKind, RefusingModule};
+use vera_domain::{NativeTx, RefusalKind, RefusingModule};
 use vera_modules::acp::types::PolicyRecord;
 
 use super::submission::{rejected, ConfirmedSubmission};
@@ -26,6 +26,39 @@ impl VeraRsProvider {
         nonce: acp::PolicyNonce,
     ) -> Result<String, ProviderError> {
         predict_policy_id(policy, nonce, &self.actor_did)
+    }
+
+    /// Whether the worker still holds a create of `policy_id`, including one
+    /// whose caller timed out or was cancelled.
+    pub(super) async fn pending_policy_create(
+        &self,
+        policy_id: &str,
+    ) -> Result<bool, ProviderError> {
+        let worker = nuclei::time::timeout(self.sync_timeout, self.worker.clone().lock_owned())
+            .await
+            .map_err(|_| {
+                ProviderError::Unavailable(
+                    "the worker is busy while checking for a pending policy create".into(),
+                )
+            })?;
+        let Some(wire) = worker.pending() else {
+            return Ok(false);
+        };
+        let tx = NativeTx::decode_wire(wire)
+            .map_err(|error| ProviderError::Unavailable(error.to_string()))?;
+        if tx.target != ACP_ADDRESS {
+            return Ok(false);
+        }
+        let Ok(call) = IAcp::bearerCreatePolicyCall::abi_decode(&tx.calldata) else {
+            return Ok(false);
+        };
+        let Ok(policy) = std::str::from_utf8(&call.policy) else {
+            return Ok(false);
+        };
+        let Ok(created) = self.predict_policy_id(policy, acp::PolicyNonce(call.nonce.0)) else {
+            return Ok(false);
+        };
+        Ok(crate::foreign::route_key(&created)? == crate::foreign::route_key(policy_id)?)
     }
 
     /// Create `policy_yaml` as the provider's actor under `nonce`, or under a

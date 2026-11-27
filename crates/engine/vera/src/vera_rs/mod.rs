@@ -24,7 +24,7 @@ pub use bearer::{
 pub use client::{ClientError, VeraRsClient};
 pub use command_digest::request_digest;
 pub use policy_id::predict_policy_id;
-pub use provider::{GenesisSource, VeraRsProvider};
+pub use provider::{ForeignProvider, GenesisSource, HomeStateListener, VeraRsProvider};
 pub use transport::RpcTransport;
 pub use vera_delegation::signer::{
     signature_from_der, DelegationAlgorithm, DelegationSigner, Ed25519Signer, P256Signer,

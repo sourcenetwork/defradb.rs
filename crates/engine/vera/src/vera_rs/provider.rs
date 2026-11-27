@@ -40,6 +40,7 @@ mod assignments;
 mod audience_tests;
 mod create_policy;
 mod exact_relationship;
+mod foreign;
 mod genesis;
 mod owed_request;
 mod reach;
@@ -55,6 +56,7 @@ mod terms;
 mod transport_tests;
 mod verified;
 
+pub use foreign::{ForeignProvider, HomeStateListener};
 pub use genesis::GenesisSource;
 use terms::Follower;
 use verified::verified;
@@ -652,6 +654,10 @@ impl VeraProvider for VeraRsProvider {
         nonce: Option<acp::PolicyNonce>,
     ) -> Result<String, ProviderError> {
         self.create_policy_with(policy_yaml, nonce).await
+    }
+
+    async fn create_policy_pending(&self, policy_id: &str) -> Result<bool, ProviderError> {
+        self.pending_policy_create(policy_id).await
     }
 
     async fn register_object(

@@ -1,11 +1,13 @@
 mod dac;
 mod decisions;
+mod foreign;
 mod provider;
 mod tuning;
 pub mod vera_rs;
 
 pub use acp::PolicyNonce;
 pub use dac::VeraDocumentACP;
+pub use foreign::{ForeignHome, ForeignPolicies};
 pub use provider::{
     owed_request_digest, AcpLightClientStatus, ActorRelationshipQuery, AssignmentPosition,
     AssignmentQuery, CertifiedAssignments, OwedCall, OwedRequestOutcome, ProviderError,

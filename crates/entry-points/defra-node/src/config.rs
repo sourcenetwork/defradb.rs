@@ -324,6 +324,11 @@ pub struct SyncTuning {
     /// Seconds between replicator retries, the last one repeating; `None`
     /// keeps the Go-compatible default ladder.
     pub replicator_retry_intervals: Option<Vec<u64>>,
+    /// How often the fallback sweep judges again the composites governance
+    /// deferred and the changes parked on an ACP refusal that nothing else
+    /// released. Default: one minute
+    /// ([`db::merge::governance::SWEEP_INTERVAL`]).
+    pub governance_sweep_interval: std::time::Duration,
 }
 
 #[cfg(any(feature = "p2p", feature = "libp2p"))]
@@ -340,6 +345,7 @@ impl Default for SyncTuning {
             gossip_deferral_peer_bytes: defaults.gossip_deferral_peer_bytes,
             gossip_deferral_total_bytes: defaults.gossip_deferral_total_bytes,
             replicator_retry_intervals: None,
+            governance_sweep_interval: db::merge::governance::SWEEP_INTERVAL,
         }
     }
 }

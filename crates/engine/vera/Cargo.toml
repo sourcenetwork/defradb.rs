@@ -70,8 +70,8 @@ base64.workspace = true
 alloy-sol-types.workspace = true
 alloy-primitives.workspace = true
 
-# Authenticated ACP records and permission evaluation
-acp-light-client = { git = "https://github.com/sourcenetwork/backbone.git", rev = "3421379115d69fd8bed8536943d5397ac6eb5ace" }
+# Authenticated ACP records and permission evaluation.
+acp-light-client = { package = "vera-light-client", git = "https://github.com/sourcenetwork/vera.rs", rev = "f51f4de9c459982c704bf0b95640121dbbca5cba" }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 # HTTP for JSON-RPC on nuclei sockets; the browser's fetch on wasm32 (below).
@@ -86,6 +86,10 @@ reqwest = { version = "0.13", default-features = false, features = ["json", "cha
 edge = { path = "../../foundation/edge", features = ["testing"] }
 # The recording signer the provider's signer tests sign through.
 vera-delegation = { path = "../../engine/vera-delegation", features = ["testing"] }
+# The worker pool that exercises a caller cancelled after the network hand-off.
+workers = { path = "../../foundation/workers" }
+# A dealt consensus key that finalizes the light blocks the ancestry test verifies.
+vera-domain = { version = "0.2.0", features = ["testing"] }
 # Tests run with ordered JSON maps: bytes built from a map in any order but the sorted one then differ from the
 # pinned ones, so a signed or hashed encoding that depends on this feature fails here and not only in a wider build.
 serde_json = { workspace = true, features = ["preserve_order"] }
