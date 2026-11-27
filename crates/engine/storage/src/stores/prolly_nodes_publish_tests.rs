@@ -5,9 +5,10 @@ use std::task::{Context, Waker};
 use std::time::Duration;
 
 use prolly::{tree::DEFAULT_TARGET, Item, MemStore, Node, Store as _, Tree};
+use regolith::sync::Event;
 
 use super::tests::{entries, entry, node_keys, publish, sweep, Publish, StoredRoots};
-use super::{node_key, reclaim_every, ProllyNodes};
+use super::{node_key, reclaim_every, LiveRoots, LiveRootsFuture, ProllyNodes};
 use crate::backends::RegolithStore;
 use crate::corekv::{
     engine_retry_options, RetryAttemptError, RetryAttemptFn, RetryAttemptFuture, RetryTxn,
@@ -252,58 +253,94 @@ fn a_publish_dropped_before_its_commit_keeps_its_nodes_pending() {
 }
 
 #[test]
-fn scheduled_pages_reclaim_every_node_the_live_root_left_behind() {
-    let pool = workers::Pool::start(workers::Config::unplaced(1)).unwrap();
-    let (left, reachable, live) = pool
-        .submit_and_wait(workers::Target::Worker(0), || async {
-            let store = Arc::new(RegolithStore::in_memory().unwrap());
-            let mut regolith = ProllyNodes::new(Arc::clone(&store), engine_retry_options(5));
-            let mut tree = Tree::build(&mut regolith, DEFAULT_TARGET, (0..5_000).map(entry))
-                .await
-                .unwrap();
-            publish(&mut regolith, &[tree.root().unwrap()]).await;
-            let removed = |n: &u32| n.is_multiple_of(500);
-            for n in (0..5_000).filter(removed) {
-                tree.remove(&mut regolith, &entry(n).0).await.unwrap();
-                publish(&mut regolith, &[tree.root().unwrap()]).await;
-            }
-            // The same entries built afresh give the same nodes, so their
-            // count is what the live root reaches.
-            let mut memory = MemStore::new();
-            let rebuilt = Tree::build(
-                &mut memory,
-                DEFAULT_TARGET,
-                (0..5_000).filter(|n| !removed(n)).map(entry),
-            )
+fn pages_reclaim_every_node_the_live_root_left_behind() {
+    workers::block_on(async {
+        let store = Arc::new(RegolithStore::in_memory().unwrap());
+        let mut regolith = ProllyNodes::new(Arc::clone(&store), engine_retry_options(5));
+        let mut tree = Tree::build(&mut regolith, DEFAULT_TARGET, (0..5_000).map(entry))
             .await
             .unwrap();
-            assert_eq!(rebuilt, tree);
-            let before = node_keys(&store).await.len();
-            assert!(before > memory.len(), "the edits left old nodes");
-
-            let schedule = workers::spawn_background(None, "prolly-reclaim", {
-                let store = Arc::clone(&store);
-                let page = before / 4;
-                move || async move {
-                    let _ =
-                        reclaim_every(store, Arc::new(StoredRoots), Duration::from_millis(1), page)
-                            .await;
-                }
-            });
-            let mut left = before;
-            for _ in 0..2_000 {
-                workers::sleep(Duration::from_millis(5)).unwrap().await;
-                left = node_keys(&store).await.len();
-                if left == memory.len() {
-                    break;
-                }
-            }
-            schedule.abort();
-            let fresh = ProllyNodes::new(Arc::clone(&store), engine_retry_options(5));
-            (left, memory.len(), entries(&tree, &fresh).await.len())
-        })
+        publish(&mut regolith, &[tree.root().unwrap()]).await;
+        let removed = |n: &u32| n.is_multiple_of(500);
+        for n in (0..5_000).filter(removed) {
+            tree.remove(&mut regolith, &entry(n).0).await.unwrap();
+            publish(&mut regolith, &[tree.root().unwrap()]).await;
+        }
+        // The same entries built afresh give the same nodes, so their count is
+        // what the live root reaches.
+        let mut memory = MemStore::new();
+        let rebuilt = Tree::build(
+            &mut memory,
+            DEFAULT_TARGET,
+            (0..5_000).filter(|n| !removed(n)).map(entry),
+        )
+        .await
         .unwrap();
+        assert_eq!(rebuilt, tree);
+        let before = node_keys(&store).await.len();
+        assert!(before > memory.len(), "the edits left old nodes");
+
+        let roots = Arc::new(StoredRoots);
+        let page = (before / 4).max(1);
+        let mut start = None;
+        loop {
+            let report = ProllyNodes::reclaim(&*store, Arc::clone(&roots), start, page)
+                .await
+                .unwrap();
+            assert!(report.scanned <= page);
+            start = report.next_start;
+            if start.is_none() {
+                break;
+            }
+        }
+
+        assert_eq!(node_keys(&store).await.len(), memory.len());
+        let fresh = ProllyNodes::new(Arc::clone(&store), engine_retry_options(5));
+        assert_eq!(entries(&tree, &fresh).await.len(), 4_990);
+    })
+    .unwrap();
+}
+
+struct ReadSignal(Arc<Event>);
+
+impl LiveRoots for ReadSignal {
+    fn read<'txn>(&'txn self, _: &'txn mut dyn RetryTxn) -> LiveRootsFuture<'txn> {
+        Box::pin(async move {
+            self.0.set();
+            Ok(Vec::new())
+        })
+    }
+}
+
+#[test]
+fn the_scheduler_runs_a_reclaim_page_on_its_worker() {
+    let pool = workers::Pool::start(workers::Config::unplaced(1)).unwrap();
+    pool.submit_and_wait(workers::Target::Worker(0), || async {
+        let store = Arc::new(RegolithStore::in_memory().unwrap());
+        let mut regolith = ProllyNodes::new(Arc::clone(&store), engine_retry_options(5));
+        let node = leaf();
+        let hash = regolith.put(node).await.unwrap();
+        publish(&mut regolith, &[hash]).await;
+
+        let read = Arc::new(Event::new());
+        let schedule = workers::spawn_background(None, "prolly-reclaim", {
+            let store = Arc::clone(&store);
+            let read = Arc::clone(&read);
+            move || async move {
+                let _ = reclaim_every(
+                    store,
+                    Arc::new(ReadSignal(read)),
+                    Duration::from_millis(20),
+                    1,
+                )
+                .await;
+            }
+        });
+        workers::timeout(Duration::from_secs(2), read.wait())
+            .await
+            .expect("the scheduled reclaim page ran");
+        schedule.abort();
+    })
+    .unwrap();
     pool.shutdown_blocking().unwrap();
-    assert_eq!(left, reachable, "only the live root's nodes are left");
-    assert_eq!(live, 4_990, "the live tree is whole");
 }

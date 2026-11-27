@@ -13,11 +13,17 @@
 //! a few nodes per level for an edit, every node of the tree for a build. A
 //! read finds a pending node before it looks in regolith, and the pending set
 //! is cleared only after that transaction commits, so a node put is always
-//! readable.
+//! readable. A build's pending set is held in memory and written in one
+//! transaction, so it must stay below both the process's memory budget and
+//! regolith's 1 GiB record limit. No production tree uses this store yet;
+//! before the first production-sized build, it needs a size cap or a spill
+//! under a provisional root tracked by #3279.
 //!
 //! [`ProllyNodes::reclaim`] sweeps one bounded page of the nodes no live root
 //! names (`proofs/tla/ProllyNodeReclaim.tla`), and [`reclaim_every`] runs one
-//! page per period. Its delete transaction reads the live roots itself, with
+//! page per period. No production owner starts that schedule yet; it starts
+//! with the first real [`LiveRoots`] implementation. Its delete transaction
+//! reads the live roots itself, with
 //! validated reads, so a root published before it commits re-runs it against
 //! that root. `t` is a key family, not a
 //! [`Namespace`](crate::namespace::Namespace), so the namespace walks (dump,
@@ -114,6 +120,11 @@ where
     /// the value is that of the run of `root` that committed. Only a commit
     /// clears the pending nodes, so a publish that fails or is dropped leaves
     /// them readable for the next one.
+    ///
+    /// A build's pending set must fit in memory and its nodes must encode to
+    /// less than regolith's 1 GiB record limit. No production tree is built
+    /// through this store yet; the first production owner must cap the tree or
+    /// spill its nodes under a provisional root before that size can be reached.
     pub async fn publish<T>(&mut self, root: RetryAttempt) -> Result<T, RetryAttemptError>
     where
         T: Any,
