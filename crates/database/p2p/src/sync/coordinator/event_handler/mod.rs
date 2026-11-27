@@ -1792,3 +1792,7 @@ mod car_ingest_held;
 #[cfg(test)]
 #[path = "../../../../tests/unit/pending_capacity_wake.rs"]
 mod pending_capacity_wake;
+
+#[cfg(test)]
+#[path = "../../../../tests/unit/doc_sync_held.rs"]
+mod doc_sync_held;

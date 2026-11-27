@@ -374,8 +374,10 @@ fn rebuilds_a_descending_json_index_stamped(stored: u32, stale_walk: bool) {
             result.data.unwrap(),
             serde_json::json!({"User": [{"name": "John"}]})
         );
-        assert_eq!(CURRENT_INDEX_FORMAT, 5);
-        assert_eq!(reopened.stored_index_format().await.unwrap(), Some(5));
+        assert_eq!(
+            reopened.stored_index_format().await.unwrap(),
+            Some(CURRENT_INDEX_FORMAT)
+        );
     })
     .unwrap();
 }

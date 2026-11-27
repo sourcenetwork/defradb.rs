@@ -11,7 +11,7 @@ Local ACP evaluates inside the request's transaction, on the same snapshot as th
 data; Vera decisions happen at the edge, with their staleness documented. The
 chapters:
 
-- [The Zanzibar engine](zanzibar.md): policies, relations, tuple-to-userset evaluation,
+- [The Zanzibar engine](zanzibar.md): policies and the rules for writing one, relations,
   the goal-tree checker.
 - [DAC and NAC](dac-nac.md): the document and node scopes, registration, the bypass
   privilege.

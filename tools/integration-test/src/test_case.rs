@@ -243,6 +243,30 @@ impl State {
         }
     }
 
+    /// End node `name`'s process with SIGKILL and keep its data for a later
+    /// start. With `crashed` the process kills itself at an armed crash
+    /// point, and this only waits for that.
+    pub fn kill_node(&mut self, name: &str, crashed: bool) -> Result<(), Failure> {
+        let node = self.node(name)?;
+        match (node.process(), crashed) {
+            (Some(process), true) => process.killed(),
+            (Some(process), false) => process.kill(),
+            // Dropping a Go node's process kills it with SIGKILL.
+            (None, false) if node.is_go() => Ok(()),
+            _ => {
+                return Err(Failure::unsupported(format!(
+                    "killing node {name}: it does not run in a process of its own (NewNode \
+                     ownProcess)"
+                )))
+            }
+        }
+        .map_err(Failure::operation)?;
+        if let Some(slot) = self.nodes.0.get_mut(name) {
+            slot.node = None;
+        }
+        Ok(())
+    }
+
     /// Restart node `name`: start it again when it is stopped; stop and start
     /// it when it keeps its data; leave an in-memory node as it is, as Go's
     /// harness does.

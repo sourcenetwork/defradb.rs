@@ -392,3 +392,41 @@ fn a_chunks_updates_show_only_to_a_reader_of_its_parent() {
     })
     .unwrap()
 }
+
+#[test]
+#[mantra_macros::req_test("defra.events.delivery.retention")]
+fn a_full_truncate_of_the_parent_drops_its_chunks_update_rows() {
+    workers::block_on(async {
+        let author = node_with_policy(false).await;
+        let peer = node_with_policy(false).await;
+        let created = peer
+            .run(
+                &format!(r#"mutation {{ add_Article(input: {{body: "{BODY}"}}) {{ _docID }} }}"#),
+                None,
+            )
+            .await;
+        let parent = created["add_Article"][0]["_docID"].as_str().unwrap();
+        merge_updated_chunk(&author, &peer, parent).await;
+        let head = format!(r#"{{ _documentUpdates(collection: "{CHUNKS}") {{ head }} }}"#);
+        assert_eq!(peer.run(&head, None).await["_documentUpdates"]["head"], "1");
+
+        peer.db
+            .truncate_collection_as(&defra_core::RequestContext::ambient(), "Article", None)
+            .await
+            .unwrap();
+
+        let errors = peer
+            .errors(&format!(
+                r#"{{ _documentUpdates(collection: "{CHUNKS}", after: "0") {{ head }} }}"#
+            ))
+            .await;
+        assert_eq!(errors.len(), 1, "{errors:?}");
+        assert!(
+            errors[0].contains(
+                "update cursor is no longer available on this node: resync the collection and read after cursor 1"
+            ),
+            "{errors:?}"
+        );
+    })
+    .unwrap()
+}
