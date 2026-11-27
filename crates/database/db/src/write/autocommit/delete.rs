@@ -281,7 +281,7 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
             if !existed {
                 return Ok((canonical_doc_id, None));
             }
-            crate::write::autocommit::helpers::unregister_deleted_doc(
+            crate::write::autocommit::helpers::archive_deleted_doc(
                 self.db.document_acp(),
                 &systemstore,
                 &collection,
@@ -525,7 +525,7 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
                     results.push((canonical_id, false, None));
                     continue;
                 }
-                crate::write::autocommit::helpers::unregister_deleted_doc(
+                crate::write::autocommit::helpers::archive_deleted_doc(
                     self.db.document_acp(),
                     &systemstore,
                     &collection,

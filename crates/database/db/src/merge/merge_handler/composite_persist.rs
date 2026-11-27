@@ -466,18 +466,8 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
             }
         }
 
-        if let (Some(provider), Some(policy)) =
-            (self.db.document_acp(), collection.schema().policy.as_ref())
-        {
-            if let Some(scoped) = provider
-                .bind_transaction(datastore.sibling(storage::namespace::Namespace::Acpstore))
-            {
-                scoped
-                    .unregister_doc_object(&policy.id, &policy.resource_name, context.doc_id_str)
-                    .await
-                    .map_err(|error| MergeError::MergeFailed(error.to_string()))?;
-            }
-        }
+        // The document's ACP object stays, as on a local delete: it still
+        // decides who reads the history this node keeps.
         let deleted_key = build_deleted_key(collection.collection_id(), context.doc_short_id);
         datastore
             .set(&deleted_key, &[DELETED_MARKER])

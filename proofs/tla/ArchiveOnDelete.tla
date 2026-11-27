@@ -90,7 +90,7 @@
 \*       the per-actor bound, read from those counts, and the transaction's bound, read
 \*       from its StagedCount), OwedChanges::stage_archive (leaves that StagedCount as is)
 \*   crates/engine/acp/src/outbox/submission.rs   relationship_call (OwedOp::Archive)
-\*   crates/database/db/src/write/autocommit/helpers.rs  unregister_deleted_doc (stages
+\*   crates/database/db/src/write/autocommit/helpers.rs  archive_deleted_doc (stages
 \*       the archive in the delete's transaction)
 \*   vera.rs crates/vera-modules/src/acp/object_archive.rs  cmd_archive_object (owner
 \*       only, relationships removed), management.rs (no change to an archived object)

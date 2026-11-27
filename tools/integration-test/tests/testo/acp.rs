@@ -42,6 +42,7 @@ mod dac {
         mod policy_section;
     }
     mod delete_with_index;
+    mod deleted_history;
     mod index {
         mod new;
         mod query;

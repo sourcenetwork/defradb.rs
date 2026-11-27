@@ -59,7 +59,14 @@ impl<S: Store> crate::database::DB<S> {
                     .iter()
                     .map(|doc_id| document::DocID::from_string(doc_id))
                     .collect::<std::result::Result<Vec<_>, _>>()?;
-                let purged = db.purge_documents(txn, &collection, &doc_ids).await?;
+                let purged = db
+                    .purge_documents(
+                        txn,
+                        &collection,
+                        &doc_ids,
+                        crate::collection::ops::purge::AcpObjects::Keep,
+                    )
+                    .await?;
                 Ok(purged)
             })
         })

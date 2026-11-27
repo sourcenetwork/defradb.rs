@@ -791,7 +791,7 @@ impl<S: Store + 'static> DocMutator for BatchMutator<S> {
         if !existed {
             return Ok(DeleteResult::new(canonical_doc_id, existed));
         }
-        crate::write::autocommit::helpers::unregister_deleted_doc(
+        crate::write::autocommit::helpers::archive_deleted_doc(
             self.db.document_acp(),
             &systemstore,
             &collection,

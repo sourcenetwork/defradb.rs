@@ -670,7 +670,7 @@ impl<S: Store + 'static> DocMutator for DbDocMutator<S> {
                 })),
                 _ => context.clone(),
             };
-            crate::write::autocommit::helpers::unregister_deleted_doc(
+            crate::write::autocommit::helpers::archive_deleted_doc(
                 self.db.document_acp(),
                 &systemstore,
                 &collection,
