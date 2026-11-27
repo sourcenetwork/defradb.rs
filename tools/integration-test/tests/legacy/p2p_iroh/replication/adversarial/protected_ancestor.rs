@@ -1,9 +1,9 @@
 use serial_test::serial;
 
-use super::blocks::{aged, author, child_of, update, with_creator, Signing};
-use super::peer::HostilePeer;
 use super::protected::{Outcome, ProtectedNode};
 use super::receiver::{p2p_addrs, user_by_id};
+use integration_test::hostile::blocks::{aged, author, child_of, update, with_creator, Signing};
+use integration_test::hostile::peer::HostilePeer;
 
 /// The owner's signature on a child must not launder an ancestor the owner
 /// never authorized: each composite in the DAG is judged by its own signer.

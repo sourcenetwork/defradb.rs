@@ -58,6 +58,7 @@ use crate::message::{PushLogReply, PushLogRequest};
 
 pub mod disconnect_gate;
 mod dual_kademlia;
+mod redial_hold;
 
 pub use dual_kademlia::{
     validate_pk_namespaced_record, DefraKademliaEvent, DualKademlia, KademliaNetwork,

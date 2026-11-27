@@ -7,9 +7,8 @@
 //! A decision the provider read at a verified state (the vera.rs light
 //! client's module state root) carries that state in its key, which makes it
 //! exact: the service caches it, bounded by bytes, and a new state is a new
-//! key. Every other decision lives in the access cache
-//! (`access_cache::AccessCache`) where the adapter has one. An unavailable
-//! provider is an error, so it is never cached anywhere.
+//! key. Every other decision is asked again each time. An unavailable
+//! provider is an error, so it is never cached.
 
 use std::sync::Arc;
 use std::time::Duration;

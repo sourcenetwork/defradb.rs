@@ -10,6 +10,9 @@
 #[path = "support.rs"]
 mod support;
 
+#[path = "behavioral/mutation.rs"]
+mod mutation;
+
 #[path = "behavioral/cid.rs"]
 mod cid;
 

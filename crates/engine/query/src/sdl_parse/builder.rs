@@ -19,6 +19,7 @@ use schema::{
 };
 
 use super::directives::IndexDirection;
+use super::field_type_refusal::{unlisted, FieldTypeRefusal, FieldTypeRefusals};
 use super::helpers::{
     generate_collection_id, generate_field_id, generate_index_name, generate_relation_name,
 };
@@ -71,7 +72,7 @@ impl<'a> SdlParser<'a> {
     pub(super) fn build_collections(&self) -> Result<Vec<CollectionVersion>> {
         // Build collection names set for relation detection, including external types
         let mut type_names: RapidHashSet<_> = self.type_defs.keys().cloned().collect();
-        type_names.extend(self.known_external_types.iter().cloned());
+        type_names.extend(self.known_collections.keys().cloned());
 
         // Pre-validate all field types to accumulate multiple errors (Go compatibility).
         // Go collects ALL "no type found" errors before returning, rather than stopping at first.
@@ -81,24 +82,44 @@ impl<'a> SdlParser<'a> {
         ]
         .into_iter()
         .collect();
-        let mut field_type_errors = Vec::new();
+        let mut unlisted_scalars = Vec::new();
+        let mut unknown_types = Vec::new();
         for type_def in self.type_defs.values() {
             for field in &type_def.fields {
                 let base = &field.field_type.base_type;
-                if !scalar_types.contains(base.as_str())
+                let refused = field
+                    .field_type
+                    .is_list
+                    .then(|| unlisted(&field.name, base))
+                    .flatten();
+                if let Some(refused) = refused {
+                    unlisted_scalars.push(refused);
+                } else if !scalar_types.contains(base.as_str())
                     && !type_names.contains(base)
                     && base != &type_def.name
                 {
-                    field_type_errors.push(format!(
-                        "no type found for given name. Field: {}, Kind: {}",
-                        field.name, base
-                    ));
+                    let kind = match field.field_type.is_list {
+                        true => format!("[{base}]"),
+                        false => base.clone(),
+                    };
+                    unknown_types.push(FieldTypeRefusal::UnknownType {
+                        field: field.name.clone(),
+                        kind,
+                    });
                 }
             }
         }
-        if !field_type_errors.is_empty() {
-            field_type_errors.sort();
-            return Err(QueryError::parse(field_type_errors.join("\n")));
+        if !unlisted_scalars.is_empty() {
+            // An unknown type beside a refused one keeps the refusal's code.
+            let mut refusals = unlisted_scalars;
+            refusals.append(&mut unknown_types);
+            refusals.sort_by_key(ToString::to_string);
+            return Err(FieldTypeRefusals(refusals).into());
+        }
+        if !unknown_types.is_empty() {
+            let mut lines: Vec<String> = unknown_types.iter().map(ToString::to_string).collect();
+            lines.sort();
+            return Err(QueryError::parse(lines.join("\n")));
         }
 
         // Collect @primary directive information for determining actual primaryness
@@ -141,8 +162,8 @@ impl<'a> SdlParser<'a> {
                 if !type_names.contains(target) || target == type_name {
                     continue; // Not a relation to another type in schema, or self-ref
                 }
-                if self.known_external_types.contains(target) {
-                    continue; // External type already exists, no CID dependency
+                if !self.type_defs.contains_key(target) {
+                    continue; // A stored collection: its ID is known already
                 }
 
                 // Check if this field is PRIMARY (included in CID calculation)
@@ -470,8 +491,19 @@ impl<'a> SdlParser<'a> {
             if let Some(size) = parsed_field.directives.size_constraint {
                 field = field.with_size(size);
             }
-            if parsed_field.directives.immutable {
+            // A single-object relation's `@immutable` and `@policy(relation:)`
+            // apply to the document ID it stores, so they go to its `_xID`
+            // field below. Anywhere else, `@immutable` stays on the field and
+            // field validation decides whether it may be there.
+            let single_relation = creates_fk_field;
+            if parsed_field.directives.immutable && !single_relation {
                 field = field.as_immutable();
+            }
+            if parsed_field.directives.policy_relation.is_some() && !single_relation {
+                return Err(QueryError::parse(format!(
+                    "@policy(relation:) requires a single-object relation field. Field: {}.{}",
+                    type_def.name, parsed_field.name
+                )));
             }
 
             // Set relation name - use explicit @relation(name:) if provided, otherwise auto-generate
@@ -516,6 +548,8 @@ impl<'a> SdlParser<'a> {
                         id_field_crdt,
                     )
                     .with_relation_name(relation_name.clone());
+                    id_field.immutable = parsed_field.directives.immutable;
+                    id_field.policy_relation = parsed_field.directives.policy_relation.clone();
                     if is_primary {
                         id_field = id_field.as_primary();
 
@@ -564,10 +598,10 @@ impl<'a> SdlParser<'a> {
                 // Build fields list based on includes
                 // For relation fields (non-array), Go DefraDB stores indexes on the FK field
                 // (_fieldID) rather than the relation field name.
+                let target = &parsed_field.field_type.base_type;
                 let is_relation_field = !parsed_field.field_type.is_list
-                    && self
-                        .type_defs
-                        .contains_key(&parsed_field.field_type.base_type);
+                    && (self.type_defs.contains_key(target)
+                        || self.known_collections.contains_key(target));
 
                 let primary_field_name = if is_relation_field {
                     // Use FK field name for relation fields (e.g., "address" -> "_addressID")
@@ -770,10 +804,7 @@ impl<'a> SdlParser<'a> {
         // An ungoverned collection commits to no policy at all, and keeps the
         // version ID it has today.
         let policy = type_def.directives.policy.as_ref().map(|policy_config| {
-            let mut policy =
-                schema::PolicyDescription::new(&policy_config.id, &policy_config.resource);
-            policy.parent_field.clone_from(&policy_config.parent_field);
-            policy
+            schema::PolicyDescription::new(&policy_config.id, &policy_config.resource)
         });
         let policy_commitment = commitments
             .is_governed()

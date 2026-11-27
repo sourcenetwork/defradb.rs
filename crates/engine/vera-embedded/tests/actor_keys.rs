@@ -129,7 +129,7 @@ async fn an_actor_of_each_key_type_owns_grants_and_reads_through_vera() {
             .await
             .expect("delegation");
         provider
-            .register_object(&delegation, &policy, "document", "first")
+            .register_object(&delegation, &policy, "document", "first", &[])
             .await
             .expect("registration");
         assert_eq!(
@@ -194,7 +194,7 @@ async fn a_p256_entity_subject_grant_admits_the_reader() {
         .await
         .expect("delegation");
     provider
-        .register_object(&delegation, &policy, "document", "first")
+        .register_object(&delegation, &policy, "document", "first", &[])
         .await
         .expect("registration");
 

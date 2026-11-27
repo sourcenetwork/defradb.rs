@@ -187,6 +187,13 @@ An index on `[Int]`, `[Float]`, `[Boolean]`, `[String]` and their nillable-eleme
 
 `_any` and `_all` filters on an indexed array (with `_eq`, `_in`, `_nin`) use the index and return the matching documents; `_none` returns correct results without using the index.
 
+# `defra.index.array.all-empty`: `_all` on an indexed array finds empty arrays
+
+- **Parents:** ["go.index.array.operators"]
+- **Scenarios:** ["index::all_empty_array::all_on_an_indexed_array_finds_an_empty_array", "index::all_empty_array::all_on_an_indexed_composite_array_finds_an_empty_array", "index::all_empty_array::all_with_a_range_on_a_descending_indexed_array_finds_an_empty_array", "index::all_empty_array::all_with_a_range_on_an_indexed_array_finds_an_empty_array"]
+
+`_all` over an empty array is true, so `_all` (with `_eq`, `_in` or a range) on an indexed scalar array returns the documents whose array is empty, exactly as the same query on an unindexed array does, while still using the index; a null array and an array holding only failing elements are not returned. This holds for an ascending or a descending index, and when the array is the first field of a composite index. Go misses these documents (its index writes no entry for an empty array), so these scenarios are listed as Go divergences.
+
 # `go.index.array.nil-elements`: Null elements in indexed arrays
 
 - **Parents:** ["go.index.array"]
@@ -236,6 +243,13 @@ Filters on a path inside an indexed JSON field (`custom: {height: {_eq: 168}}`) 
 
 Elements of JSON arrays are indexed: `_any: {_eq|_gt: ...}` matches top-level elements only (not elements of nested arrays or a scalar in place of the array); `_all` with `_eq`/`_gt` uses the index; `_none` returns correct results without the index; elements of mixed types are matched correctly.
 
+# `defra.index.json.all-empty`: `_all` on an indexed JSON path finds empty arrays
+
+- **Parents:** ["go.index.json.array"]
+- **Scenarios:** ["index::json_all_empty_array::all_on_an_indexed_json_path_finds_an_empty_array", "index::json_all_empty_array::the_empty_array_entry_matches_no_other_filter", "index::json_all_empty_array::all_on_a_descending_json_index_finds_an_empty_array", "index::json_all_empty_array::all_on_a_composite_json_index_finds_an_empty_array", "index::json_all_empty_array::all_on_two_paths_finds_an_empty_array_at_either_path", "index::json_all_empty_array::all_on_a_top_level_empty_array_finds_it", "index::json_all_empty_array::empty_arrays_never_collide_in_a_unique_json_index", "index::json_all_empty_array::an_update_moves_the_empty_array_entry"]
+
+`_all` over an empty array is true, so `_all` (with `_eq`, `_in` or a range) on a path inside an indexed JSON field (`custom: {a: {_all: {_eq: 1}}}`) returns the documents whose array at that path is empty, exactly as the same query on an unindexed field does, while still using the index; a null, missing or scalar value at the path is not returned. When one filter has `_all` conditions on several paths, the index scan includes the empty-array marker for each path that the narrowed scan does not already reach. A JSON index keeps one entry under each empty array for this, which `_eq`, `_any` and `_none` on the path never return, which a unique JSON index never counts (any number of documents may hold an empty array at the same path), and which an update adds or removes as the array becomes empty or not. A store whose JSON indexes were written before these entries existed rebuilds those indexes, and only those, when it opens. This holds for descending and composite JSON indexes. Go misses these documents (its index writes no entry for an empty array), so these scenarios do not run against Go.
+
 # `go.index.maintenance.delete-with-filter`: Filter deletes clean up index entries
 
 - **Parents:** ["go.index.maintenance"]
@@ -264,6 +278,20 @@ Inside a transaction, `UpdateDoc`, update-with-filter and `DeleteDoc` operate on
 
 A collection patch that adds, removes or modifies a secondary index, or changes a vector index's metric, fails with `collection indexes cannot be mutated`.
 
+# `defra.txn.docs.unique-filter-read`: A query through a unique index does not fail its transaction's commit
+
+- **Parents:** ["go.txn.docs"]
+- **Scenarios:** ["txn::unique_filter_read::a_unique_eq_filter_read_does_not_fail_the_commit", "txn::unique_filter_read::a_unique_in_filter_read_does_not_fail_the_commit", "txn::unique_filter_read::a_nil_writers_unique_filter_read_does_not_fail_the_commit", "txn::unique_filter_read::a_writer_of_the_filtered_value_still_loses_the_commit", "mutation::add::field_kinds::one_to_one_to_one::with_txn::transactional_creation_and_linking_of_relational_documents_forward"]
+
+With `type User { name: String @index(unique: true) age: Int }`, an explicit transaction runs `User(filter: {name: {_eq: "alice"}}) { name }` (or `{_in: ["alice"]}`) and gets `[]`, then adds `{name: "bob", age: 3}` or a document with no name, `{age: 3}`. An autocommit `add_User(input: {name: "alice", age: 1})` then succeeds, and committing the transaction succeeds too: a query read decides nothing, so it is not checked at commit, exactly as a filter on a field without an index. `User { name age }` then returns alice and the transaction's document. A transaction that adds `{name: "alice", age: 2}` instead still fails its commit with `transaction conflict. Please retry`, and only the autocommit alice is stored. The same holds for the unique index behind a one-to-one relation: with `Book { publisher: Publisher @primary }` and `Publisher { published: Book }`, two explicit transactions each add a book for a different publisher and run `Publisher { name published { name } }`, and both commit, leaving both books stored. Go checks these reads and fails the second commit in both cases; that is a deliberate divergence.
+
+# `defra.index.definition.create-duplicate`: Creating an index the collection already has is refused
+
+- **Parents:** ["go.index.definition"]
+- **Scenarios:** ["index::new_duplicate::index_new_same_generated_index_twice_is_refused", "index::new_duplicate::index_new_named_copy_of_existing_index_is_refused", "index::new_duplicate::index_new_copy_of_sdl_index_is_refused", "index::new_duplicate::index_new_same_unique_index_twice_is_refused", "index::new_duplicate::index_new_same_vector_index_twice_is_refused", "index::new_duplicate::index_new_taken_name_reports_the_name", "index::new_duplicate::index_new_differing_definitions_are_created", "index::new_duplicate::index_new_over_the_hidden_relation_index_is_created"]
+
+`NewIndex` with the same fields, in the same order and with the same directions, and the same kind as an index the collection already lists (an ordered index with the same uniqueness, or a vector index with the same configuration) fails with `index with the same definition already exists. Name: User_name_ASC`, naming the existing index, and creates nothing. This holds whether the new index's name is generated or given, and whether the existing index came from `NewIndex` or from an `@index` directive. A given name that is already taken fails first with `index with name already exists. Name: <name>`. An index that differs in any field, the field order, a direction or uniqueness is created. The unlisted index the node adds on its own for a primary relation's `_<name>ID` field does not count. The refusal applies to index creation requests (`NewIndex`, inside a transaction or not); the node's reconcile API for embedders (`ensure_ordinary_index`) still defines its stable name beside an index of the same definition. Go instead creates a copy named `User_name_ASC_2`; Rust refuses it because the copy only doubles every write's index maintenance.
+
 # `go.txn.definitions.same-txn-visibility`: Definition reads see only their own transaction
 
 - **Parents:** ["go.txn.definitions"]
@@ -284,6 +312,13 @@ A collection patch that adds, removes or modifies a secondary index, or changes 
 - **Scenarios:** ["txn::list_all_encrypted_indexes::txn_list_all_encrypted_indexes_sees_its_own_changes_until_commit"]
 
 `ListAllEncryptedIndexes` given a transaction (the embedded node's request context, the HTTP `x-defradb-tx` header on `GET /api/v0/encrypted-indexes`, the CLI's `encrypted-index list --tx` without `--collection`) lists every collection's encrypted indexes as that transaction sees them, as Go's `ensureContextTxn` does: an index added in the transaction is listed and one deleted in it is gone, while a listing outside the transaction still returns the committed indexes until it commits. The answer is Go's: an object keyed by collection name, each a list of `{FieldName, Type: "equality"}`, with collections that have no encrypted index left out. NAC checks `list-all-encrypted-index` in the transaction; a caller without it gets `not authorized to perform operation. Permission: list-all-encrypted-index`.
+
+# `defra.index.backfill.http-build-mode`: `BuildInBackground` on the HTTP create-index request
+
+- **Parents:** ["go.index.backfill"]
+- **Scenarios:** ["index::build_in_background::an_index_created_in_the_background_lists_as_building_until_its_backfill_ends"]
+
+`POST /api/v0/collections/{name}/indexes` takes an optional boolean `BuildInBackground`, a field Go's request does not have. Left out or `false`, the response is sent once the backfill over the collection's existing documents has ended, so a listing straight after it never shows the index building. With `true`, the response is sent once the index definition has committed, with the same body (`Name`, `ID`, `Fields`, `Unique`, `Kind`), and the backfill goes on by itself: `ListIndexes` reports the index with `Execution` `Status: 1, Action: 3` (building) and filtered queries full-scan until the backfill ends, then `Status: 3, Action: 0` (ready) and queries use the index. The field decides only when the response is sent, never what is built: a `Vector` configuration sent with it creates a vector index, and without one the index is an ordered one. Under `x-defradb-tx` the field changes nothing, because that backfill runs when the transaction commits.
 
 # `defra.txn.indexes.concurrent-encrypted-changes`: Concurrent encrypted index changes outside a transaction
 
@@ -314,3 +349,10 @@ With node access control enabled and owned by identity 1, an identity-only node 
 `GET /api/v0/tx/{id}` returns `{"outcome":"open"}` while its owner's transaction has no commit queued, `{"outcome":"committing"}` from the moment a commit is queued until its final result is known, `{"outcome":"committed"}` after a successful commit, and `{"outcome":"aborted"}` after a discard, an idle expiry, an abandon, or a failed commit. The request belongs to the identity that began the transaction; every other caller, including no identity, gets `{"outcome":"unknown"}` with HTTP 200, exactly as an ID that names nothing does. A malformed ID is refused with HTTP 400 and the error `invalid transaction id`. A final result is retained for at least the transaction idle age; after that it is `unknown`. Each worker retains at most 4096 outcomes: past that the oldest final results are dropped early and read `unknown`, while the outcome of a transaction that is still open or committing is never dropped. An ID carries a token for the server start that issued it, so an ID from an earlier start is `unknown` and never names a new transaction.
 
 The wire ID is Go-compatible numeric `u64`. For compatibility, a bare numeric route whose high bits are zero is still accepted; it names the reserved legacy start `0`, which no new transaction uses. Every new ID is below 2^53, so a client that reads it as a JSON number, as JavaScript does, gets the same ID back.
+
+# `defra.index.owed_reindex.resume`: A migration's reindex that stops part way resumes
+
+- **Parents:** ["go.index.backfill"]
+- **Scenarios:** ["index::owed_reindex::a_stopped_rebuild_stays_owed_and_the_next_open_settles_it", "index::owed_reindex::a_stopped_rebuild_stays_owed_and_the_next_schema_change_settles_it", "db::index::reindex_resume::the_open_resumes_a_stopped_walk_after_its_last_committed_page"]
+
+A patch with a migration commits even when the rebuild of the collection's indexes over the migrated documents stops part way. With `Users { name: String age: Int @index }` holding 300 users `u000` to `u299` aged 0 to 299, then a user `ageless` with no `age`, a patch adding `level` with the `increment` lens adding 5 to `age` succeeds, although the lens fails on `ageless` (`The requested property was not found. Requested: age`) once the rebuild has committed its first pages. Until the rebuild finishes, the collection's indexes answer no query: once `ageless` is purged, `Users(filter: {age: {_eq: 25}})` scans (0 index fetches) and returns `u020` at age 25. The next time the node opens, the rebuild resumes after the last page it committed: the documents those pages indexed are not walked again, and their entries stand as those pages wrote them. The next schema change (a patch adding `rank` with no lens) rebuilds the indexes again instead. After either, the same filter is answered from the index (1 index fetch) and returns `u020` at age 25, and every user is indexed at its migrated age: `Users(filter: {age: {_ge: 5}})`, answered from the index, returns the ages 5 to 304. Go's parity pin has no document purge, so the scenarios run on the Rust clients only.

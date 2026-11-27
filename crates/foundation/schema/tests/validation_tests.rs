@@ -229,6 +229,26 @@ fn new_relation_can_target_an_existing_collection() {
 }
 
 #[test]
+fn new_relation_can_target_an_inactive_collection_by_its_collection_id() {
+    // An inactive version whose version ID is not its collection ID, as a
+    // synced governed collection with a policy has before it is activated.
+    let mut users = user_collection();
+    users.is_active = false;
+    let author = FieldDescription::new(
+        "3",
+        "author",
+        FieldKind::relation("coll-users", false),
+        schema::CType::LwwRegister,
+    )
+    .with_relation_name("user_posts")
+    .as_primary();
+    let posts = CollectionVersion::new("posts", "v-posts", "coll-posts", vec![author]);
+
+    schema::definition_validation::validate_new_collections_with_existing(&[posts], &[users])
+        .unwrap();
+}
+
+#[test]
 fn new_relation_must_target_a_known_collection() {
     let author = FieldDescription::new(
         "3",

@@ -250,7 +250,9 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
         );
         let mut cids_to_fetch: Vec<(Cid, String)> = Vec::new();
         let mut cids_to_remerge: Vec<(Cid, String)> = Vec::new();
+        let mut docs_already_merged: Vec<(Cid, String)> = Vec::new();
         for item in &reply.results {
+            let mut merged_heads: Vec<Cid> = Vec::new();
             for head_bytes in &item.heads {
                 match Cid::try_from(head_bytes.as_slice()) {
                     Ok(cid) => match self.manager.blockstore().has(&cid).await {
@@ -265,6 +267,7 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
                                         doc_id = %item.doc_id,
                                         "Already have and merged block, skipping"
                                     );
+                                    merged_heads.push(cid);
                                 }
                                 _ => {
                                     tracing::info!(
@@ -302,6 +305,56 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
                     }
                 }
             }
+            // A document whose every advertised head is merged here has
+            // nothing left to merge, so no merge would ever report it; a head
+            // still to fetch or re-merge reports the document when it merges.
+            if merged_heads.len() == item.heads.len() && !merged_heads.is_empty() {
+                match self
+                    .subscriptions
+                    .head_provider
+                    .get_document_heads(&item.doc_id)
+                    .await
+                {
+                    Ok(heads) if merged_heads.iter().all(|cid| heads.contains(cid)) => {
+                        docs_already_merged.push((merged_heads[0], item.doc_id.clone()));
+                    }
+                    Ok(_) => {
+                        tracing::warn!(
+                            doc_id = %item.doc_id,
+                            "DocSync reply paired a head with the wrong document"
+                        );
+                    }
+                    Err(error) => {
+                        tracing::warn!(
+                            doc_id = %item.doc_id,
+                            %error,
+                            "Failed to verify a DocSync head's document"
+                        );
+                    }
+                }
+            }
+        }
+
+        if !docs_already_merged.is_empty() {
+            let event_tx = self.manager.event_sender();
+            for (cid, doc_id) in docs_already_merged {
+                if event_tx
+                    .send(crate::sync::manager::SyncEvent::HeadsAlreadyMerged {
+                        cid,
+                        doc_id: doc_id.clone(),
+                        collection_id: String::new(),
+                    })
+                    .await
+                    .is_err()
+                {
+                    tracing::error!(
+                        cid = %cid,
+                        doc_id = %doc_id,
+                        "Failed to report a DocSync document already merged"
+                    );
+                    return Err(Error::ChannelSend);
+                }
+            }
         }
 
         // Re-merge locally-present but unmerged blocks. Check if the full DAG
@@ -318,6 +371,7 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
                             crate::sync::manager::links::find_all_missing_links(
                                 self.manager.blockstore().as_ref(),
                                 &data,
+                                &self.manager.diagnostics(),
                             )
                             .await,
                             &self.manager.diagnostics(),

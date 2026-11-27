@@ -101,6 +101,32 @@ const FIXTURES: &[Fixture] = &[
             ),
         ],
     },
+    Fixture {
+        label: "a one-to-many relation bound to a policy relation",
+        sdl: r#"
+            type Book {
+                name: String
+                rating: Float
+                author: Author @immutable @policy(relation: "author")
+            }
+            type Author {
+                name: String
+                age: Int
+                verified: Boolean
+                published: [Book]
+            }
+        "#,
+        identities: &[
+            (
+                "Book",
+                "bafyreihpq2q7a7bgpmp54uwzpwomrmzar77qu4ncjrukumbj66pxomrlsq",
+            ),
+            (
+                "Author",
+                "bafyreibsjnlzaqfu6lq2njqjfgot2p4lwjhoxp63karkxzfu7flft4fohy",
+            ),
+        ],
+    },
 ];
 
 #[test]
@@ -274,4 +300,29 @@ fn an_ungoverned_policy_moves_neither_identity() {
 
     assert_eq!(policied.collection_id, UNGOVERNED_AGENT_ID);
     assert_eq!(policied.version_id, UNGOVERNED_AGENT_ID);
+}
+
+/// A governed identity commits to a field's policy relation binding, as it
+/// does to the field's immutability: nodes must agree on what gates a create.
+#[test]
+fn a_governed_identity_commits_to_a_policy_relation_binding() {
+    let book_id = |author: &str| {
+        let sdl = format!(
+            r#"type Book @governed(root: "root-a") {{ name: String author: Author {author} }}
+               type Author {{ name: String }}"#
+        );
+        parse_sdl(&sdl)
+            .unwrap()
+            .into_iter()
+            .find(|c| c.name == "Book")
+            .unwrap()
+            .collection_id
+    };
+    let immutable = book_id("@immutable");
+    let bound = book_id(r#"@immutable @policy(relation: "author")"#);
+    let other = book_id(r#"@immutable @policy(relation: "writer")"#);
+
+    assert_ne!(bound, immutable);
+    assert_ne!(bound, other);
+    assert_ne!(immutable, book_id(""));
 }

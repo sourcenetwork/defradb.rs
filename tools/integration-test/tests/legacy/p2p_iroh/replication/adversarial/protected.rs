@@ -9,9 +9,9 @@ use integration_test::{
     poll_until, users_schema_with_policy, DefraClient, TestCluster, USER_ACP_POLICY,
 };
 
-use super::blocks::{genesis_parent, named, update, Author, Parent, Signing};
-use super::peer::HostilePeer;
 use super::receiver::{describe, p2p_addrs, wait_for_user, wait_listening, Collection};
+use integration_test::hostile::blocks::{genesis_parent, named, update, Author, Parent, Signing};
+use integration_test::hostile::peer::HostilePeer;
 
 const JUDGED_TIMEOUT: Duration = Duration::from_secs(20);
 

@@ -70,9 +70,15 @@ async fn node() -> Node {
     set_encryption_config(None);
     assert!(!created.derived.is_empty());
 
-    acp.register_doc_object(&did(OWNER), "policy", "users", &created.doc_id.to_string())
-        .await
-        .unwrap();
+    acp.register_doc_object(
+        &did(OWNER),
+        "policy",
+        "users",
+        &created.doc_id.to_string(),
+        &[],
+    )
+    .await
+    .unwrap();
     Node { db, kms, created }
 }
 

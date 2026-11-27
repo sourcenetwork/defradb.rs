@@ -50,12 +50,14 @@ where
             policy_id,
             resource,
             object,
+            relationships,
             ..
         } => acp::VoidedEffect::Registration {
             creator: actor,
             policy_id: policy_id.clone(),
             resource: resource.clone(),
             object: object.clone(),
+            relationships: relationships.clone(),
             request_bound: claims.request.is_some()
                 && matches!(authority, acp::OwedAuthority::Delegation { .. }),
             authority,

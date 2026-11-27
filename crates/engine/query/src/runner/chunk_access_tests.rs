@@ -6,7 +6,8 @@ use schema::CollectionVersion;
 use crate::doc_stream::DocStream;
 use crate::error::Result;
 use crate::fetcher::{
-    DocFetcher, DocumentArrival, DocumentArrivalOptions, DocumentArrivalPage, FetchByIdsResult,
+    DocFetcher, DocumentArrival, DocumentArrivalOptions, DocumentArrivalPage, DocumentReader,
+    FetchByIdsResult,
 };
 use crate::test_utils::MockFetcher;
 use crate::{QueryExecutor, QueryRequest, QueryRunner};
@@ -69,6 +70,7 @@ impl DocFetcher for Store {
     async fn get_document_arrivals(
         &self,
         _options: &DocumentArrivalOptions,
+        _reader: &DocumentReader<'_>,
     ) -> Result<DocumentArrivalPage> {
         let entries: Vec<DocumentArrival> = self
             .chunk_ids

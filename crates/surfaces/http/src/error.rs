@@ -54,6 +54,18 @@ pub enum HttpError {
 
     #[error("query execution failed: {0}")]
     QueryExecution(String),
+
+    /// A bad request whose refusal has a stable code a client classifies it by.
+    #[error("{message}")]
+    Refused { message: String, code: &'static str },
+
+    /// A create whose document ID is stored: Go's 409, with its code.
+    #[error("{0}")]
+    DocumentAlreadyExists(String),
+
+    /// A create or upsert of a deleted document: Go's 400, with its code.
+    #[error("{0}")]
+    DocumentDeleted(String),
 }
 
 /// Error response body matching Go DefraDB format.
@@ -82,10 +94,20 @@ impl IntoResponse for HttpError {
             HttpError::Internal(msg) => (StatusCode::INTERNAL_SERVER_ERROR, msg.clone()),
             HttpError::NotImplemented(msg) => (StatusCode::NOT_IMPLEMENTED, msg.clone()),
             HttpError::QueryExecution(msg) => (StatusCode::BAD_REQUEST, msg.clone()),
+            HttpError::Refused { message, .. } => (StatusCode::BAD_REQUEST, message.clone()),
+            HttpError::DocumentAlreadyExists(msg) => (StatusCode::CONFLICT, msg.clone()),
+            HttpError::DocumentDeleted(msg) => (StatusCode::BAD_REQUEST, msg.clone()),
         };
 
-        let code = matches!(self, Self::StorageFull(_))
-            .then_some(query::executor::STORAGE_FULL_ERROR_CODE);
+        let code = match self {
+            Self::StorageFull(_) => Some(query::executor::STORAGE_FULL_ERROR_CODE),
+            Self::Refused { code, .. } => Some(code),
+            Self::DocumentAlreadyExists(_) => {
+                Some(query::executor::DOCUMENT_ALREADY_EXISTS_ERROR_CODE)
+            }
+            Self::DocumentDeleted(_) => Some(query::executor::DOCUMENT_DELETED_ERROR_CODE),
+            _ => None,
+        };
         (
             status,
             Json(ErrorResponse {
@@ -254,6 +276,8 @@ fn http_error_from_query_error(err: &QueryError) -> HttpError {
         | QueryError::AcpCheckFailed { .. }
         | QueryError::AcpRegistrationCheckFailed { .. } => HttpError::Unauthorized(message),
         QueryError::Execution(message) => http_error_from_backend_message(message.clone()),
+        QueryError::DocumentAlreadyExists(_) => HttpError::DocumentAlreadyExists(message),
+        QueryError::DocumentDeleted(_) => HttpError::DocumentDeleted(message),
         _ => HttpError::BadRequest(message),
     }
 }
@@ -289,6 +313,18 @@ fn http_status_from_db_error(err: &DbError) -> HttpError {
 /// A peer operation's refusal, with Go's status for it and its text unchanged.
 pub(crate) fn peer_refused(error: defra_p2p_adapter::peer::Error) -> HttpError {
     http_error_from_backend_message(error.to_string())
+}
+
+/// A refused add-collection request: its code when it has one, otherwise the
+/// status its message names.
+pub(crate) fn collection_refused(refusal: crate::router::CollectionRefusal) -> HttpError {
+    match refusal.code {
+        Some(code) => HttpError::Refused {
+            message: refusal.message,
+            code,
+        },
+        None => http_error_from_backend_message(refusal.message),
+    }
 }
 
 pub(crate) fn http_error_from_backend_message(message: String) -> HttpError {
@@ -333,6 +369,7 @@ impl From<TransactionError> for HttpError {
                 HttpError::Internal(message)
             }
             TransactionError::NotSupported(_) => HttpError::BadRequest(message),
+            TransactionError::UnsupportedFieldType(refusals) => collection_refused(refusals.into()),
         }
     }
 }
@@ -585,6 +622,30 @@ mod storage_failure_tests {
     }
 
     #[test]
+    fn a_coded_collection_refusal_is_a_bad_request_with_its_code() {
+        workers::block_on(async {
+            let refusal = crate::router::CollectionRefusal {
+                message: "NonNull fields are not currently supported".into(),
+                code: Some(query::sdl_parse::UNSUPPORTED_FIELD_TYPE_ERROR_CODE),
+            };
+            let response = collection_refused(refusal).into_response();
+            assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+            let bytes = axum::body::to_bytes(response.into_body(), 4096)
+                .await
+                .unwrap();
+            let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(
+                body,
+                serde_json::json!({
+                    "error": "NonNull fields are not currently supported",
+                    "code": "UNSUPPORTED_FIELD_TYPE",
+                })
+            );
+        })
+        .unwrap();
+    }
+
+    #[test]
     fn other_http_errors_keep_the_existing_wire_shape() {
         let response = ErrorResponse {
             error: "failed".into(),
@@ -608,5 +669,67 @@ mod storage_failure_tests {
             "can not index a doc's field(s) that violates unique index".into(),
         );
         assert!(matches!(HttpError::from(error), HttpError::Conflict(_)));
+    }
+}
+
+#[cfg(test)]
+mod document_collision_tests {
+    use super::*;
+
+    const ID: &str = "bae-e761da93-66da-577d-a503-54047c4cf3ea";
+
+    fn answer(error: HttpError) -> (StatusCode, serde_json::Value) {
+        let response = error.into_response();
+        let status = response.status();
+        let body = workers::block_on(async {
+            axum::body::to_bytes(response.into_body(), 4096)
+                .await
+                .unwrap()
+        })
+        .unwrap();
+        (status, serde_json::from_slice(&body).unwrap())
+    }
+
+    #[test]
+    fn an_existing_document_is_a_409_with_its_code_and_go_text() {
+        let error = DbError::Query(QueryError::DocumentAlreadyExists(ID.into()));
+        let (status, body) = answer(HttpError::from(error));
+        assert_eq!(status, StatusCode::CONFLICT);
+        assert_eq!(
+            body["error"],
+            format!("a document with the given ID already exists. DocID: {ID}")
+        );
+        assert_eq!(
+            body["code"],
+            query::executor::DOCUMENT_ALREADY_EXISTS_ERROR_CODE
+        );
+    }
+
+    #[test]
+    fn a_deleted_document_is_a_400_with_its_code_and_go_text() {
+        let error = DbError::Query(QueryError::DocumentDeleted(ID.into()));
+        let (status, body) = answer(HttpError::from(error));
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(
+            body["error"],
+            format!("a document with the given ID has been deleted. DocID: {ID}")
+        );
+        assert_eq!(body["code"], query::executor::DOCUMENT_DELETED_ERROR_CODE);
+    }
+
+    /// The statuses the uncoded text got before the typed refusals, which the
+    /// typed ones keep.
+    #[test]
+    fn the_untyped_texts_kept_the_same_statuses() {
+        let existing = format!("a document with the given ID already exists. DocID: {ID}");
+        let deleted = format!("a document with the given ID has been deleted. DocID: {ID}");
+        assert_eq!(
+            answer(http_error_from_backend_message(existing)).0,
+            StatusCode::CONFLICT
+        );
+        assert_eq!(
+            answer(http_error_from_backend_message(deleted)).0,
+            StatusCode::BAD_REQUEST
+        );
     }
 }
