@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "ayu";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-fbeb199c.js";
+            window.path_to_searchindex_js = "../searchindex-d7b7b3c5.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-8198d451.js"></script>
@@ -190,12 +190,9 @@ tuples.</p>
 <p>Three nouns:</p>
 <ul>
 <li><strong>Policies</strong> (<code>Policy</code>, <code>Resource</code>, <code>Relation</code>, <code>Subject</code>): a policy names resource
-types, relations on them, and permission expressions over those relations. DefraDB’s
-DPI format is a small YAML dialect (<code>crates/engine/acp/src/policy_yaml/</code>); the default
-document policy (used when a collection carries no explicit one) has an <code>owner</code>
-relation, an <code>admin</code> computed from <code>owner</code>, direct <code>reader</code>/<code>updater</code>/<code>deleter</code>
-relations, and <code>read</code>/<code>update</code>/<code>delete</code> permissions computed as unions over owner,
-admin and the direct relations.</li>
+types, relations on them, and permission expressions over those relations. Policies
+are written in acp_core’s YAML format, parsed and checked by
+<code>crates/engine/acp/src/policy_yaml/</code> (<a href="#writing-a-policy">Writing a policy</a> below).</li>
 <li><strong>Relationship tuples</strong>: <code>(resource, relation, subject)</code> facts, stored under
 <code>a/zanzibar/</code> as Ordinary keys. Subjects can be actors, wildcards, or usersets
 (a subject that is itself a relation on another object).</li>
@@ -205,6 +202,79 @@ this permission on this resource” (<code>crates/building-blocks/zanzibar/src/e
 resource), <code>TupleToUserset</code> (follow a tuple relation to a target, then evaluate a
 computed relation there), and the set operations <code>Union</code>, <code>Intersection</code>, <code>Difference</code>.</li>
 </ul>
+<h2 id="writing-a-policy"><a class="header" href="#writing-a-policy">Writing a policy</a></h2>
+<p>A DAC policy is acp_core’s YAML: a <code>name</code>, and <code>resources</code>, each with <code>relations</code> (who
+can be named, by <code>types</code>) and <code>permissions</code> (an <code>expr</code> over the resource’s relations and
+permissions). The rules, as <code>crates/engine/acp/src/policy_yaml/</code> applies them:</p>
+<ul>
+<li><strong><code>owner</code> is implicit and reserved.</strong> Every resource gets an <code>owner</code> relation, held by
+the identity that creates the document. A policy that declares a relation named <code>owner</code>
+is refused (<code>'owner` is a reserved relation name</code>).</li>
+<li><strong>The owner holds every permission.</strong> Each permission’s expression is joined to
+<code>owner</code> by union, and a permission with no <code>expr</code> grants the owner alone. An expression
+that names the resource’s own <code>owner</code> is refused (<code>permission cannot reference `owner` relation</code>, <code>go.acp.dac.policy.invalid</code>); <code>parent-&gt;owner</code>, the owner of the object
+<code>parent</code> names, is accepted, as in acp_core. No expression can take a permission away
+from the owner: <code>reader - blocked</code> means <code>owner + (reader - blocked)</code>.</li>
+<li><strong><code>spec: defra</code>.</strong> A policy that sets it must give every resource <code>read</code> and <code>write</code>
+permissions, and its <code>read</code> is joined to <code>write</code>: whoever holds <code>write</code> reads too, so
+there a <code>read</code> with no <code>expr</code> grants the owner and the <code>write</code> holders.</li>
+<li><strong>Operators.</strong> <code>+</code> is union, <code>-</code> difference, <code>&amp;</code> intersection, and <code>rel-&gt;perm</code> follows
+relation <code>rel</code> to the object it names and checks <code>perm</code> there. They have equal
+precedence and apply left to right; parentheses group. This is the grammar of
+acp_core’s <code>PermissionExpr.g4</code>, the parser Go uses.</li>
+<li><strong>Relation types.</strong> <code>actor</code> admits any actor DID or the all-actors wildcard <code>*</code>,
+<code>actor:individual</code> one DID only, a resource name an object of that resource (the target
+of <code>rel-&gt;perm</code>), and <code>resource-&gt;relation</code> a userset.</li>
+<li><strong>What a collection needs.</strong> <code>@policy(id, resource)</code> accepts a resource that has <code>read</code>,
+<code>update</code> and <code>delete</code> permissions (<code>go.acp.dac.link.accepted</code>,
+<code>go.acp.dac.link.bad-policy</code>). Whoever can update or delete a document can also read
+it (<code>DocumentPermission::implies_read_permissions</code>).</li>
+<li><strong><code>manages</code>.</strong> A relation’s <code>manages: [rel, ...]</code> lets its holders add and remove tuples
+of those relations; the owner may always do so, and nobody else may
+(<code>PolicyResource::get_managers_for_relation</code>, <code>go.acp.dac.relationship.manager</code>).
+Managing a relation grants no read, update or delete by itself. <code>owner</code> cannot be
+managed.</li>
+<li><strong><code>create</code>.</strong> A resource’s <code>create: {parent: &lt;relation&gt;, requires: &lt;permission&gt;}</code> admits
+a new document only if its creator holds <code>requires</code> on the parent object it names. Its
+collection must then pass <code>parentField</code> in <code>@policy</code>, and only then
+(<code>defra.acp.parent_registration</code>; <a href="transactional.html#parent-authorized-document-creation">Parent-authorized document
+creation</a>).</li>
+</ul>
+<p>An example, in which a file is readable by its readers, its editors and the readers of
+its directory, except anyone blocked:</p>
+<pre><code class="language-yaml">name: filesystem
+resources:
+  - name: directory
+    relations:
+      - name: reader
+        types: [actor]
+    permissions:
+      - name: read
+        expr: reader
+      - name: update
+      - name: delete
+  - name: file
+    relations:
+      - name: reader
+        types: [actor]
+      - name: editor
+        types: [actor]
+      - name: blocked
+        types: [actor]
+      - name: parent
+        types: [directory]
+    permissions:
+      - name: read
+        expr: (reader + editor + parent-&gt;read) - blocked
+      - name: update
+        expr: editor - blocked
+      - name: delete
+</code></pre>
+<p>With collections <code>type Directory @policy(id: "&lt;id&gt;", resource: "directory")</code> and
+<code>type File @policy(id: "&lt;id&gt;", resource: "file")</code>, the <code>parent</code> edge is a relationship
+whose target names the directory: <code>defradb client acp document relationship add --collection File --docID &lt;file&gt; --relation parent --actor directory:&lt;directory&gt;</code>. A
+reader of that directory then reads the file, until they are added to <code>blocked</code>; the
+owner still reads it if added to <code>blocked</code> too.</p>
 <h2 id="evaluation"><a class="header" href="#evaluation">Evaluation</a></h2>
 <p>The checker is a goal-tree search with cycle detection
 (<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/building-blocks/zanzibar/src/engine/evaluate.rs"><code>crates/building-blocks/zanzibar/src/engine/evaluate.rs</code></a>):</p>
@@ -222,9 +292,16 @@ unbounded;</li>
 (an <code>Atom</code>-swapped lookup table, <a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/engine/acp/src/policy_cache.rs"><code>crates/engine/acp/src/policy_cache.rs</code></a>) that reads never lock
 to consult.</p>
 <h2 id="policy-identity"><a class="header" href="#policy-identity">Policy identity</a></h2>
-<p>Policy IDs come from the engine’s <code>Db::allocate</code> (the same atomic allocator as short
-IDs), so two replicas allocate distinct policies without coordination, and a policy body
-is content-checked: a different body under an existing ID is a typed error, not a
+<p>A local ACP names a policy as Go’s acp_core does: a SHA-256 of the policy’s name,
+resources, relations and permissions, hashed again with a counter
+(<code>policy_yaml::generate_policy_id</code>). The counter comes from the engine’s <code>Db::allocate</code>
+(the same atomic allocator as short IDs, <code>PersistentZanzibarStore::next_policy_counter</code>),
+so two adds of one body get two IDs (<code>go.acp.dac.policy.ids</code>). A policy that uses
+<code>actor:individual</code> or a <code>create</code> rule, which acp_core cannot express, also hashes those
+(under <code>defra/individual-actor/v1</code> and <code>defra/parent-registration/v1</code>), so its ID is not
+one acp_core would compute. Vera names its policies
+itself (<a href="vera.html">Vera</a>). A policy body is content-checked: a different body under an
+existing ID is a typed error (<code>a different policy already exists under ID ...</code>), not a
 silent overwrite.</p>
 <blockquote>
 <p><strong>Why Zanzibar, and why fail-closed on indeterminate.</strong> Relationship tuples express

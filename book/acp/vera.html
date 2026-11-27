@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "ayu";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-fbeb199c.js";
+            window.path_to_searchindex_js = "../searchindex-d7b7b3c5.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-8198d451.js"></script>
@@ -182,9 +182,9 @@
                 <div id="mdbook-content" class="content">
                     <main>
                         <h1 id="vera-external-policy-decisions"><a class="header" href="#vera-external-policy-decisions">Vera: external policy decisions</a></h1>
-<p>Vera moves authorization off-node: an external chain (CometBFT or a native
-commonware-based chain) holds the policies and tuples, evaluates checks, and proofs
-flow back to the database.</p>
+<p>Vera moves authorization off-node: a Vera deployment (the native vera.rs chain, on
+commonware consensus) holds the policies and tuples, evaluates checks, and proofs flow
+back to the database.</p>
 <h2 id="what-it-is"><a class="header" href="#what-it-is">What it is</a></h2>
 <p><code>crates/engine/vera</code> defines the <code>VeraProvider</code> interface: create policies, register and
 archive objects, set and delete relationships, check access. Its implementation is
@@ -212,7 +212,7 @@ node adopts by creating the definition under the seed’s nonce. A collection na
 policy’s ID, so deployments that replicate one collection to each other seed the policy
 under one creator and one nonce. Modeled by
 <code>proofs/tla/VeraPolicyCreate.tla</code> and <code>DacPolicyAdd.tla</code>.</p>
-<p>Both are wrapped as a <code>DocumentACP</code> and installed as the node’s document ACP. Because
+<p>The provider is wrapped as a <code>DocumentACP</code> and installed as the node’s document ACP. Because
 the provider cannot join local transactions, the node wraps it in the external-ACP
 adapter: owed registrations, gated reads until confirmation, fail-closed
 <code>Unavailable</code> (the previous chapter’s shape).</p>

@@ -37,7 +37,7 @@
             const path_to_root = "";
             const default_light_theme = "ayu";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-fbeb199c.js";
+            window.path_to_searchindex_js = "searchindex-d7b7b3c5.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-8198d451.js"></script>
@@ -1777,7 +1777,7 @@ and management operations.</li>
 data; Vera decisions happen at the edge, with their staleness documented. The
 chapters:</p>
 <ul>
-<li><a href="#the-zanzibar-engine">The Zanzibar engine</a>: policies, relations, tuple-to-userset evaluation,
+<li><a href="#the-zanzibar-engine">The Zanzibar engine</a>: policies and the rules for writing one, relations,
 the goal-tree checker.</li>
 <li><a href="#dac-and-nac">DAC and NAC</a>: the document and node scopes, registration, the bypass
 privilege.</li>
@@ -1795,12 +1795,9 @@ tuples.</p>
 <p>Three nouns:</p>
 <ul>
 <li><strong>Policies</strong> (<code>Policy</code>, <code>Resource</code>, <code>Relation</code>, <code>Subject</code>): a policy names resource
-types, relations on them, and permission expressions over those relations. DefraDB’s
-DPI format is a small YAML dialect (<code>crates/engine/acp/src/policy_yaml/</code>); the default
-document policy (used when a collection carries no explicit one) has an <code>owner</code>
-relation, an <code>admin</code> computed from <code>owner</code>, direct <code>reader</code>/<code>updater</code>/<code>deleter</code>
-relations, and <code>read</code>/<code>update</code>/<code>delete</code> permissions computed as unions over owner,
-admin and the direct relations.</li>
+types, relations on them, and permission expressions over those relations. Policies
+are written in acp_core’s YAML format, parsed and checked by
+<code>crates/engine/acp/src/policy_yaml/</code> (<a href="#writing-a-policy">Writing a policy</a> below).</li>
 <li><strong>Relationship tuples</strong>: <code>(resource, relation, subject)</code> facts, stored under
 <code>a/zanzibar/</code> as Ordinary keys. Subjects can be actors, wildcards, or usersets
 (a subject that is itself a relation on another object).</li>
@@ -1810,6 +1807,79 @@ this permission on this resource” (<code>crates/building-blocks/zanzibar/src/e
 resource), <code>TupleToUserset</code> (follow a tuple relation to a target, then evaluate a
 computed relation there), and the set operations <code>Union</code>, <code>Intersection</code>, <code>Difference</code>.</li>
 </ul>
+<h2 id="writing-a-policy"><a class="header" href="#writing-a-policy">Writing a policy</a></h2>
+<p>A DAC policy is acp_core’s YAML: a <code>name</code>, and <code>resources</code>, each with <code>relations</code> (who
+can be named, by <code>types</code>) and <code>permissions</code> (an <code>expr</code> over the resource’s relations and
+permissions). The rules, as <code>crates/engine/acp/src/policy_yaml/</code> applies them:</p>
+<ul>
+<li><strong><code>owner</code> is implicit and reserved.</strong> Every resource gets an <code>owner</code> relation, held by
+the identity that creates the document. A policy that declares a relation named <code>owner</code>
+is refused (<code>'owner` is a reserved relation name</code>).</li>
+<li><strong>The owner holds every permission.</strong> Each permission’s expression is joined to
+<code>owner</code> by union, and a permission with no <code>expr</code> grants the owner alone. An expression
+that names the resource’s own <code>owner</code> is refused (<code>permission cannot reference `owner` relation</code>, <code>go.acp.dac.policy.invalid</code>); <code>parent-&gt;owner</code>, the owner of the object
+<code>parent</code> names, is accepted, as in acp_core. No expression can take a permission away
+from the owner: <code>reader - blocked</code> means <code>owner + (reader - blocked)</code>.</li>
+<li><strong><code>spec: defra</code>.</strong> A policy that sets it must give every resource <code>read</code> and <code>write</code>
+permissions, and its <code>read</code> is joined to <code>write</code>: whoever holds <code>write</code> reads too, so
+there a <code>read</code> with no <code>expr</code> grants the owner and the <code>write</code> holders.</li>
+<li><strong>Operators.</strong> <code>+</code> is union, <code>-</code> difference, <code>&amp;</code> intersection, and <code>rel-&gt;perm</code> follows
+relation <code>rel</code> to the object it names and checks <code>perm</code> there. They have equal
+precedence and apply left to right; parentheses group. This is the grammar of
+acp_core’s <code>PermissionExpr.g4</code>, the parser Go uses.</li>
+<li><strong>Relation types.</strong> <code>actor</code> admits any actor DID or the all-actors wildcard <code>*</code>,
+<code>actor:individual</code> one DID only, a resource name an object of that resource (the target
+of <code>rel-&gt;perm</code>), and <code>resource-&gt;relation</code> a userset.</li>
+<li><strong>What a collection needs.</strong> <code>@policy(id, resource)</code> accepts a resource that has <code>read</code>,
+<code>update</code> and <code>delete</code> permissions (<code>go.acp.dac.link.accepted</code>,
+<code>go.acp.dac.link.bad-policy</code>). Whoever can update or delete a document can also read
+it (<code>DocumentPermission::implies_read_permissions</code>).</li>
+<li><strong><code>manages</code>.</strong> A relation’s <code>manages: [rel, ...]</code> lets its holders add and remove tuples
+of those relations; the owner may always do so, and nobody else may
+(<code>PolicyResource::get_managers_for_relation</code>, <code>go.acp.dac.relationship.manager</code>).
+Managing a relation grants no read, update or delete by itself. <code>owner</code> cannot be
+managed.</li>
+<li><strong><code>create</code>.</strong> A resource’s <code>create: {parent: &lt;relation&gt;, requires: &lt;permission&gt;}</code> admits
+a new document only if its creator holds <code>requires</code> on the parent object it names. Its
+collection must then pass <code>parentField</code> in <code>@policy</code>, and only then
+(<code>defra.acp.parent_registration</code>; <a href="#parent-authorized-document-creation">Parent-authorized document
+creation</a>).</li>
+</ul>
+<p>An example, in which a file is readable by its readers, its editors and the readers of
+its directory, except anyone blocked:</p>
+<pre><code class="language-yaml">name: filesystem
+resources:
+  - name: directory
+    relations:
+      - name: reader
+        types: [actor]
+    permissions:
+      - name: read
+        expr: reader
+      - name: update
+      - name: delete
+  - name: file
+    relations:
+      - name: reader
+        types: [actor]
+      - name: editor
+        types: [actor]
+      - name: blocked
+        types: [actor]
+      - name: parent
+        types: [directory]
+    permissions:
+      - name: read
+        expr: (reader + editor + parent-&gt;read) - blocked
+      - name: update
+        expr: editor - blocked
+      - name: delete
+</code></pre>
+<p>With collections <code>type Directory @policy(id: "&lt;id&gt;", resource: "directory")</code> and
+<code>type File @policy(id: "&lt;id&gt;", resource: "file")</code>, the <code>parent</code> edge is a relationship
+whose target names the directory: <code>defradb client acp document relationship add --collection File --docID &lt;file&gt; --relation parent --actor directory:&lt;directory&gt;</code>. A
+reader of that directory then reads the file, until they are added to <code>blocked</code>; the
+owner still reads it if added to <code>blocked</code> too.</p>
 <h2 id="evaluation"><a class="header" href="#evaluation">Evaluation</a></h2>
 <p>The checker is a goal-tree search with cycle detection
 (<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/building-blocks/zanzibar/src/engine/evaluate.rs"><code>crates/building-blocks/zanzibar/src/engine/evaluate.rs</code></a>):</p>
@@ -1827,9 +1897,16 @@ unbounded;</li>
 (an <code>Atom</code>-swapped lookup table, <a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/engine/acp/src/policy_cache.rs"><code>crates/engine/acp/src/policy_cache.rs</code></a>) that reads never lock
 to consult.</p>
 <h2 id="policy-identity"><a class="header" href="#policy-identity">Policy identity</a></h2>
-<p>Policy IDs come from the engine’s <code>Db::allocate</code> (the same atomic allocator as short
-IDs), so two replicas allocate distinct policies without coordination, and a policy body
-is content-checked: a different body under an existing ID is a typed error, not a
+<p>A local ACP names a policy as Go’s acp_core does: a SHA-256 of the policy’s name,
+resources, relations and permissions, hashed again with a counter
+(<code>policy_yaml::generate_policy_id</code>). The counter comes from the engine’s <code>Db::allocate</code>
+(the same atomic allocator as short IDs, <code>PersistentZanzibarStore::next_policy_counter</code>),
+so two adds of one body get two IDs (<code>go.acp.dac.policy.ids</code>). A policy that uses
+<code>actor:individual</code> or a <code>create</code> rule, which acp_core cannot express, also hashes those
+(under <code>defra/individual-actor/v1</code> and <code>defra/parent-registration/v1</code>), so its ID is not
+one acp_core would compute. Vera names its policies
+itself (<a href="#vera-external-policy-decisions">Vera</a>). A policy body is content-checked: a different body under an
+existing ID is a typed error (<code>a different policy already exists under ID ...</code>), not a
 silent overwrite.</p>
 <blockquote>
 <p><strong>Why Zanzibar, and why fail-closed on indeterminate.</strong> Relationship tuples express
@@ -1845,18 +1922,25 @@ that guesses is a vulnerability with good manners.</p>
 <p>The <code>DocumentACP</code> trait (<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/engine/acp/src/dac.rs"><code>crates/engine/acp/src/dac.rs</code></a>) is the document-scope interface:
 register a document’s owner, check access, add and remove relationships. Implementations:</p>
 <ul>
-<li><strong>Zanzibar-backed local ACP</strong> (the default): tuples in the local store, evaluated by
-the engine above.</li>
-<li><strong>External ACP</strong> (Vera): decisions from an external chain, wrapped so the database
-still gates every read (next chapter).</li>
-<li>An in-memory variant for tests.</li>
+<li><strong>Zanzibar-backed local ACP</strong> (<code>ZanzibarDocumentACP</code>, <code>--document-acp-type local</code>):
+tuples in the local store, evaluated by the engine above. <code>defradb start</code> runs with
+<code>none</code>, no document ACP, unless told otherwise (<code>AcpDocumentType::None</code>).</li>
+<li><strong>External ACP</strong> (Vera): decisions from a Vera deployment, wrapped in
+<code>ExternalDocumentAcp</code> so the database still gates every read (<a href="#vera-external-policy-decisions">Vera</a>).</li>
+<li>An in-memory variant for tests (<code>LocalDocumentACP</code> over <code>MemoryAcpStore</code>).</li>
 </ul>
 <p>The contract every implementation honours:</p>
 <ul>
-<li><strong>Registration at create</strong>: the document’s owner relationship is written <em>in the
-create transaction</em>. Between the document’s rows and its owner tuple there is no
-commit boundary, hence no window where the document exists but is public.</li>
-<li><strong>Unregistration at delete</strong>, in the delete transaction.</li>
+<li><strong>Registration at create</strong>: a document created with an identity has its owner
+relationship written <em>in the create transaction</em>. Between the document’s rows and its
+owner tuple there is no commit boundary, hence no window where the document exists but
+is public. A document created without an identity is public
+(<code>go.acp.dac.ownership</code>).</li>
+<li><strong>Unregistration at delete</strong>, in the delete transaction, for the local ACP. Anyone the
+policy lets delete may delete, not only the owner (<code>go.acp.dac.relationship.deleter</code>).
+On Vera the delete archives the object instead (<a href="#replicated-documents">Vera</a>).
+Keeping a deleted document’s object under the local ACP too is proposed in
+<a href="https://github.com/sourcenetwork/defradb.rs/pull/3399">#3399</a>.</li>
 <li><strong>Exactly one owner</strong>: registering a document that has one fails with
 <code>DocumentAlreadyRegistered</code>; the <code>owner</code> relation itself can neither be added nor
 removed by sharing.</li>
@@ -1872,13 +1956,18 @@ arrival entry: anything that reveals a document’s data goes through the same c
 option), with a lifecycle: not configured -&gt; enabled -&gt; (optionally) temporarily
 disabled -&gt; purged. It gates administrative surface: collection and index management,
 backup, P2P configuration, lens, views, and every management HTTP route (the route
-permission map lives in <a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/surfaces/http/src/route_permissions.rs"><code>crates/surfaces/http/src/route_permissions.rs</code></a>. Some 51 node
-permissions exist, all admin-only (<code>owner + admin</code>).</p>
+permission map lives in <a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/surfaces/http/src/route_permissions.rs"><code>crates/surfaces/http/src/route_permissions.rs</code></a>). 51 node
+permissions exist (<code>NodePermission::all</code>), each held by the owner and every admin and
+grantable on its own (<code>this + owner + admin</code>, <code>crates/engine/acp/src/nac/policy.rs</code>). The
+node’s own identity passes every check.</p>
 <p>Two properties worth knowing:</p>
 <ul>
-<li><strong>While temporarily disabled, all writes are blocked</strong> (including admin changes):
-a disabled NAC that still accepted admin writes would let an attacker re-enable it
-with themselves as admin.</li>
+<li><strong>While temporarily disabled, nothing is gated but NAC itself is frozen</strong>: every node
+operation is allowed, as when NAC is not configured, but adding or removing NAC
+relationships is refused, even for the node’s own identity (<code>operation requires ACP, but ACP not available</code>, <code>go.acp.nac.relationship.add</code>, <code>go.acp.nac.relationship.delete</code>),
+and re-enabling still needs <code>re-enable-nac</code> (<code>go.acp.nac.lifecycle.disable</code>,
+<code>go.acp.nac.lifecycle.re-enable</code>). A disabled NAC that still accepted relationship
+changes would let anyone make themselves admin before it is re-enabled.</li>
 <li><strong><code>bypass-dac</code></strong>: a privilege on the NAC object that lets an authenticated identity
 skip per-document DAC checks (service accounts, indexers). It is checked first on
 every read path, and it exists only when NAC is enabled.</li>
@@ -2610,9 +2699,9 @@ identify a nonmember. A missing group, wrong owner, receiver revocation, or
 unsettled local membership change leaves classification unavailable.</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="vera-external-policy-decisions"><a class="header" href="#vera-external-policy-decisions">Vera: external policy decisions</a></h1>
-<p>Vera moves authorization off-node: an external chain (CometBFT or a native
-commonware-based chain) holds the policies and tuples, evaluates checks, and proofs
-flow back to the database.</p>
+<p>Vera moves authorization off-node: a Vera deployment (the native vera.rs chain, on
+commonware consensus) holds the policies and tuples, evaluates checks, and proofs flow
+back to the database.</p>
 <h2 id="what-it-is"><a class="header" href="#what-it-is">What it is</a></h2>
 <p><code>crates/engine/vera</code> defines the <code>VeraProvider</code> interface: create policies, register and
 archive objects, set and delete relationships, check access. Its implementation is
@@ -2640,7 +2729,7 @@ node adopts by creating the definition under the seed’s nonce. A collection na
 policy’s ID, so deployments that replicate one collection to each other seed the policy
 under one creator and one nonce. Modeled by
 <code>proofs/tla/VeraPolicyCreate.tla</code> and <code>DacPolicyAdd.tla</code>.</p>
-<p>Both are wrapped as a <code>DocumentACP</code> and installed as the node’s document ACP. Because
+<p>The provider is wrapped as a <code>DocumentACP</code> and installed as the node’s document ACP. Because
 the provider cannot join local transactions, the node wraps it in the external-ACP
 adapter: owed registrations, gated reads until confirmation, fail-closed
 <code>Unavailable</code> (the previous chapter’s shape).</p>
@@ -3356,8 +3445,12 @@ once the subscription request has returned its stream (never concurrently with i
 read <code>_documentUpdates</code> from the saved cursor up to <code>head</code>, and save the cursor with
 what the read produced. Read again on every wake-up and every loss signal (a set
 <code>resync_required</code>, an ended stream), subscribing again first when the stream ended.
+A read that fails with <code>update cursor is no longer available on this node: resync the collection and read after cursor &lt;oldest&gt;</code> is the third loss signal: a truncate without
+a filter dropped rows the reader had not read yet, so it resyncs the collection and
+saves <code>&lt;oldest&gt;</code> as its cursor (<code>defra.events.delivery.unavailable</code>).
 A subscriber that does this observes every committed update of the collection, local
-or merged, that it is allowed to see, exactly once and in commit order, with no rescan:
+or merged, that it is allowed to see, exactly once and in commit order, with no rescan
+unless that third signal asks for one:
 <code>ChangeDelivery.tla</code> <code>INV_ExactlyOnce</code>, <code>INV_CommitOrder</code> and <code>EventuallyObserved</code>
 (GREEN <code>MC_ChangeDelivery_Green_Closing.cfg</code> and <code>MC_ChangeDelivery_Green_Coalescing.cfg</code>).
 Exactly once covers the journal reads and the saved cursor, not what a consumer does with
@@ -3454,12 +3547,12 @@ wakes nobody (<code>Red_CounterNoWake</code>).</p>
 </thead>
 <tbody>
 <tr><td>Delivery</td><td>Durable, read by cursor: one row per update that changed its document, local or merged. A create adds no row. In a collection with a <code>@policy</code>, a reader is handed only the rows of documents it may read that are neither deleted nor purged; in a <code>@chunk</code> collection, only the rows whose parent document it may read; the others are hidden from it.</td><td><code>reqs/defra/change-delivery.md</code> <code>defra.events.delivery.merge-once</code>, <code>defra.events.delivery.visibility</code>, <code>defra.events.delivery.chunk</code>; <code>tools/integration-test/tests/testo/subscription/delivery/merge_once.rs</code>, <code>visibility.rs</code>, <code>tools/integration-test/tests/testo/chunk/journal_visibility.rs</code>; <code>DocumentUpdateJournal.tla</code> <code>INV_Once</code></td></tr>
-<tr><td>Duplicates</td><td>None: (collection, document, block) is the once key, so a block merged a second time (by a handler that does not yet know it was applied) adds no row. A block the node already applied is skipped before the merge, from the durable head set (<code>DbMergeHandler::composite_was_applied</code>), so the once key is held by a database-level test only; no client-level test reaches a second merge.</td><td><code>crates/database/db/tests/merge/update_journal.rs</code> <code>a_block_merged_again_by_another_handler_adds_no_second_row</code>; <code>ChangeDelivery.tla</code> <code>Red_ReMergeAppends</code></td></tr>
-<tr><td>Order within a collection</td><td>Commit order, dense cursors from 1, for local writes and merges.</td><td><code>defra.events.delivery.order</code>; <code>crates/database/db/tests/read/update_transactions.rs</code> <code>commit_order_rollback_and_replayed_updates</code></td></tr>
+<tr><td>Duplicates</td><td>None: (collection, document short ID, block) is the once key, so a block merged a second time (by a handler that does not yet know it was applied) adds no row. A block the node already applied is skipped before the merge, from the durable head set (<code>DbMergeHandler::composite_was_applied</code>), so the once key is held by a database-level test only; no client-level test reaches a second merge. A truncate without a filter keeps the once keys of the rows it drops (only regolith writes them), and a document created again after it takes a new short ID, so its updates add rows again even when they repeat a dropped row’s DocID and block.</td><td><code>crates/database/db/tests/merge/update_journal.rs</code> <code>a_block_merged_again_by_another_handler_adds_no_second_row</code>; <code>ChangeDelivery.tla</code> <code>Red_ReMergeAppends</code>; <code>defra.events.delivery.retention</code>, <code>tools/integration-test/tests/testo/subscription/delivery/retention.rs</code> <code>a_document_recreated_after_a_full_truncate_adds_rows_again</code>; <code>UpdateJournalRetention.tla</code> <code>INV_EveryWriteHasRow</code>, <code>Red_DocId</code></td></tr>
+<tr><td>Order within a collection</td><td>Commit order, dense cursors from the oldest row still kept (1 until a truncate without a filter drops rows), for local writes and merges.</td><td><code>defra.events.delivery.order</code>; <code>crates/database/db/tests/read/update_transactions.rs</code> <code>commit_order_rollback_and_replayed_updates</code></td></tr>
 <tr><td>Order across collections</td><td>None: each collection has its own cursors.</td><td><code>ChangeDelivery.tla</code> (one collection; out of scope)</td></tr>
-<tr><td>Restart</td><td>The journal and a saved cursor survive a reopen with no gap and no duplicate. Truncate at e222d6b deletes no <code>/arrival/updates/</code> key (<code>collection/ops/truncate/all.rs</code>, <code>filtered.rs</code>), so the rows of truncated documents stay; what a reader is handed for them, and retention across purge, backup restore and <code>drop_all</code>: TBD.</td><td><code>defra.events.delivery.resume</code>; <code>crates/database/db/tests/read/update_transactions.rs</code> <code>updates_and_replay_checkpoint_survive_reopen</code></td></tr>
+<tr><td>Restart</td><td>The journal and a saved cursor survive a reopen with no gap and no duplicate. A row stays until its collection is truncated without a filter; no age or row count drops one, and a filtered truncate, a delete or a purge drops none. A truncate without a filter drops every row up to the head it read, a slice of 1,024 at a time from the oldest kept row, so the dropped rows are always one run from cursor 1, and <code>head</code> keeps counting, so no cursor is handed out twice. The truncate runs as several transactions and reads that head after its document deletes commit, so the rows of a document created while it runs can be dropped though the document survives; a reader holding a cursor before them is told to resync. A truncate that fails or crashes after deleting the documents and before dropping the rows leaves those rows until the next truncate without a filter; the truncate itself reports the failure. Retention across backup restore and <code>drop_all</code>: TBD.</td><td><code>defra.events.delivery.resume</code>, <code>defra.events.delivery.retention</code>; <code>crates/database/db/tests/read/update_transactions.rs</code> <code>updates_and_replay_checkpoint_survive_reopen</code>; <code>crates/database/db/tests/read/update_retention.rs</code>; <code>UpdateJournalRetention.tla</code> <code>INV_Prefix</code>, <code>Red_Anywhere</code>, <code>Red_Reset</code></td></tr>
 <tr><td>Resubscription</td><td>A read is a snapshot of rows up to <code>head</code>; a reader that saves its cursor with its effect resumes exactly.</td><td><code>ChangeDelivery.tla</code> <code>Red_CursorNotDurable</code></td></tr>
-<tr><td>Gap detection</td><td>The stored rows are dense: a row missing from storage is an error, and a cursor past <code>head</code> fails with <code>update cursor is beyond this node's collection head</code> through every client. The cursors a reader is handed are not dense: a row hidden from it (see Delivery) is passed silently, <code>next</code> moves past it, and no error is raised.</td><td><code>defra.events.delivery.beyond-head</code>, <code>defra.events.delivery.visibility</code>; <code>crates/database/db/tests/read/update_transactions.rs</code> <code>a_scan_is_closed_when_a_row_is_missing</code>; <code>crates/database/db/tests/read/update_visibility.rs</code> <code>a_deleted_private_documents_updates_are_shown_to_nobody</code></td></tr>
+<tr><td>Gap detection</td><td>The stored rows are dense from the oldest kept row: a row missing from storage above it is an error, and a cursor past <code>head</code> fails with <code>update cursor is beyond this node's collection head</code> through every client. The cursors a reader is handed are not dense: a row hidden from it (see Delivery) is passed silently, <code>next</code> moves past it, and no error is raised. A cursor whose next row a truncate dropped fails with <code>update cursor is no longer available on this node: resync the collection and read after cursor &lt;oldest&gt;</code>, and reading after <code>&lt;oldest&gt;</code> returns every row kept; it is never answered with the rows that are left.</td><td><code>defra.events.delivery.beyond-head</code>, <code>defra.events.delivery.visibility</code>, <code>defra.events.delivery.unavailable</code>; <code>UpdateJournalRetention.tla</code> <code>INV_NoSilentGap</code>, <code>Red_Skip</code>; <code>crates/database/db/tests/read/update_transactions.rs</code> <code>a_scan_is_closed_when_a_row_is_missing</code>; <code>crates/database/db/tests/read/update_visibility.rs</code> <code>a_deleted_private_documents_updates_are_shown_to_nobody</code></td></tr>
 <tr><td>Combination</td><td>The durable half of the pattern above, for the rows the reader is allowed to see.</td><td><code>ChangeDelivery.tla</code> <code>INV_ExactlyOnce</code>, <code>INV_CommitOrder</code>, <code>INV_HiddenNotShown</code>, <code>EventuallyObserved</code></td></tr>
 </tbody>
 </table>

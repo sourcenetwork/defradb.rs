@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "ayu";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-fbeb199c.js";
+            window.path_to_searchindex_js = "../searchindex-d7b7b3c5.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-8198d451.js"></script>
@@ -186,18 +186,25 @@
 <p>The <code>DocumentACP</code> trait (<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/engine/acp/src/dac.rs"><code>crates/engine/acp/src/dac.rs</code></a>) is the document-scope interface:
 register a document’s owner, check access, add and remove relationships. Implementations:</p>
 <ul>
-<li><strong>Zanzibar-backed local ACP</strong> (the default): tuples in the local store, evaluated by
-the engine above.</li>
-<li><strong>External ACP</strong> (Vera): decisions from an external chain, wrapped so the database
-still gates every read (next chapter).</li>
-<li>An in-memory variant for tests.</li>
+<li><strong>Zanzibar-backed local ACP</strong> (<code>ZanzibarDocumentACP</code>, <code>--document-acp-type local</code>):
+tuples in the local store, evaluated by the engine above. <code>defradb start</code> runs with
+<code>none</code>, no document ACP, unless told otherwise (<code>AcpDocumentType::None</code>).</li>
+<li><strong>External ACP</strong> (Vera): decisions from a Vera deployment, wrapped in
+<code>ExternalDocumentAcp</code> so the database still gates every read (<a href="vera.html">Vera</a>).</li>
+<li>An in-memory variant for tests (<code>LocalDocumentACP</code> over <code>MemoryAcpStore</code>).</li>
 </ul>
 <p>The contract every implementation honours:</p>
 <ul>
-<li><strong>Registration at create</strong>: the document’s owner relationship is written <em>in the
-create transaction</em>. Between the document’s rows and its owner tuple there is no
-commit boundary, hence no window where the document exists but is public.</li>
-<li><strong>Unregistration at delete</strong>, in the delete transaction.</li>
+<li><strong>Registration at create</strong>: a document created with an identity has its owner
+relationship written <em>in the create transaction</em>. Between the document’s rows and its
+owner tuple there is no commit boundary, hence no window where the document exists but
+is public. A document created without an identity is public
+(<code>go.acp.dac.ownership</code>).</li>
+<li><strong>Unregistration at delete</strong>, in the delete transaction, for the local ACP. Anyone the
+policy lets delete may delete, not only the owner (<code>go.acp.dac.relationship.deleter</code>).
+On Vera the delete archives the object instead (<a href="vera.html#replicated-documents">Vera</a>).
+Keeping a deleted document’s object under the local ACP too is proposed in
+<a href="https://github.com/sourcenetwork/defradb.rs/pull/3399">#3399</a>.</li>
 <li><strong>Exactly one owner</strong>: registering a document that has one fails with
 <code>DocumentAlreadyRegistered</code>; the <code>owner</code> relation itself can neither be added nor
 removed by sharing.</li>
@@ -213,13 +220,18 @@ arrival entry: anything that reveals a document’s data goes through the same c
 option), with a lifecycle: not configured -&gt; enabled -&gt; (optionally) temporarily
 disabled -&gt; purged. It gates administrative surface: collection and index management,
 backup, P2P configuration, lens, views, and every management HTTP route (the route
-permission map lives in <a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/surfaces/http/src/route_permissions.rs"><code>crates/surfaces/http/src/route_permissions.rs</code></a>. Some 51 node
-permissions exist, all admin-only (<code>owner + admin</code>).</p>
+permission map lives in <a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/surfaces/http/src/route_permissions.rs"><code>crates/surfaces/http/src/route_permissions.rs</code></a>). 51 node
+permissions exist (<code>NodePermission::all</code>), each held by the owner and every admin and
+grantable on its own (<code>this + owner + admin</code>, <code>crates/engine/acp/src/nac/policy.rs</code>). The
+node’s own identity passes every check.</p>
 <p>Two properties worth knowing:</p>
 <ul>
-<li><strong>While temporarily disabled, all writes are blocked</strong> (including admin changes):
-a disabled NAC that still accepted admin writes would let an attacker re-enable it
-with themselves as admin.</li>
+<li><strong>While temporarily disabled, nothing is gated but NAC itself is frozen</strong>: every node
+operation is allowed, as when NAC is not configured, but adding or removing NAC
+relationships is refused, even for the node’s own identity (<code>operation requires ACP, but ACP not available</code>, <code>go.acp.nac.relationship.add</code>, <code>go.acp.nac.relationship.delete</code>),
+and re-enabling still needs <code>re-enable-nac</code> (<code>go.acp.nac.lifecycle.disable</code>,
+<code>go.acp.nac.lifecycle.re-enable</code>). A disabled NAC that still accepted relationship
+changes would let anyone make themselves admin before it is re-enabled.</li>
 <li><strong><code>bypass-dac</code></strong>: a privilege on the NAC object that lets an authenticated identity
 skip per-document DAC checks (service accounts, indexers). It is checked first on
 every read path, and it exists only when NAC is enabled.</li>
