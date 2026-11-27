@@ -38,18 +38,12 @@ where
             .await?
             .ok_or_else(|| Error::CollectionNotFound(collection_name.to_string()))?;
         txn.validate_collection_for_write(&collection).await?;
-        let index_id = self.allocate_index_id(&collection).await?;
-        let (index, lease) = self
+        let index = self
             .stage_index_definition(
                 txn,
                 &collection,
                 collection_name,
-                IndexCreation {
-                    index_id,
-                    name,
-                    fields,
-                    kind,
-                },
+                IndexCreation { name, fields, kind },
             )
             .await?;
         // The rest of the transaction reads and maintains the new definition.
@@ -62,11 +56,11 @@ where
         let defined = index.clone();
         txn.on_commit(OnCommit::Async(Box::new(move || {
             Box::pin(async move {
-                let plan = match db
-                    .publish_index_definition(&name, &collection_id, &defined, &lease)
+                let (lease, plan) = match db
+                    .publish_index_definition(&name, &collection_id, &defined)
                     .await
                 {
-                    Ok(plan) => plan,
+                    Ok(planned) => planned,
                     Err(error) => {
                         tracing::warn!(%error, index = %defined.name, "index backfill was not planned");
                         return;

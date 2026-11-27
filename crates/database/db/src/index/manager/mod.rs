@@ -360,41 +360,6 @@ impl IndexManager {
         fields: Vec<IndexedFieldDescription>,
         kind: IndexKind,
     ) -> Result<IndexDescription> {
-        self.create_index_of_kind_at(datastore, collection_name, name, fields, kind, None)
-            .await
-    }
-
-    /// [`Self::create_index_of_kind`] with an ID allocated before the
-    /// transaction, so concurrent creates cannot choose the same ID.
-    pub(crate) async fn create_index_of_kind_with_id(
-        &mut self,
-        datastore: &NamespaceView,
-        collection_name: &str,
-        name: String,
-        fields: Vec<IndexedFieldDescription>,
-        kind: IndexKind,
-        index_id: u32,
-    ) -> Result<IndexDescription> {
-        self.create_index_of_kind_at(
-            datastore,
-            collection_name,
-            name,
-            fields,
-            kind,
-            Some(index_id),
-        )
-        .await
-    }
-
-    async fn create_index_of_kind_at(
-        &mut self,
-        datastore: &NamespaceView,
-        collection_name: &str,
-        name: String,
-        fields: Vec<IndexedFieldDescription>,
-        kind: IndexKind,
-        index_id: Option<u32>,
-    ) -> Result<IndexDescription> {
         let name = if name.is_empty() {
             let first_field = fields.first().map(|f| f.name.as_str()).unwrap_or("unknown");
             let existing: Vec<String> = self.indexes.keys().cloned().collect();
@@ -430,10 +395,7 @@ impl IndexManager {
             }
         }
 
-        let index_id = match index_id {
-            Some(index_id) => index_id,
-            None => self.next_index_id(datastore).await?,
-        };
+        let index_id = self.next_index_id(datastore).await?;
 
         let desc = IndexDescription {
             name: name.clone(),
@@ -481,15 +443,8 @@ impl IndexManager {
         }
     }
 
-    /// Get the next available index ID for this collection.
-    ///
-    /// # Concurrency
-    ///
-    /// This method assumes single-writer semantics provided by the transaction layer.
-    /// The read-modify-write sequence is NOT atomic. Concurrent calls from different
-    /// transactions could generate duplicate IDs. Callers must ensure exclusive access
-    /// to index creation within a collection, either through transaction isolation or
-    /// external synchronization.
+    /// Advance the same persisted floor a drop uses. Regolith validates the
+    /// floor and the collection definition in the transaction that adds the index.
     async fn next_index_id(&self, datastore: &NamespaceView) -> Result<u32> {
         let counter = index_id_floor(datastore, self.collection_short_id).await?;
         // The schema is the authority on which ids exist: a counter advanced
@@ -502,7 +457,10 @@ impl IndexManager {
             .max()
             .unwrap_or(0);
 
-        let next_id = counter.max(highest) + 1;
+        let next_id = counter
+            .max(highest)
+            .checked_add(1)
+            .ok_or_else(|| Error::Other("the index ID sequence exceeded u32".into()))?;
         datastore
             .set(
                 &IndexIDSequenceKey::new(self.collection_short_id.to_string()).bytes(),

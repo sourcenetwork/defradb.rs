@@ -134,11 +134,12 @@ impl RetryAttemptFn for FailBackfillAttempt {
                 .await
                 .map_err(|error| Error::Other(error.to_string()))?
                 .filter(|collection| {
-                    collection
-                        .schema()
-                        .indexes
-                        .iter()
-                        .any(|index| index.id == self.plan.index_id())
+                    collection.collection_id() == self.plan.collection_id()
+                        && collection
+                            .schema()
+                            .indexes
+                            .iter()
+                            .any(|index| index.id == self.plan.index_id())
                 });
                 let Some(collection) = collection else {
                     return Ok(false);

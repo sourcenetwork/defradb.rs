@@ -580,7 +580,7 @@ impl<S: Store> crate::database::DB<S> {
                 continue;
             }
 
-            let mut needs_update = false;
+            let mut index_changes = Vec::new();
             let mut updated_schema = other_schema.clone();
             let max_index_id = updated_schema
                 .indexes
@@ -602,15 +602,15 @@ impl<S: Store> crate::database::DB<S> {
                     next_id
                 }) {
                     Ok(Some(index)) => {
+                        index_changes.push((index.id, None));
                         updated_schema.indexes.push(index);
-                        needs_update = true;
                     }
                     Ok(None) => {}
                     Err(e) => return Err(Error::InvalidPatch(e.to_string())),
                 }
             }
 
-            if needs_update {
+            if !index_changes.is_empty() {
                 // Store updated schema with new indexes
                 let key = CollectionKey::new(&updated_schema.version_id);
                 let data = serde_json::to_vec(&updated_schema).map_err(|e| {
@@ -635,7 +635,7 @@ impl<S: Store> crate::database::DB<S> {
                 let collections = std::sync::Arc::clone(&self.collections);
                 let registered_name = coll_name.to_string();
                 txn.on_commit(OnCommit::OrderedAndWait(Box::new(move || {
-                    collections.publish_named(&registered_name, cached_collection, &[]);
+                    collections.publish_named(&registered_name, cached_collection, &index_changes);
                 })))?;
             }
         }

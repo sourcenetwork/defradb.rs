@@ -32,13 +32,15 @@
 \*     and the cache still calls it building, so it is never used.
 \*
 \* Code it models (crates/database/db/src/index):
-\*   create.rs    DB::define_index, DB::allocate_index_id,
-\*                DB::stage_index_definition (the ID is reserved before the
-\*                transaction; the definition and record commit together, and
+\*   create.rs    DB::define_index,
+\*                DB::stage_index_definition (the ID, definition and action
+\*                record commit together, and
 \*                the create waits for their cache publication:
 \*                OnCommit::OrderedAndWait)
-\*   manager/mod.rs IndexManager::create_index_of_kind_with_id (uses the
-\*                reserved ID instead of choosing one from a stale snapshot)
+\*                DB::publish_index_definition (only a committed index
+\*                claims a backfill, so retries never compete for the claim)
+\*   manager/mod.rs IndexManager::next_index_id (uses the same floor as
+\*                a drop; the definition read is validated by the commit)
 \*   drop.rs      DB::stage_index_drop (the same publication for a drop)
 \*   settle.rs    FinishIndexAttempt (the build and the cleared record in one
 \*                commit, which publishes the built index), FailBackfillAttempt
@@ -161,12 +163,12 @@ Open(i) ==
 \* it read it (always validated), or, when that read is validated, a status.
 Conflicts(i) ==
   \/ defVer # readDef[i]                                   \* a definition change landed first
-  \/ (StatusRead # "Incremental" /\ statVer # readStat[i]) \* an old whole-scan publication conflicts
+  \/ (StatusRead = "Validated" /\ statVer # readStat[i]) \* an old whole-scan publication conflicts
 
 \* Queue the publication of i's transaction: the whole collection as it
 \* read it, with its own write applied.
-Publish(i, status) ==
-  /\ queue' = Append(queue, [other |-> FALSE, target |-> i, val |-> [snap[i] EXCEPT ![i] = status]]) \* what it computed from its reads
+Publish(i, status, statuses) ==
+  /\ queue' = Append(queue, [other |-> FALSE, target |-> i, val |-> [statuses EXCEPT ![i] = status]]) \* what it computed from its reads
   /\ appended' = appended + 1                               \* one more queued
   /\ mySeq' = [mySeq EXCEPT ![i] = appended + 1]            \* remember where it sits
 
@@ -197,7 +199,7 @@ CreateCommit(i) ==
   /\ store' = [store EXCEPT ![i] = "Building"]          \* the definition and record land
   /\ defVer' = defVer + 1                               \* it wrote the definition key
   /\ statVer' = statVer + 1                             \* and a status key
-  /\ Publish(i, "Building")                             \* its cache publication waits its turn
+  /\ Publish(i, "Building", snap[i])                    \* its cache publication waits its turn
   /\ pc' = [pc EXCEPT ![i] = IF PublishMode = "Wait" THEN "AwaitPub" ELSE "Returned"]
   /\ UNCHANGED <<cache, epoch, applied, held, otherDone, snap, readDef,
                  readStat, reloadEp, outcome>>
@@ -240,7 +242,7 @@ SettleCommit(i) ==
        /\ outcome' = [outcome EXCEPT ![i] = end]        \* remember which
        /\ store' = [store EXCEPT ![i] = end]            \* the record is cleared or errored
        /\ IF SettleMode = "Commit"
-            THEN /\ Publish(i, end)                     \* the commit publishes it
+            THEN /\ Publish(i, end, snap[i])            \* the commit publishes it
                  /\ pc' = [pc EXCEPT ![i] = "SettlePub"] \* and waits for it
             ELSE /\ UNCHANGED <<queue, appended, mySeq>> \* nothing published
                  /\ pc' = [pc EXCEPT ![i] = "ReloadRead"] \* a reload follows
@@ -262,13 +264,12 @@ SettleReturn(i) ==
 \* only after the publication; with "Queue" it returns at once.
 Drop(i) ==
   /\ pc[i] = "Done"                                      \* the index finished building
-  /\ snap' = [snap EXCEPT ![i] = store]                  \* the statuses the drop read
   /\ store' = [store EXCEPT ![i] = "None"]               \* definition and record are gone
   /\ defVer' = defVer + 1                                \* the definition key changed
   /\ statVer' = statVer + 1                              \* the backfill status changed
-  /\ Publish(i, "None")                                  \* its cache change waits in order
+  /\ Publish(i, "None", store)                           \* the drop uses the store at its commit
   /\ pc' = [pc EXCEPT ![i] = IF PublishMode = "Wait" THEN "DropPub" ELSE "Dropped"]
-  /\ UNCHANGED <<cache, epoch, applied, held, otherDone, readDef,
+  /\ UNCHANGED <<cache, epoch, applied, held, otherDone, snap, readDef,
                  readStat, reloadEp, outcome>>
 
 \* The drop returns once its own publication has run.

@@ -466,6 +466,12 @@ pub(super) fn ensure_backfill_index_unchanged(
     expected: &BackfillPlan,
     current: &Collection,
 ) -> Result<()> {
+    if current.collection_id() != expected.collection_id() {
+        return Err(Error::Other(format!(
+            "collection '{}' was replaced during backfill",
+            expected.collection_name()
+        )));
+    }
     let index_name = &expected.index_name;
     let current_index = current
         .get_index(index_name)

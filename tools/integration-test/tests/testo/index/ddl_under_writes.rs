@@ -3,8 +3,8 @@
 
 use integration_test::actions::shared::{IndexField, IndexSpec};
 use integration_test::actions::{
-    Actions, AddCollection, AddDoc, DeleteIndex, ListIndexes, NewIndex, Parallel, Request,
-    UpdateDoc,
+    Actions, AddCollection, AddDoc, DeleteIndex, GetCollections, ListIndexes, NewIndex, Parallel,
+    PatchCollection, Request, SetActiveCollectionVersion, UpdateDoc,
 };
 use integration_test::m;
 use integration_test::scenario::{captures, Common, Text};
@@ -134,6 +134,7 @@ fn an_index_dropped_and_created_again_under_updates_is_built_and_used() {
                 "indexes": [m::object(json!({
                     "Description": m::object(json!({
                         "Name": "by_value",
+                        "ID": 2,
                         "Fields": [m::object(json!({ "Name": "h" }))],
                     })),
                     "Execution": m::object(json!({ "Status": 3 })),
@@ -228,6 +229,80 @@ fn indexes_created_together_under_updates_are_built() {
     TestCase {
         id: integration_test::scenario_id!(),
         actions: actions.into_iter().map(Into::into).collect(),
+        ..Default::default()
+    }
+    .execute();
+}
+
+#[test]
+#[mantra_macros::req_test("defra.index.ddl_under_writes")]
+fn activating_a_version_publishes_its_indexes() {
+    TestCase {
+        id: integration_test::scenario_id!(),
+        actions: vec![
+            AddCollection {
+                sdl: "type U { g: Int }".into(),
+                ..Default::default()
+            }
+            .into(),
+            GetCollections {
+                collection_name: Some("U".into()),
+                common: Common {
+                    capture: captures([("first_version", "/collections/0/VersionID")]),
+                    ..Default::default()
+                },
+                ..Default::default()
+            }
+            .into(),
+            PatchCollection {
+                patch: r#"[{"op":"add","path":"/U/Fields/-","value":{"Name":"h","Kind":11}}]"#
+                    .into(),
+                ..Default::default()
+            }
+            .into(),
+            GetCollections {
+                collection_name: Some("U".into()),
+                common: Common {
+                    capture: captures([("second_version", "/collections/0/VersionID")]),
+                    ..Default::default()
+                },
+                ..Default::default()
+            }
+            .into(),
+            NewIndex {
+                collection: "U".into(),
+                index: index_on("by_value", "g"),
+                ..Default::default()
+            }
+            .into(),
+            SetActiveCollectionVersion {
+                version_id: Text::reference("first_version"),
+                ..Default::default()
+            }
+            .into(),
+            ListIndexes {
+                collection: "U".into(),
+                expected_data: json!({ "indexes": [] }),
+                ..Default::default()
+            }
+            .into(),
+            SetActiveCollectionVersion {
+                version_id: Text::reference("second_version"),
+                ..Default::default()
+            }
+            .into(),
+            ListIndexes {
+                collection: "U".into(),
+                expected_data: json!({
+                    "indexes": [m::object(json!({
+                        "Description": m::object(json!({ "Name": "by_value" })),
+                        "Execution": m::object(json!({ "Status": 3 })),
+                    }))],
+                }),
+                ..Default::default()
+            }
+            .into(),
+        ],
         ..Default::default()
     }
     .execute();

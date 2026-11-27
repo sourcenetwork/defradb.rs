@@ -138,6 +138,21 @@ pub(crate) async fn delete_action_record(
     .await
 }
 
+/// Start the durable action in the transaction that defines its work.
+pub(crate) async fn stage_action_start(
+    systemstore: &datastore::NamespaceView,
+    collection_id: &str,
+    action: Action,
+    subject: &str,
+) -> Result<()> {
+    let [status, reason, progress] = action_record_keys(collection_id, action, subject);
+    systemstore
+        .set(&status, &encode_status(ActionStatus::IN_PROGRESS))
+        .await
+        .map_err(Error::Storage)?;
+    delete_keys(systemstore, &[reason, progress]).await
+}
+
 /// Mark an action's record errored with `reason`, keeping its progress.
 pub(crate) async fn stage_action_failure(
     systemstore: &datastore::NamespaceView,
@@ -203,17 +218,11 @@ impl<S: Store> crate::database::DB<S> {
             action,
             subject,
         )?;
-        let [status, reason, progress] = action_record_keys(collection_id, action, subject);
-        systemstore
-            .set(&status, &encode_status(ActionStatus::IN_PROGRESS))
-            .await
-            .map_err(Error::Storage)?;
-        delete_keys(systemstore, &[reason, progress]).await?;
+        stage_action_start(systemstore, collection_id, action, subject).await?;
         Ok(lease)
     }
 
-    /// The process-local lease of an action whose in-progress record outlived
-    /// the process that started it; the record itself stays as it is.
+    /// Claim a committed action for this process, leaving its durable record as is.
     pub(crate) fn resume_action(
         &self,
         collection_id: &str,

@@ -10,7 +10,7 @@ use std::sync::{
 use async_trait::async_trait;
 use db::index::backfill::{encode_progress, BACKFILL_BATCH_DOCS};
 use db::index::build_gate::{GateWait, IndexBuildGate};
-use db::{AutoCommitMutator, BackfillSource, Cached, Collection, DbOptions, IndexManager, DB};
+use db::{AutoCommitMutator, BackfillSource, Collection, DbOptions, IndexManager, DB};
 use document::{DocID, Document, NormalValue};
 use query::DocMutator;
 use schema::{
@@ -18,7 +18,8 @@ use schema::{
     VectorAlgorithm, VectorIndexDescription,
 };
 use storage::corekv::{
-    IterOptions, Iterator, Key, Reader, Result as StorageResult, Store, Txn, Writer,
+    IterOptions, Key, Result as StorageResult, RetryAttempt, RetryAttemptError, RetryAttemptFn,
+    RetryAttemptFuture, RetryAttemptValue, RetryOptions, RetryTxn, Store, Txn,
 };
 use storage::index::IndexIterator;
 use storage::keys::datastore::IndexDataStoreKey;
@@ -650,19 +651,23 @@ impl Store for PauseDefinitionCommitStore {
     }
 
     async fn new_txn(&self, readonly: bool) -> StorageResult<Box<dyn Txn>> {
-        Ok(Box::new(PauseDefinitionCommitTxn {
-            inner: self.inner.new_txn(readonly).await?,
-            gate: Arc::clone(&self.gate),
-        }))
+        self.inner.new_txn(readonly).await
     }
 
     async fn transact_retry(
         &self,
-        options: storage::corekv::RetryOptions,
-        attempt: storage::corekv::RetryAttempt,
-    ) -> std::result::Result<storage::corekv::RetryAttemptValue, storage::corekv::RetryAttemptError>
-    {
-        self.inner.transact_retry(options, attempt).await
+        options: RetryOptions,
+        attempt: RetryAttempt,
+    ) -> std::result::Result<RetryAttemptValue, RetryAttemptError> {
+        self.inner
+            .transact_retry(
+                options,
+                Box::new(PauseDefinitionCommitAttempt {
+                    inner: attempt,
+                    gate: Arc::clone(&self.gate),
+                }),
+            )
+            .await
     }
 
     async fn close(&self) -> StorageResult<()> {
@@ -670,103 +675,24 @@ impl Store for PauseDefinitionCommitStore {
     }
 }
 
-struct PauseDefinitionCommitTxn {
-    inner: Box<dyn Txn>,
+struct PauseDefinitionCommitAttempt {
+    inner: RetryAttempt,
     gate: Arc<DefinitionCommitGate>,
 }
 
-impl storage::corekv::private::Sealed for PauseDefinitionCommitTxn {}
-
-#[async_trait]
-impl Reader for PauseDefinitionCommitTxn {
-    async fn get(&self, key: &[u8]) -> StorageResult<Option<bytes::Bytes>> {
-        self.inner.get(key).await
-    }
-
-    async fn get_parts(&self, key: &[u8], parts: &[u32]) -> StorageResult<Option<bytes::Bytes>> {
-        self.inner.get_parts(key, parts).await
-    }
-
-    async fn has(&self, key: &[u8]) -> StorageResult<bool> {
-        self.inner.has(key).await
-    }
-
-    async fn get_size(&self, key: &[u8]) -> StorageResult<Option<usize>> {
-        self.inner.get_size(key).await
-    }
-
-    async fn iterator(
-        &self,
-        opts: IterOptions,
-    ) -> StorageResult<Box<dyn storage::corekv::Iterator>> {
-        self.inner.iterator(opts).await
-    }
-}
-
-#[async_trait]
-impl Writer for PauseDefinitionCommitTxn {
-    async fn merge_shared(&self, key: &[u8], operand: &[u8]) -> StorageResult<()> {
-        self.inner.merge_shared(key, operand).await
-    }
-
-    async fn append_shared(
-        &self,
-        log: &storage::corekv::AppendLog,
-        entry: &[u8],
-        once_key: Option<&[u8]>,
-    ) -> StorageResult<()> {
-        self.inner.append_shared(log, entry, once_key).await
-    }
-
-    async fn set_shared(&self, key: &[u8], value: &[u8]) -> StorageResult<()> {
-        self.inner.set_shared(key, value).await
-    }
-
-    async fn delete_shared(&self, key: &[u8]) -> StorageResult<()> {
-        self.inner.delete_shared(key).await
-    }
-}
-
-#[async_trait]
-impl Txn for PauseDefinitionCommitTxn {
-    async fn commit(self: Box<Self>) -> StorageResult<()> {
-        if !self.inner.is_readonly() && self.gate.armed.swap(false, Ordering::SeqCst) {
-            self.gate.entered.notify_one();
-            self.gate.release.notified().await;
-        }
-        self.inner.commit().await
-    }
-
-    fn discard(self: Box<Self>) {
-        self.inner.discard()
-    }
-
-    fn on_commit(&mut self, callback: storage::corekv::OnCommit) -> StorageResult<()> {
-        self.inner.on_commit(callback)
-    }
-
-    fn on_abort(&mut self, callback: storage::corekv::OnAbort) {
-        self.inner.on_abort(callback)
-    }
-
-    fn before_commit(&mut self, callback: storage::corekv::BeforeCommit) {
-        self.inner.before_commit(callback)
-    }
-
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
-    }
-
-    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
-        self
-    }
-
-    fn is_readonly(&self) -> bool {
-        self.inner.is_readonly()
-    }
-
-    fn callback_count(&self) -> usize {
-        self.inner.callback_count()
+impl RetryAttemptFn for PauseDefinitionCommitAttempt {
+    fn run<'attempt>(
+        &'attempt mut self,
+        txn: &'attempt mut dyn RetryTxn,
+    ) -> RetryAttemptFuture<'attempt> {
+        Box::pin(async move {
+            let staged = self.inner.run(txn).await?;
+            if self.gate.armed.swap(false, Ordering::SeqCst) {
+                self.gate.entered.notify_one();
+                self.gate.release.notified().await;
+            }
+            Ok(staged)
+        })
     }
 }
 
@@ -1055,10 +981,23 @@ fn index_backfill_finishes_when_the_cache_lags_the_stored_definition() {
         .unwrap();
 
         gate.entered.wait().await;
-        assert_eq!(
-            db.add_collection_to_cache(before_index).await.unwrap(),
-            Cached::Taken
-        );
+        let committed = db.require_collection("Lagging").unwrap().schema().clone();
+        let key = CollectionKey::new(&committed.version_id).bytes();
+        let write_definition = |definition: CollectionVersion| {
+            let db = Arc::clone(&db);
+            let key = key.clone();
+            async move {
+                let txn = db.new_txn(false).await.unwrap();
+                let value = serde_json::to_vec(&definition).unwrap();
+                txn.systemstore().unwrap().set(&key, &value).await.unwrap();
+                txn.commit().await.unwrap();
+            }
+        };
+        // Reload the old definition, then restore the committed one without
+        // publishing it. The backfill should read the index from its own snapshot.
+        write_definition(before_index).await;
+        db.reload_cache().await.unwrap();
+        write_definition(committed).await;
         assert!(db
             .require_collection("Lagging")
             .unwrap()
@@ -1074,6 +1013,7 @@ fn index_backfill_finishes_when_the_cache_lags_the_stored_definition() {
             .remove(&index.id)
             .map(|action| action.reason);
         assert_eq!(failure, None, "the backfill must complete");
+        db.reload_cache().await.unwrap();
         assert_eq!(index_entries(&db, "Lagging", index.id).await, total);
         assert_eq!(entries_for(&db, "Lagging", "user-0").await, 1);
     })
@@ -1117,12 +1057,17 @@ fn ensure_ordinary_index_is_idempotent_and_preserves_collection_identity() {
             .unwrap()
             .unwrap();
         assert_eq!(stored.get("name"), Some(&NormalValue::String("Ada".into())));
-        let mut wrong = first.fields;
+        let mut wrong = first.fields.clone();
         wrong[0].descending = true;
         assert!(db
             .ensure_ordinary_index("Reconciled", "by_name", wrong)
             .await
             .is_err());
+        let next = db
+            .ensure_ordinary_index("Reconciled", "also_by_name", first.fields)
+            .await
+            .unwrap();
+        assert_eq!(next.id, first.id + 1);
     })
     .unwrap()
 }

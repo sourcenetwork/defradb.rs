@@ -330,14 +330,15 @@ impl Collection {
     /// This definition with index statuses current at its commit callback.
     /// `changes` carries only the statuses this transaction changed; every
     /// other index keeps the status already in the cache, or this snapshot's
-    /// status when the cache has not seen that index.
+    /// status when the cache has not seen that index. A version switch takes
+    /// its index list from the incoming definition.
     pub(crate) fn with_current_index_actions(
         &self,
         current: Option<&Self>,
         changes: &[(u32, Option<defra_core::ActionStatus>)],
     ) -> Self {
         let mut def = self.schema().clone();
-        if let Some(current) = current {
+        if let Some(current) = current.filter(|cached| cached.version_id() == self.version_id()) {
             def.indexes = current.schema().indexes.clone();
             for (index_id, _) in changes {
                 if let Some(index) = self
@@ -365,8 +366,15 @@ impl Collection {
             let status = match change {
                 Some(status) => *status,
                 None => current
-                    .and_then(|collection| collection.index_action_status(index.id))
-                    .or_else(|| self.index_action_status(index.id)),
+                    .filter(|collection| {
+                        collection
+                            .schema()
+                            .indexes
+                            .iter()
+                            .any(|cached| cached.id == index.id)
+                    })
+                    .unwrap_or(self)
+                    .index_action_status(index.id),
             };
             if let Some(status) = status {
                 actions.insert(index.id, status);
