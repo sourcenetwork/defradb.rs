@@ -77,6 +77,7 @@ fn an_index_dropped_and_created_again_under_updates_is_built_and_used() {
         DeleteIndex {
             collection: "U".into(),
             index_name: "by_value".into(),
+            expected_data: succeeds(),
             common: Common {
                 envelope: true,
                 ..Default::default()
@@ -90,6 +91,7 @@ fn an_index_dropped_and_created_again_under_updates_is_built_and_used() {
         NewIndex {
             collection: "U".into(),
             index: index_on("by_value", "h"),
+            expected_data: succeeds(),
             common: Common {
                 envelope: true,
                 ..Default::default()
@@ -178,6 +180,7 @@ fn indexes_created_together_under_updates_are_built() {
         NewIndex {
             collection: "U".into(),
             index: index_on("by_g", "g"),
+            expected_data: succeeds(),
             common: Common {
                 envelope: true,
                 ..Default::default()
@@ -188,6 +191,7 @@ fn indexes_created_together_under_updates_are_built() {
         NewIndex {
             collection: "U".into(),
             index: index_on("by_h", "h"),
+            expected_data: succeeds(),
             common: Common {
                 envelope: true,
                 ..Default::default()

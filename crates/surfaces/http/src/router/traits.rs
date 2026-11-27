@@ -32,6 +32,8 @@ pub trait IndexOperations: defra_core::thread_bounds::MaybeSendSync {
     /// in which case `unique` does not apply. Both are parameters rather than a
     /// defaulted second method so an implementor cannot quietly ignore the
     /// vector config and build an ordinary index over the vector field.
+    /// When `build_in_background` is true, return after the index definition
+    /// commits and let the backfill finish independently.
     async fn create_index(
         &self,
         collection: &str,
@@ -39,6 +41,7 @@ pub trait IndexOperations: defra_core::thread_bounds::MaybeSendSync {
         name: Option<&str>,
         unique: bool,
         vector: Option<schema::VectorIndexDescription>,
+        build_in_background: bool,
     ) -> Result<IndexInfo, String>;
 
     /// List indexes, optionally filtered by collection.
@@ -239,7 +242,10 @@ pub trait CollectionOperations: defra_core::thread_bounds::MaybeSendSync {
     ///
     /// Parses the SDL and creates collections for each type defined.
     /// Returns the created collection versions.
-    async fn add_collection(&self, sdl: &str) -> Result<Vec<schema::CollectionVersion>, String>;
+    async fn add_collection(
+        &self,
+        sdl: &str,
+    ) -> Result<Vec<schema::CollectionVersion>, super::CollectionRefusal>;
 }
 
 /// Collection lookups the event stream needs, which a host gives it without the management routes.

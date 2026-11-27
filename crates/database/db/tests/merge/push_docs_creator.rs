@@ -13,7 +13,7 @@ fn resolve_push_creator_uses_owner_for_protected_document() {
     workers::block_on(async {
         let acp = LocalDocumentACP::new(Arc::new(MemoryAcpStore::new()));
         let owner = Did::new("did:key:z6Mkowner").unwrap();
-        acp.register_doc_object(&owner, "policy-1", "Users", "doc1")
+        acp.register_doc_object(&owner, "policy-1", "Users", "doc1", &[])
             .await
             .unwrap();
 
@@ -99,6 +99,7 @@ impl DocumentACP for FailingAcp {
         _policy_id: &str,
         _resource_name: &str,
         _doc_id: &str,
+        _relationships: &[acp::DerivedRelationship],
     ) -> acp::Result<()> {
         Err(acp::Error::Storage("boom".to_string()))
     }

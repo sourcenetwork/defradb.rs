@@ -361,7 +361,7 @@ impl<S: Store> crate::database::DB<S> {
 
         let txn = self.new_txn(true).await?;
         let systemstore = txn.systemstore()?;
-        let executions = index_action_executions(&systemstore, collection_id).await?;
+        let executions = index_listing_executions(&systemstore, collection_id).await?;
         drop(systemstore);
         txn.discard()?;
         Ok(executions)
@@ -436,6 +436,30 @@ pub(crate) async fn index_action_statuses(
         .into_iter()
         .map(|(index_id, execution)| (index_id, execution.status))
         .collect())
+}
+
+/// [`index_action_executions`] as an index listing shows them: a unique
+/// index the owed reindex could not fill, because a migration gave two
+/// documents one of its values, lists as a failed build with the reason.
+pub(crate) async fn index_listing_executions(
+    systemstore: &datastore::NamespaceView,
+    collection_id: &str,
+) -> Result<RapidHashMap<u32, ActionExecution>> {
+    let mut executions = index_action_executions(systemstore, collection_id).await?;
+    if let Some((index_id, reason)) =
+        crate::definition::migration::owed_failure(systemstore, collection_id).await?
+    {
+        executions
+            .entry(index_id)
+            .or_insert_with(|| ActionExecution {
+                collection_id: collection_id.to_string(),
+                action: Action::BACKFILL_INDEX,
+                subject: index_id.to_string(),
+                status: ActionStatus::ERRORED,
+                reason,
+            });
+    }
+    Ok(executions)
 }
 
 pub(crate) async fn index_action_executions(

@@ -323,7 +323,8 @@ impl<S: Store> DB<S> {
     ) -> Result<usize> {
         let mut last = plan.last;
         let mut indexed = 0;
-        let mut max_docs = self.options().backfill_batch_docs();
+        let limit = self.options().backfill_batch_docs();
+        let mut max_docs = limit;
         loop {
             if let Some(gate) = &self.options().index_build_gate {
                 // A close stops the wait, as Go's gate honours its context:
@@ -337,6 +338,8 @@ impl<S: Store> DB<S> {
                 }
             }
             let batch = self.backfill_batch(plan, last, &mut max_docs).await?;
+            // A commit doubles the page; the configured batch still bounds it.
+            max_docs = max_docs.min(limit);
             indexed += batch.indexed;
             if let Some(id) = batch.last_doc_short_id {
                 last = id;
@@ -508,22 +511,26 @@ impl DocumentSource for MigratingSource {
         let Some((doc_short_id, doc)) = self.inner.next().await? else {
             return Ok(None);
         };
-        let ToActive::Migrated(migrated) =
-            migrate_to_active(&doc, &self.collection, &self.history, &self.lens_store)
-                .await
-                .map_err(|error| IndexError::Other(error.to_string()))?
+        let ToActive::Migrated {
+            document: migrated,
+            complete,
+        } = migrate_to_active(&doc, &self.collection, &self.history, &self.lens_store)
+            .await
+            .map_err(|error| IndexError::Other(error.to_string()))?
         else {
             return Ok(Some((doc_short_id, doc)));
         };
-        cache_migrated_document_with_indexes(
-            &self.datastore,
-            &self.systemstore,
-            &self.collection,
-            &migrated,
-            Some(&self.drains),
-        )
-        .await
-        .map_err(|e| IndexError::Other(e.to_string()))?;
+        if complete {
+            cache_migrated_document_with_indexes(
+                &self.datastore,
+                &self.systemstore,
+                &self.collection,
+                &migrated,
+                Some(&self.drains),
+            )
+            .await
+            .map_err(|e| IndexError::Other(e.to_string()))?;
+        }
         Ok(Some((doc_short_id, migrated)))
     }
 }

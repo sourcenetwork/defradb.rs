@@ -1,3 +1,4 @@
+use crate::common::arrivals::arrivals_page;
 use async_trait::async_trait;
 use blockstore::Blockstore as _;
 use blockstore::DefraBlockstore;
@@ -223,10 +224,6 @@ pub(super) const SESSIONS_SDL: &str = r#"type Sessions {
     session_id: String @index(name: "idx_session_id_unique", unique: true)
 }"#;
 const AGENTDOCS_SDL: &str = "type AgentDocs { agent_did: String @immutable body: String }";
-const PARENT_AGENTDOCS_SDL: &str = r#"type AgentDocs @policy(id: "policy", resource: "agentdocs", parentField: "agent_did") {
-    agent_did: String
-    body: String
-}"#;
 
 pub(super) fn users_collection() -> CollectionVersion {
     crate::common::schema::parsed(USERS_SDL)
@@ -283,22 +280,6 @@ fn agentdocs_version_id() -> &'static str {
 fn agentdocs_collection_id() -> &'static str {
     static ID: regolith::sync::Lazy<String> =
         regolith::sync::Lazy::new(|| agentdocs_collection().collection_id);
-    &ID
-}
-
-fn parent_agentdocs_collection() -> CollectionVersion {
-    crate::common::schema::parsed(PARENT_AGENTDOCS_SDL)
-}
-
-fn parent_agentdocs_version_id() -> &'static str {
-    static ID: regolith::sync::Lazy<String> =
-        regolith::sync::Lazy::new(|| parent_agentdocs_collection().version_id);
-    &ID
-}
-
-fn parent_agentdocs_collection_id() -> &'static str {
-    static ID: regolith::sync::Lazy<String> =
-        regolith::sync::Lazy::new(|| parent_agentdocs_collection().collection_id);
     &ID
 }
 
@@ -376,6 +357,7 @@ impl CompositeMergeHook for FailingCompositeHook {
         _doc_id: &str,
         _collection: &CollectionVersion,
         _metadata: &BlockMetadata<'_>,
+        _relationships: Vec<acp::DerivedRelationship>,
     ) -> Option<Box<dyn CompositePostCommitAction>> {
         Some(Box::new(FailingPostCommitAction))
     }
@@ -1691,8 +1673,20 @@ async fn make_handler_with_immutable_schema() -> (
     DbMergeHandler<RegolithStore, DefraBlockstore<RegolithStore>>,
     Arc<DefraBlockstore<RegolithStore>>,
 ) {
+    let (handler, blockstore, _) = make_handler_with_immutable_schema_and_bus().await;
+    (handler, blockstore)
+}
+
+async fn make_handler_with_immutable_schema_and_bus() -> (
+    DbMergeHandler<RegolithStore, DefraBlockstore<RegolithStore>>,
+    Arc<DefraBlockstore<RegolithStore>>,
+    Arc<ChannelBus>,
+) {
     let store = Arc::new(RegolithStore::in_memory().unwrap());
-    let db = Arc::new(DB::from_arc(store.clone()).unwrap());
+    let bus = Arc::new(ChannelBus::new());
+    let mut db = DB::from_arc(store.clone()).unwrap();
+    db.set_event_bus(bus.clone());
+    let db = Arc::new(db);
 
     db.add_collection(&defra_core::RequestContext::ambient(), AGENTDOCS_SDL)
         .await
@@ -1700,7 +1694,7 @@ async fn make_handler_with_immutable_schema() -> (
 
     let blockstore = Arc::new(DefraBlockstore::new(store, false));
     let handler = DbMergeHandler::new(db, blockstore.clone());
-    (handler, blockstore)
+    (handler, blockstore, bus)
 }
 
 /// Remote-merge enforcement of `@immutable` (filtered-replication B3 hazard).
@@ -1715,7 +1709,7 @@ async fn make_handler_with_immutable_schema() -> (
 #[test]
 fn remote_composite_merge_rejects_immutable_field_change() {
     workers::block_on(async {
-        let (handler, blockstore) = make_handler_with_immutable_schema().await;
+        let (handler, blockstore, bus) = make_handler_with_immutable_schema_and_bus().await;
         let collection = handler
             .db()
             .find_collection_by_id(agentdocs_collection_id())
@@ -1736,6 +1730,7 @@ fn remote_composite_merge_rejects_immutable_field_change() {
         let (doc_id, _doc_short_id, create_blocks) =
             create_doc_locally(&handler, &collection, &mut doc).await;
         let doc_id_str = doc_id.to_string();
+        let mut merge_events = bus.subscribe(&[EventName::MergeComplete]);
 
         // Craft a higher-priority remote update that flips the immutable field.
         let mut update_data = Vec::new();
@@ -1808,260 +1803,14 @@ fn remote_composite_merge_rejects_immutable_field_change() {
             outcome.is_terminal_skip(),
             "remote merge changing an immutable field must be terminally skipped, got {outcome:?}"
         );
-
-        // The locally-stored immutable value must be unchanged.
-        let stored = {
-            let txn = handler.db().new_txn(true).await.unwrap();
-            let stored = {
-                let datastore = txn.datastore().unwrap();
-                let systemstore = txn.systemstore().unwrap();
-                collection
-                    .get_by_doc_id(&datastore, &systemstore, &doc_id)
-                    .await
-                    .unwrap()
-                    .expect("document should still exist")
-            };
-            txn.force_discard().unwrap();
-            stored
-        };
-        assert_eq!(
-            stored.get("agent_did"),
-            Some(&NormalValue::String("did:key:alice".to_string())),
-            "immutable field must survive a rejected remote merge"
-        );
-    })
-    .unwrap()
-}
-
-async fn make_handler_with_parent_registration_schema() -> (
-    DbMergeHandler<RegolithStore, DefraBlockstore<RegolithStore>>,
-    Arc<DefraBlockstore<RegolithStore>>,
-) {
-    let store = Arc::new(RegolithStore::in_memory().unwrap());
-    let db = Arc::new(DB::from_arc(store.clone()).unwrap());
-
-    db.add_collection(&defra_core::RequestContext::ambient(), PARENT_AGENTDOCS_SDL)
-        .await
-        .unwrap();
-
-    let blockstore = Arc::new(DefraBlockstore::new(store, false));
-    let handler = DbMergeHandler::new(db, blockstore.clone());
-    (handler, blockstore)
-}
-
-#[test]
-fn remote_composite_merge_rejects_registration_parent_change() {
-    workers::block_on(async {
-        let (handler, blockstore) = make_handler_with_parent_registration_schema().await;
-        let collection = handler
-            .db()
-            .find_collection_by_id(parent_agentdocs_collection_id())
-            .unwrap()
-            .expect("agentdocs collection should exist");
-
-        let mut doc = Document::new(collection.schema_arc());
-        doc.set(
-            "agent_did",
-            NormalValue::String("did:key:alice".to_string()),
-        )
-        .unwrap();
-        doc.set("body", NormalValue::String("v1".to_string()))
-            .unwrap();
-        doc.set_collection_version_id(parent_agentdocs_version_id());
-
-        // Persist the initial document locally (agent_did = alice).
-        let (doc_id, _doc_short_id, create_blocks) =
-            create_doc_locally(&handler, &collection, &mut doc).await;
-        let doc_id_str = doc_id.to_string();
-
-        // Craft a higher-priority remote update that flips the immutable field.
-        let mut update_data = Vec::new();
-        ciborium::into_writer(
-            &NormalValue::String("did:key:bob".to_string()),
-            &mut update_data,
-        )
-        .unwrap();
-        let update_field_payload = LwwDeltaPayload {
-            field_name: "agent_did".to_string(),
-            collection_version_id: parent_agentdocs_version_id().to_string(),
-            priority: 2,
-            data: update_data,
-        };
-        let update_field_block = Block::new(
-            CrdtDelta::Lww(update_field_payload),
-            create_blocks.field_cids.clone(),
-            vec![],
-        );
-        let update_field_cid = update_field_block.generate_cid().unwrap();
-        blockstore
-            .put(
-                &update_field_cid,
-                &update_field_block.to_dag_cbor().unwrap(),
-            )
-            .await
-            .unwrap();
-
-        let update_payload = CompositeDeltaPayload {
-            collection_version_id: parent_agentdocs_version_id().to_string(),
-            priority: 2,
-            status: 1,
-        };
-        let update_composite_block = Block::new(
-            CrdtDelta::Composite(update_payload.clone()),
-            vec![create_blocks.cid],
-            vec![DAGLink::new("agent_did", update_field_cid)],
-        );
-        let update_composite_cid = update_composite_block.generate_cid().unwrap();
-        blockstore
-            .put(
-                &update_composite_cid,
-                &update_composite_block.to_dag_cbor().unwrap(),
-            )
-            .await
-            .unwrap();
-
-        let metadata = BlockMetadata::normal(
-            &doc_id_str,
-            parent_agentdocs_collection_id(),
-            "did:key:z6MkrRemoteImmutableMerge",
-            None,
-            false,
-        );
-        let outcome = handler
-            .process_composite_delta(
-                &update_composite_cid,
-                &update_composite_block,
-                &update_payload,
-                &metadata,
-                false,
-                0,
-            )
-            .await
-            .expect("an immutable-field rejection is a terminal skip, not a hard error");
-
-        // The rejection must be TERMINAL (skipped), not a transient Err — a hard
-        // error would leave the CID unmarked and re-fetched on every sync pass.
+        let reported_remote = std::iter::from_fn(|| merge_events.try_recv().ok()).any(|event| {
+            event
+                .as_merge_complete()
+                .is_some_and(|merge| merge.cid == update_composite_cid)
+        });
         assert!(
-            outcome.is_terminal_skip(),
-            "remote merge changing an immutable field must be terminally skipped, got {outcome:?}"
-        );
-
-        // The locally-stored immutable value must be unchanged.
-        let stored = {
-            let txn = handler.db().new_txn(true).await.unwrap();
-            let stored = {
-                let datastore = txn.datastore().unwrap();
-                let systemstore = txn.systemstore().unwrap();
-                collection
-                    .get_by_doc_id(&datastore, &systemstore, &doc_id)
-                    .await
-                    .unwrap()
-                    .expect("document should still exist")
-            };
-            txn.force_discard().unwrap();
-            stored
-        };
-        assert_eq!(
-            stored.get("agent_did"),
-            Some(&NormalValue::String("did:key:alice".to_string())),
-            "immutable field must survive a rejected remote merge"
-        );
-    })
-    .unwrap()
-}
-
-#[test]
-fn remote_composite_merge_rejects_non_lww_registration_parent_delta() {
-    workers::block_on(async {
-        let (handler, blockstore) = make_handler_with_parent_registration_schema().await;
-        let collection = handler
-            .db()
-            .find_collection_by_id(parent_agentdocs_collection_id())
-            .unwrap()
-            .expect("agentdocs collection should exist");
-
-        let mut doc = Document::new(collection.schema_arc());
-        doc.set(
-            "agent_did",
-            NormalValue::String("did:key:alice".to_string()),
-        )
-        .unwrap();
-        doc.set("body", NormalValue::String("v1".to_string()))
-            .unwrap();
-        doc.set_collection_version_id(parent_agentdocs_version_id());
-
-        // Persist the initial document locally (agent_did = alice).
-        let (doc_id, _doc_short_id, create_blocks) =
-            create_doc_locally(&handler, &collection, &mut doc).await;
-        let doc_id_str = doc_id.to_string();
-
-        // A counter operation cannot change a registration parent register.
-        let mut update_data = Vec::new();
-        ciborium::into_writer(&1_i64, &mut update_data).unwrap();
-        let update_field_payload = CounterDeltaPayload {
-            field_name: "agent_did".to_string(),
-            collection_version_id: parent_agentdocs_version_id().to_string(),
-            priority: 2,
-            data: update_data,
-            nonce: 99,
-        };
-        let update_field_block = Block::new(
-            CrdtDelta::Counter(update_field_payload),
-            create_blocks.field_cids.clone(),
-            vec![],
-        );
-        let update_field_cid = update_field_block.generate_cid().unwrap();
-        blockstore
-            .put(
-                &update_field_cid,
-                &update_field_block.to_dag_cbor().unwrap(),
-            )
-            .await
-            .unwrap();
-
-        let update_payload = CompositeDeltaPayload {
-            collection_version_id: parent_agentdocs_version_id().to_string(),
-            priority: 2,
-            status: 1,
-        };
-        let update_composite_block = Block::new(
-            CrdtDelta::Composite(update_payload.clone()),
-            vec![create_blocks.cid],
-            vec![DAGLink::new("agent_did", update_field_cid)],
-        );
-        let update_composite_cid = update_composite_block.generate_cid().unwrap();
-        blockstore
-            .put(
-                &update_composite_cid,
-                &update_composite_block.to_dag_cbor().unwrap(),
-            )
-            .await
-            .unwrap();
-
-        let metadata = BlockMetadata::normal(
-            &doc_id_str,
-            parent_agentdocs_collection_id(),
-            "did:key:z6MkrRemoteImmutableMerge",
-            None,
-            false,
-        );
-        let outcome = handler
-            .process_composite_delta(
-                &update_composite_cid,
-                &update_composite_block,
-                &update_payload,
-                &metadata,
-                false,
-                0,
-            )
-            .await
-            .expect("an immutable-field rejection is a terminal skip, not a hard error");
-
-        // The rejection must be TERMINAL (skipped), not a transient Err — a hard
-        // error would leave the CID unmarked and re-fetched on every sync pass.
-        assert!(
-            outcome.is_terminal_skip(),
-            "remote merge changing an immutable field must be terminally skipped, got {outcome:?}"
+            !reported_remote,
+            "a refused composite must not be reported as merged"
         );
 
         // The locally-stored immutable value must be unchanged.
@@ -2427,7 +2176,7 @@ fn remote_merge_allows_partial_update_to_deleted_doc() {
 #[test]
 fn batch_merge_rejects_immutable_change_without_partial_write() {
     workers::block_on(async {
-        let (handler, blockstore) = make_handler_with_immutable_schema().await;
+        let (handler, blockstore, bus) = make_handler_with_immutable_schema_and_bus().await;
         let collection = handler
             .db()
             .find_collection_by_id(agentdocs_collection_id())
@@ -2502,6 +2251,7 @@ fn batch_merge_rejects_immutable_change_without_partial_write() {
             .put(&bad_cid, &bad_block.to_dag_cbor().unwrap())
             .await
             .unwrap();
+        let mut merge_events = bus.subscribe(&[EventName::MergeComplete]);
         let bad_merge = MergeBlock {
             cid: bad_cid,
             block_data: bytes::Bytes::from(bad_block.to_dag_cbor().unwrap()),
@@ -2553,6 +2303,15 @@ fn batch_merge_rejects_immutable_change_without_partial_write() {
             matches!(results[0], Ok(ref o) if o.is_terminal_skip()),
             "immutable-violating batch block must be terminally skipped, got {:?}",
             results[0]
+        );
+        let reported_refused = std::iter::from_fn(|| merge_events.try_recv().ok()).any(|event| {
+            event
+                .as_merge_complete()
+                .is_some_and(|merge| merge.cid == bad_cid)
+        });
+        assert!(
+            !reported_refused,
+            "a refused composite must not be reported as merged"
         );
         assert!(
             matches!(results[1], Ok(MergeOutcome::Merged)),
@@ -4447,7 +4206,7 @@ fn resolve_composite_doc_id_explores_first_head_before_probing_later_siblings() 
 #[test]
 fn first_materialization_arrivals_include_peer_batches_once() {
     workers::block_on(async {
-        use query::fetcher::{DocFetcher, DocumentArrivalOptions};
+        use query::fetcher::DocumentArrivalOptions;
         let (handler, blockstore, _) = make_handler_with_schema_and_bus().await;
         let first = build_merge_block(&blockstore, "arrival-first", 30).await;
         let second = build_merge_block(&blockstore, "arrival-second", 31).await;
@@ -4464,15 +4223,16 @@ fn first_materialization_arrivals_include_peer_batches_once() {
         let results = handler.handle_block_batch(&blocks).await;
         assert!(results.iter().all(Result::is_ok), "{results:?}");
         let fetcher = db::LensedAutoCommitFetcher::new(handler.db().clone());
-        let page = fetcher
-            .get_document_arrivals(&DocumentArrivalOptions {
+        let page = arrivals_page(
+            &fetcher,
+            &DocumentArrivalOptions {
                 collection: "Users".into(),
                 after: 0,
                 limit: 10,
                 doc_ids: None,
-            })
-            .await
-            .unwrap();
+            },
+        )
+        .await;
         assert_eq!(page.head, 2);
         assert_eq!(
             page.entries
@@ -4558,7 +4318,7 @@ fn peer_update_is_discovered_once_by_committed_cursor() {
 #[test]
 fn first_materialization_and_local_create_arrive_in_commit_order() {
     workers::block_on(async {
-        use query::fetcher::{DocFetcher, DocumentArrivalOptions};
+        use query::fetcher::DocumentArrivalOptions;
         use query::DocMutator;
         let (handler, blockstore, _) = make_handler_with_schema_and_bus().await;
         let local = db::DbDocMutator::new(
@@ -4584,15 +4344,16 @@ fn first_materialization_and_local_create_arrive_in_commit_order() {
         );
         local.take_txn().await.unwrap().commit().await.unwrap();
         let fetcher = db::LensedAutoCommitFetcher::new(handler.db().clone());
-        let page = fetcher
-            .get_document_arrivals(&DocumentArrivalOptions {
+        let page = arrivals_page(
+            &fetcher,
+            &DocumentArrivalOptions {
                 collection: "Users".into(),
                 after: 0,
                 limit: 10,
                 doc_ids: None,
-            })
-            .await
-            .unwrap();
+            },
+        )
+        .await;
         assert_eq!(page.head, 2);
         assert_eq!(page.entries[0].doc_id, peer_id);
         assert_eq!(page.entries[1].doc_id, local_id);

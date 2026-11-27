@@ -18,6 +18,39 @@ pub(crate) struct Request {
     caller: Caller,
 }
 
+/// The scope a node operation acts in: the caller, the bearer token it
+/// presents, and the transaction the call runs in.
+pub(crate) struct NodeScope {
+    pub(crate) did: Option<identity::Did>,
+    pub(crate) bearer: Option<String>,
+    pub(crate) txn: Option<defra_core::TxnId>,
+}
+
+/// Runs `$body` with `$scoped` bound to `$node` scoped to `$scope`: a
+/// `defra_node::TxnNode` when the call runs in a transaction, a
+/// `defra_node::ScopedNode` otherwise.
+macro_rules! on_scope {
+    ($node:expr, $scope:expr, |$scoped:ident| $body:expr) => {{
+        let scope = $scope;
+        let scoped = match &scope.did {
+            Some(did) => $node.with_identity(did.clone()),
+            None => $node.anonymous(),
+        }
+        .with_bearer(scope.bearer.clone());
+        match scope.txn {
+            Some(id) => {
+                let $scoped = scoped.with_transaction(id);
+                $body
+            }
+            None => {
+                let $scoped = scoped;
+                $body
+            }
+        }
+    }};
+}
+pub(crate) use on_scope;
+
 impl Request {
     /// Resolves `node_ptr` (a node or a transaction) and `identity_ptr`, and
     /// admits the caller for `permission`.
@@ -52,6 +85,16 @@ impl Request {
             .map_err(DefraResult::error)?;
         }
         Ok(request)
+    }
+
+    /// Who the call acts as and the transaction it runs in, for a node
+    /// operation scoped to them with [`on_scope`].
+    pub(crate) fn node_scope(&self) -> Result<NodeScope, DefraResult> {
+        Ok(NodeScope {
+            did: self.did()?,
+            bearer: self.caller.bearer.as_ref().map(|token| token.to_string()),
+            txn: self.target.txn_id(),
+        })
     }
 
     /// `context` presenting the caller's bearer token, if it has one.

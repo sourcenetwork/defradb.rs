@@ -45,12 +45,8 @@ async fn node(with_type: bool, path: Option<&Path>) -> Node {
         builder
     };
     let node = builder.build().await.unwrap();
-    node.add_collection(&defra_core::RequestContext::ambient(), SDL)
-        .await
-        .unwrap();
-    node.add_collection(&defra_core::RequestContext::ambient(), NOTE_SDL)
-        .await
-        .unwrap();
+    node.add_collection(SDL).await.unwrap();
+    node.add_collection(NOTE_SDL).await.unwrap();
     node.p2p()
         .unwrap()
         .add_collections(collections())

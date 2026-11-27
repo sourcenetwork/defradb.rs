@@ -213,8 +213,4 @@ impl OwedJournal for VeraOwedJournal {
             None => Submission::Refused { reason },
         }
     }
-
-    fn applied(&self, change: &OwedChange) {
-        self.acp.invalidate_cached_access(&change.tuple.policy_id);
-    }
 }

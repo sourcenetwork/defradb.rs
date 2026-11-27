@@ -38,11 +38,12 @@ impl Op for NewEncryptedIndex {
     fn run(&self, state: &State) -> Result<Value, Failure> {
         let identity = self.common.client_identity(Self::name())?;
         state
-            .block_on(state.node_on(self.common.node())?.add_encrypted_index_as(
-                &state.context_as(self.txn, identity),
-                &self.collection,
-                &self.field_name,
-            ))
+            .block_on(
+                state
+                    .scope_as(self.txn, identity)
+                    .on(&*state.node_on(self.common.node())?)
+                    .add_encrypted_index(&self.collection, &self.field_name),
+            )
             .map(|index| json!(index))
             .map_err(|e| Failure::operation(e.to_string()))
     }

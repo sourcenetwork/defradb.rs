@@ -32,7 +32,7 @@ fn an_add_view_that_fails_part_way_leaves_nothing_in_the_transaction() {
         let context = RequestContext::default();
         let registry = DbTransactionRegistry::new(Arc::clone(&db));
         let handle = registry.begin_as(&context, false).await.unwrap();
-        let collections = query::parse_sdl_with_known_types(
+        let collections = query::parse_sdl_with_known_collections(
             "type First { name: String } type Second { name: String }",
             Default::default(),
         )

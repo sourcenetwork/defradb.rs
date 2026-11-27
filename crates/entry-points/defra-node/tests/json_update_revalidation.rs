@@ -6,8 +6,7 @@ use serde_json::{json, Value};
 fn retained_json_survives_unrelated_updates() -> Result<()> {
     workers::block_on(async {
     let node = Node::builder().build().await?;
-    node.add_collection(&defra_core::RequestContext::ambient(),
-        "type JsonProbe { key: String @index(unique: true) payload: JSON sibling: String }",
+    node.add_collection("type JsonProbe { key: String @index(unique: true) payload: JSON sibling: String }",
     )
     .await?;
     let payloads = [

@@ -16,6 +16,7 @@ use storage::corekv::{OnCommit, Store};
 use crate::database::spawn::spawn_task;
 use crate::error::{Error, Result};
 use crate::index::create::IndexCreation;
+use crate::index::duplicate::refuse_duplicate_index;
 use crate::txn::DbTxn;
 use crate::DB;
 
@@ -38,6 +39,7 @@ where
             .await?
             .ok_or_else(|| Error::CollectionNotFound(collection_name.to_string()))?;
         txn.validate_collection_for_write(&collection).await?;
+        refuse_duplicate_index(collection.schema(), name.unwrap_or(""), &fields, kind)?;
         let index = self
             .stage_index_definition(
                 txn,

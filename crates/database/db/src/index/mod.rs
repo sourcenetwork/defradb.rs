@@ -5,6 +5,7 @@ pub mod build_gate;
 pub mod create;
 pub mod deferred;
 pub mod drop;
+mod duplicate;
 pub mod error;
 mod in_txn;
 mod listing;

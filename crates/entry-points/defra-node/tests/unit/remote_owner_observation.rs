@@ -9,9 +9,7 @@ use std::time::Duration;
 
 use identity::Did;
 
-use super::staged_relationship_tests::{
-    actor, node_identity, provision, start, Remote, OWNER, READER,
-};
+use super::staged_relationship_tests::{node_identity, provision, start, Remote, OWNER, READER};
 use super::Node;
 
 /// A node on `remote` with a policy-bound collection.
@@ -49,12 +47,8 @@ async fn owner_as(
     doc: &str,
 ) -> Option<String> {
     let rows = node
-        .observe_document_owners_in_txn(
-            txn,
-            "Record",
-            &[doc.to_owned()],
-            Some(Did::new(asker).unwrap()),
-        )
+        .with_transaction(txn.parse::<defra_core::TxnId>().unwrap())
+        .observe_document_owners("Record", &[doc.to_owned()], Some(Did::new(asker).unwrap()))
         .await
         .unwrap();
     assert!(rows[0].visible, "the asker reads its document");
@@ -98,18 +92,44 @@ fn an_owner_lookup_in_a_transaction_answers_registered_created_and_owed_document
             "the registration is owed"
         );
 
-        let txn = node.begin_transaction(false).await.unwrap();
-        let fresh = created(node.execute_request_in_txn(create("fresh"), &txn).await);
+        let txn = node.new_txn(false).await.map(|txn| txn.detach()).unwrap();
+        let fresh = created(
+            node.with_transaction(txn)
+                .execute_request(create("fresh"))
+                .await,
+        );
         assert_eq!(
-            owner_in(&node, &txn, &registered).await.as_deref(),
+            owner_in(
+                &node,
+                &query::TransactionHandle::new(txn.to_string()),
+                &registered
+            )
+            .await
+            .as_deref(),
             Some(OWNER)
         );
-        assert_eq!(owner_in(&node, &txn, &fresh).await.as_deref(), Some(OWNER));
         assert_eq!(
-            owner_as(&node, &txn, READER, &owed).await.as_deref(),
+            owner_in(
+                &node,
+                &query::TransactionHandle::new(txn.to_string()),
+                &fresh
+            )
+            .await
+            .as_deref(),
+            Some(OWNER)
+        );
+        assert_eq!(
+            owner_as(
+                &node,
+                &query::TransactionHandle::new(txn.to_string()),
+                READER,
+                &owed
+            )
+            .await
+            .as_deref(),
             Some(READER)
         );
-        node.commit_transaction(&txn).await.unwrap();
+        node.with_transaction(txn).commit().await.unwrap();
         assert!(
             remote.owners.get(&owed).is_none(),
             "still owed at the commit"
@@ -126,21 +146,21 @@ fn an_owner_that_changed_before_the_commit_conflicts_and_commits_nothing() {
         let remote = Remote::new();
         let node = node(&remote).await;
         let doc = created(node.execute_request(create("moved")).await);
-        let txn = node.begin_transaction(false).await.unwrap();
-        assert_eq!(owner_in(&node, &txn, &doc).await.as_deref(), Some(OWNER));
-        created(node.execute_request_in_txn(create("decided"), &txn).await);
+        let txn = node.new_txn(false).await.map(|txn| txn.detach()).unwrap();
+        assert_eq!(owner_in(&node, &query::TransactionHandle::new(txn.to_string()), &doc).await.as_deref(), Some(OWNER));
+        created(node.with_transaction(txn).execute_request(create("decided")).await);
         // A transfer finalized on the provider, by somebody else.
         remote.owners.insert(doc.clone(), READER.to_owned());
-        let error = node.commit_transaction(&txn).await.unwrap_err();
+        let error = node.with_transaction(txn).commit().await.unwrap_err();
         assert!(
-            matches!(error, query::TransactionError::Conflict(ref message) if message.contains("owner changed")),
+            matches!(error, crate::Error::TransactionConflict(query::TransactionError::Conflict(ref message)) if message.contains("owner changed")),
             "{error:?}"
         );
         assert!(error.is_retryable());
         // The moved document is the other owner's now, and the one the
         // transaction wrote did not land.
         assert_eq!(records(&node).await, 0);
-        assert!(node.commit_transaction(&txn).await.is_err(), "the transaction is gone");
+        assert!(node.with_transaction(txn).commit().await.is_err(), "the transaction is gone");
         node.shutdown().await.unwrap();
     })
     .unwrap();
@@ -153,11 +173,20 @@ fn an_unreachable_provider_refuses_the_commit_and_keeps_the_transaction() {
         let remote = Remote::new();
         let node = node(&remote).await;
         let doc = created(node.execute_request(create("kept")).await);
-        let txn = node.begin_transaction(false).await.unwrap();
-        assert_eq!(owner_in(&node, &txn, &doc).await.as_deref(), Some(OWNER));
-        created(node.execute_request_in_txn(create("later"), &txn).await);
+        let txn = node.new_txn(false).await.map(|txn| txn.detach()).unwrap();
+        assert_eq!(
+            owner_in(&node, &query::TransactionHandle::new(txn.to_string()), &doc)
+                .await
+                .as_deref(),
+            Some(OWNER)
+        );
+        created(
+            node.with_transaction(txn)
+                .execute_request(create("later"))
+                .await,
+        );
         remote.down.store(true, Ordering::SeqCst);
-        let error = node.commit_transaction(&txn).await.unwrap_err();
+        let error = node.with_transaction(txn).commit().await.unwrap_err();
         assert!(error.is_retryable(), "{error:?}");
         assert!(
             error.to_string().contains("nothing was committed"),
@@ -165,7 +194,7 @@ fn an_unreachable_provider_refuses_the_commit_and_keeps_the_transaction() {
         );
         remote.down.store(false, Ordering::SeqCst);
         assert_eq!(records(&node).await, 1);
-        node.commit_transaction(&txn).await.unwrap();
+        node.with_transaction(txn).commit().await.unwrap();
         assert_eq!(records(&node).await, 2);
         node.shutdown().await.unwrap();
     })
@@ -179,23 +208,41 @@ fn a_settle_of_the_owed_registration_conflicts_a_decision_made_on_its_creator() 
         let remote = Remote::new();
         let node = node(&remote).await;
         remote.down.store(true, Ordering::SeqCst);
-        let earlier = node.begin_transaction(false).await.unwrap();
-        let owed = created(node.execute_request_in_txn(create("owed"), &earlier).await);
-        node.commit_transaction(&earlier).await.unwrap();
+        let earlier = node.new_txn(false).await.map(|txn| txn.detach()).unwrap();
+        let owed = created(
+            node.with_transaction(earlier)
+                .execute_request(create("owed"))
+                .await,
+        );
+        node.with_transaction(earlier).commit().await.unwrap();
 
-        let txn = node.begin_transaction(false).await.unwrap();
-        assert_eq!(owner_in(&node, &txn, &owed).await.as_deref(), Some(OWNER));
-        created(node.execute_request_in_txn(create("decided"), &txn).await);
+        let txn = node.new_txn(false).await.map(|txn| txn.detach()).unwrap();
+        assert_eq!(
+            owner_in(
+                &node,
+                &query::TransactionHandle::new(txn.to_string()),
+                &owed
+            )
+            .await
+            .as_deref(),
+            Some(OWNER)
+        );
+        created(
+            node.with_transaction(txn)
+                .execute_request(create("decided"))
+                .await,
+        );
         remote.down.store(false, Ordering::SeqCst);
         let settled = node
-            .await_owed_acp_as(&actor(OWNER), &earlier, Duration::from_secs(20))
+            .with_identity(identity::Did::new(OWNER).unwrap())
+            .await_owed_acp(earlier, Duration::from_secs(20))
             .await
             .unwrap();
         assert!(matches!(settled, acp::OwedWait::Settled), "{settled:?}");
         assert_eq!(remote.owners.get(&owed).as_deref(), Some(OWNER));
-        let error = node.commit_transaction(&txn).await.unwrap_err();
+        let error = node.with_transaction(txn).commit().await.unwrap_err();
         assert!(
-            matches!(error, query::TransactionError::Conflict(_)),
+            matches!(error, crate::Error::TransactionConflict(_)),
             "{error:?}"
         );
         node.shutdown().await.unwrap();
@@ -209,10 +256,14 @@ fn a_transaction_that_asked_nobody_commits_without_a_round() {
         let _serial = super::tests::SIGNING_STORE_GUARD.lock().await;
         let remote = Remote::new();
         let node = node(&remote).await;
-        let txn = node.begin_transaction(false).await.unwrap();
-        created(node.execute_request_in_txn(create("plain"), &txn).await);
+        let txn = node.new_txn(false).await.map(|txn| txn.detach()).unwrap();
+        created(
+            node.with_transaction(txn)
+                .execute_request(create("plain"))
+                .await,
+        );
         remote.down.store(true, Ordering::SeqCst);
-        node.commit_transaction(&txn).await.unwrap();
+        node.with_transaction(txn).commit().await.unwrap();
         assert_eq!(records(&node).await, 1);
         node.shutdown().await.unwrap();
     })
@@ -221,9 +272,10 @@ fn a_transaction_that_asked_nobody_commits_without_a_round() {
 
 /// Holds the next provider owner read and drives `commit` until that read
 /// waits: the commit, paused in its confirmation round.
-async fn hold_the_round<'a, F>(remote: &Arc<Remote>, commit: F) -> std::pin::Pin<Box<F>>
+async fn hold_the_round<'a, F, E>(remote: &Arc<Remote>, commit: F) -> std::pin::Pin<Box<F>>
 where
-    F: std::future::Future<Output = Result<(), query::TransactionError>> + 'a,
+    F: std::future::Future<Output = Result<(), E>> + 'a,
+    E: std::fmt::Debug,
 {
     remote.hold_owner_read.store(true, Ordering::SeqCst);
     let mut commit = Box::pin(commit);
@@ -241,23 +293,31 @@ fn a_request_made_during_the_confirmation_round_finds_no_transaction() {
         let remote = Remote::new();
         let node = node(&remote).await;
         let doc = created(node.execute_request(create("kept")).await);
-        let txn = node.begin_transaction(false).await.unwrap();
-        assert_eq!(owner_in(&node, &txn, &doc).await.as_deref(), Some(OWNER));
-        let commit = hold_the_round(&remote, node.commit_transaction(&txn)).await;
-        let late = node.execute_request_in_txn(create("late"), &txn).await;
+        let txn = node.new_txn(false).await.map(|txn| txn.detach()).unwrap();
+        assert_eq!(
+            owner_in(&node, &query::TransactionHandle::new(txn.to_string()), &doc)
+                .await
+                .as_deref(),
+            Some(OWNER)
+        );
+        let commit = hold_the_round(&remote, node.with_transaction(txn).commit()).await;
+        let late = node
+            .with_transaction(txn)
+            .execute_request(create("late"))
+            .await;
         assert!(
             late.has_errors(),
             "a write after the commit began joined it"
         );
         assert!(
-            node.observe_document_owners_in_txn(
-                &txn,
-                "Record",
-                std::slice::from_ref(&doc),
-                Some(Did::new(OWNER).unwrap())
-            )
-            .await
-            .is_err(),
+            node.with_transaction(txn)
+                .observe_document_owners(
+                    "Record",
+                    std::slice::from_ref(&doc),
+                    Some(Did::new(OWNER).unwrap())
+                )
+                .await
+                .is_err(),
             "a lookup after the commit began joined it"
         );
         remote.owner_reads_released.set();
@@ -277,17 +337,33 @@ fn drop_the_round_then(commit_again: bool) {
         let remote = Remote::new();
         let node = node(&remote).await;
         let doc = created(node.execute_request(create("kept")).await);
-        let txn = node.begin_transaction(false).await.unwrap();
-        assert_eq!(owner_in(&node, &txn, &doc).await.as_deref(), Some(OWNER));
-        created(node.execute_request_in_txn(create("pending"), &txn).await);
+        let txn = node.new_txn(false).await.map(|txn| txn.detach()).unwrap();
+        assert_eq!(
+            owner_in(&node, &query::TransactionHandle::new(txn.to_string()), &doc)
+                .await
+                .as_deref(),
+            Some(OWNER)
+        );
+        created(
+            node.with_transaction(txn)
+                .execute_request(create("pending"))
+                .await,
+        );
         let context = node.node_context();
-        drop(hold_the_round(&remote, node.runner().commit_txn_as(&context, &txn)).await);
+        drop(
+            hold_the_round(
+                &remote,
+                node.runner()
+                    .commit_txn_as(&context, &query::TransactionHandle::new(txn.to_string())),
+            )
+            .await,
+        );
         remote.owner_reads_released.set();
         if commit_again {
-            node.commit_transaction(&txn).await.unwrap();
+            node.with_transaction(txn).commit().await.unwrap();
             assert_eq!(records(&node).await, 2);
         } else {
-            node.discard_transaction(&txn).await.unwrap();
+            node.with_transaction(txn).discard().await.unwrap();
             assert_eq!(records(&node).await, 1);
         }
         node.shutdown().await.unwrap();
@@ -312,18 +388,27 @@ fn a_guard_dropped_during_the_round_discards_its_transaction() {
         let remote = Remote::new();
         let node = node(&remote).await;
         let doc = created(node.execute_request(create("kept")).await);
-        let handle = node.begin_transaction(false).await.unwrap();
+        let handle = node.new_txn(false).await.map(|txn| txn.detach()).unwrap();
         let guard = query::TransactionGuard::adopt(
             node.runner().as_ref(),
             node.node_context(),
-            handle.clone(),
+            query::TransactionHandle::new(handle.clone().to_string()),
         );
-        assert_eq!(owner_in(&node, &handle, &doc).await.as_deref(), Some(OWNER));
+        assert_eq!(
+            owner_in(
+                &node,
+                &query::TransactionHandle::new(handle.to_string()),
+                &doc
+            )
+            .await
+            .as_deref(),
+            Some(OWNER)
+        );
         created(guard.execute(create("pending")).await);
         drop(hold_the_round(&remote, guard.commit()).await);
         remote.owner_reads_released.set();
         assert!(
-            node.commit_transaction(&handle).await.is_err(),
+            node.with_transaction(handle).commit().await.is_err(),
             "the guard let it go"
         );
         assert_eq!(records(&node).await, 1);

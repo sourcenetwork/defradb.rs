@@ -245,6 +245,15 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
         if let Some(error) = definition_chunks::chunk_settings_error(previous.as_ref(), &schema) {
             return Ok(definition_chunks::reject_chunk_settings(&schema, &error));
         }
+        if let Err(error) = schema::check_synced_policy_bindings(&schema) {
+            tracing::warn!(
+                collection_name = %schema.name,
+                version_id = %schema.version_id,
+                %error,
+                "Synced collection definition rejected: a @policy(relation:) binding breaks the schema rules"
+            );
+            return Ok(MergeOutcome::rejected(error.to_string()));
+        }
 
         // A version this node already holds is not rebuilt. The local record
         // commits to at least what the block carries, and holds what the
@@ -443,8 +452,10 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
         });
 
         let mut field = FieldDescription::new(field_id.to_string(), name, kind, crdt_type);
-        // Immutability is in the field's own identity, so it round-trips.
+        // Immutability and a policy relation binding are in the field's own
+        // identity, so they round-trip.
         field.immutable = payload.immutable;
+        field.policy_relation = payload.policy_relation.clone();
         Ok(field)
     }
 }

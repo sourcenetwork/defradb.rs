@@ -95,4 +95,27 @@ theorem continuation_immediately_due (now : Nat) : continuationDue now ≤ now :
   -- Scheduling local work keeps the current instant instead of adding a delay.
   exact Nat.le_refl now
 
+-- An admission attempt reads at most `cap` index entries (Rust: live_roots).
+def visible (entries cap : Nat) : Nat := min entries cap
+
+-- It admits a new root only when the entries it read leave room.
+def admits (entries cap : Nat) : Bool := decide (visible entries cap < cap)
+
+-- An index at or over capacity never admits, however many entries it holds.
+theorem full_index_never_admits (entries cap : Nat) (h : cap ≤ entries) :
+    admits entries cap = false := by
+  -- The capped read equals the capacity, which is not below itself.
+  simp [admits, visible, Nat.min_eq_right h]
+
+-- Below capacity the capped read sees every entry, so it admits.
+theorem room_admits (entries cap : Nat) (h : entries < cap) :
+    admits entries cap = true := by
+  -- The capped read is the whole index, which is below the capacity.
+  simp [admits, visible, Nat.min_eq_left (Nat.le_of_lt h), h]
+
+-- Reclaiming one entry of an over-full index moves it one step toward room.
+theorem reclaim_shrinks (entries : Nat) (h : 0 < entries) : entries - 1 < entries := by
+  -- Removing an entry from a non-empty index leaves fewer entries.
+  exact Nat.sub_lt h Nat.one_pos
+
 end HistoryTurns

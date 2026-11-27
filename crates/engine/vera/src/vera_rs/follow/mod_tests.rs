@@ -31,6 +31,7 @@ fn lost_grant(add: bool) -> Lost {
 
 fn lost_registration(object: &str) -> Lost {
     Lost::Registration {
+        relationships: Vec::new(),
         policy_id: POLICY.into(),
         resource: "users".into(),
         object: object.into(),

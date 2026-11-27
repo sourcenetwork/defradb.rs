@@ -163,6 +163,7 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
                                 match find_all_missing_links(
                                     self.manager.blockstore().as_ref(),
                                     &data,
+                                    &self.manager.diagnostics(),
                                 )
                                 .await
                                 {

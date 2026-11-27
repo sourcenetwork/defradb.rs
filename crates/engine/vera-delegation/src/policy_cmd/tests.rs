@@ -37,8 +37,9 @@ impl Actors {
 }
 
 /// One command, the chain value it must be sent as, and the bytes and
-/// request digest the hand-written encoding produced for it before the
-/// commands were typed.
+/// request digest it is sent with, pinned at vera.rs's acp-rs relationship
+/// encoding (the hand-written encoding's bytes held until vera.rs moved to
+/// acp-rs; a registration without relationships keeps them).
 struct Case<'a> {
     command: PolicyCommand<'a>,
     chain: PolicyCmd,
@@ -61,7 +62,17 @@ fn structured<'a>(
 }
 
 fn entity(did: &str) -> Subject {
-    Subject::Entity(did.parse().expect("a DID"))
+    relationship_values::actor_subject(&vera_identity::Did::new(did).expect("a DID"))
+        .expect("an actor")
+}
+
+/// What a document carries through one `@policy(relation:)` field.
+fn derived() -> &'static [acp::DerivedRelationship] {
+    Box::leak(Box::new([acp::DerivedRelationship {
+        relation: "author".into(),
+        target_resource: "authors".into(),
+        target_doc_id: "bae-2".into(),
+    }]))
 }
 
 fn cases(actors: &Actors) -> Vec<Case<'_>> {
@@ -83,10 +94,11 @@ fn cases(actors: &Actors) -> Vec<Case<'_>> {
             subject,
         })
     };
-    let relationship = |subject| Relationship::new("users", "bae-1", "reader", subject);
+    let relationship =
+        |subject| relationship_values::relationship("users", "bae-1", "reader", subject);
     let actor = PolicySubject::Actor;
-    let team = || Subject::entity_set("groups", "team", "");
-    let members = || Subject::entity_set("groups", "team", "member");
+    let team = || relationship_values::object_subject("groups", "team");
+    let members = || relationship_values::actor_set("groups", "team", "member");
     vec![
         Case {
             command: command(PolicyAction::RegisterObject),
@@ -95,136 +107,150 @@ fn cases(actors: &Actors) -> Vec<Case<'_>> {
             digest: "11d65e11a72dac58353e23ae8e0c47b62b278a07cfc9f14b6340d9494c976fcb",
         },
         Case {
+            command: command(PolicyAction::register(derived())),
+            chain: PolicyCmd::RegisterObjectWithRelationships {
+                object: object("users", "bae-1"),
+                relationships: vec![relationship_values::relationship(
+                    "users",
+                    "bae-1",
+                    "author",
+                    relationship_values::object_subject("authors", "bae-2"),
+                )],
+            },
+            golden: r#"{"RegisterObjectWithRelationships":{"object":{"resource":"users","id":"bae-1"},"relationships":[{"object":{"resource":"users","id":"bae-1"},"relation":"author","subject":{"object":{"resource":"authors","id":"bae-2"}}}]}}"#,
+            digest: "8a1af91a4cddec6cb84c4b0644db93794d749644e439f60720b81f621d61585a",
+        },
+        Case {
             command: set(actor(&actors.ed25519)),
             chain: PolicyCmd::SetRelationship(relationship(entity(ED25519))),
-            golden: r#"{"SetRelationship":{"resource":"users","object_id":"bae-1","relation":"reader","subject":{"Entity":"did:key:z6MkiTBz1ymuepAQ4HEHYSF1H8quG5GLVVQR3djdX3mDooWp"}}}"#,
-            digest: "19620516fcd142e9acbbff7b942af36457918ff46509bbaf82b64373b0d1601d",
+            golden: r#"{"SetRelationship":{"object":{"resource":"users","id":"bae-1"},"relation":"reader","subject":{"actor":"did:key:z6MkiTBz1ymuepAQ4HEHYSF1H8quG5GLVVQR3djdX3mDooWp"}}}"#,
+            digest: "ac306441930a9c934839ad8247d553a14014cb5928ffac84a4d38d89e36410de",
         },
         Case {
             command: delete(actor(&actors.ed25519)),
             chain: PolicyCmd::DeleteRelationship(relationship(entity(ED25519))),
-            golden: r#"{"DeleteRelationship":{"resource":"users","object_id":"bae-1","relation":"reader","subject":{"Entity":"did:key:z6MkiTBz1ymuepAQ4HEHYSF1H8quG5GLVVQR3djdX3mDooWp"}}}"#,
-            digest: "3adecb653d046da73c1afd45ccb4f573bda4eb6dd9013d926e2aac70115ed235",
+            golden: r#"{"DeleteRelationship":{"object":{"resource":"users","id":"bae-1"},"relation":"reader","subject":{"actor":"did:key:z6MkiTBz1ymuepAQ4HEHYSF1H8quG5GLVVQR3djdX3mDooWp"}}}"#,
+            digest: "78241797dcc9992135ed13d66960a739d355d9f8557092a54a97e585b40bcc2e",
         },
         Case {
             command: set(actor(&actors.secp256k1_compressed)),
             chain: PolicyCmd::SetRelationship(relationship(entity(SECP256K1_UNCOMPRESSED))),
-            golden: r#"{"SetRelationship":{"resource":"users","object_id":"bae-1","relation":"reader","subject":{"Entity":"did:key:z7r8oqKHB4AwqvHNsPgHdGic7GYAWgVjrWsKwwazb9epJXZ3wBwVMJd5xrWTvrmDBFLJ1RZAx13earK9RyJzj8nqWbvG6"}}}"#,
-            digest: "d93de0de335901ac79fc598d87dfd70f86ffabd5d5273280fc1baf84d6e5d1b2",
+            golden: r#"{"SetRelationship":{"object":{"resource":"users","id":"bae-1"},"relation":"reader","subject":{"actor":"did:key:z7r8oqKHB4AwqvHNsPgHdGic7GYAWgVjrWsKwwazb9epJXZ3wBwVMJd5xrWTvrmDBFLJ1RZAx13earK9RyJzj8nqWbvG6"}}}"#,
+            digest: "4b4ab12bcf3f63cee2c05d04b7831cff9024f36a37ae77b151f3e51f60c249ab",
         },
         Case {
             command: delete(actor(&actors.secp256k1_compressed)),
             chain: PolicyCmd::DeleteRelationship(relationship(entity(SECP256K1_UNCOMPRESSED))),
-            golden: r#"{"DeleteRelationship":{"resource":"users","object_id":"bae-1","relation":"reader","subject":{"Entity":"did:key:z7r8oqKHB4AwqvHNsPgHdGic7GYAWgVjrWsKwwazb9epJXZ3wBwVMJd5xrWTvrmDBFLJ1RZAx13earK9RyJzj8nqWbvG6"}}}"#,
-            digest: "dc99916f8664eb7f669be1d168582f27cc0ccba850c92c1da066c766af8758ac",
+            golden: r#"{"DeleteRelationship":{"object":{"resource":"users","id":"bae-1"},"relation":"reader","subject":{"actor":"did:key:z7r8oqKHB4AwqvHNsPgHdGic7GYAWgVjrWsKwwazb9epJXZ3wBwVMJd5xrWTvrmDBFLJ1RZAx13earK9RyJzj8nqWbvG6"}}}"#,
+            digest: "d9140b7c7f6e42074d71efa48a7fcd009214cdcb0a8027ca76d25adce43f2d1d",
         },
         Case {
             command: set(actor(&actors.secp256k1_uncompressed)),
             chain: PolicyCmd::SetRelationship(relationship(entity(SECP256K1_UNCOMPRESSED))),
-            golden: r#"{"SetRelationship":{"resource":"users","object_id":"bae-1","relation":"reader","subject":{"Entity":"did:key:z7r8oqKHB4AwqvHNsPgHdGic7GYAWgVjrWsKwwazb9epJXZ3wBwVMJd5xrWTvrmDBFLJ1RZAx13earK9RyJzj8nqWbvG6"}}}"#,
-            digest: "d93de0de335901ac79fc598d87dfd70f86ffabd5d5273280fc1baf84d6e5d1b2",
+            golden: r#"{"SetRelationship":{"object":{"resource":"users","id":"bae-1"},"relation":"reader","subject":{"actor":"did:key:z7r8oqKHB4AwqvHNsPgHdGic7GYAWgVjrWsKwwazb9epJXZ3wBwVMJd5xrWTvrmDBFLJ1RZAx13earK9RyJzj8nqWbvG6"}}}"#,
+            digest: "4b4ab12bcf3f63cee2c05d04b7831cff9024f36a37ae77b151f3e51f60c249ab",
         },
         Case {
             command: delete(actor(&actors.secp256k1_uncompressed)),
             chain: PolicyCmd::DeleteRelationship(relationship(entity(SECP256K1_UNCOMPRESSED))),
-            golden: r#"{"DeleteRelationship":{"resource":"users","object_id":"bae-1","relation":"reader","subject":{"Entity":"did:key:z7r8oqKHB4AwqvHNsPgHdGic7GYAWgVjrWsKwwazb9epJXZ3wBwVMJd5xrWTvrmDBFLJ1RZAx13earK9RyJzj8nqWbvG6"}}}"#,
-            digest: "dc99916f8664eb7f669be1d168582f27cc0ccba850c92c1da066c766af8758ac",
+            golden: r#"{"DeleteRelationship":{"object":{"resource":"users","id":"bae-1"},"relation":"reader","subject":{"actor":"did:key:z7r8oqKHB4AwqvHNsPgHdGic7GYAWgVjrWsKwwazb9epJXZ3wBwVMJd5xrWTvrmDBFLJ1RZAx13earK9RyJzj8nqWbvG6"}}}"#,
+            digest: "d9140b7c7f6e42074d71efa48a7fcd009214cdcb0a8027ca76d25adce43f2d1d",
         },
         Case {
             command: set(actor(&actors.p256_uncompressed)),
             chain: PolicyCmd::SetRelationship(relationship(entity(P256_COMPRESSED))),
-            golden: r#"{"SetRelationship":{"resource":"users","object_id":"bae-1","relation":"reader","subject":{"Entity":"did:key:zDnaerx9CtbPJ1q36T5Ln5wYt3MQYeGRG5ehnPAmxcf5mDZpv"}}}"#,
-            digest: "3f438f217f9c3cf4596d8e942f8992da55f52f8da663edec6fa6a605fcf36c59",
+            golden: r#"{"SetRelationship":{"object":{"resource":"users","id":"bae-1"},"relation":"reader","subject":{"actor":"did:key:zDnaerx9CtbPJ1q36T5Ln5wYt3MQYeGRG5ehnPAmxcf5mDZpv"}}}"#,
+            digest: "52d94456a03b89863ec2180a2936915085e5d7d580b68b38ebb8412065779430",
         },
         Case {
             command: delete(actor(&actors.p256_uncompressed)),
             chain: PolicyCmd::DeleteRelationship(relationship(entity(P256_COMPRESSED))),
-            golden: r#"{"DeleteRelationship":{"resource":"users","object_id":"bae-1","relation":"reader","subject":{"Entity":"did:key:zDnaerx9CtbPJ1q36T5Ln5wYt3MQYeGRG5ehnPAmxcf5mDZpv"}}}"#,
-            digest: "3869b2742924f225c00fb0c4b6947e462fec136123968c8b8c85ae80014daa3d",
+            golden: r#"{"DeleteRelationship":{"object":{"resource":"users","id":"bae-1"},"relation":"reader","subject":{"actor":"did:key:zDnaerx9CtbPJ1q36T5Ln5wYt3MQYeGRG5ehnPAmxcf5mDZpv"}}}"#,
+            digest: "88cd9616feb3456ce76b83eef5a6a2bbbe804422ab075352a945ab122b0af104",
         },
         Case {
             command: set(actor(&actors.p256_compressed)),
             chain: PolicyCmd::SetRelationship(relationship(entity(P256_COMPRESSED))),
-            golden: r#"{"SetRelationship":{"resource":"users","object_id":"bae-1","relation":"reader","subject":{"Entity":"did:key:zDnaerx9CtbPJ1q36T5Ln5wYt3MQYeGRG5ehnPAmxcf5mDZpv"}}}"#,
-            digest: "3f438f217f9c3cf4596d8e942f8992da55f52f8da663edec6fa6a605fcf36c59",
+            golden: r#"{"SetRelationship":{"object":{"resource":"users","id":"bae-1"},"relation":"reader","subject":{"actor":"did:key:zDnaerx9CtbPJ1q36T5Ln5wYt3MQYeGRG5ehnPAmxcf5mDZpv"}}}"#,
+            digest: "52d94456a03b89863ec2180a2936915085e5d7d580b68b38ebb8412065779430",
         },
         Case {
             command: delete(actor(&actors.p256_compressed)),
             chain: PolicyCmd::DeleteRelationship(relationship(entity(P256_COMPRESSED))),
-            golden: r#"{"DeleteRelationship":{"resource":"users","object_id":"bae-1","relation":"reader","subject":{"Entity":"did:key:zDnaerx9CtbPJ1q36T5Ln5wYt3MQYeGRG5ehnPAmxcf5mDZpv"}}}"#,
-            digest: "3869b2742924f225c00fb0c4b6947e462fec136123968c8b8c85ae80014daa3d",
+            golden: r#"{"DeleteRelationship":{"object":{"resource":"users","id":"bae-1"},"relation":"reader","subject":{"actor":"did:key:zDnaerx9CtbPJ1q36T5Ln5wYt3MQYeGRG5ehnPAmxcf5mDZpv"}}}"#,
+            digest: "88cd9616feb3456ce76b83eef5a6a2bbbe804422ab075352a945ab122b0af104",
         },
         Case {
             command: set(actor(&actors.all)),
-            chain: PolicyCmd::SetRelationship(relationship(Subject::Wildcard)),
-            golden: r#"{"SetRelationship":{"resource":"users","object_id":"bae-1","relation":"reader","subject":"Wildcard"}}"#,
-            digest: "7875ab70057ff675336febfabf741ca2270b27d7ec526125a65a5a0c1ee628a5",
+            chain: PolicyCmd::SetRelationship(relationship(Subject::AllActors)),
+            golden: r#"{"SetRelationship":{"object":{"resource":"users","id":"bae-1"},"relation":"reader","subject":"all_actors"}}"#,
+            digest: "707e4b33dcb4a5975775a771cd3cb36c00e8e865173cb034f2235bc597b5cae0",
         },
         Case {
             command: delete(actor(&actors.all)),
-            chain: PolicyCmd::DeleteRelationship(relationship(Subject::Wildcard)),
-            golden: r#"{"DeleteRelationship":{"resource":"users","object_id":"bae-1","relation":"reader","subject":"Wildcard"}}"#,
-            digest: "b5c8b69124c9b0da7aa2b5f168fb5f1e24bc68917ae4454821e8642f2a0789e7",
+            chain: PolicyCmd::DeleteRelationship(relationship(Subject::AllActors)),
+            golden: r#"{"DeleteRelationship":{"object":{"resource":"users","id":"bae-1"},"relation":"reader","subject":"all_actors"}}"#,
+            digest: "0ab1ebfc2b6e0eefcab16605141810ebe5fcd410306028835b92d4439ae97c8d",
         },
         Case {
             command: set(structured(0, "", SECP256K1_COMPRESSED, "")),
             chain: PolicyCmd::SetRelationship(relationship(entity(SECP256K1_UNCOMPRESSED))),
-            golden: r#"{"SetRelationship":{"resource":"users","object_id":"bae-1","relation":"reader","subject":{"Entity":"did:key:z7r8oqKHB4AwqvHNsPgHdGic7GYAWgVjrWsKwwazb9epJXZ3wBwVMJd5xrWTvrmDBFLJ1RZAx13earK9RyJzj8nqWbvG6"}}}"#,
-            digest: "d93de0de335901ac79fc598d87dfd70f86ffabd5d5273280fc1baf84d6e5d1b2",
+            golden: r#"{"SetRelationship":{"object":{"resource":"users","id":"bae-1"},"relation":"reader","subject":{"actor":"did:key:z7r8oqKHB4AwqvHNsPgHdGic7GYAWgVjrWsKwwazb9epJXZ3wBwVMJd5xrWTvrmDBFLJ1RZAx13earK9RyJzj8nqWbvG6"}}}"#,
+            digest: "4b4ab12bcf3f63cee2c05d04b7831cff9024f36a37ae77b151f3e51f60c249ab",
         },
         Case {
             command: delete(structured(0, "", SECP256K1_COMPRESSED, "")),
             chain: PolicyCmd::DeleteRelationship(relationship(entity(SECP256K1_UNCOMPRESSED))),
-            golden: r#"{"DeleteRelationship":{"resource":"users","object_id":"bae-1","relation":"reader","subject":{"Entity":"did:key:z7r8oqKHB4AwqvHNsPgHdGic7GYAWgVjrWsKwwazb9epJXZ3wBwVMJd5xrWTvrmDBFLJ1RZAx13earK9RyJzj8nqWbvG6"}}}"#,
-            digest: "dc99916f8664eb7f669be1d168582f27cc0ccba850c92c1da066c766af8758ac",
+            golden: r#"{"DeleteRelationship":{"object":{"resource":"users","id":"bae-1"},"relation":"reader","subject":{"actor":"did:key:z7r8oqKHB4AwqvHNsPgHdGic7GYAWgVjrWsKwwazb9epJXZ3wBwVMJd5xrWTvrmDBFLJ1RZAx13earK9RyJzj8nqWbvG6"}}}"#,
+            digest: "d9140b7c7f6e42074d71efa48a7fcd009214cdcb0a8027ca76d25adce43f2d1d",
         },
         Case {
             command: set(structured(0, "", P256_UNCOMPRESSED, "")),
             chain: PolicyCmd::SetRelationship(relationship(entity(P256_COMPRESSED))),
-            golden: r#"{"SetRelationship":{"resource":"users","object_id":"bae-1","relation":"reader","subject":{"Entity":"did:key:zDnaerx9CtbPJ1q36T5Ln5wYt3MQYeGRG5ehnPAmxcf5mDZpv"}}}"#,
-            digest: "3f438f217f9c3cf4596d8e942f8992da55f52f8da663edec6fa6a605fcf36c59",
+            golden: r#"{"SetRelationship":{"object":{"resource":"users","id":"bae-1"},"relation":"reader","subject":{"actor":"did:key:zDnaerx9CtbPJ1q36T5Ln5wYt3MQYeGRG5ehnPAmxcf5mDZpv"}}}"#,
+            digest: "52d94456a03b89863ec2180a2936915085e5d7d580b68b38ebb8412065779430",
         },
         Case {
             command: delete(structured(0, "", P256_UNCOMPRESSED, "")),
             chain: PolicyCmd::DeleteRelationship(relationship(entity(P256_COMPRESSED))),
-            golden: r#"{"DeleteRelationship":{"resource":"users","object_id":"bae-1","relation":"reader","subject":{"Entity":"did:key:zDnaerx9CtbPJ1q36T5Ln5wYt3MQYeGRG5ehnPAmxcf5mDZpv"}}}"#,
-            digest: "3869b2742924f225c00fb0c4b6947e462fec136123968c8b8c85ae80014daa3d",
+            golden: r#"{"DeleteRelationship":{"object":{"resource":"users","id":"bae-1"},"relation":"reader","subject":{"actor":"did:key:zDnaerx9CtbPJ1q36T5Ln5wYt3MQYeGRG5ehnPAmxcf5mDZpv"}}}"#,
+            digest: "88cd9616feb3456ce76b83eef5a6a2bbbe804422ab075352a945ab122b0af104",
         },
         Case {
             command: set(structured(1, "", "", "")),
-            chain: PolicyCmd::SetRelationship(relationship(Subject::Wildcard)),
-            golden: r#"{"SetRelationship":{"resource":"users","object_id":"bae-1","relation":"reader","subject":"Wildcard"}}"#,
-            digest: "7875ab70057ff675336febfabf741ca2270b27d7ec526125a65a5a0c1ee628a5",
+            chain: PolicyCmd::SetRelationship(relationship(Subject::AllActors)),
+            golden: r#"{"SetRelationship":{"object":{"resource":"users","id":"bae-1"},"relation":"reader","subject":"all_actors"}}"#,
+            digest: "707e4b33dcb4a5975775a771cd3cb36c00e8e865173cb034f2235bc597b5cae0",
         },
         Case {
             command: delete(structured(1, "", "", "")),
-            chain: PolicyCmd::DeleteRelationship(relationship(Subject::Wildcard)),
-            golden: r#"{"DeleteRelationship":{"resource":"users","object_id":"bae-1","relation":"reader","subject":"Wildcard"}}"#,
-            digest: "b5c8b69124c9b0da7aa2b5f168fb5f1e24bc68917ae4454821e8642f2a0789e7",
+            chain: PolicyCmd::DeleteRelationship(relationship(Subject::AllActors)),
+            golden: r#"{"DeleteRelationship":{"object":{"resource":"users","id":"bae-1"},"relation":"reader","subject":"all_actors"}}"#,
+            digest: "0ab1ebfc2b6e0eefcab16605141810ebe5fcd410306028835b92d4439ae97c8d",
         },
         Case {
             command: set(structured(2, "groups", "team", "")),
             chain: PolicyCmd::SetRelationship(relationship(team())),
-            golden: r#"{"SetRelationship":{"resource":"users","object_id":"bae-1","relation":"reader","subject":{"EntitySet":{"resource":"groups","object_id":"team","relation":""}}}}"#,
-            digest: "5bb3f847f21be0c00e58f0938201c03b7db70e0e2596980be5376b6f571893b2",
+            golden: r#"{"SetRelationship":{"object":{"resource":"users","id":"bae-1"},"relation":"reader","subject":{"object":{"resource":"groups","id":"team"}}}}"#,
+            digest: "33fa385833d89cf4fdc37a8d13f827f32c8aa5420b380db0f3ce2dfedfe7d89f",
         },
         Case {
             command: delete(structured(2, "groups", "team", "")),
             chain: PolicyCmd::DeleteRelationship(relationship(team())),
-            golden: r#"{"DeleteRelationship":{"resource":"users","object_id":"bae-1","relation":"reader","subject":{"EntitySet":{"resource":"groups","object_id":"team","relation":""}}}}"#,
-            digest: "38139e033c6d6ff0df1e5f16cc605047f6da723d0a4201c2f6b2541639a4e941",
+            golden: r#"{"DeleteRelationship":{"object":{"resource":"users","id":"bae-1"},"relation":"reader","subject":{"object":{"resource":"groups","id":"team"}}}}"#,
+            digest: "72e9faa0e79a6e180a3f206b2e0d6e071aab2941c1a22b6feff45551030b9b2e",
         },
         Case {
             command: set(structured(3, "groups", "team", "member")),
             chain: PolicyCmd::SetRelationship(relationship(members())),
-            golden: r#"{"SetRelationship":{"resource":"users","object_id":"bae-1","relation":"reader","subject":{"EntitySet":{"resource":"groups","object_id":"team","relation":"member"}}}}"#,
-            digest: "517eb3a492fc12d737c3ba9cefdecf5abc8b7a7cacc3db0d59cde675c308c4f4",
+            golden: r#"{"SetRelationship":{"object":{"resource":"users","id":"bae-1"},"relation":"reader","subject":{"actor_set":{"object":{"resource":"groups","id":"team"},"relation":"member"}}}}"#,
+            digest: "c801549c74bf68af0a68ff015ff55572c0a429e962696723ff1d6ace84ea50b4",
         },
         Case {
             command: delete(structured(3, "groups", "team", "member")),
             chain: PolicyCmd::DeleteRelationship(relationship(members())),
-            golden: r#"{"DeleteRelationship":{"resource":"users","object_id":"bae-1","relation":"reader","subject":{"EntitySet":{"resource":"groups","object_id":"team","relation":"member"}}}}"#,
-            digest: "4f241342adf35419d0527aa66de108d440bf8b8de82e7081d772a2065c78e63f",
+            golden: r#"{"DeleteRelationship":{"object":{"resource":"users","id":"bae-1"},"relation":"reader","subject":{"actor_set":{"object":{"resource":"groups","id":"team"},"relation":"member"}}}}"#,
+            digest: "3e160c87fef17206ff38600d1a2cceffe54642dc8593680caf2bda99e6a75063",
         },
     ]
 }
@@ -258,7 +284,7 @@ fn every_command_is_sent_as_the_chain_serializes_it() {
 }
 
 #[test]
-fn the_bytes_sent_are_those_sent_before_the_commands_were_typed() {
+fn the_bytes_sent_are_the_pinned_ones() {
     let actors = Actors::new();
     for case in cases(&actors) {
         let typed = typed(&case.command).expect("a command");
@@ -295,6 +321,14 @@ fn the_digest_names_the_command_as_sent() {
             case.golden
         );
     }
+}
+
+#[test]
+fn a_registration_carrying_no_relationship_is_a_plain_one() {
+    assert!(matches!(
+        PolicyAction::register(&[]),
+        PolicyAction::RegisterObject
+    ));
 }
 
 #[test]

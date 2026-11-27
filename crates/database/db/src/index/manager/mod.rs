@@ -149,7 +149,7 @@ impl IndexManager {
             .iter()
             .enumerate()
             .find(|(position, values)| {
-                !values.iter().any(document::NormalValue::is_nil)
+                !values.iter().any(document::NormalValue::is_never_unique)
                     && value_sets[..*position].contains(values)
             })
             .map(|(_, values)| values.as_slice())

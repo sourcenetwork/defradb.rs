@@ -17,6 +17,7 @@ use crate::database::action::{stage_action_start, ActionExecutionLease};
 use crate::database::spawn::spawn_task;
 use crate::error::{Error, Result};
 use crate::index::backfill::BackfillPlan;
+use crate::index::duplicate::refuse_duplicate_index;
 use crate::index::IndexManager;
 use crate::txn::DbTxn;
 use crate::DB;
@@ -69,6 +70,13 @@ where
             txn.validate_collection_for_write(&collection)
                 .await
                 .map_err(|error| RetryAttemptError::Abort(Box::new(error)))?;
+            refuse_duplicate_index(
+                collection.schema(),
+                self.name.as_deref().unwrap_or(""),
+                &self.fields,
+                self.kind,
+            )
+            .map_err(|error| RetryAttemptError::Abort(Box::new(error)))?;
             let index = self
                 .db
                 .stage_index_definition(
