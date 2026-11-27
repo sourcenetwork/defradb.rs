@@ -118,7 +118,7 @@ impl DbSchemaOps {
                 continue;
             };
             self.database
-                .validate_collection_policy(policy)
+                .validate_resource_interface(&policy.id, &policy.resource_name)
                 .await
                 .map_err(|error| match error {
                     db::DacPolicyError::ResourceInterface(message) => {

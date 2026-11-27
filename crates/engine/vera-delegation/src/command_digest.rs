@@ -59,23 +59,21 @@ mod tests {
     }
 
     #[test]
-    fn parent_registration_binds_the_parent_to_the_request() {
-        let digest = |resource, object_id| {
-            request_digest(&command(PolicyAction::RegisterUnderParent {
-                resource,
-                object_id,
-            }))
-            .unwrap()
-        };
-        let expected = digest_of(&format!(
-            r#"{{"PolicyCommand":["{POLICY}",{{"RegisterUnderParent":{{"object":{{"resource":"users","id":"bae-1"}},"parent":{{"resource":"nodes","id":"n1"}}}}}}]}}"#
-        ));
-        assert_eq!(digest("nodes", "n1"), expected);
-        assert_ne!(digest("teams", "n1"), expected);
-        assert_ne!(digest("nodes", "n2"), expected);
+    fn a_registration_binds_its_derived_relationships_to_the_request() {
+        let derived = [acp::DerivedRelationship {
+            relation: "author".into(),
+            target_resource: "authors".into(),
+            target_doc_id: "bae-2".into(),
+        }];
+        assert_eq!(
+            request_digest(&command(PolicyAction::register(&derived))).unwrap(),
+            digest_of(&format!(
+                r#"{{"PolicyCommand":["{POLICY}",{{"RegisterObjectWithRelationships":{{"object":{{"resource":"users","id":"bae-1"}},"relationships":[{{"object":{{"resource":"users","id":"bae-1"}},"relation":"author","subject":{{"object":{{"resource":"authors","id":"bae-2"}}}}}}]}}}}]}}"#
+            ))
+        );
         assert_ne!(
-            request_digest(&command(PolicyAction::RegisterObject)).unwrap(),
-            expected
+            request_digest(&command(PolicyAction::register(&derived))).unwrap(),
+            request_digest(&command(PolicyAction::RegisterObject)).unwrap()
         );
     }
 

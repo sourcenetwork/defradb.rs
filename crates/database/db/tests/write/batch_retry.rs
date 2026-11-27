@@ -34,10 +34,11 @@ impl DocumentACP for RemoteRegistrationAcp {
         policy_id: &str,
         resource_name: &str,
         doc_id: &str,
+        _relationships: &[acp::DerivedRelationship],
     ) -> acp::Result<()> {
         self.registrations.fetch_add(1, Ordering::SeqCst);
         self.inner
-            .register_doc_object(identity, policy_id, resource_name, doc_id)
+            .register_doc_object(identity, policy_id, resource_name, doc_id, &[])
             .await
     }
 
@@ -190,6 +191,7 @@ impl DocumentACP for RevokeAfterAttemptRead {
         _policy_id: &str,
         _resource_name: &str,
         _doc_id: &str,
+        _relationships: &[acp::DerivedRelationship],
     ) -> acp::Result<()> {
         Ok(())
     }

@@ -303,6 +303,24 @@ fn owned<const N: usize>(parts: [&str; N]) -> [String; N] {
 
 /// A provider's failure as document ACP reports it. One that says the
 /// provider was not reached keeps saying so, since a caller may act on it.
+/// A registration's refusal: [`acp::Error::CreateNotAuthorized`] when the
+/// provider says its creator may not create the document in its collection
+/// (vera.rs's `AcpError::CreateNotAuthorized`, "<actor> may not create
+/// <resource>/<id> in its collection"), else as [`provider_err`] reads it.
+fn registration_err(doc_id: &str, error: ProviderError) -> acp::Error {
+    let text = error.to_string();
+    if !matches!(error, ProviderError::Unavailable(_))
+        && text.contains(" may not create ")
+        && text.contains(" in its collection")
+    {
+        return acp::Error::CreateNotAuthorized {
+            doc_id: doc_id.to_owned(),
+            reason: text,
+        };
+    }
+    provider_err(error)
+}
+
 fn provider_err(error: impl std::borrow::Borrow<ProviderError>) -> acp::Error {
     match error.borrow() {
         ProviderError::Unavailable(reason) => acp::Error::ProviderUnavailable(reason.clone()),
@@ -567,6 +585,7 @@ impl DocumentACP for VeraDocumentACP {
         policy_id: &str,
         resource_name: &str,
         doc_id: &str,
+        relationships: &[acp::DerivedRelationship],
     ) -> Result<()> {
         let bearer_token = self.create_bearer_token(identity.as_str()).await?;
         self.admit_for(
@@ -576,77 +595,18 @@ impl DocumentACP for VeraDocumentACP {
                 policy_id,
                 resource: resource_name,
                 object_id: doc_id,
-                action: PolicyAction::RegisterObject,
+                action: PolicyAction::register(relationships),
             },
         )?;
         let [policy, resource, doc] = owned([policy_id, resource_name, doc_id]);
+        let relationships = relationships.to_vec();
         self.remote(move |provider| async move {
             provider
-                .register_object(&bearer_token, &policy, &resource, &doc)
+                .register_object(&bearer_token, &policy, &resource, &doc, &relationships)
                 .await
         })
         .await
-        .map_err(provider_err)?;
-        Ok(())
-    }
-
-    async fn registration_parent(
-        &self,
-        policy_id: &str,
-        child: &str,
-        id: &str,
-    ) -> Result<acp::RegistrationParent> {
-        self.registration_parent_rule(policy_id, child, id)
-            .await
-            .map(|(parent, _)| parent)
-    }
-
-    async fn registration_parent_rule(
-        &self,
-        policy_id: &str,
-        child: &str,
-        id: &str,
-    ) -> Result<(acp::RegistrationParent, String)> {
-        let policy = self
-            .get_policy(policy_id)
-            .await
-            .map_err(provider_err)?
-            .ok_or_else(|| acp::Error::PolicyNotFound(policy_id.into()))?;
-        acp::RegistrationParent::with_requirement(&policy, child, id)
-            .map(|(parent, permission)| (parent, permission.to_owned()))
-    }
-
-    async fn register_under_parent(
-        &self,
-        identity: &Did,
-        policy_id: &str,
-        resource: &str,
-        object_id: &str,
-        parent: &acp::RegistrationParent,
-    ) -> Result<()> {
-        let token = self.create_bearer_token(identity.as_str()).await?;
-        self.admit_for(
-            identity.as_str(),
-            &token,
-            &PolicyCommand {
-                policy_id,
-                resource,
-                object_id,
-                action: PolicyAction::RegisterUnderParent {
-                    resource: &parent.resource,
-                    object_id: &parent.object_id,
-                },
-            },
-        )?;
-        let [policy, resource, object] = owned([policy_id, resource, object_id]);
-        let parent = parent.clone();
-        self.remote(move |provider| async move {
-            provider
-                .register_under_parent(&token, &policy, &resource, &object, &parent)
-                .await
-        })
-        .await
-        .map_err(provider_err)?;
+        .map_err(|error| registration_err(doc_id, error))?;
         Ok(())
     }
 

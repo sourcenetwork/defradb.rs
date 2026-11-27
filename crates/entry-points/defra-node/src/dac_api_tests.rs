@@ -294,7 +294,7 @@ fn document_acp_handle_registers_and_checks_a_document() {
 
         let document_acp = node.document_acp();
         document_acp
-            .register_doc_object(&did_a, &policy_id, "users", "doc-x")
+            .register_doc_object(&did_a, &policy_id, "users", "doc-x", &[])
             .await
             .unwrap();
 

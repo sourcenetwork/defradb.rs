@@ -129,10 +129,8 @@ async fn settle(owed: Vec<CommitRegistration>) -> Result<(), String> {
                 async move {
                     let refs: Vec<AcpObject<'_>> = objects
                         .iter()
-                        .map(|(policy_id, resource, object_id)| AcpObject {
-                            policy_id,
-                            resource,
-                            object_id,
+                        .map(|(policy_id, resource, object_id)| {
+                            AcpObject::new(policy_id, resource, object_id)
                         })
                         .collect();
                     acp.redrive_registrations(&refs).await

@@ -1125,6 +1125,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry + 'static> QueryRunner<F, R
                                     &policy.id,
                                     &policy.resource_name,
                                     doc_id,
+                                    &[],
                                 )
                                 .await
                                 .map_err(|error| {

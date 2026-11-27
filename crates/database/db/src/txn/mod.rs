@@ -108,9 +108,7 @@ impl OwedAcpRegistration {
                             && schema.collection_id == query.child
                             && creator.as_str() == query.device
                             && schema.policy.as_ref().is_some_and(|policy| {
-                                policy.id == query.policy
-                                    && policy.resource_name == query.resource
-                                    && policy.parent_field.is_some()
+                                policy.id == query.policy && policy.resource_name == query.resource
                             });
                         if !matching || !acp.verify_transport_sentinel(query).await? {
                             return Err(acp::Error::PermissionDenied(

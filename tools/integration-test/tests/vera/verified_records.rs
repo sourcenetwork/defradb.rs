@@ -9,6 +9,8 @@ use super::helpers;
 
 /// The actor the permission scenario grants and revokes.
 const READER: &str = "did:key:z6MkpTHR8VNsBxYAAWHut2Geadd9jSwuBV8xRoAnwWsdvktH";
+/// The team whose editors write the specification policy's files.
+const EDITORS: &str = "editors";
 
 #[nuclei::test]
 #[serial_test::serial]
@@ -62,7 +64,7 @@ pub(super) async fn archived_owner_record(provider: Arc<VeraRsProvider>) {
         .await
         .expect("delegation");
     provider
-        .register_object(&token, &policy, "users", "archived-document")
+        .register_object(&token, &policy, "users", "archived-document", &[])
         .await
         .expect("register object");
     assert!(provider
@@ -199,7 +201,6 @@ async fn native_permissions_honor_policy_exclusions_and_cross_object_rules() {
             subject,
             owner_did,
         } = permissions(provider.clone()).await;
-        let reader = READER;
         hub.kill_node(0);
         // Outlive the native client's default maximum revision age.
         nuclei::time::sleep(std::time::Duration::from_secs(31)).await;
@@ -270,7 +271,7 @@ async fn native_permissions_honor_policy_exclusions_and_cross_object_rules() {
             .await
             .unwrap());
         provider
-            .delete_relationship(&bearer, &spec_policy, "actor", reader, "editor", &subject)
+            .delete_relationship(&bearer, &spec_policy, "team", EDITORS, "editor", &subject)
             .await
             .unwrap();
         assert!(!document_acp
@@ -319,9 +320,12 @@ resources:
       - name: reader
       - name: blocked
       - name: approved
+        types: [group->member]
+      - name: suspended_by
+        types: [file]
     permissions:
       - name: read
-        expr: (reader & approved) - blocked->blocked
+        expr: (reader & approved) - suspended_by->blocked
   - name: group
     relations:
       - name: member
@@ -333,7 +337,7 @@ resources:
         .unwrap();
     let bearer = provider.create_bearer_token(&owner_did).await.unwrap();
     provider
-        .register_object(&bearer, &policy, "file", "report")
+        .register_object(&bearer, &policy, "file", "report", &[])
         .await
         .unwrap();
     let reader = READER;
@@ -350,7 +354,7 @@ resources:
         "a reader relation alone does not satisfy the policy"
     );
     provider
-        .register_object(&bearer, &policy, "group", "editors")
+        .register_object(&bearer, &policy, "group", "editors", &[])
         .await
         .unwrap();
     provider
@@ -386,16 +390,16 @@ resources:
             &policy,
             "file",
             "report",
-            "blocked",
-            3,
+            "suspended_by",
+            2,
             "file",
             "suspensions",
-            "blocked",
+            "",
         )
         .await
         .unwrap();
     provider
-        .register_object(&bearer, &policy, "file", "suspensions")
+        .register_object(&bearer, &policy, "file", "suspensions", &[])
         .await
         .unwrap();
     assert_eq!(
@@ -477,21 +481,29 @@ resources:
         .unwrap();
     let specification = r#"spec: defra
 name: files
-description: Actor-managed file access
+description: Team-managed file access
 meta:
   purpose: consumer conformance
   revision: one
-actor:
-  relations:
-    - name: editor
-      types: [actor]
 resources:
+  - name: team
+    relations:
+      - name: editor
+        types: [actor]
+    permissions:
+      - name: read
+      - name: update
+      - name: delete
+      - name: write
   - name: file
     relations:
       - name: writer
-        types: [actor->editor]
+        types: [team->editor]
     permissions:
       - name: read
+        expr: writer
+      - name: update
+      - name: delete
       - name: write
         expr: writer
 "#;
@@ -510,15 +522,19 @@ resources:
         .unwrap()
         .unwrap();
     assert_eq!(compiled.name, "files");
-    assert_eq!(compiled.description, "Actor-managed file access");
+    assert_eq!(compiled.description, "Team-managed file access");
     assert_eq!(compiled.attributes["purpose"], "consumer conformance");
-    assert!(compiled.get_relation("actor", "editor").is_some());
+    assert!(compiled.get_relation("team", "editor").is_some());
     assert!(provider
-        .register_object(&bearer, &spec_policy, "actor", reader)
+        .register_object(&bearer, &spec_policy, "actor", reader, &[])
         .await
         .is_err());
     provider
-        .register_object(&bearer, &spec_policy, "file", "report")
+        .register_object(&bearer, &spec_policy, "team", EDITORS, &[])
+        .await
+        .unwrap();
+    provider
+        .register_object(&bearer, &spec_policy, "file", "report", &[])
         .await
         .unwrap();
     provider
@@ -528,8 +544,8 @@ resources:
             "report",
             "writer",
             3,
-            "actor",
-            reader,
+            "team",
+            EDITORS,
             "editor",
         )
         .await
@@ -545,7 +561,7 @@ resources:
         .await
         .unwrap());
     provider
-        .set_relationship(&bearer, &spec_policy, "actor", reader, "editor", &subject)
+        .set_relationship(&bearer, &spec_policy, "team", EDITORS, "editor", &subject)
         .await
         .unwrap();
     assert!(document_acp
