@@ -322,9 +322,9 @@ iroh-base = { git = "https://github.com/n0-computer/iroh", rev = "26dfe1d469e274
 iroh-dns = { git = "https://github.com/n0-computer/iroh", rev = "26dfe1d469e274d38fe3b41617a20f9bb7a10072" }
 iroh-relay = { git = "https://github.com/n0-computer/iroh", rev = "26dfe1d469e274d38fe3b41617a20f9bb7a10072" }
 # Temporary: the unreleased Vera 0.2.0 crates, from vera.rs main.
-vera-client = { git = "https://github.com/sourcenetwork/vera.rs", rev = "faf4a4f094c1b4f5786bce0cbeb6567966e27999" }
-vera-crypto = { git = "https://github.com/sourcenetwork/vera.rs", rev = "faf4a4f094c1b4f5786bce0cbeb6567966e27999" }
-vera-domain = { git = "https://github.com/sourcenetwork/vera.rs", rev = "faf4a4f094c1b4f5786bce0cbeb6567966e27999" }
-vera-identity = { git = "https://github.com/sourcenetwork/vera.rs", rev = "faf4a4f094c1b4f5786bce0cbeb6567966e27999" }
-vera-modules = { git = "https://github.com/sourcenetwork/vera.rs", rev = "faf4a4f094c1b4f5786bce0cbeb6567966e27999" }
-vera-permission = { git = "https://github.com/sourcenetwork/vera.rs", rev = "faf4a4f094c1b4f5786bce0cbeb6567966e27999" }
+vera-client = { git = "https://github.com/sourcenetwork/vera.rs", rev = "f51f4de9c459982c704bf0b95640121dbbca5cba" }
+vera-crypto = { git = "https://github.com/sourcenetwork/vera.rs", rev = "f51f4de9c459982c704bf0b95640121dbbca5cba" }
+vera-domain = { git = "https://github.com/sourcenetwork/vera.rs", rev = "f51f4de9c459982c704bf0b95640121dbbca5cba" }
+vera-identity = { git = "https://github.com/sourcenetwork/vera.rs", rev = "f51f4de9c459982c704bf0b95640121dbbca5cba" }
+vera-modules = { git = "https://github.com/sourcenetwork/vera.rs", rev = "f51f4de9c459982c704bf0b95640121dbbca5cba" }
+vera-permission = { git = "https://github.com/sourcenetwork/vera.rs", rev = "f51f4de9c459982c704bf0b95640121dbbca5cba" }

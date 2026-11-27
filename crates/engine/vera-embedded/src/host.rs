@@ -151,7 +151,9 @@ pub enum HostError {
         #[source]
         source: vera_node::EmbedError,
         /// Whether the node still serves requests: a refusal leaves it as it
-        /// was; an error once it stopped for the switch does not.
+        /// was; a started follow whose discarded report cannot be read leaves
+        /// it in its new role; an error once it stopped for the switch does
+        /// not.
         running: bool,
     },
     #[error(

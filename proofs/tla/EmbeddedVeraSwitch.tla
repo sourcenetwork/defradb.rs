@@ -26,6 +26,11 @@
 \*     runs on with nobody waiting for it, though it has been told to stop.
 \*     The caller may also drop the switch future before it returns; the
 \*     host then settles whatever node is left in the slot.
+\*     A follow has one more step after its node serves: it reads the
+\*     report of submissions the switch voided. That read can fail while
+\*     the replacement still runs; the host must recognize the committed
+\*     replacement from the running node, update the slot and link, and
+\*     then return the report error.
 \*     A switch that left no node behind is started again by a restart
 \*     (HostedNode::complete_switch, HostedNode::restart), which launches
 \*     the node the switch was heading to once no thread holds the
@@ -89,6 +94,10 @@
 \*                  and record the device the switch was heading to;
 \*   RecordsTarget  the same function, which records that device too when
 \*                  the switch succeeded and its node runs;
+\*   ReportFails    HostedNode::follow and Vera's EmbeddedNode::follow, whose
+\*                  final report read can fail after the replacement started;
+\*   ObservesCommit HostedNode::follow, which recognizes the replacement by
+\*                  the running node's term and records it despite that error;
 \*   Restarts       crates/engine/vera-embedded/src/host/restart.rs
 \*                  HostedNode::start_again, behind complete_switch and
 \*                  restart;
@@ -109,7 +118,8 @@
 \* crates/entry-points/defra-node/tests/embedded_vera/switch_recovery.rs
 \* a_stop_during_a_switch_starts_no_node,
 \* a_stop_during_a_switch_waits_for_the_node and
-\* a_failed_take_over_is_completed_in_place.
+\* a_failed_take_over_is_completed_in_place and
+\* a_failed_follow_report_leaves_the_started_backup_running.
 
 EXTENDS Naturals  \* numbers, for counting writers and readers
 
@@ -120,6 +130,8 @@ CONSTANTS
   SwitchDeadline, \* TRUE: a hung switch or restart ends at the start deadline
   ClearsHalted,   \* TRUE: a switch that left the node halted empties the slot
   RecordsTarget,  \* TRUE: a switch that succeeded records its new device
+  ReportFails,    \* TRUE: the switch's discarded-submission report read fails
+  ObservesCommit, \* TRUE: a failed report still records the replacement that runs
   Restarts,       \* TRUE: the host can start the node again in the slot
   LinkShuts,      \* TRUE: a switch opens the link only while it is not closed
   Reaps,          \* TRUE: a stop that reaches its deadline leaves a reaper
@@ -372,6 +384,7 @@ SwitchRelease ==
               THEN "new"                                \* transports follow
               ELSE link                                 \* or stay as they are
   /\ device' = IF slot = "new" /\ RecordsTarget
+                         /\ (~ReportFails \/ ObservesCommit)
                 THEN "to"                               \* the new role
                 ELSE device                             \* or as it was
   /\ writer' = "none"                                   \* it lets go

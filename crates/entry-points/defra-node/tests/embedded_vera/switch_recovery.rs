@@ -12,9 +12,11 @@ use defra_node::vera_embedded::{
     HostConfig, HostError, HostedNode, SoloDeployment, TermCertificate,
 };
 use defra_node::{EmbeddedVeraDevice, Node};
+use serde_json::Value;
+use vera::vera_rs::RpcTransport as _;
 
 use super::switching::{
-    certify, device, free_address, identity, pair, until_settled, vera, Paired,
+    certify, device, free_address, identity, pair, until_settled, vera, Paired, PATIENCE,
 };
 
 /// The phone, a backup of the laptop, once the laptop stopped, with the
@@ -237,6 +239,73 @@ fn a_failed_take_over_is_completed_in_place() {
         assert!(hosted.is_active().await);
 
         stranded.phone.shutdown().await.expect("phone shutdown");
+    })
+    .unwrap();
+}
+
+/// A follow whose node starts as the certificate's backup, then fails to read
+/// its discarded report, leaves that backup in the slot and behind the
+/// transports. The error reports that the node still runs.
+#[test]
+#[mantra_macros::req_test("defra.acp.vera_embedded_switching")]
+fn a_failed_follow_report_leaves_the_started_backup_running() {
+    workers::block_on(async {
+        let directories = [tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap()];
+        let [laptop_device, phone_device] = pair();
+        let deployment = identity().deal(laptop_device.listen).expect("deployment");
+        let laptop = device(
+            directories[0].path(),
+            42,
+            laptop_device.listen,
+            EmbeddedVeraDevice::Active {
+                deployment: Box::new(deployment.clone()),
+                switching: laptop_device.switching(),
+            },
+        )
+        .await;
+        let phone = device(
+            directories[1].path(),
+            43,
+            phone_device.listen,
+            EmbeddedVeraDevice::Backup {
+                record: deployment.record().to_vec(),
+                active: laptop_device.listen,
+                switching: phone_device.switching(),
+            },
+        )
+        .await;
+
+        let successor = phone_device.key.public_key();
+        let change = until_settled(|| vera(&laptop).hand_over(&successor)).await;
+        let certificate = certify(change);
+        std::fs::write(
+            directories[0]
+                .path()
+                .join("vera/discarded-submissions.json"),
+            b"{",
+        )
+        .expect("malformed discarded report");
+
+        let failed = vera(&laptop)
+            .follow(certificate.clone())
+            .await
+            .expect_err("the discarded report is malformed");
+        assert!(failed.node_runs(), "{failed}");
+        assert!(!vera(&laptop).is_active().await);
+        assert_eq!(
+            vera(&laptop).term().await.expect("the backup runs"),
+            certificate.change.term
+        );
+
+        let status: Value = vera(&laptop)
+            .transport(PATIENCE)
+            .call("vera_nodeStatus", Value::Null, 4096)
+            .await
+            .expect("the transports reach the started backup");
+        assert!(status.is_object(), "{status}");
+
+        laptop.shutdown().await.expect("laptop shutdown");
+        phone.shutdown().await.expect("phone shutdown");
     })
     .unwrap();
 }

@@ -17,6 +17,8 @@ use futures::FutureExt as _;
 use vera_domain::{PublicKey, TermCertificate, TermChange};
 use vera_node::{Contest, DiscardedSubmission, EmbedError, EmbeddedNode, SoloDeployment, SoloKeys};
 
+use crate::link::Link;
+
 use super::held::{Replacing, Slot};
 use super::{device, Bounded, HostConfig, HostDevice, HostError, HostedNode};
 
@@ -113,7 +115,8 @@ impl HostedNode {
     ) -> Result<(), HostError> {
         let kept = keys.clone();
         let heading = move |device: &HostDevice| activated(device, &kept);
-        self.switch(heading, move |node| {
+        let term = certificate.change.term;
+        self.switch(heading, Some(term), move |node| {
             Box::pin(node.take_over(keys, certificate))
         })
         .await
@@ -125,9 +128,12 @@ impl HostedNode {
     /// device finalized above the certificate's cut, which the term voided.
     ///
     /// A refusal leaves the node running. An error after the certificate was
-    /// accepted, or the deadline, leaves the node stopped
-    /// ([`HostError::node_runs`]); [`complete_switch`](Self::complete_switch)
-    /// starts it as the holder's backup. A stop that begins meanwhile
+    /// accepted while the replacement starts, or the deadline, leaves the node
+    /// stopped ([`HostError::node_runs`]); [`complete_switch`](Self::complete_switch)
+    /// starts it as the holder's backup. A replacement that starts and then
+    /// cannot read its discarded report stays in the slot as the holder's
+    /// backup, behind the host's transports, and this call returns that report
+    /// error with [`HostError::node_runs`] true. A stop that begins meanwhile
     /// abandons the switch.
     ///
     /// A submission in flight when the node stops for the switch gets no
@@ -139,9 +145,15 @@ impl HostedNode {
         certificate: TermCertificate,
     ) -> Result<Vec<DiscardedSubmission>, HostError> {
         let holder = certificate.change.holder;
+        let term = certificate.change.term;
         let heading = move |device: &HostDevice| following(device, holder.as_slice());
-        self.switch(heading, move |node| Box::pin(node.follow(certificate)))
-            .await
+        self.switch(heading, Some(term), move |node| {
+            Box::pin(async move {
+                node.follow(certificate).await?;
+                node.discarded()
+            })
+        })
+        .await
     }
 
     /// The finalized submissions that switches voided on this device and the
@@ -190,7 +202,12 @@ impl HostedNode {
     /// Replace the node with the one `switch` starts in its place, and point
     /// the host's transports at it. `heading` names the device the switch
     /// makes of the slot's.
-    async fn switch<T, H, S>(&self, heading: H, switch: S) -> Result<T, HostError>
+    async fn switch<T, H, S>(
+        &self,
+        heading: H,
+        committed_term: Option<u64>,
+        switch: S,
+    ) -> Result<T, HostError>
     where
         H: FnOnce(&HostDevice) -> HostDevice,
         S: for<'node> FnOnce(&'node mut EmbeddedNode) -> Switch<'node, T>,
@@ -200,7 +217,7 @@ impl HostedNode {
         }
         let replaced = self.held.replace().await;
         let target = heading(&replaced.device);
-        let mut held = Settling::new(replaced, target);
+        let mut held = Settling::new(replaced, target, committed_term, &self.link);
         let node = held.node.as_mut().ok_or(HostError::NotRunning)?;
         // A stop that began, also before the slot was free, drops the switch
         // where it stands, as Vera recovers an interruption: the stop, or
@@ -210,14 +227,7 @@ impl HostedNode {
         held.switched = matches!(ended, Bounded::Done(Ok(_)));
         let running = held.settle();
         match ended {
-            Bounded::Done(Ok(value)) => {
-                // The transports reach the node the switch started, unless a
-                // stop closed them meanwhile.
-                if let Some(node) = held.node.as_ref() {
-                    self.link.open(node.rpc());
-                }
-                Ok(value)
-            }
+            Bounded::Done(Ok(value)) => Ok(value),
             Bounded::Done(Err(source)) => Err(HostError::Switch { source, running }),
             Bounded::Elapsed => Err(HostError::SwitchElapsed {
                 deadline: self.start_deadline,
@@ -233,15 +243,24 @@ impl HostedNode {
 struct Settling<'held> {
     slot: Replacing<'held>,
     target: HostDevice,
+    committed_term: Option<u64>,
+    link: &'held Link,
     switched: bool,
     settled: bool,
 }
 
 impl<'held> Settling<'held> {
-    fn new(slot: Replacing<'held>, target: HostDevice) -> Self {
+    fn new(
+        slot: Replacing<'held>,
+        target: HostDevice,
+        committed_term: Option<u64>,
+        link: &'held Link,
+    ) -> Self {
         Self {
             slot,
             target,
+            committed_term,
+            link,
             switched: false,
             settled: false,
         }
@@ -249,7 +268,23 @@ impl<'held> Settling<'held> {
 
     fn settle(&mut self) -> bool {
         self.settled = true;
-        settle(&mut self.slot, self.target.clone(), self.switched)
+        if !self.switched {
+            self.switched = self.committed_term.is_some_and(|term| {
+                self.slot.node.as_ref().is_some_and(|node| {
+                    node.term() >= term
+                        && match &self.target {
+                            HostDevice::Active { .. } => node.export().is_ok(),
+                            HostDevice::Backup { .. } => node.export().is_err(),
+                            HostDevice::Alone => true,
+                        }
+                })
+            });
+        }
+        let running = settle(&mut self.slot, self.target.clone(), self.switched);
+        if let Some(node) = self.slot.node.as_ref() {
+            self.link.open(node.rpc());
+        }
+        running
     }
 }
 
