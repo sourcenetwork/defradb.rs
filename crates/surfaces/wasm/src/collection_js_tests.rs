@@ -3,8 +3,8 @@
 //! in Go's field order. This client returns these data-only objects instead
 //! of Go's collection handles.
 //!
-//! These run natively against the same `Serialize` the wasm client feeds to
-//! `serde_wasm_bindgen`; the browser test in `client.rs` checks the JS object.
+//! These run natively against the same JSON serializer the wasm client uses.
+//! The browser test in `client.rs` checks the parsed JavaScript object.
 
 use schema::{
     CType, CollectionSetDescription, CollectionSource, CollectionVersion,
@@ -250,11 +250,16 @@ fn every_vector_algorithm_keeps_its_parameters() {
                 descending: false,
             }],
             unique: false,
-            kind: Some(IndexKind::Vector(VectorIndexDescription::with_defaults(
-                *algorithm,
-                schema::DistanceMetric::Cosine,
-                3,
-            ))),
+            kind: Some(IndexKind::Vector(VectorIndexDescription {
+                algorithm: *algorithm,
+                dimensions: 3,
+                hnsw: Some(schema::HnswParams::default()),
+                ivfpq: Some(schema::IvfPqParams::default()),
+                ivfflat: Some(schema::IvfFlatParams::default()),
+                ssg: Some(schema::SsgParams::default()),
+                diskann: Some(schema::DiskAnnParams::default()),
+                ..VectorIndexDescription::default()
+            })),
             auto_generated: false,
         }];
         let json: serde_json::Value = serde_json::from_str(&js_json(&user)).unwrap();

@@ -1115,7 +1115,14 @@ mod tests {
             .await
             .unwrap();
         client
-            .add_collection("type User { name: String, points: Int @crdt(type: pcounter) }")
+            .add_collection(
+                "type User {
+                    name: String
+                    points: Int @crdt(type: pcounter)
+                    high: Int @default(value: 9007199254740993)
+                    low: Int @default(value: -9007199254740993)
+                }",
+            )
             .await
             .unwrap();
 
@@ -1158,6 +1165,26 @@ mod tests {
         assert!(js_sys::Reflect::get(&user, &"Policy".into())
             .unwrap()
             .is_null());
+
+        let fields = js_sys::Reflect::get(&user, &"Fields".into()).unwrap();
+        let fields = js_sys::Array::from(&fields);
+        for (name, expected) in [
+            ("high", 9_007_199_254_740_992.0),
+            ("low", -9_007_199_254_740_992.0),
+        ] {
+            let field = fields
+                .iter()
+                .find(|field| {
+                    js_sys::Reflect::get(field, &"Name".into())
+                        .unwrap()
+                        .as_string()
+                        .as_deref()
+                        == Some(name)
+                })
+                .unwrap();
+            let value = js_sys::Reflect::get(&field, &"DefaultValue".into()).unwrap();
+            assert_eq!(value.as_f64(), Some(expected));
+        }
 
         let user: serde_json::Value = serde_wasm_bindgen::from_value(user).unwrap();
         let points = user["Fields"]

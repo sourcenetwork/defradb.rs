@@ -3093,6 +3093,24 @@ pub const PROPERTIES: &[Property] = &[
         bound_by: "",
     },
     Property {
+        family: "Browser collection wire format",
+        name: "SelectedBlockOnly / DefaultIsNumber",
+        axis: Tla,
+        anchor: "crates/surfaces/wasm/src/collection_js.rs IndexJs::from, collections_to_js",
+        model_ref: "CollectionWire.tla",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
+        family: "Browser collection wire format",
+        name: "selected_kept / unselected_absent / same_integer_token",
+        axis: Lean,
+        anchor: "crates/surfaces/wasm/src/collection_js.rs IndexJs::from, collections_to_js",
+        model_ref: "CollectionWire (lake build)",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
         // A Go-written config.yaml has each Go key moved onto its Rust key
         // before it is read: a Rust key already there wins, a file with no
         // Go keys is untouched, and no two Go keys feed one Rust key.

@@ -19,7 +19,7 @@ use wasm_bindgen::JsValue;
 use schema::{
     CollectionSetDescription, CollectionSource, CollectionVersion, EncryptedIndexDescription,
     FieldDescription, FieldKind, HnswParams, IndexDescription, IndexKind, IndexedFieldDescription,
-    PolicyDescription, QuerySource, VectorEmbeddingDescription,
+    PolicyDescription, QuerySource, VectorAlgorithm, VectorEmbeddingDescription,
 };
 
 use crate::error::{Result, WasmError};
@@ -231,11 +231,21 @@ impl<'a> From<&'a IndexDescription> for IndexJs<'a> {
                     algorithm: vector.algorithm.as_str(),
                     metric: vector.metric,
                     dimensions: vector.dimensions,
-                    hnsw: vector.hnsw,
-                    ivfpq: vector.ivfpq,
-                    ivfflat: vector.ivfflat,
-                    ssg: vector.ssg,
-                    diskann: vector.diskann,
+                    hnsw: vector
+                        .hnsw
+                        .filter(|_| vector.algorithm == VectorAlgorithm::Hnsw),
+                    ivfpq: vector
+                        .ivfpq
+                        .filter(|_| vector.algorithm == VectorAlgorithm::IvfPq),
+                    ivfflat: vector
+                        .ivfflat
+                        .filter(|_| vector.algorithm == VectorAlgorithm::IvfFlat),
+                    ssg: vector
+                        .ssg
+                        .filter(|_| vector.algorithm == VectorAlgorithm::Ssg),
+                    diskann: vector
+                        .diskann
+                        .filter(|_| vector.algorithm == VectorAlgorithm::DiskAnn),
                 },
                 false,
             ),
@@ -261,7 +271,7 @@ where
     I: IntoIterator<Item = &'a CollectionVersion>,
 {
     let views: Vec<CollectionJs<'a>> = collections.into_iter().map(CollectionJs::from).collect();
-    views
-        .serialize(&serde_wasm_bindgen::Serializer::json_compatible())
-        .map_err(WasmError::from)
+    // JSON.parse rounds large integers the same way as Go's JavaScript client.
+    let json = serde_json::to_string(&views)?;
+    js_sys::JSON::parse(&json).map_err(|error| WasmError::Serialization(format!("{error:?}")))
 }
