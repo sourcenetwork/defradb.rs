@@ -25,9 +25,9 @@
 \* get-collection, then the operation's own permission, in the transaction.
 \*
 \* Code it models:
-\*   crates/entry-points/defra-node/src/ops/index.rs           Node::create_index_as,
-\*                                                 Node::delete_index_as,
-\*                                                 Node::list_indexes_as (route a txn)
+\*   crates/entry-points/defra-node/src/node_core/index.rs     NodeCore::create_index,
+\*                                                 NodeCore::delete_index,
+\*                                                 NodeCore::list_indexes (route a txn)
 \*   crates/database/db/src/txn/registry/indexes.rs        create_index_in_txn,
 \*                                                 drop_index_in_txn, indexes_in_txn
 \*   crates/database/db/src/txn/registry/mod.rs            finish_statement

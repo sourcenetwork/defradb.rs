@@ -82,10 +82,8 @@ async fn initial_col_version() {
         poll_until(
             || {
                 node1_ref
-                    .collection_describe_version("Users")
-                    .ok()
-                    .and_then(|desc| desc["VersionID"].as_str().map(|v| v == expected_version))
-                    .unwrap_or(false)
+                    .collection_version_ids("Users")
+                    .is_ok_and(|ids| ids.contains(&expected_version))
             },
             P2P_TIMEOUT,
             Duration::from_millis(300),
@@ -117,10 +115,8 @@ async fn initial_col_version_activated_and_queried() {
         poll_until(
             || {
                 node1_ref
-                    .collection_describe_version("Users")
-                    .ok()
-                    .and_then(|desc| desc["VersionID"].as_str().map(|v| v == expected_version))
-                    .unwrap_or(false)
+                    .collection_version_ids("Users")
+                    .is_ok_and(|ids| ids.contains(&expected_version))
             },
             P2P_TIMEOUT,
             Duration::from_millis(300),
@@ -234,10 +230,8 @@ async fn patch_version_of_known_collection() {
     poll_until(
         || {
             node1_ref
-                .collection_describe_version("Users")
-                .ok()
-                .and_then(|desc| desc["VersionID"].as_str().map(|v| v == expected))
-                .unwrap_or(false)
+                .collection_version_ids("Users")
+                .is_ok_and(|ids| ids.contains(&expected))
         },
         P2P_TIMEOUT,
         Duration::from_millis(300),
@@ -311,10 +305,8 @@ async fn patch_version_of_unknown_collection() {
     poll_until(
         || {
             node1_ref
-                .collection_describe_version("Users")
-                .ok()
-                .and_then(|desc| desc["VersionID"].as_str().map(|_| true))
-                .unwrap_or(false)
+                .collection_version_ids("Users")
+                .is_ok_and(|ids| !ids.is_empty())
         },
         P2P_TIMEOUT,
         Duration::from_millis(300),
@@ -433,10 +425,8 @@ async fn with_view() {
         poll_until(
             || {
                 node1_ref
-                    .collection_describe_version("UserView")
-                    .ok()
-                    .and_then(|desc| desc["VersionID"].as_str().map(|_| true))
-                    .unwrap_or(false)
+                    .collection_version_ids("UserView")
+                    .is_ok_and(|ids| !ids.is_empty())
             },
             Duration::from_secs(30),
             Duration::from_millis(300),
@@ -524,10 +514,8 @@ async fn with_view_activated_and_queried() {
         poll_until(
             || {
                 node1_ref
-                    .collection_describe_version("UserView")
-                    .ok()
-                    .and_then(|desc| desc["VersionID"].as_str().map(|_| true))
-                    .unwrap_or(false)
+                    .collection_version_ids("UserView")
+                    .is_ok_and(|ids| !ids.is_empty())
             },
             Duration::from_secs(30),
             Duration::from_millis(300),

@@ -73,8 +73,9 @@ fn refused(error: documents::Error) -> HttpError {
         documents::Error::Conflict => HttpError::TransactionConflict,
         documents::Error::Request(_)
         | documents::Error::SecondaryRelation(_)
-        | documents::Error::CollectionNotFound
-        | documents::Error::Deleted(_) => http_error_from_backend_message(message),
+        | documents::Error::CollectionNotFound => http_error_from_backend_message(message),
+        documents::Error::AlreadyExists(_) => HttpError::DocumentAlreadyExists(message),
+        documents::Error::Deleted(_) => HttpError::DocumentDeleted(message),
     }
 }
 
@@ -276,7 +277,27 @@ pub async fn update_documents_with_filter(
 
 #[cfg(test)]
 mod tests {
-    use super::{signing_choice, HttpError};
+    use super::{refused, signing_choice, HttpError};
+    use query::documents;
+
+    #[test]
+    fn a_collision_refusal_keeps_its_type_and_text() {
+        let id = "bae-e761da93-66da-577d-a503-54047c4cf3ea";
+        match refused(documents::Error::AlreadyExists(id.into())) {
+            HttpError::DocumentAlreadyExists(message) => assert_eq!(
+                message,
+                format!("a document with the given ID already exists. DocID: {id}")
+            ),
+            other => panic!("{other:?}"),
+        }
+        match refused(documents::Error::Deleted(id.into())) {
+            HttpError::DocumentDeleted(message) => assert_eq!(
+                message,
+                format!("a document with the given ID has been deleted. DocID: {id}")
+            ),
+            other => panic!("{other:?}"),
+        }
+    }
 
     #[test]
     fn enable_signing_parses_as_go_parse_bool() {

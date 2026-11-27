@@ -17,6 +17,7 @@ use crate::database::action::ActionExecutionLease;
 use crate::database::spawn::spawn_task;
 use crate::error::{Error, Result};
 use crate::index::backfill::BackfillPlan;
+use crate::index::duplicate::refuse_duplicate_index;
 use crate::index::IndexManager;
 use crate::txn::DbTxn;
 use crate::DB;
@@ -182,6 +183,7 @@ impl<S: Store> DB<S> {
 
         let txn = self.new_txn(false).await?;
         txn.validate_collection_for_write(&collection).await?;
+        refuse_duplicate_index(collection.schema(), name.unwrap_or(""), &fields, kind)?;
         let (index, lease) = self
             .stage_index_definition(&txn, &collection, collection_name, name, fields, kind)
             .await?;

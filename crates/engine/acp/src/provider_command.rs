@@ -10,17 +10,13 @@ use crate::outbox::{OwedOp, OwedTuple};
 /// One command sent to an external provider as an actor.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ProviderCommand<'a> {
-    /// Register `object` with the actor as its owner.
+    /// Register `object` with the actor as its owner, together with the
+    /// relationships it carries through its `@policy(relation:)` fields.
     RegisterObject {
         policy_id: &'a str,
         resource: &'a str,
         object: &'a str,
-    },
-    RegisterUnderParent {
-        policy_id: &'a str,
-        resource: &'a str,
-        object: &'a str,
-        parent: &'a crate::RegistrationParent,
+        relationships: &'a [crate::DerivedRelationship],
     },
     /// Add or delete one relationship.
     Relationship { tuple: &'a OwedTuple, op: OwedOp },

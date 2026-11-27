@@ -51,7 +51,7 @@ async fn fixture(count: usize) -> LocalDocumentACP {
     let acp = LocalDocumentACP::new(Arc::new(MemoryAcpStore::new()));
     let owner = owner();
     for index in 0..count {
-        acp.register_doc_object(&owner, POLICY, RESOURCE, &doc_id(index))
+        acp.register_doc_object(&owner, POLICY, RESOURCE, &doc_id(index), &[])
             .await
             .expect("the document to register");
     }
@@ -151,7 +151,7 @@ fn registration(c: &mut Criterion) {
             || rt.block_on(fixture(0)),
             |acp| {
                 seq += 1;
-                rt.block_on(acp.register_doc_object(&owner, POLICY, RESOURCE, &doc_id(seq)))
+                rt.block_on(acp.register_doc_object(&owner, POLICY, RESOURCE, &doc_id(seq), &[]))
                     .expect("the document to register")
             },
             criterion::BatchSize::SmallInput,
@@ -170,7 +170,7 @@ fn registration(c: &mut Criterion) {
     group.bench_function("register_doc_object_regolith", |b| {
         b.iter(|| {
             seq += 1;
-            rt.block_on(persistent.register_doc_object(&owner, POLICY, RESOURCE, &doc_id(seq)))
+            rt.block_on(persistent.register_doc_object(&owner, POLICY, RESOURCE, &doc_id(seq), &[]))
                 .expect("the document to register")
         })
     });

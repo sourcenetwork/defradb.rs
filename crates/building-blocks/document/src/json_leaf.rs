@@ -27,6 +27,11 @@ pub enum JsonScalarValue {
     /// Sentinel value for path upper bound (comes after all values for a path)
     /// Used for constraining range scans to a specific JSON path.
     PathMax,
+    /// Index-only marker under an empty array: its path is the array's path
+    /// plus an index, the path the array's elements would have. It is never a
+    /// JSON value, and only an `_all` scan looks it up, since `_all` over an
+    /// empty array is true.
+    EmptyArray,
 }
 
 impl JsonScalarValue {
@@ -65,5 +70,50 @@ impl JsonLeafValue {
     /// Create from a path and serde_json::Value, returning None for non-scalars.
     pub fn from_json(path: JsonPath, value: &serde_json::Value) -> Option<Self> {
         JsonScalarValue::from_json_value(value).map(|scalar| Self::new(path, scalar))
+    }
+
+    /// Whether this is the empty-array marker, which no filter but `_all`
+    /// matches and no unique check counts.
+    pub fn is_empty_array_marker(&self) -> bool {
+        self.value == JsonScalarValue::EmptyArray
+    }
+}
+
+/// Every indexable leaf in `json`, including the empty-array marker of every
+/// empty array at the path its elements would have.
+pub fn json_index_leaves(json: &serde_json::Value) -> Vec<JsonLeafValue> {
+    let mut leaves = Vec::new();
+    collect_index_leaves(json, &JsonPath::new(), &mut leaves);
+    leaves
+}
+
+fn collect_index_leaves(
+    value: &serde_json::Value,
+    path: &JsonPath,
+    leaves: &mut Vec<JsonLeafValue>,
+) {
+    match value {
+        serde_json::Value::Object(map) => {
+            for (key, child) in map {
+                collect_index_leaves(child, &path.append_property(key), leaves);
+            }
+        }
+        serde_json::Value::Array(elements) if elements.is_empty() => {
+            leaves.push(JsonLeafValue::new(
+                path.append_index(),
+                JsonScalarValue::EmptyArray,
+            ));
+        }
+        serde_json::Value::Array(elements) => {
+            let element_path = path.append_index();
+            for element in elements {
+                collect_index_leaves(element, &element_path, leaves);
+            }
+        }
+        _ => {
+            if let Some(leaf) = JsonLeafValue::from_json(path.clone(), value) {
+                leaves.push(leaf);
+            }
+        }
     }
 }

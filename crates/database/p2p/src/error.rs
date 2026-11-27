@@ -444,6 +444,13 @@ impl Error {
         }
     }
 
+    /// Returns true if a publish found no peer subscribed to its topic, which
+    /// gossipsub refuses as `InsufficientPeers`. Go publishes such a message to
+    /// no one, without an error.
+    pub fn is_no_topic_peer(&self) -> bool {
+        matches!(self, Error::GossipSubPublish(message) if message == "InsufficientPeers")
+    }
+
     /// Best-effort classifier for common disconnect / teardown reasons surfaced
     /// as transport strings.
     pub fn is_connection_loss_reason(reason: &str) -> bool {
@@ -681,6 +688,14 @@ mod tests {
             Error::Unauthorized("nope".into()).to_string(),
             "unauthorized: nope"
         );
+    }
+
+    #[test]
+    fn no_topic_peer_is_only_gossipsubs_insufficient_peers() {
+        assert!(Error::GossipSubPublish("InsufficientPeers".into()).is_no_topic_peer());
+        assert!(!Error::GossipSubPublish("MessageTooLarge".into()).is_no_topic_peer());
+        assert!(!Error::Transport("InsufficientPeers".into()).is_no_topic_peer());
+        assert!(!Error::ChannelSend.is_no_topic_peer());
     }
 
     #[test]

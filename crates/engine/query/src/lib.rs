@@ -21,6 +21,7 @@
 pub mod access_hooks;
 pub mod chunk_writes;
 pub(crate) mod collection_provider;
+pub mod derived_relationships;
 pub(crate) mod doc;
 pub mod document;
 pub mod documents;
@@ -84,7 +85,7 @@ pub use rest::{
     RestOperationsImpl, RestResult,
 };
 pub use runner::{DocFetcher, FetchByIdsResult, NacChecker, QueryRunner, SeQueryTransport};
-pub use sdl_parse::{parse_sdl, parse_sdl_with_known_types};
+pub use sdl_parse::{parse_sdl, parse_sdl_with_known_collections};
 pub use select_convert::select_to_go_json;
 pub use txn::{
     txn_job, NoOpTransactionRegistry, SharedTurn, TransactionContext, TransactionGuard,

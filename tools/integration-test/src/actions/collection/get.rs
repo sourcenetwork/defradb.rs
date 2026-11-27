@@ -46,12 +46,12 @@ impl Op for GetCollections {
 
     fn run(&self, state: &State) -> Result<Value, Failure> {
         let identity = self.common.client_identity(Self::name())?;
+        let (node, scope) = (
+            state.node_on(self.common.node())?,
+            state.scope_as(self.txn, identity),
+        );
         let collections = state
-            .block_on(
-                state
-                    .node_on(self.common.node())?
-                    .get_collections_as(&state.context_as(self.txn, identity), &self.selector()),
-            )
+            .block_on(async { scope.on(&node).get_collections(&self.selector()).await })
             .map_err(|e| Failure::operation(e.to_string()))?;
         Ok(json!({ "collections": collections }))
     }

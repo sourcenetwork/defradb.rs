@@ -747,6 +747,22 @@ pub(super) type ReplyScript = Arc<
         + Sync,
 >;
 
+/// What a gossip publish to [`ConnectedPeerTransport`] does. The remote peer
+/// is connected but never subscribed, so the default finds no peer on either
+/// topic.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(super) enum PublishFails {
+    /// No peer subscribed to either topic: gossipsub's `InsufficientPeers`.
+    #[default]
+    BothTopics,
+    /// Only the collection topic has no peer.
+    CollectionTopic,
+    /// Only the document topic has no peer.
+    DocumentTopic,
+    /// The transport is gone, which is not a no-subscriber case.
+    Transport,
+}
+
 #[derive(Clone)]
 pub(super) struct ConnectedPeerTransport {
     local: PeerId,
@@ -761,6 +777,7 @@ pub(super) struct ConnectedPeerTransport {
     script: Option<ReplyScript>,
     arrivals: Arc<kovan::Atom<Vec<Instant>>>,
     publishes: Arc<AtomicUsize>,
+    publish_fails: PublishFails,
 }
 
 impl ConnectedPeerTransport {
@@ -777,7 +794,14 @@ impl ConnectedPeerTransport {
             script: None,
             arrivals: Arc::new(kovan::Atom::new(Vec::new())),
             publishes: Arc::new(AtomicUsize::new(0)),
+            publish_fails: PublishFails::BothTopics,
         }
+    }
+
+    /// What this transport's gossip publishes do.
+    pub(super) fn with_publish_fails(mut self, publish_fails: PublishFails) -> Self {
+        self.publish_fails = publish_fails;
+        self
     }
 
     pub(super) fn listing_replicators(mut self, replicators: Vec<p2p::ReplicatorInfo>) -> Self {
@@ -902,12 +926,22 @@ impl p2p::P2PTransport for ConnectedPeerTransport {
 
     async fn publish(
         &self,
-        _topic: p2p::DefraTopic,
+        topic: p2p::DefraTopic,
         _msg: p2p::PushLogBroadcast,
     ) -> p2p::Result<p2p::transport::MessageId> {
         self.publishes.fetch_add(1, Ordering::SeqCst);
+        let document_topic = matches!(topic, p2p::DefraTopic::Document(_));
+        match self.publish_fails {
+            PublishFails::Transport => {
+                return Err(p2p::Error::Transport("the transport is gone".to_string()));
+            }
+            PublishFails::CollectionTopic if !document_topic => {}
+            PublishFails::DocumentTopic if document_topic => {}
+            PublishFails::BothTopics => {}
+            _ => return Ok(p2p::transport::MessageId::new("published".to_string())),
+        }
         Err(p2p::Error::GossipSubPublish(
-            "gossipsub publish error: InsufficientPeers".to_string(),
+            "InsufficientPeers".to_string(),
         ))
     }
 

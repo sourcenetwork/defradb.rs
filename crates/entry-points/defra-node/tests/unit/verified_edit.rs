@@ -141,17 +141,21 @@ impl Verified {
                 (graph, request)
             }
         };
-        let txn = self.node.begin_transaction(false).await.unwrap();
+        let txn = self
+            .node
+            .new_txn(false)
+            .await
+            .map(|txn| txn.detach())
+            .unwrap();
         let response = self
             .node
-            .execute_verified_mutation_in_txn(
-                request.with_identity(identity),
-                &txn,
-                &graph,
-                credential,
-            )
+            .with_transaction(txn)
+            .execute_verified_mutation(request.with_identity(identity), &graph, credential)
             .await;
-        Staged { txn, response }
+        Staged {
+            txn: query::TransactionHandle::new(txn.to_string()),
+            response,
+        }
     }
 
     /// The edit was admitted, and its commit sent the provider nothing and
@@ -159,7 +163,11 @@ impl Verified {
     async fn admitted(&self, staged: Staged) {
         let Staged { txn, response } = staged;
         assert!(!response.has_errors(), "{:?}", response.errors);
-        self.node.commit_transaction(&txn).await.unwrap();
+        self.node
+            .with_transaction(txn.parse::<defra_core::TxnId>().unwrap())
+            .commit()
+            .await
+            .unwrap();
         assert!(self.remote.take_writes().is_empty());
         assert!(self.owed().await.is_empty());
     }
@@ -184,7 +192,12 @@ impl Verified {
                 response.errors
             );
         }
-        assert!(self.node.commit_transaction(&txn).await.is_err());
+        assert!(self
+            .node
+            .with_transaction(txn.parse::<defra_core::TxnId>().unwrap())
+            .commit()
+            .await
+            .is_err());
         assert!(self.remote.take_writes().is_empty());
         assert!(self.owed().await.is_empty());
     }
@@ -489,7 +502,11 @@ fn what_the_node_owes_decides_before_the_provider() {
         );
         let unregistered = attempt.doc.clone();
         on.remote.down.store(true, Ordering::SeqCst);
-        on.node.commit_transaction(&attempt.txn).await.unwrap();
+        on.node
+            .with_transaction(attempt.txn.parse::<defra_core::TxnId>().unwrap())
+            .commit()
+            .await
+            .unwrap();
         on.remote
             .finalize(&unregistered, "writer", &writer.did, true);
         let staged = on
@@ -501,7 +518,12 @@ fn what_the_node_owes_decides_before_the_provider() {
             )
             .await;
         assert!(staged.response.has_errors(), "an edit was admitted");
-        assert!(on.node.commit_transaction(&staged.txn).await.is_err());
+        assert!(on
+            .node
+            .with_transaction(staged.txn.parse::<defra_core::TxnId>().unwrap())
+            .commit()
+            .await
+            .is_err());
         let staged = on
             .edit(
                 &owner,
@@ -515,7 +537,11 @@ fn what_the_node_owes_decides_before_the_provider() {
             "{:?}",
             staged.response.errors
         );
-        on.node.commit_transaction(&staged.txn).await.unwrap();
+        on.node
+            .with_transaction(staged.txn.parse::<defra_core::TxnId>().unwrap())
+            .commit()
+            .await
+            .unwrap();
         on.remote.down.store(false, Ordering::SeqCst);
         assert_eq!(on.records().await, ["still mine"]);
         assert!(on.remote.owners.get(&unregistered).is_none());
@@ -524,20 +550,27 @@ fn what_the_node_owes_decides_before_the_provider() {
         // is owed, and denies the writer every permission on the document.
         let doc = on.registered("shared").await;
         on.remote.finalize(&doc, "writer", &writer.did, true);
-        let txn = on.node.begin_transaction(false).await.unwrap();
+        let txn = on
+            .node
+            .new_txn(false)
+            .await
+            .map(|txn| txn.detach())
+            .unwrap();
         let revoking = actor(&on.user).with_bearer(
             Some(on.user.clone()),
             Some(format!("delegation:{}", on.user)),
         );
         let staged = on
             .node
-            .delete_dac_actor_relationship_change_for_in_txn(
-                &txn,
+            .core()
+            .change_dac_actor_relationship_for(
+                txn,
                 &revoking,
                 "Record",
                 &doc,
                 "reader",
                 &writer.did,
+                true,
             )
             .await;
         assert!(
@@ -548,7 +581,7 @@ fn what_the_node_owes_decides_before_the_provider() {
         // so the revocation stays owed while the node's drainer runs.
         on.remote.cut_off(&doc, true);
         on.remote.down.store(true, Ordering::SeqCst);
-        on.node.commit_transaction(&txn).await.unwrap();
+        on.node.with_transaction(txn).commit().await.unwrap();
         on.remote.down.store(false, Ordering::SeqCst);
         assert_eq!(on.owed().await.len(), 1);
         let staged = on
@@ -560,7 +593,12 @@ fn what_the_node_owes_decides_before_the_provider() {
             )
             .await;
         assert!(staged.response.has_errors(), "an edit was admitted");
-        assert!(on.node.commit_transaction(&staged.txn).await.is_err());
+        assert!(on
+            .node
+            .with_transaction(staged.txn.parse::<defra_core::TxnId>().unwrap())
+            .commit()
+            .await
+            .is_err());
         let mut records = on.records().await;
         records.sort();
         assert_eq!(records, ["shared", "still mine"]);

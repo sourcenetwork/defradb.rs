@@ -102,7 +102,7 @@ async fn exercise(node: &defra_node::Node, rpc_url: &str) {
 
     let document_acp = node.document_acp();
     document_acp
-        .register_doc_object(&owner_did, &policy, "users", "node-document")
+        .register_doc_object(&owner_did, &policy, "users", "node-document", &[])
         .await
         .expect("register document");
     assert!(document_acp

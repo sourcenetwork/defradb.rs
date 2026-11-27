@@ -153,9 +153,9 @@ impl SdlParser<'_> {
             let chunk_type = chunk_collection_name(&spec.parent, &spec.field);
             // Re-adding an existing parent fails later as "collection already exists",
             // the same as for a plain type.
-            let readded = self.known_external_types.contains(&spec.parent);
+            let readded = self.known_collections.contains_key(&spec.parent);
             if self.type_defs.contains_key(&chunk_type)
-                || (!readded && self.known_external_types.contains(&chunk_type))
+                || (!readded && self.known_collections.contains_key(&chunk_type))
             {
                 return Err(QueryError::parse(format!(
                     "@chunk needs the type name {chunk_type}, which is already taken"

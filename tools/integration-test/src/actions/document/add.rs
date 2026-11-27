@@ -36,6 +36,9 @@ pub struct AddDoc {
     pub expected_data: Value,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expected_error: Option<String>,
+    /// The stable code the error must carry; see [`Op::expected_error_code`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected_error_code: Option<String>,
     #[serde(flatten)]
     pub common: Common,
 }
@@ -53,25 +56,28 @@ impl Op for AddDoc {
         self.expected_error.as_deref()
     }
 
+    fn expected_error_code(&self) -> Option<&str> {
+        self.expected_error_code.as_deref()
+    }
+
     fn run(&self, state: &State) -> Result<Value, Failure> {
         let identity = self.check_arguments(state)?;
-        let (node, context, options) = (
+        let (node, scope, options) = (
             state.node_on(self.common.node())?,
-            state.context_on(self.common.node(), self.txn, identity, self.enable_signing),
+            state.scope_on(self.common.node(), self.txn, identity, self.enable_signing),
             self.options(),
         );
-        let failed = |e: defra_node::Error| Failure::operation(e.to_string());
+        let failed = |e: defra_node::Error| Failure::coded(e.to_string(), e.code());
         if let Some(docs) = &self.docs {
             let ids = state
-                .block_on(node.add_docs(&context, &self.collection, docs, &options))
+                .block_on(scope.on(&node).add_docs(&self.collection, docs, &options))
                 .map_err(failed)?;
             return Ok(json!({ "docIDs": ids }));
         }
         let doc = self.doc();
         let id = match self.upsert {
             true => state
-                .block_on(node.save_doc(
-                    &context,
+                .block_on(scope.on(&node).save_doc(
                     &self.collection,
                     self.doc_id.as_ref().map(Text::as_str),
                     &doc,
@@ -80,7 +86,7 @@ impl Op for AddDoc {
                 .map_err(failed)?,
             false => first(
                 state
-                    .block_on(node.add_docs(&context, &self.collection, &[doc], &options))
+                    .block_on(scope.on(&node).add_docs(&self.collection, &[doc], &options))
                     .map_err(failed)?,
             )?,
         };
@@ -128,7 +134,7 @@ impl HttpRun for AddDoc {
             let identity = action.check_arguments(state)?;
             let (txn, options) = (state.txn_id(action.txn), action.options());
             let collection = action.collection.clone();
-            let failed = |e: cli::error::Error| Failure::operation(e.to_string());
+            let failed = |e: cli::error::Error| Failure::coded(e.to_string(), e.code());
             if let Some(docs) = action.docs.clone() {
                 let ids = state
                     .http_as(action.common.node(), identity, |client| async move {

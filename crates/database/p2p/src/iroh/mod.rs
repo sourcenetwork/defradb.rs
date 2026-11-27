@@ -24,7 +24,7 @@ mod endpoint_streams;
 mod fetch_stats;
 mod gossip;
 mod identity_cache;
-#[cfg(test)]
+#[cfg(all(test, feature = "kms"))]
 pub(crate) use gossip::raw_origin::MAX_RAW_PAYLOAD;
 #[cfg(test)]
 mod inbound_admission_tests;
