@@ -669,7 +669,7 @@ impl<S: Store> DB<S> {
     /// Install app merge governance. First call wins; install it before any
     /// replication starts so no composite of a governed collection (one
     /// claimed by name, or, with a validator, one that declares a governance
-    /// root) merges ungoverned.
+    /// root and carries no `@policy`) merges ungoverned.
     pub fn set_merge_governance(&self, governance: crate::merge::governance::MergeGovernance) {
         let _ = self.merge_governance.set(governance);
     }

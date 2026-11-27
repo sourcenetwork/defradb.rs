@@ -369,7 +369,7 @@ A replicator pushes a document to a stopped target without treating the offline 
 
 - **Parents:** ["defra"]
 
-A collection whose definition carries `@governed(root: "<identifier>")` is judged by the merge validator of every node that embeds one: a document replicated into it there merges only once the validator has accepted it. The node names no collection for this, so a collection defined after the node started is judged from its first document. A node with no merge validator handles such a collection exactly as before: it merges replicated documents into it unless it named the collection, in which case it merges none of them. A collection that declares no governance root replicates as it always did, and a node's own writes are not judged here.
+A collection whose definition carries `@governed(root: "<identifier>")` is judged by the merge validator of every node that embeds one: a document replicated into it there merges only once the validator has accepted it. The node names no collection for this, so a collection defined after the node started is judged from its first document. A node with no merge validator handles such a collection exactly as before: it merges replicated documents into it unless it named the collection, in which case it merges none of them. A collection that declares no governance root replicates as it always did, and a node's own writes are not judged here. A collection that also carries `@policy` is left to access control: its declared root does not make it judged, and a node judges it only if it named the collection.
 
 # `defra.net.governed.no_validator`: A node with no merge validator replicates a governed collection as before
 

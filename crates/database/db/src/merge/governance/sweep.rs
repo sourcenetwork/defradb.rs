@@ -37,7 +37,8 @@ impl<S: Store + 'static, B: blockstore::Blockstore + 'static> DbMergeHandler<S, 
     /// this walk the unmerged set every interval to re-drive composites no
     /// validator can judge. That is the gate `judge_governed` and
     /// `defer_unresolved_document` already apply. With a validator installed,
-    /// the pass also covers collections that declare a governance root.
+    /// the pass also covers collections that declare a governance root and
+    /// carry no `@policy`.
     pub async fn sweep_unmerged_governed(&self) -> usize {
         let has_validator = self
             .db

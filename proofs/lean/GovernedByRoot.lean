@@ -6,16 +6,17 @@ A node may have installed no merge governance at all. If it installed some, it
 claimed a list of collection names and has a merge validator or has none. A
 collection is governed on such a node when its name was claimed, or when the
 node has a validator and the collection's definition declares a governance
-root. An ungoverned composite merges as in any collection; a governed one goes
+root and carries no access-control policy. An ungoverned composite merges as in any collection; a governed one goes
 to the validator; a governed one on a node with no validator is held
 unmerged.
 
 Before roots governed anything, only the claimed names counted. The theorems
-below say three things. A node with a validator judges every rooted
-collection, whatever names it claimed, so two such nodes agree on it. A node
-with no validator, or with no governance, does exactly what it did before. And
-the change only ever adds judgement: whatever was judged before is judged
-still.
+below say four things. A node with a validator judges every rooted collection
+that carries no policy, whatever names it claimed, so two such nodes agree on
+it. A node with no validator, or with no governance, does exactly what it did
+before. A collection that carries a policy is handled exactly as before on
+every node, so access control keeps it. And the change only ever adds
+judgement: whatever was judged before is judged still.
 
 Rust owner: crates/database/db/src/merge/governance/validator.rs
 MergeGovernance::governs; crates/database/db/src/merge/governance/judge.rs
@@ -23,11 +24,13 @@ DbMergeHandler::is_governed and DbMergeHandler::judge_governed.
 -/
 namespace GovernedByRoot
 
--- What the decision reads of a collection: its name, and its governance root
--- when its definition declares one.
+-- What the decision reads of a collection: its name, its governance root
+-- when its definition declares one, and whether it carries an access-control
+-- policy.
 structure Collection where
   name : String
   root : Option String
+  policy : Bool
 
 -- What a node installed as merge governance: the names it claimed, and
 -- whether it has a merge validator.
@@ -36,9 +39,10 @@ structure Governance where
   validator : Bool
 
 -- A collection is governed under installed governance when its name was
--- claimed, or when there is a validator and the collection declares a root.
+-- claimed, or when there is a validator and the collection declares a root
+-- and carries no policy.
 def governs (g : Governance) (c : Collection) : Bool :=
-  g.claimed.contains c.name || (g.validator && c.root.isSome)
+  g.claimed.contains c.name || (g.validator && c.root.isSome && !c.policy)
 
 -- The rule before roots governed anything: the claimed names only.
 def governsBefore (g : Governance) (c : Collection) : Bool :=
@@ -111,24 +115,42 @@ theorem no_validator_as_before (claimed : List String) (c : Collection) :
   simp [path, pathBefore, isGoverned, isGovernedBefore, governs, governsBefore,
     hasValidator]
 
--- On a node with a validator, a composite of a rooted collection is judged,
--- whatever names the node claimed.
+-- On a node with a validator, a composite of a rooted collection that
+-- carries no policy is judged, whatever names the node claimed.
 theorem rooted_with_a_validator_is_judged (claimed : List String) (c : Collection)
-    (h : c.root.isSome = true) : path (some ⟨claimed, true⟩) c = Path.judged := by
-  -- Unfold the definitions and use `h`: the root arm is `true && true`, so
-  -- the collection is governed whatever the name arm says, and with a
-  -- validator simp computes the route to `judged`.
-  simp [path, isGoverned, governs, hasValidator, route, h]
+    (h : c.root.isSome = true) (open_ : c.policy = false) :
+    path (some ⟨claimed, true⟩) c = Path.judged := by
+  -- Unfold the definitions and use `h` and `open_`: the root arm is
+  -- `true && true && !false`, so the collection is governed whatever the
+  -- name arm says, and with a validator simp computes the route to `judged`.
+  simp [path, isGoverned, governs, hasValidator, route, h, open_]
 
 -- Two nodes with validators that claimed different names agree on the path
--- of a rooted collection.
+-- of a rooted collection that carries no policy.
 theorem validating_nodes_agree_on_rooted (claimed other : List String)
-    (c : Collection) (h : c.root.isSome = true) :
+    (c : Collection) (h : c.root.isSome = true) (open_ : c.policy = false) :
     path (some ⟨claimed, true⟩) c = path (some ⟨other, true⟩) c := by
   -- Rewrite each side with the theorem above; both become `judged`, and
   -- `rw` closes `judged = judged` itself.
-  rw [rooted_with_a_validator_is_judged claimed c h,
-    rooted_with_a_validator_is_judged other c h]
+  rw [rooted_with_a_validator_is_judged claimed c h open_,
+    rooted_with_a_validator_is_judged other c h open_]
+
+-- Access control takes precedence over a declared root: a collection that
+-- carries a policy takes the path it took before, on every node, whatever
+-- root it declares.
+theorem policied_as_before (node : Option Governance) (c : Collection)
+    (policied : c.policy = true) : path node c = pathBefore node c := by
+  -- Look at the two kinds of node one at a time.
+  cases node with
+  -- No governance: both sides compute to the ungoverned path.
+  | none => rfl
+  -- Governance `g`: unfold both sides down to the two `governs` tests. With
+  -- a policy the root arm ends in `!true`, which is `false`, so the arm is
+  -- `false` and `x || false` is `x`; simp finds the two sides are the same
+  -- expression.
+  | some g =>
+    simp [path, pathBefore, isGoverned, isGovernedBefore, governs, governsBefore,
+      policied]
 
 -- A node with a validator never holds a composite: it judges or merges it.
 theorem validator_never_holds (claimed : List String) (c : Collection) :

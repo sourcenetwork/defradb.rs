@@ -1,13 +1,16 @@
 --------------------------- MODULE GovernedByRoot ---------------------------
-\* Three nodes hold the same three collections. "book" declares a governance
-\* root in its own definition. "letter" declares none, but some nodes claim
-\* it by name when they are built. "note" declares none and nobody claims it.
+\* Three nodes hold the same four collections. "book" declares a governance
+\* root in its own definition. "deed" declares a root and also carries an
+\* access-control policy. "letter" declares no root, but some nodes claim it
+\* by name when they are built. "note" declares none and nobody claims it.
 \* Composites reach each node from its peers, in any order.
 \*
 \* Who acts: a node, each time a composite reaches it. It asks whether the
 \* composite's collection is governed there. The rule has two arms: the
 \* collection's name was claimed on this node, or this node has a merge
-\* validator and the collection declares a root. If neither arm holds, the
+\* validator and the collection declares a root and carries no policy. A
+\* policied collection is left to access control, which this model does not
+\* follow further: here it merges as an ungoverned one. If neither arm holds, the
 \* composite merges as in any collection. If one does and the node has a
 \* validator, the validator judges it, and it merges only when accepted. If
 \* the name was claimed and the node has no validator, the composite is held
@@ -41,26 +44,31 @@
 \* RootWithoutValidator lets the root govern on a node with no validator.
 \* ValidatorOnlyForNamed finds the validator only for a claimed collection.
 \* ValidatorWithoutInstall finds a validator on a node that installed none.
+\* RootOverPolicy lets the root govern a collection that carries a policy.
 \* ClaimAll treats every collection as governed.
 CONSTANTS DropRootArm, DropNameArm, RootWithoutValidator,
-          ValidatorOnlyForNamed, ValidatorWithoutInstall, ClaimAll
+          ValidatorOnlyForNamed, ValidatorWithoutInstall, RootOverPolicy,
+          ClaimAll
 
 \* The three nodes.
 Nodes == {"named", "late", "plain"}
 \* The nodes that have a merge validator installed.
 Validating == {"named", "late"}
 \* The collections whose definition declares a governance root.
-Rooted == {"book"}
+Rooted == {"book", "deed"}
+\* The collections whose definition carries an access-control policy.
+Policied == {"deed"}
 \* The collections a node claimed by name when it was built.
 Named(n) == CASE n = "named" -> {"book", "letter"}
               [] n = "plain" -> {"letter"}
               [] OTHER -> {}
-\* The composites that can arrive: two of "book", one of "letter" and one of
-\* "note".
-Composites == {"good", "bad", "card", "memo"}
+\* The composites that can arrive: two of "book", and one each of "letter",
+\* "note" and "deed".
+Composites == {"good", "bad", "card", "memo", "seal"}
 \* The collection a composite belongs to.
 CollOf(w) == CASE w = "card" -> "letter"
                [] w = "memo" -> "note"
+               [] w = "seal" -> "deed"
                [] OTHER -> "book"
 \* The composites a validator rejects on their own content.
 Bad == {"bad"}
@@ -81,10 +89,12 @@ Init == /\ merged = [n \in Nodes |-> {}]
 \* The name arm: the node claimed the collection's name. DropNameArm
 \* switches it off.
 NameArm(n, c) == c \in Named(n) /\ ~DropNameArm
-\* The root arm: the collection declares a root and the node has a
-\* validator. RootWithoutValidator drops the validator condition, and
-\* DropRootArm switches the arm off.
+\* The root arm: the collection declares a root, carries no policy, and the
+\* node has a validator. RootOverPolicy drops the policy condition,
+\* RootWithoutValidator drops the validator condition, and DropRootArm
+\* switches the arm off.
 RootArm(n, c) == /\ c \in Rooted
+                 /\ (c \notin Policied \/ RootOverPolicy)
                  /\ (n \in Validating \/ RootWithoutValidator)
                  /\ ~DropRootArm
 \* A collection is governed at a node when either arm holds. ClaimAll
@@ -164,11 +174,12 @@ Next == \E n \in Nodes, w \in Composites :
 \* The execution can also stutter.
 Spec == Init /\ [][Next]_vars
 
-\* A node with a validator merges a composite of a rooted or claimed
-\* collection only when its validator accepted it.
+\* A node with a validator merges a composite of a claimed collection, or of
+\* a rooted one that carries no policy, only when its validator accepted it.
 INV_JudgedWhereValidating ==
     \A n \in Validating : \A w \in merged[n] :
-        (CollOf(w) \in Rooted \/ CollOf(w) \in Named(n)) => w \in accepted[n]
+        (CollOf(w) \in (Rooted \ Policied) \/ CollOf(w) \in Named(n))
+            => w \in accepted[n]
 
 \* A node with a validator never holds a rooted composite without judging it.
 INV_ValidatorNeverHoldsRooted ==
@@ -188,10 +199,19 @@ INV_NoValidatorAsBefore ==
         /\ \A w \in merged[n] : CollOf(w) \notin Named(n)
         /\ rejected[n] = {}
 
-\* Only a collection that the node claimed, or that declares a root on a
-\* node with a validator, is ever held back or rejected.
+\* Only a collection that the node claimed, or that declares a root and
+\* carries no policy on a node with a validator, is ever held back or
+\* rejected.
 INV_UngovernedUntouched ==
     \A n \in Nodes : \A w \in (held[n] \cup rejected[n]) :
         \/ CollOf(w) \in Named(n)
-        \/ (CollOf(w) \in Rooted /\ n \in Validating)
+        \/ (CollOf(w) \in (Rooted \ Policied) /\ n \in Validating)
+
+\* Access control takes precedence over a declared root: a composite of a
+\* policied collection that the node did not claim never goes to the
+\* validator and is never held for want of one.
+INV_PolicyLeftToAcp ==
+    \A n \in Nodes :
+        \A w \in (accepted[n] \cup rejected[n] \cup held[n]) :
+            CollOf(w) \in Policied => CollOf(w) \in Named(n)
 =============================================================================

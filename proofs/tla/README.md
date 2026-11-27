@@ -382,9 +382,10 @@ verdict is real; the design note says how.
 **Which collections are governed.** `GovernedByRoot.tla` is the rule in
 `MergeGovernance::governs`: a collection is governed where its name was claimed,
 or where a validator is installed and its definition declares a governance
-root. Three nodes (a validator with names, a validator with none, no validator
-with one name) and three collections (rooted, claimed but rootless, neither).
-One GREEN run and seven RED, one for each arm and guard of the rule:
+root and carries no policy. Three nodes (a validator with names, a validator
+with none, no validator with one name) and four collections (rooted, rooted
+with a policy, claimed but rootless, none of these). One GREEN run and eight
+RED, one for each arm and guard of the rule:
 
 ```bash
 # GREEN: a validating node judges every rooted or claimed collection; a node with no validator is as before.
@@ -393,4 +394,6 @@ One GREEN run and seven RED, one for each arm and guard of the rule:
 ./tools/tlc -metadir states/gbr_r -config MC_GovernedByRoot_Red_DropRootArm.cfg             GovernedByRoot.tla
 # RED: a validator found on a node that installed none merges what that node used to hold.
 ./tools/tlc -metadir states/gbr_v -config MC_GovernedByRoot_Red_ValidatorWithoutInstall.cfg GovernedByRoot.tla
+# RED: the root governs a collection that carries a policy, taking it off the access-control path.
+./tools/tlc -metadir states/gbr_p -config MC_GovernedByRoot_Red_RootOverPolicy.cfg          GovernedByRoot.tla
 ```

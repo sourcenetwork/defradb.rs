@@ -9,6 +9,7 @@ use super::*;
 
 const LEDGER_SDL: &str = r#"type Ledger @governed(root: "root-a") { entry: String }"#;
 const PLAIN_SDL: &str = "type Plain { entry: String }";
+const POLICIED_LEDGER_SDL: &str = r#"type Ledger @governed(root: "root-a") @policy(id: "policy-1", resource: "ledger") { entry: String }"#;
 
 const NO_VALIDATOR: &str = "collection Ledger is governed but no merge validator is installed";
 
@@ -221,6 +222,53 @@ fn a_claimed_rooted_collection_with_no_validator_is_held_as_before() {
         assert_eq!(node.handler.deferred_composites(), 0);
         assert!(node.doc_ids("Ledger").await.is_empty());
         assert_eq!(node.handler.sweep_unmerged_governed().await, 0);
+    })
+    .unwrap()
+}
+
+/// ACP takes precedence over a declared root: a rooted collection that also
+/// carries `@policy` is not judged on a node that did not claim its name, so
+/// it keeps the ACP merge path it had before a root governed anything.
+#[test]
+fn a_rooted_collection_with_a_policy_is_not_judged_unless_claimed() {
+    workers::block_on(async {
+        let validator = Counting::giving(MergeVerdict::reject("no"));
+        let node = node_judging_with(&validator).await;
+        let writer = signer();
+
+        define(&node, POLICIED_LEDGER_SDL).await;
+        let entry = genesis(&target(POLICIED_LEDGER_SDL), "entry", "x", &writer);
+
+        assert_eq!(entry.merge(&node, &writer.did).await, MergeOutcome::Merged);
+        assert_eq!(validator.asked(), 0);
+        assert_eq!(node.doc_ids("Ledger").await, vec![entry.doc_id.clone()]);
+    })
+    .unwrap()
+}
+
+/// A name claim still governs a collection that carries `@policy`, as it did
+/// before a root governed anything.
+#[test]
+fn a_claimed_collection_with_a_policy_is_judged_as_before() {
+    workers::block_on(async {
+        let validator = Counting::giving(MergeVerdict::reject("no"));
+        let node = Node::open(
+            RegolithStore::in_memory().unwrap(),
+            MergeGovernance::new(["Ledger"]).with_validator(validator.clone()),
+            true,
+        )
+        .await;
+        let writer = signer();
+
+        define(&node, POLICIED_LEDGER_SDL).await;
+        let entry = genesis(&target(POLICIED_LEDGER_SDL), "entry", "x", &writer);
+
+        assert_eq!(
+            entry.merge(&node, &writer.did).await,
+            MergeOutcome::rejected("no")
+        );
+        assert_eq!(validator.asked(), 1);
+        assert!(node.doc_ids("Ledger").await.is_empty());
     })
     .unwrap()
 }
