@@ -250,6 +250,7 @@ jobs:
         with:
           save-if: ${{ env.SAVE_CACHE == 'true' }}
       - run: cargo clippy --all --all-targets -- -D warnings
+      - run: cargo clippy -p integration-test --features generator --bin gen_scenarios -- -D warnings
       - name: Data path confinement
         env:
           CLIPPY_CONF_DIR: .github/clippy/data-path

@@ -141,7 +141,12 @@ pub fn resolve(path: &str, test: &str, go: &[GoExclude]) -> Option<(Vec<&'static
         .iter()
         .filter(|exclude| runs_here(path, test, exclude).is_none())
         .collect();
-    let names: Vec<&'static str> = carried.iter().map(|exclude| exclude.multiplier).collect();
+    let mut names = Vec::new();
+    for exclude in &carried {
+        if !names.contains(&exclude.multiplier) {
+            names.push(exclude.multiplier);
+        }
+    }
     if names.is_empty() {
         return None;
     }
@@ -187,6 +192,19 @@ mod tests {
             Some((
                 vec!["secondary-index"],
                 "Excluded as in Go: The join is inverted.".to_owned()
+            ))
+        );
+    }
+
+    #[test]
+    fn emits_one_multiplier_with_both_reasons() {
+        let mut go = excluded("First reason.");
+        go.extend(excluded("Second reason."));
+        assert_eq!(
+            resolve("a_test.go", "TestA", &go),
+            Some((
+                vec!["secondary-index"],
+                "Excluded as in Go: First reason. Second reason.".to_owned()
             ))
         );
     }

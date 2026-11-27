@@ -113,6 +113,7 @@ fn generate(args: &Args) -> Result<()> {
     let pin = go.as_ref().map(|go| go.pin().to_owned());
     let mut unresolved: Vec<String> = Vec::new();
     let mut unresolved_excludes: Vec<String> = Vec::new();
+    let mut emitted_excludes = Vec::new();
     let mut run_here: Vec<String> = Vec::new();
 
     let mut skipped_drift: Vec<String> = Vec::new();
@@ -209,7 +210,21 @@ fn generate(args: &Args) -> Result<()> {
                 }
                 None => Vec::new(),
             };
+            let excludes = multiplier_excludes::resolve(&source.path, &source.test, &go_excludes);
+            if let Some((names, reason)) = &excludes {
+                emitted_excludes.push(format!(
+                    "{} {}: {reason}",
+                    item.scenario.id,
+                    names.join(", ")
+                ));
+            }
             for exclude in &go_excludes {
+                if excludes
+                    .as_ref()
+                    .is_some_and(|(names, _)| names.contains(&exclude.multiplier))
+                {
+                    continue;
+                }
                 if let Some(why) =
                     multiplier_excludes::runs_here(&source.path, &source.test, exclude)
                 {
@@ -219,7 +234,6 @@ fn generate(args: &Args) -> Result<()> {
                     ));
                 }
             }
-            let excludes = multiplier_excludes::resolve(&source.path, &source.test, &go_excludes);
             body.push_str(&emit::test_fn(
                 item,
                 &name,
@@ -289,6 +303,10 @@ fn generate(args: &Args) -> Result<()> {
     );
     for line in &unresolved_excludes {
         println!("  excludes: {line}");
+    }
+    println!("emitted multiplier excludes: {}", emitted_excludes.len());
+    for line in &emitted_excludes {
+        println!("  emitted: {line}");
     }
     println!("Go multiplier excludes run here: {}", run_here.len());
     for line in &run_here {

@@ -127,6 +127,12 @@ impl GoSource {
         let Some(body) = function_body(&text, test) else {
             return Excludes::Unresolved(format!("no func {test} in {path}"));
         };
+        if !body.match_indices("TestCase").any(|(at, name)| {
+            !go_excludes::commented_out(body, at)
+                && body[at + name.len()..].trim_start().starts_with('{')
+        }) {
+            return Excludes::Unresolved(format!("{path}::{test} has no inline TestCase"));
+        }
         let mut found: Vec<GoExclude> = Vec::new();
         for (at, key) in body.match_indices("MultiplierExcludes:") {
             if go_excludes::commented_out(body, at) {
@@ -261,6 +267,24 @@ mod tests {
     fn reads_an_inline_list_without_comments() {
         let rest = "[]state.ClientType{\n// state.CLIClientType is out\nstate.HTTPClientType,\nstate.JSClientType}),\n";
         assert_eq!(list(rest), vec!["RustHttp", "GoHttp"]);
+    }
+
+    #[test]
+    fn reports_an_exclusion_it_cannot_read_from_a_helper() {
+        let path = "foo_test.go";
+        let mut go = GoSource::new(PathBuf::new(), "pin".to_owned());
+        go.files.insert(
+            path.to_owned(),
+            Some(
+                "package x\nfunc TestA(t *testing.T) { run(sharedCase()) }\n\
+                 func sharedCase() TestCase { return TestCase{} }\n"
+                    .to_owned(),
+            ),
+        );
+        assert!(matches!(
+            go.multiplier_excludes(path, "TestA"),
+            Excludes::Unresolved(reason) if reason.contains("no inline TestCase")
+        ));
     }
 
     #[test]
