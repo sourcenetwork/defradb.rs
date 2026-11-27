@@ -215,8 +215,8 @@ async fn snapshot(mem: &MemoryNodeStore) -> (Vec<Node>, Aux, Vec<Vec<u8>>, Optio
 /// `RESIDENT_BUILD=1` grows the graph with resident codes instead, `CACHE=1`
 /// with the shared code cache a node's engine carries, and writes it into
 /// `resident_store` as built. Query this layout with `ENGINE=resident`.
-/// It prints the time spent merging and a digest
-/// of every record and code, so two builds can be compared.
+/// It prints the time spent merging and a digest of every record and code,
+/// excluding training's random tag, so two builds can be compared.
 async fn build_diskann(
     vectors: &[Vec<f32>],
     store: &RegolithStore,
@@ -267,6 +267,7 @@ async fn build_diskann(
     if resident_build {
         let digest = aux
             .iter()
+            .filter(|(kind, _, _)| *kind != codec::TRAINED)
             .fold(0xcbf2_9ce4_8422_2325u64, |hash, (kind, key, value)| {
                 [&[*kind][..], key, value]
                     .into_iter()
