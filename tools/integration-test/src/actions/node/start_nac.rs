@@ -14,6 +14,10 @@ pub struct Start {
     pub enable_signing: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub node_identity_seed: Option<u64>,
+    /// The query runner's identity when a request carries none, as
+    /// `defradb start --identity` sets it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_identity_seed: Option<u64>,
     #[serde(default, skip_serializing_if = "Value::is_null")]
     pub expected_data: Value,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -37,11 +41,16 @@ impl Op for Start {
 
     fn run_mut(&self, state: &mut State) -> Result<Value, Failure> {
         let owner = self.common.client_identity(Self::name())?;
-        let (node_identity, signing) = (self.node_identity_seed, self.enable_signing);
+        let (node_identity, default_identity, signing) = (
+            self.node_identity_seed,
+            self.default_identity_seed,
+            self.enable_signing,
+        );
         state.start_node_with_nac(self.common.node(), self.enable_nac, owner, |spec| {
             if let Some(seed) = node_identity {
                 spec.node_identity = Some(seed);
             }
+            spec.default_identity = default_identity;
             match signing {
                 Some(true) => spec.signing = Some(spec.signing.unwrap_or_default()),
                 Some(false) => spec.signing = None,

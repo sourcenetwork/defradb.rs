@@ -18,7 +18,7 @@ A store NAC was enabled on comes back with NAC enforced when the node restarts w
 
 While NAC is enabled, an identity NAC grants `bypass-dac` (a NAC admin) reads and writes documents DAC would hide from it on every path, as Go's `canDACBypass` decides: a query, a `_commits` query, a top-level aggregate such as `COUNT(Users: {})`, the events of a subscription it opened, a filtered `update_Users` and a `delete_Users` by docID. A request whose caller denied it the bypass, and an identity without `bypass-dac` that NAC lets read, update and delete documents, get on those paths only what DAC grants them: no rows, a count of 0, no events, and no document changed, without an error (`go.acp.nac.admin.dac-bypass`).
 
-The bypass belongs to the identity that made the request: an anonymous write on a node started with `--identity` set to a NAC admin gets no bypass, as an anonymous read gets none.
+The bypass belongs to the identity that made the request: an anonymous write on a node whose default query identity is a NAC admin gets no bypass, as an anonymous read gets none, and changes no document even when NAC grants the caller the permissions needed to reach DAC.
 
 # `defra.acp.nac_admin_dac_bypass_attempt`: A write decides its DAC bypass again in each attempt
 
