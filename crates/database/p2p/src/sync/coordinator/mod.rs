@@ -161,6 +161,8 @@ pub struct PushFailure {
 pub struct SyncStatus {
     /// Live queue occupancy and retry/retirement counters.
     pub push_backlog: crate::sync::push_backlog::PushBacklogSnapshot,
+    /// Lane depth, run sizes and failed runs of the push failure recorder.
+    pub failure_recorder: crate::sync::FailureRecorderSnapshot,
     /// Gossip updates folded into a newer update during the short window.
     pub broadcast_coalesced_total: u64,
     /// Duplicate replicator updates folded by the bounded outgoing queue.
@@ -991,6 +993,9 @@ pub(super) struct SyncRuntime<T: P2PTransport> {
     /// is installed after construction (`set_failure_channel`).
     pub(super) failure_tx: Arc<AtomOption<mpsc::Sender<PushFailure>>>,
 
+    /// What the recorder draining `failure_tx` holds and does.
+    pub(super) failure_recorder: Arc<crate::sync::FailureRecorderStats>,
+
     /// Limiter for concurrent DAG fetch tasks (configurable via SyncConfig).
     pub(super) dag_fetch_limiter: DagFetchLimiter,
 
@@ -1165,6 +1170,7 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
         let estimates = self.manager.pending_dag_estimates();
         SyncStatus {
             push_backlog,
+            failure_recorder: self.runtime.failure_recorder.snapshot(),
             broadcast_coalesced_total: self.runtime.broadcast_coalescer.coalesced(),
             push_updates_coalesced_total,
             gossip_direction_filtered_total: self
