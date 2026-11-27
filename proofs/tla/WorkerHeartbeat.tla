@@ -352,9 +352,10 @@ Sweep(m) ==
                    hookDone, taskRep, taskDone, held, badReport,
                    badTaskTwice, badTwice>>  \* nothing else moves
 
-\* Monitor m first sees a hook poll: it notes when, and reports nothing. In
-\* the code this is one compare-and-swap on the shared sighting, so both
-\* monitors agree on it.
+\* Monitor m first sees a hook poll: after reading the heartbeat it reads the
+\* clock, notes when, and reports nothing. Reading the clock second means a
+\* newly shown poll is never given an earlier sighting. In the code this is
+\* one compare-and-swap on the shared sighting, so both monitors agree on it.
 Sight(m) ==
     /\ mpc[m] = "rest" /\ beatOn /\ Kind(beatPoll) = "hook" \* a hook poll shown
     /\ sightPoll # beatPoll                             \* not seen before
@@ -444,21 +445,21 @@ Report(m) ==
     /\ Step(m, "checked", "rest")                       \* m is about to report
     /\ IF Kind(mPoll[m]) = "task"                       \* m has a task poll
        THEN IF TaskClaims(mPoll[m])                     \* m claims it
-            THEN /\ badTaskTwice' = (badTaskTwice \/ mPoll[m] \in taskDone)
+            THEN /\ badTaskTwice' = (badTaskTwice \/ mPoll[m] \in taskDone) \* already reported means duplicate
                  /\ taskDone' = taskDone \cup {mPoll[m]} \* reported now
                  /\ taskRep' = mPoll[m]                    \* the claim's word
                  /\ UNCHANGED <<hookDone, hookRep, badTwice>> \* no hook claim
             ELSE /\ UNCHANGED <<badTaskTwice, taskDone, taskRep,
-                                 hookDone, hookRep, badTwice>> \* nothing claimed
+                                 hookDone, hookRep, badTwice>> \* failed claim preserves state
        ELSE IF Claims(mPoll[m])                         \* m claims a hook poll
-            THEN /\ badTwice' = (badTwice \/ mPoll[m] \in hookDone)
-                 /\ hookDone' = hookDone \cup {mPoll[m]}
-                 /\ hookRep' = IF ClaimMax
+            THEN /\ badTwice' = (badTwice \/ mPoll[m] \in hookDone) \* already reported means duplicate
+                 /\ hookDone' = hookDone \cup {mPoll[m]} \* reported now
+                 /\ hookRep' = IF ClaimMax              \* the claim's word
                                THEN Max(hookRep, mPoll[m])
                                ELSE mPoll[m]
                  /\ UNCHANGED <<badTaskTwice, taskDone, taskRep>>
             ELSE /\ UNCHANGED <<badTwice, hookDone, hookRep, badTaskTwice,
-                                 taskDone, taskRep>>
+                                 taskDone, taskRep>>       \* failed claim preserves state
     /\ UNCHANGED <<workerVars, mark, mPoll, sightPoll, sightAt, held,
                    badReport>>                            \* nothing else moves
 

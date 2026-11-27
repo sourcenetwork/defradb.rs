@@ -82,7 +82,8 @@ pub(crate) fn scan(pool: &PoolShared, now: u64) -> usize {
             continue;
         };
         let elapsed = if beat.hook() {
-            worker.hook_elapsed(beat.number(), now)
+            // The scan's start can predate a poll recorded before this read.
+            worker.hook_elapsed(beat.number(), pool.clock.now_micros().max(now))
         } else {
             now.saturating_sub(beat.start())
         };

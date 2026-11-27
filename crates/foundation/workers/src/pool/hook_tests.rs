@@ -291,6 +291,23 @@ fn the_monitor_reports_a_hook_poll_once_and_routes_around_it() {
 }
 
 #[test]
+fn a_hook_sighted_after_the_scan_began_waits_a_full_limit() {
+    let clock = Arc::new(ManualClock::default());
+    let pool = bare(2, clock.clone());
+    let worker = &pool.workers[0];
+    worker.heartbeat.begin_hook(hook_word(1));
+    clock.advance(9_000);
+
+    assert_eq!(monitor::scan(&pool, 0), 0, "first seen");
+    clock.advance(2_000);
+    assert_eq!(
+        monitor::scan(&pool, clock.now_micros()),
+        0,
+        "the sighting is no older than the poll"
+    );
+}
+
+#[test]
 fn a_scan_sweeps_a_mark_for_a_poll_no_longer_shown() {
     let clock = Arc::new(ManualClock::default());
     let pool = bare(2, clock.clone());
