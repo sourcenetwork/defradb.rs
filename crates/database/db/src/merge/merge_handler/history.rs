@@ -47,6 +47,10 @@ struct Progress {
     /// per finished node the headstore does not record as applied.
     #[serde(default)]
     keys: u64,
+    /// Old build states have no `keys` field. They must restart rather than
+    /// continue with an incorrect count.
+    #[serde(default)]
+    keys_known: bool,
 }
 
 fn now_unix() -> u64 {

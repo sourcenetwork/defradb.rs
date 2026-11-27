@@ -96,10 +96,14 @@ where
                     last_active_unix: now_unix(),
                     sender_peer: metadata.sender_peer.map(str::to_owned),
                     keys: 2,
+                    keys_known: true,
                     ..Progress::default()
                 }
             }
         };
+        if !progress.keys_known {
+            progress.outcome = Some(Completion::Restart);
+        }
         if progress.context != context {
             progress.outcome = Some(Completion::Restart);
             progress.context = context;

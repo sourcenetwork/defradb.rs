@@ -8,7 +8,10 @@
 \* and 5 may be skipped for good when processed (never applied).
 \* What can happen: the walk pushes a parent, pops an ancestor the headstore
 \* already records as applied, processes a node whose parents are done, and at
-\* the end deletes what bookkeeping remains.
+\* the end deletes what bookkeeping remains in pages. A walk can also abort
+\* partway through because its message is rejected, its context changes, or
+\* its admission slot is reclaimed; cleanup then pages through the partial
+\* stack and marks.
 \* What must never happen: the root's progress miscounts its keys; a finished,
 \* applied node keeps a mark (bookkeeping then grows with the whole history,
 \* not with the open walk); a node is processed twice; bookkeeping outlives the
@@ -116,21 +119,49 @@ Process == /\ stage = "walk"
            /\ stage' = AfterPop
            /\ UNCHANGED skipped
 
-\* After the walk, cleanup deletes every remaining key and the count with them.
-Cleanup == /\ stage = "clean"
-           /\ mark' = [n \in Nodes |-> "none"]
-           /\ keys' = 0
-           /\ stage' = "gone"
-           /\ UNCHANGED <<stack, applied, processed, skipped>>
+\* A walk may stop before finishing, leaving a partial stack and marks for
+\* cleanup to page through.
+Abort == /\ stage = "walk"
+         /\ stage' = "clean"
+         /\ UNCHANGED <<stack, mark, applied, processed, keys, skipped>>
+
+\* The marks currently occupying bookkeeping keys.
+Marked == {n \in Nodes : mark[n] # "none"}
+
+\* A cleanup page deletes one bookkeeping key per modeled step; a Rust turn
+\* repeats this until its page budget is spent. Deleting a mark and deleting a
+\* frame are separate steps so either key can be the first page entry. With
+\* Bug = "cleanupnoaccount" the count is left alone.
+CleanupMark == /\ stage = "clean"
+                /\ \E n \in Marked :
+                     /\ mark' = [m \in Nodes |-> IF m = n THEN "none" ELSE mark[m]]
+                     /\ keys' = (IF Bug = "cleanupnoaccount" THEN keys ELSE keys - 1)
+                     /\ UNCHANGED <<stack, applied, processed, skipped, stage>>
+
+\* Deleting one frame is the other cleanup-page step.
+CleanupFrame == /\ stage = "clean"
+                 /\ Len(stack) > 0
+                 /\ stack' = Popped
+                 /\ keys' = (IF Bug = "cleanupnoaccount" THEN keys ELSE keys - 1)
+                 /\ UNCHANGED <<mark, applied, processed, skipped, stage>>
+
+CleanupPage == CleanupMark \/ CleanupFrame
+
+\* Cleanup finishes once no frame or mark key remains.
+CleanupDone == /\ stage = "clean"
+               /\ Len(stack) + Cardinality(Marked) = 0
+               /\ keys' = 0
+               /\ stage' = "gone"
+               /\ UNCHANGED <<stack, mark, applied, processed, skipped>>
 
 \* One step of the walk or its cleanup.
-Next == PopApplied \/ SkipDone \/ Push \/ Process \/ Cleanup
+Next == PopApplied \/ SkipDone \/ Push \/ Process \/ Abort \/ CleanupPage \/ CleanupDone
 
 \* The walk keeps taking steps until its bookkeeping is gone.
 Spec == Init /\ [][Next]_vars /\ WF_vars(Next)
 
 \* The number of keys that exist: every frame and every mark.
-Stored == Len(stack) + Cardinality({n \in Nodes : mark[n] # "none"})
+Stored == Len(stack) + Cardinality(Marked)
 
 \* The progress counts exactly the bookkeeping keys that exist.
 INV_Accounted == keys = Stored
@@ -138,9 +169,8 @@ INV_Accounted == keys = Stored
 INV_Retention == \A n \in Nodes : mark[n] = "done" => n \in skipped
 \* No node is processed twice, applied or skipped.
 INV_ProcessedOnce == \A n \in Nodes : processed[n] <= 1
-\* Once the walk is over, every block that is not skipped is applied and no key is left.
-INV_CleanEnd == stage = "gone" => /\ applied = Nodes \ skipped
-                                  /\ keys = 0
+\* Once the walk or its cleanup is over, no key is left.
+INV_CleanEnd == stage = "gone" => /\ keys = 0
                                   /\ Stored = 0
 \* The walk always finishes and leaves no bookkeeping.
 LIVE_Finishes == <>(stage = "gone")
