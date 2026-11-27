@@ -75,7 +75,9 @@ impl Op for CrashCommit {
                 self.point
             )));
         }
-        state.kill_node(name, true)?;
+        state.kill_node(name, true).map_err(|error| {
+            Failure::operation(format!("{}; the commit answered {answer:?}", error.message))
+        })?;
         Ok(json!({}))
     }
 }

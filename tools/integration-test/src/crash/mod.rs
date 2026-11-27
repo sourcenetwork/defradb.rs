@@ -2,7 +2,9 @@
 //! runs in a process of its own: this test binary run again as
 //! [`HOST_TEST`], whose store writes its files through [`CrashEnv`]. The
 //! test arms one [`CrashPoint`], and the node's process kills itself with
-//! SIGKILL when its log reaches it.
+//! SIGKILL when its log reaches it. SIGKILL leaves the operating system's
+//! page cache in place, so these tests cover process-crash recovery, not
+//! power-loss durability.
 
 mod env;
 pub mod host;
@@ -26,7 +28,8 @@ pub enum CrashPoint {
     /// After the first half of the commit's log record is written.
     TornLogWrite,
     /// After the log sync that makes the commit's record durable, before the
-    /// commit is answered.
+    /// commit is answered. The process is still killed with SIGKILL, so the
+    /// page cache remains; this does not simulate a power cut.
     AfterLogSync,
 }
 
@@ -58,8 +61,11 @@ impl CrashPoint {
 fn kill_self() -> ! {
     #[cfg(unix)]
     // SAFETY: kill(2) on this process's own ID takes no pointers.
-    unsafe {
-        libc::kill(libc::getpid(), libc::SIGKILL);
+    if unsafe { libc::kill(libc::getpid(), libc::SIGKILL) } == 0 {
+        // Signal delivery need not happen before the next instruction.
+        loop {
+            std::thread::park();
+        }
     }
     std::process::abort()
 }

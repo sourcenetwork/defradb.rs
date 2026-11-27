@@ -57,6 +57,7 @@ fn two_users_in_a_transaction() -> Vec<ActionInstance<Actions>> {
 /// Read the users back, through the collection and through the index on
 /// `name`, expecting `users` both ways.
 fn users_read_back(users: Value) -> Vec<ActionInstance<Actions>> {
+    let index_fetches = users.as_array().map_or(0, Vec::len);
     vec![
         Request {
             request: r#"
@@ -83,6 +84,22 @@ fn users_read_back(users: Value) -> Vec<ActionInstance<Actions>> {
             "#
             .into(),
             expected_data: json!({ "Users": integration_test::m::unordered(users) }),
+            ..Default::default()
+        }
+        .into(),
+        Request {
+            request: r#"
+                query @explain(type: execute) {
+                    Users(filter: { name: { _in: ["John", "Islam", "Fred"] } }) {
+                        name
+                        age
+                    }
+                }
+            "#
+            .into(),
+            expected_data: json!(integration_test::m::explain_scan(
+                json!({ "indexFetches": index_fetches })
+            )),
             ..Default::default()
         }
         .into(),
