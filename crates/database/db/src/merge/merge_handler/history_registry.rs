@@ -56,7 +56,7 @@ pub(super) async fn reclaim_idle(
             write(store, &state_key(root), &progress).await?;
             updated = true;
         } else if now.saturating_sub(progress.last_active_unix) >= IDLE_SECONDS {
-            if cleanup(store, root, budget).await? {
+            if cleanup(store, root, budget, &mut progress).await? {
                 progress.outcome = Some(Completion::Restart);
                 write(store, &state_key(root), &progress).await?;
             }
