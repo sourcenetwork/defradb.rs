@@ -165,7 +165,7 @@ impl<S: Store> VersionedFetcher<S> {
 
         // Collect all blocks from target CID back to genesis
         let blocks = self
-            .collect_blocks_to_genesis(txn, &target_cid, &target_block)
+            .collect_blocks_to_genesis(txn, &target_cid, &target_block, &members)
             .await?;
 
         // Sort blocks by priority (ascending) for forward replay
@@ -294,7 +294,12 @@ impl<S: Store> VersionedFetcher<S> {
 
             // Collect all blocks from this composite back to genesis
             let blocks = self
-                .collect_blocks_to_genesis(txn, composite_cid, &composite_block)
+                .collect_blocks_to_genesis(
+                    txn,
+                    composite_cid,
+                    &composite_block,
+                    std::slice::from_ref(&doc_id),
+                )
                 .await?;
 
             let mut sorted_blocks: Vec<(Cid, Block)> = blocks.into_iter().collect();
@@ -363,13 +368,17 @@ impl<S: Store> VersionedFetcher<S> {
 
     /// Collect all blocks from target CID back to genesis using BFS.
     ///
-    /// Returns a map of CID -> Block for all blocks in the history.
+    /// Returns a map of CID -> Block for all blocks in the history. A block
+    /// a history prune of `doc_ids` deleted fails the walk: the version
+    /// cannot be rebuilt without it.
     async fn collect_blocks_to_genesis(
         &self,
         txn: &DbTxn<S>,
         start_cid: &Cid,
         start_block: &Block,
+        doc_ids: &[String],
     ) -> Result<RapidHashMap<Cid, Block>> {
+        let mut missing = Vec::new();
         let mut blocks = RapidHashMap::new();
         let mut visited: RapidHashSet<Cid> = RapidHashSet::new();
         let mut queue: VecDeque<Cid> = VecDeque::new();
@@ -401,9 +410,13 @@ impl<S: Store> VersionedFetcher<S> {
             }
             visited.insert(cid);
 
-            let block = match self.load_block(txn, &cid).await {
-                Ok(b) => b,
-                Err(_) => continue, // Skip missing blocks (genesis reached)
+            let block = match self.find_block(txn, &cid).await {
+                Ok(Some(block)) => block,
+                Ok(None) => {
+                    missing.push(cid);
+                    continue;
+                }
+                Err(_) => continue,
             };
 
             // Queue heads for further traversal
@@ -427,8 +440,55 @@ impl<S: Store> VersionedFetcher<S> {
             blocks.insert(cid, block);
         }
 
+        self.refuse_pruned(txn, doc_ids, &missing).await?;
         self.decrypt_blocks(txn, start_cid, &mut blocks).await?;
         Ok(blocks)
+    }
+
+    /// Fail when a block the walk did not find is one of `doc_ids`' commits:
+    /// its priority index entry outlives the block only when a history prune
+    /// deleted it.
+    async fn refuse_pruned(
+        &self,
+        txn: &DbTxn<S>,
+        doc_ids: &[String],
+        missing: &[Cid],
+    ) -> Result<()> {
+        if missing.is_empty() {
+            return Ok(());
+        }
+        let systemstore = txn.systemstore()?;
+        let headstore = txn.headstore()?;
+        for doc_id in doc_ids {
+            let Some(doc_ref) = crate::docid::map::get_doc_ref(&systemstore, doc_id).await? else {
+                continue;
+            };
+            let entries =
+                crate::block::priority::document_entries(&headstore, doc_ref.doc_short_id).await?;
+            if let Some((_, cid)) = entries.iter().find(|(_, cid)| missing.contains(cid)) {
+                return Err(Error::HistoryPruned {
+                    doc_id: doc_id.clone(),
+                    cid: cid.to_string(),
+                });
+            }
+        }
+        Ok(())
+    }
+
+    /// A block from the blockstore by CID, its payload as stored, or `None`
+    /// when the blockstore has none.
+    async fn find_block(&self, txn: &DbTxn<S>, cid: &Cid) -> Result<Option<Block>> {
+        let blockstore = txn.blockstore()?;
+        let Some(data) = blockstore
+            .get(&cid.to_bytes())
+            .await
+            .map_err(Error::Storage)?
+        else {
+            return Ok(None);
+        };
+        Block::from_dag_cbor(&data)
+            .map(Some)
+            .map_err(|e| Error::Serialization(format!("Failed to decode block: {}", e)))
     }
 
     /// Load a block from blockstore by CID, its payload as stored.

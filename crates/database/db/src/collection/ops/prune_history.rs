@@ -1,7 +1,7 @@
 //! Pruning a collection's history to its `@retention(maxDepth: N)`: each
 //! document keeps the composite commits of its top N heights and its live
-//! heads, and loses the older composites with the field blocks only they
-//! link. Nothing is replicated.
+//! heads, and loses the older composites and every field block no kept
+//! composite links and no field still has as its head. Nothing is replicated.
 //!
 //! A snapshot scan lists the documents; each one is then pruned in its own
 //! engine-retried attempt that reads its heads, its commits and the owners of
@@ -9,7 +9,8 @@
 //! attempt runs makes it run again. The priority index entries of pruned
 //! commits stay: they record that the commits were published, so a pruned
 //! commit a peer sends again is recognised as applied and never becomes a
-//! head again. Model: `proofs/tla/HistoryRetention.tla`.
+//! head again, and one a peer fetches back is taken again by the next prune.
+//! Model: `proofs/tla/HistoryRetention.tla`.
 
 use std::sync::Arc;
 
@@ -17,7 +18,7 @@ use cid::Cid;
 use defra_core::CrdtDelta;
 use rapidhash::{HashSetExt, RapidHashSet};
 use storage::keys::doc_id_index::decode_doc_short_id;
-use storage::keys::{HeadstorePriorityKey, DELETED_KEY_PREFIX, DOC_KEY_PREFIX};
+use storage::keys::{DELETED_KEY_PREFIX, DOC_KEY_PREFIX};
 
 use super::*;
 
@@ -30,8 +31,10 @@ where
     /// N heights below a document's highest commit go, with the field blocks
     /// no kept commit links, unless they are live heads or another document
     /// owns them. A collection without `@retention` keeps everything. Returns
-    /// how many commits were pruned. Checked against the node permission of a
-    /// collection truncate.
+    /// how many composite commits were pruned. Checked against the node
+    /// permission of a collection truncate, before the collection is looked
+    /// up. Refused first inside an explicit transaction, since each document
+    /// is pruned in a transaction of its own.
     #[instrument(skip(self, context), fields(collection = %name), name = "db.prune_history")]
     pub async fn prune_history_as(
         self: &Arc<Self>,
@@ -41,11 +44,14 @@ where
     where
         S: 'static,
     {
+        if context.txn().is_some() {
+            return Err(Error::HistoryPruneInTransaction);
+        }
+        self.check_node_access_as(context, acp::nac::NodePermission::CollectionTruncate)
+            .await?;
         let collection = self
             .get_collection(name)?
             .ok_or_else(|| Error::CollectionNotFound(name.to_string()))?;
-        self.check_node_access_as(context, acp::nac::NodePermission::CollectionTruncate)
-            .await?;
         if collection.schema().retention_max_depth.is_none() {
             return Ok(0);
         }
@@ -125,7 +131,9 @@ where
 }
 
 /// Delete the document's composites more than `max_depth` heights below its
-/// highest one, except its live heads; the number deleted.
+/// highest one, except its live heads, and every field block of the document
+/// that neither a kept composite links nor a field has as its live head; the
+/// number of composites deleted.
 async fn prune_doc_in<S>(txn: &DbTxn<S>, doc_short_id: u64, max_depth: u64) -> Result<usize>
 where
     S: Store,
@@ -145,8 +153,11 @@ where
     .collect();
 
     let mut composites = Vec::new();
+    let mut fields = Vec::new();
     let mut seen = RapidHashSet::new();
-    for (priority, cid) in priority_entries(&headstore, doc_short_id).await? {
+    for (priority, cid) in
+        crate::block::priority::document_entries(&headstore, doc_short_id).await?
+    {
         if !seen.insert(cid) {
             continue;
         }
@@ -155,6 +166,8 @@ where
         };
         if matches!(block.delta, CrdtDelta::Composite(_)) {
             composites.push((priority, cid));
+        } else {
+            fields.push(cid);
         }
     }
     let Some(top) = composites.iter().map(|(priority, _)| *priority).max() else {
@@ -164,9 +177,6 @@ where
     let (pruned, kept): (Vec<_>, Vec<_>) = composites
         .into_iter()
         .partition(|(priority, cid)| *priority <= cutoff && !heads.contains(cid));
-    if pruned.is_empty() {
-        return Ok(0);
-    }
     // A field's live head stays even when only a pruned composite links it:
     // the field's next write and merge build on it.
     let mut retained =
@@ -183,32 +193,18 @@ where
         )
         .await?;
     }
-    Ok(pruned.len())
-}
-
-/// Every priority index entry of the document, as its priority and CID.
-async fn priority_entries(headstore: &NamespaceView, doc_short_id: u64) -> Result<Vec<(u64, Cid)>> {
-    let prefix = HeadstorePriorityKey::document_prefix(doc_short_id);
-    let (prefix_len, cid_offset) = (prefix.len(), HeadstorePriorityKey::cid_offset(doc_short_id));
-    let mut iter = headstore
-        .iterator(IterOptions::new().with_prefix(prefix))
-        .await
-        .map_err(Error::Storage)?;
-    let mut entries = Vec::new();
-    while let Some(pair) = iter.next().await.map_err(Error::Storage)? {
-        let priority = pair
-            .key
-            .get(prefix_len..cid_offset - 1)
-            .and_then(|hex| std::str::from_utf8(hex).ok())
-            .and_then(|hex| u64::from_str_radix(hex, 16).ok());
-        let cid = pair
-            .key
-            .get(cid_offset..)
-            .and_then(|bytes| Cid::try_from(bytes).ok());
-        if let (Some(priority), Some(cid)) = (priority, cid) {
-            entries.push((priority, cid));
-        }
+    // A field block an earlier prune kept as its field's head is linked only
+    // by a composite that prune deleted, so no pruned composite reaches it
+    // once a newer write supersedes it: the priority index still names it.
+    for cid in fields.iter().filter(|cid| !retained.contains(cid)) {
+        crate::block::cleanup::delete_owned_block(
+            &blockstore,
+            &systemstore,
+            cid,
+            &doc_id,
+            &retained,
+        )
+        .await?;
     }
-    iter.close().await.map_err(Error::Storage)?;
-    Ok(entries)
+    Ok(pruned.len())
 }

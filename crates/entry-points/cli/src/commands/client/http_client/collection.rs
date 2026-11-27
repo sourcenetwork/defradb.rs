@@ -40,10 +40,15 @@ impl HttpClient {
     }
 
     /// Prune each document's history in collection `name` to the
-    /// collection's `@retention(maxDepth: N)`; the response, `{"count": pruned}`.
-    pub async fn collection_prune_history(&self, name: &str) -> Result<serde_json::Value> {
+    /// collection's `@retention(maxDepth: N)`, naming transaction `txn`, which
+    /// the node refuses; the response, `{"count": pruned}`.
+    pub async fn collection_prune_history(
+        &self,
+        txn: Option<&str>,
+        name: &str,
+    ) -> Result<serde_json::Value> {
         let path = format!("collections/{}/history/prune", encode(name));
-        let response = self.send(Method::POST, &path, &[], None, None).await?;
+        let response = self.send(Method::POST, &path, &[], None, txn).await?;
         Ok(response.json().await?)
     }
 

@@ -1,7 +1,7 @@
 //! `client collection prune-history`.
 
 use super::PruneHistoryArgs;
-use crate::commands::client::http_client::HttpClient;
+use crate::commands::client::document::write_client;
 use crate::commands::client::ClientContext;
 use crate::error::{Error, Result};
 
@@ -11,10 +11,10 @@ impl PruneHistoryArgs {
         let collection = name.ok_or_else(|| {
             Error::MissingInput("--collection-name is required for prune-history".to_string())
         })?;
-        let client = HttpClient::new(&ctx.url, &ctx.edge)?
-            .with_auth_token(ctx.auth_token.clone())
-            .with_verbose(ctx.verbose);
-        let response = client.collection_prune_history(collection).await?;
+        let (client, txn) = write_client(ctx)?;
+        let response = client
+            .collection_prune_history(txn.as_deref(), collection)
+            .await?;
         println!("{}", serde_json::to_string(&response)?);
         Ok(())
     }

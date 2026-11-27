@@ -16,6 +16,9 @@ use testo::prelude::*;
 #[serde(rename_all = "camelCase")]
 pub struct PruneHistory {
     pub collection: String,
+    /// The explicit transaction the prune is sent in, which the node refuses.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub txn: Option<usize>,
     /// How many commits the prune must report.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expected_count: Option<usize>,
@@ -42,10 +45,10 @@ impl Op for PruneHistory {
 
     /// On the database's pool, as the HTTP API runs it.
     fn run(&self, state: &State) -> Result<Value, Failure> {
-        self.common.plain(Self::name())?;
+        let identity = self.common.client_identity(Self::name())?;
         let node = state.node_on(self.common.node())?;
         let database = Arc::clone(node.database());
-        let context = state.context(None);
+        let context = state.context_as(self.txn, identity);
         let name = self.collection.clone();
         let pruned = state
             .block_on(workers::run_on(
@@ -88,11 +91,14 @@ impl HttpRun for PruneHistory {
                     "history prune under GoHttp: Go has no history retention",
                 ));
             }
-            action.common.plain(Self::name())?;
+            let identity = action.common.client_identity(Self::name())?;
+            let txn = state.txn_id(action.txn);
             let collection = action.collection.clone();
             let response = state
-                .http_as(action.common.node(), None, |client| async move {
-                    client.collection_prune_history(&collection).await
+                .http_as(action.common.node(), identity, |client| async move {
+                    client
+                        .collection_prune_history(txn.as_deref(), &collection)
+                        .await
                 })?
                 .map_err(|e| Failure::operation(e.to_string()))?;
             action.check_count(Self::wire_count(&response)?)
@@ -103,7 +109,7 @@ impl HttpRun for PruneHistory {
 impl CliRun for PruneHistory {
     fn execute_cli(&self, state: &mut State) {
         crate::scenario::execute_with(self, state, |action, state| {
-            action.common.plain(Self::name())?;
+            let identity = action.common.client_identity(Self::name())?;
             let args = [
                 "collection",
                 "--collection-name",
@@ -111,7 +117,7 @@ impl CliRun for PruneHistory {
                 "prune-history",
             ];
             let response = state
-                .defra_client_as(action.common.node(), None, None, &args)
+                .defra_client_as(action.common.node(), action.txn, identity, &args)
                 .map_err(Failure::operation)?;
             action.check_count(Self::wire_count(&response)?)
         });
