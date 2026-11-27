@@ -185,23 +185,32 @@ pub async fn is_connected(cluster: &TestCluster, node: usize, peer: &str) -> boo
         .is_ok_and(|details| details["connected"].as_bool() == Some(true))
 }
 
-/// DAG fetches `node` has in flight to `peer`.
-pub async fn fetches_in_flight_to(cluster: &TestCluster, node: usize, peer: &str) -> u64 {
-    let status = sync_status(cluster, node).await;
-    status["peer_fetches"]
+/// Pending roots in one sync `status` whose source is `peer`. Read from sync
+/// status, not peer details: peer details challenge the peer for its identity,
+/// which waits out a throttled peer's whole stop.
+pub fn pending_from(status: &Value, peer: &str) -> u64 {
+    status["pending_dag_peer_occupancy"]
         .as_array()
         .and_then(|peers| peers.iter().find(|p| p["peer"].as_str() == Some(peer)))
-        .map(|p| count(p, "in_flight"))
+        .map(|p| count(p, "held"))
         .unwrap_or(0)
 }
 
-/// Pending roots `node` holds whose source is `peer`.
-pub async fn pending_from(cluster: &TestCluster, node: usize, peer: &str) -> u64 {
-    let details = cluster
-        .p2p_peer_details(node, peer)
-        .await
-        .unwrap_or_else(|e| panic!("node{node} details of {peer}: {e}"));
-    count(&details, "pending_fetch_count")
+/// Pending-DAG fetch slots in one sync `status` whose root came from `peer`,
+/// in any state. Counting these slots, rather than the global `held` total,
+/// keeps the count and the slots it counts in one field of one response: a
+/// slot held for another peer's root can never stand in for one of this
+/// peer's.
+pub fn fetch_slots_held_by(status: &Value, peer: &str) -> u64 {
+    status["pending_dag_fetch_slots"]["roots"]
+        .as_array()
+        .map(|roots| {
+            roots
+                .iter()
+                .filter(|root| root["peer"].as_str() == Some(peer))
+                .count() as u64
+        })
+        .unwrap_or(0)
 }
 
 /// Poll `check` until it holds or `timeout` passes; whether it held.

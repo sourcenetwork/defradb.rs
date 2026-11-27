@@ -4,15 +4,22 @@
 use std::collections::BTreeMap;
 
 use integration_test::actions::{
-    Actions, AddCollection, AddCollectionSubscription, AddDoc, ConnectPeers, NewNode, Request,
-    SyncCounters, UpdateDoc, WaitForPeersEvents,
+    Actions, AddCollection, AddCollectionSubscription, AddDoc, ConnectPeers, GetCollections,
+    NewNode, PushCommit, Request, SyncCounters, UpdateDoc, WaitForPeersEvents,
 };
 use integration_test::scenario::{captures, Common, Eventually, Text};
 use integration_test::test_case::TestCase;
 use integration_test::ClientType;
-use serde_json::{json, Value};
+use serde_json::{json, Map, Value};
 
 const SDL: &str = "type Users { name: String  age: Int }";
+
+fn user_fields(name: &str, age: i64) -> Map<String, Value> {
+    let mut fields = Map::new();
+    fields.insert("name".into(), json!(name));
+    fields.insert("age".into(), json!(age));
+    fields
+}
 
 fn on(node: &str) -> Common {
     Common {
@@ -148,6 +155,81 @@ fn fetch_slots_are_free_once_a_fetched_dag_merges() {
         id: integration_test::scenario_id!(),
         actions: actions.into_iter().map(Into::into).collect(),
         client_types: Some(&[ClientType::InProcess, ClientType::RustHttp, ClientType::Cli]),
+        ..Default::default()
+    }
+    .execute();
+}
+
+/// A peer pushes a document's signed composite alone, so the node holds the
+/// root but not the blocks it links and keeps a pending fetch for the rest.
+/// Every slot that fetch holds names the pushing peer, and no other peer, in
+/// `pending_dag_fetch_slots.roots[].peer`.
+#[test]
+#[mantra_macros::req_test("defra.net.sync.fetch_slots.owner")]
+fn a_held_slot_names_the_peer_whose_root_it_serves() {
+    let actions: Vec<Actions> = vec![
+        NewNode {
+            network: true,
+            iroh: true,
+            common: on("db0"),
+            ..Default::default()
+        }
+        .into(),
+        AddCollection {
+            sdl: SDL.into(),
+            common: on("db0"),
+            ..Default::default()
+        }
+        .into(),
+        WaitForPeersEvents {
+            start: true,
+            common: on("db0"),
+            ..Default::default()
+        }
+        .into(),
+        GetCollections {
+            collection_name: Some("Users".into()),
+            filtered: true,
+            common: Common {
+                capture: captures([
+                    ("collection", "/collections/0/CollectionID"),
+                    ("version", "/collections/0/VersionID"),
+                ]),
+                ..on("db0")
+            },
+            ..Default::default()
+        }
+        .into(),
+        PushCommit {
+            target: "db0".into(),
+            collection_id: Text::reference("collection"),
+            version_id: Text::reference("version"),
+            fields: user_fields("Pushed", 1),
+            root_only: true,
+            common: Common {
+                capture: captures([("pusher", "/peerID")]),
+                ..on("db0")
+            },
+            ..Default::default()
+        }
+        .into(),
+        SyncCounters {
+            slot_peer: Some("pusher".into()),
+            common: Common {
+                eventually: Some(Eventually {
+                    timeout_millis: Some(20_000),
+                    interval_millis: Some(100),
+                }),
+                ..on("db0")
+            },
+            ..Default::default()
+        }
+        .into(),
+    ];
+    TestCase {
+        id: integration_test::scenario_id!(),
+        actions: actions.into_iter().map(Into::into).collect(),
+        client_types: Some(&[ClientType::InProcess]),
         ..Default::default()
     }
     .execute();

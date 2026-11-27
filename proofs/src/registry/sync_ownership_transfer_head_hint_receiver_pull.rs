@@ -222,7 +222,7 @@ pub(super) const PROPERTIES: &[Property] = &[
         family: "Sync ownership transfer (head hint / receiver pull)",
         name: "INV_Capacity / INV_OwnedSlot / INV_NoIdleCapacity / INV_RollbackNeedsCause — only an owner's own generation releases its pending-DAG slot, the release wakes the retry clock, and a full-lane rollback does not",
         axis: Tla,
-        anchor: "crates/database/p2p/src/sync/coordinator/mod.rs PendingDagWorkOwner, claim_pending_dag_merge, spawn_pending_dag_fetch, dispatch_due_pending_dag_fetches and run_pending_dag_retry_clock; crates/database/p2p/tests/unit/pending_capacity_wake.rs",
+        anchor: "crates/database/p2p/src/sync/coordinator/mod.rs PendingDagWorkOwner, PendingDagFetchTask, claim_pending_dag_merge, spawn_pending_dag_fetch, reserve_pending_dag_fetch, dispatch_due_pending_dag_fetches and run_pending_dag_retry_clock; crates/database/p2p/src/sync/coordinator/fetch_slots.rs pending_dag_fetch_slots; crates/database/p2p/tests/unit/pending_capacity_wake.rs; crates/database/p2p/tests/unit/fetch_slots.rs",
         model_ref: "MC_PendingDagOwner_{Green,Red_NoGeneration,Red_NoWake,Red_RollbackWake}.cfg",
         tiers: &[Boundary],
         bound_by: "",

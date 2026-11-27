@@ -27,7 +27,7 @@ pub use documents_add::AddDocumentSubscription;
 pub use documents_list::ListP2PDocuments;
 pub use documents_remove::DeleteDocumentSubscription;
 pub use info::PeerInfo;
-pub use push_commit::{PushCommit, Tamper};
+pub use push_commit::{KeptPushers, PushCommit, Tamper};
 pub use sync_counters::SyncCounters;
 pub use wait_events::WaitForPeersEvents;
 pub use wait_sync::WaitForSync;

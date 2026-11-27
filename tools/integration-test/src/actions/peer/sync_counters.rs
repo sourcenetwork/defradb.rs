@@ -15,6 +15,10 @@ use testo::prelude::*;
 /// status, so `capture` takes `/<counter>`). With `eventually`, the status is
 /// read again until every bound holds or the timeout passes. The node is read directly,
 /// whichever client the test runs through; a Go node has no such status.
+///
+/// `slotPeer` names a capture holding a peer ID: then every slot in
+/// `pending_dag_fetch_slots.roots` must name that peer as its `peer`, and
+/// there must be at least one such slot.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SyncCounters {
@@ -24,6 +28,8 @@ pub struct SyncCounters {
     pub at_least: BTreeMap<String, u64>,
     #[serde(default)]
     pub since: BTreeMap<String, String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub slot_peer: Option<String>,
     #[serde(default, skip_serializing_if = "Value::is_null")]
     pub expected_data: Value,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -97,6 +103,33 @@ impl SyncCounters {
                 )));
             }
             seen.insert(counter.clone(), json!(value));
+        }
+        if let Some(capture) = &self.slot_peer {
+            let peer = state
+                .captures
+                .get(capture)
+                .and_then(Value::as_str)
+                .ok_or_else(|| Failure::operation(format!("no peer captured as {capture}")))?;
+            let roots = status
+                .pointer("/pending_dag_fetch_slots/roots")
+                .and_then(Value::as_array)
+                .ok_or_else(|| {
+                    Failure::operation("status has no pending_dag_fetch_slots/roots".to_owned())
+                })?;
+            if roots.is_empty() {
+                return Err(Failure::operation(
+                    "no pending-DAG fetch slot is held".to_owned(),
+                ));
+            }
+            if let Some(root) = roots
+                .iter()
+                .find(|root| root["peer"].as_str() != Some(peer))
+            {
+                return Err(Failure::operation(format!(
+                    "a held slot names {:?} instead of the pushing peer {peer}",
+                    root["peer"]
+                )));
+            }
         }
         println!(
             "{} sync counters: {}",

@@ -342,7 +342,14 @@ Adding a new replicator records the current time as `LastStatusChange`; updating
 
 - **Parents:** ["defra"]
 
-A defradb.rs node's `p2p status` carries `pending_dag_fetch_slots`: the slot `limit` (`--p2p-max-concurrent-dag-fetches`, 4 by default), the number `held`, how many are `scheduled`, `claimed`, `running` and `merging`, and a `roots` list naming the root CID and state of each held slot. A Go node has no such status.
+A defradb.rs node's `p2p status` carries `pending_dag_fetch_slots`: the slot `limit` (`--p2p-max-concurrent-dag-fetches`, 4 by default), the number `held`, how many are `scheduled`, `claimed`, `running` and `merging`, and a `roots` list holding, for each held slot, the root CID, the state holding it, and the `peer` whose root it serves. The `peer` is the pushing peer's ID in the same form as `pending_dag_peer_occupancy[].peer`; a slot for a root no caller named a source for carries no `peer`. A Go node has no such status.
+
+# `defra.net.sync.fetch_slots.owner`: A held slot names the peer whose root it serves
+
+- **Parents:** ["defra.net.sync.fetch_slots"]
+- **Scenarios:** ["net::sync::fetch_slots::a_held_slot_names_the_peer_whose_root_it_serves"]
+
+A node fetching a document's DAG from the peer that pushed it has, while the fetch runs, `pending_dag_fetch_slots` slots whose `roots[]` entries name that pushing peer as `peer`, and none names any other peer.
 
 # `defra.net.sync.fetch_slots.released`: Fetch slots are free once a fetched DAG merges
 

@@ -77,6 +77,7 @@ async fn assert_pending_capacity_release_wakes_dispatch(edge: edge::Edge, mergin
             let (release, released) = crate::rt::oneshot::channel::<()>();
             assert!(coordinator.spawn_pending_dag_fetch_task(
                 root,
+                None,
                 "test.pending.capacity",
                 async move {
                     let _ = released.await;

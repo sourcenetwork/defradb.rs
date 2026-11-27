@@ -216,6 +216,7 @@ where
         let event_tx = coordinator.manager().event_sender();
         let limiter = coordinator.dag_fetch_limiter();
         let diagnostics = coordinator.manager().diagnostics();
+        let slot_peer = source_peer.clone();
         let source_peer = crate::transport::PeerId::new(source_peer);
         let mut alternate_providers: Vec<crate::transport::PeerId> = providers
             .into_iter()
@@ -241,19 +242,24 @@ where
             .with_rooted_provider_discovery();
 
         let attempt = context.clone();
-        coordinator.spawn_pending_dag_fetch_task(root_cid, "pushlog_fetch_dag", async move {
-            let (end, sample) = crate::sync::coordinator::dag_fetcher::poll_fetch_dag(
-                transport,
-                blockstore,
-                event_tx,
-                root_cid,
-                context,
-                limiter,
-                diagnostics,
-            )
-            .await;
-            attempt.finish_clock_attempt(end, sample);
-        });
+        coordinator.spawn_pending_dag_fetch_task(
+            root_cid,
+            Some(&slot_peer),
+            "pushlog_fetch_dag",
+            async move {
+                let (end, sample) = crate::sync::coordinator::dag_fetcher::poll_fetch_dag(
+                    transport,
+                    blockstore,
+                    event_tx,
+                    root_cid,
+                    context,
+                    limiter,
+                    diagnostics,
+                )
+                .await;
+                attempt.finish_clock_attempt(end, sample);
+            },
+        );
 
         return ReplicationResult::DagFetchStarted { root_cid };
     }
