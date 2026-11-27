@@ -72,7 +72,7 @@ impl<'a> SdlParser<'a> {
     pub(super) fn build_collections(&self) -> Result<Vec<CollectionVersion>> {
         // Build collection names set for relation detection, including external types
         let mut type_names: RapidHashSet<_> = self.type_defs.keys().cloned().collect();
-        type_names.extend(self.known_external_types.iter().cloned());
+        type_names.extend(self.known_collections.keys().cloned());
 
         // Pre-validate all field types to accumulate multiple errors (Go compatibility).
         // Go collects ALL "no type found" errors before returning, rather than stopping at first.
@@ -162,8 +162,8 @@ impl<'a> SdlParser<'a> {
                 if !type_names.contains(target) || target == type_name {
                     continue; // Not a relation to another type in schema, or self-ref
                 }
-                if self.known_external_types.contains(target) {
-                    continue; // External type already exists, no CID dependency
+                if !self.type_defs.contains_key(target) {
+                    continue; // A stored collection: its ID is known already
                 }
 
                 // Check if this field is PRIMARY (included in CID calculation)
@@ -598,10 +598,10 @@ impl<'a> SdlParser<'a> {
                 // Build fields list based on includes
                 // For relation fields (non-array), Go DefraDB stores indexes on the FK field
                 // (_fieldID) rather than the relation field name.
+                let target = &parsed_field.field_type.base_type;
                 let is_relation_field = !parsed_field.field_type.is_list
-                    && self
-                        .type_defs
-                        .contains_key(&parsed_field.field_type.base_type);
+                    && (self.type_defs.contains_key(target)
+                        || self.known_collections.contains_key(target));
 
                 let primary_field_name = if is_relation_field {
                     // Use FK field name for relation fields (e.g., "address" -> "_addressID")

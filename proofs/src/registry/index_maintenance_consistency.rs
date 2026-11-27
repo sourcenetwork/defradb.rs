@@ -126,12 +126,12 @@ pub(super) const PROPERTIES: &[Property] = &[
     },
     Property {
         family: "Index-maintenance consistency",
-        name: "INV_FreshAttempt / INV_OpenCompatible / INV_FailureKeepsStamp / INV_FutureRefusedUntouched / INV_LegacyIntact — rebuild older indexes before stamping; refuse future formats",
+        name: "INV_FreshAttempt / INV_OpenCompatible / INV_FailureKeepsStamp / INV_FutureRefusedUntouched / INV_LegacyIntact — rebuild older indexes before stamping, only the JSON ones from format 5; refuse future formats",
         axis: Tla,
-        anchor: "crates/database/db/src/definition/migration/format.rs CURRENT_INDEX_FORMAT, DB::stored_index_format, DB::migrate_index_format; crates/database/db/src/database/mod.rs DB::finish_open; crates/database/db/src/index/deferred/drain.rs; crates/database/db/src/index/manager/deferred.rs",
-        model_ref: "MC_IndexFormatGuard_{Green,Red_SkipRebuild,Red_EarlyStamp,Red_DeleteLegacy,Red_UnguardedRecord,Red_StaleProgress,Red_Future}.cfg",
+        anchor: "crates/database/db/src/definition/migration/format.rs CURRENT_INDEX_FORMAT, DB::stored_index_format, DB::migrate_index_format, DB::rebuild_indexes_owed; crates/database/db/src/database/mod.rs DB::finish_open; crates/database/db/src/index/deferred/drain.rs; crates/database/db/src/index/manager/deferred.rs",
+        model_ref: "MC_IndexFormatGuard_{Green,Red_SkipRebuild,Red_EarlyStamp,Red_DeleteLegacy,Red_UnguardedRecord,Red_StaleProgress,Red_Future,Red_SkipJson}.cfg",
         tiers: &[Boundary],
-        bound_by: "crates/database/db/tests/definition/format.rs",
+        bound_by: "crates/database/db/tests/definition/format.rs; crates/database/db/tests/definition/format_json.rs a_format_5_store_rebuilds_only_its_json_indexes, a_format_4_store_rebuilds_every_index",
     },
     Property {
         family: "Index-maintenance consistency",

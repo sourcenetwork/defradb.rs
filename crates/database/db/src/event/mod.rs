@@ -3,4 +3,5 @@
 pub(crate) mod arrivals;
 pub mod emission;
 mod gate;
+pub(crate) mod update_retention;
 pub(crate) mod updates;

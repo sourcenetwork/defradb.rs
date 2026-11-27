@@ -91,7 +91,20 @@ impl<'a> SdlParser<'a> {
                 ));
             }
 
-            // For non-circular relations where target not yet processed, use Named
+            // A stored collection is as known as one already processed: the
+            // relation commits to its ID, so the collection has the identity
+            // it has when both are declared together.
+            if !self.type_defs.contains_key(base) {
+                if let Some(collection_id) = self.known_collections.get(base) {
+                    return Ok(FieldKind::relation(
+                        collection_id.clone(),
+                        parsed_type.is_list,
+                    ));
+                }
+            }
+
+            // A target of this SDL that is not processed yet stays Named
+            // until the second pass knows every collection ID.
             return Ok(FieldKind::named(base, parsed_type.is_list));
         }
 

@@ -216,6 +216,7 @@ mod simple {
     mod with_doc_id_filter;
     mod with_doc_ids;
     mod with_filter_unknown;
+    mod with_unknown_object_field;
     mod with_filter {
         mod with_alias;
         mod with_and;
