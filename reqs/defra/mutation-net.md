@@ -393,3 +393,23 @@ A node holding none of a document with 11 updates, told of its next head, fetche
 - **Scenarios:** ["net::simple::replicator::with_offline_push::a_push_to_a_stopped_peer_is_parked_until_it_restarts"]
 
 A replicator pushes a document to a stopped target without treating the offline target as a failed job: before the target starts again, the source's `push_backlog.failed_total` is no more than zero and `push_backlog.parked_total` is at least one. When the target restarts with its data, it receives the document.
+
+# `defra.net.governed`: A node with a merge validator judges every collection that declares a governance root
+
+- **Parents:** ["defra"]
+
+A collection whose definition carries `@governed(root: "<identifier>")` is judged by the merge validator of every node that embeds one: a document replicated into it there merges only once the validator has accepted it. The node names no collection for this, so a collection defined after the node started is judged from its first document. A node with no merge validator handles such a collection exactly as before: it merges replicated documents into it unless it named the collection, in which case it merges none of them. A collection that declares no governance root replicates as it always did, and a node's own writes are not judged here. A collection that also carries `@policy` is left to access control: its declared root does not make it judged, and a node judges it only if it named the collection.
+
+# `defra.net.governed.no_validator`: A node with no merge validator replicates a governed collection as before
+
+- **Parents:** ["defra.net.governed"]
+- **Scenarios:** ["net::governed::a_node_with_no_merge_validator_merges_a_governed_collection_as_before"]
+
+Two nodes with no merge validator hold `type Ledger @governed(root: "root-a") { entry: String }`, and the first replicates it to the second. A `Ledger` document written on the first appears in `query { Ledger { entry } }` on the second.
+
+# `defra.net.governed.judged`: A merge validator judges a governed collection it was never told of
+
+- **Parents:** ["defra.net.governed"]
+- **Scenarios:** ["net::governed::a_merge_validator_judges_a_governed_collection_defined_after_it_started"]
+
+A node that embeds a merge validator and claims no collection by name is given `type Ledger @governed(root: "root-a") { entry: String }` after it started. Of the `Ledger` documents replicated to it, one the validator rejects is never merged, even once its blocks are held there, and one it accepts is.

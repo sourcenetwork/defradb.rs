@@ -13,6 +13,7 @@ mod go_node;
 pub mod hostile;
 pub mod index_gate;
 pub mod introspection_sdl;
+pub mod merge_validator;
 pub mod multiplier;
 pub mod node_scope;
 pub mod nodes;

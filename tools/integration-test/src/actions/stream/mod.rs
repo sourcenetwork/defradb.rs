@@ -1,10 +1,11 @@
 //! Embedder stream protocols (`defra.stream_protocols`): iroh nodes that serve
-//! test protocols, and the actions that open them.
+//! test protocols, and the actions that open them. Such a node can also embed
+//! a merge validator (`crate::merge_validator::RejectValue`).
 //!
-//! Stream protocols are a Rust embedder API with no HTTP, CLI or Go surface,
-//! so every action here runs under the in-process client only. Under any
-//! other client they stop with `unsupported op`, which the testo report counts
-//! as unsupported rather than failed.
+//! Stream protocols and merge validators are a Rust embedder API with no
+//! HTTP, CLI or Go surface, so every action here runs under the in-process
+//! client only. Under any other client they stop with `unsupported op`, which
+//! the testo report counts as unsupported rather than failed.
 
 mod admit;
 mod new_iroh_node;
@@ -21,7 +22,7 @@ use std::sync::{Arc, Weak};
 use std::time::Duration;
 
 use async_trait::async_trait;
-use defra_node::{Node, NodeBuilder, P2PConfig};
+use defra_node::{AccessHooks, Node, NodeBuilder, P2PConfig};
 use p2p::iroh::{
     InboundStream, Priority, ProtocolRecvStream, ProtocolSendStream, StreamHandler, StreamProtocol,
 };
@@ -29,6 +30,7 @@ use rapidhash::fast::RandomState;
 use regolith::sync::{HopscotchMap, OnceCell, SegQueue};
 use serde::{Deserialize, Serialize};
 
+use crate::merge_validator::RejectValue;
 use crate::scenario::Failure;
 use crate::test_case::State;
 
@@ -127,6 +129,9 @@ pub struct IrohSpec {
     /// Build the node with no P2P at all, still registering the protocols.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub without_network: bool,
+    /// Embed this merge validator, claiming no collection by name for it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub merge_validator: Option<RejectValue>,
 }
 
 /// Build an in-process node as `spec` says, its handlers bound to it.
@@ -145,6 +150,12 @@ pub fn build(spec: &IrohSpec) -> Result<Arc<Node>, String> {
             },
             ..Default::default()
         });
+    }
+    if let Some(validator) = &spec.merge_validator {
+        builder = builder.with_access_hooks(
+            AccessHooks::new(Vec::<String>::new())
+                .with_merge_validator(Arc::new(validator.clone())),
+        );
     }
     for protocol in &spec.protocols {
         let handler = Arc::new(TestHandler {

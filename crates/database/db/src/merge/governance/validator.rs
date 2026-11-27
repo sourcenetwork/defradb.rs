@@ -49,6 +49,19 @@ pub struct MergeCandidate<'a> {
 ///   composite unmerged and never treats an error as a verdict.
 ///
 /// Replication policy is node-local and is never an input to this verdict.
+///
+/// # Which collections it is asked about
+///
+/// Once installed, a validator is asked about every collection whose
+/// definition declares a governance root (`@governed(root:)`) and carries no
+/// `@policy`, including one defined after the node started, as well as the
+/// collections claimed by name in [`MergeGovernance::new`]. A validator with no rule for such a collection
+/// still has to decide: return [`MergeVerdict::Accept`] if the collection is
+/// meant to replicate unjudged, and [`MergeVerdict::Reject`] if it is not.
+/// [`MergeVerdict::Defer`] is for a verdict that a named input will settle. A
+/// deferred composite stays unmerged and keeps its sender's pending-DAG
+/// record, so a validator that defers a whole collection fills that peer's
+/// share and the node stops taking the peer's other documents.
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 pub trait MergeValidator: MaybeSendSync {
@@ -59,11 +72,33 @@ pub trait MergeValidator: MaybeSendSync {
     ) -> Result<MergeVerdict, String>;
 }
 
-/// The collections an app has claimed and the validator that governs them.
+/// The validator that judges governed collections, and the collections an
+/// app has claimed for it by name.
 ///
-/// A claimed collection is judged only by the validator: the ACP merge hook
-/// does not run for it, and a claimed collection with no validator installed
-/// defers every composite rather than merging it as ungoverned.
+/// A collection is governed when its name was claimed here, or when a
+/// validator is installed and the collection's definition declares a
+/// governance root (`@governed(root:)`) and carries no `@policy`. With no
+/// validator installed only the claimed names are governed, so a collection
+/// that declares a root merges as any other collection does.
+///
+/// ACP takes precedence over a declared root: a collection that carries
+/// `@policy` is governed only when its name was claimed, so a rooted one
+/// that was not claimed keeps the whole ACP merge hook and is not judged.
+///
+/// The validator decides whether a replicated composite of a governed
+/// collection merges. The ACP merge hook's per-collection steps that the
+/// merge path gates on governance (replica registration, the protected
+/// composite and encrypted link checks, the post-commit action) do not run
+/// for it; a hook that checks protected updates inside the merge transaction
+/// still does. A claimed collection with no validator installed holds every
+/// replicated composite unmerged, as a retryable skip, rather than merging it
+/// as ungoverned.
+///
+/// Limitations: a `@chunk` collection generated for a governed parent
+/// declares no root of its own, so it is governed only when claimed by name.
+/// A collection that carries `@policy` cannot have both: claimed by name it
+/// is judged and loses the ACP merge hook steps above; not claimed it keeps
+/// them and its declared root is not honoured.
 #[derive(Clone, Default)]
 pub struct MergeGovernance {
     collections: RapidHashSet<String>,
@@ -71,7 +106,9 @@ pub struct MergeGovernance {
 }
 
 impl MergeGovernance {
-    /// Claim collections by name.
+    /// Claim collections by name. A validator installed with
+    /// [`with_validator`](Self::with_validator) also governs every collection
+    /// that declares a governance root and carries no `@policy`, named or not.
     pub fn new(collections: impl IntoIterator<Item = impl Into<String>>) -> Self {
         Self {
             collections: collections.into_iter().map(Into::into).collect(),
@@ -84,8 +121,14 @@ impl MergeGovernance {
         self
     }
 
+    /// Whether the validator decides `collection`'s replicated composites:
+    /// its name was claimed, or a validator is installed and it declares a
+    /// governance root and carries no `@policy`.
     pub fn governs(&self, collection: &CollectionVersion) -> bool {
         self.collections.contains(&collection.name)
+            || (self.validator.is_some()
+                && collection.governance_root.is_some()
+                && collection.policy.is_none())
     }
 
     pub fn validator(&self) -> Option<&Arc<dyn MergeValidator>> {

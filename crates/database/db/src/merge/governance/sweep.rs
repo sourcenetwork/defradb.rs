@@ -31,12 +31,14 @@ impl<S: Store + 'static, B: blockstore::Blockstore + 'static> DbMergeHandler<S, 
     /// scan.
     ///
     /// A pass costs nothing until a merge validator is installed. Claiming a
-    /// collection by name is not enough: `governs` answers only that the name
-    /// was claimed, and an application installing a read or write validator
-    /// alone claims names too, so gating on it would have this walk the
-    /// unmerged set every interval to re-drive composites no validator can
-    /// judge. That is the gate `judge_governed` and `defer_unresolved_document`
-    /// already apply.
+    /// collection by name is not enough: with no validator `governs` answers
+    /// only that the name was claimed, and an application installing a read
+    /// or write validator alone claims names too, so gating on it would have
+    /// this walk the unmerged set every interval to re-drive composites no
+    /// validator can judge. That is the gate `judge_governed` and
+    /// `defer_unresolved_document` already apply. With a validator installed,
+    /// the pass also covers collections that declare a governance root and
+    /// carry no `@policy`.
     pub async fn sweep_unmerged_governed(&self) -> usize {
         let has_validator = self
             .db
