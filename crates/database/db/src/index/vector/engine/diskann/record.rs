@@ -35,7 +35,10 @@ impl ClusterSizes {
     }
 }
 
-impl<S: VectorNodeStore> DiskAnn<S> {
+impl<S> DiskAnn<S>
+where
+    S: VectorNodeStore,
+{
     /// Where `id`'s record is, and its bytes. With resident codes the key
     /// starts with the cluster the node's code names: the code cache's,
     /// which may be another generation's, and else the transaction's own
