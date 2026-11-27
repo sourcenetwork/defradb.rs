@@ -58,6 +58,7 @@ UNIT_NAMES = (
     "delegation_parity::a_policy_identifier_parses_as_vera_rs_client_parses_it",
     "delegation_parity::the_acp_precompile_is_the_one_vera_rs_client_names",
     "follow::effect::policy_creation_tests::a_lost_policy_creation_names_its_derived_id",
+    "follow::effect::tests::a_registration_with_relationships_is_owed_again_with_them",
     "follow::effect::tests::a_voided_batch_keeps_every_archive_it_carried_and_counts_the_rest",
     "follow::effect::tests::an_archive_and_other_requests_are_told_apart",
     "follow::effect::tests::registrations_and_relationship_changes_are_read_back_with_their_delegation",

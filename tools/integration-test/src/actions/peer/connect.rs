@@ -37,7 +37,12 @@ impl Op for ConnectPeers {
         let addresses = addresses_of(state, &[self.target.as_str()])?;
         let node = state.node_on(self.common.node())?;
         state
-            .block_on(node.connect_as(&state.context_as(None, identity), &addresses))
+            .block_on(
+                state
+                    .scope_as(None, identity)
+                    .scoped(&node)
+                    .connect(&addresses),
+            )
             .map_err(failed)?;
         Ok(json!({}))
     }

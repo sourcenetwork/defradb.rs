@@ -266,8 +266,7 @@ pub(super) fn vera_setup(
     edge: &edge::Edge,
 ) -> DocumentAcpSetup {
     let document_acp = Arc::new(
-        vera::VeraDocumentACP::without_access_cache(provider.clone())
-            .on_network(edge, tuning.request_timeout),
+        vera::VeraDocumentACP::new(provider.clone()).on_network(edge, tuning.request_timeout),
     );
     let dac_policies = db::DacPolicies::remote(document_acp.clone(), zanzibar_store);
     let gate = gate_external_acp(document_acp, store, edge);

@@ -34,6 +34,7 @@ fn grant() -> Lost {
 
 fn registration() -> Lost {
     Lost::Registration {
+        relationships: Vec::new(),
         policy_id: "0xpolicy".into(),
         resource: "users".into(),
         object: "bae-2".into(),

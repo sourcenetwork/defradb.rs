@@ -25,6 +25,7 @@ use crate::write::autocommit::helpers::{
 use crate::write::prepare::{prepared_identity, PreparedCreateBlocks};
 use crate::write::WriteStores;
 
+mod gate;
 #[cfg(feature = "native")]
 mod runs;
 #[cfg(test)]
@@ -306,6 +307,8 @@ where
         ))
     })?;
     let block_result = &computed.block_result;
+    let gate =
+        gate::create_gate(db, collection, doc, &block_result.doc_id, context, inputs).await?;
     let doc_id = register_created_doc(
         db.document_acp(),
         context,
@@ -315,7 +318,7 @@ where
         doc,
         computed.doc_short_id,
         block_result,
-        inputs,
+        gate,
     )
     .await?;
     // The source document keeps its ID unset through validation; series and

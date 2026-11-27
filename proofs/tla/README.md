@@ -331,8 +331,8 @@ showing a mishandled exclusion operator over-grants. All `[propext, Quot.sound]`
 ```bash
 # GREEN: a revocation propagates; no node grants the revoked permission.
 ./tools/tlc -metadir states/acp_g -config MC_Acp_Green.cfg          MC_Acp_Green.tla
-# RED: a stale policy cache still grants a revoked permission (INV_RevocationConsistent).
-./tools/tlc -metadir states/acp_r -config MC_Acp_StaleCache_Red.cfg MC_Acp_StaleCache_Red.tla
+# RED: a node keeps a revoked tuple in its copy and still grants it (INV_RevocationConsistent).
+./tools/tlc -metadir states/acp_r -config MC_Acp_StaleStore_Red.cfg MC_Acp_StaleStore_Red.tla
 ```
 
 ---

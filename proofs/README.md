@@ -147,6 +147,7 @@ headstore); go↔go vs rust↔rust parity (`parity.rs`) localized it to Rust.
 | Per-operation signing choice | Boundary | `SigningOverride`; unit tests on each edge and `signature::per_op_signing` (testo) |
 | Backup import write path | Boundary | `BackupImportWritePath.tla`, `BackupImportSigner`; unit tests on each edge and `backup::signed_import`, `backup::import_creator`, `backup::duplicate_alias`, `backup::failed_import` (testo); the drain's deadline is not modelled |
 | vera.rs policy creation | Boundary | over abstract IDs: that vera.rs's SHA-256 derivation separates definitions, nonces and creators is vera.rs's and acp's property (their vectors); in-process node tests in `crates/engine/vera-embedded/tests/policy_ids.rs` |
+| Policy relation binding identity | Boundary | over a field definition's entries, not its bytes; that the CBOR encoder writes an entry list the same way every time is the encoder's; pinned identities in `crates/engine/query/src/sdl_parse/identity_tests.rs`, unit tests in `crates/foundation/schema/tests/policy_binding_tests.rs` |
 | Policy nonce text | Boundary | over digit values; that a character reads back as its digit value in either case is the character table's; unit tests in `crates/engine/acp/tests/policy_nonce_tests.rs` |
 
 ```bash
@@ -287,8 +288,10 @@ same revision as Cargo.lock rather than copied into this repository. DefraDB's
 once keys and reopen through the adapter.
 
 `RetryPreparedInputs.tla` models exact-context provider answers resolved outside
-an attempt and reused after a commit conflict; its RED cases run provider work
-inside an attempt or clear the memo and repeat provider work. It does not establish that every remote ACP/Vera/KMS/decrypt call
+an attempt, kept from request preparation, and reused after a commit conflict;
+its RED cases run provider work inside an attempt, clear the memo and repeat
+provider work, or drop the answer preparation got so the first attempt ends
+asking for it. It does not establish that every remote ACP/Vera/KMS/decrypt call
 is lifted out of retry attempts. `RetryMarkerGeneration.tla` models generation
 compare-delete and the peer-incarnation fence on clear across forget/re-add,
 and the sweep over several scopes: a tick reads one probe and at most one page

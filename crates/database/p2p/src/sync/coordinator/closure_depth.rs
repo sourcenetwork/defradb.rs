@@ -18,6 +18,11 @@ impl ClosureDepth {
         Self(INITIAL_CLOSURE_DEPTH)
     }
 
+    /// No cut below the response cap: the one rooted request.
+    pub(crate) fn whole() -> Self {
+        Self(MAX_CLOSURE_DEPTH)
+    }
+
     pub(crate) fn get(self) -> u32 {
         self.0
     }

@@ -82,7 +82,7 @@ impl<S: Store + 'static> DbTransactionRegistry<S> {
                     .get_collection(&collection)
                     .await?
                     .ok_or_else(|| Error::CollectionNotFound(collection.clone()))?;
-                let actions = crate::database::action::index_action_executions(
+                let actions = crate::database::action::index_listing_executions(
                     &txn.systemstore()?,
                     found.collection_id(),
                 )

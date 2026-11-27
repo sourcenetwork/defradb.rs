@@ -49,8 +49,9 @@ pub async fn caller_delegation(
 
 /// A delegation for one scope, issued under the spelling `issuer` gives.
 ///
-/// vera.rs takes either spelling of a secp256k1 issuer as the same actor, and
-/// an Ed25519 or P-256 issuer under its one canonical DID.
+/// vera.rs takes every spelling of a secp256k1 issuer (either point encoding,
+/// in base58btc or base64url) as the same actor, and an Ed25519 or P-256
+/// issuer under its one base58btc canonical DID.
 pub async fn create_scoped_bearer_token(
     signer: &dyn DelegationSigner,
     issuer: &str,
@@ -195,7 +196,7 @@ fn base64url_encode(data: &[u8]) -> String {
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum BearerError {
-    #[error("issuer DID does not match the signing key")]
+    #[error("issuer DID is not a spelling vera.rs takes for the signing key")]
     Issuer,
 
     #[error("system time error: {0}")]
@@ -225,6 +226,8 @@ pub enum BearerError {
     Size { bytes: usize },
 }
 
+#[cfg(test)]
+mod issuer_spellings;
 #[cfg(test)]
 mod key_types;
 mod request;

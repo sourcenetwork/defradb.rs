@@ -53,7 +53,14 @@ struct Provider {
 
 #[async_trait]
 impl DocumentACP for Provider {
-    async fn register_doc_object(&self, _: &Did, _: &str, _: &str, doc: &str) -> Result<()> {
+    async fn register_doc_object(
+        &self,
+        _: &Did,
+        _: &str,
+        _: &str,
+        doc: &str,
+        _: &[crate::DerivedRelationship],
+    ) -> Result<()> {
         if self.refused_documents.contains(doc) {
             return Err(Error::DocumentAlreadyRegistered(doc.to_owned()));
         }
@@ -661,6 +668,7 @@ fn a_registration_another_owner_held_first_is_not_recorded_as_this_nodes() {
         provider.held_by_another.store(true, Ordering::SeqCst);
         let (_, gate) = gate_over(provider);
         gate.owe_again(&[VoidedEffect::Registration {
+            relationships: Vec::new(),
             creator: did(OWNER),
             policy_id: POLICY.into(),
             resource: USERS.into(),
@@ -683,7 +691,7 @@ fn a_registration_another_owner_held_first_is_not_recorded_as_this_nodes() {
 fn a_change_made_through_the_gate_is_recorded_once_the_provider_confirms_it() {
     workers::block_on(async {
         let (_, gate) = gate();
-        gate.register_doc_object(&did(OWNER), POLICY, USERS, "bae-1")
+        gate.register_doc_object(&did(OWNER), POLICY, USERS, "bae-1", &[])
             .await
             .unwrap();
         gate.add_actor_relationship(
@@ -726,6 +734,7 @@ fn a_list_that_fails_part_way_keeps_the_registrations_before_the_failure() {
         let objects: Vec<AcpObject<'_>> = ["bae-1", "bae-2", "bae-3"]
             .into_iter()
             .map(|object_id| AcpObject {
+                relationships: &[],
                 policy_id: POLICY,
                 resource: USERS,
                 object_id,
@@ -755,6 +764,7 @@ fn a_list_cut_short_by_an_unreachable_provider_keeps_what_it_may_have_taken() {
         let objects: Vec<AcpObject<'_>> = ["bae-1", "bae-2", "bae-3"]
             .into_iter()
             .map(|object_id| AcpObject {
+                relationships: &[],
                 policy_id: POLICY,
                 resource: USERS,
                 object_id,
@@ -791,6 +801,7 @@ fn a_list_whose_answer_is_lost_at_its_start_keeps_every_intent() {
         let objects: Vec<AcpObject<'_>> = ["bae-1", "bae-2", "bae-3"]
             .into_iter()
             .map(|object_id| AcpObject {
+                relationships: &[],
                 policy_id: POLICY,
                 resource: USERS,
                 object_id,
@@ -816,6 +827,7 @@ fn what_the_outbox_settles_is_recorded_and_owed_again_when_the_deployment_loses_
     workers::block_on(async {
         let (_, gate) = gate();
         let registration = VoidedEffect::Registration {
+            relationships: Vec::new(),
             creator: did(OWNER),
             policy_id: POLICY.into(),
             resource: USERS.into(),

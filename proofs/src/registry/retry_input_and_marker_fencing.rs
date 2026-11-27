@@ -6,9 +6,9 @@ pub(super) const CRATES: &str = "db, query, storage, p2p, p2p-adapter";
 pub(super) const PROPERTIES: &[Property] = &[
     Property {
         family: "Retry input and marker fencing",
-        name: "INV_ProviderOncePerContext / INV_NewRegistrationSurvivesOldAck / ACT_NewRegistrationSurvivesOldClear",
+        name: "INV_ProviderOncePerContext / INV_PreparedAnswerReused / INV_NewRegistrationSurvivesOldAck / ACT_NewRegistrationSurvivesOldClear",
         axis: Tla,
-        anchor: "crates/engine/query/src/error.rs QueryError::NeedsInput; crates/database/db/src/write/autocommit/create.rs create_many_with_resolved_inputs; update.rs update_with_projected_resolved_inputs; delete.rs delete_with_resolved_inputs; crates/database/db/src/write/create.rs embed, compute_many; crates/engine/query/src/prepared.rs; crates/engine/storage/src/stores/peerstore.rs register/complete/clear retry scope",
+        anchor: "crates/engine/query/src/error.rs QueryError::NeedsInput; crates/database/db/src/write/autocommit/create.rs create_many_with_resolved_inputs; update.rs update_with_projected_resolved_inputs; delete.rs delete_with_resolved_inputs; crates/database/db/src/write/create.rs embed, compute_many; crates/engine/query/src/prepared.rs; crates/engine/query/src/runner/prepare.rs prepare_mutations; crates/engine/query/src/runner/mutation.rs authorize_mutation; crates/engine/storage/src/stores/peerstore.rs register/complete/clear retry scope",
         model_ref: "MC_RetryPreparedInputs_{Green,Red_*}.cfg / MC_RetryMarkerGeneration_{Green,Red_*}.cfg",
         tiers: &[Boundary],
         bound_by: "",
@@ -46,6 +46,15 @@ pub(super) const PROPERTIES: &[Property] = &[
         axis: Tla,
         anchor: "crates/database/p2p/src/sync/coordinator/broadcast.rs admit_replicator_push; broadcast_tests.rs fanout_registration_failure_is_peer_local",
         model_ref: "MC_RetryRegistrationFence_{Green,Red_FanOutAbort}.cfg",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
+        family: "Retry input and marker fencing",
+        name: "INV_EveryMarkerScheduled — an ack or empty-peer clear deletes a peer's schedule row only when a validated scan found no marker, and a registration that saw the row is aborted by its validated row read, so a registration that commits meanwhile is never left unscheduled",
+        axis: Tla,
+        anchor: "crates/engine/storage/src/stores/peerstore.rs scope_markers_left, walk_scope_markers, CompleteMarker, ClearPeer, RegisterScopeMarkerAttempt; crates/engine/storage/src/stores/peerstore_schedule_race_tests.rs",
+        model_ref: "MC_RetryPeerSchedule_{Green,Red_PlainScan,Red_UnvalidatedRowRead}.cfg",
         tiers: &[Boundary],
         bound_by: "",
     },

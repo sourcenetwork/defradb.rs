@@ -91,6 +91,9 @@ impl ScanValueFilter {
             }
             NormalValue::JsonLeaf(leaf) => match &leaf.value {
                 JsonScalarValue::String(s) => s.as_str(),
+                // `_all` over an empty array passes any pattern, so its marker
+                // stays a candidate and the whole filter decides.
+                JsonScalarValue::EmptyArray => return true,
                 _ => return false, // Non-string JSON leaf: exclude
             },
             _ => return false, // Non-string value: exclude

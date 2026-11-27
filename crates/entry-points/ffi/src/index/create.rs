@@ -2,7 +2,7 @@ use std::ffi::{c_char, c_int};
 
 use acp::nac::NodePermission;
 
-use crate::request::Request;
+use crate::request::{on_scope, Request};
 use crate::target::{go_string, non_empty, split_comma_separated, CollectionArgs};
 use crate::types::{CollectionOptions, DefraResult};
 use crate::{ffi_async, ffi_entry, try_ffi};
@@ -43,20 +43,21 @@ pub unsafe fn defra_index_new(
         let index_name = non_empty(index_name);
         let collection_name = CollectionArgs::read(&opts).name.unwrap_or_default();
         let node = try_ffi!(request.node_handle());
-        let context = request.context();
+        let scope = try_ffi!(request.node_scope());
 
         ffi_async!(caller, {
-            let index = node
-                .create_index_with_vector_as(
-                    &context,
-                    &collection_name,
-                    index_name.as_deref(),
-                    fields,
-                    is_unique != 0,
-                    vector,
-                )
-                .await
-                .map_err(|e| e.to_string())?;
+            let index = on_scope!(node, &scope, |scoped| {
+                scoped
+                    .create_index(
+                        &collection_name,
+                        index_name.as_deref(),
+                        fields,
+                        is_unique != 0,
+                        vector,
+                    )
+                    .await
+            })
+            .map_err(|e| e.to_string())?;
             serde_json::to_string(&index).map_err(|e| format!("failed to serialize result: {}", e))
         })
     }
