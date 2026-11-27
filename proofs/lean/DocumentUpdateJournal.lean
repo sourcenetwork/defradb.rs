@@ -8,7 +8,10 @@ authorized to read.
 
 A provider outside the page's transaction also lets through a document it
 finds unregistered. The page then drops what is deleted, which is enough as
-long as a document is unregistered only once it is deleted.
+long as a document is unregistered only once its history is purged. A provider
+bound to the page's transaction uses an unvalidated snapshot for the same
+reason: deciding a page does not take part in the transaction's commit
+validation.
 
 The arrival journal's page passes its rows through the same gate, so what is
 proved here about which rows a reader sees holds for its rows too.

@@ -95,6 +95,15 @@ pub trait DocumentACP: MaybeSendSync {
         None
     }
 
+    /// Bind local authorization to a transaction snapshot for a read that
+    /// decides nothing the transaction writes. Such reads never validate.
+    fn bind_read_transaction(
+        &self,
+        view: datastore::NamespaceView,
+    ) -> Option<std::sync::Arc<dyn DocumentACP>> {
+        self.bind_transaction(view)
+    }
+
     /// Whether this provider has a transaction stage the relationship
     /// changes it makes as owed ([`transaction_outbox`](Self::transaction_outbox)
     /// gives a place for them), rather than applying them in it or not at all.

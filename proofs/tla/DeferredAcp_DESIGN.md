@@ -69,7 +69,7 @@ states, so the invariants hold over a non-trivial space:
 | `proj[t]` (the txn's own ACP writes) | the transaction's ACP namespace view, read by `PendingRegistrations::get` | `crates/engine/acp/src/pending.rs`; `DbTxn::acpstore` in `crates/database/db/src/txn/mod.rs` |
 | one projection per txn (isolation by construction) | `DbTxn::acp_registration_projection` builds it over the txn's own view | `crates/database/db/src/txn/mod.rs` |
 | `proj[t][d] := Reg(o)` (`Register` action) | `register_created_doc`: `bind_transaction` then `register_doc_object`, or `PendingRegistrations::record` | `crates/database/db/src/write/autocommit/helpers.rs` |
-| `proj[t][d] := Unreg` (`Unregister` action) | `release_purged_doc_objects` (a purge; a delete or truncate keeps the object): `unregister_doc_object` through the bound provider, or `PendingRegistrations::clear` | `crates/database/db/src/collection/acp.rs` |
+| `proj[t][d] := Unreg` (`Unregister` action) | `release_purged_doc_objects` (a purge; a delete or truncate keeps the object): `unregister_doc_object` through the bound provider | `crates/database/db/src/collection/acp.rs` |
 | `EffectiveProj` / `OverlayGrant` (the gate: projection-first, else committed) | `check_doc_access_with_projection`, `is_doc_registered_with_projection` | `crates/engine/query/src/txn/context.rs` |
 | `OwnerCheck="Strict"` (Registered grants only to owner) | `is_creator` | `crates/engine/query/src/txn/context.rs` |
 | projected `Unregistered ⇒ open` for the modeled backend | `acp.unregistered_documents_are_public()` | `crates/engine/query/src/txn/context.rs` |

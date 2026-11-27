@@ -72,14 +72,14 @@ Deleting a document in a collection with a policy keeps its access-control objec
 # `defra.acp.deleted_history.hidden`: A deleted document's history stays hidden from an actor without access
 
 - **Parents:** ["defra.acp.deleted_history"]
-- **Scenarios:** ["acp::dac::deleted_history::a_deleted_documents_history_stays_hidden_from_an_actor_without_access", "acp::dac::deleted_history::a_delete_committed_in_a_transaction_keeps_the_history_hidden"]
+- **Scenarios:** ["acp::dac::deleted_history::a_deleted_documents_history_stays_hidden_from_an_actor_without_access", "acp::dac::deleted_history::a_delete_committed_in_a_transaction_keeps_the_history_hidden", "acp::dac::deleted_history::a_delete_committed_in_a_transaction_keeps_the_commits_hidden_for_every_client", "acp::dac::deleted_history::a_deleted_documents_history_stays_hidden_after_peer_replication"]
 
 After the owner deletes a document, alone or in a transaction that commits, an actor with no relationship to it still gets an empty `_commits` for it, and verifying one of its blocks' signatures still fails with `missing permission`, also after the node restarts. The owner still reads its commits, the delete's included, and its blocks.
 
 # `defra.acp.deleted_history.grants`: Grants on a deleted document stay, and revoking one takes effect
 
 - **Parents:** ["defra.acp.deleted_history"]
-- **Scenarios:** ["acp::dac::deleted_history::a_reader_keeps_a_deleted_documents_history_until_revoked"]
+- **Scenarios:** ["acp::dac::deleted_history::a_reader_keeps_a_deleted_documents_history_until_revoked", "acp::dac::deleted_history::a_reader_keeps_a_deleted_documents_commits_until_revoked_for_every_client"]
 
 An actor granted `reader` before the delete still reads the deleted document's commits and blocks. The owner can still revoke the grant (`recordFound: true`); from then on that actor gets an empty `_commits` and `missing permission` on its blocks.
 

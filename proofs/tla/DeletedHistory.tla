@@ -20,8 +20,13 @@
 \* A deleted document's DocID cannot be added again while its history is
 \* there: the create is refused. A purge removes the
 \* history, and with it the object, so the same content can be added again
-\* under the same DocID; that new document belongs to its creator alone and
-\* takes no grant from the one that was purged.
+\* under the same DocID, by the same creator or another; that new document
+\* belongs to its creator alone, takes no grant from the one that was purged,
+\* and denies the previous owner.
+\*
+\* A truncate is outside this model. It keeps the object and grants, as Go
+\* does for `go.collection.truncate.acp`, while this model covers deletes,
+\* purges and re-creation.
 \*
 \* What must never happen: anyone reads a document's history whom its
 \* current owner has not let read it (INV_NoUnintendedRead).
@@ -49,28 +54,31 @@ EXTENDS Naturals
 \* FenceRecreate: a create of a DocID whose deleted history is still there is refused.
 CONSTANTS KeepOnDelete, ReleaseOnPurge, FenceRecreate
 
-\* The three actors.
+\* The first owner and a different creator who may re-create after a purge.
 Owner == "owner"
+OtherOwner == "other-owner"
 Reader == "reader"
 Foreign == "foreign"
 \* Everyone who might try to read.
-Actors == {Owner, Reader, Foreign}
+Actors == {Owner, OtherOwner, Reader, Foreign}
 
 \* phase: "live" (rows and history), "deleted" (history only) or "gone" (purged).
 \* pending: a delete is staged in an open transaction.
+\* owner: the creator of the document this DocID currently names.
 \* registered: the node holds the document's access-control object.
 \* grants: the actors the object lets read besides its owner.
 \* intended: who the current owner means to let read, besides itself; the oracle.
 \* leaked: someone outside the owner's intent read the history.
-VARIABLES phase, pending, registered, grants, intended, leaked
+VARIABLES phase, pending, owner, registered, grants, intended, leaked
 
 \* Every variable, for stuttering steps.
-vars == <<phase, pending, registered, grants, intended, leaked>>
+vars == <<phase, pending, owner, registered, grants, intended, leaked>>
 
 \* The kinds of values each variable may hold.
 TypeOK ==
   /\ phase \in {"live", "deleted", "gone"}
   /\ pending \in BOOLEAN
+  /\ owner \in Actors
   /\ registered \in BOOLEAN
   /\ grants \subseteq {Reader}
   /\ intended \subseteq {Reader}
@@ -80,13 +88,14 @@ TypeOK ==
 HasHistory == phase \in {"live", "deleted"}
 
 \* The read rule (DirectChecker): no object reads as public; an object lets
-\* its owner and its grants read.
-Allows(a) == ~registered \/ a = Owner \/ a \in grants
+\* the document's current owner and its grants read.
+Allows(a) == ~registered \/ a = owner \/ a \in grants
 
 \* The owner has just added the document: it is registered, nobody is granted.
 Init ==
   /\ phase = "live"
   /\ pending = FALSE
+  /\ owner = Owner
   /\ registered = TRUE
   /\ grants = {}
   /\ intended = {}
@@ -98,7 +107,7 @@ Grant ==
   /\ grants' = grants \cup {Reader}
   \* The owner now means the reader to read.
   /\ intended' = intended \cup {Reader}
-  /\ UNCHANGED <<phase, pending, registered, leaked>>
+  /\ UNCHANGED <<phase, pending, owner, registered, leaked>>
 
 \* The owner revokes the reader. The owner's intent changes whatever the
 \* node holds; the object only changes if the node still has it.
@@ -106,13 +115,13 @@ Revoke ==
   /\ HasHistory
   /\ intended' = intended \ {Reader}
   /\ grants' = IF registered THEN grants \ {Reader} ELSE grants
-  /\ UNCHANGED <<phase, pending, registered, leaked>>
+  /\ UNCHANGED <<phase, pending, owner, registered, leaked>>
 
 \* The owner stages a delete of the live document in a transaction.
 BeginDelete ==
   /\ phase = "live" /\ ~pending
   /\ pending' = TRUE
-  /\ UNCHANGED <<phase, registered, grants, intended, leaked>>
+  /\ UNCHANGED <<phase, owner, registered, grants, intended, leaked>>
 
 \* The transaction commits: the rows go, the history stays. A delete merged
 \* from a peer commits the same way. Without KeepOnDelete the delete also
@@ -123,14 +132,14 @@ CommitDelete ==
   /\ phase' = "deleted"
   /\ registered' = IF KeepOnDelete THEN registered ELSE FALSE
   /\ grants' = IF KeepOnDelete THEN grants ELSE {}
-  /\ UNCHANGED <<intended, leaked>>
+  /\ UNCHANGED <<owner, intended, leaked>>
 
 \* The transaction is discarded, or the node restarts before it commits:
 \* nothing it staged lands.
 AbortDelete ==
   /\ pending
   /\ pending' = FALSE
-  /\ UNCHANGED <<phase, registered, grants, intended, leaked>>
+  /\ UNCHANGED <<phase, owner, registered, grants, intended, leaked>>
 
 \* A purge removes the history and the DocID mappings. With ReleaseOnPurge
 \* it removes the object too.
@@ -139,26 +148,28 @@ Purge ==
   /\ phase' = "gone"
   /\ registered' = IF ReleaseOnPurge THEN FALSE ELSE registered
   /\ grants' = IF ReleaseOnPurge THEN {} ELSE grants
-  /\ UNCHANGED <<pending, intended, leaked>>
+  /\ UNCHANGED <<pending, owner, intended, leaked>>
 
-\* The owner adds the same content again, under the same DocID. Its create
-\* registers the object for its creator (a registration already there is
-\* kept, grants and all). The owner of the new document has granted nobody.
-\* With FenceRecreate a deleted document's DocID is refused.
+\* A creator adds the same content again, under the same DocID. Its create
+\* registers the object for that creator (a registration already there is kept,
+\* grants and all). The owner of the new document has granted nobody. With
+\* FenceRecreate a deleted document's DocID is refused.
 Recreate ==
-  /\ phase = "gone" \/ (phase = "deleted" /\ ~FenceRecreate)
-  /\ ~pending
-  /\ phase' = "live"
-  /\ registered' = TRUE
-  /\ intended' = {}
-  /\ UNCHANGED <<pending, grants, leaked>>
+  \E creator \in Actors :
+    /\ phase = "gone" \/ (phase = "deleted" /\ ~FenceRecreate)
+    /\ ~pending
+    /\ phase' = "live"
+    /\ owner' = creator
+    /\ registered' = TRUE
+    /\ intended' = {}
+    /\ UNCHANGED <<pending, grants, leaked>>
 
 \* Actor a reads the history (`_commits`, a block, a P2P fetch). A read the
 \* rule allows to someone outside the owner's intent is a leak.
 Read(a) ==
   /\ HasHistory /\ Allows(a)
-  /\ leaked' = (leaked \/ (a # Owner /\ a \notin intended))
-  /\ UNCHANGED <<phase, pending, registered, grants, intended>>
+  /\ leaked' = (leaked \/ (a # owner /\ a \notin intended))
+  /\ UNCHANGED <<phase, pending, owner, registered, grants, intended>>
 
 \* One step is any of the above.
 Next ==
@@ -171,6 +182,7 @@ Spec == Init /\ [][Next]_vars
 
 \* Nobody ever reads a document's history whom its current owner has not let
 \* read it: not the foreign actor after a delete, not a revoked reader, and
-\* not a reader of a purged document once the same DocID is added again.
+\* not the previous owner when a different creator adds the DocID again after
+\* a purge.
 INV_NoUnintendedRead == ~leaked
 ====

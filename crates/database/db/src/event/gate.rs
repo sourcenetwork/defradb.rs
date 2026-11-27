@@ -125,7 +125,8 @@ impl<'page> Gate<'page> {
 /// stores read. A purge unregisters the document, and an unregistered
 /// document reads as public, so the access check alone would show its rows to
 /// anyone. The page decides nothing its transaction writes, so neither read
-/// is validated: a later delete or purge never fails that transaction through them.
+/// is validated: a later delete or purge never fails that transaction through
+/// the page's rows or access read.
 async fn alive(
     collection: &Collection,
     datastore: &NamespaceView,

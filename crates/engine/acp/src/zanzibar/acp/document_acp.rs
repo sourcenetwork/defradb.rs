@@ -131,6 +131,19 @@ impl<S: ZanzibarStore + ?Sized + 'static> DocumentACP for ZanzibarDocumentACP<S>
         ))))
     }
 
+    #[cfg_attr(target_arch = "wasm32", allow(clippy::arc_with_non_send_sync))]
+    fn bind_read_transaction(
+        &self,
+        view: datastore::NamespaceView,
+    ) -> Option<std::sync::Arc<dyn DocumentACP>> {
+        if !self.supports_transactions() {
+            return None;
+        }
+        Some(std::sync::Arc::new(self.scoped(std::sync::Arc::new(
+            crate::zanzibar::store::TransactionZanzibarStore::new_unvalidated(view),
+        ))))
+    }
+
     async fn register_doc_object(
         &self,
         identity: &Did,

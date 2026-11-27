@@ -372,15 +372,10 @@ fn a_page_in_a_writing_transaction_does_not_fail_it_when_its_document_is_deleted
 }
 
 #[test]
-fn a_page_in_a_writing_transaction_conflicts_when_its_documents_object_is_purged() {
+fn a_page_in_a_writing_transaction_does_not_fail_it_when_its_documents_object_is_purged() {
     workers::block_on(async {
         let committed = commit_after_removing_a_paged_document(true).await;
-        // The purge removed the ACP object the page's access decision read,
-        // as a revocation that commits first does.
-        assert!(
-            matches!(committed, Err(query::TransactionError::Conflict(_))),
-            "{committed:?}"
-        );
+        committed.expect("the page's access read decides nothing the transaction writes");
     })
     .unwrap();
 }

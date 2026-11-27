@@ -11,7 +11,10 @@
 \* stands for the removal that unregisters: a purge.)
 \* The access provider either reads in the page's transaction, or stands
 \* outside it and answers from the state of the moment it is asked. A
-\* provider outside loses a document's registration in a step of its own,
+\* provider bound to the page's transaction uses a snapshot binding with no
+\* read validation: the page decides nothing its transaction writes, so a
+\* delete or purge that commits elsewhere never fails that transaction.
+\* A provider outside loses a document's registration in a step of its own,
 \* which this node takes only after its delete has committed.
 \* Not prevented: a provider shared with other nodes can lose a registration
 \* with no delete on this node, when a peer deleted the document and this

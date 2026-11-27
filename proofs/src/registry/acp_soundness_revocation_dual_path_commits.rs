@@ -231,19 +231,21 @@ pub(super) const PROPERTIES: &[Property] = &[
     Property {
         // A delete keeps the document's ACP object, so the history the node
         // retains reads under the same decision as before; a purge removes
-        // the object with the history (a truncate keeps it, as Go does), and
-        // a deleted DocID cannot be added again until then.
+        // the object with the history, and a deleted DocID cannot be added
+        // again until then. Truncate is outside this model: it keeps the
+        // object and grants for Go parity and is covered by
+        // go.collection.truncate.acp.
         family: "ACP soundness + revocation + dual-path commits",
         name: "INV_NoUnintendedRead: nobody reads a document's history whom its current owner has not let read it, across delete, revocation, purge and re-creation",
         axis: Tla,
         anchor: "crates/database/db/src/write/autocommit/helpers.rs archive_deleted_doc, register_created_doc; crates/database/db/src/write/autocommit/mod.rs register_deleted_doc_with_acp_as; crates/engine/query/src/runner/mutation.rs execute_single_mutation; crates/database/db/src/merge/merge_handler/composite_persist.rs handle_deletion; crates/database/db/src/collection/acp.rs release_purged_doc_objects; crates/engine/acp/src/read_access.rs DirectChecker",
         model_ref: "MC_DeletedHistory_{Green,Red_UnregisterOnDelete,Red_KeepOnPurge,Red_NoFence}.cfg",
         tiers: &[Boundary],
-        bound_by: "tools/integration-test/tests/testo/acp/dac/deleted_history.rs a_deleted_documents_history_stays_hidden_from_an_actor_without_access, a_delete_committed_in_a_transaction_keeps_the_history_hidden, a_reader_keeps_a_deleted_documents_history_until_revoked, a_purged_document_added_again_takes_no_earlier_grant",
+        bound_by: "tools/integration-test/tests/testo/acp/dac/deleted_history.rs a_deleted_documents_history_stays_hidden_from_an_actor_without_access, a_delete_committed_in_a_transaction_keeps_the_history_hidden, a_reader_keeps_a_deleted_documents_history_until_revoked, a_purged_document_added_again_takes_no_earlier_grant, a_deleted_documents_history_stays_hidden_after_peer_replication",
     },
     Property {
         family: "ACP soundness + revocation + dual-path commits",
-        name: "DeletedHistory.delete_keeps_access / deleted_history_hidden_from_foreign / revoke_after_delete_denies_reader / unregister_on_delete_leaks / recreate_refused_while_deleted / purged_then_recreated_has_no_reader",
+        name: "DeletedHistory.delete_keeps_access / deleted_history_hidden_from_foreign / owner_reads_deleted_history / reader_keeps_grant_after_delete / revoke_after_delete_denies_reader / unregister_on_delete_leaks / recreate_refused_while_deleted / purged_then_recreated_has_no_reader / purged_document_recreated_by_another_denies_previous_owner / kept_object_carries_the_grant",
         axis: Lean,
         anchor: "crates/database/db/src/write/autocommit/helpers.rs archive_deleted_doc, register_created_doc; crates/database/db/src/collection/acp.rs release_purged_doc_objects; crates/engine/acp/src/read_access.rs DirectChecker",
         model_ref: "DeletedHistory (lake build)",

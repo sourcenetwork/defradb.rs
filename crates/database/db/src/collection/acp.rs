@@ -239,11 +239,11 @@ pub async fn unregister_doc_if_needed(
         .await
 }
 
-/// Remove the ACP objects of the documents `doc_ids` names, whose history
-/// the transaction `acpstore` belongs to purges from this node, so a document added again under the same DocID takes no
-/// earlier owner or grant. Only a provider that joins the transaction holds
-/// this node's objects; a remote provider's object is shared with the other
-/// nodes that still hold the document, and stays.
+/// Remove the ACP objects of `doc_ids`, whose history the purge running in
+/// `acpstore`'s transaction removes from this node, so a document added again
+/// under the same DocID takes no earlier owner or grant. Only a provider that
+/// joins the transaction holds this node's objects; a remote provider's object
+/// is shared with the other nodes that still hold the document, and stays.
 pub(crate) async fn release_purged_doc_objects<'ids, I>(
     acp: Option<&Arc<dyn DocumentACP>>,
     acpstore: datastore::NamespaceView,

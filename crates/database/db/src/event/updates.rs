@@ -93,7 +93,7 @@ where
     let next = head.min(options.after.saturating_add(options.limit.min(1024)));
     let rows = rows(&store, root, options.after, next).await?;
 
-    let bound = reader.acp.bind_transaction(txn.acpstore()?);
+    let bound = reader.acp.bind_read_transaction(txn.acpstore()?);
     let reader = DocumentReader {
         context: reader.context,
         acp: bound.as_deref().unwrap_or(reader.acp),
