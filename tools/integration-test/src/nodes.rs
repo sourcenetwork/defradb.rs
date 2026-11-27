@@ -8,7 +8,6 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use cli::commands::client::http_client::HttpClient;
-use defra_core::RequestContext;
 use defra_node::{HttpConfig, Node};
 use events::{EventName, Message, MessageData};
 use rapidhash::{HashMapExt, RapidHashMap, RapidHashSet};
@@ -321,12 +320,14 @@ impl TestNode {
         let owner = self.spec.nac_owner;
         match (&self.embedded, &self.url) {
             (Some(node), _) => {
-                let context = match owner {
-                    Some(seed) => RequestContext::ambient()
-                        .with_identity(Some(crate::scenario::identity::did(seed))),
-                    None => RequestContext::ambient(),
+                let scoped = match owner {
+                    Some(seed) => node.with_identity(
+                        ::identity::Did::new(crate::scenario::identity::did(seed))
+                            .map_err(|e| e.to_string())?,
+                    ),
+                    None => node.anonymous(),
                 };
-                workers::block_on(node.peer_info_as(&context))
+                workers::block_on(scoped.peer_info())
                     .map_err(|e| e.to_string())?
                     .map_err(|e| e.to_string())
             }

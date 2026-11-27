@@ -14,7 +14,6 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use clock::sleep;
-use defra_core::RequestContext;
 use defra_node::{NodeBuilder, NodeConfig, QueryRequest, TransportConfig};
 use iroh_peers::{create, iroh_config, listen_addr};
 use outcome::Result;
@@ -50,8 +49,8 @@ fn a_transaction_committed_during_shutdown_is_refused_or_keeps_its_head_marker()
                 .with_p2p(iroh_config())
                 .build()
                 .await?;
-            sender.add_collection(&defra_core::RequestContext::ambient(), NOTE_SDL).await?;
-            receiver.add_collection(&defra_core::RequestContext::ambient(), NOTE_SDL).await?;
+            sender.add_collection(NOTE_SDL).await?;
+            receiver.add_collection(NOTE_SDL).await?;
             let receiver_peer = receiver
                 .p2p_system()
                 .expect("p2p")
@@ -75,16 +74,12 @@ fn a_transaction_committed_during_shutdown_is_refused_or_keeps_its_head_marker()
 
             let (before, _) = create(&sender, "Note", r#"body: "before shutdown""#).await?;
             let txn = sender
-                .begin_transaction(false)
-                .await
+                .new_txn(false).await.map(|txn| txn.detach())
                 .map_err(|e| e.to_string())?;
             let written = sender
-                .execute_request_in_txn(
-                    QueryRequest::new(
+                .with_transaction(txn).execute_request(QueryRequest::new(
                         r#"mutation { add_Note(input: {body: "at shutdown"}) { _docID } }"#,
-                    ),
-                    &txn,
-                )
+                    ))
                 .await;
             assert!(written.errors.is_empty(), "{:?}", written.errors);
             let during = doc_id(written.data.as_ref(), "add_Note");
@@ -95,7 +90,7 @@ fn a_transaction_committed_during_shutdown_is_refused_or_keeps_its_head_marker()
                 async move { sender.shutdown().await }
             });
             sleep(COMMIT_DELAY).await;
-            let committed = sender.commit_transaction(&txn).await.is_ok();
+            let committed = sender.with_transaction(txn).commit().await.is_ok();
             stopping.await.expect("shutdown task")?;
             drop(sender);
 
@@ -140,8 +135,7 @@ fn a_transaction_committed_during_shutdown_is_refused_or_keeps_its_head_marker()
         .unwrap()
 }
 
-/// A commit refused at shutdown, through `commit_transaction` or the ops
-/// API's `txn_commit`, leaves its transaction open, and its caller may never
+/// A commit refused at shutdown, through `TxnNode::commit`, leaves its transaction open, and its caller may never
 /// discard it: an HTTP client's discard is refused too. Shutdown ends it
 /// rather than have the store's close wait out its timeout for it.
 #[test]
@@ -158,30 +152,24 @@ fn a_transaction_left_open_by_a_refused_commit_does_not_stall_shutdown() -> Resu
                 .data_path(dir.path().join("data.regolith"))
                 .build()
                 .await?;
-            node.add_collection(&defra_core::RequestContext::ambient(), NOTE_SDL).await?;
+            node.add_collection(NOTE_SDL).await?;
             let txn = node
-                .begin_transaction(false)
-                .await
+                .new_txn(false).await.map(|txn| txn.detach())
                 .map_err(|e| e.to_string())?;
             let written = node
-                .execute_request_in_txn(
-                    QueryRequest::new(
+                .with_transaction(txn).execute_request(QueryRequest::new(
                         r#"mutation { add_Note(input: {body: "left open"}) { _docID } }"#,
-                    ),
-                    &txn,
-                )
+                    ))
                 .await;
             assert!(written.errors.is_empty(), "{:?}", written.errors);
-            let ops_txn = node.txn_begin(&RequestContext::default(), false).await?;
-            let ops_context = RequestContext::default().with_txn(Some(ops_txn));
+            let ops_txn = node.anonymous().new_txn(false).await?.detach();
             let written = node
-                .execute_request_as(
-                    &ops_context,
-                    QueryRequest::new(
-                        r#"mutation { add_Note(input: {body: "left open by txn_commit"}) { _docID } }"#,
-                    ),
-                )
-                .await?;
+                .anonymous()
+                .with_transaction(ops_txn)
+                .execute_request(QueryRequest::new(
+                    r#"mutation { add_Note(input: {body: "left open by a scoped transaction"}) { _docID } }"#,
+                ))
+                .await;
             assert!(written.errors.is_empty(), "{:?}", written.errors);
 
             let node = Arc::new(node);
@@ -198,12 +186,16 @@ fn a_transaction_left_open_by_a_refused_commit_does_not_stall_shutdown() -> Resu
                 sleep(Duration::from_millis(10)).await;
             }
             assert!(
-                node.commit_transaction(&txn).await.is_err(),
-                "commit_transaction was admitted after shutdown stopped admitting requests"
+                node.with_transaction(txn).commit().await.is_err(),
+                "a commit was admitted after shutdown stopped admitting requests"
             );
             assert!(
-                node.txn_commit(&ops_context, ops_txn).await.is_err(),
-                "txn_commit was admitted after shutdown stopped admitting requests"
+                node.anonymous()
+                    .with_transaction(ops_txn)
+                    .commit()
+                    .await
+                    .is_err(),
+                "a scoped commit was admitted after shutdown stopped admitting requests"
             );
             let stopped = stopping.await.expect("shutdown task");
             let elapsed = started.elapsed();

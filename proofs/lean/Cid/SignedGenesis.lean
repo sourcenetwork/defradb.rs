@@ -38,7 +38,7 @@ Rust owners:
 * crates/database/db/src/block/builder/verified_client_create.rs
   `VerifiedClientCreate::verify`, `ExactSignatures::sign_sync` (a client-signed
   create replays only the client's signatures).
-* crates/entry-points/defra-node/src/lib.rs `execute_verified_graph_in_txn`
+* crates/entry-points/defra-node/src/node_core/execute.rs `NodeCore::execute_verified_graph`
   (refuses a committed `_docID` other than `graph.doc_id()`).
 * crates/surfaces/http/src/client_signed_create.rs `conversation_on_socket`
   (the Rust client refuses an out-of-graph wave and a different `_docID`).
@@ -386,7 +386,7 @@ theorem node_recompute_after_schema_change_moves_id (w : World)
 
 -- A client-signed create: the node rebuilds the genesis from the client's
 -- signatures (`ExactSignatures::sign_sync` refuses any other block, so the
--- rebuild may fail: `none`), then `execute_verified_graph_in_txn` commits only
+-- rebuild may fail: `none`), then `NodeCore::execute_verified_graph` commits only
 -- when the stored `_docID` equals `graph.doc_id()`.
 def clientCommitted (w : World) (graphId : DocId) (rebuilt : Option Composite) :
     Option DocId :=

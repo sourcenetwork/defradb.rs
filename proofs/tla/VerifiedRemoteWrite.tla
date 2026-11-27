@@ -84,7 +84,7 @@
 \* Such a provider proves none of its decisions either (proven is FALSE), so an
 \* update there still needs the key.
 \*
-\* Rust owners: crates/entry-points/defra-node/src/lib.rs execute_verified_graph_in_txn;
+\* Rust owners: crates/entry-points/defra-node/src/node_core/execute.rs NodeCore::execute_verified_graph;
 \* crates/entry-points/defra-node/src/signer_credential.rs SignerCredential::carried_by;
 \* crates/engine/query/src/runner/remote_authority.rs remote_write_authority,
 \* edit_credential;
@@ -108,7 +108,7 @@
 \* note_failure;
 \* crates/engine/acp/src/external/owed.rs reauthorize, entries;
 \* crates/database/db/src/write/autocommit/helpers.rs register_created_doc;
-\* crates/entry-points/defra-node/src/owed.rs Node::reauthorize_owed_acp_as, Node::owed_acp_as.
+\* crates/entry-points/defra-node/src/node_core/owed.rs NodeCore::reauthorize_owed_acp, NodeCore::owed_acp.
 EXTENDS Naturals, FiniteSets
 
 \* Each RED configuration plants exactly one bug by naming it here.

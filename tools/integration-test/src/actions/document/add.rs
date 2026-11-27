@@ -62,23 +62,22 @@ impl Op for AddDoc {
 
     fn run(&self, state: &State) -> Result<Value, Failure> {
         let identity = self.check_arguments(state)?;
-        let (node, context, options) = (
+        let (node, scope, options) = (
             state.node_on(self.common.node())?,
-            state.context_on(self.common.node(), self.txn, identity, self.enable_signing),
+            state.scope_on(self.common.node(), self.txn, identity, self.enable_signing),
             self.options(),
         );
         let failed = |e: defra_node::Error| Failure::coded(e.to_string(), e.code());
         if let Some(docs) = &self.docs {
             let ids = state
-                .block_on(node.add_docs(&context, &self.collection, docs, &options))
+                .block_on(scope.on(&node).add_docs(&self.collection, docs, &options))
                 .map_err(failed)?;
             return Ok(json!({ "docIDs": ids }));
         }
         let doc = self.doc();
         let id = match self.upsert {
             true => state
-                .block_on(node.save_doc(
-                    &context,
+                .block_on(scope.on(&node).save_doc(
                     &self.collection,
                     self.doc_id.as_ref().map(Text::as_str),
                     &doc,
@@ -87,7 +86,7 @@ impl Op for AddDoc {
                 .map_err(failed)?,
             false => first(
                 state
-                    .block_on(node.add_docs(&context, &self.collection, &[doc], &options))
+                    .block_on(scope.on(&node).add_docs(&self.collection, &[doc], &options))
                     .map_err(failed)?,
             )?,
         };

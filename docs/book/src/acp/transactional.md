@@ -54,8 +54,8 @@ replayed identically for later attempts. Failures of the provider fail closed
 
 The same bridge carries a relationship change made inside a transaction
 (`acp::outbox`). The in-transaction relationship call (`relationship_in_txn`, behind
-`Node::add_dac_actor_relationship_change_for_in_txn`, its delete counterpart and
-`Node::change_dac_actor_relationship_as`) does not refuse on an external provider: it
+`TxnNode::acting_for(actor).add_dac_actor_relationship`, its delete counterpart and
+`TxnNode::change_dac_actor_relationship`) does not refuse on an external provider: it
 *stages* the change, a record written in the transaction that commits or rolls back with
 its rows, and the provider is sent the change after the commit.
 
@@ -341,8 +341,8 @@ with no HTTP route.
 
 ### Verified writes on an external provider
 
-A verified write (`Node::execute_verified_create_in_txn`,
-`Node::execute_verified_mutation_in_txn`) is one create, update or delete an embedder has
+A verified write (`TxnNode::execute_verified_create`,
+`TxnNode::execute_verified_mutation`) is one create, update or delete an embedder has
 checked against its signer's signature, run in a transaction the node owns. On a local
 ACP its authority is *bound*: decided inside the transaction and validated at the
 commit. An external provider cannot be bound that way. There its authority counts as
@@ -438,14 +438,15 @@ sends nothing.
 
 A commit on an external provider returns before the provider holds what the transaction
 owes it, and stands whatever the submission comes to. Four node calls say what it came
-to and act on it. Each takes the context of an authenticated caller.
+to and act on it. Each runs as the caller its scope names (`Node::with_identity`), and
+the unscoped `Node` calls it as the node's principal.
 
 | Call | What it does | Who may call |
 |---|---|---|
-| `Node::owed_acp_as(context, actor)` | lists what `actor` owes: the registrations of documents it created and the changes it staged | `actor`, and the node's principal (`Node::node_context`) |
-| `Node::await_owed_acp_as(context, handle, deadline)` | waits until what one committed transaction owes is settled or has come to rest, and says which | anyone authenticated; the node's principal waits for every entry of the transaction, an actor for its own, and another actor's entries neither show in its wait nor keep it |
-| `Node::reauthorize_owed_acp_as(context, entry, credential)` | records a fresh credential with one owed registration or change and submits it | the entry's actor, and the node's principal |
-| `Node::abandon_owed_acp_change_as(context, seq)` | deletes the record of a change the provider refused | the actor that staged it, and nobody else; the node's principal for the changes it staged itself |
+| `ScopedNode::owed_acp(actor)` | lists what `actor` owes: the registrations of documents it created and the changes it staged | `actor`, and the node's principal (the unscoped `Node`) |
+| `ScopedNode::await_owed_acp(txn, deadline)` | waits until what one committed transaction owes is settled or has come to rest, and says which | anyone authenticated; the node's principal waits for every entry of the transaction, an actor for its own, and another actor's entries neither show in its wait nor keep it |
+| `ScopedNode::reauthorize_owed_acp(entry, credential)` | records a fresh credential with one owed registration or change and submits it | the entry's actor, and the node's principal |
+| `ScopedNode::abandon_owed_acp_change(seq)` | deletes the record of a change the provider refused | the actor that staged it, and nobody else; the node's principal for the changes it staged itself |
 
 To a caller who may not see an entry it does not exist (`OwedEntryNotFound`). No call
 returns a recorded credential.
@@ -576,7 +577,7 @@ returns a recorded credential.
   - a create whose request carries no bearer for its creator, by a creator whose key
     the node does not hold, commits, sends nothing at its commit and records no
     authority. Its registration is `awaiting_authority` in the report and takes a
-    credential through `reauthorize_owed_acp_as`, or settles when a later request
+    credential through `reauthorize_owed_acp`, or settles when a later request
     carries the creator's bearer;
   - no later submission finds one either: not the pass at start, not the settlement of
     an owed change, not a wait, and not another request that touches the document;

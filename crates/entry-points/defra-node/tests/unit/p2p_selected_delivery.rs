@@ -19,7 +19,7 @@ fn selected_delivery_crosses_receiver_capacity_without_losing_the_remainder() {
             let sender = Node::builder().with_p2p(config()).build().await.unwrap();
             let receiver = Node::builder().with_p2p(config()).build().await.unwrap();
             for node in [&sender, &receiver] {
-                node.add_collection(&defra_core::RequestContext::ambient(), "type SelectedPushNote { value: Int }")
+                node.add_collection("type SelectedPushNote { value: Int }")
                     .await
                     .unwrap();
             }
