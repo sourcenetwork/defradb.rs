@@ -63,12 +63,8 @@ fn two_embedded_iroh_nodes_connect_and_replicate() -> Result<()> {
                 .build()
                 .await?;
 
-            node_a
-                .add_collection(&defra_core::RequestContext::ambient(), BOOK_SDL)
-                .await?;
-            node_b
-                .add_collection(&defra_core::RequestContext::ambient(), BOOK_SDL)
-                .await?;
+            node_a.add_collection(BOOK_SDL).await?;
+            node_b.add_collection(BOOK_SDL).await?;
 
             let p2p_b = node_b
                 .p2p_system()
@@ -183,9 +179,7 @@ fn an_apps_stream_protocol_round_trips_between_embedded_nodes() -> Result<()> {
                 .with_p2p(test_iroh_config())
                 .build()
                 .await?;
-            server
-                .add_collection(&defra_core::RequestContext::ambient(), BOOK_SDL)
-                .await?;
+            server.add_collection(BOOK_SDL).await?;
             let created = server
                 .execute(
                     r#"mutation { add_Book(input: {title: "Served over a stream"}) { _docID } }"#,

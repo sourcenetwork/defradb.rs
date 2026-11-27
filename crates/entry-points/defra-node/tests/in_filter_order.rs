@@ -12,7 +12,7 @@ fn an_unsorted_in_filter_keeps_the_requested_order() {
             "type User { name: String age: Int }",
         ] {
             let node = Node::builder().build().await.unwrap();
-            node.add_collection(&defra_core::RequestContext::ambient(), sdl).await.unwrap();
+            node.add_collection(sdl).await.unwrap();
             for age in [25, 35, 45, 55, 65] {
                 let created = node
                     .execute(&format!(

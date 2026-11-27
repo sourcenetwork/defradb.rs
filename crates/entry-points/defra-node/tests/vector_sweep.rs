@@ -60,7 +60,7 @@ async fn merges_pending_inserts(diskann: &str) -> Result<()> {
     let corpus = TRAIN_THRESHOLD + 76;
 
     let node = NodeBuilder::default().data_path(dir.path()).build().await?;
-    node.add_collection(&defra_core::RequestContext::ambient(), &format!(
+    node.add_collection(&format!(
         "type Note {{ title: String embedding: [Float32!] @index(vector: {{dimensions: 4, diskann: {{{diskann}}}}}) }}"
     ))
     .await?;

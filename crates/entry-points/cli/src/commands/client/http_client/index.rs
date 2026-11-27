@@ -20,6 +20,11 @@ struct GoIndexCreateRequest {
     unique: bool,
     #[serde(rename = "Vector", skip_serializing_if = "Option::is_none")]
     vector: Option<schema::VectorIndexDescription>,
+    #[serde(
+        rename = "BuildInBackground",
+        skip_serializing_if = "std::ops::Not::not"
+    )]
+    build_in_background: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -129,6 +134,22 @@ impl HttpClient {
         unique: bool,
         vector: Option<schema::VectorIndexDescription>,
     ) -> Result<IndexInfo> {
+        self.index_create_with_build_mode(txn, collection, fields, name, unique, vector, false)
+            .await
+    }
+
+    /// Create an index and optionally return while its backfill runs.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn index_create_with_build_mode(
+        &self,
+        txn: Option<&str>,
+        collection: &str,
+        fields: &[String],
+        name: Option<&str>,
+        unique: bool,
+        vector: Option<schema::VectorIndexDescription>,
+        build_in_background: bool,
+    ) -> Result<IndexInfo> {
         let request = GoIndexCreateRequest {
             name: name.map(|s| s.to_string()),
             fields: fields
@@ -140,6 +161,7 @@ impl HttpClient {
                 .collect(),
             unique,
             vector,
+            build_in_background,
         };
         let path = format!("collections/{}/indexes", encode(collection));
         let body = serde_json::to_string(&request)?;

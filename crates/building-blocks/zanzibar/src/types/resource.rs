@@ -4,20 +4,16 @@ use super::subject::SubjectRestriction;
 use crate::expression::RelationExpression;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct CreateRule {
-    pub parent: String,
-    pub requires: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Resource {
     pub name: String,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub description: String,
     pub relations: Vec<Relation>,
+    /// The `create` expression of the resource's `collection` section: who
+    /// may add an object to it. The engine never evaluates it; a host that
+    /// gates creates reads it. Absent, and `"*"`, mean anyone may.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub create: Option<CreateRule>,
+    pub collection_create: Option<String>,
 }
 
 impl Resource {
@@ -26,8 +22,16 @@ impl Resource {
             name: name.into(),
             description: String::new(),
             relations: Vec::new(),
-            create: None,
+            collection_create: None,
         }
+    }
+
+    /// Whether adding an object to this resource is restricted: a `create`
+    /// is present and is not `"*"`.
+    pub fn is_create_gated(&self) -> bool {
+        self.collection_create
+            .as_deref()
+            .is_some_and(|create| create.trim() != "*")
     }
 
     pub fn with_relation(mut self, relation: Relation) -> Self {

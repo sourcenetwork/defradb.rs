@@ -1,7 +1,6 @@
 //! Tests for issue #859: collection patching, schema migration, and
 //! introspection exposed through [`Node`].
 
-use defra_core::RequestContext;
 use defra_node::Node;
 use defra_node::Result;
 #[cfg(feature = "wasmtime-runtime")]
@@ -24,8 +23,7 @@ const EMPTY_WASM: &[u8] = &[0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00];
 
 /// Apply `patch` to `User` through the node and return its active version.
 async fn patch_user(node: &Node, patch: &str) -> Result<CollectionVersion> {
-    node.patch_collection_as(&RequestContext::ambient(), patch, None)
-        .await?;
+    node.anonymous().patch_collection(patch, None).await?;
     Ok(node
         .get_collection("User")?
         .expect("User exists after a patch"))
@@ -38,8 +36,7 @@ fn list_collections_reports_added_schema() -> Result<()> {
 
         assert!(node.list_collections()?.is_empty());
 
-        node.add_collection(&defra_core::RequestContext::ambient(), USER_SDL)
-            .await?;
+        node.add_collection(USER_SDL).await?;
 
         let names = node.list_collections()?;
         assert_eq!(names, vec!["User".to_string()]);
@@ -52,8 +49,7 @@ fn list_collections_reports_added_schema() -> Result<()> {
 fn get_collection_returns_active_schema() -> Result<()> {
     workers::block_on(async {
         let node = Node::builder().build().await?;
-        node.add_collection(&defra_core::RequestContext::ambient(), USER_SDL)
-            .await?;
+        node.add_collection(USER_SDL).await?;
 
         let collection = node
             .get_collection("User")?
@@ -73,8 +69,7 @@ fn get_collection_returns_active_schema() -> Result<()> {
 fn patch_collection_adds_field_and_bumps_version() -> Result<()> {
     workers::block_on(async {
         let node = Node::builder().build().await?;
-        node.add_collection(&defra_core::RequestContext::ambient(), USER_SDL)
-            .await?;
+        node.add_collection(USER_SDL).await?;
 
         let original = node
             .get_collection("User")?
@@ -103,8 +98,7 @@ fn patch_collection_adds_field_and_bumps_version() -> Result<()> {
 fn patch_collection_chained_evolutions_produce_distinct_versions() -> Result<()> {
     workers::block_on(async {
         let node = Node::builder().build().await?;
-        node.add_collection(&defra_core::RequestContext::ambient(), USER_SDL)
-            .await?;
+        node.add_collection(USER_SDL).await?;
 
         let v0 = node
             .get_collection("User")?
@@ -137,8 +131,7 @@ fn patch_collection_chained_evolutions_produce_distinct_versions() -> Result<()>
 fn get_collection_by_version_id_finds_prior_and_new() -> Result<()> {
     workers::block_on(async {
         let node = Node::builder().build().await?;
-        node.add_collection(&defra_core::RequestContext::ambient(), USER_SDL)
-            .await?;
+        node.add_collection(USER_SDL).await?;
 
         let original_version = node
             .get_collection("User")?
@@ -171,8 +164,7 @@ fn get_collection_by_version_id_finds_prior_and_new() -> Result<()> {
 fn get_all_collection_versions_returns_history() -> Result<()> {
     workers::block_on(async {
         let node = Node::builder().build().await?;
-        node.add_collection(&defra_core::RequestContext::ambient(), USER_SDL)
-            .await?;
+        node.add_collection(USER_SDL).await?;
 
         let initial = node.get_all_collection_versions().await?;
         assert_eq!(initial.len(), 1);
@@ -197,8 +189,7 @@ fn get_all_collection_versions_returns_history() -> Result<()> {
 fn set_active_collection_version_round_trips_to_original() -> Result<()> {
     workers::block_on(async {
         let node = Node::builder().build().await?;
-        node.add_collection(&defra_core::RequestContext::ambient(), USER_SDL)
-            .await?;
+        node.add_collection(USER_SDL).await?;
 
         let original_version = node
             .get_collection("User")?
@@ -217,7 +208,8 @@ fn set_active_collection_version_round_trips_to_original() -> Result<()> {
             patched.version_id,
         );
 
-        node.set_active_collection_version_as(&RequestContext::ambient(), &original_version)
+        node.anonymous()
+            .set_active_collection_version(&original_version)
             .await?;
         assert_eq!(
             node.get_collection("User")?
@@ -236,8 +228,7 @@ fn set_active_collection_version_round_trips_to_original() -> Result<()> {
 fn set_migration_registers_lens_between_versions() -> Result<()> {
     workers::block_on(async {
         let node = Node::builder().build().await?;
-        node.add_collection(&defra_core::RequestContext::ambient(), USER_SDL)
-            .await?;
+        node.add_collection(USER_SDL).await?;
 
         let original_version = node
             .get_collection("User")?
@@ -253,9 +244,7 @@ fn set_migration_registers_lens_between_versions() -> Result<()> {
         let config = LensConfig::new(&original_version, &patched.version_id, module);
 
         let config = serde_json::to_value(config).expect("a lens config serializes");
-        let transform_id = node
-            .set_migration_as(&RequestContext::ambient(), &config)
-            .await?;
+        let transform_id = node.anonymous().set_migration(&config).await?;
         assert!(
             !transform_id.is_empty(),
             "transform id should be a non-empty CID"
@@ -269,8 +258,7 @@ fn set_migration_registers_lens_between_versions() -> Result<()> {
 fn materialize_collection_is_exposed_on_node() -> Result<()> {
     workers::block_on(async {
         let node = Node::builder().build().await?;
-        node.add_collection(&defra_core::RequestContext::ambient(), USER_SDL)
-            .await?;
+        node.add_collection(USER_SDL).await?;
 
         let patch =
             r#"[{"op":"add","path":"/User/Fields/-","value":{"Name":"email","Kind":"String"}}]"#;
@@ -301,8 +289,7 @@ fn introspection_supports_idempotent_schema_ensure() -> Result<()> {
 
 async fn ensure_user_schema(node: &Node) -> Result<()> {
     if node.get_collection("User")?.is_none() {
-        node.add_collection(&defra_core::RequestContext::ambient(), USER_SDL)
-            .await?;
+        node.add_collection(USER_SDL).await?;
     }
     Ok(())
 }

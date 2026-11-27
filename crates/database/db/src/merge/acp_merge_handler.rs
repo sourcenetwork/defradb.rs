@@ -26,6 +26,10 @@ struct RegisterReplicatedDocAction {
     policy_id: String,
     resource_name: String,
     doc_id: String,
+    /// What the document carries through its `@policy(relation:)` fields,
+    /// derived from its merged genesis: the provider checks the
+    /// collection's `create` over them, as it did for the creating node.
+    relationships: Vec<acp::DerivedRelationship>,
 }
 
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
@@ -38,6 +42,7 @@ impl CompositePostCommitAction for RegisterReplicatedDocAction {
                 &self.policy_id,
                 &self.resource_name,
                 &self.doc_id,
+                &self.relationships,
             )
             .await
             .map_err(|e| MergeError::MergeFailed(format!("ACP registration failed: {}", e)))
@@ -375,24 +380,21 @@ impl CompositeMergeHook for AcpCompositeMergeHook {
             return Ok(ReplicaStep::Gate);
         };
         if !registered {
-            // A gated command binds the parent from the signed body. Check its
-            // authority when staging that exact command in the merge transaction.
-            if policy.parent_field.is_none() {
-                if let Err(error) = acp.command_authority(
-                    &registrant,
-                    acp::ProviderCommand::RegisterObject {
-                        policy_id: &policy.id,
-                        resource: &policy.resource_name,
-                        object: doc_id,
-                    },
-                ) {
-                    tracing::warn!(
-                        %doc_id,
-                        %error,
-                        "The node cannot register a replicated document as its own actor; it waits for a registration"
-                    );
-                    return Ok(ReplicaStep::Gate);
-                }
+            if let Err(error) = acp.command_authority(
+                &registrant,
+                acp::ProviderCommand::RegisterObject {
+                    policy_id: &policy.id,
+                    resource: &policy.resource_name,
+                    object: doc_id,
+                    relationships: &[],
+                },
+            ) {
+                tracing::warn!(
+                    %doc_id,
+                    %error,
+                    "The node cannot register a replicated document as its own actor; it waits for a registration"
+                );
+                return Ok(ReplicaStep::Gate);
             }
             let grants = ownership.creator_grants(&collection.name, &creator, doc_id);
             return Ok(ReplicaStep::Register {
@@ -534,6 +536,7 @@ impl CompositeMergeHook for AcpCompositeMergeHook {
         doc_id: &str,
         collection: &CollectionVersion,
         metadata: &BlockMetadata<'_>,
+        relationships: Vec<acp::DerivedRelationship>,
     ) -> Option<Box<dyn CompositePostCommitAction>> {
         // Only register a replicated document's owner on the receiving node under
         // strict (Vera) ACP, where cross-node access control is authoritative
@@ -554,9 +557,6 @@ impl CompositeMergeHook for AcpCompositeMergeHook {
                 doc_id: doc_id.to_string(),
             }));
         }
-        if policy.parent_field.is_some() {
-            return None;
-        }
         let creator = metadata
             .explicit_replay_authorizer_for(&collection.collection_id)
             .or_else(|| metadata.effective_creator())?;
@@ -568,6 +568,7 @@ impl CompositeMergeHook for AcpCompositeMergeHook {
             policy_id: policy.id.clone(),
             resource_name: policy.resource_name.clone(),
             doc_id: doc_id.to_string(),
+            relationships,
         }))
     }
 }

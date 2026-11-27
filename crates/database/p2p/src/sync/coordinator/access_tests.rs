@@ -6,6 +6,9 @@
 #[path = "../../../tests/unit/car_serving.rs"]
 mod car_serving;
 
+#[path = "../../../tests/unit/cid_check.rs"]
+mod cid_check;
+
 #[path = "../../../tests/unit/selected_car_authority.rs"]
 #[cfg(not(target_arch = "wasm32"))]
 mod selected_car_authority;
@@ -856,7 +859,7 @@ impl P2PTransport for NoopTransport {
     ) -> crate::Result<MessageId> {
         if !self.publish_open.load(std::sync::atomic::Ordering::SeqCst) {
             return Err(crate::error::Error::GossipSubPublish(
-                "gossipsub publish error: InsufficientPeers".to_string(),
+                "InsufficientPeers".to_string(),
             ));
         }
         record(&self.published, topic);

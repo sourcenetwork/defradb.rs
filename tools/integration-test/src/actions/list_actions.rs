@@ -48,8 +48,9 @@ impl Op for ListActions {
         state
             .block_on(
                 state
-                    .node_on(self.common.node())?
-                    .list_actions_as(&state.context_as(None, identity)),
+                    .scope_as(None, identity)
+                    .scoped(&*state.node_on(self.common.node())?)
+                    .list_actions(),
             )
             .map(|actions| json!({ "actions": actions }))
             .map_err(|e| Failure::operation(e.to_string()))

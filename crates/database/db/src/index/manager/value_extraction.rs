@@ -19,7 +19,7 @@ impl IndexManager {
                 continue;
             }
             for values in self.extract_index_values(doc, index.description(), schema)? {
-                if !values.iter().any(NormalValue::is_nil) {
+                if !values.iter().any(NormalValue::is_never_unique) {
                     keys.insert(self.encode_index_key(index.description(), &values)?);
                 }
             }
@@ -167,13 +167,18 @@ impl IndexManager {
         }
 
         match value {
-            NormalValue::Json(_) => {
-                let leaves = value.json_leaves();
-                if leaves.is_empty() {
-                    vec![NormalValue::Null]
-                } else {
-                    leaves
+            NormalValue::Json(ref json) => {
+                if json.is_null() {
+                    return vec![NormalValue::Null];
                 }
+                let entries = document::json_index_leaves(json);
+                let has_value = entries.iter().any(|leaf| !leaf.is_empty_array_marker());
+                let mut expanded = Vec::with_capacity(entries.len() + usize::from(!has_value));
+                if !has_value {
+                    expanded.push(NormalValue::Null);
+                }
+                expanded.extend(entries.into_iter().map(NormalValue::JsonLeaf));
+                expanded
             }
 
             NormalValue::Null

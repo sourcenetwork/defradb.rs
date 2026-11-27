@@ -40,7 +40,7 @@ async fn acp() -> (ZanzibarDocumentACP<MemoryZanzibarStore>, String) {
     let store = Arc::new(MemoryZanzibarStore::new());
     store.store_policy(&policy).await.unwrap();
     let acp = ZanzibarDocumentACP::new(store);
-    acp.register_doc_object(&did("owner"), &policy.id, "records", "doc")
+    acp.register_doc_object(&did("owner"), &policy.id, "records", "doc", &[])
         .await
         .unwrap();
     (acp, policy.id)

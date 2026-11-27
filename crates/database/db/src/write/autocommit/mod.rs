@@ -320,6 +320,15 @@ impl<S: Store + 'static> DocMutator for AutoCommitMutator<S> {
         .map_err(query::error::QueryError::execution)
     }
 
+    async fn chunk_embedding_requests(
+        &self,
+        collection_name: &str,
+        docs: &[Document],
+    ) -> query::error::Result<Vec<query::prepared::PreparedInputRequest>> {
+        let collection = self.get_collection_or_err(collection_name)?;
+        crate::chunk::sync::embedding_requests(&self.db, collection.schema(), docs)
+    }
+
     async fn prepare_write(
         &self,
         collection_name: &str,
