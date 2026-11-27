@@ -85,6 +85,9 @@ pub struct NodeSpec {
     /// An in-process iroh node serving these stream protocols, in place of
     /// the libp2p one `network` starts.
     pub iroh: Option<crate::actions::stream::IrohSpec>,
+    /// The embedder's write validator the node asks before each local
+    /// mutation; access hooks need the iroh network.
+    pub write_validator: Option<Arc<dyn query::access_hooks::WriteValidator>>,
 }
 
 /// A running node: the node itself for the in-process client, or the URL the
@@ -129,9 +132,10 @@ impl TestNode {
             Some(address) => address.clone(),
             None => "/ip4/127.0.0.1/tcp/0".to_owned(),
         };
-        // Admission limits, a connection manager, iroh, a resolv.conf and a
-        // loaded Go config are a Rust node's options: under go-http the node
-        // is a Rust node reached over HTTP, as rust-http does.
+        // Admission limits, a connection manager, iroh, a resolv.conf, a
+        // loaded Go config and a write validator are a Rust node's options:
+        // under go-http the node is a Rust node reached over HTTP, as
+        // rust-http does.
         let client_type = match client_type {
             ClientType::GoHttp
                 if spec.admission.is_some()
@@ -139,7 +143,8 @@ impl TestNode {
                     || spec.iroh_network
                     || spec.resolv_conf.is_some()
                     || spec.go_config
-                    || spec.go_datastore =>
+                    || spec.go_datastore
+                    || spec.write_validator.is_some() =>
             {
                 ClientType::RustHttp
             }
@@ -425,6 +430,12 @@ fn build(spec: &NodeSpec, listen: &str, http: Option<HttpConfig>) -> Result<Node
     }
     if let Some(gate) = &spec.commit_gate {
         builder = builder.with_commit_gate(gate.clone());
+    }
+    if let Some(validator) = &spec.write_validator {
+        builder = builder.with_access_hooks(
+            defra_node::AccessHooks::new(Vec::<String>::new())
+                .with_write_validator(validator.clone()),
+        );
     }
     if spec.registered_identity {
         builder = builder.with_node_identity_did(register_node_identity(spec)?);

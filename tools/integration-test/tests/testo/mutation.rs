@@ -139,4 +139,5 @@ mod upsert {
     mod simple;
     mod text;
     mod with_filter_unknown;
+    mod write_validator;
 }
