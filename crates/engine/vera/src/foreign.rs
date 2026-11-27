@@ -95,6 +95,15 @@ pub struct ForeignPolicies {
     listener: regolith::sync::OnceCell<Arc<dyn acp::ObjectChangeListener>>,
 }
 
+/// The bounded policy routing and creation work in flight on this node.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ForeignPolicyClaims {
+    /// Adds that are deciding whether and where to route a policy.
+    pub adds: usize,
+    /// Creates on the node's own deployment that may still land.
+    pub creates: usize,
+}
+
 /// The policy identifier as every route is keyed and told: its 32 bytes in
 /// lowercase hex, however it was written.
 pub(crate) fn route_key(policy_id: &str) -> Result<String, ProviderError> {
@@ -118,6 +127,12 @@ impl HomeStateListener for HomeChanged {
 }
 
 impl ForeignPolicies {
+    /// The policy routing and creation work in flight now.
+    pub fn claims(&self) -> ForeignPolicyClaims {
+        let (adds, creates) = self.claims.sizes();
+        ForeignPolicyClaims { adds, creates }
+    }
+
     /// The document ACP that decides `policy_id`, when another deployment
     /// owns it.
     pub fn route(&self, policy_id: &str) -> Option<Arc<VeraDocumentACP>> {
@@ -152,9 +167,9 @@ impl ForeignPolicies {
     /// Mark `policy_id` as being routed until the claim is dropped. Refused
     /// while a create on the node's own deployment may be making it
     /// ([`ProviderError::PolicyBeingCreated`]).
-    pub(crate) fn claim(&self, policy_id: &str) -> Result<Held<'_>, ProviderError> {
+    pub(crate) fn claim(&self, policy_id: &str) -> Result<Held, ProviderError> {
         let policy = route_key(policy_id)?;
-        let claim = self.claims.claim(policy.clone());
+        let claim = self.claims.claim(policy.clone()).map_err(claims_full)?;
         if self.claims.creating(&policy) {
             return Err(ProviderError::PolicyBeingCreated { policy });
         }
@@ -167,16 +182,19 @@ impl ForeignPolicies {
     /// policy is routed or being routed
     /// ([`ProviderError::PolicyRoutedElsewhere`]), and, for an unknown ID,
     /// while any policy is ([`ProviderError::UnnamedPolicyCreate`]).
-    pub(crate) fn begin_create(&self, policy_id: Option<&str>) -> Result<Held<'_>, ProviderError> {
+    pub(crate) fn begin_create(&self, policy_id: Option<&str>) -> Result<Held, ProviderError> {
         let Some(policy_id) = policy_id else {
-            let create = self.claims.create(None);
+            let create = self.claims.create(None).map_err(claims_full)?;
             if self.any_claimed() {
                 return Err(ProviderError::UnnamedPolicyCreate);
             }
             return Ok(create);
         };
         let policy = route_key(policy_id)?;
-        let create = self.claims.create(Some(policy.clone()));
+        let create = self
+            .claims
+            .create(Some(policy.clone()))
+            .map_err(claims_full)?;
         if self.claimed(&policy) {
             return Err(ProviderError::PolicyRoutedElsewhere { policy });
         }
@@ -378,6 +396,13 @@ impl ForeignPolicies {
                 listener.policy_changed(&policy);
             }
         }
+    }
+}
+
+fn claims_full(error: claims::ClaimsFull) -> ProviderError {
+    ProviderError::PolicyChangesBusy {
+        operation: error.operation,
+        limit: error.limit,
     }
 }
 

@@ -9,8 +9,9 @@
 
 use std::time::{Duration, Instant};
 
-use acp_light_client::ProofClient;
-use vera_domain::{ConsensusPublicKey, LightBlock};
+use acp_light_client::{AcpTransport, ProofClient, SyncState};
+use alloy_primitives::B256;
+use vera_domain::{AncestryProof, BlockId, ConsensusPublicKey, LightBlock};
 
 use crate::provider::ProviderError;
 
@@ -35,6 +36,7 @@ pub enum GenesisSource {
 
 /// How long a hosted node's first block is asked for between attempts.
 const FIRST_BLOCK_RETRY: Duration = Duration::from_millis(200);
+const ANCESTRY_RESPONSE_BYTES: usize = 16 << 10;
 
 /// The genesis identity of the deployment `trusted` is the consensus key of,
 /// read through `proofs`. Runs inside `edge::compat`.
@@ -87,6 +89,40 @@ pub(super) fn genesis_of(
         ));
     }
     Ok(genesis)
+}
+
+/// Whether the revision `state` names is proven to descend from `genesis`.
+/// The light block is checked under `trusted` and the proof against the
+/// ancestry that block commits to, so neither answer is taken from the node.
+pub(super) async fn descends_from(
+    proofs: &ProofClient,
+    transport: &dyn AcpTransport,
+    trusted: &ConsensusPublicKey,
+    genesis: [u8; 32],
+    state: &SyncState,
+) -> Result<bool, ProviderError> {
+    let value = transport
+        .call(
+            "vera_getAncestryProof",
+            serde_json::json!([0, state.height]),
+            ANCESTRY_RESPONSE_BYTES,
+        )
+        .await
+        .map_err(|error| ProviderError::Query(format!("ancestry proof: {error}")))?;
+    let proof: AncestryProof = serde_json::from_value(value)
+        .map_err(|error| ProviderError::Query(format!("ancestry proof: {error}")))?;
+    let light = proofs
+        .get_light_block(state.height)
+        .await
+        .map_err(|error| ProviderError::Query(format!("ancestry block: {error}")))?;
+    let block = vera_domain::verify_finalized_block(&light, trusted)
+        .map_err(|error| ProviderError::Query(format!("ancestry block: {error}")))?;
+    if block.height != state.height || block.id().0 != state.block_hash {
+        return Err(ProviderError::Query(
+            "ancestry block differs from the verified revision".into(),
+        ));
+    }
+    Ok(block.has_ancestor(0, &BlockId(B256::from(genesis)), &proof))
 }
 
 #[cfg(test)]

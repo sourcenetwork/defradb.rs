@@ -52,6 +52,8 @@ const DIFFERS: u8 = 2;
 /// A read-only provider of a deployment other than the node's own.
 pub struct ForeignProvider {
     light_client: Arc<AcpLightClient>,
+    transport: Arc<dyn AcpTransport>,
+    trusted: ConsensusPublicKey,
     genesis_id: [u8; 32],
     served: Arc<AtomicU8>,
     _observer: edge::Service,
@@ -72,6 +74,7 @@ impl ForeignProvider {
     ) -> Result<Self, ProviderError> {
         let trusted = super::trusted_key(trusted_consensus_key)?;
         let key = trusted_consensus_key.to_owned();
+        let transport = Arc::clone(&acp);
         let light_client = edge::compat(async move {
             AcpLightClient::for_deployment(
                 acp,
@@ -87,13 +90,15 @@ impl ForeignProvider {
         let served = Arc::new(AtomicU8::new(UNCHECKED));
         let _observer = edge.spawn_service(edge::compat(observe(
             light_client.clone(),
-            trusted,
+            trusted.clone(),
             genesis_id,
             served.clone(),
             listener,
         )));
         Ok(Self {
             light_client,
+            transport,
+            trusted,
             genesis_id,
             served,
             _observer,
@@ -108,13 +113,65 @@ impl ForeignProvider {
     /// heard from for that long, and waiting on it inside a query would
     /// spend the query's own deadline (`proofs/tla/ForeignPolicy.tla`
     /// HomeDecision).
-    fn serves_given(&self) -> Result<(), ProviderError> {
-        serving(self.served.load(Ordering::Acquire), self.genesis_id)?;
-        self.light_client
+    async fn serves_given(&self) -> Result<(), ProviderError> {
+        let mut served = self.served.load(Ordering::Acquire);
+        if served == DIFFERS {
+            return serving(DIFFERS, self.genesis_id);
+        }
+        let state = self
+            .light_client
             .header_chain()
             .fresh_state()
-            .map(|_| ())
-            .map_err(|e| ProviderError::Unavailable(format!("the foreign home is away: {e}")))
+            .map_err(|e| ProviderError::Unavailable(format!("the foreign home is away: {e}")))?;
+        if served == UNCHECKED {
+            match genesis::read(self.light_client.proof_client(), &self.trusted).await {
+                Ok(id) if id == self.genesis_id => {
+                    served = MATCHES;
+                    self.served.store(served, Ordering::Release);
+                }
+                Ok(id) => {
+                    tracing::warn!(
+                        served = %hex::encode(id),
+                        given = %hex::encode(self.genesis_id),
+                        "a foreign home serves another deployment than the one its policy names"
+                    );
+                    self.served.store(DIFFERS, Ordering::Release);
+                    return serving(DIFFERS, self.genesis_id);
+                }
+                Err(error) => {
+                    return Err(ProviderError::Unavailable(format!(
+                        "the foreign home's genesis identity is not yet proven: {error}"
+                    )))
+                }
+            }
+        }
+        match genesis::descends_from(
+            self.light_client.proof_client(),
+            self.transport.as_ref(),
+            &self.trusted,
+            self.genesis_id,
+            &state,
+        )
+        .await
+        {
+            Ok(true) => {
+                if served != MATCHES {
+                    self.served.store(MATCHES, Ordering::Release);
+                }
+                Ok(())
+            }
+            Ok(false) => {
+                self.served.store(DIFFERS, Ordering::Release);
+                Err(ProviderError::Config(format!(
+                    "the foreign home changed to a history that does not descend from 0x{}",
+                    hex::encode(self.genesis_id)
+                )))
+            }
+            Err(_) => Err(ProviderError::Unavailable(format!(
+                "the foreign home did not prove that its revision descends from 0x{}",
+                hex::encode(self.genesis_id)
+            ))),
+        }
     }
 
     /// The error of an observation read as `what`: a query error the home
@@ -301,13 +358,14 @@ impl VeraProvider for ForeignProvider {
         &self,
         policy_id: &str,
     ) -> Result<Option<ProviderPolicyInfo>, ProviderError> {
-        self.serves_given()?;
+        self.serves_given().await?;
         let id = Self::policy_key(policy_id)?;
         let proof = verified(self.light_client.header_chain(), || {
             self.light_client.read_policy(&id)
         })
         .await
         .map_err(|e| reach::read_error(&self.light_client, "foreign policy proof", e))?;
+        self.serves_given().await?;
         let Some(bytes) = proof.value.as_deref() else {
             return Ok(None);
         };
@@ -331,7 +389,7 @@ impl VeraProvider for ForeignProvider {
         resource: &str,
         object_id: &str,
     ) -> Result<(bool, String), ProviderError> {
-        self.serves_given()?;
+        self.serves_given().await?;
         let policy = Self::policy_key(policy_id)?;
         let object = acp_light_client::Object {
             resource: resource.into(),
@@ -342,6 +400,7 @@ impl VeraProvider for ForeignProvider {
         })
         .await
         .map_err(|e| reach::read_error(&self.light_client, "foreign owner proof", e))?;
+        self.serves_given().await?;
         Ok(match owner {
             Some(owner) => (true, did_spelling::defra(owner.0.as_str()).into_owned()),
             None => (false, String::new()),
@@ -352,28 +411,32 @@ impl VeraProvider for ForeignProvider {
         &self,
         query: ActorRelationshipQuery<'_>,
     ) -> Result<bool, ProviderError> {
-        self.serves_given()?;
-        verified(self.light_client.header_chain(), || async {
+        self.serves_given().await?;
+        let result = verified(self.light_client.header_chain(), || async {
             exact_relationship::query(&self.light_client, query)
                 .await
                 .map_err(|error| Box::new(error) as Box<dyn std::error::Error + Send + Sync>)
         })
         .await
-        .map_err(|error| self.unreached("foreign relationship", error))
+        .map_err(|error| self.unreached("foreign relationship", error));
+        self.serves_given().await?;
+        result
     }
 
     async fn verify_transport_sentinel(
         &self,
         query: &acp::TransportSentinelQuery,
     ) -> Result<bool, ProviderError> {
-        self.serves_given()?;
-        verified(self.light_client.header_chain(), || async {
+        self.serves_given().await?;
+        let result = verified(self.light_client.header_chain(), || async {
             exact_relationship::sentinel(&self.light_client, query)
                 .await
                 .map_err(|error| Box::new(error) as Box<dyn std::error::Error + Send + Sync>)
         })
         .await
-        .map_err(|error| self.unreached("foreign sentinel", error))
+        .map_err(|error| self.unreached("foreign sentinel", error));
+        self.serves_given().await?;
+        result
     }
 
     async fn verify_access(
@@ -384,13 +447,15 @@ impl VeraProvider for ForeignProvider {
         permission: &str,
         actor_did: &str,
     ) -> Result<bool, ProviderError> {
-        self.serves_given()?;
+        self.serves_given().await?;
         let request = access_request(resource, object_id, permission, actor_did)?;
-        verified(self.light_client.header_chain(), || {
+        let result = verified(self.light_client.header_chain(), || {
             self.light_client.verify_access(policy_id, &request)
         })
         .await
-        .map_err(|e| reach::read_error(&self.light_client, "foreign verified permission", e))
+        .map_err(|e| reach::read_error(&self.light_client, "foreign verified permission", e));
+        self.serves_given().await?;
+        result
     }
 
     /// Every decision is a permission proof of the home verified at a

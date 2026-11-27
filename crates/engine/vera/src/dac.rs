@@ -140,10 +140,13 @@ impl VeraDocumentACP {
             }
         }
         let (nonce, predicted) = self.named_create(policy_yaml, nonce)?;
-        let _create = self.foreign.begin_create(predicted.as_deref())?;
+        let create = self.foreign.begin_create(predicted.as_deref())?;
         let yaml = policy_yaml.to_owned();
         let id = self
-            .remote(move |provider| async move { provider.create_policy(&yaml, nonce).await })
+            .remote(move |provider| async move {
+                let _create = create;
+                provider.create_policy(&yaml, nonce).await
+            })
             .await?;
         if let Some(predicted) = predicted {
             if route_key(&predicted)? != route_key(&id)? {

@@ -123,6 +123,14 @@ pub enum ProviderError {
         "a policy whose ID is known only once it is created is not created while another deployment's home decides a policy on this node"
     )]
     UnnamedPolicyCreate,
+    /// The bounded set of policy routing and creation operations is full.
+    #[error(
+        "too many policy {operation} operations are in flight (limit {limit}); retry when one finishes"
+    )]
+    PolicyChangesBusy {
+        operation: &'static str,
+        limit: usize,
+    },
 }
 
 /// A command that cannot be typed, encoded or digested, with the text the

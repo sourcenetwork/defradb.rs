@@ -69,12 +69,12 @@ pub(super) const PROPERTIES: &[Property] = &[
     },
     Property {
         family: "Verified client graph transaction",
-        name: "INV_NoShadow: a create of a policy on the node's own deployment and an add of its route, interleaved step by step with a light client that sees the deployment late, never leave the policy routed while the node's own deployment holds it",
+        name: "INV_NoShadow: a create of a policy on the node's own deployment and an add of its route, interleaved step by step with a light client that sees the deployment late and a caller that may stop waiting, never leave the policy routed while the node's own deployment holds it",
         axis: Tla,
         anchor: "crates/engine/vera/src/foreign/claims.rs Claims::claim, Claims::claimed, Claims::any_claimed, Claims::create, Claims::creating; crates/engine/vera/src/foreign.rs ForeignPolicies::claim, ForeignPolicies::begin_create, ForeignPolicies::claimed; crates/engine/vera/src/dac/foreign_routes.rs VeraDocumentACP::unheld_here; crates/engine/vera/src/dac.rs VeraDocumentACP::add_policy, VeraDocumentACP::named_create; crates/engine/vera/src/provider.rs VeraProvider::create_policy, VeraProvider::create_policy_pending; crates/engine/vera/src/vera_rs/provider/create_policy.rs VeraRsProvider::create_policy_with, VeraRsProvider::pending_policy_create",
-        model_ref: "MC_ForeignPolicyCreate_{Green,Red_NoClaimCheck,Red_NoCreatingCheck,Red_NoPendingCheck,Red_EarlyReturn,Red_ShadowAdd}.cfg",
+        model_ref: "MC_ForeignPolicyCreate_{Green,Red_NoClaimCheck,Red_NoCreatingCheck,Red_NoPendingCheck,Red_EarlyReturn,Red_ShadowAdd,Red_CallerForgetsMark}.cfg",
         tiers: &[Boundary, Contract],
-        bound_by: "crates/engine/vera/src/foreign_tests.rs a_policy_the_node_holds_is_never_routed_elsewhere; crates/engine/vera/src/foreign_create_tests.rs a_routed_policy_is_never_created_on_the_nodes_own_deployment, a_create_with_no_nonce_names_its_policy_before_it_is_sent, a_create_named_only_once_made_is_refused_while_a_route_holds, a_route_is_refused_while_its_policy_is_being_created_and_after, a_route_is_refused_while_a_retained_create_can_still_land; crates/engine/vera/src/vera_rs/provider/signer_tests.rs a_create_left_in_the_journal_is_reported_for_its_policy",
+        bound_by: "crates/engine/vera/src/foreign_tests.rs a_policy_the_node_holds_is_never_routed_elsewhere; crates/engine/vera/src/foreign_create_tests.rs a_routed_policy_is_never_created_on_the_nodes_own_deployment, a_create_with_no_nonce_names_its_policy_before_it_is_sent, a_create_named_only_once_made_is_refused_while_a_route_holds, a_route_is_refused_while_its_policy_is_being_created_and_after, a_route_is_refused_while_a_retained_create_can_still_land; crates/engine/vera/src/foreign/claims.rs full_tables_refuse_another_add_or_create_until_one_ends, concurrent_reacquisition_leaves_no_orphaned_entries; crates/engine/vera/src/vera_rs/provider/signer_tests.rs a_create_left_in_the_journal_is_reported_for_its_policy",
     },
     Property {
         family: "Verified client graph transaction",

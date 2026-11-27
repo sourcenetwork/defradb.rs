@@ -6,9 +6,9 @@
 \*   * a create of P on the node's own deployment: it marks itself in
 \*     flight, looks whether P is routed or being routed (and gives up if
 \*     so), sends the create, which lands on the deployment, and returns
-\*     once the node's own light client has seen P there. A caller that
-\*     stops waiting leaves the request pending in the worker journal until
-\*     the deployment either holds P or refuses it;
+\*     once the node's own light client has seen P there. The handed-off
+\*     work owns the in-flight mark, so a caller that stops waiting does
+\*     not remove it;
 \*   * an add of a route of P to another deployment's home: it claims P,
 \*     looks whether a create of P is in flight (and gives up if so), asks
 \*     the node's own light client whether the deployment holds P (and gives
@@ -49,9 +49,10 @@ VARIABLES
   ownHolds,  \* TRUE once the node's own deployment holds P
   ownSeen,   \* TRUE once the node's own light client has seen P held
   cpc,       \* where the create is: "idle", "marked", "sent" or "landed"
-  apc        \* where the add is: "idle", "claimed" or "checked"
+  apc,       \* where the add is: "idle", "claimed" or "checked"
+  waiting    \* TRUE while the create's caller still waits
 
-vars == <<routed, claimed, creating, pending, ownHolds, ownSeen, cpc, apc>>
+vars == <<routed, claimed, creating, pending, ownHolds, ownSeen, cpc, apc, waiting>>
 
 \* At the start nothing is routed, held or in flight.
 Init ==
@@ -63,13 +64,14 @@ Init ==
   /\ ownSeen = FALSE      \* and the light client has seen none
   /\ cpc = "idle"         \* the create has not started
   /\ apc = "idle"         \* nor has the add
+  /\ waiting = TRUE       \* the create's caller waits
 
 \* The create marks itself in flight, first of all.
 CreateMark ==
   /\ cpc = "idle"
   /\ creating' = TRUE
   /\ cpc' = "marked"
-  /\ UNCHANGED <<routed, claimed, pending, ownHolds, ownSeen, apc>>
+  /\ UNCHANGED <<routed, claimed, pending, ownHolds, ownSeen, apc, waiting>>
 
 \* Then it looks for a claim or a route of P: found, it gives up before
 \* anything is sent; the planted bug sends it anyway.
@@ -80,31 +82,39 @@ CreateCheck ==
             /\ cpc' = "idle"
        ELSE /\ cpc' = "sent"
             /\ UNCHANGED creating
-  /\ UNCHANGED <<routed, claimed, pending, ownHolds, ownSeen, apc>>
+  /\ UNCHANGED <<routed, claimed, pending, ownHolds, ownSeen, apc, waiting>>
 
 \* The deployment executes the create: it holds P now.
 CreateLand ==
   /\ cpc = "sent"
   /\ ownHolds' = TRUE
   /\ cpc' = "landed"
-  /\ UNCHANGED <<routed, claimed, creating, pending, ownSeen, apc>>
+  /\ UNCHANGED <<routed, claimed, creating, pending, ownSeen, apc, waiting>>
 
 \* The deployment refuses the create: nothing is held, and it ends.
 CreateFail ==
   /\ cpc = "sent"
   /\ creating' = FALSE
   /\ cpc' = "idle"
-  /\ UNCHANGED <<routed, claimed, pending, ownHolds, ownSeen, apc>>
+  /\ UNCHANGED <<routed, claimed, pending, ownHolds, ownSeen, apc, waiting>>
 
-\* The caller stops waiting, but the deployment may still execute or refuse
-\* the request. Its mark in the in-memory create set goes, while the journal
-\* keeps the request pending.
+\* A stopped host leaves the request in its journal and loses the in-memory
+\* mark. The next host checks the journal before taking a route.
 CreateRetain ==
   /\ cpc = "sent"
   /\ creating' = FALSE
   /\ pending' = TRUE
   /\ cpc' = "idle"
+  /\ waiting' = FALSE
   /\ UNCHANGED <<routed, claimed, ownHolds, ownSeen, apc>>
+
+\* The caller stops waiting without stopping the handed-off work. The work
+\* keeps the in-flight mark; the planted bug forgets it here.
+CallerStops ==
+  /\ waiting
+  /\ waiting' = FALSE
+  /\ IF Bug = "forgetsMark" THEN creating' = FALSE ELSE UNCHANGED creating
+  /\ UNCHANGED <<routed, claimed, pending, ownHolds, ownSeen, cpc, apc>>
 
 \* The create returns, and its mark goes, once the light client has seen
 \* P held; the planted bug returns before that.
@@ -113,7 +123,7 @@ CreateReturn ==
   /\ ownSeen \/ Bug = "earlyReturn"
   /\ creating' = FALSE
   /\ cpc' = "idle"
-  /\ UNCHANGED <<routed, claimed, pending, ownHolds, ownSeen, apc>>
+  /\ UNCHANGED <<routed, claimed, pending, ownHolds, ownSeen, apc, waiting>>
 
 \* A retained request reaches its terminal outcome: the deployment holds P.
 RetainedLand ==
@@ -121,20 +131,20 @@ RetainedLand ==
   /\ ownHolds' = TRUE
   /\ ownSeen' = TRUE
   /\ pending' = FALSE
-  /\ UNCHANGED <<routed, claimed, creating, cpc, apc>>
+  /\ UNCHANGED <<routed, claimed, creating, cpc, apc, waiting>>
 
 \* A retained request reaches its terminal outcome: the deployment refuses it.
 RetainedFail ==
   /\ pending
   /\ pending' = FALSE
-  /\ UNCHANGED <<routed, claimed, creating, ownHolds, ownSeen, cpc, apc>>
+  /\ UNCHANGED <<routed, claimed, creating, ownHolds, ownSeen, cpc, apc, waiting>>
 
 \* The node's own light client verifies a newer state, which holds P.
 OwnSeen ==
   /\ ownHolds
   /\ ~ownSeen
   /\ ownSeen' = TRUE
-  /\ UNCHANGED <<routed, claimed, creating, pending, ownHolds, cpc, apc>>
+  /\ UNCHANGED <<routed, claimed, creating, pending, ownHolds, cpc, apc, waiting>>
 
 \* An add of an unrouted P claims it, first of all.
 AddClaim ==
@@ -142,7 +152,7 @@ AddClaim ==
   /\ ~routed
   /\ claimed' = TRUE
   /\ apc' = "claimed"
-  /\ UNCHANGED <<routed, creating, pending, ownHolds, ownSeen, cpc>>
+  /\ UNCHANGED <<routed, creating, pending, ownHolds, ownSeen, cpc, waiting>>
 
 \* Then it looks for a create of P in flight or retained in the journal:
 \* found, it gives up. One planted bug skips the in-memory check, another
@@ -155,7 +165,7 @@ AddCheckCreating ==
             /\ apc' = "idle"
        ELSE /\ apc' = "checked"
             /\ UNCHANGED claimed
-  /\ UNCHANGED <<routed, creating, pending, ownHolds, ownSeen, cpc>>
+  /\ UNCHANGED <<routed, creating, pending, ownHolds, ownSeen, cpc, waiting>>
 
 \* Then it asks the light client whether the deployment holds P: seen
 \* held, it gives up; otherwise it routes P, and drops its claim after.
@@ -167,13 +177,13 @@ AddRoute ==
        ELSE routed' = TRUE
   /\ claimed' = FALSE
   /\ apc' = "idle"
-  /\ UNCHANGED <<creating, pending, ownHolds, ownSeen, cpc>>
+  /\ UNCHANGED <<creating, pending, ownHolds, ownSeen, cpc, waiting>>
 
 \* The route of P is removed.
 Remove ==
   /\ routed
   /\ routed' = FALSE
-  /\ UNCHANGED <<claimed, creating, pending, ownHolds, ownSeen, cpc, apc>>
+  /\ UNCHANGED <<claimed, creating, pending, ownHolds, ownSeen, cpc, apc, waiting>>
 
 \* One step of anyone.
 Next ==
@@ -182,6 +192,7 @@ Next ==
   \/ CreateLand
   \/ CreateFail
   \/ CreateRetain
+  \/ CallerStops
   \/ CreateReturn
   \/ RetainedLand
   \/ RetainedFail
@@ -204,6 +215,7 @@ TypeOK ==
   /\ ownSeen \in BOOLEAN
   /\ cpc \in {"idle", "marked", "sent", "landed"}
   /\ apc \in {"idle", "claimed", "checked"}
+  /\ waiting \in BOOLEAN
 
 \* P is never routed while the node's own deployment holds it.
 INV_NoShadow == ~(routed /\ ownHolds)
