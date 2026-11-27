@@ -2,7 +2,7 @@
 
 use integration_test::actions::{
     Actions, AddCollection, AddDACActorRelationship, AddDACPolicy, AddDoc, ConnectPeers, NewNode,
-    Request, SyncDocs, VerifyBlockSignature, Wait, WaitForPeersEvents,
+    Request, SyncCounters, SyncDocs, VerifyBlockSignature, WaitForPeersEvents,
 };
 use integration_test::m;
 use integration_test::scenario::{captures, Common, Text};
@@ -172,13 +172,25 @@ fn a_peer_gets_chunk_blocks_only_for_parents_its_node_can_read() {
             }
             eventually(read)
         },
+        SyncCounters {
+            common: Common {
+                capture: captures([("filteredBefore", "/car_filtered_cids")]),
+                ..on(Some("db0"))
+            },
+            ..Default::default()
+        }
+        .into(),
         sync("Article", "hidden"),
         sync(CHUNKS, "hiddenChunk"),
-        // A block that never arrives raises no event to wait on, so the
-        // fetches get many times what an allowed fetch takes.
-        Wait {
-            millis: Some(1000),
-            common: on(Some("db1")),
+        SyncCounters {
+            at_least: [("car_filtered_cids".to_owned(), 1)].into_iter().collect(),
+            since: [("car_filtered_cids".to_owned(), "filteredBefore".to_owned())]
+                .into_iter()
+                .collect(),
+            common: Common {
+                eventually: Some(Default::default()),
+                ..on(Some("db0"))
+            },
             ..Default::default()
         }
         .into(),

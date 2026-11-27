@@ -1,5 +1,4 @@
-//! Block verify never vouches for a chunk block, and the parent's blocks still need
-//! read access (`defra.chunk.access.verify`).
+//! Block verify refuses unsigned chunk create blocks (`defra.chunk.access.verify`).
 
 use integration_test::actions::shared::KeyType;
 use integration_test::actions::{Actions, NewNode, Request, VerifyBlockSignature};
@@ -39,7 +38,7 @@ fn verify(cid: &str, identity: Option<u64>, error: Option<&str>) -> Actions {
 
 #[test]
 #[mantra_macros::req_test("defra.chunk.access.verify")]
-fn block_verify_never_vouches_for_a_chunk_block() {
+fn block_verify_refuses_unsigned_chunk_create_blocks() {
     let mut actions: Vec<Actions> = vec![NewNode {
         enable_signing: true,
         key_type: Some(KeyType::Secp256k1),
@@ -82,8 +81,8 @@ fn block_verify_never_vouches_for_a_chunk_block() {
         verify("head", Some(BOB), Some("missing permission")),
         verify("head", None, Some("missing permission")),
     ]);
-    // Chunk blocks are unsigned on a signing node too, so verify refuses them
-    // for everyone before any content is returned.
+    // Create and update chunk blocks are unsigned even on a signing node, so
+    // verify refuses them before any content is returned.
     for cid in ["chunkHead", "chunkText"] {
         actions.extend([
             verify(cid, Some(ALICE), Some("block has no signature")),
