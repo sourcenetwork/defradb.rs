@@ -186,6 +186,36 @@ pub(super) async fn merge_outcome_in(
         .await
 }
 
+/// Merges `blocks` (CID, DocID, collection ID) of `from` into `to` as one batch.
+pub(super) async fn merge_batch_in(
+    from: &Node,
+    to: &Node,
+    blocks: &[(cid::Cid, String, String)],
+) -> Vec<Result<MergeOutcome, MergeError>> {
+    let mut batch = Vec::new();
+    for (cid, doc_id, collection_id) in blocks {
+        let bytes = from.blockstore.get(cid).await.unwrap().unwrap();
+        let block = Block::from_dag_cbor(&bytes).unwrap();
+        for link in block.links.iter().flatten() {
+            let data = from.blockstore.get(&link.link).await.unwrap().unwrap();
+            to.blockstore.put(&link.link, &data).await.unwrap();
+        }
+        to.blockstore.put(cid, &bytes).await.unwrap();
+        batch.push(defra_core::merge::MergeBlock {
+            cid: *cid,
+            block_data: bytes.to_vec().into(),
+            doc_id: doc_id.clone(),
+            collection_id: collection_id.clone(),
+            creator: "did:key:z6MkChunkAuthor".to_string(),
+            sender_peer: Some("peer".to_string()),
+            is_explicit_replicator: false,
+            explicit_replay_authorization: None,
+            verified_creator: None,
+        });
+    }
+    to.handler.handle_block_batch(&batch).await
+}
+
 /// Merges a block into `to`. The peer's own write may already hold the same chunk.
 async fn merge(from: &Node, to: &Node, cid: &cid::Cid, doc_id: &str) {
     let outcome = merge_outcome(from, to, cid, doc_id).await.unwrap();
@@ -203,6 +233,36 @@ pub(super) async fn create_chunk(
     body: &str,
     signing: Option<&SigningConfig>,
 ) -> (Document, u64, BlockResult) {
+    create_chunk_named(author, parent, body, signing, None).await
+}
+
+/// The `sourceCID` of `peer`'s own chunk of `body`'s first piece, if it holds one.
+async fn source_on(peer: &Node, parent: &str, body: &str) -> Option<String> {
+    let articles = peer.db.get_collection("Article").unwrap()?;
+    let config =
+        db::chunk::chunk_config("Article", articles.schema().chunked_field("body").unwrap())
+            .unwrap();
+    let hash = db::chunk::split::split(body, &config).remove(0).hash;
+    let query = format!(
+        r#"{{ {CHUNKS}(filter: {{_sourceID: {{_eq: "{parent}"}}, hash: {{_eq: "{hash}"}}}}) {{ sourceCID }} }}"#
+    );
+    for reader in [owner(), stranger()] {
+        let data = peer.run(&query, Some(reader)).await;
+        if let Some(source) = data[CHUNKS][0]["sourceCID"].as_str() {
+            return Some(source.to_string());
+        }
+    }
+    None
+}
+
+/// [`create_chunk`] naming the commit `source`.
+async fn create_chunk_named(
+    author: &Node,
+    parent: &str,
+    body: &str,
+    signing: Option<&SigningConfig>,
+    source: Option<String>,
+) -> (Document, u64, BlockResult) {
     let chunks = author.chunks();
     let articles = author.db.get_collection("Article").unwrap().unwrap();
     let config =
@@ -215,6 +275,9 @@ pub(super) async fn create_chunk(
         .unwrap();
     chunk.set("text", NormalValue::String(piece.text)).unwrap();
     chunk.set("hash", NormalValue::String(piece.hash)).unwrap();
+    if let Some(source) = source {
+        chunk.set("sourceCID", NormalValue::String(source)).unwrap();
+    }
 
     let txn = author.db.new_txn(false).await.unwrap();
     let systemstore = txn.systemstore().unwrap();
@@ -263,7 +326,9 @@ pub(super) async fn merge_chunk(
     body: &str,
     signing: Option<&SigningConfig>,
 ) -> (String, cid::Cid) {
-    let (_, _, created) = create_chunk(author, parent, body, signing).await;
+    // The peer's own write may hold this chunk, so the author's names the same commit.
+    let source = source_on(peer, parent, body).await;
+    let (_, _, created) = create_chunk_named(author, parent, body, signing, source).await;
     merge(author, peer, &created.cid, &created.doc_id).await;
     (created.doc_id, created.cid)
 }
@@ -272,7 +337,8 @@ pub(super) async fn merge_chunk(
 /// unchanged, both merged into `peer`. The second write is one journal row.
 pub(super) async fn merge_updated_chunk(author: &Node, peer: &Node, parent: &str) -> String {
     let chunks = author.chunks();
-    let (chunk, short_id, created) = create_chunk(author, parent, BODY, None).await;
+    let source = source_on(peer, parent, BODY).await;
+    let (chunk, short_id, created) = create_chunk_named(author, parent, BODY, None, source).await;
     let chunk_id = created.doc_id.clone();
     merge(author, peer, &created.cid, &chunk_id).await;
 
@@ -323,6 +389,44 @@ fn a_chunks_updates_show_only_to_a_reader_of_its_parent() {
         for reader in [None, Some(stranger())] {
             assert!(peer.journal(reader).await.is_empty());
         }
+    })
+    .unwrap()
+}
+
+#[test]
+#[mantra_macros::req_test("defra.events.delivery.retention")]
+fn a_full_truncate_of_the_parent_drops_its_chunks_update_rows() {
+    workers::block_on(async {
+        let author = node_with_policy(false).await;
+        let peer = node_with_policy(false).await;
+        let created = peer
+            .run(
+                &format!(r#"mutation {{ add_Article(input: {{body: "{BODY}"}}) {{ _docID }} }}"#),
+                None,
+            )
+            .await;
+        let parent = created["add_Article"][0]["_docID"].as_str().unwrap();
+        merge_updated_chunk(&author, &peer, parent).await;
+        let head = format!(r#"{{ _documentUpdates(collection: "{CHUNKS}") {{ head }} }}"#);
+        assert_eq!(peer.run(&head, None).await["_documentUpdates"]["head"], "1");
+
+        peer.db
+            .truncate_collection_as(&defra_core::RequestContext::ambient(), "Article", None)
+            .await
+            .unwrap();
+
+        let errors = peer
+            .errors(&format!(
+                r#"{{ _documentUpdates(collection: "{CHUNKS}", after: "0") {{ head }} }}"#
+            ))
+            .await;
+        assert_eq!(errors.len(), 1, "{errors:?}");
+        assert!(
+            errors[0].contains(
+                "update cursor is no longer available on this node: resync the collection and read after cursor 1"
+            ),
+            "{errors:?}"
+        );
     })
     .unwrap()
 }

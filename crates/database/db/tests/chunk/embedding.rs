@@ -313,8 +313,10 @@ fn an_edit_does_not_ask_for_its_unchanged_chunks() {
     .unwrap()
 }
 
+/// The edit deleted the chunk the revert brings back, so the revert makes it
+/// again under its own commit and asks for its vector in one wave.
 #[test]
-fn a_revert_reuses_the_old_chunks_and_asks_for_nothing() {
+fn a_revert_embeds_only_the_chunk_it_makes_again() {
     workers::block_on(async {
         let provider = Provider::start();
         let (_db, runner) = setup(&provider.sdl("")).await;
@@ -330,7 +332,7 @@ fn a_revert_reuses_the_old_chunks_and_asks_for_nothing() {
 
         run(&runner, &set_body(book(0, None))).await;
 
-        assert_eq!(waves_and_inputs(), (waves, inputs));
+        assert_eq!(waves_and_inputs(), (waves + 1, inputs + 1));
     })
     .unwrap()
 }

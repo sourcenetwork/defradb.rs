@@ -477,7 +477,12 @@ where
                 .as_object()
                 .ok_or_else(|| invalid("expected a JSON object".into()))?;
             if let Some(key) = doc_map.keys().find(|key| {
-                *key != schema::CHUNK_TEXT_FIELD
+                ![
+                    schema::CHUNK_TEXT_FIELD,
+                    schema::CHUNK_SOURCE_ID_FIELD,
+                    schema::CHUNK_SOURCE_CID_FIELD,
+                ]
+                .contains(&key.as_str())
                     && !schema
                         .vector_embeddings
                         .iter()
@@ -492,6 +497,22 @@ where
                 .get(schema::CHUNK_TEXT_FIELD)
                 .and_then(JsonValue::as_str)
                 .ok_or_else(|| invalid("a chunk has no text".into()))?;
+            // The chunk keeps the commit it names, so it keeps its `_docID`.
+            if let (Some(parent), Some(source)) = (
+                doc_map
+                    .get(schema::CHUNK_SOURCE_ID_FIELD)
+                    .and_then(JsonValue::as_str),
+                doc_map
+                    .get(schema::CHUNK_SOURCE_CID_FIELD)
+                    .and_then(JsonValue::as_str),
+            ) {
+                let request = crate::chunk::source::imported_source_request(
+                    collection.resolved_root_id(),
+                    parent,
+                    &chunk_split::hash::text_hash(text),
+                );
+                known.insert(request, Arc::from(source.as_bytes()));
+            }
             let mut chunk = Document::new(collection.schema_arc());
             chunk
                 .set(

@@ -119,7 +119,7 @@
     "verdict": "none",
     "rust_tests": [],
     "evidence": "",
-    "note": "Two collections reindexed concurrently (both listed in progress, both converge) and a migration advancing the epoch mid-build are not tested. See https://github.com/sourcenetwork/defradb.rs/issues/2803"
+    "note": "Two collections reindexed concurrently (both listed in progress, both converge) and a migration advancing the epoch mid-build are not tested. A Rust rebuild after a migration that stops part way, stays owed and resumes is covered by defra.index.owed_reindex.resume."
   },
   {
     "id": "go.index.backfill.txn",
@@ -814,17 +814,26 @@
     "id": "go.index.vector.fallback-warning",
     "verdict": "diverges",
     "rust_tests": [
+      "tools/integration-test/tests/testo/index/vector_fallback_warning.rs::vector_index_warning_multiple_similarity_fields_reports_warning",
+      "tools/integration-test/tests/testo/index/vector_fallback_warning.rs::vector_index_warning_no_limit_reports_warning",
+      "tools/integration-test/tests/testo/index/vector_fallback_warning.rs::vector_index_warning_no_vector_index_on_field_reports_no_warning",
+      "tools/integration-test/tests/testo/index/vector_fallback_warning.rs::vector_index_warning_ordered_ascending_reports_warning",
+      "tools/integration-test/tests/testo/index/vector_fallback_warning.rs::vector_index_warning_query_uses_index_reports_no_warning",
+      "tools/integration-test/tests/testo/index/vector_fallback_warning.rs::vector_index_warning_selective_filter_still_returns_matching_docs",
+      "tools/integration-test/tests/testo/index/vector_fallback_warning.rs::vector_index_warning_with_filter_reports_warning",
+      "tools/integration-test/tests/testo/index/vector_fallback_warning.rs::vector_index_warning_and_wrapped_filter_reports_warning",
       "crates/entry-points/defra-node/tests/vector_index_query_path.rs::dropping_the_limit_warns_vector_index_unused",
       "crates/entry-points/defra-node/tests/vector_index_query_path.rs::ascending_order_warns_vector_index_unused",
       "crates/entry-points/defra-node/tests/vector_index_query_path.rs::a_routed_similarity_query_has_no_extensions",
       "crates/entry-points/defra-node/tests/vector_index_query_path.rs::a_field_without_a_vector_index_never_warns",
       "crates/entry-points/defra-node/tests/vector_index_query_path.rs::a_filtered_similarity_query_returns_a_full_page",
+      "crates/entry-points/defra-node/tests/vector_index_query_path.rs::a_scalar_filter_takes_the_exhaustive_path",
+      "crates/entry-points/defra-node/tests/vector_index_query_path.rs::nested_vector_pages_are_scoped_to_each_parent",
       "crates/engine/query/tests/vector_index_warnings.rs::every_not_routed_variant_maps_to_its_reason_string",
-      "crates/engine/query/tests/vector_routing.rs::zero_or_several_similarities_do_not_route",
-      "crates/engine/query/tests/vector_routing.rs::a_filter_is_not_a_reason_to_refuse"
+      "crates/engine/query/tests/vector_routing.rs::zero_or_several_similarities_do_not_route"
     ],
-    "evidence": "vector_index_query_path.rs:987 reason noLimit with code VECTOR_INDEX_UNUSED and correct full result; :1029 reason notOrderedBySimilarityDesc; :955 routed query has no extensions; :1147 field without a vector index never warns; :420 selective filter returns only matching docs (and routes); vector_index_warnings.rs maps NotOneSimilarity to 'multipleSimilarityFields'",
-    "note": "multipleSimilarityFields is only checked at the planner/reason-string unit level, not as an end-to-end warning. Divergence: Go warns with reason 'filter' for a filtered similarity query; Rust routes filtered queries through the index and never emits that reason (vector_routing.rs a_filter_is_not_a_reason_to_refuse; vector_index_query_path.rs:415 assert_routes on the filtered query)."
+    "evidence": "testo index::vector_fallback_warning ports all seven Go-Tests and asserts code VECTOR_INDEX_UNUSED end to end with reasons multipleSimilarityFields, noLimit, notOrderedBySimilarityDesc and filter (plain and _and-wrapped filter), no warning on a routed query or a field without a vector index, and the matching docs for a selective filter. vector_index_query_path.rs a_scalar_filter_takes_the_exhaustive_path and a_filtered_similarity_query_returns_a_full_page: a top-level filtered query skips the vector index and returns the full matching page; nested_vector_pages_are_scoped_to_each_parent: a one-to-many child with a scalar filter routes (assert_routes).",
+    "note": "Divergences from Go, whose tryRouteSimilarityToVectorIndex (internal/planner/vector_search.go) checks noLimit before filter and refuses any select whose scan carries a filter. 1) A one-to-many child select with a scalar filter routes through the vector index in Rust (planner/joins/child_plan.rs applies the filter on the routed child scan) and emits no warning when it does not route; Go, reading its planner, refuses it with reason 'filter'. 2) Check order: a top-level filtered query without a limit warns 'filter' in Rust (planner/builder/mod.rs checks the filter before route) and 'noLimit' in Go. 3) An unfiltered top-level select that rejects rows above the scan warns 'filter' and does not route in Rust; this covers ACP-gated policies, groupBy, chunk collections and app read validation. Go has no corresponding check, so those queries route without a warning. Top-level filtered selects otherwise match Go since #3171."
   },
   {
     "id": "go.index.vector.replication",

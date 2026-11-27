@@ -53,6 +53,11 @@ pub enum MergeError {
     #[error("chunk rejected: {0}")]
     ChunkRejected(String),
 
+    /// A peer's chunk create or delete this node drops. The attempt is
+    /// discarded so nothing it mapped stays, and the merge reports a skip.
+    #[error("{0}")]
+    DroppedChunk(String),
+
     /// A single-block `_in_txn` merge rejected its content after staging
     /// writes; the enclosing attempt is discarded and the original reason is
     /// returned as the merge outcome.
@@ -161,6 +166,7 @@ impl MergeError {
             | Self::SignatureVerificationFailed { .. }
             | Self::DepthExceeded { .. } => MergeErrorDisposition::Terminal,
             Self::MissingMetadata(_)
+            | Self::DroppedChunk(_)
             | Self::MergeFailed(_)
             | Self::Database(_)
             | Self::Storage(_)

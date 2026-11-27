@@ -13,6 +13,9 @@ pub const CHUNK_SOURCE_ID_FIELD: &str = "_sourceID";
 pub const CHUNK_TEXT_FIELD: &str = "text";
 /// Hex SHA-256 of the chunk's text, its identity within the parent.
 pub const CHUNK_HASH_FIELD: &str = "hash";
+/// The CID of the parent's field commit whose text the chunk was first cut from.
+/// It is part of the chunk's ID, so a text written again never reuses a deleted ID.
+pub const CHUNK_SOURCE_CID_FIELD: &str = "sourceCID";
 
 /// Name of the collection generated for `field` of `collection`.
 pub fn chunk_collection_name(collection: &str, field: &str) -> String {

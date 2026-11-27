@@ -86,8 +86,10 @@ mod simple {
     }
 }
 mod sync {
+    mod documents_complete;
     mod exact_fetch;
     mod fetch_slots;
+    mod missing_link_walks;
     mod branchable_collection {
         mod complex_network;
         mod simple;

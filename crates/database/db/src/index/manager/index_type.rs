@@ -220,6 +220,20 @@ impl IndexType {
         }
     }
 
+    /// A prefix scan validated at commit, for a decision on what it finds.
+    pub async fn scan_prefix_validated<R: Reader + MaybeSend>(
+        &self,
+        txn: &R,
+        prefix_values: &[NormalValue],
+    ) -> Result<RangeIterator> {
+        match self {
+            IndexType::Simple(idx) => idx.scan_prefix_validated(txn, prefix_values).await,
+            _ => Err(storage::corekv::Error::Other(
+                "a validated prefix scan needs an ordered, non-unique index".to_string(),
+            )),
+        }
+    }
+
     /// Scan entries within a range on a field.
     pub async fn scan_range<R: Reader + MaybeSend>(
         &self,

@@ -109,7 +109,8 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
             if collection.schema().chunk_of.is_some() {
                 let chunk_id = DocID::from_string(context.doc_id_str)
                     .map_err(|e| MergeError::MergeFailed(format!("Invalid doc_id: {}", e)))?;
-                if let Some(reason) = crate::chunk::peer_delete::delete_must_wait(
+                use crate::chunk::peer_delete::DeleteVerdict;
+                match crate::chunk::peer_delete::delete_verdict(
                     &self.db,
                     datastore,
                     systemstore,
@@ -120,10 +121,27 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                 .await
                 .map_err(MergeError::Database)?
                 {
-                    return Ok(Some(MergeOutcome::retryable_skip(reason)));
+                    DeleteVerdict::Merge => {}
+                    DeleteVerdict::Wait(reason) => {
+                        return Ok(Some(MergeOutcome::retryable_skip(reason)));
+                    }
+                    DeleteVerdict::Drop(reason) => {
+                        return Err(MergeError::DroppedChunk(reason.to_string()));
+                    }
                 }
             }
             self.handle_deletion(datastore, context, collection).await?;
+            if !collection.schema().chunked_fields.is_empty() {
+                let removed = crate::chunk::rebuild::remove_all(
+                    &self.db,
+                    datastore,
+                    systemstore,
+                    collection,
+                    context.doc_id_str,
+                )
+                .await?;
+                state.rebuilt_chunks.extend(removed);
+            }
             return Ok(None);
         }
 
@@ -167,6 +185,21 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                 context.block.encryption.is_some() || !state.linked_encryption_cids.is_empty();
             crate::chunk::guard::check_chunk_merge(old_doc.as_ref(), &doc, encrypted)
                 .map_err(|reason| MergeError::ChunkRejected(reason.to_string()))?;
+            // Encrypted and embedded chunks only come from their writer, so they are kept.
+            if old_doc.is_none() && !encrypted && collection.schema().vector_embeddings.is_empty() {
+                if let Some(reason) = crate::chunk::peer_create::create_is_stale(
+                    &self.db,
+                    datastore,
+                    systemstore,
+                    collection,
+                    &doc,
+                )
+                .await
+                .map_err(MergeError::Database)?
+                {
+                    return Err(MergeError::DroppedChunk(reason.to_string()));
+                }
+            }
         }
 
         let known_fields: rapidhash::RapidHashSet<&str> = collection
@@ -257,6 +290,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                 systemstore,
                 collection.resolved_root_id(),
                 context.doc_id_str,
+                context.doc_short_id,
                 &context.cid.to_string(),
             )
             .await
@@ -366,22 +400,9 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
         }
 
         if !doc_is_tombstoned && !collection.schema().chunked_fields.is_empty() {
-            let rebuilt = crate::chunk::rebuild::build_missing(
-                &self.db,
-                datastore,
-                systemstore,
-                crate::chunk::rebuild::MergedParent {
-                    collection,
-                    doc_short_id: context.doc_short_id,
-                    doc_id: context.doc_id_str,
-                    doc: &doc,
-                    merged: &state.field_values,
-                    encrypted: context.block.encryption.is_some()
-                        || !state.linked_encryption_cids.is_empty(),
-                },
-            )
-            .await?;
-            state.rebuilt_chunks.extend(rebuilt);
+            let encrypted =
+                context.block.encryption.is_some() || !state.linked_encryption_cids.is_empty();
+            state.chunked_parent = Some((doc.clone(), encrypted));
         }
 
         if let Some(enc_key) = self.se_enc_key() {
@@ -423,6 +444,58 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
             .await
             .map_err(|error| MergeError::Database(crate::error::Error::Storage(error)))?;
         Ok(None)
+    }
+
+    /// Makes a merged parent's chunks follow its text, once its heads are written.
+    pub(crate) async fn reconcile_chunks(
+        &self,
+        datastore: &NamespaceView,
+        systemstore: &NamespaceView,
+        headstore: &NamespaceView,
+        context: &CompositeMergeContext<'_, '_>,
+        state: &mut CompositeMergeState,
+    ) -> std::result::Result<(), MergeError> {
+        let (Some((doc, encrypted)), Some(collection)) =
+            (state.chunked_parent.take(), context.collection.as_ref())
+        else {
+            return Ok(());
+        };
+        let commits: Vec<(String, Cid)> = context
+            .block
+            .links
+            .iter()
+            .flatten()
+            .filter(|link| {
+                state.linked_field_cids.contains(&link.link)
+                    && collection.schema().chunked_field(&link.name).is_some()
+            })
+            .map(|link| (link.name.clone(), link.link))
+            .collect();
+        if commits.is_empty() {
+            return Ok(());
+        }
+        let heads = state
+            .reads
+            .heads(headstore, context.doc_short_id)
+            .await
+            .map_err(|e| MergeError::Storage(e.to_string()))?;
+        let rebuilt = crate::chunk::rebuild::reconcile(
+            &self.db,
+            datastore,
+            systemstore,
+            crate::chunk::rebuild::MergedParent {
+                collection,
+                doc_short_id: context.doc_short_id,
+                doc_id: context.doc_id_str,
+                doc: &doc,
+                commits: &commits,
+                heads,
+                encrypted,
+            },
+        )
+        .await?;
+        state.rebuilt_chunks.extend(rebuilt);
+        Ok(())
     }
 
     pub(crate) async fn handle_deletion(

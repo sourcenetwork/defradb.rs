@@ -33,7 +33,7 @@
 \*     the model leaves them out.
 \*
 \* Code it models:
-\*   crates/database/db/src/chunk/sync/mod.rs ChunkWrites::create_missing (skip
+\*   crates/database/db/src/chunk/sync/mod.rs ChunkWrites::sync_chunks (skip
 \*     existing chunks, look up every missing vector, end the attempt on a miss)
 \*   crates/database/db/src/chunk/sync/write.rs ChunkWrites::embed (the memo
 \*     lookup, and the refusal when the model or URL is missing)

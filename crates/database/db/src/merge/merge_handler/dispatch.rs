@@ -382,6 +382,7 @@ impl<S: Store + 'static, B: blockstore::Blockstore + 'static> DbMergeHandler<S, 
         }
         match result {
             Err(MergeError::RetryRejected(reason)) => Ok(MergeOutcome::rejected(reason)),
+            Err(MergeError::DroppedChunk(reason)) => Ok(MergeOutcome::terminal_skip(reason)),
             Err(error) if error.disposition() == MergeErrorDisposition::Terminal => {
                 Ok(MergeOutcome::rejected(error.to_string()))
             }

@@ -13,12 +13,19 @@ use super::embed_failure::{model_fails, MODEL_FAILED};
 use super::embed_support::{
     chunks_have_vectors, chunks_of, embedded_schema, embedding_input, model_embedded,
 };
-use super::support::{add_article_on, body, no_chunks, on, CHUNKS};
+use super::support::{add_article_on, body, no_chunks, on, update_article_on, CHUNKS};
 
 const PARAGRAPHS: usize = 3;
 
 /// Two nodes with the embedded schema, an article on `db0` and its export.
 fn exported() -> Vec<Actions> {
+    exported_after(None)
+}
+
+/// [`exported`], with the article's body changed to `edit` about a topic and
+/// back before the export: the article keeps its create, so its `_docID`, but
+/// its chunks name the commit that changed it back.
+fn exported_after(edit: Option<&str>) -> Vec<Actions> {
     let chunks = chunks_of(PARAGRAPHS, "rivers");
     let inputs: Vec<String> = chunks.iter().map(|chunk| embedding_input(chunk)).collect();
     let mut actions = vec![model_embedded(&[])];
@@ -44,16 +51,29 @@ fn exported() -> Vec<Actions> {
     actions.extend([
         add_article_on(&body(PARAGRAPHS, "rivers"), "article", Some("db0")),
         model_embedded(&inputs),
-        ExportBackup {
-            common: Common {
-                node: Some("db0".into()),
-                capture: captures([("backup", "/content")]),
-                ..Default::default()
-            },
-            ..Default::default()
-        }
-        .into(),
     ]);
+    if let Some(topic) = edit {
+        let inputs: Vec<String> = chunks_of(PARAGRAPHS, topic)
+            .iter()
+            .map(|chunk| embedding_input(chunk))
+            .collect();
+        actions.extend([
+            update_article_on("article", &body(PARAGRAPHS, topic), Some("db0")),
+            model_embedded(&inputs),
+            // The node's embedding cache answers the texts it embedded before.
+            update_article_on("article", &body(PARAGRAPHS, "rivers"), Some("db0")),
+            model_embedded(&[]),
+        ]);
+    }
+    actions.extend([ExportBackup {
+        common: Common {
+            node: Some("db0".into()),
+            capture: captures([("backup", "/content")]),
+            ..Default::default()
+        },
+        ..Default::default()
+    }
+    .into()]);
     actions
 }
 
@@ -112,6 +132,24 @@ fn same_chunk_ids(node: &str, chunks: &[String]) -> Actions {
 fn importing_a_backup_keeps_the_chunk_vectors() {
     let chunks = chunks_of(PARAGRAPHS, "rivers");
     let mut actions = exported();
+    actions.extend([
+        capture_chunk_ids("db0"),
+        model_fails().into(),
+        import(None),
+        model_embedded(&[]),
+        chunks_have_vectors(&chunks, Some("db1")),
+        same_chunk_ids("db1", &chunks),
+    ]);
+    let mut case = TestCase::from_actions(actions);
+    case.without_db = true;
+    case.execute();
+}
+
+#[test]
+#[mantra_macros::req_test("defra.chunk.embed.backup")]
+fn importing_an_edited_articles_backup_keeps_its_chunk_ids() {
+    let chunks = chunks_of(PARAGRAPHS, "rivers");
+    let mut actions = exported_after(Some("lakes"));
     actions.extend([
         capture_chunk_ids("db0"),
         model_fails().into(),

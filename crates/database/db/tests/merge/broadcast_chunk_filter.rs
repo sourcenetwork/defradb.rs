@@ -117,13 +117,21 @@ impl Node {
 impl Node {
     /// The DocIDs of every chunk `parent` ever had, deleted ones too.
     pub(super) async fn chunks_of(&self, parent: &DocID) -> RapidHashSet<String> {
+        self.chunks_with(parent, true).await
+    }
+
+    async fn live_chunks_of(&self, parent: &DocID) -> RapidHashSet<String> {
+        self.chunks_with(parent, false).await
+    }
+
+    async fn chunks_with(&self, parent: &DocID, deleted: bool) -> RapidHashSet<String> {
         let chunks = self.db.get_collection(CHUNKS).unwrap().unwrap();
         let txn = self.db.new_txn(true).await.unwrap();
         let docs = chunks
             .get_all_with_datastore_include_deleted(
                 &txn.datastore().unwrap(),
                 &txn.systemstore().unwrap(),
-                true,
+                deleted,
             )
             .await
             .unwrap();
@@ -175,7 +183,7 @@ fn a_create_pushes_only_the_chunks_of_a_matching_parent() {
 }
 
 #[test]
-fn an_update_pushes_the_new_chunks_of_a_matching_parent() {
+fn an_update_pushes_the_new_and_deleted_chunks_of_a_matching_parent() {
     workers::block_on(async {
         let mut node = node().await;
         let created = node.article(PUBLIC, "Open text.");
@@ -187,7 +195,7 @@ fn an_update_pushes_the_new_chunks_of_a_matching_parent() {
         .await
         .unwrap()
         .doc_id;
-        let before = node.chunks_of(&public).await;
+        let before = node.live_chunks_of(&public).await;
         node.take_pushed();
         let mut doc = node
             .mutator
@@ -207,13 +215,10 @@ fn an_update_pushes_the_new_chunks_of_a_matching_parent() {
         .await
         .unwrap();
 
-        let added = node
-            .chunks_of(&public)
-            .await
-            .difference(&before)
-            .cloned()
-            .collect();
-        assert_eq!(node.take_pushed(), with_parent(&public, added));
+        let after = node.live_chunks_of(&public).await;
+        assert!(!after.is_empty());
+        let changed = before.symmetric_difference(&after).cloned().collect();
+        assert_eq!(node.take_pushed(), with_parent(&public, changed));
     })
     .unwrap()
 }

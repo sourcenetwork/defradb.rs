@@ -105,8 +105,21 @@ impl ReplicationLoop {
                             "Block merged but re-broadcast failed"
                         );
                     }
-                    ReplicationResult::Skipped { cid, reason, .. } => {
-                        tracing::debug!(cid = %cid, reason = %reason, "Block skipped");
+                    ReplicationResult::Skipped {
+                        cid,
+                        doc_id,
+                        collection_id,
+                        reason,
+                        terminal,
+                    } => {
+                        tracing::debug!(
+                            cid = %cid,
+                            doc_id = %doc_id,
+                            collection_id = %collection_id,
+                            reason = %reason,
+                            terminal,
+                            "Block skipped"
+                        );
                     }
                     ReplicationResult::Quarantined {
                         cid,

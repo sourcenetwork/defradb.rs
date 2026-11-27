@@ -92,6 +92,29 @@ impl RangeIterator {
         prefix_values: &[NormalValue],
         reverse: bool,
     ) -> Result<Self> {
+        Self::new_prefix_with(
+            txn,
+            collection_short_id,
+            desc,
+            is_unique,
+            prefix_values,
+            reverse,
+            false,
+        )
+        .await
+    }
+
+    /// A prefix scan whose range is validated at commit when `validated`, for
+    /// a decision on the set of entries it reads.
+    pub async fn new_prefix_with<R: Reader + MaybeSend + ?Sized>(
+        txn: &R,
+        collection_short_id: u32,
+        desc: &IndexDescription,
+        is_unique: bool,
+        prefix_values: &[NormalValue],
+        reverse: bool,
+        validated: bool,
+    ) -> Result<Self> {
         // Build key prefix with the exact field values
         let mut key_prefix = IndexDataStoreKey::index_prefix(collection_short_id, desc.id);
         let index_prefix_len = key_prefix.len();
@@ -104,7 +127,8 @@ impl RangeIterator {
 
         let opts = IterOptions::default()
             .with_prefix(key_prefix.clone())
-            .with_reverse(reverse);
+            .with_reverse(reverse)
+            .with_validation(validated);
         let inner = txn.iterator(opts).await?;
 
         Ok(Self {
@@ -283,10 +307,10 @@ impl RangeIterator {
         // Decode field values and get remaining bytes (doc short ID suffix)
         let (values, doc_suffix) = self.decode_field_values(key)?;
 
-        // Determine if this is a NULL entry (doc short ID in key suffix)
-        let has_nil = values.iter().any(|v| v.is_nil());
+        // A NULL or empty-array entry keeps the doc short ID in its key suffix
+        let never_unique = values.iter().any(NormalValue::is_never_unique);
 
-        let doc_short_id = if self.is_unique && !has_nil && !value.is_empty() {
+        let doc_short_id = if self.is_unique && !never_unique && !value.is_empty() {
             // Unique index with non-NULL value: doc short ID is in the value
             decode_doc_short_id(value)?
         } else {

@@ -4,9 +4,10 @@ use storage::RegolithStore;
 
 #[test]
 fn identities_are_unambiguous_and_payloads_round_trip() {
-    assert_ne!(once_key(1, "a", "bc"), once_key(1, "ab", "c"));
-    assert_ne!(once_key(1, "a", "x"), once_key(1, "a", "y"));
-    assert_ne!(once_key(1, "a", "x"), once_key(2, "a", "x"));
+    assert_ne!(once_key(1, 1, "x"), once_key(1, 2, "x"));
+    assert_ne!(once_key(1, 1, "x"), once_key(1, 1, "y"));
+    assert_ne!(once_key(1, 1, "x"), once_key(2, 1, "x"));
+    assert_ne!(once_key(1, 0x0100, "x"), once_key(1, 0x01, "\0x"));
     let update = Update {
         doc_id: "a/☃".into(),
         cid: "cid".into(),
@@ -24,20 +25,20 @@ fn commit_order_rollback_and_replayed_updates() {
         let first = db.new_txn(false).await.unwrap();
         let second = db.new_txn(false).await.unwrap();
         let discarded = db.new_txn(false).await.unwrap();
-        record(&first.systemstore().unwrap(), 1, "doc", "cid-1")
+        record(&first.systemstore().unwrap(), 1, "doc", 1, "cid-1")
             .await
             .unwrap();
-        record(&second.systemstore().unwrap(), 1, "doc", "cid-2")
+        record(&second.systemstore().unwrap(), 1, "doc", 1, "cid-2")
             .await
             .unwrap();
-        record(&discarded.systemstore().unwrap(), 1, "doc", "discarded")
+        record(&discarded.systemstore().unwrap(), 1, "doc", 1, "discarded")
             .await
             .unwrap();
         discarded.discard().unwrap();
         second.commit().await.unwrap();
         first.commit().await.unwrap();
         let replay = db.new_txn(false).await.unwrap();
-        record(&replay.systemstore().unwrap(), 1, "doc", "cid-2")
+        record(&replay.systemstore().unwrap(), 1, "doc", 1, "cid-2")
             .await
             .unwrap();
         replay.commit().await.unwrap();
@@ -65,17 +66,17 @@ fn updates_and_replay_checkpoint_survive_reopen() {
         {
             let db = DB::new(RegolithStore::open(dir.path()).unwrap()).unwrap();
             let txn = db.new_txn(false).await.unwrap();
-            record(&txn.systemstore().unwrap(), 1, "doc", "cid-1")
+            record(&txn.systemstore().unwrap(), 1, "doc", 1, "cid-1")
                 .await
                 .unwrap();
             txn.commit().await.unwrap();
         }
         let db = DB::new(RegolithStore::open(dir.path()).unwrap()).unwrap();
         let txn = db.new_txn(false).await.unwrap();
-        record(&txn.systemstore().unwrap(), 1, "doc", "cid-1")
+        record(&txn.systemstore().unwrap(), 1, "doc", 1, "cid-1")
             .await
             .unwrap();
-        record(&txn.systemstore().unwrap(), 1, "doc", "cid-2")
+        record(&txn.systemstore().unwrap(), 1, "doc", 1, "cid-2")
             .await
             .unwrap();
         txn.commit().await.unwrap();
@@ -104,7 +105,7 @@ fn a_scan_returns_the_rows_of_its_collection_and_range_only() {
         // Collections 1 and 12: one's row prefix is not the other's.
         for (collection, cid) in [(1, "a"), (12, "x"), (1, "b"), (12, "y"), (1, "c")] {
             let txn = db.new_txn(false).await.unwrap();
-            record(&txn.systemstore().unwrap(), collection, "doc", cid)
+            record(&txn.systemstore().unwrap(), collection, "doc", 1, cid)
                 .await
                 .unwrap();
             txn.commit().await.unwrap();

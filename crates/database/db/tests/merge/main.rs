@@ -9,6 +9,7 @@ mod broadcast_chunk_filter;
 mod broadcast_marker_handoff;
 mod broadcast_mutator_broadcast;
 mod chunk_before_parent;
+mod chunk_cleanup;
 mod chunk_definition;
 mod chunk_definition_guard;
 mod chunk_delete;
