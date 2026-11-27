@@ -689,6 +689,7 @@ impl NodeBuilder {
             let server = server
                 .with_view_arc(ops.clone())
                 .with_backup_arc(ops.clone())
+                .with_dump_arc(ops.clone())
                 .with_doc_acp_arc(ops.clone())
                 .with_encrypted_index_arc(ops.clone())
                 .with_block_arc(ops);

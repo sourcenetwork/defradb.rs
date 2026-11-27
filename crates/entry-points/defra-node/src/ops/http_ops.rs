@@ -1,5 +1,5 @@
 //! The node's operations behind the HTTP server's router traits: views,
-//! backups, document ACP relationships, encrypted indexes and block
+//! backups, the store dump, document ACP relationships, encrypted indexes and block
 //! signatures run the same core operations the node's own calls do.
 //!
 //! A request runs as the identity it carries, or as none: it never acts as
@@ -10,7 +10,7 @@ use std::sync::Arc;
 use defra_core::RequestContext;
 use defra_http::router::{
     BackupOperations, BlockOperations, DocRelationshipChange, DocumentAcpOperations,
-    EncryptedIndexInfo, EncryptedIndexOperations, ImportResult, ViewOperations,
+    DumpOperations, EncryptedIndexInfo, EncryptedIndexOperations, ImportResult, ViewOperations,
 };
 use schema::CollectionVersion;
 
@@ -133,17 +133,18 @@ impl BackupOperations for HttpNodeOps {
         data: &str,
         host: &dyn db::backup::ImportHost,
     ) -> Result<ImportResult, String> {
-        let stats = self
-            .ops
+        self.ops
             .import_backup_with(self.context(), host, data)
             .await
-            .map_err(text)?;
-        Ok(ImportResult {
-            documents_imported: stats.documents_imported,
-            documents_skipped: 0,
-            collections_affected: stats.collections_affected,
-            errors: Vec::new(),
-        })
+            .map(ImportResult::from)
+            .map_err(text)
+    }
+}
+
+#[async_trait::async_trait]
+impl DumpOperations for HttpNodeOps {
+    async fn print_dump(&self) -> Result<Vec<String>, String> {
+        self.ops.print_dump().await.map_err(text)
     }
 }
 

@@ -31,7 +31,10 @@ impl ServerDumpArgs {
                 let database = db::DB::open_from_arc(store)
                     .await
                     .map_err(|e| Error::Server(e.to_string()))?;
-                database.print_dump().await.map_err(Error::Server)?
+                database
+                    .print_dump()
+                    .await
+                    .map_err(|e| Error::Server(e.to_string()))?
             }
         };
 

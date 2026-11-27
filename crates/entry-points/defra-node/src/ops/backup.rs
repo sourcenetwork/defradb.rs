@@ -1,7 +1,7 @@
 //! Backups as the caller `context` names: a JSON export of the documents and
-//! its import, as Go's `BasicExport` and `BasicImport` do.
+//! its import, as Go's `BasicExport` and `BasicImport` do, and Go's
+//! `PrintDump` of the store.
 
-use acp::nac::NodePermission;
 use db::backup::{DbJob, ImportHost};
 use defra_core::thread_bounds::MaybeBoxFuture;
 use defra_core::RequestContext;
@@ -11,7 +11,7 @@ use query::{QueryRequest, QueryResponse};
 use super::handle::NodeOps;
 use super::request::{acting_identity, request_in};
 use crate::request_path::OwnedRequestPath;
-use crate::{Admit, Error, Node, Result};
+use crate::{Admit, Node, Result};
 
 impl Node {
     /// The documents of `collections` (every collection when empty) as the
@@ -39,6 +39,12 @@ impl Node {
         let context = self.admitted_caller(context)?.with_txn(None);
         let host = NodeHost::new(self, context.clone())?;
         self.import_admitted(context, host, data).await.map(drop)
+    }
+
+    /// Go's `PrintDump`: every key of the node's store, one line each naming
+    /// its namespace, the key and its value's size. Unwise on a large store.
+    pub async fn print_dump(&self) -> Result<Vec<String>> {
+        self.ops().print_dump().await
     }
 
     /// The import of [`Self::import_backup_as`] as one admitted request, every
@@ -109,12 +115,10 @@ impl NodeOps {
     ) -> Result<String> {
         let (database, runner) = (self.database.clone(), self.runner.clone());
         self.on_pool(move || async move {
-            database
-                .check_node_access_as(&context, NodePermission::DocumentRead)
-                .await?;
-            db::backup::export_database_as(&context, &database, &runner, &collections, pretty)
-                .await
-                .map_err(Error::Backup)
+            Ok(
+                db::backup::export_database_as(&context, &database, &runner, &collections, pretty)
+                    .await?,
+            )
         })
         .await
     }
@@ -128,8 +132,13 @@ impl NodeOps {
         host: &dyn ImportHost,
         data: &str,
     ) -> Result<db::backup::ImportStats> {
-        db::backup::import_database_as(&context, &self.database, host, data)
+        Ok(db::backup::import_database_as(&context, &self.database, host, data).await?)
+    }
+
+    /// [`Node::print_dump`], on a database worker.
+    pub(crate) async fn print_dump(&self) -> Result<Vec<String>> {
+        let database = self.database.clone();
+        self.on_pool(move || async move { Ok(database.print_dump().await?) })
             .await
-            .map_err(Error::Backup)
     }
 }

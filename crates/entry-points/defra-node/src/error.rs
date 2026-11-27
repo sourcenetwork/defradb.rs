@@ -116,9 +116,9 @@ pub enum Error {
     /// Refreshing materialized views failed.
     #[error("refresh materialized views error: {0}")]
     MaterializedViewRefresh(#[source] db::Error),
-    /// A backup export or import failed; the backup code reports it as text.
-    #[error("{0}")]
-    Backup(String),
+    /// A backup export, a backup import or a store dump failed.
+    #[error(transparent)]
+    Backup(#[from] db::backup::BackupError),
     /// Bootstrapping downsample collections failed.
     #[error("bootstrap downsample collections error: {0}")]
     DownsampleBootstrap(#[source] db::Error),
