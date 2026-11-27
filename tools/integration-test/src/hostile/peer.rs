@@ -23,8 +23,26 @@ pub struct HostilePeer {
     _drain: edge::Service,
 }
 
+/// The most requests a silent peer keeps open; later ones are dropped, which
+/// the node reads as an empty reply.
+const HELD_REQUESTS: usize = 64;
+
 impl HostilePeer {
+    /// Connect to the node. A request the node sends this peer, such as a
+    /// fetch for blocks it is missing, is dropped unanswered, which the node
+    /// reads as an empty reply at once.
     pub async fn dial(p2p_addrs: &[String]) -> Self {
+        Self::connect(p2p_addrs, false).await
+    }
+
+    /// Connect like `dial`, but keep every request the node sends this peer
+    /// open and unanswered until the peer drops, so a fetch from it runs to
+    /// its own timeout instead of ending on an empty reply.
+    pub async fn dial_silent(p2p_addrs: &[String]) -> Self {
+        Self::connect(p2p_addrs, true).await
+    }
+
+    async fn connect(p2p_addrs: &[String], hold_requests: bool) -> Self {
         let secret_key = generate_secret_key();
         let config = IrohEndpointConfig {
             secret_key: secret_key.clone(),
@@ -43,7 +61,15 @@ impl HostilePeer {
 
         // The node asks the pusher for blocks it is missing. Never answering
         // is deliberate, but the queue must keep moving or the endpoint stalls.
-        let drain = edge.spawn_service(async move { while events.recv().await.is_some() {} });
+        // A held request keeps its reply stream open until the drain stops.
+        let drain = edge.spawn_service(async move {
+            let mut held = Vec::new();
+            while let Some(event) = events.recv().await {
+                if hold_requests && held.len() < HELD_REQUESTS {
+                    held.push(event);
+                }
+            }
+        });
 
         let mut target = None;
         let mut addrs = Vec::new();

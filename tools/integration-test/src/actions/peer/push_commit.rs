@@ -1,3 +1,6 @@
+use std::sync::Arc;
+
+use regolith::sync::SegQueue;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 use testo::prelude::*;
@@ -26,8 +29,10 @@ pub struct Tamper {
 /// first refusal the target answers.
 ///
 /// With `rootOnly` it sends the signed composite alone, so the target holds a
-/// root whose links it lacks and keeps a pending fetch for the rest. The
-/// result names the pusher's own peer ID as `peerID`.
+/// root whose links it lacks and keeps a pending fetch for the rest. That
+/// pusher stays connected until the test ends and holds the target's block
+/// requests open without answering them, so the fetch keeps its source and
+/// its slot. The result names the pusher's own peer ID as `peerID`.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PushCommit {
@@ -70,6 +75,23 @@ fn unsupported_value(name: &str, value: &Value) -> Failure {
     Failure::unsupported(format!("PushCommit field {name} value {value}"))
 }
 
+/// The pushers a test keeps connected after their push, dropped with the
+/// test's state.
+#[derive(Clone)]
+pub struct KeptPushers(Arc<SegQueue<HostilePeer>>);
+
+impl Default for KeptPushers {
+    fn default() -> Self {
+        Self(Arc::new(SegQueue::new()))
+    }
+}
+
+impl KeptPushers {
+    pub fn keep(&self, peer: HostilePeer) {
+        self.0.push(peer);
+    }
+}
+
 impl Op for PushCommit {
     fn common(&self) -> &Common {
         &self.common
@@ -104,10 +126,12 @@ impl Op for PushCommit {
         let collection_id = self.collection_id.as_str().to_owned();
         let root_only = self.root_only;
         let edge = edge::testing::edge();
-        let (peer_id, refusals) = edge
+        let (peer, refusals) = edge
             .block_on(edge::compat(async move {
-                let peer = HostilePeer::dial(&addresses).await;
-                let peer_id = peer.peer_id();
+                let peer = match root_only {
+                    true => HostilePeer::dial_silent(&addresses).await,
+                    false => HostilePeer::dial(&addresses).await,
+                };
                 let refusals: Vec<Option<String>> = match root_only {
                     true => vec![peer.push_root(&fragment, &collection_id).await.err_message],
                     false => peer
@@ -117,9 +141,15 @@ impl Op for PushCommit {
                         .map(|(_, reply)| reply.err_message)
                         .collect(),
                 };
-                (peer_id, refusals)
+                (peer, refusals)
             }))
             .map_err(|e| Failure::operation(format!("push did not run: {e}")))?;
+        let peer_id = peer.peer_id();
+        if root_only {
+            // Dropping the pusher closes its connection and the requests it
+            // holds, and the target's fetch then settles and frees its slot.
+            state.pushers.keep(peer);
+        }
         match refusals.into_iter().flatten().next() {
             Some(refusal) => Err(Failure::operation(refusal)),
             None => Ok(json!({ "peerID": peer_id })),

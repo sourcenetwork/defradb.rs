@@ -29,6 +29,8 @@ pub struct State {
     pub subscriptions: crate::actions::Subscriptions,
     /// Stream-protocol streams the test keeps open across actions.
     pub streams: crate::actions::stream::KeptStreams,
+    /// Root-only pushers kept connected for the rest of the test.
+    pub pushers: crate::actions::KeptPushers,
     /// How many nodes the test has started, Go's next node index.
     pub go_nodes_started: u64,
 }
