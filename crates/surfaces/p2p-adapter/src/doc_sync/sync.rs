@@ -40,7 +40,9 @@ where
     // A merge is reported more than once (by the merge handler and by the
     // replication loop), and again when another peer sends a head already
     // held, so completion is the set of asked documents seen merged, not a
-    // count of reports (proofs/tla/DocSyncCompletion.tla).
+    // count of reports (proofs/tla/DocSyncCompletion.tla). A document whose
+    // every advertised head is merged here already is reported when its reply
+    // arrives (`SyncEvent::HeadsAlreadyMerged`), so it does not hold the sync.
     let doc_set: RapidHashSet<String> = doc_ids.iter().cloned().collect();
     let mut merged = RapidHashSet::<String>::default();
     let mut last_unanswered = 0;

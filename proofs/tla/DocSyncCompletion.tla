@@ -30,11 +30,23 @@
 \* needs. That is the contract before and after the fix, and the model
 \* states it as it is.
 \*
+\* A peer may also answer with heads of an asked document that the node
+\* already holds and has merged: nothing is fetched or merged for it, so no
+\* merge would ever report it. The reply handler reports such a document
+\* itself, once every head the peer advertised for it is merged here
+\* (handle_doc_sync_reply in
+\* crates/database/p2p/src/sync/coordinator/event_handler/doc_sync.rs sends
+\* SyncEvent::HeadsAlreadyMerged, which the replication loop turns into the
+\* same "already merged" report).
+\*
 \* What must never happen:
 \*   1. the sync returns early while a document it asked for has not
 \*      merged - INV_CompleteMeansEveryDocMerged;
 \*   2. the sync keeps waiting after it has read a report for every document
-\*      it asked for - INV_DoneOnceEveryDocReported.
+\*      it asked for - INV_DoneOnceEveryDocReported;
+\*   3. the sync keeps waiting after every peer's answer for every asked
+\*      document was handled and every report was read, when each asked
+\*      document was in some peer's answer - INV_NoWaitOnceEveryAnswerHandled.
 \* What may happen, shown by a witness configuration: a timeout ends the sync
 \* with documents missing and the caller is told Ok (INV_OkMeansEveryDocMerged
 \* is not promised).
@@ -53,7 +65,11 @@
 \*                 every asked document. TRUE: the code before the fix, which
 \*                 counted reports and was complete at peers x documents;
 \*   FilterAsked   TRUE: a report for a document not asked for is ignored
-\*                 (`doc_set.contains(&data.doc_id)`).
+\*                 (`doc_set.contains(&data.doc_id)`);
+\*   ReportHeld    TRUE: a reply whose every head of a document is already
+\*                 merged here reports the document (HeadsAlreadyMerged).
+\*                 FALSE: the code before, which skipped such heads and
+\*                 reported nothing, so the sync waited out its timeouts.
 
 EXTENDS Naturals, Sequences, FiniteSets
 
@@ -62,11 +78,15 @@ CONSTANTS
   Peers,         \* the connected peers the request went to
   MaxReports,    \* how many reports the run may publish, to keep it finite
   CountReports,  \* TRUE: the code before the fix, counting reports
-  FilterAsked    \* TRUE: reports for documents not asked for are ignored
+  FilterAsked,   \* TRUE: reports for documents not asked for are ignored
+  HeldDocs,      \* the documents a peer may answer for with heads the node already merged
+  ReportHeld     \* TRUE: a document already merged here is reported when a peer's answer names it
 
 VARIABLES
   asked,      \* the documents the sync asked for (fixed for the run)
   holds,      \* holds[p]: the documents peer p has a head of that the node lacks (fixed)
+  current,    \* current[p]: the documents peer p answers for with heads the node has all merged (fixed)
+  answered,   \* the pairs <<p, d>>: peer p's answer for d, all heads already merged here, was handled
   arrived,    \* the pairs <<p, d>>: peer p's head of document d reached the node and merged
   merged,     \* the documents that really merged on the node
   queue,      \* reports published and not read by the sync yet, oldest first
@@ -76,7 +96,7 @@ VARIABLES
   state,      \* "waiting", "complete" (its rule said done, before any timeout) or "timedout"
   result      \* what the caller is told: "none" yet, "ok" or "error" (the timeout error)
 
-vars == <<asked, holds, arrived, merged, queue, published, seen, count, state, result>>  \* every variable
+vars == <<asked, holds, current, answered, arrived, merged, queue, published, seen, count, state, result>>  \* every variable
 
 \* The sync's completion rule: the fix compares the set of documents it read
 \* reports for with the set it asked for; the code before compared a count of
@@ -89,8 +109,11 @@ Done ==
 Init ==                                   \* at the start:
   /\ asked \in SUBSET Docs                \* any set of documents is asked for, the empty one too
   /\ holds \in [Peers -> SUBSET Docs]     \* each peer holds some heads the node lacks
+  /\ current \in [Peers -> SUBSET HeldDocs]  \* and answers for some documents with heads the node merged
+  /\ \A p \in Peers : holds[p] \cap current[p] = {}  \* a document with a head still to send is not "all merged"
+  /\ answered = {}                        \* no such answer handled yet
   /\ arrived = {}                         \* nothing has arrived
-  /\ merged = {}                          \* nothing has merged
+  /\ merged = UNION {current[p] : p \in Peers}  \* only the documents already merged here have merged
   /\ queue = <<>>                         \* no report yet
   /\ published = 0                        \* none published
   /\ seen = {}                            \* the sync has read nothing
@@ -107,7 +130,19 @@ Merge(p, d) ==
   /\ merged' = merged \cup {d}            \* the document merged
   /\ queue' = Append(queue, d)            \* its report is published
   /\ published' = published + 1           \* one more report
-  /\ UNCHANGED <<asked, holds, seen, count, state, result>>  \* the sync has not read it yet
+  /\ UNCHANGED <<asked, holds, current, answered, seen, count, state, result>>  \* the sync has not read it yet
+
+\* Peer p's answer names document d, and every head it names is merged here
+\* already: nothing is fetched or merged. With the fix the reply handler
+\* reports d; the code before reported nothing.
+AnswerHeld(p, d) ==
+  /\ d \in current[p]                     \* every head p names for d is merged here
+  /\ <<p, d>> \notin answered             \* and this answer was not handled yet
+  /\ published < MaxReports               \* within the run's bound
+  /\ answered' = answered \cup {<<p, d>>} \* the answer is handled
+  /\ queue' = IF ReportHeld THEN Append(queue, d) ELSE queue  \* MUTATION report_held: no report
+  /\ published' = IF ReportHeld THEN published + 1 ELSE published  \* one more report, if any
+  /\ UNCHANGED <<asked, holds, current, arrived, merged, seen, count, state, result>>  \* nothing merged
 
 \* A merge already reported is reported again: the replication loop's own
 \* report of it, or a second peer's copy of a head the node already holds.
@@ -116,7 +151,7 @@ Echo(d) ==
   /\ published < MaxReports               \* within the run's bound
   /\ queue' = Append(queue, d)            \* another report of it
   /\ published' = published + 1           \* one more report
-  /\ UNCHANGED <<asked, holds, arrived, merged, seen, count, state, result>>  \* nothing else happened
+  /\ UNCHANGED <<asked, holds, current, answered, arrived, merged, seen, count, state, result>>  \* nothing else happened
 
 \* The sync reads the oldest report while its rule does not say done.
 Read ==
@@ -128,7 +163,7 @@ Read ==
      IN /\ seen' = IF keep THEN seen \cup {d} ELSE seen  \* the fix: the document joins the set
         /\ count' = IF keep THEN count + 1 ELSE count     \* the code before: one more report counted
   /\ queue' = Tail(queue)                 \* read
-  /\ UNCHANGED <<asked, holds, arrived, merged, published, state, result>>  \* the rest stays
+  /\ UNCHANGED <<asked, holds, current, answered, arrived, merged, published, state, result>>  \* the rest stays
 
 \* The rule says done: the sync stops waiting and returns.
 Finish ==
@@ -136,7 +171,7 @@ Finish ==
   /\ Done                                 \* the rule holds (at once when nothing was asked)
   /\ state' = "complete"                  \* complete
   /\ result' = "ok"                       \* the caller is told Ok
-  /\ UNCHANGED <<asked, holds, arrived, merged, queue, published, seen, count>>  \* the rest stays
+  /\ UNCHANGED <<asked, holds, current, answered, arrived, merged, queue, published, seen, count>>  \* the rest stays
 
 \* The idle timeout of its last round or the overall timeout fires, at any moment.
 Timeout ==
@@ -145,10 +180,11 @@ Timeout ==
   /\ result' \in IF seen \cap asked = {}  \* nothing asked for merged: on iroh, with a peer
                  THEN {"ok", "error"}     \* that never answered, the timeout error; else Ok
                  ELSE {"ok"}              \* something merged: Ok, with or without the rest
-  /\ UNCHANGED <<asked, holds, arrived, merged, queue, published, seen, count>>  \* the rest stays
+  /\ UNCHANGED <<asked, holds, current, answered, arrived, merged, queue, published, seen, count>>  \* the rest stays
 
 Next ==                                   \* any of these, in any order:
   \/ \E p \in Peers, d \in Docs : Merge(p, d)  \* a head arrives
+  \/ \E p \in Peers, d \in Docs : AnswerHeld(p, d)  \* an answer names only heads merged here
   \/ \E d \in Docs : Echo(d)              \* a merge is reported again
   \/ Read                                 \* the sync reads a report
   \/ Finish                               \* the sync completes
@@ -159,6 +195,8 @@ Spec == Init /\ [][Next]_vars             \* every behaviour
 TypeOK ==                                 \* every variable holds what it should
   /\ asked \subseteq Docs
   /\ holds \in [Peers -> SUBSET Docs]
+  /\ current \in [Peers -> SUBSET Docs]
+  /\ answered \subseteq Peers \X Docs
   /\ arrived \subseteq Peers \X Docs
   /\ merged \subseteq Docs
   /\ queue \in Seq(Docs)
@@ -175,6 +213,17 @@ INV_CompleteMeansEveryDocMerged ==
 \* A sync that has read a report for every document it asked for does not wait for more.
 INV_DoneOnceEveryDocReported ==
   (state = "waiting" /\ asked \subseteq seen) => Done
+
+\* A sync that is still waiting after every peer's answer for every asked
+\* document was handled, and after reading every report, is done, as long as
+\* each asked document was in some peer's answer. (A document no peer answers
+\* for is left to the timeouts.)
+INV_NoWaitOnceEveryAnswerHandled ==
+  LET answeredFor == UNION {holds[p] \cup current[p] : p \in Peers}  \* the asked documents some peer answers for
+      allHandled ==                                                     \* every such answer was handled
+        /\ \A p \in Peers : \A d \in asked \cap holds[p] : <<p, d>> \in arrived
+        /\ \A p \in Peers : \A d \in asked \cap current[p] : <<p, d>> \in answered
+  IN (state = "waiting" /\ queue = <<>> /\ asked \subseteq answeredFor /\ allHandled) => Done
 
 \* Not promised, checked only by the witness: a complete sync has every peer's head of every asked document.
 INV_EveryPeersHeadMerged ==
