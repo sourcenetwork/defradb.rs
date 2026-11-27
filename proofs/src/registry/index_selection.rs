@@ -1,7 +1,7 @@
 use super::{Axis::*, Property, Tier::*};
 
 /// The crates this family's models cover.
-pub(super) const CRATES: &str = "query, db";
+pub(super) const CRATES: &str = "query, db, storage, document";
 
 pub(super) const PROPERTIES: &[Property] = &[
     Property {
@@ -16,5 +16,16 @@ pub(super) const PROPERTIES: &[Property] = &[
         model_ref: "AllEmptyArray (lake build)",
         tiers: &[Boundary],
         bound_by: "tools/integration-test/tests/testo/index/all_empty_array.rs all_on_an_indexed_array_finds_an_empty_array, all_on_an_indexed_composite_array_finds_an_empty_array, all_with_a_range_on_an_indexed_array_finds_an_empty_array, all_with_a_range_on_a_descending_indexed_array_finds_an_empty_array; crates/engine/query/src/planner/index_selection/empty_array_tests.rs all_lt_on_an_ascending_index_reads_the_null_entry_once, all_lt_on_a_descending_index_reads_the_null_entry_once, all_gt_on_a_descending_index_also_reads_the_null_entry, any_beside_all_reads_only_its_elements",
+    },
+    Property {
+        // A JSON index scan must answer as a full scan does. The scan pieces
+        // are private to the planner. Boundary.
+        family: "Index selection",
+        name: "AllScanEmptyArray.all_scan_complete / all_scan_sound / value_scan_skips_empty / neg_scan_finds_empty / any_scan_complete / empty_arrays_never_clash / same_path_scan_complete / pinned_scan_complete / narrowed_scan_complete / chosen_scan_pins / chosen_scan_complete / entry_scan_complete / separate_any_complete / clause_scan_complete: `_all` with a positive predicate at a JSON path finds every matching document, empty arrays included, a value scan returns no empty array while a bare negative scan reads the marker and finds them, a scan tests a `_like` pattern only at its own path and `_any` clause, a full scan reads the path of a condition a missing path fails and never of a bare negative at a path, and bounds from two `_any` clauses are never joined",
+        axis: Lean,
+        anchor: "crates/building-blocks/document/src/json_leaf.rs json_index_leaves; crates/engine/query/src/planner/index_selection/filter_to_scan.rs filter_to_index_scan, suffix_eq_values, at_entry_path; crates/engine/query/src/planner/index_selection/json_empty_array.rs with_json_empty_arrays; crates/engine/query/src/planner/index_selection/path_bounds.rs path_low_end, path_high_end; crates/engine/query/src/planner/index_selection/conditions.rs extract_field_conditions, is_full_scan, accepts_missing, should_fallback_to_full_scan, looks_for_null; crates/engine/query/src/planner/index_selection/types.rs FieldCondition::clause, FieldCondition::nested_array_op, FieldCondition::non_scalar_member; crates/building-blocks/document/src/normal.rs NormalValue::is_never_unique",
+        model_ref: "AllScanEmptyArray (lake build)",
+        tiers: &[Boundary],
+        bound_by: "tools/integration-test/tests/testo/index/json_range_paths.rs; tools/integration-test/tests/testo/index/json_index_matches_scan.rs; crates/engine/query/src/planner/index_selection/json_exact_scan_tests.rs; crates/engine/storage/src/index/range_iterator_tests.rs a_range_stopping_below_the_markers_reads_none_of_them",
     },
 ];

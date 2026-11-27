@@ -14,19 +14,27 @@ use super::types::{FieldCondition, IndexScanType};
 
 /// `scan` widened to the empty-array markers its `_all` conditions on the
 /// JSON index's first field need, unless it reads them already.
+///
+/// An `_any` on the same array needs an element, so no empty array there
+/// passes the filter and its marker would only add reads.
 pub(super) fn with_json_empty_arrays(
     scan: IndexScanType,
     conditions: &[FieldCondition],
     first_field: &str,
     is_composite: bool,
 ) -> IndexScanType {
+    let on_first_field = |op| {
+        conditions
+            .iter()
+            .filter(move |c| c.field_name == first_field && c.array_op == Some(op))
+            .filter_map(|c| c.json_path.as_ref().filter(|path| !path.is_empty()))
+    };
     let mut paths: Vec<&JsonPath> = Vec::new();
-    for path in conditions
-        .iter()
-        .filter(|c| c.field_name == first_field && c.array_op == Some(FilterOp::All))
-        .filter_map(|c| c.json_path.as_ref().filter(|path| !path.is_empty()))
-    {
-        if !paths.contains(&path) && !reads_path_top(&scan, path) {
+    for path in on_first_field(FilterOp::All) {
+        if !paths.contains(&path)
+            && !reads_path_top(&scan, path)
+            && !on_first_field(FilterOp::Any).any(|any| any == path)
+        {
             paths.push(path);
         }
     }

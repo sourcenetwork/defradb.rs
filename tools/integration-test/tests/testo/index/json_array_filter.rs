@@ -22,7 +22,10 @@ fn case(docs: &[Value], filter: &str, names: &[&str]) {
     let names: Vec<Value> = names.iter().map(|name| json!({ "name": name })).collect();
     actions.push(
         Request {
-            request: format!("query {{ Users(filter: {{custom: {filter}}}) {{ name }} }}").into(),
+            request: format!(
+                "query {{ Users(filter: {{custom: {filter}}}, order: {{name: ASC}}) {{ name }} }}"
+            )
+            .into(),
             expected_data: json!({ "Users": names }),
             ..Default::default()
         }

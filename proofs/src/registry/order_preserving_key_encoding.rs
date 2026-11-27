@@ -57,7 +57,7 @@ pub(super) const PROPERTIES: &[Property] = &[
         family: "Order-preserving key encoding",
         name: "lookups_strictly_increasing / reversed_lookups_strictly_decreasing / written_sublist — `_in` point lookups run in key order under an order, as written without one, each once",
         axis: Lean,
-        anchor: "crates/engine/query/src/planner/index_selection/filter_to_scan.rs filter_to_index_scan, order_in_values",
+        anchor: "crates/engine/query/src/planner/index_selection/filter_to_scan.rs filter_to_index_scan; crates/engine/query/src/planner/index_selection/path_bounds.rs order_in_values",
         model_ref: "OrderEncoding.InLookup (lake build)",
         tiers: &[Boundary],
         bound_by: "",

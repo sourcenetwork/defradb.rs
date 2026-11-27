@@ -25,6 +25,8 @@ mod json_array_filter;
 mod json_composite;
 mod json_descending;
 mod json_descending_range;
+mod json_index_matches_scan;
+mod json_range_paths;
 mod json_unique;
 mod json_unique_array;
 mod keyspace;

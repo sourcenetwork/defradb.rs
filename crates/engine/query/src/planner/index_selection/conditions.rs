@@ -1,6 +1,6 @@
 //! Condition analysis and scoring for index selection.
 
-use document::NormalValue;
+use document::{JsonPathPart, NormalValue};
 use schema::{FieldKind, IndexDescription};
 use serde_json::Map;
 use serde_json::Value as JsonValue;
@@ -45,6 +45,29 @@ pub(super) fn should_fallback_to_full_scan(
     // JSON indexes only store leaf values (scalars), not objects or arrays.
     // If the filter value is a complex type, fall back to full scan.
     if is_json_field {
+        // An element that is an object or an array has no entry, and a negative
+        // op passes it, so the index would miss the document. A property under
+        // an array operator is an error the full scan must raise.
+        if matches!(cond.array_op, Some(FilterOp::Any | FilterOp::All))
+            && (cond.nested_array_op
+                || matches!(
+                    cond.op,
+                    FilterOp::Ne | FilterOp::Nin | FilterOp::Nlike | FilterOp::Nilike
+                )
+                || !cond
+                    .json_path
+                    .as_ref()
+                    .and_then(|path| path.0.last())
+                    .is_some_and(|part| matches!(part, JsonPathPart::Index)))
+        {
+            return true;
+        }
+
+        // A document without the path passes a null check but has no entry there.
+        if cond.array_op.is_none() && has_nested_path && looks_for_null(cond) {
+            return true;
+        }
+
         // JSON ordering operators only work with numeric values. Non-numeric
         // values must take the normal scan path so filter evaluation returns
         // the correct type error.
@@ -68,19 +91,55 @@ pub(super) fn should_fallback_to_full_scan(
             return true;
         }
 
-        // _in/_nin with empty values (all objects were filtered out) → fallback
-        if matches!(cond.op, FilterOp::In | FilterOp::Nin) {
-            if let ConditionValue::Multiple(vs) = &cond.value {
-                if vs.is_empty() {
-                    return true;
-                }
-            }
+        // An object or an array in the list has no entry to look up.
+        if matches!(cond.op, FilterOp::In | FilterOp::Nin)
+            && (cond.non_scalar_member
+                || matches!(&cond.value, ConditionValue::Multiple(vs) if vs.is_empty()))
+        {
+            return true;
         }
     }
 
     field_kind.map(|kind| kind.is_array()).unwrap_or(false)
         && matches!(cond.op, FilterOp::Eq | FilterOp::Ne)
         && matches!(cond.value, ConditionValue::Multiple(_))
+}
+
+fn looks_for_null(cond: &FieldCondition) -> bool {
+    match &cond.value {
+        ConditionValue::Single(NormalValue::Null) => cond.op == FilterOp::Eq,
+        ConditionValue::Multiple(vs) => {
+            cond.op == FilterOp::In && vs.iter().any(|v| matches!(v, NormalValue::Null))
+        }
+        _ => false,
+    }
+}
+
+pub(super) fn is_full_scan(cond: &FieldCondition) -> bool {
+    // An array or object at a path has its entries deeper, so a scan of the
+    // path misses it and a negative op passes it.
+    let bare_negative_at_path = cond.array_op.is_none()
+        && cond.json_path.as_ref().is_some_and(|path| !path.is_empty())
+        && matches!(
+            cond.op,
+            FilterOp::Ne | FilterOp::Nin | FilterOp::Nlike | FilterOp::Nilike
+        );
+    cond.array_op != Some(FilterOp::None)
+        && !bare_negative_at_path
+        && matches!(
+            cond.op,
+            FilterOp::Ne
+                | FilterOp::Nin
+                | FilterOp::Like
+                | FilterOp::Nlike
+                | FilterOp::Ilike
+                | FilterOp::Nilike
+        )
+}
+
+/// A `_nin` outside an array operator, which a missing property passes.
+pub(super) fn accepts_missing(cond: &FieldCondition) -> bool {
+    cond.op == FilterOp::Nin && cond.array_op.is_none()
 }
 
 fn is_numeric_filter_value(value: &ConditionValue) -> bool {
@@ -124,7 +183,14 @@ fn extract_conditions_recursive(
 
         // Field condition
         if let Some(ops) = value.as_object() {
-            conditions.extend(FieldCondition::parse(key, ops));
+            let clause = conditions
+                .last()
+                .map_or(0, |c: &FieldCondition| c.clause + 1);
+            conditions.extend(
+                FieldCondition::parse(key, ops)
+                    .into_iter()
+                    .map(|cond| FieldCondition { clause, ..cond }),
+            );
         }
     }
 }

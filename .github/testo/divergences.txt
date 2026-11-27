@@ -34,6 +34,45 @@ testo index::all_empty_array::all_on_an_indexed_composite_array_finds_an_empty_a
 # With an index on the related field, Go returns ties in index order and ignores the second order condition; Rust applies it.
 testo index::query_with_relation_tie_order::a_page_of_ties_follows_the_second_condition_with_an_index
 testo index::query_with_relation_tie_order::ties_follow_the_second_condition_with_an_index
+# With range conditions on two paths of one JSON index, Go bounds the scan by the wrong path and misses matching documents; Rust bounds it by one path and filters the rest.
+testo index::json_range_paths::a_range_and_ne_on_two_paths
+testo index::json_range_paths::ranges_on_two_paths
+testo index::json_range_paths::all_ranges_on_two_paths
+# Go refuses `_ne` on a JSON field; Rust tests a `_like` pattern only at its own path and returns the match.
+testo index::json_range_paths::like_and_ne_on_two_paths
+testo index::json_range_paths::ne_and_like_with_a_missing_ne_path
+# Go refuses a string range on a JSON field ("unexpected type. Property: condition, Actual: string"); Rust compares the strings and narrows the scan.
+testo index::json_range_paths::a_range_and_like_on_one_path
+# With conditions on two paths of one JSON index, Go joins both paths into one scan path and misses matching documents; Rust scans one path and leaves the other's `_like` to the filter.
+testo index::json_range_paths::a_range_and_like_on_two_paths
+testo index::json_range_paths::like_and_a_range_on_two_paths
+testo index::json_range_paths::eq_and_like_on_two_paths
+testo index::json_range_paths::nin_and_like_with_a_missing_nin_path
+# Go's JSON index has no entry for an empty array, and Go refuses `_ne` on a JSON field; Rust finds the empty arrays at either path, as without the index.
+testo index::json_range_paths::like_under_all_on_two_paths_finds_the_empty_array
+testo index::json_range_paths::ne_under_all_on_two_paths_finds_the_empty_array
+# Go writes no entry for an empty array in a JSON index and refuses `_ne` on a JSON field; Rust answers each filter as a full scan does.
+testo index::json_index_matches_scan::ne_under_all_matches_a_full_scan
+testo index::json_index_matches_scan::nested_array_operators_match_a_full_scan
+testo index::json_index_matches_scan::bare_negatives_match_a_full_scan
+testo index::json_index_matches_scan::positive_all_and_any_match_a_full_scan
+testo index::json_index_matches_scan::array_operators_on_a_path_match_a_full_scan
+testo index::json_index_matches_scan::the_index_serves_positive_all_and_not_negative_all
+testo index::json_index_matches_scan::a_composite_json_index_matches_a_full_scan
+testo index::json_index_matches_scan::a_descending_json_index_matches_a_full_scan
+testo index::json_index_matches_scan::a_unique_json_index_matches_a_full_scan
+testo index::json_index_matches_scan::updates_and_deletes_keep_the_index_matching_a_full_scan
+testo index::json_index_matches_scan::updates_and_deletes_keep_a_unique_json_index_matching_a_full_scan
+testo index::json_index_matches_scan::all_with_a_page_matches_a_full_scan
+# Go serves a property under `_all`, a null check at a JSON path and an `_in` listing an object from its JSON index, which has no entry for them; Rust reads every document, so it fails or returns the documents as without the index.
+testo index::json_index_matches_scan::an_object_filter_under_all_fails_with_and_without_the_index
+testo index::json_index_matches_scan::null_checks_at_a_path_match_a_full_scan
+testo index::json_index_matches_scan::an_in_listing_an_object_matches_a_full_scan
+testo index::json_index_matches_scan::the_index_serves_positive_filters_and_not_its_fallbacks
+testo index::json_index_matches_scan::a_json_field_second_in_a_composite_index_matches_a_full_scan
+# Go tests a `_like` pattern from another `_any` clause on the element its scan matched and misses a match whose elements differ; Rust leaves the pattern to the filter.
+testo index::json_index_matches_scan::a_pattern_from_another_any_clause_matches_a_full_scan
+testo index::json_index_matches_scan::a_pattern_from_another_any_clause_on_a_typed_array_matches_a_full_scan
 # With `_in` on an indexed field Go ignores `order` on that field and returns the rows as the filter lists them; Rust applies it.
 testo index::composite_in_order::in_on_descending_first_field_ordered_ascending_follows_the_order
 testo index::composite_in_order::in_on_descending_first_field_ordered_descending_follows_the_order
@@ -68,5 +107,16 @@ testo query::relation_order_with_filter::selected_relation_id::indexed
 testo query::relation_order_with_filter::selected_relation_id_unfiltered::indexed
 testo query::relation_order_with_filter::selected_relation_id_unfiltered_with_limit::indexed
 testo query::relation_order_with_filter::selected_relation_id_with_limit::indexed
+# Rust reads every document for `_ne`, `_nin` and `_nlike` at a path inside a JSON value, because an array or object there has its entries deeper; Go reads the index and misses those documents, and its `_nlike` drops non-string values.
+testo index::json::json_index_with_n_like_filter_on_string_field_should_use_index
+testo index::json::json_index_with_ne_filter_against_bool_field_should_fetch_null_values
+testo index::json::json_index_with_ne_filter_against_number_field_should_fetch_null_values
+testo index::json::json_index_with_ne_filter_against_string_field_should_fetch_null_values
+testo index::json::json_index_with_ne_filter_on_bool_field_should_use_index
+testo index::json::json_index_with_ne_filter_on_null_nested_field_should_use_index
+testo index::json::json_index_with_ne_filter_on_number_field_should_use_index
+testo index::json::json_index_with_nin_filter_should_use_index
+# Rust reads every document for `_eq: null` at a path inside a JSON value, because a document without the path passes it and has no entry; Go's index returns only explicit nulls.
+testo index::json::json_index_with_eq_filter_on_null_field_should_use_index
 # An execute explain whose plan fails while it runs: Go reports the error as two `executionErrors` entries; Rust reports it once.
 testo explain::simple::with_invalid_request::execute_explain_reports_a_run_time_failure_in_execution_errors
