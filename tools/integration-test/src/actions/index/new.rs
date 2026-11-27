@@ -51,23 +51,22 @@ impl Op for NewIndex {
             })
             .collect();
         let node = state.node_on(self.common.node())?;
-        let context = state.context_as(self.txn, self.common.identity_seed);
+        let scope = state.scope_as(self.txn, self.common.identity_seed);
         // Go's NewIndex always returns before the build; its harness waits
         // for the build unless the scenario sets `async`.
         let created = match self.r#async {
-            true => state.block_on(node.start_index_as(
-                &context,
+            true => state.block_on(scope.on(&node).start_index(
                 &self.collection,
                 self.index_name(),
                 fields,
                 self.unique(),
             )),
-            false => state.block_on(node.create_index_as(
-                &context,
+            false => state.block_on(scope.on(&node).create_index(
                 &self.collection,
                 self.index_name(),
                 fields,
                 self.unique(),
+                None,
             )),
         };
         created
@@ -120,15 +119,11 @@ impl NewIndex {
     }
 
     /// [`NewIndex::check_arguments`], plus the descending fields the HTTP and
-    /// CLI clients cannot send, and `async`: an index created over HTTP is
-    /// built before the response.
+    /// CLI clients cannot send.
     fn check_remote_arguments(&self) -> Result<(), Failure> {
         self.check_arguments()?;
         let descending = self.index.fields.iter().any(|field| field.descending);
-        unsupported_argument(&[
-            ("index.fields.descending", descending),
-            ("async", self.r#async),
-        ])
+        unsupported_argument(&[("index.fields.descending", descending)])
     }
 
     fn name_of() -> &'static str {
@@ -166,30 +161,39 @@ impl HttpRun for NewIndex {
             let fields = action.field_names();
             let name = action.index_name().map(str::to_owned);
             let unique = action.unique();
-            let created = collection.clone();
+            let target = collection.clone();
             let txn = state.txn_id(action.txn);
             let in_txn = txn.is_some();
-            state
+            if action.r#async && state.client_type() == crate::ClientType::GoHttp {
+                return Err(Failure::unsupported(
+                    "index.new async under GoHttp".to_owned(),
+                ));
+            }
+            let wait_for_build = !action.r#async && !in_txn;
+            let build_in_background = action.r#async && !in_txn;
+            let created = state
                 .http_as(
                     action.common.node(),
                     action.common.identity_seed,
                     |client| async move {
                         client
-                            .index_create(
+                            .index_create_with_build_mode(
                                 txn.as_deref(),
-                                &created,
+                                &target,
                                 &fields,
                                 name.as_deref(),
                                 unique,
                                 None,
+                                build_in_background,
                             )
                             .await
                     },
                 )?
                 .map_err(|e| Failure::operation(e.to_string()))?;
-            // In a transaction the backfill runs once it commits.
-            if !in_txn {
-                wait_until_built(state, action, &collection)?;
+            // In a transaction the backfill runs once it commits; an async
+            // build is left to the scenario's own wait actions.
+            if wait_for_build {
+                wait_until_built(state, action, &collection, &created.name)?;
             }
             Ok(json!({}))
         });
@@ -199,12 +203,16 @@ impl HttpRun for NewIndex {
 /// How long a backfill may take before the wait gives up.
 const BUILD_TIMEOUT: Duration = Duration::from_secs(10);
 
-/// Waits until no index of `collection` is still building, as Go's
-/// `NewIndex` action does: Go builds an index in the background, so a
-/// `ListIndexes` straight after the create would see it mid-backfill.
-// ponytail: waits on every index of the collection, not just the new one; the
-// HTTP client refuses `async`, so no other index is left building on purpose.
-fn wait_until_built(state: &State, action: &NewIndex, collection: &str) -> Result<(), Failure> {
+/// Waits until the index `name` of `collection` is no longer building, as
+/// Go's `NewIndex` action does: Go builds an index in the background, so a
+/// `ListIndexes` straight after the create would see it mid-backfill. Another
+/// index of the collection still building in the background does not hold it.
+fn wait_until_built(
+    state: &State,
+    action: &NewIndex,
+    collection: &str,
+    name: &str,
+) -> Result<(), Failure> {
     let deadline = Instant::now() + BUILD_TIMEOUT;
     loop {
         let collection = collection.to_owned();
@@ -221,15 +229,16 @@ fn wait_until_built(state: &State, action: &NewIndex, collection: &str) -> Resul
                 },
             )?
             .map_err(Failure::operation)?;
-        if !indexes
-            .as_array()
-            .is_some_and(|all| all.iter().any(building))
-        {
+        let still_building = indexes.as_array().is_some_and(|all| {
+            all.iter()
+                .any(|index| index["Description"]["Name"] == name && building(index))
+        });
+        if !still_building {
             return Ok(());
         }
         if Instant::now() > deadline {
             return Err(Failure::operation(format!(
-                "{}: an index of {} was still building after {BUILD_TIMEOUT:?}",
+                "{}: index {name} of {} was still building after {BUILD_TIMEOUT:?}",
                 NewIndex::name_of(),
                 action.collection
             )));
@@ -248,6 +257,8 @@ impl CliRun for NewIndex {
     fn execute_cli(&self, state: &mut State) {
         crate::scenario::execute_with(self, state, |action, state| {
             action.check_remote_arguments()?;
+            // `index new` has no background flag, here or in Go's CLI.
+            unsupported_argument(&[("async", action.r#async)])?;
             let fields = action.field_names().join(",");
             let mut args = vec![
                 "index",

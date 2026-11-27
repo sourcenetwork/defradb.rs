@@ -9,7 +9,7 @@ use serde::Serialize;
 
 use super::handle::NodeOps;
 use crate::ops::request::transaction_error;
-use crate::{Error, Node, Result};
+use crate::{Error, Result};
 
 /// An encrypted index as Go lists it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -18,54 +18,6 @@ pub struct EncryptedIndexListing {
     pub field_name: String,
     #[serde(rename = "Type")]
     pub index_type: String,
-}
-
-impl Node {
-    /// Add an equality encrypted index on `field_name` of `collection`.
-    pub async fn add_encrypted_index_as(
-        &self,
-        context: &RequestContext,
-        collection: &str,
-        field_name: &str,
-    ) -> Result<EncryptedIndexListing> {
-        self.ops()
-            .add_encrypted_index(&self.admitted_caller(context)?, collection, field_name)
-            .await
-    }
-
-    /// The encrypted indexes of `collection`.
-    pub async fn list_encrypted_indexes_as(
-        &self,
-        context: &RequestContext,
-        collection: &str,
-    ) -> Result<Vec<EncryptedIndexListing>> {
-        self.ops()
-            .list_encrypted_indexes(&self.admitted_caller(context)?, collection)
-            .await
-    }
-
-    /// Every collection's encrypted indexes, by collection name; a
-    /// collection without one is left out.
-    pub async fn list_all_encrypted_indexes_as(
-        &self,
-        context: &RequestContext,
-    ) -> Result<Vec<(String, Vec<EncryptedIndexListing>)>> {
-        self.ops()
-            .list_all_encrypted_indexes(&self.admitted_caller(context)?)
-            .await
-    }
-
-    /// Delete the encrypted index on `field_name` of `collection`.
-    pub async fn delete_encrypted_index_as(
-        &self,
-        context: &RequestContext,
-        collection: &str,
-        field_name: &str,
-    ) -> Result<()> {
-        self.ops()
-            .delete_encrypted_index(&self.admitted_caller(context)?, collection, field_name)
-            .await
-    }
 }
 
 /// The operations of [`Node`] above, as `context` names: no default caller.

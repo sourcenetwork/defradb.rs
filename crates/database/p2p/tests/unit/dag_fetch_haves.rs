@@ -3,9 +3,9 @@ use crate::sync::car::doc_dag::{updates, DocDag};
 use crate::sync::coordinator::haves::haves_from_heads;
 
 /// The receiver holds a document's history and is told of a new head: on the
-/// steady path, a deep concurrent branch, and with nothing held. With its
-/// haves named, each fetch is one request serving exactly what is missing; a
-/// receiver holding nothing still gets the whole DAG.
+/// steady path, a deep concurrent branch, and with nothing held. Each fetch is
+/// one request naming the root, with no depth cut, serving exactly what is
+/// missing; a receiver holding nothing gets the whole DAG in that request.
 #[nuclei::test(threads = 0)]
 async fn a_fetch_naming_its_haves_is_served_only_the_missing_blocks() {
     let store = || {
@@ -70,17 +70,10 @@ async fn a_fetch_naming_its_haves_is_served_only_the_missing_blocks() {
         for (cid, _) in &missing {
             assert!(receiver.has(cid).await.unwrap());
         }
-        if held > 0 {
-            assert_eq!(
-                transport.closure_rounds(),
-                vec![(2, missing.len())],
-                "held {held}"
-            );
-        } else {
-            assert!(
-                transport.closure_rounds().len() > 1,
-                "nothing held keeps the depth cut"
-            );
-        }
+        assert_eq!(
+            transport.closure_rounds(),
+            vec![(ClosureDepth::whole().get(), missing.len())],
+            "held {held}"
+        );
     }
 }

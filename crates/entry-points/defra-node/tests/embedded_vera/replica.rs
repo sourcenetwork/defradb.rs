@@ -101,7 +101,7 @@ fn a_foreign_creators_row_is_registered_by_the_receiving_node_and_its_changes_fo
             .add_policy(actor.as_str(), POLICY, None)
             .await
             .expect("policy");
-        node.add_collection(&defra_core::RequestContext::ambient(), &users(&policy))
+        node.add_collection(&users(&policy))
             .await
             .expect("collection");
 

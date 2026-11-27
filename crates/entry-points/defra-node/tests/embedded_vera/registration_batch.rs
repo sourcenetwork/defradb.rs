@@ -32,16 +32,15 @@ fn certified_sentinel_checks_owner_parent_and_device_at_one_root() {
         assert!(vera.verify_transport_sentinel(&query).await.unwrap());
         query.device = STRANGER.into();
         assert!(!vera.verify_transport_sentinel(&query).await.unwrap());
-        let follower = identity::Did::new(STRANGER).unwrap();
+        let follower = identity::Did::new(STRANGER.to_string()).unwrap();
         acp.add_relationship(&owner, acp::Subject::entity(follower.clone()), &query.policy, "nodes", "node", "transport_publisher", &[]).await.unwrap();
         acp.add_relationship(&owner, acp::Subject::entity(follower.clone()), &query.policy, "device_groups", "group", "member", &[]).await.unwrap();
         assert!(vera.verify_transport_sentinel(&query).await.unwrap());
-        let context = defra_core::RequestContext::default().with_identity(Some(follower.to_string()));
         let mut wrong_child = query.clone();
         wrong_child.child = "different".into();
-        assert!(node.restore_shared_transport_collection_as(&context, &sdl, wrong_child).await.is_err());
+        assert!(node.with_identity(identity::Did::new(follower.to_string()).unwrap()).restore_shared_transport_collection(&sdl, wrong_child).await.is_err());
         assert!(node.get_collection("SharedJob").unwrap().is_none());
-        node.restore_shared_transport_collection_as(&context, &sdl, query.clone()).await.unwrap();
+        node.with_identity(identity::Did::new(follower.to_string()).unwrap()).restore_shared_transport_collection(&sdl, query.clone()).await.unwrap();
         query.parent = "wrong".into();
         assert!(!matches!(vera.verify_transport_sentinel(&query).await, Ok(true)));
         query.parent = "node".into();
@@ -65,16 +64,16 @@ async fn creates_in_one_transaction(count: usize) -> Measured {
     let node = node(directory.path()).await;
     let vera = node.vera_acp().expect("vera.rs document ACP").clone();
     let owner = identity::Did::new(vera.self_did().expect("actor DID")).unwrap();
-    let stranger = identity::Did::new(STRANGER).unwrap();
+    let stranger = identity::Did::new(STRANGER.to_string()).unwrap();
     let policy = vera
         .add_policy(owner.as_str(), POLICY, None)
         .await
         .expect("policy");
-    node.add_collection(&defra_core::RequestContext::ambient(), &users(&policy))
+    node.add_collection(&users(&policy))
         .await
         .expect("collection");
 
-    let transaction = node.begin_transaction_guard(false).await.unwrap();
+    let transaction = node.new_txn(false).await.unwrap();
     let mut docs = Vec::with_capacity(count);
     for index in 0..count {
         docs.push(created(
@@ -95,10 +94,8 @@ async fn creates_in_one_transaction(count: usize) -> Measured {
         assert!(!reads_doc(&node, &stranger, &policy, doc).await, "{doc}");
     }
     assert!(node
-        .owed_acp_as(
-            &defra_core::RequestContext::default().with_identity(Some(owner.to_string())),
-            owner.as_str()
-        )
+        .with_identity(identity::Did::new(owner.to_string()).unwrap())
+        .owed_acp(owner.as_str())
         .await
         .expect("what is owed")
         .is_empty());
@@ -169,7 +166,7 @@ fn a_created_document_registers_under_its_selected_parent() {
         let definition = format!("{POLICY}{child_resource}");
         let policy = vera.add_policy(owner.as_str(), &definition, None).await.unwrap();
         let children = format!(r#"type Job @policy(id: "{policy}", resource: "jobs", parentField: "parentId") {{ parentId: String! }}"#);
-        node.add_collection(&defra_core::RequestContext::ambient(), &format!("{}\n{children}", users(&policy))).await.unwrap();
+        node.add_collection(&format!("{}\n{children}", users(&policy))).await.unwrap();
         let parent = created(node.execute_request(create_user("parent", &owner)).await);
         let mutation = format!(r#"mutation {{ add_Job(input: {{parentId: "{parent}"}}) {{ _docID }} }}"#);
         let request = defra_node::QueryRequest::new(mutation).with_identity(Some(owner.clone()));

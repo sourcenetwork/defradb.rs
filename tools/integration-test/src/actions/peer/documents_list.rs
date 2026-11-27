@@ -36,7 +36,12 @@ impl Op for ListP2PDocuments {
 
         let node = state.node_on(self.common.node())?;
         let listed = state
-            .block_on(node.list_p2p_documents_as(&state.context_as(None, identity)))
+            .block_on(
+                state
+                    .scope_as(None, identity)
+                    .scoped(&node)
+                    .list_p2p_documents(),
+            )
             .map_err(failed)?;
         Ok(json!({ "docIDs": listed }))
     }
