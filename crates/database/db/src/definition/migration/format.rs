@@ -19,12 +19,19 @@ use crate::DB;
 /// index keyspace so collection short IDs cannot collide with another family;
 /// version 5 moves descending JSON paths back into ascending order; version 6
 /// adds an entry under each empty array in a JSON index, which only the JSON
-/// indexes of a version 5 store lack.
-pub const CURRENT_INDEX_FORMAT: u32 = 6;
+/// indexes of a version 5 store lack; version 7 keeps only field values in
+/// deferred position records. Version 6's keys are already in version 7's
+/// encoding, so moving its stamp alone makes an older binary refuse the store
+/// before it reads a new record with the old decoder.
+pub const CURRENT_INDEX_FORMAT: u32 = 7;
 
 /// The format before JSON indexes held empty-array entries. A store stamped
 /// with it rebuilds only its JSON indexes; every other index is current.
 const FORMAT_WITHOUT_JSON_EMPTY_ARRAYS: u32 = 5;
+
+/// The format whose indexes already use the current key encoding, so moving
+/// its stamp needs no format rebuild.
+const STAMP_ONLY_INDEX_FORMAT: u32 = 6;
 
 /// Systemstore key holding the format the indexes on disk were written with.
 pub use storage::keys::systemstore::INDEX_FORMAT_KEY;
@@ -113,6 +120,7 @@ impl<S: Store> DB<S> {
         match stored {
             Some(CURRENT_INDEX_FORMAT) => return self.rebuild_indexes_owed(false).await,
             Some(FORMAT_WITHOUT_JSON_EMPTY_ARRAYS) => self.rebuild_indexes_owed(true).await?,
+            Some(STAMP_ONLY_INDEX_FORMAT) => self.rebuild_indexes_owed(false).await?,
             _ => self.rebuild_every_index(stored).await?,
         }
         self.stamp_index_format().await
