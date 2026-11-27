@@ -49,8 +49,9 @@
 \*                                                 delete_encrypted_index_in_txn,
 \*                                                 encrypted_indexes_in_txn,
 \*                                                 all_encrypted_indexes_in_txn
-\*   crates/entry-points/defra-node/src/ops/encrypted_index.rs NodeOps (routes a txn)
-\*   crates/entry-points/cli/src/encrypted_index_adapter.rs    EncryptedIndexAdapter (routes a txn)
+\*   crates/database/db/src/collection/encrypted_index/client/mod.rs
+\*                                                 DbTransactionRegistry::add_encrypted_index_as
+\*                                                 and its siblings (route a txn, for every client)
 \*   crates/surfaces/http/src/handlers/encrypted_index.rs  the x-defradb-tx context
 \* Views follow them too. AddView stages its view collections in the
 \* caller's transaction, and building its materialized views (and

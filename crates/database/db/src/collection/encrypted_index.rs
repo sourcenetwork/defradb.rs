@@ -5,8 +5,14 @@
 //! transaction it is given, so in an explicit transaction the change is
 //! visible to it at once and to others once it commits.
 
+mod client;
+
+pub use client::EncryptedIndexError;
+
 use std::sync::Arc;
 
+use acp::nac::NodePermission;
+use defra_core::RequestContext;
 use schema::{CollectionVersion, EncryptedIndexDescription};
 use storage::corekv::{IterOptions, Key, OnCommit, Store};
 use storage::keys::systemstore::{CollectionKey, CollectionNameKey};
@@ -21,6 +27,33 @@ impl<S> DB<S>
 where
     S: Store + 'static,
 {
+    /// Add an equality encrypted index on `field` of `collection` as
+    /// `context`, checking node access in the transaction that writes it.
+    pub async fn add_encrypted_index_as(
+        self: &Arc<Self>,
+        context: &RequestContext,
+        collection: &str,
+        field: &str,
+    ) -> Result<()> {
+        let (db, context) = (Arc::clone(self), context.clone());
+        let (collection, field) = (collection.to_owned(), field.to_owned());
+        self.transact_db(move |txn| {
+            let (db, context) = (Arc::clone(&db), context.clone());
+            let (collection, field) = (collection.clone(), field.clone());
+            Box::pin(async move {
+                check_encrypted_index_access_in(
+                    &db,
+                    &context,
+                    txn,
+                    NodePermission::EncryptedIndexAdd,
+                )
+                .await?;
+                db.add_encrypted_index_in(txn, &collection, &field).await
+            })
+        })
+        .await
+    }
+
     /// Add an equality encrypted index on `field` of `collection` in a
     /// transaction of its own. A definition that changes before it commits
     /// runs it again against the new one, under the node's retry policy.
@@ -52,6 +85,93 @@ where
         })
         .await
     }
+
+    /// Delete the encrypted index on `field` of `collection` as `context`,
+    /// checking node access in the transaction that writes it.
+    pub async fn delete_encrypted_index_as(
+        self: &Arc<Self>,
+        context: &RequestContext,
+        collection: &str,
+        field: &str,
+    ) -> Result<()> {
+        let (db, context) = (Arc::clone(self), context.clone());
+        let (collection, field) = (collection.to_owned(), field.to_owned());
+        self.transact_db(move |txn| {
+            let (db, context) = (Arc::clone(&db), context.clone());
+            let (collection, field) = (collection.clone(), field.clone());
+            Box::pin(async move {
+                check_encrypted_index_access_in(
+                    &db,
+                    &context,
+                    txn,
+                    NodePermission::EncryptedIndexDelete,
+                )
+                .await?;
+                db.delete_encrypted_index_in(txn, &collection, &field).await
+            })
+        })
+        .await
+    }
+
+    /// The fields of `collection` that carry an encrypted index, read and
+    /// authorized in one snapshot as `context`.
+    pub async fn encrypted_indexes_as(
+        &self,
+        context: &RequestContext,
+        collection: &str,
+    ) -> Result<Vec<String>> {
+        let txn = self.new_txn(true).await?;
+        let fields = async {
+            check_encrypted_index_access_in(
+                self,
+                context,
+                &txn,
+                NodePermission::EncryptedIndexList,
+            )
+            .await?;
+            self.encrypted_indexes_in(&txn, collection).await
+        }
+        .await;
+        let _ = txn.discard();
+        fields
+    }
+
+    /// Every collection's encrypted index fields, read and authorized in one
+    /// snapshot as `context`.
+    pub async fn all_encrypted_indexes_as(
+        &self,
+        context: &RequestContext,
+    ) -> Result<Vec<(String, Vec<String>)>> {
+        let txn = self.new_txn(true).await?;
+        let all = async {
+            self.check_node_access_in_txn(
+                context,
+                txn.acpstore()?,
+                NodePermission::EncryptedIndexListAll,
+            )
+            .await?;
+            self.all_encrypted_indexes_in(&txn).await
+        }
+        .await;
+        let _ = txn.discard();
+        all
+    }
+}
+
+async fn check_encrypted_index_access_in<S>(
+    db: &DB<S>,
+    context: &RequestContext,
+    txn: &DbTxn<S>,
+    permission: NodePermission,
+) -> Result<()>
+where
+    S: Store,
+{
+    for needed in [NodePermission::CollectionGet, permission] {
+        db.check_node_access_in_txn(context, txn.acpstore()?, needed)
+            .await?;
+    }
+    Ok(())
 }
 
 impl<S> DB<S>
@@ -113,6 +233,11 @@ where
         collection: &str,
     ) -> Result<Vec<String>> {
         let found = definition_in(txn, collection).await?;
+        if self.is_collection_forbidden(found.collection_id())?
+            && !txn.was_collection_created(found.collection_id())
+        {
+            return Err(Error::CollectionNotFound(collection.to_owned()));
+        }
         Ok(found
             .schema()
             .encrypted_indexes
