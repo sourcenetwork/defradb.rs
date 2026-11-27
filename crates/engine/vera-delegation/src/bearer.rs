@@ -49,8 +49,9 @@ pub async fn caller_delegation(
 
 /// A delegation for one scope, issued under the spelling `issuer` gives.
 ///
-/// vera.rs takes either spelling of a secp256k1 issuer as the same actor, and
-/// an Ed25519 or P-256 issuer under its one canonical DID.
+/// vera.rs takes every spelling of a secp256k1 issuer (either point encoding,
+/// in base58btc or base64url) as the same actor, and an Ed25519 or P-256
+/// issuer under its one base58btc canonical DID.
 pub async fn create_scoped_bearer_token(
     signer: &dyn DelegationSigner,
     issuer: &str,

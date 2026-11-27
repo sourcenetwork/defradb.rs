@@ -17,7 +17,9 @@
 //! than base58btc (`did:key:z…`). vera.rs takes a secp256k1 key in either and
 //! the other types in base58btc only, and DefraDB derives base58btc, so both
 //! [`defra`] and [`wire`] write base58btc, an Ed25519 key's one encoding
-//! included.
+//! included. [`spellings`] lists the base58btc form of a base64url Ed25519
+//! name as well, so key lookups find a registration under either name, and
+//! every DID the provider reports is the base58btc form.
 
 use std::borrow::Cow;
 
@@ -82,6 +84,18 @@ pub fn same_actor(a: &str, b: &str) -> bool {
 mod tests {
     use super::*;
 
+    fn base64url(did: &str) -> String {
+        use base64::Engine as _;
+
+        let bytes = bs58::decode(&did["did:key:z".len()..])
+            .into_vec()
+            .expect("base58btc");
+        format!(
+            "did:key:u{}",
+            base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes)
+        )
+    }
+
     fn spellings() -> (String, String) {
         let key = k256::ecdsa::SigningKey::from_slice(&[42; 32]).expect("valid key");
         (
@@ -101,30 +115,16 @@ mod tests {
 
     #[test]
     fn a_base64url_spelling_meets_the_base58btc_ones() {
-        use base64::Engine as _;
-
         let (compressed, uncompressed) = spellings();
         for did in [&compressed, &uncompressed] {
-            let bytes = bs58::decode(&did["did:key:z".len()..])
-                .into_vec()
-                .expect("base58btc");
-            let base64url = format!(
-                "did:key:u{}",
-                base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes)
-            );
+            let base64url = base64url(did);
             assert_eq!(defra(&base64url), uncompressed);
             assert_eq!(wire(&base64url), uncompressed);
             assert!(same_actor(&base64url, &compressed));
         }
 
         let ed25519 = "did:key:z6MkiTBz1ymuepAQ4HEHYSF1H8quG5GLVVQR3djdX3mDooWp";
-        let bytes = bs58::decode(&ed25519["did:key:z".len()..])
-            .into_vec()
-            .expect("base58btc");
-        let base64url = format!(
-            "did:key:u{}",
-            base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes)
-        );
+        let base64url = base64url(ed25519);
         assert_eq!(defra(&base64url), ed25519);
         assert_eq!(wire(&base64url), ed25519);
         assert!(same_actor(&base64url, ed25519));
@@ -179,6 +179,8 @@ mod tests {
         );
         let ed25519 = "did:key:z6MkiTBz1ymuepAQ4HEHYSF1H8quG5GLVVQR3djdX3mDooWp";
         assert_eq!(super::spellings(ed25519), [ed25519]);
+        let base64url = base64url(ed25519);
+        assert_eq!(super::spellings(&base64url), [base64url.as_str(), ed25519]);
     }
 
     #[test]

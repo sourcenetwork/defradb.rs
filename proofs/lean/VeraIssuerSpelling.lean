@@ -29,8 +29,13 @@ Rust owner: `ActorKey::names` in
 `create_scoped_bearer_token_at` in `crates/engine/vera-delegation/src/bearer.rs`.
 The function it asks is `canonical_actor` in vera.rs `vera-crypto`.
 
-The model is over an abstract key. That two different keys never share a
-spelling is the encoding's injectivity, assumed here.
+The model is over an abstract key. Two string-level facts are assumed here:
+different keys never share a spelling (the encoding's injectivity), and
+DefraDB's `bearer::did_from_key` / `crypto::create_did_key` and vera.rs's
+`ActorKey::canonical_did` write the same base58btc DID for a key. The crate
+tests `an_ed25519_or_p256_signer_named_in_base64url_issues_under_its_canonical_did_only`
+and `key_types::vera_rs_verifies_a_delegation_from_each_key_type_and_names_its_actor`
+check both sides of that canonical-DID assumption.
 -/
 namespace VeraIssuerSpelling
 
