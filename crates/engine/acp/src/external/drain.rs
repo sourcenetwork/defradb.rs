@@ -226,8 +226,9 @@ where
     }
 
     /// Whether `change` may share a request with `members`: its object owes
-    /// no registration, and every earlier unsettled change of its tuple is
-    /// one of them.
+    /// no registration, every earlier unsettled change of its tuple is one
+    /// of them, and the order around a transfer on its object holds it
+    /// behind none but them ([`super::transfer_order::held_by_transfer`]).
     async fn joins_request(
         &self,
         change: &OwedChange,
@@ -241,10 +242,11 @@ where
         {
             return Ok(false);
         }
-        Ok(match self.oldest_on(tuple).await? {
+        let head = match self.oldest_on(tuple).await? {
             Some(oldest) => oldest.seq == change.seq || members.contains(&oldest.seq),
             None => false,
-        })
+        };
+        Ok(head && self.holder_on_object(change, members).await?.is_none())
     }
 
     /// Store `flight` with the changes `seqs` in one transaction.

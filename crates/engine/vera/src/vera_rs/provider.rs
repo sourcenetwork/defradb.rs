@@ -707,6 +707,23 @@ impl VeraProvider for VeraRsProvider {
             .await
     }
 
+    async fn transfer_object(
+        &self,
+        bearer_token: &str,
+        policy_id: &str,
+        resource: &str,
+        object_id: &str,
+        new_owner: &str,
+    ) -> Result<(), ProviderError> {
+        let command = crate::PolicyCommand {
+            policy_id,
+            resource,
+            object_id,
+            action: crate::PolicyAction::TransferObject { new_owner },
+        };
+        self.send_command(bearer_token, &command).await
+    }
+
     async fn set_relationship(
         &self,
         bearer_token: &str,
