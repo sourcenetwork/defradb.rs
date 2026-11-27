@@ -116,6 +116,9 @@ pub enum Error {
     /// Refreshing materialized views failed.
     #[error("refresh materialized views error: {0}")]
     MaterializedViewRefresh(#[source] db::Error),
+    /// An encrypted index operation was refused.
+    #[error(transparent)]
+    EncryptedIndex(#[from] db::EncryptedIndexError),
     /// A backup export or import failed; the backup code reports it as text.
     #[error("{0}")]
     Backup(String),
