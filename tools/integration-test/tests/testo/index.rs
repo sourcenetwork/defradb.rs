@@ -19,6 +19,7 @@ mod get;
 mod group_order;
 mod index_offset_limit;
 mod json;
+mod json_all_empty_array;
 mod json_array;
 mod json_array_filter;
 mod json_composite;
