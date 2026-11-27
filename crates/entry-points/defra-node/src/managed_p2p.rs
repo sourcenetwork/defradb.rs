@@ -25,6 +25,8 @@ pub enum TransportKind {
     Libp2p,
     #[cfg(feature = "p2p")]
     Iroh,
+    #[cfg(feature = "pinc")]
+    Pinc,
 }
 
 /// P2P runtime managed by a node.
@@ -196,6 +198,11 @@ enum ShutdownKind {
         /// closed scope would refuse.
         scope: edge::Scope,
     },
+    #[cfg(feature = "pinc")]
+    Pinc {
+        peer: defra_p2p_adapter::PincPeerShutdown,
+        scope: edge::Scope,
+    },
 }
 
 impl ShutdownHandle {
@@ -225,6 +232,13 @@ impl ShutdownHandle {
         }
     }
 
+    #[cfg(feature = "pinc")]
+    pub(crate) fn pinc(peer: defra_p2p_adapter::PincPeerShutdown, scope: edge::Scope) -> Self {
+        Self {
+            inner: ShutdownKind::Pinc { peer, scope },
+        }
+    }
+
     /// Stops the transport and the tasks around it.
     pub async fn stop(&self) {
         #[cfg(not(any(feature = "libp2p", feature = "p2p")))]
@@ -247,6 +261,15 @@ impl ShutdownHandle {
             }
             #[cfg(feature = "p2p")]
             ShutdownKind::Iroh { peer, scope } => {
+                peer.shutdown().await;
+                crate::network::drain(
+                    scope,
+                    "timed out draining the node's network work during shutdown",
+                )
+                .await;
+            }
+            #[cfg(feature = "pinc")]
+            ShutdownKind::Pinc { peer, scope } => {
                 peer.shutdown().await;
                 crate::network::drain(
                     scope,

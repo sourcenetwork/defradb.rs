@@ -36,7 +36,7 @@ impl Op for ActivePeers {
 
         let node = state.node_on(self.common.node())?;
         let listed = state
-            .block_on(node.active_peers_as(&state.context_as(None, identity)))
+            .block_on(state.scope_as(None, identity).scoped(&node).active_peers())
             .map_err(failed)?;
         Ok(json!({ "addresses": listed }))
     }

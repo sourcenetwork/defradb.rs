@@ -99,8 +99,8 @@
 \* create, record; crates/database/db/src/backup/host.rs ImportHost,
 \* RunnerHost; crates/database/db/src/backup/batch.rs Batch::must_save_before;
 \* crates/database/db/src/backup/alias.rs register, check_free;
-\* crates/entry-points/defra-node/src/ops/backup.rs Node::import_backup_as,
-\* Node::import_admitted, NodeOps::import_backup_with, NodeHost;
+\* crates/entry-points/defra-node/src/node_core/backup.rs NodeCore::import_backup,
+\* NodeCore::import_admitted, NodeOps::import_backup_with, NodeHost;
 \* crates/entry-points/defra-node/src/lib.rs Node::as_request, Admit;
 \* crates/entry-points/defra-node/src/request_path.rs RequestPath::execute,
 \* RequestPath::admitted; crates/foundation/edge/src/handle.rs Edge::spawn,

@@ -44,11 +44,12 @@ impl Op for SyncDocs {
         let identity = self.common.client_identity(Self::name())?;
         let started = Instant::now();
         state
-            .block_on(state.node_on(self.common.node())?.sync_documents_as(
-                &state.context_as(None, identity),
-                &self.collection,
-                &self.ids(),
-            ))
+            .block_on(
+                state
+                    .scope_as(None, identity)
+                    .scoped(&*state.node_on(self.common.node())?)
+                    .sync_documents(&self.collection, &self.ids()),
+            )
             .map_err(|e| Failure::operation(e.to_string()))?;
         self.returned_in_time(started)
     }

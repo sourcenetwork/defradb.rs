@@ -51,7 +51,7 @@ Receipt recovery is distinct from caller-level operation idempotency. Retrying
 a completed operation can issue a new request. vera.rs derives a policy's ID
 from its definition, its creator (the node's actor) and a 32-byte nonce, so a
 caller that supplies the nonce (`VeraProvider::create_policy`,
-`Node::add_dac_policy_with_nonce_as`, `?nonce=` on the add-policy route,
+`ScopedNode::add_dac_policy` with a nonce, `?nonce=` on the add-policy route,
 `policy add --nonce`) knows the ID beforehand (`vera_rs::predict_policy_id`):
 a create sent again with that nonce is refused as already existing, and the
 provider returns the existing policy when its definition, owner and nonce are

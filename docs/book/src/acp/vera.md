@@ -17,7 +17,7 @@ nonce the creator picks: `SHA-256("acp/policy-id/v2" || policy hash || nonce ||
 u64be(len(creator)) || creator)`. One definition by two creators gets two IDs, and one
 creator gets a new ID for each nonce. The node's actor is the creator, so a nonce from a
 caller that is not that actor is refused: its ID would come from the actor's DID. A caller that
-supplies the nonce (`Node::add_dac_policy_with_nonce_as`, `?nonce=<64 hex>` on
+supplies the nonce (`ScopedNode::add_dac_policy(policy, Some(nonce))`, `?nonce=<64 hex>` on
 `POST /api/v0/acp/document/policy`, `defradb client acp document policy add --nonce`)
 knows the ID before the policy exists (`vera::vera_rs::predict_policy_id`,
 `VeraRsProvider::predict_policy_id`), and a create sent again with the same nonce
@@ -27,9 +27,9 @@ owner and nonce are the ones asked for. Without a nonce the provider draws one f
 the operating system for each request, once, so its own sends again reuse it, but a
 caller that repeats the request makes a second policy. A local ACP numbers its
 policies as Go's does and refuses a nonce; vera.rs refuses a counter
-(`add_dac_policy_with_counter_as`). An embedded deployment is seeded with
+(`add_dac_policy_with_counter`). An embedded deployment is seeded with
 `EmbeddedVeraPolicy { definition, nonce, creator }`; `EmbeddedVeraPolicy::id` gives the
-ID, which any node of the deployment reads (`get_dac_policy_as`) and the creator's own
+ID, which any node of the deployment reads (`get_dac_policy`) and the creator's own
 node adopts by creating the definition under the seed's nonce. A collection names its
 policy's ID, so deployments that replicate one collection to each other seed the policy
 under one creator and one nonce. Modeled by
@@ -156,9 +156,9 @@ Where a one-request delegation is taken, and where not:
 - **Taken** beside a verified write
   ([Verified writes on an external provider](transactional.md#verified-writes-on-an-external-provider)),
   as `SignerCredential::RequestBound` for the registration a create owes, in the
-  context of a relationship call (`RequestContext::with_request_delegation`) for that one
+  scope of a relationship call (`ScopedNode::with_request_delegation`) for that one
   change, and as the fresh credential of one owed registration or change
-  (`Node::reauthorize_owed_acp_as`), whose command it must name.
+  (`ScopedNode::reauthorize_owed_acp`), whose command it must name.
 - **Not taken** as a caller's credential. `caller_of_delegation` refuses it, so an HTTP
   request that presents one is not authenticated. Presented as a plain bearer it admits
   no verified write and stages no change.

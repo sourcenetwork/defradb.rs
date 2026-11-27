@@ -51,6 +51,9 @@ query = { path = "../../crates/engine/query" }
 schema = { path = "../../crates/foundation/schema" }
 defra-core = { path = "../../crates/foundation/defra-core" }
 defra-version = { path = "../../crates/foundation/defra-version" }
+# The client-signed create action builds its graph and runs its conversation.
+crdt = { path = "../../crates/building-blocks/crdt" }
+db = { path = "../../crates/database/db", default-features = false }
 serde.workspace = true
 tempfile = "3.17"
 thiserror.workspace = true
@@ -69,6 +72,8 @@ identity = { path = "../../crates/building-blocks/identity" }
 
 [features]
 generator = ["serde_json/preserve_order"]
+# Run the network scenarios over pinc with DEFRA_TRANSPORT=pinc.
+pinc = ["defra-node/pinc"]
 
 [[bin]]
 name = "gen_scenarios"
