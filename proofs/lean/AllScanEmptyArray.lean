@@ -30,7 +30,9 @@ another (`_all{_all}`).
 
 Model limit: one array level. An element is a scalar (`some v`) or not
 (`none`); a nested array operator is out of the model because the planner never
-sends it to the index.
+sends it to the index. A path that crosses an array of objects is out of it
+too: the marker of `[{"tags": []}]` sits below that array, and the model has
+one value per path.
 
 Who acts: the writer, which turns a document's array into entries, and a scan,
 which turns entries back into the documents it hands to the filter.
@@ -54,9 +56,18 @@ What must never happen:
 - a range, `_eq` or `_in` scan on one path tests its values with a `_like`
   pattern of another path, so a match is lost (`narrowed_scan_complete`);
 - a full scan reads the path of a bare `_nin`, which a document without that
-  path passes, so the document is lost (`chosen_scan_complete`);
+  path passes, so the document is lost (`chosen_scan_complete`), or a bare
+  `_ne` or `_nin` at a path inside the value pins the scan
+  (`chosen_scan_pins`);
+- a scan of a path drives a condition a missing path passes, such as
+  `_eq: null` (`entry_scan_complete` states what holds instead);
 - bounds from two `_any` clauses are joined into one range, which no single
-  element of a match may fall in (`separate_any_complete`).
+  element of a match may fall in (`separate_any_complete`);
+- a `_like` pattern from another `_any` clause is tested on the scanned
+  element (`clause_scan_complete`).
+
+The planner applies the same rules to every JSON field of a composite index
+whose `_eq` narrows the scan, not only to the first.
 
 The RED side: with the old writer, which stored nothing for `[]`, the same
 scan misses an empty array that matches (`neg_no_entry_misses_empty`). Routing
@@ -72,7 +83,14 @@ under `{a: {_gt: 10}, b: {_like: "x%"}}` (`neg_unguarded_scan_misses`). A scan
 pinned to `_nin` on `a` misses `{"b": "xa"}` under
 `{a: {_nin: [25]}, b: {_like: "x%"}}` (`neg_nin_pin_misses`). Joining
 `{_any: {_gt: 10}}` and `{_any: {_lt: 20}}` from two clauses misses `[5, 30]`
-(`neg_joined_any_misses`).
+(`neg_joined_any_misses`). A bare `_ne: 5` pinning the scan of `tags` misses
+`{"tags": {"x": 1}}` (`neg_bare_path_pin_misses`). `_eq: null` at `title`
+served by the index misses `{"other": 1}` (`neg_null_eq_scan_misses`). Testing
+`_like` from another `_any` clause on the scanned element misses `[5, "xa"]`
+(`neg_cross_clause_filter_misses`). `_all {_in: [1, {x: 1}]}` served by the
+index misses `[{"x": 1}]` (`neg_in_object_member_misses`). A property under
+`_all` served by the index returns `[]` where the full scan errors
+(`neg_property_under_all_answers`).
 
 Rust anchors:
 - the writer: `extract_json_leaves` (`crates/building-blocks/document/src/normal.rs`);
@@ -84,14 +102,18 @@ Rust anchors:
   `PrefixScan` that reads every entry, markers included, and `is_full_scan`
   (`crates/engine/query/src/planner/index_selection/conditions.rs`), which
   keeps a bare negative at a path from driving a scan;
-- the full-scan fallback for a negative op under `_all` or `_any`:
-  `should_fallback_to_full_scan` (`conditions.rs`), and for a nested array
-  operator `FieldCondition::nested_array_op` (`types.rs`);
+- the full-scan fallback for a negative op, a property or a nested array
+  operator under `_all` or `_any`, a null check at a path, and an `_in` with
+  an object or array member: `should_fallback_to_full_scan` (`conditions.rs`),
+  with `FieldCondition::nested_array_op` and `FieldCondition::non_scalar_member`
+  (`types.rs`), applied to the later fields of a composite index by
+  `suffix_eq_values` (`filter_to_scan.rs`);
 - the skip: `RangeIterator::next` (`crates/engine/storage/src/index/range_iterator.rs`),
   which drops the marker from every bounded scan;
 - the pinned path: `filter_to_index_scan`, where the first `_like`-family
   condition (or a top-level `_ne` or `_nin`) gives the scan both its path and its value filter, and
-  a narrowing scan keeps the value filter only when it names the scan's path;
+  a narrowing scan keeps the value filter only when it names the scan's path
+  and, under `_any`, the scan's clause;
 - the choice of that condition: `full_scan_at` in `filter_to_index_scan`, with
   `is_full_scan` and `accepts_missing` (`conditions.rs`), which skip a bare `_nin` while
   another condition can pin the scan, and `in_range`, which joins bounds only
@@ -593,33 +615,63 @@ def needsEntry {P V : Type} (c : Cond P (Option V)) : Bool :=
   -- a missing path is a `none` value
   !c.test none
 
--- The shipped choice: the first condition a missing path fails, else the first.
-def chooseScan {P V : Type} (cs : List (Cond P (Option V))) : Option (Cond P (Option V)) :=
-  -- prefer a condition that only documents with the path pass
-  (cs.find? needsEntry).orElse fun _ => cs.head?
+-- The shipped choice, `full_scan_at`: among the conditions that may pin a
+-- scan, the first one a missing path fails, else the first of them. `pins` is
+-- `is_full_scan`: a bare `_ne` or `_nin` at a path inside the value never
+-- pins one, since an object or array there has its entries deeper.
+def chooseScan {P V : Type} (pins : Cond P (Option V) → Bool)
+    (cs : List (Cond P (Option V))) : Option (Cond P (Option V)) :=
+  -- prefer a pinning condition that only documents with the path pass
+  ((cs.filter pins).find? needsEntry).orElse fun _ => (cs.filter pins).head?
 
-/-- When some condition fails a missing path, the chosen full scan keeps every
-    document that passes all conditions. -/
-theorem chosen_scan_complete {P V : Type} (doc : P → Option V)
-    (cs : List (Cond P (Option V)))
+/-- The chosen scan is always a condition that may pin a scan. -/
+theorem chosen_scan_pins {P V : Type} (pins : Cond P (Option V) → Bool)
+    (cs : List (Cond P (Option V))) (c : Cond P (Option V))
+    -- the choice is `c`
+    (h : chooseScan pins cs = some c) :
+    -- then `c` may pin the scan
+    pins c = true := by
+  -- the choice comes from the pinning conditions alone
+  have hmem : c ∈ cs.filter pins := by
+    -- split on whether a pinning condition fails a missing path
+    unfold chooseScan at h
+    cases hf : (cs.filter pins).find? needsEntry with
+    -- none does: the choice is the first pinning condition
+    | none =>
+      rw [hf] at h
+      simp only [Option.orElse] at h
+      exact List.mem_of_mem_head? h
+    -- one does: the choice is that condition
+    | some d =>
+      rw [hf] at h
+      simp only [Option.orElse, Option.some.injEq] at h
+      subst h
+      exact List.mem_of_find?_eq_some hf
+  -- members of the filtered list pass the filter
+  exact (List.mem_filter.mp hmem).2
+
+/-- When some condition that may pin a scan fails a missing path, the chosen
+    full scan keeps every document that passes all conditions. -/
+theorem chosen_scan_complete {P V : Type} (pins : Cond P (Option V) → Bool)
+    (doc : P → Option V) (cs : List (Cond P (Option V)))
     -- the document passes every condition
     (h : passesAll doc cs = true)
-    -- and one condition fails a missing path
-    (hn : ∃ c ∈ cs, needsEntry c = true) :
+    -- and one pinning condition fails a missing path
+    (hn : ∃ c ∈ cs, pins c = true ∧ needsEntry c = true) :
     -- the chosen scan exists and keeps it
-    ∃ c, chooseScan cs = some c ∧ entryScan doc c = true := by
+    ∃ c, chooseScan pins cs = some c ∧ entryScan doc c = true := by
   -- the search for such a condition succeeds
-  obtain ⟨c0, hc0, hn0⟩ := hn
-  have hfind : (cs.find? needsEntry).isSome = true := by
+  obtain ⟨c0, hc0, hp0, hn0⟩ := hn
+  have hfind : ((cs.filter pins).find? needsEntry).isSome = true := by
     -- `find?` finds something when a member passes
     rw [List.find?_isSome]
-    exact ⟨c0, hc0, hn0⟩
+    exact ⟨c0, List.mem_filter.mpr ⟨hc0, hp0⟩, hn0⟩
   -- name what it finds
   obtain ⟨c, hc⟩ := Option.isSome_iff_exists.mp hfind
   -- that is the chosen scan
   refine ⟨c, by simp [chooseScan, hc, Option.orElse], ?_⟩
   -- it is a member that fails a missing path
-  have hmem : c ∈ cs := List.mem_of_find?_eq_some hc
+  have hmem : c ∈ cs := (List.mem_filter.mp (List.mem_of_find?_eq_some hc)).1
   have hneed : needsEntry c = true := List.find?_some hc
   -- the document passes it
   have hpass : c.test (doc c.path) = true := by
@@ -707,6 +759,187 @@ theorem neg_joined_any_misses :
   -- all sides are literal; Lean computes them
   decide
 
+/-- A scan of one path keeps every document passing a condition that a missing
+    path fails: such a document has an entry there. -/
+theorem entry_scan_complete {P V : Type} (doc : P → Option V) (c : Cond P (Option V))
+    -- a missing path fails the condition
+    (hn : needsEntry c = true)
+    -- the document passes it
+    (h : c.test (doc c.path) = true) :
+    -- the scan keeps it
+    entryScan doc c = true := by
+  -- split on whether the document has the path
+  unfold entryScan
+  cases hd : doc c.path with
+  -- missing: it would fail the condition, so this cannot happen
+  | none =>
+    rw [hd] at h
+    simp [needsEntry, h] at hn
+  -- present: the scan keeps it because it passes
+  | some v =>
+    rw [hd] at h
+    exact h
+
+-- `{"tags": {"x": 1}}`: an object at `tags`, whose entries sit deeper.
+def docObjAt : Unit → Option Val
+  -- no entry at the path itself
+  | () => none
+
+-- `_ne: 5` on an optional value: an object at the path passes.
+def ne5Opt : Option Val → Bool
+  -- 5 fails
+  | some (.num 5) => false
+  -- anything else, an object included, passes
+  | _ => true
+
+/-- RED: letting a bare `_ne: 5` at `tags` pin the scan misses
+    `{"tags": {"x": 1}}`. The object passes `_ne`, but the scan of `tags`
+    never sees it. This is why `pins` leaves such a condition out. -/
+theorem neg_bare_path_pin_misses :
+    -- the document passes the condition
+    passesAll docObjAt [⟨(), ne5Opt⟩] = true
+    -- but a scan of its path never sees it
+    ∧ entryScan docObjAt ⟨(), ne5Opt⟩ = false := by
+  -- both sides are literal; Lean computes them
+  decide
+
+-- A value at a path that may be missing: outer `none` is a missing path,
+-- `some none` a null, `some (some n)` a number.
+def docMissing : Unit → Option (Option Nat)
+  -- `{"other": 1}`: no `title`
+  | () => none
+
+-- `_eq: null`: the full scan reads a missing path as null, so both pass.
+def eqNull : Option (Option Nat) → Bool
+  -- a number fails
+  | some (some _) => false
+  -- a null or a missing path passes
+  | _ => true
+
+/-- RED: serving `{custom: {title: {_eq: null}}}` from the index misses
+    `{"other": 1}`. The missing `title` passes, but the document has no
+    entry there. So the planner sends null checks at a path to a full scan. -/
+theorem neg_null_eq_scan_misses :
+    -- the document passes the condition
+    passesAll docMissing [⟨(), eqNull⟩] = true
+    -- but a scan of the path never sees it
+    ∧ entryScan docMissing ⟨(), eqNull⟩ = false := by
+  -- both sides are literal; Lean computes them
+  decide
+
+-- The scan of an `_any` clause with a `_like` value filter. With `true` the
+-- pattern is tested on the element the scan matched; with `false` the pattern
+-- is left to the filter.
+def clauseScan {V : Type} (p q : Option V → Bool) : Bool → List (Entry V) → Bool
+  -- one element must pass both tests
+  | true, es => valueScan (fun e => p e && q e) es
+  -- the scan tests only its own clause
+  | false, es => valueScan p es
+
+-- What the document must pass. With `true` both tests sit in one `_any`
+-- clause, so one element passes both; with `false` they sit in two clauses,
+-- each with an element of its own.
+def clauseMatch {V : Type} (p q : Option V → Bool) : Bool → Arr V → Bool
+  -- one clause: one element passes both
+  | true, a => anyMatch (fun e => p e && q e) a
+  -- two clauses: each finds its own element
+  | false, a => anyMatch p a && anyMatch q a
+
+/-- When the value filter is kept only for a pattern from the scan's own
+    `_any` clause, every document passing the clauses is found. -/
+theorem clause_scan_complete {V : Type} (p q : Option V → Bool) (same : Bool) (a : Arr V)
+    -- the scan's predicate is positive
+    (hpos : p none = false)
+    -- the document passes the clauses
+    (h : clauseMatch p q same a = true) :
+    -- the scan finds it
+    clauseScan p q same (entries a) = true := by
+  -- split on whether the pattern shares the scan's clause
+  cases same with
+  -- two clauses: the scan alone is the single `_any` case
+  | false =>
+    simp only [clauseMatch, Bool.and_eq_true] at h
+    exact any_scan_complete p a hpos h.1
+  -- one clause: both tests together are a positive predicate
+  | true => exact any_scan_complete _ a (by simp [hpos]) h
+
+-- `_eq: 5` on an element.
+def eq5 : Option Val → Bool
+  -- the number 5 passes
+  | some (.num 5) => true
+  -- anything else fails
+  | _ => false
+
+/-- RED: testing a pattern from another `_any` clause on the scanned element
+    misses `[5, "xa"]`, which passes `_any {_eq: 5}` and `_any {_like: "x%"}`
+    with two different elements. -/
+theorem neg_cross_clause_filter_misses :
+    -- the document passes the two clauses
+    clauseMatch eq5 likeXOpt false (some [some (.num 5), some (.str ['x', 'a'])]) = true
+    -- but the scan that tests both on one element misses it
+    ∧ clauseScan eq5 likeXOpt true
+        (entries (some [some (.num 5), some (.str ['x', 'a'])])) = false := by
+  -- both sides are literal; Lean computes them
+  decide
+
+-- `_in: [1, {"x": 1}]` on an element: the object member matches an object,
+-- a non-scalar `none`, so the predicate is not positive.
+def inOneOrObj : Option Nat → Bool
+  -- 1 passes
+  | some 1 => true
+  -- any other scalar fails
+  | some _ => false
+  -- an object element can equal the object member
+  | none => true
+
+/-- RED: serving `_all {_in: [1, {x: 1}]}` from the index misses `[{"x": 1}]`.
+    Its element equals the object member but has no entry. So the planner
+    sends an `_in` with an object or array member to a full scan. -/
+theorem neg_in_object_member_misses :
+    -- the document matches
+    allMatch inOneOrObj (some [none]) = true
+    -- but the `_all` scan over its entries does not find it
+    ∧ allScan inOneOrObj (entries (some [none])) = false := by
+  -- both sides are literal; Lean computes them
+  decide
+
+-- What a query answers: `none` when the filter errors on some document, else
+-- the documents that pass, in order.
+def runQuery {D : Type} (f : D → Option Bool) : List D → Option (List D)
+  -- no documents: nothing to return
+  | [] => some []
+  -- one document, then the rest
+  | d :: ds =>
+    match f d, runQuery f ds with
+    -- it passes: keep it
+    | some true, some r => some (d :: r)
+    -- it fails: drop it
+    | some false, some r => some r
+    -- it, or a later one, errors: the query errors
+    | _, _ => none
+
+-- `_all {a: {_eq: 1}}`: a null array fails, an empty one passes, and any
+-- element is an error, since `a` is no element operator.
+def propAll : Arr Nat → Option Bool
+  -- a null array fails
+  | none => some false
+  -- nothing to test
+  | some [] => some true
+  -- an element: the filter errors
+  | some (_ :: _) => none
+
+/-- RED: serving `{tags: {_all: {a: {_eq: 1}}}}` from the index reads only the
+    marker of `[]` and returns it, while the full scan of `[]` and `[1]` errors
+    on `[1]`. So the planner sends a property under an array operator to a
+    full scan. -/
+theorem neg_property_under_all_answers :
+    -- the full scan errors
+    runQuery propAll [some [], some [some 1]] = none
+    -- the index reads only `[]` and answers it
+    ∧ runQuery propAll [some []] = some [some []] := by
+  -- both sides are literal; Lean computes them
+  decide
+
 end AllScanEmptyArray
 
 #print axioms AllScanEmptyArray.all_scan_complete
@@ -731,3 +964,11 @@ end AllScanEmptyArray
 #print axioms AllScanEmptyArray.neg_nin_pin_misses
 #print axioms AllScanEmptyArray.separate_any_complete
 #print axioms AllScanEmptyArray.neg_joined_any_misses
+#print axioms AllScanEmptyArray.chosen_scan_pins
+#print axioms AllScanEmptyArray.entry_scan_complete
+#print axioms AllScanEmptyArray.neg_bare_path_pin_misses
+#print axioms AllScanEmptyArray.neg_null_eq_scan_misses
+#print axioms AllScanEmptyArray.clause_scan_complete
+#print axioms AllScanEmptyArray.neg_cross_clause_filter_misses
+#print axioms AllScanEmptyArray.neg_in_object_member_misses
+#print axioms AllScanEmptyArray.neg_property_under_all_answers
