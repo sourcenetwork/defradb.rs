@@ -17,7 +17,8 @@
 \* Rust: crates/database/db/src/definition/migration/format.rs
 \* DB::check_index_format, DB::migrate_index_format, DB::rebuild_every_index,
 \* DB::rebuild_indexes_owed, DB::stamp_index_format; crates/database/db/src/database/mod.rs DB::finish_open;
-\* crates/database/db/src/index/deferred/drain.rs and replace.rs.
+\* crates/database/db/src/index/deferred/drain.rs move_entries;
+\* crates/database/db/src/index/manager/deferred.rs IndexManager::replace.
 EXTENDS FiniteSets
 CONSTANTS Collections, Rebuild, StampLast, RefuseFuture, RetainLegacy, GuardRecordedKeys, FreshToken
 \* JsonCollections: the collections with a JSON index. RebuildJson: the guard

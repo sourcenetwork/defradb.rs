@@ -88,7 +88,7 @@ a metadir collision.)
 |---|---|---|---|
 | `Converge` | all nodes eventually merge all blocks | GREEN run 1, RED run 2 | `crates/database/p2p/src/sync/coordinator/dag_fetcher.rs` ancestry walk |
 | `INV_DagComplete` | no merged block lacks a merged parent | holds under `Merge`; relaxed by Model B (by design) | `crates/database/db/src/merge/merge_handler/` `loadComposites` recursion |
-| `INV_SubsetConverge` | subscribed docs fully converge | GREEN run 3 | Gents watcher DID filter (`watcher/query.rs`) |
+| `INV_SubsetConverge` | subscribed docs fully converge | GREEN run 3 | Gents watcher DID filter (`gents:crates/gents/src/watcher/query.rs`) |
 | `INV_RelRefSafe` | dropping a foreign-DID relational ref never blocks a merge | GREEN run 3 | scalar `String` FK; merge never derefs it |
 | `INV_NoSplitOwnership` | at most one DID owns a doc across all nodes | RED run 4 (mutable key), GREEN run 5 (immutable key) | `agent_request.graphql` `agent_did` (unenforced at model time; since `@immutable` + enforced) |
 | `INV_VisibleConverge` | every non-filtered visible block eventually merges | RED run 6 (Naive), GREEN run 8 (Model B) | GraphSync field-filter (future feature) |

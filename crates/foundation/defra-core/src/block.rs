@@ -402,7 +402,7 @@ impl CrdtDelta {
     /// no collection-version id, cannot be ACP-scoped, and (unlike Go, which
     /// stores but denies serving it) is never transferred over P2P at all:
     /// circular-relation groups converge by local deterministic reconstruction
-    /// (`schema/cid.rs`), so it must not be unconditionally served.
+    /// (`crates/foundation/schema/src/cid.rs`), so it must not be unconditionally served.
     pub fn is_definition(&self) -> bool {
         matches!(
             self,

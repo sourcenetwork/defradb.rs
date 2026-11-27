@@ -109,7 +109,7 @@ async fn inherited_encryption(
 
     // Encstore first, then blockstore: blocks arriving over P2P land in the
     // encstore while locally-written ones go to the blockstore. Mirrors the
-    // merge decrypt path (`db-merge/src/merge_handler/encryption.rs`) and
+    // merge decrypt path (`crates/database/db/src/merge/merge_handler/encryption.rs`) and
     // `versioned_fetcher`.
     let enc_key = cid_bytes(&enc_cid);
     let enc_bytes = match blockstore

@@ -109,7 +109,7 @@ Transaction & merge-queue concurrency, is now both — a Behavioral no-loss/no-d
 storm leg plus a Boundary internal-serialization leg). One
 of these (`partition::convergence_concurrent_same_doc_writes_merge`) found a real
 Rust-specific CRDT convergence bug — divergent materialization on identical DAGs
-after a restart — which is now **fixed** in `crates/database/db (merge)/.../field_state.rs`
+after a restart — which is now **fixed** in `crates/database/db/src/merge/merge_handler/field_state.rs`
 (`reseed_from_document` re-seeds the datastore LWW from the authoritative
 headstore); go↔go vs rust↔rust parity (`parity.rs`) localized it to Rust.
 

@@ -44,23 +44,24 @@ what makes "save wins" recover every `new` tuple even if it was just deleted.
 
 ## Source anchors
 
-Rust (`crates/database/db (index)`, this worktree):
-* `src/index_manager/mod.rs:412` `on_document_update` — the headline op.
-  - `:427-428` compute `old_value_sets` / `new_value_sets` via `extract_index_values`.
-  - `:430` guard `if old_value_sets != new_value_sets` (the no-op-on-equal short circuit).
-  - `:431-436` `for old_values in &old_value_sets { index.delete(.., old_values) }`  (deleteAll old).
-  - `:437-442` `for new_values in &new_value_sets { index.save(.., new_values) }`    (saveAll new).
+Rust (`crates/database/db/src/index/manager/`):
+* `mod.rs` `IndexManager::on_document_update` — the headline op.
+  - compute `old_value_sets` / `new_value_sets` via `extract_index_values`.
+  - guard `if old_value_sets != new_value_sets` (the no-op-on-equal short circuit).
+  - `for old_values in &old_value_sets { index.delete(.., old_values) }`  (deleteAll old).
+  - `for new_values in &new_value_sets { save_local_unique_validated(.., new_values) }`
+    (saveAll new).
   Modeled by `onDocumentUpdate := saveAll new ∘ deleteAll old`, plus
   `onDocumentUpdateGuarded` for the `old = new` short-circuit branch.
-* `src/index_manager/value_extraction.rs:31` `extract_index_values` →
-  `Vec<Vec<NormalValue>>` (the Cartesian product `cartesian_product`, `:229`).
+* `value_extraction.rs` `extract_index_values` →
+  `Vec<Vec<NormalValue>>` (the Cartesian product `cartesian_product`).
   Modeled abstractly as the function `extract : Doc → List Tuple` (its internal
   determinism/algebra is the *separate* `index-value-extraction-determinism`
   slice; here it is a black box — all we need is that update uses the same
   `extract` for both old and new, which the code does).
-* `src/index_manager/mod.rs:331-336` (`bulk_index`) and `:362-369`
-  (`on_document_create`) — `save` writes one entry per tuple; modeled by `save`.
-* `src/index_manager/mod.rs:463-470` (`on_document_delete`) — `delete` removes one
+* `mod.rs` `bulk_index` and `on_document_create` — `save` writes one entry per
+  tuple; modeled by `save`.
+* `mod.rs` `on_document_delete` — `delete` removes one
   entry per tuple; modeled by `delete`.
 
 Go (`origin/develop`, live upstream — fetched via
