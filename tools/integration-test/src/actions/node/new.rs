@@ -26,6 +26,9 @@ pub struct AdmissionSpec {
     /// the default.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub deferral_peer_bytes: Option<u64>,
+    /// The most documents one doc sync request may cover; `None` keeps the default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_doc_sync_request_doc_ids: Option<usize>,
 }
 
 /// A Rust node's connection manager: it trims to `low_water` once it holds

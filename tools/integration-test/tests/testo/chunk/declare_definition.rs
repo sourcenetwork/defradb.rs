@@ -6,7 +6,7 @@ use serde_json::json;
 
 use super::support::{add_article_collection, CHUNKS};
 
-const CHUNK_VERSION_ID: &str = "bafyreieddzrmajuoyvus5dnah5a6civs3742k6zuzfgm32335qskxkqfz4";
+const CHUNK_VERSION_ID: &str = "bafyreigojcyipvwoud4wtdg2a26babjs23czsoyqcmtpul4fl4a5aqj6je";
 
 #[test]
 #[mantra_macros::req_test("defra.chunk.declare.definition")]
@@ -42,16 +42,6 @@ fn the_chunk_collection_is_listed_with_its_source() {
                     },
                     {
                         "DefaultValue": null,
-                        "FieldID": "bafyreihq25gof76pqysd7pajyt45ezsz5mpviqaqyo6vqi2dar3xsmxuum",
-                        "IsPrimary": false,
-                        "Kind": 4,
-                        "Name": "generation",
-                        "RelationName": null,
-                        "Size": 0,
-                        "Typ": 1,
-                    },
-                    {
-                        "DefaultValue": null,
                         "FieldID": "bafyreifadfrdhubrvn2n4e7wcyooktriqcwc7eddgcdl5cj5trydbl7lzm",
                         "IsPrimary": false,
                         "Kind": 11,
@@ -75,6 +65,16 @@ fn the_chunk_collection_is_listed_with_its_source() {
                     },
                     {
                         "DefaultValue": null,
+                        "FieldID": "bafyreic5dozmi3zz66vkhnvcgwmhxpiofjrate4pcohw6nclqlrujt3454",
+                        "IsPrimary": false,
+                        "Kind": 11,
+                        "Name": "sourceCID",
+                        "RelationName": null,
+                        "Size": 0,
+                        "Typ": 1,
+                    },
+                    {
+                        "DefaultValue": null,
                         "FieldID": "bafyreibihrituppcjs44cdxohnicv2ky6ugx45bhtjoxizzmqcoygukfb4",
                         "IsPrimary": false,
                         "Kind": 11,
@@ -88,6 +88,7 @@ fn the_chunk_collection_is_listed_with_its_source() {
                     "Fields": [
                         { "Descending": false, "Name": "_sourceID" },
                         { "Descending": false, "Name": "hash" },
+                        { "Descending": false, "Name": "sourceCID" },
                     ],
                     "ID": 1,
                     "Kind": 0,

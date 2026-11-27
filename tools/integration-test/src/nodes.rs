@@ -387,6 +387,9 @@ fn build(spec: &NodeSpec, listen: &str, http: Option<HttpConfig>) -> Result<Node
             if let Some(bytes) = limits.deferral_peer_bytes {
                 libp2p.sync.gossip_deferral_peer_bytes = bytes;
             }
+            if let Some(max) = limits.max_doc_sync_request_doc_ids {
+                libp2p.sync.max_doc_sync_request_doc_ids = max;
+            }
         }
         if let Some(manager) = &spec.connection_manager {
             libp2p.connection_manager_low_water = manager.low_water;
@@ -484,6 +487,9 @@ fn pinc_transport(
         config.sync.rate_limit_rate = limits.rate_limit_rate;
         if let Some(bytes) = limits.deferral_peer_bytes {
             config.sync.gossip_deferral_peer_bytes = bytes;
+        }
+        if let Some(max) = limits.max_doc_sync_request_doc_ids {
+            config.sync.max_doc_sync_request_doc_ids = max;
         }
     }
     builder.with_pinc(config)
