@@ -876,7 +876,7 @@ jobs:
         if: matrix.suite == 'iroh'
         run: >-
           cargo nextest run --cargo-profile super-dev -p integration-test --test legacy -E 'test(/^p2p_iroh::/)'
-          -- connection::
+          -- connection:: replication::adversarial::
           sync::version::initial_col_version sync::version::patch_version_of_
       - name: Run iroh sync ownership fences
         if: matrix.suite == 'iroh'

@@ -1,9 +1,10 @@
 use serial_test::serial;
 
 use super::protected::{Outcome, ProtectedNode};
-use super::receiver::user_by_id;
+use super::receiver::{user_by_id, wait_for_user};
 use integration_test::hostile::blocks::{
-    aged, author, update, with_creator, Author, Fragment, Parent, Signing,
+    aged, author, genesis, genesis_parent_of, update, user, with_creator, Author, Fragment, Parent,
+    Signing,
 };
 
 /// Push `hostile`, then the owner's own rename; once the node has judged the
@@ -72,6 +73,46 @@ async fn unsigned_update_to_protected_document_is_refused() {
             Signing::Unsigned,
         );
         assert_refused(&node, &owner, &doc_id, &parent, &unsigned).await;
+    })
+    .await;
+}
+
+/// A replicated genesis registers its verified signer as the owner, so the
+/// document is private on the node and a stranger's update is refused.
+#[nuclei::test]
+#[serial]
+async fn update_to_replicated_protected_document_is_refused() {
+    edge::compat(async move {
+        let owner = author(0x11);
+        let stranger = author(0x22);
+        let node = ProtectedNode::start(&owner).await;
+        let version_id = &node.collection.version_id;
+
+        let created = genesis(&user("Alice", 30), version_id, &owner, Signing::EveryBlock);
+        node.peer
+            .push(&created, &node.collection.collection_id)
+            .await;
+        wait_for_user(
+            &node.client(),
+            Some(&owner.private_key_hex),
+            &created.doc_id,
+            |row| row["name"] == "Alice",
+        )
+        .await;
+        assert!(
+            user_by_id(&node.client(), None, &created.doc_id).is_none(),
+            "a replicated protected document is readable without an identity"
+        );
+
+        let parent = genesis_parent_of(&created);
+        let edited = update(
+            &parent,
+            &aged(666),
+            version_id,
+            &stranger,
+            Signing::EveryBlock,
+        );
+        assert_refused(&node, &owner, &created.doc_id, &parent, &edited).await;
     })
     .await;
 }
