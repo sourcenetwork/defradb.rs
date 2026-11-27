@@ -112,6 +112,10 @@ pub enum PreparedInputKind {
     /// A value an attempt drew locally (a created document's short ID) that
     /// every later attempt of the request reuses. Never asked for as a miss.
     Allocation,
+    /// The DAC bypass a write's attempt decided in its own transaction, when
+    /// preparation chose the write's documents under the other one. Never
+    /// held in the memo: the request is prepared again under it.
+    DacBypass,
 }
 
 /// Exact-request memo shared by all attempts of one logical request.
@@ -381,6 +385,8 @@ pub struct PreparedMutations {
     /// The request this capsule was prepared from, parsed once: each
     /// execution of the request uses a copy instead of parsing it again.
     pub parsed: Option<Arc<crate::query_parse::ParsedOperation>>,
+    /// The DAC bypass the documents in `mutations` were chosen under.
+    pub dac_bypass: PreparedDacBypass,
 }
 
 impl Default for PreparedMutations {
@@ -391,6 +397,40 @@ impl Default for PreparedMutations {
             inputs: PreparedInputMemo::default(),
             engine_managed_retry: false,
             parsed: None,
+            dac_bypass: PreparedDacBypass::default(),
+        }
+    }
+}
+
+/// The DAC bypass a write's preparation chose its documents under. Each
+/// attempt decides the bypass again in its own transaction, for the same
+/// caller; when it decides the other one, the attempt ends and the request
+/// is prepared again under the attempt's decision.
+#[derive(Debug, Clone, Default)]
+pub struct PreparedDacBypass {
+    /// The request's own caller, never the node's default identity: node
+    /// access control grants the bypass to the identity that made the
+    /// request, as it decides the request's node permissions.
+    pub caller: Option<identity::Did>,
+    /// Whether the documents were chosen past document access control.
+    pub bypassed: bool,
+}
+
+impl PreparedDacBypass {
+    /// The input an attempt that decided `bypassed` asks for when it differs
+    /// from this one: the request prepared again under the attempt's bypass.
+    pub fn stale(&self, bypassed: bool) -> Option<PreparedInputRequest> {
+        (bypassed != self.bypassed).then(|| {
+            PreparedInputRequest::new(PreparedInputKind::DacBypass, vec![u8::from(bypassed)])
+        })
+    }
+
+    /// The bypass an attempt decided, from the input [`stale`](Self::stale)
+    /// asked for.
+    pub fn decided(request: &PreparedInputRequest) -> Option<bool> {
+        match (request.kind(), request.exact_request()) {
+            (PreparedInputKind::DacBypass, [decided]) => Some(*decided != 0),
+            _ => None,
         }
     }
 }

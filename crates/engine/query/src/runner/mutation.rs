@@ -282,16 +282,26 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry + 'static> QueryRunner<F, R
                             batch_mutator.set_document_acp(acp.clone());
                             let attempt_acp = batch_fetcher.scoped_acp(acp.clone()).await?;
                             let mut batch_runner = runner.scoped_runner(attempt_acp);
-                            // Decided in this attempt's transaction, so the
-                            // grant and the documents it reaches agree.
-                            if let Some(bypassed) = batch_runner
-                                .with_decided_dac_bypass(
-                                    batch_fetcher.as_ref(),
-                                    caller_identity.as_ref(),
-                                )
-                                .await?
-                            {
-                                batch_runner = bypassed;
+                            // Decided in this attempt's transaction, for the
+                            // request's own caller, so the grant and the
+                            // documents it reaches agree. Documents chosen
+                            // under the other bypass are chosen again.
+                            if let Some(prepared) = prepared.as_ref() {
+                                if let Some(bypassed) = batch_runner
+                                    .with_decided_dac_bypass(
+                                        batch_fetcher.as_ref(),
+                                        prepared.dac_bypass.caller.as_ref(),
+                                    )
+                                    .await?
+                                {
+                                    batch_runner = bypassed;
+                                }
+                                if let Some(again) = prepared
+                                    .dac_bypass
+                                    .stale(batch_runner.context().dac_bypass())
+                                {
+                                    return Err(QueryError::NeedsInput(again));
+                                }
                             }
                             batch_runner.acp_registration_projection =
                                 batch_mutator.acp_registration_projection();

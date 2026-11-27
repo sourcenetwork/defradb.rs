@@ -40,8 +40,17 @@ where
         if !fetcher.dac_bypass(caller).await? {
             return Ok(None);
         }
-        Ok(Some(
-            self.for_request(context.into_owned().with_dac_bypass(true)),
-        ))
+        Ok(self.with_dac_bypass_as_decided(true))
+    }
+
+    /// This runner with the bypass an attempt decided in its own
+    /// transaction: `None` when that is no bypass or the request already
+    /// carries one. A request its caller denied the bypass never gets one.
+    pub(crate) fn with_dac_bypass_as_decided(&self, bypassed: bool) -> Option<Self> {
+        let context = self.context();
+        if !bypassed || context.dac_bypass() || context.dac_bypass_denied() {
+            return None;
+        }
+        Some(self.for_request(context.into_owned().with_dac_bypass(true)))
     }
 }
