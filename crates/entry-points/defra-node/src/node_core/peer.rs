@@ -9,12 +9,13 @@ use defra_core::RequestContext;
 use defra_p2p_adapter::peer::{self, Replicator};
 use defra_p2p_adapter::ReplicationFilters;
 
-use crate::{Error, Node, Result};
+use super::NodeCore;
+use crate::{Error, Result};
 
-impl Node {
+impl NodeCore<'_> {
     /// This node's P2P addresses, each ending in `/p2p/<peer ID>`; none
     /// without a network. Go's `PeerInfo`.
-    pub async fn peer_info_as(&self, context: &RequestContext) -> Result<Vec<String>> {
+    pub(crate) async fn peer_info(&self, context: &RequestContext) -> Result<Vec<String>> {
         match self.peer(context) {
             Ok(p2p) => {
                 self.at_edge(async move { peer::peer_info(&*p2p).await })
@@ -26,21 +27,25 @@ impl Node {
 
     /// The addresses of the peers this node is connected to. Go's
     /// `ActivePeers`.
-    pub async fn active_peers_as(&self, context: &RequestContext) -> Result<Vec<String>> {
+    pub(crate) async fn active_peers(&self, context: &RequestContext) -> Result<Vec<String>> {
         let p2p = self.peer(context)?;
         self.at_edge(async move { peer::active_peers(&*p2p).await })
             .await
     }
 
     /// Connect to the peer at `addresses`. Go's `Connect`.
-    pub async fn connect_as(&self, context: &RequestContext, addresses: &[String]) -> Result<()> {
+    pub(crate) async fn connect(
+        &self,
+        context: &RequestContext,
+        addresses: &[String],
+    ) -> Result<()> {
         let (p2p, addresses) = (self.peer(context)?, addresses.to_vec());
         self.at_edge(async move { peer::connect(&*p2p, &addresses).await })
             .await
     }
 
     /// Close the connections to the peers at `addresses`. Go's `Disconnect`.
-    pub async fn disconnect_as(
+    pub(crate) async fn disconnect(
         &self,
         context: &RequestContext,
         addresses: &[String],
@@ -54,7 +59,7 @@ impl Node {
     /// write, adding them to its replicator if it has one. A collection named
     /// in `filters` pushes only the documents its filter matches. Go's
     /// `AddReplicator`.
-    pub async fn add_replicator_as(
+    pub(crate) async fn add_replicator(
         &self,
         context: &RequestContext,
         addresses: &[String],
@@ -76,7 +81,7 @@ impl Node {
 
     /// Stop pushing `collections` to peer `id`, or every collection when
     /// none is named. Go's `DeleteReplicator`.
-    pub async fn delete_replicator_as(
+    pub(crate) async fn delete_replicator(
         &self,
         context: &RequestContext,
         id: &str,
@@ -88,7 +93,10 @@ impl Node {
     }
 
     /// Every replicator with its collections. Go's `ListReplicators`.
-    pub async fn list_replicators_as(&self, context: &RequestContext) -> Result<Vec<Replicator>> {
+    pub(crate) async fn list_replicators(
+        &self,
+        context: &RequestContext,
+    ) -> Result<Vec<Replicator>> {
         let p2p = self.peer(context)?;
         self.at_edge(async move { peer::list_replicators(&*p2p).await })
             .await
@@ -96,7 +104,7 @@ impl Node {
 
     /// Subscribe to the topics of collections `names`. Go's
     /// `AddP2PCollections`.
-    pub async fn add_p2p_collections_as(
+    pub(crate) async fn add_p2p_collections(
         &self,
         context: &RequestContext,
         names: &[String],
@@ -108,7 +116,7 @@ impl Node {
 
     /// Unsubscribe from the topics of collections `names`. Go's
     /// `DeleteP2PCollections`.
-    pub async fn delete_p2p_collections_as(
+    pub(crate) async fn delete_p2p_collections(
         &self,
         context: &RequestContext,
         names: &[String],
@@ -119,7 +127,10 @@ impl Node {
     }
 
     /// The collections this node subscribes to. Go's `ListP2PCollections`.
-    pub async fn list_p2p_collections_as(&self, context: &RequestContext) -> Result<Vec<String>> {
+    pub(crate) async fn list_p2p_collections(
+        &self,
+        context: &RequestContext,
+    ) -> Result<Vec<String>> {
         let p2p = self.peer(context)?;
         self.at_edge(async move { peer::list_p2p_collections(&*p2p).await })
             .await
@@ -127,7 +138,7 @@ impl Node {
 
     /// Subscribe to the topics of documents `doc_ids`. Go's
     /// `AddP2PDocuments`.
-    pub async fn add_p2p_documents_as(
+    pub(crate) async fn add_p2p_documents(
         &self,
         context: &RequestContext,
         doc_ids: &[String],
@@ -139,7 +150,7 @@ impl Node {
 
     /// Unsubscribe from the topics of documents `doc_ids`. Go's
     /// `DeleteP2PDocuments`.
-    pub async fn delete_p2p_documents_as(
+    pub(crate) async fn delete_p2p_documents(
         &self,
         context: &RequestContext,
         doc_ids: &[String],
@@ -150,7 +161,7 @@ impl Node {
     }
 
     /// The documents this node subscribes to. Go's `ListP2PDocuments`.
-    pub async fn list_p2p_documents_as(&self, context: &RequestContext) -> Result<Vec<String>> {
+    pub(crate) async fn list_p2p_documents(&self, context: &RequestContext) -> Result<Vec<String>> {
         let p2p = self.peer(context)?;
         self.at_edge(async move { peer::list_p2p_documents(&*p2p).await })
             .await
@@ -158,13 +169,14 @@ impl Node {
 
     /// Fetch documents `doc_ids` of `collection` from connected peers. Go's
     /// `SyncDocuments`.
-    pub async fn sync_documents_as(
+    pub(crate) async fn sync_documents(
         &self,
         context: &RequestContext,
         collection: &str,
         doc_ids: &[String],
     ) -> Result<()> {
-        self.check_access(context, NodePermission::P2pSyncDocuments)
+        self.node
+            .check_access(context, NodePermission::P2pSyncDocuments)
             .await?;
         let p2p = self.peer(context)?;
         let (collection, doc_ids) = (collection.to_owned(), doc_ids.to_vec());
@@ -174,12 +186,13 @@ impl Node {
 
     /// Fetch collection versions `version_ids` from connected peers. Go's
     /// `SyncCollectionVersions`.
-    pub async fn sync_collection_versions_as(
+    pub(crate) async fn sync_collection_versions(
         &self,
         context: &RequestContext,
         version_ids: &[String],
     ) -> Result<()> {
-        self.check_access(context, NodePermission::P2pSyncCollectionVersions)
+        self.node
+            .check_access(context, NodePermission::P2pSyncCollectionVersions)
             .await?;
         let (p2p, version_ids) = (self.peer(context)?, version_ids.to_vec());
         self.at_edge(async move { peer::sync_collection_versions(&*p2p, &version_ids).await })
@@ -188,12 +201,13 @@ impl Node {
 
     /// Fetch the history of branchable collection `collection_id` from
     /// connected peers. Go's `SyncBranchableCollection`.
-    pub async fn sync_branchable_collection_as(
+    pub(crate) async fn sync_branchable_collection(
         &self,
         context: &RequestContext,
         collection_id: &str,
     ) -> Result<()> {
-        self.check_access(context, NodePermission::P2pSyncBranchableCollection)
+        self.node
+            .check_access(context, NodePermission::P2pSyncBranchableCollection)
             .await?;
         let (p2p, collection_id) = (self.peer(context)?, collection_id.to_owned());
         self.at_edge(async move { peer::sync_branchable_collection(&*p2p, &collection_id).await })
@@ -202,7 +216,8 @@ impl Node {
 
     /// The P2P operations serving `context`, or Go's `ErrNoP2P`.
     fn peer(&self, context: &RequestContext) -> Result<Arc<dyn defra_p2p_adapter::P2POperations>> {
-        self.p2p_system()
+        self.node
+            .p2p_system()
             .map(|system| system.ops_for(context))
             .ok_or(Error::Peer(peer::Error::NoP2P))
     }
@@ -213,7 +228,7 @@ impl Node {
         F: std::future::Future<Output = peer::Result<T>> + Send + 'static,
         T: Send + 'static,
     {
-        let Some(network) = &self.network else {
+        let Some(network) = &self.node.network else {
             return Ok(work.await?);
         };
         Ok(network.edge().spawn(work).await??)
