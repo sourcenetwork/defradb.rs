@@ -81,7 +81,10 @@ pub fn signing_config(seed: u64) -> defra_core::signing::SigningConfig {
     }
 }
 
-fn ed25519_private_key(seed: u64) -> Option<Vec<u8>> {
+pub(crate) fn ed25519_private_key(seed: u64) -> Option<Vec<u8>> {
+    if seed >= NODE_IDENTITY_BASE {
+        return None;
+    }
     let local = seed.checked_sub(ED25519_IDENTITY_BASE)?;
     let mut bytes = [0x33; 32];
     bytes[24..].copy_from_slice(&local.to_be_bytes());

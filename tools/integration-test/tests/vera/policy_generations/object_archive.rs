@@ -136,7 +136,8 @@ pub(super) async fn exercise(
         .records
         .iter()
         .filter(|record| {
-            record.relationship.object_id == document && record.relationship.relation == "reader"
+            record.relationship.object.id.as_str() == document
+                && record.relationship.relation.as_str() == "reader"
         })
         .collect();
     assert_eq!(grants.len(), 1);

@@ -33,7 +33,10 @@ pub fn index_listing<'v>(
 
 /// Whether `index` is the one the node adds for a primary relation's
 /// `_<name>ID` field, which Go does not list.
-fn is_hidden_relation_index(version: &CollectionVersion, index: &IndexDescription) -> bool {
+pub(crate) fn is_hidden_relation_index(
+    version: &CollectionVersion,
+    index: &IndexDescription,
+) -> bool {
     let [field] = index.fields.as_slice() else {
         return false;
     };

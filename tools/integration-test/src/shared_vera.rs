@@ -115,6 +115,7 @@ impl SharedVera {
 /// the node names, and sends it as its bearer token over HTTP.
 pub fn delegation(node: &defra_node::Node, seed: u64) -> Result<Option<String>, String> {
     use acp::RemotePolicies as _;
+    use vera::vera_rs::{DelegationSigner, Ed25519Signer, Secp256k1Signer};
     let Some(vera) = node.vera_acp() else {
         return Ok(None);
     };
@@ -122,10 +123,16 @@ pub fn delegation(node: &defra_node::Node, seed: u64) -> Result<Option<String>, 
         .light_client_status()?
         .delegation
         .ok_or("the node's Vera names no delegation audience")?;
-    let key = crate::scenario::identity::private_key(seed);
-    let signer = vera::vera_rs::Secp256k1Signer::from_slice(&key).map_err(|e| e.to_string())?;
+    let signer: Box<dyn DelegationSigner> =
+        match crate::scenario::identity::ed25519_private_key(seed) {
+            Some(key) => Box::new(Ed25519Signer::from_slice(&key).map_err(|e| e.to_string())?),
+            None => {
+                let key = crate::scenario::identity::private_key(seed);
+                Box::new(Secp256k1Signer::from_slice(&key).map_err(|e| e.to_string())?)
+            }
+        };
     workers::block_on(vera::vera_rs::caller_delegation(
-        &signer,
+        signer.as_ref(),
         &audience,
         DELEGATION_LIFETIME,
     ))

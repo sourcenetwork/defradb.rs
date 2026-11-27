@@ -5,13 +5,16 @@ mod cli_command;
 mod client_type;
 pub mod clients;
 pub mod commit_gate;
+pub mod crash;
 mod cross_runtime;
 pub mod export;
 mod feature_binaries;
 mod go_node;
+pub mod hostile;
 pub mod index_gate;
 pub mod introspection_sdl;
 pub mod multiplier;
+pub mod node_scope;
 pub mod nodes;
 mod purge;
 mod reserved_port;
@@ -19,6 +22,7 @@ pub mod scenario;
 pub mod shared_vera;
 mod stub_embedder;
 pub mod test_case;
+pub mod transport_choice;
 pub mod wasm_lens;
 
 pub use cli_command::cli_command;
@@ -40,7 +44,7 @@ pub fn go_compat_binary() -> PathBuf {
     )
 }
 
-fn cached_go_compat_binary(home: &std::path::Path, tag: &str, commit: &str) -> PathBuf {
+pub(crate) fn cached_go_compat_binary(home: &std::path::Path, tag: &str, commit: &str) -> PathBuf {
     let pin = if tag.is_empty() { commit } else { tag };
     home.join(".cache/defra-harness").join(pin).join("defradb")
 }

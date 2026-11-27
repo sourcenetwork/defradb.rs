@@ -53,33 +53,25 @@ impl Relationship<'_> {
     pub fn in_process(&self, state: &State) -> Result<Value, Failure> {
         let identity = self.common.acting_identity(self.op, state)?;
         let node = state.node_on(self.common.node())?;
+        let scoped = state
+            .scope_as_on(self.common.node(), None, identity)
+            .scoped(&node);
         let (collection, doc_id, relation) = (self.collection, self.doc_id, self.relation);
-        let target = self.target.as_str();
-        // An identity acts with what the node needs to act for it, its Vera
-        // delegation included; no identity is the empty actor, as Go's
-        // in-process client sends no identity.
-        let found =
-            match (self.change, identity) {
-                (Change::Add, Some(_)) => {
-                    let context = state.context_as_on(self.common.node(), None, identity);
-                    state.block_on(node.add_dac_actor_relationship_as(
-                        &context, collection, doc_id, relation, target,
-                    ))
-                }
-                (Change::Delete, Some(_)) => {
-                    let context = state.context_as_on(self.common.node(), None, identity);
-                    state.block_on(node.delete_dac_actor_relationship_as(
-                        &context, collection, doc_id, relation, target,
-                    ))
-                }
-                (Change::Add, None) => state.block_on(
-                    node.add_dac_actor_relationship("", collection, doc_id, relation, target),
-                ),
-                (Change::Delete, None) => state.block_on(
-                    node.delete_dac_actor_relationship("", collection, doc_id, relation, target),
-                ),
-            }
-            .map_err(|e| Failure::operation(e.to_string()))?;
+        let found = match self.change {
+            Change::Add => state.block_on(scoped.add_dac_actor_relationship(
+                collection,
+                doc_id,
+                relation,
+                &self.target,
+            )),
+            Change::Delete => state.block_on(scoped.delete_dac_actor_relationship(
+                collection,
+                doc_id,
+                relation,
+                &self.target,
+            )),
+        }
+        .map_err(|e| Failure::operation(e.to_string()))?;
         Ok(json!({ self.change.key(): found }))
     }
 

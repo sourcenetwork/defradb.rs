@@ -18,7 +18,7 @@ use crate::plan::{
 use crate::planner::{Doc, PlanNode};
 
 pub(crate) use super::plan_aggregates::add_aggregate_nodes;
-pub(crate) use super::plan_validation::validate_select;
+pub(crate) use super::plan_validation::{validate_root_select, validate_select};
 
 /// ACP filter configuration for inserting PermissionFilterNode into plan trees.
 pub(crate) struct AcpFilter {

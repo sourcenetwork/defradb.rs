@@ -47,9 +47,7 @@ impl ClientUpdateSignatures {
         let input = input.as_object()?;
         if input.is_empty() || input.iter().any(|(name, value)| {
             let Some(field) = schema.field_by_name(name) else { return true; };
-            field.immutable
-                || schema.policy.as_ref().and_then(|policy| policy.parent_field.as_deref()) == Some(name.as_str())
-                || field.relation_name.is_some() || field.crdt_type != CType::LwwRegister
+            field.immutable || field.relation_name.is_some() || field.crdt_type != CType::LwwRegister
                 || !matches!(field.kind, FieldKind::Scalar(_) | FieldKind::ScalarArray(_))
                 || (matches!(&field.kind, FieldKind::Scalar(kind) if kind.base_kind() == ScalarKind::NillableDateTime)
                     && value.as_str() == Some("UTC_NOW"))
@@ -295,40 +293,5 @@ impl ClientUpdateSignatures {
         self.waves
             .respond(wave)
             .ok_or(ClientUpdateError::UnexpectedWave)
-    }
-}
-
-#[cfg(test)]
-mod parent_tests {
-    use super::*;
-    use schema::{FieldDescription, PolicyDescription};
-
-    #[test]
-    fn signed_update_builder_refuses_registration_parent_field() {
-        let mut schema = CollectionVersion::new(
-            "Job",
-            "job-v1",
-            "job",
-            vec![
-                FieldDescription::new("1", "nodeID", FieldKind::string(), CType::LwwRegister),
-                FieldDescription::new("2", "name", FieldKind::string(), CType::LwwRegister),
-            ],
-        );
-        let mut policy = PolicyDescription::new("policy", "job");
-        policy.parent_field = Some("nodeID".into());
-        schema.policy = Some(policy);
-        let crdts = crdt::Crdts::default();
-        assert!(ClientUpdateSignatures::normalize_input(
-            &crdts,
-            &schema,
-            &serde_json::json!({"nodeID":"other"})
-        )
-        .is_none());
-        assert!(ClientUpdateSignatures::normalize_input(
-            &crdts,
-            &schema,
-            &serde_json::json!({"name":"updated"})
-        )
-        .is_some());
     }
 }

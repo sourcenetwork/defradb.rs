@@ -27,42 +27,6 @@ When a Vera deployment takeover may have voided confirmed submissions older than
 
 What the pass cannot restore is reported in the `acp::audit` log, never dropped: an object the deployment holds for another owner, a registration the node removed that the deployment holds again, a relationship whose registration was never recorded, a relationship the deployment does not let the pass read, and a registration or grant the provider never answered and the deployment does not hold. A delete the provider never answered is owed when the deployment still holds the grant. Changes other actors made directly on the deployment, and what the provider confirmed before the node kept this record, are not in it and are not restored.
 
-# `defra.acp.parent_registration`: Registration under a parent object
-
-- **Parents:** ["defra.acp"]
-
-A policy resource may carry a `create: {parent: <relation>, requires: <permission>}` rule. A document of such a resource is registered only under a parent object: the object of the relation's single type whose ID the document carries in the field its collection names with `@policy(parentField:)`.
-
-# `defra.acp.parent_registration.create`: A create needs the rule's permission on the parent
-
-- **Parents:** ["defra.acp.parent_registration"]
-- **Scenarios:** ["acp::dac::parent_registration::a_document_is_registered_only_under_a_parent_its_creator_owns"]
-
-With `create: {parent: parent, requires: owner}` on `jobs` and `Job @policy(resource: "jobs", parentField: "nodeID")`, a create whose `nodeID` names a node the creator owns succeeds, and the creator owns the new document. A create by an identity that does not own that node fails with `parent requires 'owner'`. A create without an identity fails with `parent-authorized registration requires an authenticated creator and ACP provider`. A create whose `nodeID` is absent or empty fails with `missing parent document ID in 'nodeID'`. A refused create stores no document.
-
-# `defra.acp.parent_registration.parent_field`: `parentField` goes with the create rule
-
-- **Parents:** ["defra.acp.parent_registration"]
-- **Scenarios:** ["acp::dac::parent_registration::a_collection_names_a_parent_field_exactly_when_its_resource_has_a_create_rule"]
-
-Adding a collection whose `@policy` names a resource with a create rule but no `parentField`, or a `parentField` for a resource without one, fails with `parentField must be supplied exactly when resource '<resource>' declares a create rule`. A `parentField` that is not a field of the collection fails with `parent field '<field>' does not exist on '<collection>'`.
-
-# `defra.acp.parent_registration.immutable`: The parent field of a registered document does not change
-
-- **Parents:** ["defra.acp.parent_registration"]
-- **Scenarios:** ["acp::dac::parent_registration::an_update_cannot_move_a_registered_document_to_another_parent"]
-
-An update that writes another value, or null, into the parent field of a document in such a collection fails with `parent field '<field>' of a registered document cannot change` and changes nothing. An update that writes the value the field already holds succeeds, together with its other fields.
-
-# `defra.acp.parent_registration.last_parent`: A registered document keeps a parent link
-
-- **Parents:** ["defra.acp.parent_registration"]
-- **Scenarios:** ["acp::dac::parent_registration::a_registered_document_retains_at_least_one_parent_link"]
-
-Local document ACP refuses to delete a registered document's last parent relation with `invalid relation: cannot delete the last parent relation`. The owner can still read the document. Once the owner adds another authorized parent, removing the first link succeeds. Removing the remaining link is refused.
-
-Vera makes the registration parent immutable. A relationship edit cannot remove or replace that parent.
-
 # `defra.acp.shared_transport_restoration`: Restore a branchable shared transport collection
 
 - **Parents:** ["defra.acp"]
@@ -88,6 +52,14 @@ A `defradb start` server whose document ACP is Vera (`--document-acp-type vera` 
 
 A token that declares itself a Vera delegation and fails a check is refused with 403 `Token verification failed: …` before the request runs, and is never read as an identity token: a signature that does not verify against its issuer, a malformed token, one over 16 KiB, a validity interval that does not hold at the server's time, a scope other than `acp:policy`, a request-bound delegation, or another worker or deployment.
 
+# `defra.acp.vera_issuer_spelling`: A Vera delegation is issued under any issuer spelling vera.rs takes
+
+- **Parents:** ["defra.acp"]
+- **Scenarios:** ["bearer::issuer_spellings::a_secp256k1_signer_issues_under_every_spelling_vera_rs_takes_and_keeps_it", "bearer::issuer_spellings::an_ed25519_or_p256_signer_named_in_base64url_issues_under_its_canonical_did_only", "bearer::issuer_spellings::no_spelling_of_another_key_is_a_signers_issuer", "request_bound::the_chain_executes_a_request_bound_delegation_for_its_command_only"]
+- **Scope:** "crate tests and the `vera` integration binary's request-bound delegation test, not testo: only a host embedding DefraDB supplies a `DelegationSigner` of its own, and no testo client takes one or starts a node on a Vera deployment"
+
+A host may name its delegation signer by any `did:key` spelling of the signer's key that `crypto::parse_did_key` decodes. A delegation it issues for a secp256k1 key may name as its issuer any of the four spellings vera.rs takes for that key: the compressed or the uncompressed point, in base58btc (`did:key:z…`) or base64url (`did:key:u…`), whichever spelling names the signer itself. The token carries the issuer exactly as given, and vera.rs verifies it as that key's actor. An Ed25519 or P-256 key is taken by vera.rs only under its one base58btc DID (for P-256, of the compressed point); a signer named by any other spelling of such a key issues under that DID. An issuer that is not a spelling vera.rs takes for the signer's key, including the base64url spelling of an Ed25519 or P-256 key and any spelling of another key, is refused before anything is signed with `issuer DID is not a spelling vera.rs takes for the signing key`.
+
 # `go.acp.nac.gates.signature`: Block signature verification is gated
 
 - **Parents:** ["go.acp.nac.gates"]
@@ -95,3 +67,61 @@ A token that declares itself a Vera delegation and fails a check is refused with
 - **Scope:** "authorized-identity tests run on HTTP and CLI clients (default signer) or Go and C clients (signed documents), one test each"
 
 With NAC enabled, verifying a block signature succeed for the NAC owner and fail without identity or with a wrong identity with `not authorized to perform operation. Permission: verify-signature`.
+
+# `defra.acp.create_gate`: Policy relations bound to the fields a new document carries
+
+- **Parents:** ["defra.acp"]
+
+A policy resource may say who may add documents to its collection (`collection: { create: <expr> }`), based on relations the new document carries. A collection names those relations by binding single-object relation fields to them with `@policy(relation:)`. A create in a governed collection whose resource sets `create` (not omitted, not `"*"`) is decided before anything is written: a refused create stores no document, no document ID and no index entry, so it takes nothing from a creator the policy admits. `create` holds when, for an arrow `<relation>-><name>`, a relationship the document derives in `<relation>` links an object on which the creator holds `<name>`; unions, intersections and differences combine the arrows, and any other name admits nobody. A refused create fails with `not authorized to create document <docID> in its collection: <identity> may not create <resource>/<docID> in its collection`. A create without an identity in such a collection is refused with `not authorized to create a document in collection <Type> without an identity: its policy restricts who may create documents`. A collection whose resource has no `create`, and a collection without a policy, are unaffected.
+
+# `defra.acp.create_gate.vera`: A create in a gated collection under vera
+
+- **Parents:** ["defra.acp.create_gate"]
+- **Scenarios:** ["create_gate::a_gated_collection_admits_creators_its_policy_lets_create"]
+- **Scope:** "the `vera` integration suite: a testo node takes no Vera document ACP"
+
+On a node whose document ACP is vera, `create` is decided on vera's certified state before the create's transaction, and a refused create writes nothing (`defra.acp.create_gate`). An admitted document is registered with the relationships its bound fields carry (`<resource>:<doc>#<relation>@<target resource>:<field value>`), and vera checks the resource's `create` over them again and stores them with the owner relationship in one execution. Until vera holds the registration of a document in such a collection, nobody reads it, its creator included, also when a takeover voided the registration and it is owed again. A creator admitted by the certified state whose right is revoked before vera checks has its create commit and its registration refused: the node keeps the owed registration as refused with a reason starting `not authorized to create document <docID>`, never sends it again, and nobody reads the document. A document received from a peer is owed as this node's own registration; refused as a create it is sent at most three times and then kept as refused, and it is cleared without being sent once vera holds the document's registration. Once registered, the bound relationship is the owner's to change through the relationship API like any other.
+
+# `defra.acp.create_gate.local`: A create in a gated collection under the local ACP
+
+- **Parents:** ["defra.acp.create_gate"]
+- **Scenarios:** ["acp::dac::create_gate::local_gate::a_refused_create_stores_nothing_and_an_admitted_one_takes_its_id", "acp::dac::create_gate::local_gate::an_anonymous_create_in_a_gated_collection_is_refused"]
+
+Under the local ACP engine, `create` is decided in the create's own transaction over the relationships the document's bound fields carry, and an admitted document is registered with them, stored beside its owner relationship, so a permission that follows them (`read: author->publish`) reads through them.
+
+# `defra.acp.create_gate.policy_section`: The `collection` section of a policy resource
+
+- **Parents:** ["defra.acp.create_gate"]
+- **Scenarios:** ["acp::dac::create_gate::policy_section::a_policy_with_a_collection_section_is_added", "acp::dac::create_gate::policy_section::an_empty_collection_create_is_refused"]
+
+A resource of a DAC policy may carry a `collection` section with one field, `create`, a string: omitted or `"*"` means anyone may add a document, anything else is an expression acp evaluates. The section gates a governed collection only (`defra.acp.create_gate`): in a collection that is not governed a document is created as it would be without it. A policy without the section is accepted, and gets the same policy ID, as before the section existed. An empty `create` is refused with `collection create of resource '<resource>' must not be empty: omit it or write "*" to let anyone create`; an unknown field in the section is refused as any unknown policy field is.
+
+# `defra.acp.create_gate.binding`: `@policy(relation:)` on a relation field
+
+- **Parents:** ["defra.acp.create_gate"]
+- **Scenarios:** ["acp::dac::create_gate::binding::a_binding_on_a_governed_primary_immutable_field_is_accepted", "acp::dac::create_gate::binding::a_binding_outside_a_governed_collection_is_refused", "acp::dac::create_gate::binding::a_binding_on_the_secondary_side_is_refused", "acp::dac::create_gate::binding::a_binding_on_a_mutable_field_is_refused", "acp::dac::create_gate::binding::a_binding_to_a_collection_under_another_policy_is_refused", "acp::dac::create_gate::binding::a_binding_to_a_relation_of_another_type_is_refused", "acp::dac::create_gate::binding::a_binding_on_a_scalar_field_is_refused"]
+
+`author: Author @immutable @policy(relation: "author")` binds the relation field `author` to the policy relation `author`; the binding is kept on the `_authorID` field, which holds the related document's ID. Adding the collection is refused, and nothing is created, unless:
+
+- the field is a single-object relation (`@policy(relation:) requires a single-object relation field. Field: <Type>.<field>`);
+- the collection is governed (`invalid @policy(relation:) on field <Type>.<field>: the collection must be governed (@governed(root:))`);
+- the field is on the primary side of the relation (`... the binding must be on the primary side of the relation, which stores the related document ID`);
+- the field is `@immutable` (`... the field must be @immutable`);
+- the collection has a `@policy` (`... the collection must have a @policy`), and the related collection has the same policy ID (`... the related collection <Type> must have the same policy (<policyID>)`);
+- the relation is declared on the collection's resource (`... relation does not exist on the resource. PolicyID: <id>, ResourceName: <resource>, Relation: <relation>`), is not `owner`, and its `types` are exactly the related collection's resource (`... relation types must be exactly the related collection's resource. PolicyID: <id>, ResourceName: <resource>, Relation: <relation>, Expected: <resource>`). These two are checked when the node has a DAC ACP, as `@policy` itself is.
+
+On a field, `@policy` without `relation` does nothing, as before; `relation` with `id` or `resource` is refused (`@policy on a field takes only the relation argument; the policy is the collection's. Field: <Type>.<field>`), an empty `relation` is refused (`@policy relation must not be empty. Field: <Type>.<field>`), and `relation` on a type is refused (`@policy(relation:) binds a field and is not allowed on a type`). A governed collection's identity commits to its bindings; an ungoverned collection's identity, and that of any collection without a binding, is unchanged.
+
+# `defra.acp.create_gate.immutable_relation`: `@immutable` on a single-object relation field
+
+- **Parents:** ["defra.acp.create_gate"]
+- **Scenarios:** ["acp::dac::create_gate::immutable_relation::an_immutable_relation_cannot_be_changed"]
+
+`@immutable` on a single-object relation field `x` makes its `_xID` field immutable: an update that changes `_xID`, through `_xID` or through `x`, fails with `immutable field '_xID' cannot be changed`. `@immutable` on an array relation is refused as before (`invalid immutable field <field>: only LWW register fields can be immutable`), and on the secondary side of a relation with `invalid immutable field _<field>ID: only the primary side of a relation can be immutable`.
+
+# `defra.acp.create_gate.not_encrypted`: A bound field is never encrypted
+
+- **Parents:** ["defra.acp.create_gate"]
+- **Scenarios:** ["acp::dac::create_gate::not_encrypted::encrypting_a_bound_field_is_refused"]
+
+A document create that would encrypt a bound field, the whole document or the field itself, fails with `field <field> is bound to policy relation <relation> and cannot be encrypted`, and nothing is created: the relationship is derived from the field's plaintext. Encryption is chosen per request, so this is checked at create, not when the collection is added.

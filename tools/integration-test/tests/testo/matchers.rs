@@ -192,6 +192,15 @@ fn all_requires_every_clause() {
 }
 
 #[test]
+fn not_accepts_what_its_value_rejects() {
+    assert!(matches(m::not(json!(DOC_ID)), json!(CID)));
+    assert!(!matches(m::not(json!(DOC_ID)), json!(DOC_ID)));
+    let differs = json!([m::same("a"), m::not(m::same("a"))]);
+    assert!(matches(differs.clone(), json!([1, 2])));
+    assert!(!matches(differs, json!([1, 1])));
+}
+
+#[test]
 fn any_of_takes_the_first_alternative_that_matches() {
     let expected = m::any_of(json!([1, "a", m::nonempty()]));
     assert!(matches(expected.clone(), json!("a")));

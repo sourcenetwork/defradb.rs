@@ -60,7 +60,7 @@ pub(super) async fn read(
     Ok(CertifiedAssignments {
         object_ids: records
             .into_iter()
-            .map(|record| record.relationship.object_id)
+            .map(|record| record.relationship.object.id.to_string())
             .collect(),
         position,
         timestamp: revision.timestamp,
@@ -131,7 +131,7 @@ pub(super) async fn group_member(
                         vera_permission::RECORD_PROOF_BYTES,
                     )?
                     .iter()
-                    .any(|row| row.relationship.object_id == group.object),
+                    .any(|row| row.relationship.object.id.as_str() == group.object),
             )
         };
         if !holds(&receiver)? {

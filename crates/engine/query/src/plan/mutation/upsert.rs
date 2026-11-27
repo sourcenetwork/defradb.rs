@@ -269,9 +269,7 @@ impl UpsertNode {
             .is_deleted(&self.collection_name, &doc_id)
             .await?
         {
-            return Err(QueryError::execution(format!(
-                "a document with the given ID has been deleted. DocID: {named}"
-            )));
+            return Err(QueryError::DocumentDeleted(named.clone()));
         }
         match self.mutator.exists(&self.collection_name, &doc_id).await? {
             true => Err(QueryError::execution(

@@ -32,7 +32,14 @@ struct Deployment {
 
 #[async_trait]
 impl DocumentACP for Deployment {
-    async fn register_doc_object(&self, _: &Did, _: &str, _: &str, _: &str) -> acp::Result<()> {
+    async fn register_doc_object(
+        &self,
+        _: &Did,
+        _: &str,
+        _: &str,
+        _: &str,
+        _: &[acp::DerivedRelationship],
+    ) -> acp::Result<()> {
         self.registrations.fetch_add(1, Ordering::SeqCst);
         Ok(())
     }
@@ -132,7 +139,7 @@ async fn an_uncovered_journal_recovers_through_the_outbox_under_the_same_worker(
         deployment.clone(),
         Arc::new(RegolithStore::in_memory().expect("a store")),
     ));
-    gate.register_doc_object(&did(OWNER), "policy", "users", "bae-1")
+    gate.register_doc_object(&did(OWNER), "policy", "users", "bae-1", &[])
         .await
         .expect("registered");
     gate.add_actor_relationship(

@@ -27,9 +27,10 @@ impl DocumentACP for ClaimedTransactions {
         policy: &str,
         resource: &str,
         doc: &str,
+        _relationships: &[acp::DerivedRelationship],
     ) -> acp::Result<()> {
         self.inner
-            .register_doc_object(actor, policy, resource, doc)
+            .register_doc_object(actor, policy, resource, doc, &[])
             .await
     }
     async fn is_doc_registered(

@@ -215,9 +215,11 @@ impl IndexManager {
                         .is_some_and(|keys| !keys.contains(&key))
                 })
             {
-                return Err(Error::Storage(
-                    storage::corekv::Error::UniqueConstraintViolation,
-                ));
+                return Err(Error::RebuildUniqueViolation {
+                    index_id: index.description().id,
+                    doc_id: doc_id.to_string(),
+                    fields: Self::named_values(index, values),
+                });
             }
         }
         self.save_resolving_unique_conflict(
@@ -298,17 +300,22 @@ impl IndexManager {
         let Some(doc_id) = doc.id().filter(|_| error.is_unique_constraint_violation()) else {
             return error;
         };
-        let fields = index
+        Error::UniqueViolation {
+            doc_id: doc_id.to_string(),
+            fields: Self::named_values(index, values),
+        }
+    }
+
+    /// `values` of `index`'s fields as a unique violation names them, each
+    /// as `, <field>: <value>`.
+    fn named_values(index: &IndexType, values: &[document::NormalValue]) -> String {
+        index
             .description()
             .fields
             .iter()
             .zip(values)
             .map(|(field, value)| format!(", {}: {}", field.name, go_value(value)))
-            .collect();
-        Error::UniqueViolation {
-            doc_id: doc_id.to_string(),
-            fields,
-        }
+            .collect()
     }
 
     /// [`IndexManager::naming_the_writer`] for an update, which Go also wraps

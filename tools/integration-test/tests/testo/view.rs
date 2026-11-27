@@ -26,4 +26,5 @@ mod simple {
     mod with_transform;
     mod with_transform_aggregate;
     mod with_transform_cid;
+    mod with_unique_index;
 }

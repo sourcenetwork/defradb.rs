@@ -57,10 +57,18 @@ impl DefinitionState {
                 .active_by_name
                 .get(name)
                 .or_else(|| self.collections.iter().find(|col| col.name == *name)),
+            // An inactive collection is found by its collection ID too, as a
+            // named kind finds one by its name: a version ID differs from it
+            // once a collection is patched or carries a governed policy.
             FieldKind::Relation { collection_id, .. } => self
                 .active_by_collection_id
                 .get(collection_id)
-                .or_else(|| self.collections_by_id.get(collection_id)),
+                .or_else(|| self.collections_by_id.get(collection_id))
+                .or_else(|| {
+                    self.collections
+                        .iter()
+                        .find(|col| col.collection_id == *collection_id)
+                }),
             FieldKind::SelfRef { relative_id, .. } if relative_id.is_empty() => Some(host),
             FieldKind::SelfRef { relative_id, .. } => {
                 let host_set = host.collection_set.as_ref()?;
