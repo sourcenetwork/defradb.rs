@@ -74,10 +74,11 @@
 \*       stage it: the owner, as the owed registration or the deployment names it, with no
 \*       owed transfer or archive denying it)
 \*   crates/engine/acp/src/outbox/ops.rs          account (an owed transfer counts as taking
-\*       the owner relation from its actor, which denies it), stage (a transfer's validated
-\*       scan of its object's live keys and its write of the object's transfer key, read
-\*       validated by every other staging: CommitConflict)
-\*   crates/engine/acp/src/outbox/keys.rs         transfer_key
+\*       the owner relation from its actor, which denies it), stage (every staging blind
+\*       merges its object's staged marker, a transfer reads that marker validated, and
+\*       every other staging reads the object's transfer key, which a transfer writes:
+\*       CommitConflict)
+\*   crates/engine/acp/src/outbox/keys.rs         staged_key, transfer_key
 \*   crates/engine/acp/src/outbox/deny.rs         owed_denial (OwedDenial::Always)
 \*   crates/engine/query/src/txn/context.rs       decided_by_owed_archive (an owed transfer
 \*       denies its old owner before an owed registration could let it in)
@@ -95,9 +96,8 @@
 \* Where the code differs from the model:
 \*   * the code's conflict is regolith's: a validated read that a commit
 \*     after it invalidates aborts the reader at its own commit. A settle
-\*     deletes a live key, so one that commits while a transfer is staged on
-\*     the object aborts the transfer too; the model's settles abort nothing,
-\*     and an abort only ever narrows what commits;
+\*     touches neither the staged marker nor the transfer key, so it aborts
+\*     neither side of that guard, as in the model;
 \*   * the owner's own grant beside a transfer that commits first is
 \*     already aborted by its read of the owed deletes naming it (the
 \*     transfer merges into that count); the transfer key covers everyone
@@ -342,11 +342,11 @@ StageLater(who) ==
 
 \* Transaction x and a change r another transaction committed after x
 \* staged something on the object conflict when one of them is a transfer:
-\* the transfer's staging reads, validated, every change staged on its
-\* object, and every other change's staging reads, validated, the object's
-\* transfer mark, which a transfer writes. The later of the two to commit is
-\* aborted, so changes on one object around a transfer commit in the order
-\* of their sequences.
+\* every staging writes the object's staged marker, which a transfer reads,
+\* validated, and every other change's staging reads, validated, the
+\* object's transfer mark, which a transfer writes. The later of the two to
+\* commit is aborted, so changes on one object around a transfer commit in
+\* the order of their sequences.
 Conflicts(x) ==
   \E s \in OpenIn(x), r \in Slots :
     /\ r \in late[s]                                     \* r committed while s was open

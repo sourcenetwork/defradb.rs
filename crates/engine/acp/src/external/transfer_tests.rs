@@ -18,6 +18,7 @@ use crate::permission::DocumentPermission;
 const OWNER: &str = "did:key:owner";
 const NEW_OWNER: &str = "did:key:new-owner";
 const READER: &str = "did:key:reader";
+const MANAGER: &str = "did:key:manager";
 
 /// A provider that holds one object: owned by [`OWNER`] until a transfer
 /// lands, by [`NEW_OWNER`] after. It takes a change only from the owner of
@@ -92,6 +93,18 @@ impl DocumentACP for Owning {
     ) -> Result<bool> {
         self.reachable()?;
         Ok(matches!(who, Identity::Authenticated(actor) if *actor == self.owner()))
+    }
+
+    async fn check_named_permission(
+        &self,
+        subject: &Did,
+        permission: &str,
+        _: &str,
+        _: &str,
+        _: &str,
+    ) -> Result<bool> {
+        self.reachable()?;
+        Ok(*subject == did(MANAGER) && permission == "manager")
     }
 
     fn command_authority(&self, _: &Did, _: crate::ProviderCommand<'_>) -> Result<OwedAuthority> {
@@ -228,6 +241,17 @@ fn grant<'a>(actor: &'a Did, to: &str) -> StageRelationship<'a> {
         relation: "reader",
         managing_relations: &[],
         op: OwedOp::Add,
+    }
+}
+
+fn managed_grant<'a>(
+    actor: &'a Did,
+    to: &str,
+    managing_relations: &'a [String],
+) -> StageRelationship<'a> {
+    StageRelationship {
+        managing_relations,
+        ..grant(actor, to)
     }
 }
 
@@ -540,6 +564,44 @@ fn a_transfer_staged_beside_a_grant_that_commits_first_is_aborted() {
     .unwrap()
 }
 
+/// A settle of an earlier change on the object changes no order around a
+/// transfer staged beside it, so the transfer still commits.
+#[test]
+#[mantra_macros::req_test("defra.acp.vera_owner_transfer")]
+fn a_settle_beside_a_staged_transfer_does_not_abort_it() {
+    workers::block_on(async {
+        let (provider, gate) = gate();
+        let (owner, new_owner) = (&did(OWNER), &did(NEW_OWNER));
+        in_transaction(&gate, |outbox| async move {
+            outbox.stage(grant(owner, READER)).await
+        })
+        .await
+        .unwrap();
+
+        let txn = gate.begin(false).await.unwrap();
+        let view = txn.acpstore();
+        let outbox = gate.transaction_outbox(&view, StagedCount::new()).unwrap();
+        outbox
+            .stage_transfer(transfer(owner, new_owner))
+            .await
+            .unwrap();
+        drop(outbox);
+        drop(view);
+
+        gate.settle_owed_changes_once(OwedScope::All).await.unwrap();
+        assert!(txn.commit().await.is_ok(), "the settle aborts nothing");
+        gate.settle_owed_changes_once(OwedScope::All).await.unwrap();
+        assert_eq!(
+            provider.writes(),
+            vec![
+                format!("add reader {READER} on bae-1 as {OWNER}"),
+                format!("transfer bae-1 to {NEW_OWNER}"),
+            ]
+        );
+    })
+    .unwrap();
+}
+
 /// A transfer commits before the owner's concurrent grant that took the
 /// earlier place in the queue: the grant's commit is aborted, and staged
 /// again the owner is refused, its transfer owed.
@@ -579,6 +641,46 @@ fn a_grant_staged_beside_a_transfer_that_commits_first_is_aborted() {
         );
     })
     .unwrap()
+}
+
+/// A manager's grant commits before a concurrent transfer that took the
+/// earlier place in the queue: the grant's commit is aborted on the
+/// transfer key alone, since the transfer denies only its old owner.
+#[test]
+#[mantra_macros::req_test("defra.acp.vera_owner_transfer")]
+fn a_managers_grant_staged_beside_a_transfer_that_commits_first_is_aborted() {
+    workers::block_on(async {
+        let (provider, gate) = gate();
+        let (owner, manager, new_owner) = (&did(OWNER), &did(MANAGER), &did(NEW_OWNER));
+        let managing = vec!["manager".to_string()];
+        let (grant_ok, transfer_ok) = concurrently(
+            &gate,
+            |outbox| async move {
+                outbox
+                    .stage(managed_grant(manager, READER, &managing))
+                    .await
+                    .unwrap();
+            },
+            |outbox| async move {
+                outbox
+                    .stage_transfer(transfer(owner, new_owner))
+                    .await
+                    .unwrap();
+            },
+        )
+        .await;
+        assert!(transfer_ok, "the transfer commits");
+        assert!(
+            !grant_ok,
+            "the manager's grant that commits second is aborted"
+        );
+        gate.settle_owed_changes_once(OwedScope::All).await.unwrap();
+        assert_eq!(
+            provider.writes(),
+            vec![format!("transfer bae-1 to {NEW_OWNER}")]
+        );
+    })
+    .unwrap();
 }
 
 /// Changes that are not transfers still stage on one object at once and

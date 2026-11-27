@@ -164,24 +164,25 @@ theorem nothing_lifts_the_transfer_denial (wide more : Nat) (named : Owed) :
 
 -- What one staging on an object reads and writes, as conflicts see it.
 inductive Key where
-  -- Any of the object's live keys: every staging writes one, a transfer's
-  -- validated scan reads them all.
-  | live
+  -- The object's staged-change marker: every staging writes it, a transfer
+  -- reads it, validated.
+  | stagedMark
   -- The object's transfer key: a transfer writes it, every other staging
   -- reads it, validated.
   | transferMark
   deriving DecidableEq, Repr
 
-/-- The keys a staging reads, validated: a transfer scans the object's live
-keys, any other change reads the transfer key. -/
+/-- The keys a staging reads, validated: a transfer reads the staged-change
+marker, any other change reads the transfer key. -/
 def reads (transfer : Bool) : List Key :=
   -- One validated read each.
-  if transfer then [.live] else [.transferMark]
+  if transfer then [.stagedMark] else [.transferMark]
 
-/-- The keys a staging writes: its live key, and a transfer its mark too. -/
+/-- The keys a staging writes: the staged-change marker, and a transfer its
+transfer key too. -/
 def writes (transfer : Bool) : List Key :=
-  -- A live key always; the mark for a transfer.
-  if transfer then [.live, .transferMark] else [.live]
+  -- The staged marker always; the transfer key for a transfer.
+  if transfer then [.stagedMark, .transferMark] else [.stagedMark]
 
 /-- Whether a staging that commits second is aborted by one that committed
 first while it was open: it read, validated, a key the first wrote. -/
@@ -193,14 +194,14 @@ def abortedBy (first second : Bool) : Bool :=
 beside it, is aborted. -/
 theorem a_transfer_committing_second_is_aborted (first : Bool) :
     abortedBy first true = true := by
-  -- Every staging writes a live key, and a transfer reads them.
+  -- Every staging writes the staged marker, and a transfer reads it.
   cases first <;> decide
 
 /-- Any change that commits second, after a transfer staged beside it, is
 aborted. -/
 theorem a_change_committing_after_a_transfer_is_aborted (second : Bool) :
     abortedBy true second = true := by
-  -- A transfer writes both keys, and every staging reads one of them.
+  -- A transfer writes the transfer key, which every other staging reads.
   cases second <;> decide
 
 /-- Two changes that are not transfers never abort each other: the order

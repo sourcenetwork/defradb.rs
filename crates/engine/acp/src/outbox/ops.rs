@@ -15,6 +15,7 @@
 //! by its head key, which only staging reads and writes.
 
 use storage::corekv::{IterOptions, Reader, Store, Writer};
+use storage::merge::counter_i64;
 use storage::merge::owed::{self, part, Counters};
 
 use super::keys::{self, OwedTupleState};
@@ -472,15 +473,14 @@ pub(super) struct StageMarks {
 /// touches the head key, so a settle of the tuple aborts nothing.
 ///
 /// A transfer orders its whole object the same way
-/// (`proofs/tla/OwnerTransfer.tla`, `CommitConflict`). It reads every live
-/// key of its object in a validated scan and writes the object's transfer
-/// key; every other change reads that key, validated. Of a transfer and
-/// another change staged on one object at once, the one that commits second
-/// is aborted, and its next attempt takes a later sequence: changes on an
-/// object around a transfer hold their places in the queue in the order
-/// they committed. Two changes that are not transfers do not conflict by
-/// this. A settle deletes a live key, so one that commits while a transfer
-/// is staged on the object aborts the transfer's attempt too.
+/// (`proofs/tla/OwnerTransfer.tla`, `CommitConflict`). Every staging on the
+/// object blind-merges its staging marker; a transfer reads that marker
+/// validated and writes the object's transfer key, which every other change
+/// reads validated. Of a transfer and another change staged on one object at
+/// once, the one that commits second is aborted, and its next attempt takes
+/// a later sequence: changes on an object around a transfer hold their places
+/// in the queue in the order they committed. Two changes that are not
+/// transfers do not conflict by this, and a settle touches neither key.
 pub(super) async fn stage<T>(
     txn: &T,
     sequences: &dyn Store,
@@ -494,14 +494,9 @@ where
     txn.get(&head_key).await.map_err(storage_error)?;
     let transfer_key =
         keys::transfer_key(&new.tuple.policy_id, &new.tuple.resource, &new.tuple.object);
+    let staged_key = keys::staged_key(&new.tuple.policy_id, &new.tuple.resource, &new.tuple.object);
     if new.op == OwedOp::Transfer {
-        let prefix =
-            keys::object_live_prefix(&new.tuple.policy_id, &new.tuple.resource, &new.tuple.object);
-        let mut iter = txn
-            .iterator(IterOptions::new().with_prefix(prefix).with_validation(true))
-            .await
-            .map_err(storage_error)?;
-        while iter.next().await.map_err(storage_error)?.is_some() {}
+        txn.get(&staged_key).await.map_err(storage_error)?;
     } else {
         txn.get(&transfer_key).await.map_err(storage_error)?;
     }
@@ -529,6 +524,7 @@ where
         OwedOp::Delete | OwedOp::Archive => LIVE_DELETE,
     };
     put(txn, &keys::live_key(&change.tuple, seq), live).await?;
+    merge(txn, &staged_key, &counter_i64(1)).await?;
     account(txn, &change, false).await?;
     Ok(change)
 }
