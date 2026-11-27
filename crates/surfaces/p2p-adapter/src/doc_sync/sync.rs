@@ -224,7 +224,9 @@ mod tests {
     use std::sync::Arc;
     use std::time::Duration;
 
-    use crate::doc_sync::test_support::{FailingDispatch, MixedDispatch, SlowDispatch};
+    use crate::doc_sync::test_support::{
+        merge_report, FailingDispatch, MixedDispatch, ReportingDispatch, SlowDispatch,
+    };
 
     /// #1299: with peers present and every send failing, the sync must report
     /// an error rather than success. The attempt count is asserted first — it
@@ -361,53 +363,42 @@ mod tests {
     }
 
     /// #3468: a merge reported twice does not stand for a second document, so
-    /// the sync waits for each document it asked for.
+    /// the sync waits for each document it asked for. The doubled report is
+    /// published from inside the send, so the sync has subscribed by then.
     #[nuclei::test]
     async fn a_merge_reported_twice_counts_as_one_document() {
-        let dispatch = Arc::new(MixedDispatch::<false>::new(1, 0));
-        let bus = Arc::new(events::ChannelBus::default());
-        let merged = |doc_id: &str| {
-            events::Message::merge_complete(events::MergeCompleteData {
-                doc_id: doc_id.to_string(),
-                subject_doc_id: None,
-                cid: cid::Cid::default(),
-                collection_id: "collection".to_string(),
-                by_peer: String::new(),
-            })
-        };
-        let publisher = {
-            let bus = Arc::clone(&bus);
-            edge::testing::edge().spawn(async move {
-                use events::Bus as _;
-                edge::testing::edge().sleep(Duration::from_millis(50)).await;
-                bus.publish(merged("bae-first"));
-                bus.publish(merged("bae-first"));
-                edge::testing::edge()
-                    .sleep(Duration::from_millis(400))
-                    .await;
-                bus.publish(merged("bae-second"));
-            })
-        };
-        let started = web_time::Instant::now();
+        use events::Bus as _;
+        use futures::future::{select, Either};
 
-        super::sync_documents(
+        let bus = Arc::new(events::ChannelBus::default());
+        let dispatch = Arc::new(ReportingDispatch::new(
+            Arc::clone(&bus),
+            &["bae-first", "bae-first"],
+        ));
+        let network = p2p::network::Network::on(edge::testing::edge());
+        let mut sync = Box::pin(super::sync_documents(
             Arc::clone(&dispatch),
             bus.as_ref(),
-            &p2p::network::Network::on(edge::testing::edge()),
+            &network,
             vec!["bae-first".to_string(), "bae-second".to_string()],
-            Duration::from_secs(2),
+            Duration::from_secs(30),
             1,
-        )
-        .await
-        .expect("both documents merged");
+        ));
+        // Shorter than the sync's 3 s idle timeout: only its completion rule
+        // could end it inside either window.
+        let window = || Box::pin(edge::testing::edge().sleep(Duration::from_secs(1)));
 
+        let early = select(sync.as_mut(), window()).await;
         assert!(
-            started.elapsed() >= Duration::from_millis(400),
-            "the sync returned before the second document merged, after {:?}",
-            started.elapsed()
+            matches!(early, Either::Right(_)),
+            "the sync returned while bae-second had not merged"
         );
-        assert!(started.elapsed() < Duration::from_millis(1500));
-        publisher.await.expect("publisher");
+
+        bus.publish(merge_report("bae-second"));
+        match select(sync, window()).await {
+            Either::Left((result, _)) => result.expect("both documents merged"),
+            Either::Right(_) => panic!("the sync kept waiting after both documents merged"),
+        }
     }
 
     /// #1314 review: `timeout: "0"` is valid Go input. With peers and
