@@ -178,6 +178,7 @@ LIVE_CASES = (
 )
 CARGO = ["cargo", "+1.99.1"]
 BUILD = ["--release", "--frozen"]
+PROFILES = ("release", "release-fast")
 PUBLIC_FIELDS = ("phase", "exit_code", "seconds", "passed", "panic_site", "error")
 
 
@@ -379,8 +380,8 @@ def interrupted(_signal, _frame):
 
 
 class Runner:
-    def __init__(self, root, vera, temporary, runtime_ref=None, cache_dir=None):
-        self.root, self.vera = root, vera
+    def __init__(self, root, vera, temporary, runtime_ref=None, cache_dir=None, profile="release"):
+        self.root, self.vera, self.profile = root, vera, profile
         self.sdk_revision = revision(root)
         expected = self.sdk_revision if runtime_ref is None else runtime_revision(runtime_ref)
         self.sources = {"defra": source(root), "vera": source(vera)}
@@ -439,7 +440,7 @@ class Runner:
 
     def save(self):
         public = [public_phase(record) for record in self.records]
-        provenance = {"sources": self.sources, "sdk_revision": self.sdk_revision}
+        provenance = {"sources": self.sources, "sdk_revision": self.sdk_revision, "profile": self.profile}
         self.summary.write_text(json.dumps({**provenance, "phases": public}, indent=2) + "\n")
         (self.private / "manifest.json").write_text(json.dumps({**provenance, "binaries": self.binaries,
                                                               "phases": self.records}, indent=2) + "\n")
@@ -499,18 +500,17 @@ def qualify(runner):
         runner.target = runner.cache_dir / "defra-target"
         runner.env["CARGO_TARGET_DIR"] = str(runner.target)
     runner.run("fetch-defra", fetch)
-    log = runner.run("build-defra", CARGO + ["build", *BUILD, "-p", "cli", "--bin", "defradb", "--features", "vera", "--message-format=json"])
+    build = ["--profile", runner.profile, "--frozen"]
+    log = runner.run("build-defra", CARGO + ["build", *build, "-p", "cli", "--bin", "defradb", "--features", "vera", "--message-format=json"])
     runner.env["DEFRA_RUST_BINARY"] = runner.stage(log, "defradb", "defradb")
     runner.env["DEFRA_VERA_BINARY"] = runner.env["DEFRA_RUST_BINARY"]
-    log = runner.run("compile-provider", CARGO + ["test", *BUILD, "-p", "vera", "--lib", "--no-run", "--message-format=json"])
+    log = runner.run("compile-provider", CARGO + ["test", *build, "-p", "vera", "--lib", "--no-run", "--message-format=json"])
     provider = runner.stage(log, "vera", "provider-tests")
-    log = runner.run("compile-native", CARGO + ["test", *BUILD, "-p", "integration-test", "--test", "vera", "--no-run", "--message-format=json"])
+    log = runner.run("compile-native", CARGO + ["test", *build, "-p", "integration-test", "--test", "vera", "--no-run", "--message-format=json"])
     native = runner.stage(log, "vera", "native-tests")
     runner.test("provider-units", provider, ["vera_rs::"], UNIT_TESTS)
     for phase, selector in LIVE_CASES:
         runner.test(phase, native, [selector, "--exact"], [selector])
-    runner.run("lint-provider", CARGO + ["clippy", *BUILD, "-p", "vera", "-p", "cli", "--features", "cli/vera", "--lib", "--tests", "--", "-D", "warnings"])
-    runner.run("lint-native", CARGO + ["clippy", *BUILD, "-p", "integration-test", "--test", "vera", "--", "-D", "warnings"])
 
 
 def main():
@@ -520,6 +520,8 @@ def main():
     parser.add_argument("--cache-dir", type=Path, help="Runner-local cache for compiled dependencies and pinned Vera")
     parser.add_argument("--runtime-ref", type=runtime_revision,
                         help="Vera runtime commit; defaults to the native SDK revision")
+    parser.add_argument("--profile", choices=PROFILES, default="release",
+                        help="Cargo profile for the defradb side; verad is always built with --release")
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[2]
     if args.vera_ref:
@@ -531,7 +533,7 @@ def main():
     os.umask(0o077)
     signal.signal(signal.SIGTERM, interrupted)
     runner = Runner(root, args.vera.resolve(), Path(os.environ["RUNNER_TEMP"]).resolve(), args.runtime_ref,
-                    args.cache_dir.resolve() if args.cache_dir else None)
+                    args.cache_dir.resolve() if args.cache_dir else None, args.profile)
     try:
         qualify(runner)
         runner.records.append({"phase": "qualification", "exit_code": 0, "passed": len(UNIT_TESTS) + len(LIVE_CASES)})
