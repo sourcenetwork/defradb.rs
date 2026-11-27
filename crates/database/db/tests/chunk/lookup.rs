@@ -54,7 +54,6 @@ fn a_revert_after_many_edits_reuses_the_old_chunk() {
             .create("Article", article("t", first))
             .await
             .unwrap();
-        // More old chunks than the scan reads before it looks hashes up one by one.
         for edit in 0..20 {
             let text = format!("Edit {edit} of the article.");
             assert_eq!(
@@ -86,10 +85,19 @@ fn an_explicit_transaction_reuses_an_old_chunk_after_many_edits() {
             .create("Article", article("t", first))
             .await
             .unwrap();
+        let txn = db::DbDocMutator::new(Arc::clone(&db), db.new_txn(false).await.unwrap());
+        let staged = "The first text staged in the transaction.";
+        assert_eq!(
+            update_body(&txn, &created.doc_id, staged)
+                .await
+                .derived
+                .len(),
+            1
+        );
         for edit in 0..20 {
             let text = format!("Edit {edit} of the article.");
             assert_eq!(
-                update_body(&mutator, &created.doc_id, &text)
+                update_body(&txn, &created.doc_id, &text)
                     .await
                     .derived
                     .len(),
@@ -97,13 +105,12 @@ fn an_explicit_transaction_reuses_an_old_chunk_after_many_edits() {
             );
         }
 
-        let txn = db::DbDocMutator::new(Arc::clone(&db), db.new_txn(false).await.unwrap());
-        let back = update_body(&txn, &created.doc_id, first).await;
+        let back = update_body(&txn, &created.doc_id, staged).await;
         assert!(back.derived.is_empty());
         txn.take_txn().await.unwrap().commit().await.unwrap();
         assert_eq!(
             body_of(&mutator, &created.doc_id).await.as_deref(),
-            Some(first)
+            Some(staged)
         );
     })
     .unwrap()

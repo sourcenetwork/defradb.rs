@@ -16,9 +16,6 @@ use crate::txn::DbTxn;
 
 use super::{ChunkCollection, ChunkWrites};
 
-/// About how many index entries a scan reads for the cost of one lookup.
-const SCAN_ENTRIES_PER_LOOKUP: usize = 8;
-
 impl<S> ChunkWrites<'_, S>
 where
     S: Store + 'static,
@@ -73,26 +70,23 @@ impl ChunkCollection {
 
     /// Which of the `planned` hashes `parent` already has a chunk document for.
     ///
-    /// A parent's old chunks stay until it is deleted, so its range of the
-    /// index grows with every edit. It is scanned while that costs about what
-    /// looking each planned hash up would; past that, the hashes the scan has
-    /// not found are looked up one by one.
+    /// One prefix scan includes staged chunks and avoids a separate walk of
+    /// the transaction's buffered writes for each hash.
     pub(crate) async fn existing_of(
         &self,
         parent: &str,
         planned: &RapidHashSet<&str>,
     ) -> Result<RapidHashSet<String>> {
-        let budget = planned.len().saturating_mul(SCAN_ENTRIES_PER_LOOKUP);
-        let mut entries = self.scan_of(parent).await?;
         let mut existing = RapidHashSet::default();
-        for _ in 0..budget {
-            let Some(entry) = entries
-                .next()
-                .await
-                .map_err(|e| QueryError::execution(format!("chunk scan failed: {e}")))?
-            else {
-                return Ok(existing);
-            };
+        if planned.is_empty() {
+            return Ok(existing);
+        }
+        let mut entries = self.scan_of(parent).await?;
+        while let Some(entry) = entries
+            .next()
+            .await
+            .map_err(|e| QueryError::execution(format!("chunk scan failed: {e}")))?
+        {
             // An index key does not record that the hash was a string.
             let hash = match entry.values.into_iter().nth(1) {
                 Some(NormalValue::Bytes(hash)) => String::from_utf8(hash).ok(),
@@ -101,23 +95,12 @@ impl ChunkCollection {
             };
             if let Some(hash) = hash.filter(|hash| planned.contains(hash.as_str())) {
                 existing.insert(hash);
-            }
-        }
-        for hash in planned {
-            if !existing.contains(*hash) && self.has(parent, hash).await? {
-                existing.insert((*hash).to_string());
+                if existing.len() == planned.len() {
+                    break;
+                }
             }
         }
         Ok(existing)
-    }
-
-    async fn has(&self, parent: &str, hash: &str) -> Result<bool> {
-        let mut entries = self.scan_of_hash(parent, hash).await?;
-        let found = entries
-            .next()
-            .await
-            .map_err(|e| QueryError::execution(format!("chunk scan failed: {e}")))?;
-        Ok(found.is_some())
     }
 
     pub(super) async fn chunks_of(&self, parent: &str) -> Result<Vec<u64>> {
