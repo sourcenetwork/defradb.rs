@@ -29,6 +29,9 @@ storage = { path = "../../engine/storage" }
 blockstore = { path = "../../engine/blockstore" }
 crypto = { path = "../../foundation/crypto" }
 identity = { path = "../../building-blocks/identity" }
+# The Vera delegation `--identity` signs for a node whose document ACP is a
+# vera.rs deployment.
+vera-delegation = { path = "../../engine/vera-delegation" }
 kms = { path = "../../database/kms" }
 p2p = { path = "../../database/p2p", features = ["libp2p-transport"] }
 defra-p2p-adapter = { path = "../../surfaces/p2p-adapter", default-features = false, features = ["libp2p", "kms"] }
