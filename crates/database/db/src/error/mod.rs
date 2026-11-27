@@ -31,6 +31,19 @@ pub enum Error {
     #[error("collection '{0}' not found")]
     CollectionNotFound(String),
 
+    /// A history prune runs each document in a transaction of its own, so an
+    /// explicit transaction cannot hold it.
+    #[error("history prune cannot run in a transaction")]
+    HistoryPruneInTransaction,
+
+    /// A versioned read reached a commit a history prune deleted, so the
+    /// version cannot be rebuilt.
+    #[error(
+        "document {doc_id} cannot be read at a commit: its history was pruned to the \
+         collection's @retention depth (commit {cid} is gone); read it without a cid"
+    )]
+    HistoryPruned { doc_id: String, cid: String },
+
     #[error("collection not found. collection version: {0}")]
     CollectionVersionNotFound(String),
 

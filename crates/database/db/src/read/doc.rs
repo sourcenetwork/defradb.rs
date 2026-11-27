@@ -646,7 +646,12 @@ impl<S: Store + 'static> DocFetcher for DbDocFetcher<S> {
         versioned_fetcher
             .get_document_at_cid(cid, expected_doc_id, collection.clone())
             .await
-            .map_err(|e| query::error::QueryError::execution(e.to_string()))
+            .map_err(|e| match e {
+                crate::error::Error::HistoryPruned { doc_id, cid } => {
+                    query::error::QueryError::HistoryPruned { doc_id, cid }
+                }
+                other => query::error::QueryError::execution(other.to_string()),
+            })
     }
 
     async fn get_documents_at_cid(
@@ -665,7 +670,12 @@ impl<S: Store + 'static> DocFetcher for DbDocFetcher<S> {
                 collection.clone(),
             )
             .await
-            .map_err(|e| query::error::QueryError::execution(e.to_string()))
+            .map_err(|e| match e {
+                crate::error::Error::HistoryPruned { doc_id, cid } => {
+                    query::error::QueryError::HistoryPruned { doc_id, cid }
+                }
+                other => query::error::QueryError::execution(other.to_string()),
+            })
     }
 
     async fn search_fulltext_scored(

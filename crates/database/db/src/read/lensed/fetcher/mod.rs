@@ -704,6 +704,9 @@ impl<S: Store + 'static> DocFetcher for LensedDocFetcher<S> {
             .await
             .map_err(|error| match error {
                 crate::error::Error::Query(error) => error,
+                crate::error::Error::HistoryPruned { doc_id, cid } => {
+                    query::error::QueryError::HistoryPruned { doc_id, cid }
+                }
                 error => query::error::QueryError::execution(error.to_string()),
             })
     }
@@ -733,6 +736,9 @@ impl<S: Store + 'static> DocFetcher for LensedDocFetcher<S> {
             .await
             .map_err(|error| match error {
                 crate::error::Error::Query(error) => error,
+                crate::error::Error::HistoryPruned { doc_id, cid } => {
+                    query::error::QueryError::HistoryPruned { doc_id, cid }
+                }
                 error => query::error::QueryError::execution(error.to_string()),
             })
     }

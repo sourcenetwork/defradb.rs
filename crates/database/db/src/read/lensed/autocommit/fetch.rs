@@ -313,7 +313,12 @@ impl<S: Store + 'static> LensedAutoCommitFetcher<S> {
             .map_err(|e| {
                 query::error::QueryError::execution(format!("failed to create txn: {}", e))
             })?
-            .map_err(|e| query::error::QueryError::execution(e.to_string()))
+            .map_err(|e| match e {
+                crate::error::Error::HistoryPruned { doc_id, cid } => {
+                    query::error::QueryError::HistoryPruned { doc_id, cid }
+                }
+                other => query::error::QueryError::execution(other.to_string()),
+            })
     }
 
     pub(super) async fn get_documents_at_cid_impl(
@@ -339,7 +344,12 @@ impl<S: Store + 'static> LensedAutoCommitFetcher<S> {
             .map_err(|e| {
                 query::error::QueryError::execution(format!("failed to create txn: {}", e))
             })?
-            .map_err(|e| query::error::QueryError::execution(e.to_string()))
+            .map_err(|e| match e {
+                crate::error::Error::HistoryPruned { doc_id, cid } => {
+                    query::error::QueryError::HistoryPruned { doc_id, cid }
+                }
+                other => query::error::QueryError::execution(other.to_string()),
+            })
     }
 
     pub(super) async fn get_view_cache_items_impl(

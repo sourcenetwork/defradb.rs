@@ -123,6 +123,10 @@ pub(crate) fn create_router_with_state_and_body_limits(
         .route("/{name}/exists", get(handlers::collection_exists))
         .route("/{name}/truncate", delete(handlers::truncate_collection))
         .route("/{name}/documents/purge", delete(handlers::purge_documents))
+        .route(
+            "/{name}/history/prune",
+            post(handlers::prune_history::prune_history),
+        )
         .route("/{name}/document/{docID}", get(handlers::get_document))
         .route("/{name}/document/{docID}", patch(handlers::update_document))
         .route(

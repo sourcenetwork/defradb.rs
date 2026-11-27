@@ -113,3 +113,33 @@ impl<S: Store> DB<S> {
         Ok(())
     }
 }
+
+/// Every priority index entry of the document, as its priority and CID.
+pub(crate) async fn document_entries(
+    headstore: &datastore::NamespaceView,
+    doc_short_id: u64,
+) -> Result<Vec<(u64, Cid)>> {
+    let prefix = HeadstorePriorityKey::document_prefix(doc_short_id);
+    let (prefix_len, cid_offset) = (prefix.len(), HeadstorePriorityKey::cid_offset(doc_short_id));
+    let mut iter = headstore
+        .iterator(IterOptions::new().with_prefix(prefix))
+        .await
+        .map_err(Error::Storage)?;
+    let mut entries = Vec::new();
+    while let Some(pair) = iter.next().await.map_err(Error::Storage)? {
+        let priority = pair
+            .key
+            .get(prefix_len..cid_offset - 1)
+            .and_then(|hex| std::str::from_utf8(hex).ok())
+            .and_then(|hex| u64::from_str_radix(hex, 16).ok());
+        let cid = pair
+            .key
+            .get(cid_offset..)
+            .and_then(|bytes| Cid::try_from(bytes).ok());
+        if let (Some(priority), Some(cid)) = (priority, cid) {
+            entries.push((priority, cid));
+        }
+    }
+    iter.close().await.map_err(Error::Storage)?;
+    Ok(entries)
+}

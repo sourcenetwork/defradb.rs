@@ -3,6 +3,7 @@
 mod describe;
 mod document;
 pub(crate) mod introspection;
+mod prune_history;
 
 use std::path::PathBuf;
 
@@ -54,7 +55,13 @@ pub enum CollectionCommand {
     Truncate(TruncateArgs),
     /// Permanently remove documents by DocID from the local node
     PurgeDocs(PurgeDocsArgs),
+    /// Prune each document's history to the collection's @retention(maxDepth)
+    PruneHistory(PruneHistoryArgs),
 }
+
+/// Arguments for prune-history: the collection is named by `--collection-name`.
+#[derive(Args, Debug)]
+pub struct PruneHistoryArgs {}
 
 /// Arguments for purge-docs. History is always pruned unless the collection is
 /// branchable, so Go shinzo's `--prune-history` has no counterpart.
@@ -194,6 +201,7 @@ impl CollectionArgs {
             CollectionCommand::SetActive(args) => args.execute(ctx).await,
             CollectionCommand::Truncate(args) => args.execute(ctx, self.name.as_deref()).await,
             CollectionCommand::PurgeDocs(args) => args.execute(ctx, self.name.as_deref()).await,
+            CollectionCommand::PruneHistory(args) => args.execute(ctx, self.name.as_deref()).await,
         }
     }
 }

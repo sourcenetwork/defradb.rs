@@ -154,6 +154,7 @@ client_actions! {
         OpenApiDocument,
         PatchCollection,
         PeerInfo,
+        PruneHistory,
         PurgeDocs,
         ReEnableNAC,
         RefreshViews,

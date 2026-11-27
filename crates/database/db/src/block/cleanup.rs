@@ -80,6 +80,19 @@ async fn remove_encryption_owner(
     Ok(())
 }
 
+/// Remove one document's ownership of a field block a commit no longer links,
+/// and delete it, its signature and its encryption block when no document
+/// owns them any more. Blocks in `retained` keep their encryption block.
+pub async fn delete_owned_block(
+    blockstore: &NamespaceView,
+    systemstore: &NamespaceView,
+    cid: &Cid,
+    doc_id: &str,
+    retained: &RapidHashSet<Cid>,
+) -> Result<()> {
+    remove_leaf_owner(blockstore, systemstore, cid, doc_id, true, retained).await
+}
+
 /// The blocks `commits` still need: the commits, the field blocks they link
 /// and the encryption blocks either references.
 pub async fn referenced_blocks(

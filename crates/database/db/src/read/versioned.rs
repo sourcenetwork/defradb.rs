@@ -15,7 +15,9 @@ use schema::{CType, CollectionVersion, FieldDescription, FieldKind, ScalarKind};
 use std::collections::VecDeque;
 use std::str::FromStr;
 use std::sync::Arc;
-use storage::corekv::Store;
+use storage::corekv::{IterOptions, Store};
+use storage::keys::doc_id_index::decode_doc_short_id;
+use storage::keys::{DELETED_KEY_PREFIX, DOC_KEY_PREFIX};
 
 use crate::error::{Error, Result};
 use crate::txn::{DbTxn, LentTxn};
@@ -81,7 +83,12 @@ impl<S: Store> VersionedFetcher<S> {
         collection: Arc<CollectionVersion>,
     ) -> Result<Document> {
         let docs = self
-            .get_documents_at_cid(cid_str, expected_doc_id, None, collection)
+            .get_documents_at_cid(
+                cid_str,
+                expected_doc_id,
+                Some(collection.resolved_root_id()),
+                collection,
+            )
             .await?;
         docs.into_iter().next().ok_or_else(|| {
             Error::Serialization("cid either does not exist or belong to document".to_string())
@@ -108,8 +115,30 @@ impl<S: Store> VersionedFetcher<S> {
         // Parse the CID
         let target_cid = Self::parse_cid(cid_str)?;
 
-        // Load the target block first to validate and get doc info
-        let target_block = self.load_block(txn, &target_cid).await?;
+        // Load the target block first to validate and get doc info. A missing
+        // target can still be one of this document's pruned commits: its
+        // retained priority entry names it after the block is gone.
+        let target_block = match self.load_block(txn, &target_cid).await {
+            Ok(block) => block,
+            Err(error) => {
+                if let Some(doc_id) = self
+                    .pruned_target(
+                        txn,
+                        &target_cid,
+                        expected_doc_id,
+                        collection_short_id,
+                        &collection,
+                    )
+                    .await?
+                {
+                    return Err(Error::HistoryPruned {
+                        doc_id,
+                        cid: target_cid.to_string(),
+                    });
+                }
+                return Err(error);
+            }
+        };
 
         // Check if this is a collection block (branchable collection CID)
         if matches!(&target_block.delta, CrdtDelta::Collection(_)) {
@@ -165,7 +194,7 @@ impl<S: Store> VersionedFetcher<S> {
 
         // Collect all blocks from target CID back to genesis
         let blocks = self
-            .collect_blocks_to_genesis(txn, &target_cid, &target_block)
+            .collect_blocks_to_genesis(txn, &target_cid, &target_block, &members)
             .await?;
 
         // Sort blocks by priority (ascending) for forward replay
@@ -294,7 +323,12 @@ impl<S: Store> VersionedFetcher<S> {
 
             // Collect all blocks from this composite back to genesis
             let blocks = self
-                .collect_blocks_to_genesis(txn, composite_cid, &composite_block)
+                .collect_blocks_to_genesis(
+                    txn,
+                    composite_cid,
+                    &composite_block,
+                    std::slice::from_ref(&doc_id),
+                )
                 .await?;
 
             let mut sorted_blocks: Vec<(Cid, Block)> = blocks.into_iter().collect();
@@ -361,15 +395,69 @@ impl<S: Store> VersionedFetcher<S> {
             })
     }
 
+    /// The document whose retained priority entries name `cid`, when this read
+    /// names a commit a history prune deleted.
+    async fn pruned_target(
+        &self,
+        txn: &DbTxn<S>,
+        cid: &Cid,
+        expected_doc_id: Option<&str>,
+        collection_short_id: Option<u32>,
+        collection: &CollectionVersion,
+    ) -> Result<Option<String>> {
+        let systemstore = txn.systemstore()?;
+        let mut short_ids = Vec::new();
+        if let Some(expected) = expected_doc_id {
+            let canonical = self.canonical_doc_id(txn, expected).await?;
+            if let Some(doc_ref) = crate::docid::map::get_doc_ref(&systemstore, &canonical).await? {
+                short_ids.push(doc_ref.doc_short_id);
+            }
+        } else if collection_short_id.is_some() {
+            let datastore = txn.datastore()?;
+            for prefix in [DOC_KEY_PREFIX, DELETED_KEY_PREFIX] {
+                let mut prefix = prefix.to_vec();
+                prefix.extend_from_slice(collection.collection_id.as_bytes());
+                prefix.push(b'/');
+                let prefix_len = prefix.len();
+                let mut iter = datastore
+                    .iterator(IterOptions::new().with_prefix(prefix))
+                    .await
+                    .map_err(Error::Storage)?;
+                while let Some(pair) = iter.next().await.map_err(Error::Storage)? {
+                    if let Ok(doc_short_id) = decode_doc_short_id(&pair.key[prefix_len..]) {
+                        short_ids.push(doc_short_id);
+                    }
+                }
+                iter.close().await.map_err(Error::Storage)?;
+            }
+        }
+        short_ids.sort_unstable();
+        short_ids.dedup();
+
+        let headstore = txn.headstore()?;
+        for doc_short_id in short_ids {
+            let entries =
+                crate::block::priority::document_entries(&headstore, doc_short_id).await?;
+            if entries.iter().any(|(_, entry)| entry == cid) {
+                return crate::docid::map::get_doc_id(&systemstore, doc_short_id).await;
+            }
+        }
+        Ok(None)
+    }
+
     /// Collect all blocks from target CID back to genesis using BFS.
     ///
-    /// Returns a map of CID -> Block for all blocks in the history.
+    /// Returns a map of CID -> Block for all blocks in the history. A block
+    /// a history prune of `doc_ids` deleted fails the walk: the version
+    /// cannot be rebuilt without it.
     async fn collect_blocks_to_genesis(
         &self,
         txn: &DbTxn<S>,
         start_cid: &Cid,
         start_block: &Block,
+        doc_ids: &[String],
     ) -> Result<RapidHashMap<Cid, Block>> {
+        let mut missing = Vec::new();
         let mut blocks = RapidHashMap::new();
         let mut visited: RapidHashSet<Cid> = RapidHashSet::new();
         let mut queue: VecDeque<Cid> = VecDeque::new();
@@ -401,9 +489,13 @@ impl<S: Store> VersionedFetcher<S> {
             }
             visited.insert(cid);
 
-            let block = match self.load_block(txn, &cid).await {
-                Ok(b) => b,
-                Err(_) => continue, // Skip missing blocks (genesis reached)
+            let block = match self.find_block(txn, &cid).await {
+                Ok(Some(block)) => block,
+                Ok(None) => {
+                    missing.push(cid);
+                    continue;
+                }
+                Err(_) => continue,
             };
 
             // Queue heads for further traversal
@@ -427,8 +519,55 @@ impl<S: Store> VersionedFetcher<S> {
             blocks.insert(cid, block);
         }
 
+        self.refuse_pruned(txn, doc_ids, &missing).await?;
         self.decrypt_blocks(txn, start_cid, &mut blocks).await?;
         Ok(blocks)
+    }
+
+    /// Fail when a block the walk did not find is one of `doc_ids`' commits:
+    /// its priority index entry outlives the block only when a history prune
+    /// deleted it.
+    async fn refuse_pruned(
+        &self,
+        txn: &DbTxn<S>,
+        doc_ids: &[String],
+        missing: &[Cid],
+    ) -> Result<()> {
+        if missing.is_empty() {
+            return Ok(());
+        }
+        let systemstore = txn.systemstore()?;
+        let headstore = txn.headstore()?;
+        for doc_id in doc_ids {
+            let Some(doc_ref) = crate::docid::map::get_doc_ref(&systemstore, doc_id).await? else {
+                continue;
+            };
+            let entries =
+                crate::block::priority::document_entries(&headstore, doc_ref.doc_short_id).await?;
+            if let Some((_, cid)) = entries.iter().find(|(_, cid)| missing.contains(cid)) {
+                return Err(Error::HistoryPruned {
+                    doc_id: doc_id.clone(),
+                    cid: cid.to_string(),
+                });
+            }
+        }
+        Ok(())
+    }
+
+    /// A block from the blockstore by CID, its payload as stored, or `None`
+    /// when the blockstore has none.
+    async fn find_block(&self, txn: &DbTxn<S>, cid: &Cid) -> Result<Option<Block>> {
+        let blockstore = txn.blockstore()?;
+        let Some(data) = blockstore
+            .get(&cid.to_bytes())
+            .await
+            .map_err(Error::Storage)?
+        else {
+            return Ok(None);
+        };
+        Block::from_dag_cbor(&data)
+            .map(Some)
+            .map_err(|e| Error::Serialization(format!("Failed to decode block: {}", e)))
     }
 
     /// Load a block from blockstore by CID, its payload as stored.

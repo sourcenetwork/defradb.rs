@@ -146,6 +146,8 @@ pub const ROUTES: &[Route] = &[
     row("/api/v0/collections/{name}/truncate", DELETE, required(NodePermission::CollectionTruncate), true),
     // A purge is checked against the node permission of a truncate.
     row("/api/v0/collections/{name}/documents/purge", DELETE, required(NodePermission::CollectionTruncate), false),
+    // A history prune is checked against the node permission of a truncate.
+    row("/api/v0/collections/{name}/history/prune", POST, required(NodePermission::CollectionTruncate), false),
     row("/api/v0/collections/{name}/document/{docID}", GET, required(NodePermission::DocumentRead), true),
     row("/api/v0/collections/{name}/document/{docID}", PATCH, required(NodePermission::DocumentUpdate), true),
     row("/api/v0/collections/{name}/document/{docID}", DELETE, required(NodePermission::DocumentDelete), true),

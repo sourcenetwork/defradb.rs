@@ -11,6 +11,7 @@ mod chunk_versions;
 mod create;
 mod delete;
 mod lookup;
+mod prune_history;
 mod purge;
 mod resolve;
 mod select;

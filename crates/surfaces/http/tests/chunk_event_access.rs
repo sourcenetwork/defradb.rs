@@ -79,6 +79,10 @@ impl CollectionManagementOperations for Collections {
     ) -> Result<(), String> {
         Ok(())
     }
+
+    async fn prune_history(&self, _name: &str) -> Result<usize, String> {
+        Ok(0)
+    }
 }
 
 fn collections() -> Vec<schema::CollectionVersion> {

@@ -227,6 +227,32 @@ A signature block received over P2P starts out marked to-merge. Merging a block 
 
 The node configuration's `Libp2pConfig::orphan_sweep` sets whether the sweep runs (off by default), the interval between sweeps (5 minutes by default) and how long a to-merge block is kept (30 minutes by default). The node runs it only on a persistent store; an in-memory store never sweeps. The first sweep waits one TTL; each sweep examines at most 100,000 marks and resumes where the previous one stopped. With the sweep on, a block put through the P2P blockstore and never merged is deleted once its mark ages past the TTL.
 
+# `defra.retention`: Keeping only the recent history of each document
+
+- **Parents:** ["defra"]
+
+A collection can declare how much of each document's commit history it keeps with `@retention(maxDepth: N)`. Nothing happens on write: the operator applies it with a history prune of the collection (`DB::prune_history_as`, `POST /api/v0/collections/{name}/history/prune`, `defradb client collection --collection-name <name> prune-history`), which runs on this node only and replicates nothing. The depth is this node's own: it is not part of the collection's identity, so nodes that keep different depths share one collection, and the definition a peer receives over P2P does not carry it; a peer that should prune declares `@retention` in the collection it adds. Go has no history retention.
+
+# `defra.retention.directive`: Declaring a retention depth
+
+- **Parents:** ["defra.retention"]
+- **Scenarios:** ["collection::retention::retention_needs_a_positive_max_depth", "collection::retention::a_branchable_collection_refuses_retention"]
+
+`type User @retention(maxDepth: 2) { name: String age: Int }` records `"RetentionMaxDepth": 2` in the collection definition; a collection without the directive has no such field. A `maxDepth` that is missing, not an integer, zero or negative fails with `@retention directive requires a positive integer 'maxDepth' argument`. A `@branchable` collection keeps its whole history, since its collection DAG links every commit, so `@retention` on one fails with `invalid retention configuration: a branchable collection keeps its whole history. Collection: User`.
+
+# `defra.retention.prune`: A history prune keeps the top N heights of each document
+
+- **Parents:** ["defra.retention"]
+- **Scenarios:** ["collection::retention::prune_keeps_the_top_heights_and_the_value", "collection::retention::a_pruned_document_takes_updates_and_prunes_again", "collection::retention::a_collection_without_retention_keeps_its_history", "collection::retention::a_field_head_kept_by_a_prune_goes_once_superseded", "collection::retention::a_deleted_document_is_pruned_the_same_way", "collection::retention::a_block_another_document_owns_is_kept", "collection::retention::a_version_read_past_a_prune_fails", "collection::retention::access::a_prune_inside_a_transaction_is_refused", "collection::retention::access::a_prune_needs_the_truncate_permission", "collection::retention::p2p::a_concurrent_head_below_the_window_is_kept", "collection::retention::p2p::pruned_history_a_peer_sends_back_goes_in_the_next_prune"]
+
+With `maxDepth: 2`, a document created as `{"name":"John","age":21}` and updated three times (`age` 22, 23, 24) has composite commits at heights 1 to 4. A prune removes the composites at heights 1 and 2 and reports `{"count": 2}`: `_commits` then returns composite and `age` commits at heights 4 and 3 only (a walk from the heads stops where the history was cut, with no error), while the `name` commit at height 1 stays because it is still that field's head, and the document still reads `{"name":"John","age":24}`. Once a later write replaces that `name` value, the next prune removes the old `name` commit too: every field commit that no kept composite links and that is no field's head goes. A composite that is a live head is never pruned, even below the window (a concurrent branch a peer merged), and a block another document owns is kept (it stays in the `_commits` of both documents). Running the prune again removes nothing and counts 0; after another update it removes the one composite that fell below the window. A collection without `@retention` keeps its whole history and counts 0. Deleted documents are pruned the same way.
+
+A version read (`User(cid: "...")`) rebuilds a document from its whole history, so once that history is pruned it fails with `document <docID> cannot be read at a commit: its history was pruned to the collection's @retention depth (commit <cid> is gone); read it without a cid` instead of returning the fields the kept commits hold.
+
+A prune is checked against the node permission of a collection truncate before the collection is looked up, so an identity without it is denied (`not authorized to perform operation`) whether or not the collection exists; an unknown collection then fails with `collection '<name>' not found`. Each document is pruned in a transaction of its own, so a prune sent inside an explicit transaction (in process, or with the transaction header over HTTP or the CLI's `--tx`) fails with `history prune cannot run in a transaction`.
+
+Peers: a pruned commit cannot be fetched from this node any more. A pruned commit a peer sends again, or fetches back as the parent of a commit built on it, is recognised as already applied: it never becomes a head again, and it is stored with no owner until the next prune removes it again (or the orphan sweep, when on, after its TTL). A peer whose copy of a document is older than the window cannot catch up from this node alone: the history it is missing is gone here, so its fetch stays incomplete and is retried (a pushed head stays a pending DAG, retried at most every 60 seconds) until a peer that still holds that history serves it. Catching a peer up past a pruned window is left to #559.
+
 # `defra.replication_filter`: An embedder's filter on replicated documents
 
 - **Parents:** ["defra"]

@@ -78,6 +78,32 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
                 Ok(docs) => {
                     documents.extend(docs.into_iter().map(|doc| (doc, cid.clone())));
                 }
+                Err(QueryError::HistoryPruned { doc_id, cid }) => {
+                    let readable = match &collection.policy {
+                        Some(policy) => {
+                            let identity = Identity::from(caller_identity.clone());
+                            self.check_doc_access_for_read(
+                                &identity,
+                                DocumentPermission::Read,
+                                &policy.id,
+                                &policy.resource_name,
+                                &doc_id,
+                            )
+                            .await?
+                        }
+                        None => true,
+                    };
+                    if !readable {
+                        tracing::debug!(
+                            target: "acp::audit",
+                            event = "cid_query_permission_denied",
+                            doc_id = %doc_id,
+                            "CID time-travel query: pruned history excluded by ACP"
+                        );
+                        continue;
+                    }
+                    return Err(QueryError::HistoryPruned { doc_id, cid });
+                }
                 Err(e) => {
                     let err_msg = e.to_string();
                     // docID mismatch: Go returns empty results

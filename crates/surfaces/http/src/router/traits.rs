@@ -302,6 +302,10 @@ pub trait CollectionManagementOperations: CollectionLookup {
     /// named collection is removed.
     async fn delete_collections(&self, names: Vec<String>, active_only: bool)
         -> Result<(), String>;
+
+    /// Prune each document's history in the collection `name` to the
+    /// collection's `@retention(maxDepth: N)`; how many commits went.
+    async fn prune_history(&self, name: &str) -> Result<usize, String>;
 }
 
 /// What a relationship change made in a request did.

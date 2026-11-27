@@ -1063,6 +1063,7 @@ impl<'a> SdlParser<'a> {
         collection.downsample_interval = type_def.directives.downsample_interval.clone();
         collection.downsample_time_field = type_def.directives.downsample_time_field.clone();
         collection.downsample_retention = type_def.directives.downsample_retention.clone();
+        collection.retention_max_depth = type_def.directives.retention_max_depth;
         collection.is_branchable = type_def.directives.is_branchable;
         collection
             .governance_root
