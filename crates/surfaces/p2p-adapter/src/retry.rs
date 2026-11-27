@@ -68,7 +68,7 @@ pub type FailureRecorder = n0_future::task::JoinHandle<()>;
 /// channel closes or it is aborted.
 ///
 /// Records run in [`FAILURE_RECORDER_LANES`] lanes. A peer's records all go to
-/// one lane ([`lane_of`]), so they stay in the order they were sent and never
+/// one lane (`lane_of`), so they stay in the order they were sent and never
 /// run beside each other; different peers' transactions commit together and
 /// share their device syncs (#3471, `RetryRecorderLanes.tla`). `stats` counts
 /// what the lanes hold and do.
