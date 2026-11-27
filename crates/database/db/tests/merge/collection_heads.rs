@@ -1,0 +1,73 @@
+//! Collection-level head coverage for the P2P head provider.
+//!
+//! `BranchableSync` serves whatever `get_collection_heads` returns. A
+//! branchable collection that has committed documents must therefore expose
+//! its collection heads — otherwise every sync response is empty and a peer
+//! can never pull the collection.
+
+use crate::common::schema::parsed;
+use db::merge::head_provider::DbHeadProvider;
+use db::AutoCommitMutator;
+use db::DB;
+use document::Document;
+use p2p::sync::DocumentHeadProvider;
+use query::mutator::DocMutator;
+use schema::CollectionVersion;
+use std::sync::Arc;
+use storage::corekv::{IterOptions, Store};
+use storage::RegolithStore;
+
+const BRANCHABLE_SDL: &str = "type Transcript @branchable { body: String }";
+
+fn branchable_schema() -> CollectionVersion {
+    parsed(BRANCHABLE_SDL)
+}
+
+/// Every raw store key that textually contains a collection-head segment, so
+/// a failure shows where heads actually landed (or that none were written).
+async fn raw_collection_head_keys(store: &Arc<RegolithStore>) -> Vec<String> {
+    let txn = store.new_txn(true).await.unwrap();
+    let mut iter = txn.iterator(IterOptions::new()).await.unwrap();
+    let mut keys = Vec::new();
+    while let Some(pair) = iter.next().await.unwrap() {
+        let key = String::from_utf8_lossy(&pair.key).into_owned();
+        if key.contains("/hc/") {
+            keys.push(key);
+        }
+    }
+    keys
+}
+
+#[test]
+fn branchable_collection_writes_expose_collection_heads() {
+    workers::block_on(async {
+        let store = Arc::new(RegolithStore::in_memory().unwrap());
+        let db = Arc::new(DB::from_arc(store.clone()).unwrap());
+        db.add_collection(&defra_core::RequestContext::ambient(), BRANCHABLE_SDL)
+            .await
+            .unwrap();
+
+        let mutator = AutoCommitMutator::new(db.clone());
+        let transcript = db
+            .get_collection("Transcript")
+            .unwrap()
+            .unwrap()
+            .schema_arc();
+        let mut doc = Document::new(transcript);
+        doc.set("body", "first".to_string()).unwrap();
+        mutator.create("Transcript", doc).await.unwrap();
+
+        let raw = raw_collection_head_keys(&store).await;
+        let provider = DbHeadProvider::new(db);
+        let heads = provider
+            .get_collection_heads(&branchable_schema().collection_id)
+            .await
+            .unwrap();
+        assert!(
+            !heads.is_empty(),
+            "a branchable collection with one committed document must expose \
+         collection heads to BranchableSync; raw '/hc/' keys in the store: {raw:?}"
+        );
+    })
+    .unwrap()
+}

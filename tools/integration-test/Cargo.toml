@@ -15,38 +15,49 @@ name = "legacy"
 path = "tests/legacy/main.rs"
 
 [[test]]
-name = "verars"
-path = "tests/verars/main.rs"
+name = "vera"
+path = "tests/vera/main.rs"
 
 [dependencies]
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 commonware-codec = "=2026.10.0"
-defra-harness = { git = "https://github.com/sourcenetwork/backbone.git", rev = "502e60487f585a8303afa4998b07806aab69922c" }
-crypto = { path = "../../crates/crypto" }
-document = { path = "../../crates/document" }
-edge = { path = "../../crates/edge", features = ["testing"] }
+defra-harness = { git = "https://github.com/sourcenetwork/backbone.git", rev = "3421379115d69fd8bed8536943d5397ac6eb5ace" }
+crypto = { path = "../../crates/foundation/crypto" }
+document = { path = "../../crates/building-blocks/document" }
+blockstore = { path = "../../crates/engine/blockstore" }
+edge = { path = "../../crates/foundation/edge", features = ["testing"] }
 nuclei.workspace = true
-net = { path = "../../crates/net" }
+net = { path = "../../crates/building-blocks/net" }
 serde_json = "1.0"
 graphql-parser.workspace = true
 futures.workspace = true
 paste = "1.0"
 ctor = "1.0"
 chrono = { version = "0.4" }
-defra-node = { path = "../../crates/defra-node", features = ["http", "libp2p", "p2p"] }
+defra-node = { path = "../../crates/entry-points/defra-node", features = ["http", "libp2p", "p2p"] }
 # Embedder stream protocols: the testo actions register and open them on iroh nodes.
-p2p = { path = "../../crates/p2p", features = ["iroh-transport"] }
+p2p = { path = "../../crates/database/p2p", features = ["iroh-transport"] }
 async-trait = { workspace = true }
-events = { path = "../../crates/events" }
+events = { path = "../../crates/foundation/events" }
 async-channel = "2"
-cli = { path = "../../crates/cli" }
-query = { path = "../../crates/query" }
-schema = { path = "../../crates/schema" }
-defra-core = { path = "../../crates/defra-core" }
+cli = { path = "../../crates/entry-points/cli" }
+# The client-signing WebSocket handshake the signing-session action dials.
+defra-http = { path = "../../crates/surfaces/http" }
+# Reads the response the in-process client gets from an HTTP handler.
+axum.workspace = true
+async-tungstenite = "0.35.0"
+clap = "4.5"
+query = { path = "../../crates/engine/query" }
+schema = { path = "../../crates/foundation/schema" }
+defra-core = { path = "../../crates/foundation/defra-core" }
+defra-version = { path = "../../crates/foundation/defra-version" }
+# The client-signed create action builds its graph and runs its conversation.
+crdt = { path = "../../crates/building-blocks/crdt" }
+db = { path = "../../crates/database/db", default-features = false }
 serde.workspace = true
 tempfile = "3.17"
 thiserror.workspace = true
-workers = { path = "../../crates/workers" }
+workers = { path = "../../crates/foundation/workers" }
 testo = { git = "https://github.com/sourcenetwork/testo.rs", rev = "dc53fa515d5c39511845407dcd42a7650c07f66c" }
 kovan.workspace = true
 regolith.workspace = true
@@ -54,12 +65,15 @@ rapidhash.workspace = true
 cid = { workspace = true }
 base64 = "0.23"
 hex = "0.4"
+ciborium = { workspace = true }
 # Holds a stopped Go node's P2P port with SO_REUSEPORT until it restarts.
 socket2 = { version = "0.6", features = ["all"] }
-identity = { path = "../../crates/identity" }
+identity = { path = "../../crates/building-blocks/identity" }
 
 [features]
 generator = ["serde_json/preserve_order"]
+# Run the network scenarios over pinc with DEFRA_TRANSPORT=pinc.
+pinc = ["defra-node/pinc"]
 
 [[bin]]
 name = "gen_scenarios"
@@ -67,19 +81,19 @@ path = "src/bin/gen_scenarios/main.rs"
 required-features = ["generator"]
 
 [dev-dependencies]
-vera-harness = { git = "https://github.com/sourcenetwork/vera.rs", rev = "bf4a4352cd620d6b498508e2dbf768edcbf3392b" }
+query = { path = "../../crates/engine/query", features = ["testing"] }
+vera-harness = { git = "https://github.com/sourcenetwork/vera.rs", rev = "faf4a4f094c1b4f5786bce0cbeb6567966e27999" }
 mantra-macros = "0.9"
-keyring = { path = "../../crates/keyring" }
-vera-client = "0.1.2"
-vera-domain = "0.1.2"
-vera-modules = "0.1.2"
+keyring = { path = "../../crates/foundation/keyring" }
+vera-client = "0.2.0"
+vera-domain = "0.2.0"
+vera-modules = "0.2.0"
 alloy-sol-types.workspace = true
-acp = { path = "../../crates/acp" }
-vera = { path = "../../crates/vera" }
+acp = { path = "../../crates/engine/acp" }
+vera = { path = "../../crates/engine/vera" }
 # The Vera node the in-process provider tests host themselves.
-vera-embedded = { path = "../../crates/vera-embedded", features = ["node"] }
+vera-embedded = { path = "../../crates/engine/vera-embedded", features = ["node"] }
 libc = "0.2"
-ciborium = { workspace = true }
 serial_test = "4"
 
 [lints]

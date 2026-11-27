@@ -83,14 +83,14 @@
 \*   * SameByContext: two signers are the same when they call the same host
 \*     context (Red_RefuseSameContext).
 \*
-\* Rust: crates/defra-core/src/signing/identity_store.rs: slot, same_signer,
+\* Rust: crates/foundation/defra-core/src/signing/identity_store.rs: slot, same_signer,
 \* store_identity, hold_identity, IdentityHold::new, IdentityHold::drop,
 \* retain_identity, release_identity, get_identity, clear_identity_store.
-\* Holders: crates/ffi/src/state/identity.rs IdentityState::register,
-\* NodeIdentity::hold, NodeIdentity::release; crates/ffi/src/remote_signer/
-\* register.rs store; crates/defra-node/src/node_identity.rs
-\* create_node_identity. Signer equality: crates/defra-core/src/signing.rs
-\* RemoteSigner::host_context; crates/ffi/src/remote_signer/mod.rs
+\* Holders: crates/entry-points/ffi/src/state/identity.rs IdentityState::register,
+\* NodeIdentity::hold, NodeIdentity::release; crates/entry-points/ffi/src/remote_signer/
+\* register.rs store; crates/entry-points/defra-node/src/node_identity.rs
+\* create_node_identity. Signer equality: crates/foundation/defra-core/src/signing.rs
+\* RemoteSigner::host_context; crates/entry-points/ffi/src/remote_signer/mod.rs
 \* FfiRemoteSigner::host_context.
 EXTENDS Naturals, FiniteSets
 

@@ -24,7 +24,7 @@ again on every ask; and the code before the second fix looked at the time
 limit only when the body had nothing ready, so a body that always had a piece
 ready (a fast server and a slow reader) was read on past the limit.
 
-Rust anchors (crates/net/src/http/response.rs): `BytesStream::poll_next`, and
+Rust anchors (crates/building-blocks/net/src/http/response.rs): `BytesStream::poll_next`, and
 `Response::bytes_stream`, which builds the stream with the body and a sleep
 until the request's deadline. A frame that is not data (trailers) is skipped
 and the body asked again, as the loop does. Hyper's body answers each

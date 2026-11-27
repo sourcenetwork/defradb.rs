@@ -50,9 +50,9 @@ lock-free rather than merely fine-grained-locked.
 
 The store's module doc states the rule: snapshot capture and native commit use the
 engine directly, "so independent commits can join its commit groups"
-([`crates/storage/src/backends/regolith/store.rs`](https://github.com/sourcenetwork/defradb.rs/blob/main/crates/storage/src/backends/regolith/store.rs)). On a worker's `IoQueue` the commit is
+([`crates/engine/storage/src/backends/regolith/store.rs`](https://github.com/sourcenetwork/defradb.rs/blob/main/crates/engine/storage/src/backends/regolith/store.rs)). On a worker's `IoQueue` the commit is
 `commit_nowait` and the ticket is completed by that same queue
-([`crates/storage/src/backends/regolith/transaction.rs`](https://github.com/sourcenetwork/defradb.rs/blob/main/crates/storage/src/backends/regolith/transaction.rs)); without a queue, the commit
+([`crates/engine/storage/src/backends/regolith/transaction.rs`](https://github.com/sourcenetwork/defradb.rs/blob/main/crates/engine/storage/src/backends/regolith/transaction.rs)); without a queue, the commit
 syncs on the calling thread. Nothing defradb.rs does stands between the caller and the
 engine's grouping.
 
@@ -60,7 +60,7 @@ engine's grouping.
 
 Every commit returns a receipt with a sequence (`CommitReceipt.seq`). defradb.rs uses it
 as the one ordering token for everything downstream: post-commit callbacks run in receipt
-order across threads ([`crates/storage/src/backends/regolith/event_order.rs`](https://github.com/sourcenetwork/defradb.rs/blob/main/crates/storage/src/backends/regolith/event_order.rs)), and events
+order across threads ([`crates/engine/storage/src/backends/regolith/event_order.rs`](https://github.com/sourcenetwork/defradb.rs/blob/main/crates/engine/storage/src/backends/regolith/event_order.rs)), and events
 are published in that order (see [Events](../events/index.md)). A `seq` is never
 persisted across a wipe or restore, so ordering promises never span a database
 replacement.

@@ -1,8 +1,11 @@
 name: CI
 
 on:
-  push:
-    branches: [main]
+  # Main runs once a night: it saves the caches pull requests restore and runs
+  # the heavy suite, so a regression the queue let through shows by morning.
+  schedule:
+    - cron: '0 7 * * *'
+  workflow_dispatch:
   pull_request:
     branches: ['**']
     # labeled: adding a ci:* label runs the jobs it names.
@@ -49,11 +52,71 @@ env:
 # merge-queue run ejects the pull request before that retry, so merge-queue
 # runs take on-demand instances.
 jobs:
+  # Every pull request run from this repository waits until a maintainer
+  # approves it in the ci-approval environment, as a fork's run waits for its
+  # approval. Main, the queue and forks never wait here.
+  approval:
+    name: Approve run
+    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    environment: ci-approval
+    steps:
+      - run: echo "A maintainer approved this run."
+
+  # The one approval covers every pull request workflow. CI (macOS), the quick
+  # benchmark and the native consumer each ended waiting on it
+  # (ci-approved.yml), so re-run the newest run of each that left that notice.
+  start-waiting:
+    name: Start waiting workflows
+    needs: approval
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      actions: write
+      checks: read
+    steps:
+      - uses: actions/github-script@v9
+        with:
+          script: |
+            const sha = context.payload.pull_request.head.sha;
+            const deadline = Date.now() + 10 * 60 * 1000;
+            const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+            for (const workflow of ['ci-macos.yml', 'perf-pr.yml', 'native-consumer.yml']) {
+              let run = (await github.rest.actions.listWorkflowRuns({ ...context.repo, workflow_id: workflow, head_sha: sha, event: 'pull_request', per_page: 1 })).data.workflow_runs[0];
+              if (!run) continue;
+              // Only a finished run can be re-run; its approval check ends within seconds.
+              while (run.status !== 'completed' && Date.now() < deadline) {
+                await sleep(10000);
+                run = (await github.rest.actions.getWorkflowRun({ ...context.repo, run_id: run.id })).data;
+              }
+              if (run.status !== 'completed') {
+                core.warning(`${workflow} run ${run.id} did not finish; re-run it by hand`);
+                continue;
+              }
+              const jobs = await github.paginate(github.rest.actions.listJobsForWorkflowRun, { ...context.repo, run_id: run.id, filter: 'latest', per_page: 100 });
+              const gate = jobs.find((j) => j.name.startsWith('Wait for CI approval'));
+              if (!gate) continue;
+              const notes = await github.paginate(github.rest.checks.listAnnotations, { ...context.repo, check_run_id: gate.id });
+              if (!notes.some((a) => a.title === 'Waiting for CI approval')) continue;
+              await github.rest.actions.reRunWorkflow({ ...context.repo, run_id: run.id });
+              core.info(`re-ran ${workflow} run ${run.id}`);
+            }
+
   ci-scope:
     name: CI scope
+    needs: approval
+    if: ${{ !cancelled() && needs.approval.result != 'failure' }}
     runs-on: ubuntu-latest
+    # In the queue it reads the head pull request's checks and runs.
+    permissions:
+      actions: read
+      checks: read
+      contents: read
+      pull-requests: read
     outputs:
       full: ${{ steps.decide.outputs.full }}
+      reused: ${{ steps.decide.outputs.reused }}
+      tree: ${{ steps.decide.outputs.tree }}
       heavy: ${{ steps.decide.outputs.heavy }}
       testo_clients: ${{ steps.decide.outputs.testo_clients }}
       testo_matrix: ${{ steps.decide.outputs.testo_matrix }}
@@ -70,9 +133,42 @@ jobs:
             // and ci:full runs all of them. queue-failure-labels.yml adds the
             // label of each job that ejected the pull request from the queue.
             const labels = pr ? context.payload.pull_request.labels.map((l) => l.name) : [];
-            const heavy = !pr || labels.includes('ci:full');
+            // The tree this run tests. A pull request run tests its head merged with
+            // its base, which is not always the head's own tree.
+            const tree = async (sha) => (await github.rest.git.getCommit({ ...context.repo, commit_sha: sha })).data.tree.sha;
+            const tested = await tree(context.sha);
+            core.setOutput('tree', tested);
+            // A queue entry whose tree a pull request run already passed with the heavy
+            // suite (`ci:full`) runs nothing but Merge gate: the queue would build and
+            // test the same bytes again (#3315). That holds when the pull request is
+            // rebased onto main and nothing is queued ahead of it.
+            let reused = false;
+            if (context.eventName === 'merge_group') {
+              const number = (context.payload.merge_group.head_ref.match(/\/pr-(\d+)-[0-9a-f]+$/) || [])[1];
+              if (number) {
+                const head = (await github.rest.pulls.get({ ...context.repo, pull_number: Number(number) })).data.head.sha;
+                // A stamp counts only on a job of this repository's own pull_request run of
+                // the workflow, never on a check run another workflow or an app created.
+                const passed = async (workflow, sha, name) => {
+                  const runs = (await github.rest.actions.listWorkflowRuns({ ...context.repo, workflow_id: workflow, head_sha: sha, event: 'pull_request', per_page: 20 })).data.workflow_runs;
+                  const jobs = [];
+                  for (const run of runs) {
+                    jobs.push(...(await github.paginate(github.rest.actions.listJobsForWorkflowRun, { ...context.repo, run_id: run.id, filter: 'latest', per_page: 100 }))
+                      .filter((j) => j.name === name && j.conclusion === 'success'));
+                  }
+                  return jobs;
+                };
+                const gates = await passed('ci.yml', head, 'Merge gate');
+                for (const gate of gates) {
+                  const notes = await github.paginate(github.rest.checks.listAnnotations, { ...context.repo, check_run_id: gate.id });
+                  if (notes.some((a) => a.title === 'Heavy suite passed' && a.message === `tree ${tested}`)) reused = true;
+                }
+                core.info(`queue entry #${number}: reuses its pull request run = ${reused}`);
+              }
+            }
+            const heavy = !reused && (!pr || labels.includes('ci:full'));
             const want = (job) => heavy || labels.includes(`ci:${job}`);
-            let full = true;
+            let full = !reused;
             // A labelled pull request runs its jobs wherever it sits in a stack.
             if (pr && !labels.some((l) => l.startsWith('ci:'))) {
               const stack = context.payload.pull_request && context.payload.pull_request.stack;
@@ -84,9 +180,10 @@ jobs:
               }
             }
             core.setOutput('full', full ? 'true' : 'false');
+            core.setOutput('reused', reused ? 'true' : 'false');
             // A pull request runs the fast checks (lint, dependency checks, unit
-            // tests, in-process testo). The merge queue and main run everything else, once per batch
-            // instead of once per push.
+            // tests, in-process testo); `ci:full` runs everything. The queue runs
+            // everything unless its tree already passed on the pull request.
             core.setOutput('heavy', heavy ? 'true' : 'false');
             core.setOutput('run', JSON.stringify({
               feature_checks: want('feature-checks'),
@@ -98,12 +195,20 @@ jobs:
               p2p: want('p2p'),
             }));
 
-            // A pull request runs testo through the in-process client only, so a
-            // green pull request has run the scenarios; the queue runs every client.
-            const testoClients = ['in-process', ...['rust-http', 'go-http', 'cli', 'legacy']
+            // A pull request runs testo through the in-process client, plain and
+            // with every field indexed (the secondary-index multiplier), so a green
+            // pull request has run the scenarios; the queue runs every client.
+            const testoClients = ['in-process', 'in-process-secondary-index', ...['rust-http', 'go-http', 'cli', 'legacy']
               .filter((client) => want(`testo-${client}`))];
             core.setOutput('testo_clients', testoClients.join(','));
-            core.setOutput('testo_matrix', JSON.stringify({ include: testoClients.map((client) => ({ client, shard: 1 })) }));
+            core.setOutput('testo_matrix', JSON.stringify({
+              include: testoClients.map((client) => ({
+                client,
+                defra_client: client === 'in-process-secondary-index' ? 'in-process' : client,
+                multipliers: client === 'in-process-secondary-index' ? 'secondary-index' : '',
+                shard: 1,
+              })),
+            }));
 
             const suites = [
               { suite: 'signed-docs', needs_go: false, multipliers: 'signed-docs' },
@@ -115,6 +220,7 @@ jobs:
             if (want('integration')) {
               suites.push({ suite: 'rust', needs_go: false });
             }
+            // go-compat is the suite that saves the integration cache.
             core.setOutput('integration_matrix', JSON.stringify({ include: suites }));
 
             // The other nuclei io backends run in the merge queue and on main.
@@ -127,6 +233,8 @@ jobs:
 
   lint-default:
     name: Lint (default)
+    needs: ci-scope
+    if: ${{ !cancelled() && !failure() && needs.ci-scope.outputs.reused != 'true' }}
     runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/volume=80gb/env=v3/extras=s3-cache+git-cache+apt-cache
     steps:
       - uses: runs-on/action@v2
@@ -160,7 +268,7 @@ jobs:
   feature-checks:
     name: Feature checks (${{ matrix.group }})
     needs: ci-scope
-    if: fromJson(needs.ci-scope.outputs.run).feature_checks
+    if: ${{ !cancelled() && !failure() && fromJson(needs.ci-scope.outputs.run).feature_checks }}
     runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/volume=80gb/env=v3/extras=s3-cache+git-cache+apt-cache
     strategy:
       fail-fast: false
@@ -182,6 +290,9 @@ jobs:
               cargo clippy -p cli --features embedded-vera --all-targets -- -D warnings
               cargo clippy -p db --features p2p --all-targets -- -D warnings
               cargo clippy -p cli --features iroh,model-trace --all-targets -- -D warnings
+              cargo clippy -p p2p --features pinc-transport,iroh-transport --all-targets -- -D warnings
+              cargo clippy -p cli --features pinc --all-targets -- -D warnings
+              cargo clippy -p integration-test --features pinc --all-targets -- -D warnings
           - group: minimal
             commands: |
               cargo clippy -p defra-node --no-default-features --features native --all-targets -- -D warnings
@@ -210,6 +321,8 @@ jobs:
 
   dependency-checks:
     name: Dependency checks
+    needs: ci-scope
+    if: ${{ !cancelled() && !failure() && needs.ci-scope.outputs.reused != 'true' }}
     runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/volume=80gb/env=v3/extras=s3-cache+git-cache+apt-cache
     steps:
       - uses: runs-on/action@v2
@@ -230,6 +343,8 @@ jobs:
   # Mirrors `just doc`: a broken intra-doc link or malformed doc comment fails.
   docs:
     name: Docs
+    needs: ci-scope
+    if: ${{ !cancelled() && !failure() && needs.ci-scope.outputs.reused != 'true' }}
     runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/volume=80gb/env=v3/extras=s3-cache+git-cache+apt-cache
     steps:
       - uses: runs-on/action@v2
@@ -247,10 +362,47 @@ jobs:
           RUSTDOCFLAGS: -D warnings
         run: cargo doc --workspace --no-deps --keep-going
 
+  # Mirrors `just check-c-api`: defra.h as this change generates it against the
+  # one its base generates.
+  c-api:
+    name: C API compatibility
+    needs: ci-scope
+    if: ${{ !cancelled() && !failure() && needs.ci-scope.outputs.reused != 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cbindgen,just
+      - name: Test the checker
+        run: python3 .github/scripts/test-check-c-api.py
+      - name: Check the C API against the base
+        env:
+          BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before }}
+        run: |
+          git fetch --depth=1 origin "$BASE"
+          bash .github/scripts/check-c-api.sh "$BASE"
+
+  # Mirrors `just check-openapi-snapshot`: the Go document the HTTP crate merges
+  # into its own is Go's at GO_COMPAT_COMMIT.
+  openapi-snapshot:
+    name: OpenAPI snapshot
+    needs: ci-scope
+    if: ${{ !cancelled() && !failure() && needs.ci-scope.outputs.reused != 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Check the Go snapshot is Go's document at the pin
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: bash .github/scripts/check-openapi-snapshot.sh
+
   lint:
     name: Lint
-    needs: [ci-scope, lint-default, feature-checks, dependency-checks, docs]
-    if: always()
+    needs: [ci-scope, lint-default, feature-checks, dependency-checks, docs, c-api, openapi-snapshot]
+    # A queue entry that reuses its pull request run already passed lint there.
+    if: always() && needs.ci-scope.outputs.reused != 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Check lint results
@@ -260,6 +412,8 @@ jobs:
           FEATURES: ${{ needs.feature-checks.result }}
           DEPENDENCIES: ${{ needs.dependency-checks.result }}
           DOCS: ${{ needs.docs.result }}
+          C_API: ${{ needs.c-api.result }}
+          OPENAPI_SNAPSHOT: ${{ needs.openapi-snapshot.result }}
         run: |
           test "$DEFAULT" = success
           # Skipped on a pull request without its ci: label; the merge queue runs them. Only then: a
@@ -267,11 +421,13 @@ jobs:
           test "$FEATURES" = success || { test "$FEATURES" = skipped && test "$RUN_FEATURES" = false; }
           test "$DEPENDENCIES" = success
           test "$DOCS" = success
+          test "$C_API" = success
+          test "$OPENAPI_SNAPSHOT" = success
 
   unit-tests:
     name: Unit tests
     needs: ci-scope
-    if: needs.ci-scope.outputs.full == 'true'
+    if: ${{ !cancelled() && !failure() && needs.ci-scope.outputs.full == 'true' }}
     uses: ./.github/workflows/unit-tests.yml
     with:
       os: linux
@@ -281,7 +437,7 @@ jobs:
   go-defradb:
     name: Go DefraDB binary
     needs: ci-scope
-    if: needs.ci-scope.outputs.full == 'true'
+    if: ${{ !cancelled() && !failure() && needs.ci-scope.outputs.full == 'true' }}
     outputs:
       pin: ${{ steps.prepare.outputs.pin }}
     runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/volume=80gb/env=v3/extras=s3-cache+git-cache+apt-cache
@@ -293,49 +449,22 @@ jobs:
         uses: actions/cache/restore@v6
         with:
           path: ~/.cache/defra-harness
-          key: go-defradb-${{ runner.os }}-${{ hashFiles('crates/defra-version/src/lib.rs') }}
+          key: go-defradb-${{ runner.os }}-${{ hashFiles('crates/foundation/defra-version/src/lib.rs') }}
       - name: Install Go toolchain
         if: steps.go-defradb.outputs.cache-hit != 'true'
         uses: actions/setup-go@v7
         with:
           # The pinned GO_COMPAT_COMMIT declares `go 1.26.10`, so an older
-          # toolchain cannot build it.
-          go-version: '1.26'
+          # toolchain cannot build it. Held at 1.26.10: Go 1.26.11 refuses the
+          # LTO section in wasmtime-go's prebuilt libwasmtime.a
+          go-version: '1.26.10'
+      - uses: extractions/setup-just@v4
       - name: Prepare Go DefraDB binary
         id: prepare
         run: |
-          GO_REF=$(grep 'pub const GO_COMPAT_COMMIT' crates/defra-version/src/lib.rs | sed 's/.*"\(.*\)".*/\1/')
-          GO_BRANCH=$(grep 'pub const GO_COMPAT_BRANCH' crates/defra-version/src/lib.rs | sed 's/.*"\(.*\)".*/\1/')
-          GO_TAG=$(grep 'pub const GO_COMPAT_TAG' crates/defra-version/src/lib.rs | sed 's/.*"\(.*\)".*/\1/')
-
-          if [ -n "$GO_TAG" ]; then
-            VER_NUM="${GO_TAG#v}"
-            ASSET="defradb_${VER_NUM}_linux_x86_64"
-            CACHE_DIR="$HOME/.cache/defra-harness/${GO_TAG}"
-            mkdir -p "$CACHE_DIR"
-            if [ ! -x "$CACHE_DIR/defradb" ]; then
-              curl -fSL -o "$CACHE_DIR/defradb" \
-                "https://github.com/sourcenetwork/defradb/releases/download/${GO_TAG}/${ASSET}"
-              chmod +x "$CACHE_DIR/defradb"
-            fi
-          else
-            test -n "$GO_REF"
-            test -n "$GO_BRANCH"
-            CACHE_DIR="$HOME/.cache/defra-harness/${GO_REF}"
-            mkdir -p "$CACHE_DIR"
-            if [ ! -x "$CACHE_DIR/defradb" ]; then
-              WORK_DIR="$RUNNER_TEMP/defradb-${GO_REF}"
-              git clone --filter=blob:none --branch "$GO_BRANCH" https://github.com/sourcenetwork/defradb "$WORK_DIR"
-              git -C "$WORK_DIR" checkout "$GO_REF"
-              make -C "$WORK_DIR" build path="$CACHE_DIR/defradb"
-              chmod +x "$CACHE_DIR/defradb"
-            fi
-          fi
-
-          "$CACHE_DIR/defradb" version --format json
-          echo "dir=$CACHE_DIR" >> "$GITHUB_OUTPUT"
-          echo "pin=${GO_TAG:-$GO_REF}" >> "$GITHUB_OUTPUT"
-          echo "branch=$GO_BRANCH" >> "$GITHUB_OUTPUT"
+          just setup-go-defradb
+          echo "dir=$(just --evaluate go_defradb_dir)" >> "$GITHUB_OUTPUT"
+          echo "pin=$(just --evaluate go_defradb_pin)" >> "$GITHUB_OUTPUT"
       - name: Save Go DefraDB
         if: env.SAVE_CACHE == 'true' && steps.go-defradb.outputs.cache-hit != 'true'
         uses: actions/cache/save@v6
@@ -347,52 +476,11 @@ jobs:
           name: go-defradb
           path: ${{ steps.prepare.outputs.dir }}/defradb
           retention-days: 1
-      # Lens scenarios load the WASM modules Go's tests/lenses builds, from
-      # DEFRADB_GO_REPO, at the same pin as the Go binary.
-      - name: Restore Go lens modules
-        id: go-lenses
-        uses: actions/cache/restore@v6
-        with:
-          path: ~/.cache/defra-lenses
-          key: go-lenses-${{ runner.os }}-${{ hashFiles('crates/defra-version/src/lib.rs') }}
-      - uses: dtolnay/rust-toolchain@stable
-        if: steps.go-lenses.outputs.cache-hit != 'true'
-        with:
-          targets: wasm32-unknown-unknown
-      - name: Build Go lens modules
-        if: steps.go-lenses.outputs.cache-hit != 'true'
-        env:
-          PIN: ${{ steps.prepare.outputs.pin }}
-          BRANCH: ${{ steps.prepare.outputs.branch }}
-        run: |
-          WORK_DIR="$RUNNER_TEMP/defradb-lenses"
-          git clone --filter=blob:none --no-checkout --branch "$BRANCH" https://github.com/sourcenetwork/defradb "$WORK_DIR"
-          git -C "$WORK_DIR" sparse-checkout set tests/lenses
-          git -C "$WORK_DIR" checkout "$PIN"
-          make -C "$WORK_DIR/tests/lenses" build
-          OUT="$HOME/.cache/defra-lenses"
-          cd "$WORK_DIR"
-          for wasm in tests/lenses/*/target/wasm32-unknown-unknown/debug/*.wasm; do
-            mkdir -p "$OUT/$(dirname "$wasm")"
-            cp "$wasm" "$OUT/$wasm"
-          done
-          find "$OUT" -name '*.wasm' | sort
-      - name: Save Go lens modules
-        if: env.SAVE_CACHE == 'true' && steps.go-lenses.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v6
-        with:
-          path: ~/.cache/defra-lenses
-          key: ${{ steps.go-lenses.outputs.cache-primary-key }}
-      - uses: actions/upload-artifact@v7
-        with:
-          name: go-lenses
-          path: ~/.cache/defra-lenses
-          retention-days: 1
 
   build-binaries:
     name: Build integration binaries
     needs: ci-scope
-    if: needs.ci-scope.outputs.full == 'true'
+    if: ${{ !cancelled() && !failure() && needs.ci-scope.outputs.full == 'true' }}
     runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/volume=80gb/env=v3/extras=s3-cache+git-cache+apt-cache
     steps:
       - uses: runs-on/action@v2
@@ -441,7 +529,7 @@ jobs:
   feature-tests:
     name: Feature tests
     needs: ci-scope
-    if: fromJson(needs.ci-scope.outputs.run).feature_tests
+    if: ${{ !cancelled() && !failure() && fromJson(needs.ci-scope.outputs.run).feature_tests }}
     runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/volume=80gb/env=v3/extras=s3-cache+git-cache+apt-cache
     steps:
       - uses: runs-on/action@v2
@@ -462,13 +550,21 @@ jobs:
       - run: cargo nextest run --cargo-profile super-dev -p defra-node --features p2p
       - run: cargo nextest run --cargo-profile super-dev -p vera-embedded --features node --test hosted_node --test node_placement
       - run: cargo nextest run --cargo-profile super-dev -p defra-node --features embedded-vera,http --test embedded_vera
+      # The vera binary's create gate scenario runs on an in-process Vera node and needs no verad
+      # and no CLI binary, so the nextest setup scripts are told not to build them.
+      - run: cargo nextest run --cargo-profile super-dev -p integration-test --test vera -E 'test(/^create_gate::/)'
+        env:
+          DEFRA_RUST_BINARY: /usr/bin/false
+          DEFRA_IROH_BINARY: /usr/bin/false
+          DEFRA_VERA_BINARY: /usr/bin/false
       - run: cargo nextest run --cargo-profile super-dev -p defra-node --features embedded-vera,p2p --test embedded_vera_replication
       - run: cargo nextest run --cargo-profile super-dev -p cli --features embedded-vera --test embedded_vera --test embedded_vera_config
+      - run: cargo nextest run --cargo-profile super-dev -p p2p --features pinc-transport,iroh-transport -E 'test(/pinc/)'
 
   wasm-check:
     name: WASM Build Check
     needs: ci-scope
-    if: fromJson(needs.ci-scope.outputs.run).wasm
+    if: ${{ !cancelled() && !failure() && fromJson(needs.ci-scope.outputs.run).wasm }}
     runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/volume=80gb/env=v3/extras=s3-cache+git-cache+apt-cache
     steps:
       - uses: runs-on/action@v2
@@ -495,7 +591,7 @@ jobs:
       - name: Build WASM
         run: >-
           CARGO_PROFILE_RELEASE_OPT_LEVEL=z
-          wasm-pack build crates/wasm --release --target web --out-dir ../../pkg/wasm
+          wasm-pack build crates/surfaces/wasm --release --target web --out-dir ../../../pkg/wasm
       - uses: browser-actions/setup-firefox@0bc507ddf224827e3b1af68e014d5e42ab93e795 # v1
       - uses: browser-actions/setup-geckodriver@eb8b0670366f719ca31703766a8cb7e3ea2c56ed # v0.0.0
         with:
@@ -521,7 +617,7 @@ jobs:
   lean-conformance:
     name: Lean Conformance
     needs: ci-scope
-    if: fromJson(needs.ci-scope.outputs.run).lean
+    if: ${{ !cancelled() && !failure() && fromJson(needs.ci-scope.outputs.run).lean }}
     runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/volume=80gb/env=v3/extras=s3-cache+git-cache+apt-cache
     timeout-minutes: 20
     env:
@@ -551,36 +647,45 @@ jobs:
           lake-package-directory: proofs/lean
           auto-config: false
           build: true
+          # The lakefile lists its proof roots from the directory at
+          # elaboration time, so new `.lean` files need a reconfigure.
+          build-args: "-R"
           test: false
           use-mathlib-cache: false
       - name: Check client-signed create model cases
         run: python3 proofs/lean/test_client_signed_create.py
-      - name: Check storage failure model binding
-        run: cargo test -p query --test storage_failure -- --ignored
-      - name: Check native listener model binding
-        run: cargo test -p p2p --features iroh-transport --lib iroh::endpoint_config::bind_tests::native_bindings_match_executed_model -- --exact --ignored
-      - name: Check native port mapping model binding
-        run: cargo test -p p2p --features iroh-transport --lib iroh::endpoint_config::bind_tests::native_port_mapping_configuration_matches_executed_model -- --exact --ignored
-      - name: Check client create graph model binding
-        run: cargo test -p db --test block client_create_graph::trusted_create_graph_matches_model_and_rejects_unapproved_waves -- --exact --ignored
-      - name: Check normalized client create intent model binding
-        run: cargo test -p db --test block client_create_graph::normalized_agent_intent_preserves_explicit_null_and_datetime -- --exact --ignored
-      - name: Check client create schema model binding
-        run: cargo test -p db --lib write::create::schema_binding_tests::prepared_create_checks_immutable_definition_even_when_version_is_unchanged -- --exact --ignored
-      - name: Check client signing admission model binding
-        run: cargo test -p defra-http --lib client_signer_tests::admission_and_token_lifetime_match_the_model -- --exact --ignored
-      - name: Check selected document push model binding
-        run: cargo test -p db --test merge selected_document_transfers_match_executed_model -- --ignored
-      - name: Check replica gate model binding
-        run: cargo test -p db --lib merge::gate_conformance_tests::the_acp_hook_matches_the_executed_gate_model -- --exact --ignored
-      - name: Check deferred merge index model binding
-        run: cargo test -p db --lib merge::governance::deferred_conformance_tests::the_index_matches_the_executed_model -- --exact --ignored
-      - name: Check HTTP router composition model binding
-        run: cargo test -p defra-http --lib server::router_transform_tests::forwarding_filter_matches_executed_model -- --exact --ignored
-      - name: Check collection head set model binding
-        run: cargo test -p db --test block head_conformance::head_queries_match_executable_lean -- --exact
-      - name: Check Lean-to-Rust conformance
-        run: cargo nextest run -p conformance --lib --test lean_conformance
+      # One build and one run for every model binding and the Lean-to-Rust
+      # conformance tests: separate invocations resolve features per package
+      # and rebuild the shared crates each time.
+      - name: Check model bindings and Lean-to-Rust conformance
+        run: |
+          cargo nextest run --no-fail-fast --run-ignored all \
+            -p query -p p2p -p db -p defra-http -p defra-node -p acp -p conformance \
+            --features p2p/iroh-transport \
+            --lib --test storage_failure --test block --test merge --test projection_scope --test lean_conformance \
+            -E '
+              binary_id(query::storage_failure)
+              | binary_id(p2p) & (
+                test(=iroh::endpoint_config::bind_tests::native_bindings_match_executed_model)
+                | test(=iroh::endpoint_config::bind_tests::native_port_mapping_configuration_matches_executed_model))
+              | binary_id(db::block) & (
+                test(=client_create_graph::trusted_create_graph_matches_model_and_rejects_unapproved_waves)
+                | test(=client_create_graph::normalized_agent_intent_preserves_explicit_null_and_datetime)
+                | test(=head_conformance::head_queries_match_executable_lean))
+              | binary_id(db) & (
+                test(=write::create::schema_binding_tests::prepared_create_checks_immutable_definition_even_when_version_is_unchanged)
+                | test(=merge::gate_conformance_tests::the_acp_hook_matches_the_executed_gate_model)
+                | test(=merge::governance::deferred_conformance_tests::the_index_matches_the_executed_model))
+              | binary_id(defra-http) & (
+                test(=client_signer_tests::admission_and_token_lifetime_match_the_model)
+                | test(=server::router_transform_tests::forwarding_filter_matches_executed_model))
+              | binary_id(db::merge) & (
+                test(selected_document_transfers_match_executed_model)
+                | test(=genesis_access::genesis_reader_matches_executed_lean_model))
+              | binary_id(defra-node) & test(owner_observation_tests)
+              | binary_id(acp::projection_scope)
+              | binary_id(conformance)
+              | binary_id(conformance::lean_conformance)'
 
   conformance:
     name: Conformance${{ matrix.io.name }}
@@ -589,7 +694,7 @@ jobs:
       matrix:
         io: ${{ fromJson(needs.ci-scope.outputs.io_variants) }}
     needs: [ci-scope, build-binaries]
-    if: fromJson(needs.ci-scope.outputs.run).conformance
+    if: ${{ !cancelled() && !failure() && fromJson(needs.ci-scope.outputs.run).conformance }}
     runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/volume=80gb/env=v3/extras=s3-cache+git-cache+apt-cache
     timeout-minutes: 45
     env:
@@ -645,7 +750,7 @@ jobs:
   integration:
     name: Integration (${{ matrix.suite }})
     needs: [ci-scope, build-binaries, go-defradb]
-    if: fromJson(needs.ci-scope.outputs.run).integration
+    if: ${{ !cancelled() && !failure() && fromJson(needs.ci-scope.outputs.run).integration }}
     runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/volume=80gb/env=v3/extras=s3-cache+git-cache+apt-cache
     timeout-minutes: 90
     strategy:
@@ -709,20 +814,20 @@ jobs:
         if: matrix.suite == 'go-compat'
         run: |
           OUT=$(mktemp)
-          (cd crates/p2p/testdata/gen_message_fixtures && go run .) >> "$OUT"
-          (cd crates/p2p/testdata/gen_pubsub_rpc_fixture && go run .) >> "$OUT"
+          (cd crates/database/p2p/testdata/gen_message_fixtures && go run .) >> "$OUT"
+          (cd crates/database/p2p/testdata/gen_pubsub_rpc_fixture && go run .) >> "$OUT"
           HEXES=$(grep -Eo '\(([0-9]+)( bytes)?\): [0-9a-f]+' "$OUT" | awk '{print $NF}')
           test -n "$HEXES"
           while IFS= read -r H; do
-            grep -qR --include='*.rs' -F "$H" crates/p2p/
+            grep -qR --include='*.rs' -F "$H" crates/database/p2p/
           done <<< "$HEXES"
       - name: Verify the pinned rustffi client resolves
         if: matrix.suite == 'go-compat'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          pin=$(sed -nE 's/^pub const GO_FFI_CLIENT_COMMIT: &str = "([0-9a-f]+)";/\1/p' crates/defra-version/src/lib.rs)
-          test -n "$pin" || { echo "GO_FFI_CLIENT_COMMIT not found in crates/defra-version/src/lib.rs"; exit 1; }
+          pin=$(sed -nE 's/^pub const GO_FFI_CLIENT_COMMIT: &str = "([0-9a-f]+)";/\1/p' crates/foundation/defra-version/src/lib.rs)
+          test -n "$pin" || { echo "GO_FFI_CLIENT_COMMIT not found in crates/foundation/defra-version/src/lib.rs"; exit 1; }
           gh api "repos/sourcenetwork/defradb/commits/$pin" --jq .sha > /dev/null \
             || { echo "GO_FFI_CLIENT_COMMIT=$pin does not resolve on sourcenetwork/defradb"; exit 1; }
       - name: Run rust integration tests (basic)
@@ -749,7 +854,7 @@ jobs:
         if: matrix.suite == 'go-compat'
         run: >-
           cargo nextest run --cargo-profile super-dev -p integration-test --test legacy -E
-          'test(/^(basic|query|acp|nac|backup|p2p|identity|encryption|vera)::/)'
+          'test(/^(basic|query|acp|nac|backup|p2p|identity|encryption)::/)'
           -- go_
           --skip go_acp_link_collection_nonexistent_policy_reject
           --skip go_acp_link_collection_nonexistent_resource_reject
@@ -796,7 +901,7 @@ jobs:
       matrix:
         io: ${{ fromJson(needs.ci-scope.outputs.io_variants) }}
     needs: [ci-scope, build-binaries]
-    if: fromJson(needs.ci-scope.outputs.run).p2p
+    if: ${{ !cancelled() && !failure() && fromJson(needs.ci-scope.outputs.run).p2p }}
     runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/volume=80gb/env=v3/extras=s3-cache+git-cache+apt-cache
     timeout-minutes: 90
     env:
@@ -861,11 +966,9 @@ jobs:
   testo-archive:
     name: Build testo archive
     needs: ci-scope
-    if: needs.ci-scope.outputs.full == 'true'
+    if: ${{ !cancelled() && !failure() && needs.ci-scope.outputs.full == 'true' }}
     timeout-minutes: 30
     runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/volume=80gb/env=v3/extras=s3-cache+git-cache+apt-cache
-    env:
-      DEFRADB_GO_REPO: ${{ github.workspace }}/target/go-repo
     steps:
       - uses: runs-on/action@v2
       - uses: actions/checkout@v7
@@ -894,7 +997,7 @@ jobs:
   testo:
     name: ${{ matrix.client == 'legacy' && 'Legacy integration binaries' || format('Testo ({0})', matrix.client) }}
     needs: [ci-scope, build-binaries, go-defradb, testo-archive]
-    if: needs.ci-scope.outputs.full == 'true'
+    if: ${{ !cancelled() && !failure() && needs.ci-scope.outputs.full == 'true' }}
     runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/volume=80gb/env=v3/extras=s3-cache+git-cache+apt-cache
     timeout-minutes: 90
     strategy:
@@ -906,14 +1009,15 @@ jobs:
     env:
       DEFRA_RUST_BINARY: ${{ github.workspace }}/target/ci/defradb
       DEFRA_IROH_BINARY: ${{ github.workspace }}/target/ci/defradb-iroh
-      DEFRADB_GO_REPO: ${{ github.workspace }}/target/go-repo
+      DEFRA_MULTIPLIERS: ${{ matrix.multipliers || '' }}
       DEFRA_E2E_KEEP: '1'
       # A failing scenario shows its in-process nodes' P2P trace.
       DEFRA_TEST_TRACE: p2p=debug,defra_p2p_adapter=debug,warn
       TESTO_FILTER: binary(testo)
-      # Not run anywhere: p2p_interop_bench, whose one test is an ignored
-      # benchmark that prints latencies, and verars, whose cluster needs the
-      # verad validator binary from vera.rs, which CI does not build.
+      # Not run here: p2p_interop_bench, whose one test is an ignored
+      # benchmark that prints latencies, and vera, whose cluster needs the
+      # verad validator binary from vera.rs, which CI does not build; the
+      # feature tests run vera's create_gate scenarios, which need none.
       # c_rust_to_go_outage_replay (#2089) flips between runs: the Go receiver
       # sometimes misses the protected document written while it was down. A
       # known-failure entry would fail every run it passes, so the test is left
@@ -949,13 +1053,16 @@ jobs:
         with:
           name: go-defradb
           path: target/go
-      - uses: actions/download-artifact@v8
-        with:
-          name: go-lenses
-          path: target/go-repo
+      - name: Build the lens modules
+        # A stray CARGO_TARGET_DIR keeps --target-dir honest (#2350): without
+        # the flag the modules land there and the lens tests can't find them.
+        env:
+          CARGO_TARGET_DIR: ${{ runner.temp }}/stray-lens-target
+        run: cargo build --manifest-path tools/lenses/Cargo.toml --target wasm32-unknown-unknown --target-dir tools/lenses/target
       - name: Pick the tests
         env:
           CLIENT: ${{ matrix.client }}
+          DEFRA_CLIENT_NAME: ${{ matrix.defra_client || matrix.client }}
           PIN: ${{ needs.go-defradb.outputs.pin }}
         run: |
           chmod +x target/ci/defradb target/ci/defradb-iroh
@@ -967,7 +1074,7 @@ jobs:
           if [ "$CLIENT" = legacy ]; then
             echo "FILTER=$LEGACY_FILTER" >> "$GITHUB_ENV"
           else
-            echo "DEFRA_CLIENT=$CLIENT" >> "$GITHUB_ENV"
+            echo "DEFRA_CLIENT=$DEFRA_CLIENT_NAME" >> "$GITHUB_ENV"
             if [ "$CLIENT" = go-http ]; then
               echo "FILTER=($TESTO_FILTER) $GO_HTTP_FILTER" >> "$GITHUB_ENV"
             else
@@ -1087,3 +1194,183 @@ jobs:
             } else {
               await github.rest.issues.createComment({ owner, repo, issue_number, body });
             }
+
+  # The one required check besides Validate title. A job passes when it
+  # succeeded, or was skipped and ci-scope did not ask for it; a job skipped
+  # because a dependency failed is reported as well as that dependency.
+  merge-gate:
+    name: Merge gate
+    needs:
+      - ci-scope
+      - lint-default
+      - feature-checks
+      - dependency-checks
+      - docs
+      - c-api
+      - openapi-snapshot
+      - lint
+      - unit-tests
+      - go-defradb
+      - build-binaries
+      - build
+      - feature-tests
+      - wasm-check
+      - lean-conformance
+      - conformance
+      - integration
+      - p2p-linux
+      - testo-archive
+      - testo
+      - testo-summary
+    if: always()
+    timeout-minutes: 10
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      # A changes request from a reviewer with write access blocks the merge until
+      # it is approved or dismissed (#3312). The reviews are read when this job runs,
+      # and review-gate.yml reruns this job alone on each review, so a review never
+      # reruns the rest of CI.
+      - id: reviews
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v9
+        with:
+          script: |
+            const decision = new Map();
+            const reviews = await github.paginate(github.rest.pulls.listReviews, {
+              ...context.repo, pull_number: context.payload.pull_request.number, per_page: 100,
+            });
+            // A reviewer's latest approving, blocking or dismissed review is their decision.
+            for (const r of reviews) {
+              if (['APPROVED', 'CHANGES_REQUESTED', 'DISMISSED'].includes(r.state)) decision.set(r.user.login, r.state);
+            }
+            const blocking = [];
+            for (const [login, state] of decision) {
+              if (state !== 'CHANGES_REQUESTED') continue;
+              // A reviewer whose permission can't be read still blocks.
+              const level = await github.rest.repos.getCollaboratorPermissionLevel({ ...context.repo, username: login })
+                .then((r) => r.data.permission, () => 'admin');
+              if (['admin', 'maintain', 'write'].includes(level)) blocking.push(login);
+            }
+            core.setOutput('changes_requested', blocking.join(','));
+      # The queue rebase-merges (#3325), so each commit of a pull request lands on
+      # main as it is. A pull request with one commit lands it under its title. A
+      # batch carries several pull requests, one commit each, and each commit names
+      # the one it carries as "<title> (#N)". Only the subjects are checked: the
+      # batch's reviewer approves what each commit carries.
+      - id: commits
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v9
+        with:
+          script: |
+            // A rerun keeps the payload of the event that started the run, so read the
+            // current title.
+            const pr = (await github.rest.pulls.get({ ...context.repo, pull_number: context.payload.pull_request.number })).data;
+            const commits = await github.paginate(github.rest.pulls.listCommits, { ...context.repo, pull_number: pr.number, per_page: 100 });
+            const subject = (c) => c.commit.message.split('\n')[0];
+            const problems = [];
+            if (commits.length === 1) {
+              const got = subject(commits[0]);
+              if (got !== pr.title && got !== `${pr.title} (#${pr.number})`) problems.push(`the commit subject "${got}" is not the title "${pr.title}"`);
+            } else {
+              const seen = new Set();
+              for (const c of commits) {
+                const got = subject(c);
+                const m = got.match(/^(.+) \(#(\d+)\)$/);
+                if (!m) { problems.push(`${c.sha.slice(0, 9)} "${got}" names no pull request; squash to one commit, or end each subject with (#N)`); continue; }
+                const [, title, n] = m;
+                const number = Number(n);
+                if (number === pr.number || seen.has(number)) { problems.push(`${c.sha.slice(0, 9)} repeats #${n}`); continue; }
+                seen.add(number);
+                const carried = await github.rest.pulls.get({ ...context.repo, pull_number: number }).then((r) => r.data, () => null);
+                if (!carried || carried.state !== 'open') { problems.push(`#${n} is not an open pull request`); continue; }
+                if (carried.title !== title) problems.push(`${c.sha.slice(0, 9)} title "${title}" is not #${n}'s "${carried.title}"`);
+              }
+            }
+            core.setOutput('problems', problems.join('; '));
+      - name: Check every queue job
+        env:
+          FULL: ${{ needs.ci-scope.outputs.full }}
+          FAST: ${{ needs.ci-scope.outputs.reused != 'true' }}
+          HEAVY: ${{ needs.ci-scope.outputs.heavy }}
+          TREE: ${{ needs.ci-scope.outputs.tree }}
+          RUN_TESTO: ${{ needs.ci-scope.outputs.full == 'true' }}
+          CHANGES_REQUESTED: ${{ steps.reviews.outputs.changes_requested }}
+          COMMIT_PROBLEMS: ${{ steps.commits.outputs.problems }}
+          RUN_FEATURE_CHECKS: ${{ fromJson(needs.ci-scope.outputs.run || '{}').feature_checks }}
+          RUN_FEATURE_TESTS: ${{ fromJson(needs.ci-scope.outputs.run || '{}').feature_tests }}
+          RUN_WASM: ${{ fromJson(needs.ci-scope.outputs.run || '{}').wasm }}
+          RUN_LEAN: ${{ fromJson(needs.ci-scope.outputs.run || '{}').lean }}
+          RUN_CONFORMANCE: ${{ fromJson(needs.ci-scope.outputs.run || '{}').conformance }}
+          RUN_INTEGRATION: ${{ fromJson(needs.ci-scope.outputs.run || '{}').integration }}
+          RUN_P2P: ${{ fromJson(needs.ci-scope.outputs.run || '{}').p2p }}
+          CI_SCOPE: ${{ needs.ci-scope.result }}
+          LINT_DEFAULT: ${{ needs.lint-default.result }}
+          FEATURE_CHECKS: ${{ needs.feature-checks.result }}
+          DEPENDENCY_CHECKS: ${{ needs.dependency-checks.result }}
+          DOCS: ${{ needs.docs.result }}
+          C_API: ${{ needs.c-api.result }}
+          OPENAPI_SNAPSHOT: ${{ needs.openapi-snapshot.result }}
+          LINT: ${{ needs.lint.result }}
+          UNIT_TESTS: ${{ needs.unit-tests.result }}
+          GO_DEFRADB: ${{ needs.go-defradb.result }}
+          BUILD_BINARIES: ${{ needs.build-binaries.result }}
+          BUILD: ${{ needs.build.result }}
+          FEATURE_TESTS: ${{ needs.feature-tests.result }}
+          WASM: ${{ needs.wasm-check.result }}
+          LEAN: ${{ needs.lean-conformance.result }}
+          CONFORMANCE: ${{ needs.conformance.result }}
+          INTEGRATION: ${{ needs.integration.result }}
+          P2P: ${{ needs.p2p-linux.result }}
+          TESTO_ARCHIVE: ${{ needs.testo-archive.result }}
+          TESTO: ${{ needs.testo.result }}
+          TESTO_SUMMARY: ${{ needs.testo-summary.result }}
+        run: |
+          set -euo pipefail
+
+          failed=0
+          check() {
+            local name="$1" result="$2" expected="$3"
+            if [ "$result" = success ] || { [ "$result" = skipped ] && [ "$expected" = false ]; }; then
+              return 0
+            fi
+            echo "::error::$name was $result"
+            failed=1
+          }
+
+          check "CI scope" "$CI_SCOPE" true
+          check "Lint (default)" "$LINT_DEFAULT" "$FAST"
+          check "Feature checks" "$FEATURE_CHECKS" "$RUN_FEATURE_CHECKS"
+          check "Dependency checks" "$DEPENDENCY_CHECKS" "$FAST"
+          check "Docs" "$DOCS" "$FAST"
+          check "C API compatibility" "$C_API" "$FAST"
+          check "OpenAPI snapshot" "$OPENAPI_SNAPSHOT" "$FAST"
+          check "Lint" "$LINT" "$FAST"
+          check "Unit tests" "$UNIT_TESTS" "$FULL"
+          check "Go DefraDB binary" "$GO_DEFRADB" "$FULL"
+          check "Build integration binaries" "$BUILD_BINARIES" "$FULL"
+          check "Build & Test" "$BUILD" "$FULL"
+          check "Feature tests" "$FEATURE_TESTS" "$RUN_FEATURE_TESTS"
+          check "WASM Build Check" "$WASM" "$RUN_WASM"
+          check "Lean Conformance" "$LEAN" "$RUN_LEAN"
+          check "Conformance" "$CONFORMANCE" "$RUN_CONFORMANCE"
+          check "Integration" "$INTEGRATION" "$RUN_INTEGRATION"
+          check "P2P Integration" "$P2P" "$RUN_P2P"
+          check "Build testo archive" "$TESTO_ARCHIVE" "$RUN_TESTO"
+          check "Testo" "$TESTO" "$RUN_TESTO"
+          check "Testo summary" "$TESTO_SUMMARY" "$RUN_TESTO"
+          if [ -n "$COMMIT_PROBLEMS" ]; then
+            echo "::error::Commits can't be rebase-merged: $COMMIT_PROBLEMS"
+            failed=1
+          fi
+          if [ -n "$CHANGES_REQUESTED" ]; then
+            echo "::error::Changes requested by $CHANGES_REQUESTED; merging waits for their approval or a dismissal"
+            failed=1
+          fi
+          # The notice names the tree this run tested; a queue entry with that tree skips the heavy suite.
+          if [ "$failed" = 0 ] && [ "$HEAVY" = true ] && [ "$RUN_TESTO" = true ]; then
+            echo "::notice title=Heavy suite passed::tree $TREE"
+          fi
+          exit "$failed"

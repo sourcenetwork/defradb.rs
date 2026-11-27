@@ -75,7 +75,7 @@
 \* Each ticker has its own mark and its own total, and no step touches two
 \* tickers, so one ticker stands for all of them.
 \*
-\* Correspondence with the Rust code (crates/telemetry/src/engine_tickers.rs,
+\* Correspondence with the Rust code (crates/building-blocks/telemetry/src/engine_tickers.rs,
 \* by line, unless named):
 \*
 \*   | Model          | Rust                                                        |

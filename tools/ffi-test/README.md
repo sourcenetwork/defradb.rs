@@ -12,7 +12,7 @@ cargo install --path tools/ffi-test
 
 ```
 defradb.rs (Rust)                     defradb (Go) @ the client commit
-├── crates/ffi/                       ├── tests/integration/
+├── crates/entry-points/ffi/                       ├── tests/integration/
 │   └── (FFI library)                 │   └── (Go test packages)
 └── tools/ffi-test/                   └── tests/clients/rustffi/
     └── (this CLI tool)      ──────▶      ├── (the Go client, at the pin)
@@ -25,12 +25,12 @@ the rustffi client: the client plus the harness seams it needs. Upstream does
 not merge it; the commit, not a branch name, identifies it.
 
 The checkout must sit on the pinned client commit, `GO_FFI_CLIENT_COMMIT` in
-`crates/defra-version`, and `ffi-test run` fails fast when it does not. The pin
+`crates/foundation/defra-version`, and `ffi-test run` fails fast when it does not. The pin
 keeps pass rates comparable: an unpinned checkout silently changes what the
 test corpus measures.
 
 `ffi-test` writes exactly two things into that checkout, both regenerated from
-`crates/ffi` on every run and neither ever committed:
+`crates/entry-points/ffi` on every run and neither ever committed:
 
 - **`defra.h`** — cbindgen output.
 - **the shared library** — `cargo build --release -p ffi`, copied in as

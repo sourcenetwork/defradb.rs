@@ -44,8 +44,8 @@ jobs:
       CORE: >-
         -p defra-core -p crdt -p storage -p blockstore -p schema
         -p document -p crypto -p cursor -p datastore -p keyring@0.5.0 -p kms
-        -p path+file://${{ github.workspace }}/crates/identity -p path+file://${{ github.workspace }}/crates/zanzibar
-        -p path+file://${{ github.workspace }}/crates/acp -p defra-version -p events -p lens
+        -p path+file://${{ github.workspace }}/crates/building-blocks/identity -p path+file://${{ github.workspace }}/crates/building-blocks/zanzibar
+        -p path+file://${{ github.workspace }}/crates/engine/acp -p defra-version -p events -p lens
         -p replication-filter -p telemetry
       DATA: -p query -p db -p vera -p vera-embedded -p pg-compat
       NETWORK: >-
@@ -89,6 +89,10 @@ jobs:
           shared-key: unit
           save-if: ${{ github.ref == 'refs/heads/main' && (matrix.group == 'surfaces' || matrix.group == 'all') }}
       - run: cargo nextest run --cargo-profile super-dev $PACKAGES
+      # The proofs registry anchors and family matrix are static checks the merge
+      # queue kept failing on (#3308); they reuse this group's p2p build.
+      - if: matrix.group == 'network' || matrix.group == 'all'
+        run: cargo nextest run --cargo-profile super-dev -p conformance --lib
       # The node's P2P tests need features the workspace run leaves off.
       - if: matrix.group == 'all'
         run: cargo nextest run --cargo-profile super-dev $NODE_P2P

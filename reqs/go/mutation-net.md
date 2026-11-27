@@ -215,9 +215,8 @@ Requests carrying a transaction ID, committed or discarded later.
 - **Parents:** ["go.mutation.txn"]
 - **Go-Tests:** ["mutation/mix/with_txn_test.go::TestMutationWithTxnDoesNotAllowUpdateInSecondTransactionUser", "mutation/update/txn_test.go::TestMutationUpdate_InterleavedTxn", "mutation/add/field_kinds/one_to_one_to_one/with_txn_test.go::TestTransactionalCreationAndLinkingOfRelationalDocumentsForward", "mutation/add/field_kinds/one_to_one_to_one/with_txn_test.go::TestTransactionalCreationAndLinkingOfRelationalDocumentsBackward"]
 - **Scope:** "Badger file, Badger in-memory and Defra in-memory databases only (Go issue #4442)"
-- **Go-Bug-Suspect:** "in the relational creation tests two transactions each add a different book linked to a different publisher, yet the second commit must fail with 'transaction conflict' only because each txn ran a read query over the other's publisher (SSI anti-dependency); defradb.rs validates query snapshots never, so it is expected to commit both"
 
-Two transactions updating the same document: the first commit wins and the second fails with `transaction conflict. Please retry`; the stored value is the first's. Two transactions updating different documents both commit (regression for Go issue #5257). Two transactions that create and link books to different publishers and then query publishers: Go fails the second commit with `transaction conflict` and only the first book is stored.
+Two transactions updating the same document: the first commit wins and the second fails with `transaction conflict. Please retry`; the stored value is the first's. Two transactions updating different documents both commit (regression for Go issue #5257). Two transactions that create and link books to different publishers and then query publishers: the one-to-one join each transaction ran validates the range it scanned, so the second commit fails with `transaction conflict` and only the first book is stored. defradb.rs does not validate a query read, so when the transactions query publishers both commit (`defra.txn.docs.unique-filter-read`).
 
 # `go.net`: P2P networking and replication
 

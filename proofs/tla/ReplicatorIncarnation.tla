@@ -16,12 +16,12 @@
 \* its own, or a replay whose install is still current giving up on its
 \* remaining failed documents because a live push already holds one of them
 \* with a newer marker.
-\* Rust: crates/db/src/merge/push_docs_replay.rs persist_replay_failures, which flips
-\* status through crates/storage/src/stores/peerstore.rs update_replicator_for_incarnation
+\* Rust: crates/database/db/src/merge/push_docs_replay.rs persist_replay_failures, which flips
+\* status through crates/engine/storage/src/stores/peerstore.rs update_replicator_for_incarnation
 \* (UpdateReplicatorAttempt: one transaction, the bytes rewritten by
-\* crates/p2p/src/replicator.rs ReplicatorInfo::rewrite_status; the status helpers in
-\* crates/p2p-adapter/src/replicator_status.rs use the same method), and records markers
-\* through record_push_failure_for_incarnation; crates/db/src/merge/push_docs.rs
+\* crates/database/p2p/src/replicator.rs ReplicatorInfo::rewrite_status; the status helpers in
+\* crates/surfaces/p2p-adapter/src/replicator_status.rs use the same method), and records markers
+\* through record_push_failure_for_incarnation; crates/database/db/src/merge/push_docs.rs
 \* push_existing_docs_with_config_and_allowlist, which registers each document's marker
 \* through observe_push_head_for_incarnation. Both marker writes check the incarnation
 \* inside peerstore.rs RegisterScopeMarkerAttempt.

@@ -70,20 +70,20 @@
 \* discharges first and leaves the forward to the handler, which a crash
 \* forgets. Red OwedInMemory forwards in the terminal step, but only a root
 \* the running process remembers merging, which a crash also forgets.
-\* Rust: crates/p2p/src/sync/replication/handlers.rs forward_merged,
+\* Rust: crates/database/p2p/src/sync/replication/handlers.rs forward_merged,
 \* forward_owed, handle_block_received, process_merge_batch;
-\* crates/defra-core/src/merge.rs MergeOutcome::skip_reason_is_applied;
-\* crates/db/src/merge/redriven_sink.rs;
-\* crates/p2p/src/sync/manager/process/mod.rs mark_as_merged, discharge_merged;
-\* crates/p2p/src/sync/coordinator/broadcast.rs push_to_replicators_with_creator.
+\* crates/foundation/defra-core/src/merge.rs MergeOutcome::skip_reason_is_applied;
+\* crates/database/db/src/merge/redriven_sink.rs;
+\* crates/database/p2p/src/sync/manager/process/mod.rs mark_as_merged, discharge_merged;
+\* crates/database/p2p/src/sync/coordinator/broadcast.rs push_to_replicators_with_creator.
 \*
 \* The sender's commit-to-marker handoff (MarkerHandoff). Rust: handoff is
 \* the scopes whose ordered_transaction_broadcast task
-\* (crates/db/src/merge/txn_broadcaster.rs SyncTxnBroadcaster::submit_update)
+\* (crates/database/db/src/merge/txn_broadcaster.rs SyncTxnBroadcaster::submit_update)
 \* has not ended, each holding the BroadcastDone its commit call waits on
-\* (crates/db/src/event/emission.rs register_update_event_callback);
+\* (crates/database/db/src/event/emission.rs register_update_event_callback);
 \* senderUp is SyncCoordinator::spawn_background_task still accepting tasks
-\* (crates/p2p/src/sync/coordinator/mod.rs), false once the coordinator's
+\* (crates/database/p2p/src/sync/coordinator/mod.rs), false once the coordinator's
 \* shutdown began or its process died.
 EXTENDS Naturals, FiniteSets
 

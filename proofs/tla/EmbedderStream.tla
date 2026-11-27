@@ -20,16 +20,16 @@
 \* handler outlives shutdown; or a handler runs forever, holding its room.
 \*
 \* Code this models:
-\*   crates/p2p/src/iroh/endpoint_streams.rs admit_stream (Arrive, Busy,
+\*   crates/database/p2p/src/iroh/endpoint_streams.rs admit_stream (Arrive, Busy,
 \*     the tag check), handle_connection_streams (Handoff: the lease moves
 \*     into the ProtocolRequest), serve_protocol_stream (Return, Deadline,
 \*     Cut);
-\*   crates/p2p/src/iroh/stream_protocols.rs StreamProtocols::get (the tag
+\*   crates/database/p2p/src/iroh/stream_protocols.rs StreamProtocols::get (the tag
 \*     check), ProtocolRequest::release (DropRequest: releasing it frees the room),
 \*     StreamHandler::handle (it borrows the stream, so Return, Deadline
 \*     and Cut each end the stream with its task);
-\*   crates/p2p/src/iroh/endpoint_commands.rs handle_deny_peer (Revoke);
-\*   crates/p2p/src/iroh/task_registry.rs TaskRegistry::close (Shutdown).
+\*   crates/database/p2p/src/iroh/endpoint_commands.rs handle_deny_peer (Revoke);
+\*   crates/database/p2p/src/iroh/task_registry.rs TaskRegistry::close (Shutdown).
 EXTENDS Naturals, FiniteSets
 
 CONSTANTS

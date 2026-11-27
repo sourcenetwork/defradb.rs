@@ -1,0 +1,321 @@
+/// CoreKV error types matching the Go corekv implementation.
+///
+/// These errors represent the various failure modes that can occur
+/// in key-value storage operations, transactions, and iteration.
+use thiserror::Error;
+
+/// Result type alias for CoreKV operations.
+pub type Result<T> = std::result::Result<T, Error>;
+
+/// Go-compatible unique index violation message.
+pub const UNIQUE_CONSTRAINT_VIOLATION_MESSAGE: &str =
+    "can not index a doc's field(s) that violates unique index.";
+
+/// Conflict facts from the engine that are safe to retain for retry policy
+/// and metrics. The user key is deliberately omitted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TransactionConflict {
+    pub access: regolith::Access,
+    pub winning_write: regolith::WriteKind,
+    pub observed_seq: u64,
+    pub latest_seq: u64,
+}
+
+impl From<&regolith::Conflict> for TransactionConflict {
+    fn from(conflict: &regolith::Conflict) -> Self {
+        Self {
+            access: conflict.mine(),
+            winning_write: conflict.theirs(),
+            observed_seq: conflict.observed_seq(),
+            latest_seq: conflict.latest_seq(),
+        }
+    }
+}
+
+/// The reason in plain words, without the key: what the losing transaction
+/// did and the newer write that won.
+impl std::fmt::Display for TransactionConflict {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mine = match self.access {
+            regolith::Access::Read => "read",
+            regolith::Access::ReadParts => "partial read",
+            regolith::Access::ReadPresence => "presence check",
+            regolith::Access::ReadForUpdate => "read for update",
+            regolith::Access::ScannedThenWrote => "write after a scan",
+            regolith::Access::ScannedRange => "range scan",
+            regolith::Access::Put => "put",
+            regolith::Access::Delete => "delete",
+            regolith::Access::Merge => "merge",
+            _ => "access",
+        };
+        let theirs = match self.winning_write {
+            regolith::WriteKind::Put => "put",
+            regolith::WriteKind::Delete => "delete",
+            regolith::WriteKind::RangeDelete => "range delete",
+            regolith::WriteKind::Merge => "merge",
+            _ => "write",
+        };
+        write!(f, "a {mine} lost to a newer {theirs}")
+    }
+}
+
+/// CoreKV error types.
+///
+/// These errors match the error types defined in the Go corekv package
+/// to maintain compatibility and consistent error handling.
+#[derive(Error, Debug, Clone, PartialEq)]
+#[non_exhaustive]
+pub enum Error {
+    /// A projection's actual actor cannot administer its required source edge.
+    #[error(
+        "source projection requires an authorized actor; use an explicit owner-authorized repair"
+    )]
+    ProjectionPermissionDenied,
+
+    /// Key was not found in the store.
+    ///
+    /// This is a normal condition and not necessarily an error in many cases.
+    /// Callers should handle this gracefully.
+    #[error("key not found")]
+    NotFound,
+
+    /// Attempted to use an empty key.
+    ///
+    /// Empty keys are not allowed as they would be ambiguous.
+    #[error("empty key")]
+    EmptyKey,
+
+    /// Attempted to set a nil/null value.
+    ///
+    /// While Get operations can return None, Set operations should not
+    /// accept None values. Use Delete instead to remove keys.
+    #[error("value is nil")]
+    ValueNil,
+
+    /// Attempted to use a transaction that has already been discarded.
+    ///
+    /// Once a transaction is discarded, it cannot be used for any further operations.
+    #[error("transaction has been discarded")]
+    DiscardedTxn,
+
+    /// Attempted to use a closed datastore.
+    ///
+    /// The database has been closed and no further operations can be performed.
+    #[error("datastore is closed")]
+    DBClosed,
+
+    /// Transaction conflict detected.
+    ///
+    /// This occurs when two transactions attempt to modify the same keys concurrently.
+    /// The transaction should typically be retried.
+    #[error("transaction conflict. Please retry")]
+    TxnConflict,
+
+    /// A transaction conflict with non-sensitive engine classification.
+    #[error("{0}: transaction conflict. Please retry")]
+    TxnConflictDetails(TransactionConflict),
+
+    /// The engine exhausted its own retry policy. Outer request retry loops
+    /// must not repeat the exact same stale attempt body.
+    #[error("transaction retry attempts exhausted: {0}")]
+    TxnRetryExhausted(TransactionConflict),
+
+    /// Unique index constraint violation.
+    #[error("can not index a doc's field(s) that violates unique index.")]
+    UniqueConstraintViolation,
+
+    /// Attempted a write operation on a read-only transaction.
+    ///
+    /// Read-only transactions cannot perform Set or Delete operations.
+    #[error("No sets or deletes are allowed in a read-only transaction")]
+    ReadOnlyTxn,
+
+    /// I/O error occurred during storage operation.
+    ///
+    /// This wraps underlying I/O errors from the storage backend.
+    #[error("I/O error: {0}")]
+    Io(#[from] super::IoFailure),
+
+    /// Serialization error occurred.
+    ///
+    /// This wraps errors from serializing or deserializing data.
+    #[error("serialization error: {0}")]
+    Serialization(String),
+
+    /// Iterator error occurred.
+    ///
+    /// This represents errors that occur during iteration.
+    #[error("iterator error: {0}")]
+    Iterator(String),
+
+    /// Backend-specific error.
+    ///
+    /// This wraps errors specific to the storage backend (Redb, Memory, etc.).
+    #[error("backend error: {0}")]
+    Backend(String),
+
+    /// The store folder holds a Badger datastore, which Go DefraDB writes
+    /// and regolith cannot read. Go's export holds documents but not the
+    /// schema, and the import looks each collection up by name, so the
+    /// schema has to be added here before the documents are moved.
+    #[error(
+        "the data directory '{0}' holds a Badger datastore written by Go DefraDB, which defradb.rs cannot read; start this node on an empty data directory (another --rootdir or datastore.path), add the same schema to it first, then move the documents with Go's `defradb client backup export` (run against Go DefraDB on the old rootdir) and this node's `defradb client backup import`"
+    )]
+    GoBadgerStore(String),
+
+    /// Generic error with custom message.
+    ///
+    /// Used for errors that don't fit other categories.
+    #[error("{0}")]
+    Other(String),
+
+    #[error("projection requires a prepared ACP observation")]
+    ProjectionAcpInput(ProjectionAcpInput),
+}
+
+#[derive(Clone, PartialEq)]
+pub struct ProjectionAcpInput(Vec<u8>);
+
+impl ProjectionAcpInput {
+    pub fn new(request: Vec<u8>) -> Self {
+        Self(request)
+    }
+
+    pub fn into_bytes(self) -> Vec<u8> {
+        self.0
+    }
+}
+
+impl std::fmt::Debug for ProjectionAcpInput {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("ProjectionAcpInput([redacted])")
+    }
+}
+
+impl Error {
+    /// The typed I/O cause reports full storage; message text is not evidence.
+    pub fn is_storage_full(&self) -> bool {
+        matches!(self, Self::Io(cause) if cause.kind() == std::io::ErrorKind::StorageFull)
+    }
+
+    /// Check if this error indicates a key was not found.
+    pub fn is_not_found(&self) -> bool {
+        matches!(self, Error::NotFound)
+    }
+
+    /// Check if this error indicates a transaction conflict.
+    pub fn is_txn_conflict(&self) -> bool {
+        matches!(self, Error::TxnConflict | Error::TxnConflictDetails(_))
+    }
+
+    /// Check if this error indicates a unique index constraint violation.
+    pub fn is_unique_constraint_violation(&self) -> bool {
+        matches!(self, Error::UniqueConstraintViolation)
+    }
+
+    /// Check if this error indicates a closed database.
+    pub fn is_db_closed(&self) -> bool {
+        matches!(self, Error::DBClosed)
+    }
+
+    /// Check if this error is retriable.
+    ///
+    /// Currently only transaction conflicts are retriable.
+    pub fn is_retriable(&self) -> bool {
+        self.is_txn_conflict()
+    }
+}
+
+impl From<std::io::Error> for Error {
+    fn from(err: std::io::Error) -> Self {
+        Error::Io(err.into())
+    }
+}
+
+impl From<regolith::Error> for Error {
+    fn from(error: regolith::Error) -> Self {
+        match error {
+            regolith::Error::Io(cause) => cause.into(),
+            other => Self::Backend(other.to_string()),
+        }
+    }
+}
+
+impl From<defra_core::cbor::Error> for Error {
+    fn from(err: defra_core::cbor::Error) -> Self {
+        Error::Serialization(err.to_string())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_error_is_not_found() {
+        assert!(Error::NotFound.is_not_found());
+        assert!(!Error::EmptyKey.is_not_found());
+    }
+
+    #[test]
+    fn test_error_is_txn_conflict() {
+        assert!(Error::TxnConflict.is_txn_conflict());
+        assert!(!Error::NotFound.is_txn_conflict());
+    }
+
+    #[test]
+    fn test_error_is_retriable() {
+        assert!(Error::TxnConflict.is_retriable());
+        assert!(!Error::NotFound.is_retriable());
+        assert!(!Error::DBClosed.is_retriable());
+    }
+
+    #[test]
+    fn conflict_errors_name_their_reason_and_keep_the_retry_wording() {
+        let conflict = TransactionConflict {
+            access: regolith::Access::ReadForUpdate,
+            winning_write: regolith::WriteKind::Delete,
+            observed_seq: 4,
+            latest_seq: 9,
+        };
+        let details = Error::TxnConflictDetails(conflict).to_string();
+        assert_eq!(
+            details,
+            "a read for update lost to a newer delete: transaction conflict. Please retry"
+        );
+        assert!(details.ends_with(&Error::TxnConflict.to_string()));
+        assert_eq!(
+            Error::TxnRetryExhausted(conflict).to_string(),
+            "transaction retry attempts exhausted: a read for update lost to a newer delete"
+        );
+    }
+
+    #[test]
+    fn test_error_display() {
+        assert_eq!(Error::NotFound.to_string(), "key not found");
+        assert_eq!(Error::EmptyKey.to_string(), "empty key");
+        assert_eq!(Error::ValueNil.to_string(), "value is nil");
+        assert_eq!(
+            Error::TxnConflict.to_string(),
+            "transaction conflict. Please retry"
+        );
+        assert_eq!(
+            Error::UniqueConstraintViolation.to_string(),
+            UNIQUE_CONSTRAINT_VIOLATION_MESSAGE
+        );
+    }
+
+    #[test]
+    fn test_error_from_io() {
+        let io_err = std::io::Error::new(std::io::ErrorKind::NotFound, "file not found");
+        let err: Error = io_err.into();
+        assert!(matches!(err, Error::Io(_)));
+    }
+
+    #[test]
+    fn test_error_clone() {
+        let err = Error::NotFound;
+        let cloned = err.clone();
+        assert_eq!(err, cloned);
+    }
+}

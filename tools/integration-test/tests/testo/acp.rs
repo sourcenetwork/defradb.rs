@@ -33,6 +33,14 @@ mod dac {
         mod with_relationship;
     }
     mod count;
+    mod create_gate {
+        mod binding;
+        mod common;
+        mod immutable_relation;
+        mod local_gate;
+        mod not_encrypted;
+        mod policy_section;
+    }
     mod delete_with_index;
     mod index {
         mod new;
@@ -133,6 +141,7 @@ mod nac {
     mod dac_access_by_node_owner_nac_on;
     mod dac_access_by_owner_nac_off;
     mod dac_access_by_wrong_user_nac_off;
+    mod delete_collection;
     mod delete_dac_relationship;
     mod delete_document;
     mod delete_encrypted_index;
@@ -157,6 +166,7 @@ mod nac {
     mod list_p2p_document;
     mod list_p2p_replicator;
     mod nac_restart;
+    mod nac_restart_enforced;
     mod nac_start;
     mod new_encrypted_index;
     mod new_index;
@@ -209,6 +219,7 @@ mod nac {
         mod update_document;
         mod verify_signature;
     }
+    mod set_active_collection_version;
     mod set_migration;
     mod sync_p2p_branchable_collection;
     mod sync_p2p_collection_versions;

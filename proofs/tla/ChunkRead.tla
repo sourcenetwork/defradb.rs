@@ -10,10 +10,8 @@
 \* is not shown. Chunks of one article share one decision about that article,
 \* made once per query.
 \*
-\* The article also stores a list of its chunks' hashes. The article's writer
-\* writes that list, and may name in it chunks of old text while its first
-\* entry still names the current text. So the decision cuts the current text
-\* itself and never trusts the list.
+\* The article stores no list of its chunks, so the decision cuts the current
+\* text itself to learn which chunks it uses.
 \*
 \* An app read validator may also govern the chunk collection itself. It can
 \* refuse a reader a chunk the article would let them see, so a chunk shows
@@ -50,24 +48,24 @@
 \*     of one of the article's own blocks (INV_DelegatedKeyInScope).
 \*
 \* Code it models:
-\*   crates/query/src/plan/chunk_parent.rs  parent_hashes (deleted parent, the text cut again), ChunkFields::verified_hash
-\*   crates/query/src/plan/chunk_gate.rs    ChunkGate::allows, ChunkGate::decide (one decision per parent per query)
-\*   crates/query/src/plan/permission_filter.rs PermissionFilterNode::permission_check (the chunk's fields
+\*   crates/engine/query/src/plan/chunk_parent.rs  parent_hashes (deleted parent, the text cut again), ChunkFields::verified_hash
+\*   crates/engine/query/src/plan/chunk_gate.rs    ChunkGate::allows, ChunkGate::decide (one decision per parent per query)
+\*   crates/engine/query/src/plan/permission_filter.rs PermissionFilterNode::permission_check (the chunk's fields
 \*                                          come from its scan row, read at the query's snapshot)
-\*   crates/query/src/planner/builder/mod.rs maybe_wrap_with_acp_filter (a new gate per query)
-\*   crates/query/src/runner/chunk_access.rs chunk_readable, ChunkReads (commits, arrivals, updates and
+\*   crates/engine/query/src/planner/builder/mod.rs maybe_wrap_with_acp_filter (a new gate per query)
+\*   crates/engine/query/src/runner/chunk_access.rs chunk_readable, ChunkReads (commits, arrivals, updates and
 \*                                          version reads; one decision per parent per request, then
 \*                                          the chunk collection's own app check per chunk)
-\*   crates/query/src/planner/builder/mod.rs maybe_wrap_with_acp_filter (the chunk collection's own app check)
-\*   crates/db/src/chunk/access.rs         history_parents, read_owners, merged (an unarrived parent owns nothing)
-\*   crates/db/src/chunk/access.rs         parent_collection, read_owners (an unknown collection owns nothing)
-\*   crates/db/src/chunk/access.rs         read_owners (each owner keeps its block's collection)
-\*   crates/kms/src/defra_kms.rs           DefraKms::local_release_decision (a delegated key release)
-\*   crates/kms/src/nac_dac_policy.rs      Delegation::covers (the delegation's collection against the block's)
-\*   crates/p2p-adapter/src/read_gate.rs    DbBlockReadGate::may_read, DbBlockClassifier::classify (chunk block serving)
-\*   crates/db/src/block/verify.rs          load_authorized_block_signature (the chunk branch)
-\*   crates/http/src/handlers/events.rs     can_observe_document_event (an unknown collection's event)
-\* Merging text and list across peers is ChunkMerge.tla's job, not this one's.
+\*   crates/engine/query/src/planner/builder/mod.rs maybe_wrap_with_acp_filter (the chunk collection's own app check)
+\*   crates/database/db/src/chunk/access.rs         history_parents, read_owners, merged (an unarrived parent owns nothing)
+\*   crates/database/db/src/chunk/access.rs         parent_collection, read_owners (an unknown collection owns nothing)
+\*   crates/database/db/src/chunk/access.rs         read_owners (each owner keeps its block's collection)
+\*   crates/database/kms/src/defra_kms.rs           DefraKms::local_release_decision (a delegated key release)
+\*   crates/database/kms/src/nac_dac_policy.rs      Delegation::covers (the delegation's collection against the block's)
+\*   crates/surfaces/p2p-adapter/src/read_gate.rs    DbBlockReadGate::may_read, DbBlockClassifier::classify (chunk block serving)
+\*   crates/database/db/src/block/verify.rs          load_authorized_block_signature (the chunk branch)
+\*   crates/surfaces/http/src/handlers/events.rs     can_observe_document_event (an unknown collection's event)
+\* Merging the text across peers is ChunkMerge.tla's job, not this one's.
 EXTENDS Naturals, FiniteSets
 
 CONSTANTS
@@ -77,9 +75,8 @@ CONSTANTS
   MemoPerQuery,  \* TRUE: each query starts with no remembered decision (the guard)
   CheckMerged,   \* TRUE: a block's owner must be an article that has arrived (the guard)
   CheckGranted,  \* TRUE: the reader must be allowed to read the article (the guard)
-  CheckListed,   \* TRUE: a chunk shows only if the article's current list names it (the guard)
+  CheckCut,      \* TRUE: a chunk shows only if a cut of the article's current text has it (the guard)
   CheckResolved, \* TRUE: nothing is served while the chunk's collections are unknown here (the guard)
-  CutText,       \* TRUE: the decision cuts the text, never trusting the stored list (the guard)
   CheckOwnApp,   \* TRUE: the chunk collection's own app check runs too (the guard)
   CheckDelegationScope \* TRUE: a delegation is checked against the collection of the block (the guard)
 
@@ -89,11 +86,9 @@ ASSUME MaxEdits \in Nat \ {0}
 ASSUME CheckDeleted \in BOOLEAN /\ CheckHash \in BOOLEAN /\ MemoPerQuery \in BOOLEAN
 ASSUME CheckMerged \in BOOLEAN
 \* The last two switches are yes-or-no too.
-ASSUME CheckGranted \in BOOLEAN /\ CheckListed \in BOOLEAN
+ASSUME CheckGranted \in BOOLEAN /\ CheckCut \in BOOLEAN
 \* And the resolve switch.
 ASSUME CheckResolved \in BOOLEAN
-\* And the cut switch.
-ASSUME CutText \in BOOLEAN
 \* And the own app check switch.
 ASSUME CheckOwnApp \in BOOLEAN
 \* And the delegation scope switch.
@@ -120,7 +115,7 @@ Stored == [hash : Hashes, honest : BOOLEAN]
 
 \* What a query sees: the article and the chunks, frozen at one moment.
 Views == [text : Texts, merged : BOOLEAN, deleted : BOOLEAN, granted : BOOLEAN,
-          stored : SUBSET Stored, padded : BOOLEAN, ownApp : BOOLEAN]
+          stored : SUBSET Stored, ownApp : BOOLEAN]
 
 \* What a query remembers about the article: nothing yet, or a decision.
 NoDecision == [ok |-> FALSE, hashes |-> {}, made |-> FALSE]
@@ -138,34 +133,30 @@ VARIABLES
   result,   \* the chunks the last query showed
   leaked,   \* whether a peer was ever served a block it may not have
   resolved, \* whether this node knows the chunk collection and the article collection that chunks it
-  padded,   \* whether the stored list also names every old chunk, its first entry still right
   ownApp,   \* whether the chunk collection's own app check lets the reader read its chunks
   scopeLeaked \* whether a delegated peer ever got a key its delegation doesn't cover
 
 \* All the variables, for stuttering steps.
-vars == <<text, merged, deleted, granted, stored, edits, phase, snap, memo, result, leaked, resolved, padded, ownApp, scopeLeaked>>
+vars == <<text, merged, deleted, granted, stored, edits, phase, snap, memo, result, leaked, resolved, ownApp, scopeLeaked>>
 
 \* The chunks an honest write of text t stores.
 HonestChunks(t) == {[hash |-> h, honest |-> TRUE] : h \in ChunksOf(t)}
 
 \* The store's state right now, as a query would see it.
 Now == [text |-> text, merged |-> merged, deleted |-> deleted, granted |-> granted,
-        stored |-> stored, padded |-> padded, ownApp |-> ownApp]
-
-\* The hashes the stored list names: the text's, plus every hash when padded.
-ListHashes(v) == ChunksOf(v.text) \cup (IF v.padded THEN Hashes ELSE {})
+        stored |-> stored, ownApp |-> ownApp]
 
 \* The decision about the article from view v: may its chunks show, and which.
 Decide(v) ==
   [ok |-> (v.merged /\ (CheckGranted => v.granted) /\ (CheckDeleted => ~v.deleted)),  \* arrived, readable (with the guard), live
-   hashes |-> IF CutText THEN ChunksOf(v.text) ELSE ListHashes(v),  \* the text cut again, or the list
+   hashes |-> ChunksOf(v.text),                          \* the text cut again
    made |-> TRUE]                                        \* a decision exists now
 
 \* Whether a stored chunk passes the hash check.
 HashOK(c) == CheckHash => c.honest
 
-\* Whether decision d lists chunk c. Without the guard every stored chunk counts as listed.
-ListedOK(c, d) == CheckListed => c.hash \in d.hashes
+\* Whether decision d's cut of the text has chunk c. Without the guard every stored chunk counts.
+CutOK(c, d) == CheckCut => c.hash \in d.hashes
 
 \* Whether serving a chunk's block is allowed: the owner is the article, which
 \* with the guard must have arrived. An article that hasn't arrived has no
@@ -189,7 +180,6 @@ TypeOK ==
   /\ result \subseteq Stored                           \* shown chunks
   /\ leaked \in BOOLEAN                               \* a bad serve happened
   /\ resolved \in BOOLEAN                             \* collections known or not
-  /\ padded \in BOOLEAN                               \* list padded or not
   /\ ownApp \in BOOLEAN                               \* own app check passes or not
   /\ scopeLeaked \in BOOLEAN                          \* an out of scope key went out
 
@@ -200,7 +190,6 @@ Init ==
   /\ merged = FALSE                        \* the article is still on its way
   /\ deleted = FALSE                       \* live
   /\ granted = TRUE                        \* readable
-  /\ padded = FALSE                        \* the list names only the text's chunks
   /\ ownApp = TRUE                         \* the own app check passes
   /\ stored = HonestChunks("t1")           \* t1's chunks are stored
   /\ edits = 0                             \* no edits yet
@@ -218,39 +207,31 @@ Edit(t) ==
   /\ text' = t                                      \* the new text
   /\ stored' = stored \cup HonestChunks(t)          \* and its chunks
   /\ edits' = edits + 1                             \* one more edit
-  /\ padded' = FALSE                                \* with an honest list
   /\ UNCHANGED <<scopeLeaked, merged, deleted, granted, phase, snap, memo, result, leaked, resolved, ownApp>>
 
 \* A writer deletes the article. Its chunks stay stored.
 Delete ==
   /\ ~deleted                                       \* not yet deleted
   /\ deleted' = TRUE                                \* now deleted
-  /\ UNCHANGED <<scopeLeaked, merged, text, granted, stored, edits, phase, snap, memo, result, leaked, resolved, padded, ownApp>>
+  /\ UNCHANGED <<scopeLeaked, merged, text, granted, stored, edits, phase, snap, memo, result, leaked, resolved, ownApp>>
 
 \* The owner revokes the reader's access.
 Revoke ==
   /\ granted                                        \* still granted
   /\ granted' = FALSE                               \* now revoked
-  /\ UNCHANGED <<scopeLeaked, merged, text, deleted, stored, edits, phase, snap, memo, result, leaked, resolved, padded, ownApp>>
+  /\ UNCHANGED <<scopeLeaked, merged, text, deleted, stored, edits, phase, snap, memo, result, leaked, resolved, ownApp>>
 
 \* A chunk that claims hash h but holds other text reaches the store by some
 \* route that skipped the write guard.
 Plant(h) ==
   /\ stored' = stored \cup {[hash |-> h, honest |-> FALSE]}  \* the forged chunk
-  /\ UNCHANGED <<scopeLeaked, merged, text, deleted, granted, edits, phase, snap, memo, result, leaked, resolved, padded, ownApp>>
-
-\* The article's writer stores a list that names every old chunk too, its
-\* first entry still the current text's hash.
-Pad ==
-  /\ ~padded                                        \* not padded yet
-  /\ padded' = TRUE                                 \* padded now
-  /\ UNCHANGED <<scopeLeaked, text, merged, deleted, granted, stored, edits, phase, snap, memo, result, leaked, resolved, ownApp>>
+  /\ UNCHANGED <<scopeLeaked, merged, text, deleted, granted, edits, phase, snap, memo, result, leaked, resolved, ownApp>>
 
 \* The chunk collection's own app check starts refusing the reader.
 AppRefuse ==
   /\ ownApp                                        \* still passing
   /\ ownApp' = FALSE                               \* refusing now
-  /\ UNCHANGED <<scopeLeaked, text, merged, deleted, granted, stored, edits, phase, snap, memo, result, leaked, resolved, padded>>
+  /\ UNCHANGED <<scopeLeaked, text, merged, deleted, granted, stored, edits, phase, snap, memo, result, leaked, resolved>>
 
 \* A query starts: it takes its snapshot, and with the guard forgets old decisions.
 Start ==
@@ -259,7 +240,7 @@ Start ==
   /\ snap' = Now                                    \* reading this moment
   /\ memo' = IF MemoPerQuery THEN NoDecision ELSE memo  \* the guard: a fresh gate
   /\ result' = {}                                   \* nothing shown yet
-  /\ UNCHANGED <<scopeLeaked, text, merged, deleted, granted, stored, edits, leaked, resolved, padded, ownApp>>
+  /\ UNCHANGED <<scopeLeaked, text, merged, deleted, granted, stored, edits, leaked, resolved, ownApp>>
 
 \* The query shows the chunks the decision allows, deciding first if needed.
 Answer ==
@@ -267,22 +248,22 @@ Answer ==
   /\ LET d == IF memo.made THEN memo ELSE Decide(snap)  \* reuse or decide
      IN /\ memo' = d                                \* remember the decision
         /\ result' = {c \in snap.stored :           \* the stored chunks that
-             HashOK(c) /\ d.ok /\ ListedOK(c, d)   \* pass every check on the article
+             HashOK(c) /\ d.ok /\ CutOK(c, d)      \* pass every check on the article
              /\ (CheckOwnApp => snap.ownApp)}       \* and, with the guard, the own app check
   /\ phase' = "done"                                \* the query has answered
-  /\ UNCHANGED <<scopeLeaked, text, merged, deleted, granted, stored, edits, snap, leaked, resolved, padded, ownApp>>
+  /\ UNCHANGED <<scopeLeaked, text, merged, deleted, granted, stored, edits, snap, leaked, resolved, ownApp>>
 
 \* The article arrives on this node, with its access rules.
 Arrive ==
   /\ ~merged                                        \* not here yet
   /\ merged' = TRUE                                 \* here now
-  /\ UNCHANGED <<scopeLeaked, text, deleted, granted, stored, edits, phase, snap, memo, result, leaked, resolved, padded, ownApp>>
+  /\ UNCHANGED <<scopeLeaked, text, deleted, granted, stored, edits, phase, snap, memo, result, leaked, resolved, ownApp>>
 
 \* The chunk collection and the article collection that chunks it become known here.
 Resolve ==
   /\ ~resolved                                      \* not known yet
   /\ resolved' = TRUE                               \* known now
-  /\ UNCHANGED <<scopeLeaked, text, merged, deleted, granted, stored, edits, phase, snap, memo, result, leaked, padded, ownApp>>
+  /\ UNCHANGED <<scopeLeaked, text, merged, deleted, granted, stored, edits, phase, snap, memo, result, leaked, ownApp>>
 
 \* A peer that may read only what the reader may asks for a stored chunk's block.
 \* It is served when allowed; a serve the peer may not have is a leak.
@@ -290,7 +271,7 @@ Serve ==
   /\ stored # {}                                    \* there is a block to ask for
   /\ ServeAllowed                                   \* this node hands it over
   /\ leaked' = (leaked \/ ~(merged /\ granted))     \* bad if the article is unknown or unreadable
-  /\ UNCHANGED <<scopeLeaked, text, merged, deleted, granted, stored, edits, phase, snap, memo, result, resolved, padded, ownApp>>
+  /\ UNCHANGED <<scopeLeaked, text, merged, deleted, granted, stored, edits, phase, snap, memo, result, resolved, ownApp>>
 
 \* A peer replaying for the reader under a delegation on collection d asks for
 \* the key of a block in collection b. The key follows the article's rules, as
@@ -300,7 +281,7 @@ DelegatedKey(d, b) ==
   /\ ServeAllowed                                    \* the article's rules let the key go
   /\ CheckDelegationScope => DelegationCovers(d, b)  \* the guard: the delegation covers the block
   /\ scopeLeaked' = (scopeLeaked \/ ~DelegationCovers(d, b))  \* bad if it doesn't
-  /\ UNCHANGED <<text, merged, deleted, granted, stored, edits, phase, snap, memo, result, leaked, resolved, padded, ownApp>>
+  /\ UNCHANGED <<text, merged, deleted, granted, stored, edits, phase, snap, memo, result, leaked, resolved, ownApp>>
 
 \* Every step anyone can take.
 Next ==
@@ -310,7 +291,6 @@ Next ==
   \/ \E h \in Hashes : Plant(h)  \* a forged chunk,
   \/ Arrive                      \* the article arrives,
   \/ Resolve                     \* the collections become known,
-  \/ Pad                         \* the list is padded,
   \/ AppRefuse                   \* the own app check refuses,
   \/ Serve                       \* a peer is served a block,
   \/ \E d, b \in Collections : DelegatedKey(d, b)  \* a delegated peer asks for a key,

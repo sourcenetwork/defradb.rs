@@ -24,14 +24,16 @@
 \*      conflict instead. (INV_NoLostUpdate)
 \*
 \* The Rust code this models:
-\*   - RequestContext::txn / with_txn            crates/defra-core/src/request_context.rs
-\*   - Node::txn_begin / txn_commit / txn_discard
-\*                                                crates/defra-node/src/ops/request.rs
+\*   - RequestContext::txn / with_txn            crates/foundation/defra-core/src/request_context.rs
+\*   - NodeCore::begin / commit / discard, reached through
+\*     ScopedNode::new_txn and TxnNode::commit / discard
+\*                                                crates/entry-points/defra-node/src/node_core/transaction.rs,
+\*                                                crates/entry-points/defra-node/src/scope/txn_node.rs
 \*   - DbTransactionRegistry begin_as / run_as / commit_as / discard_as,
-\*     and the owner check Owners::run / finish   crates/db/src/txn/registry/lifecycle.rs,
-\*                                                crates/db/src/txn/owner/mod.rs
-\*   - the read-only rejection                    crates/query/src/runner/turn.rs
-\*   - commit-time conflict (regolith validates)  crates/db/src/txn/registry/lifecycle.rs commit_error
+\*     and the owner check Owners::run / finish   crates/database/db/src/txn/registry/lifecycle.rs,
+\*                                                crates/database/db/src/txn/owner/mod.rs
+\*   - the read-only rejection                    crates/engine/query/src/runner/turn.rs
+\*   - commit-time conflict (regolith validates)  crates/database/db/src/txn/registry/lifecycle.rs commit_error
 EXTENDS Naturals, FiniteSets
 
 CONSTANTS
@@ -86,7 +88,7 @@ Init ==
   /\ lateRan = FALSE                       \* no request has run in a finished transaction
   /\ lostUpdate = FALSE                    \* no commit has overwritten another
 
-\* Caller c opens transaction t (Node::txn_begin). The store as it is now is
+\* Caller c opens transaction t (ScopedNode::new_txn). The store as it is now is
 \* the transaction's starting picture.
 Begin(c, t, ro) ==
   /\ state[t] = "none"                                    \* only an unused ID can be handed out
@@ -117,7 +119,7 @@ Request(c, t, k) ==
        ELSE UNCHANGED <<ranBy, lateRan, writes>>          \* refused: "transaction not found", nothing changes
   /\ UNCHANGED <<state, owner, readOnly, base, committed, final, lostUpdate>>  \* a request never ends t or touches the store
 
-\* Caller c commits t (Node::txn_commit). Only the opener, only while open.
+\* Caller c commits t (TxnNode::commit). Only the opener, only while open.
 \* The commit fails with a conflict when it writes a key another transaction
 \* committed after t opened; a failed commit ends t and keeps nothing.
 Commit(c, t) ==
@@ -133,7 +135,7 @@ Commit(c, t) ==
   /\ writes' = [writes EXCEPT ![t] = {}]                  \* t's private writes are gone either way
   /\ UNCHANGED <<owner, readOnly, base, ranBy, lateRan>>  \* nothing else moves
 
-\* Caller c discards t (Node::txn_discard). The writes are dropped.
+\* Caller c discards t (TxnNode::discard). The writes are dropped.
 Discard(c, t) ==
   /\ state[t] = "open" /\ owner[t] = c                    \* only t's opener discards, only while t is open
   /\ state' = [state EXCEPT ![t] = "discarded"]           \* t ends

@@ -16,15 +16,18 @@ mod comment;
 mod crdt_type;
 mod describe_string_kind;
 mod duplicate_relation_name;
+mod field_type_forms;
 mod filter;
 mod get_collection_version;
 mod group;
 mod input_type;
 mod migrations {
     mod add_lens;
+    mod identity_settlement;
     mod query {
         mod simple;
         mod with_collection_branch;
+        mod with_date_time;
         mod with_doc_id;
         mod with_filter;
         mod with_incremental_migrations;
@@ -130,6 +133,7 @@ mod updates {
         }
         mod name;
         mod policy;
+        mod removed_transform_reindex;
         mod version_id;
         mod view_txn;
     }

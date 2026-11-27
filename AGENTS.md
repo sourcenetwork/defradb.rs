@@ -2,7 +2,7 @@
 
 ## 0. The North Star: 1.0 Release
 
-**The Go compatibility baseline lives in `crates/defra-version/src/lib.rs`, not
+**The Go compatibility baseline lives in `crates/foundation/defra-version/src/lib.rs`, not
 here.** Three constants define it: `GO_COMPAT_BRANCH`, `GO_COMPAT_COMMIT`, and
 `GO_COMPAT_TAG`. An empty tag means CI builds the pinned commit from source
 instead of downloading a release binary. `.github/workflows/ci.yml` greps those
@@ -50,50 +50,65 @@ No `ROADMAP.md`, `DEVELOPMENT.md`, `docs/` directories, or planning documents.
 
 ### Crate Structure
 
+Crates are grouped by level (see `crates/README.md`). A crate may only depend
+on the crates below it: on any lower level, and on the crates listed after it in
+its own level.
+
 ```
 crates/
-├── acp/                # Access Control Policy
-├── bitswap/            # Bitswap block exchange, wire-compatible with Go
-├── blockstore/         # IPLD block storage
-├── chunk-split/        # @chunk splitter and the parent's chunk list
-├── cli/                # Command-line interface
-├── crdt/               # CRDT implementations
-├── crypto/             # Cryptographic operations
-├── cursor/             # Opaque cursor token codec for GraphQL pagination
-├── datastore/          # Data persistence abstractions
-├── db/                 # Database core, one module per execution role:
-│                       #   txn/ (the transaction seam), read/, write/,
-│                       #   collection/, block/, definition/, access/,
-│                       #   database/, docid/, downsample/, view/,
-│                       #   event/, error/, plus the folded former crates:
-│                       #   backup/, block/builder/, index/, merge/, nac/,
-│                       #   search/. src/ holds only lib.rs; every test
-│                       #   lives in db/tests/.
-├── defra-core/         # Core types and traits
-├── defra-node/         # The node assembly: NodeBuilder, libp2p/iroh, FFI base
-├── defra-version/      # Version metadata and Go compat tracking
-├── document/           # Document handling
-├── events/             # Pub/sub event bus (subscriptions)
-├── ffi/                # C-compatible FFI bindings
-├── http/               # HTTP API server
-├── identity/           # Identity and JWT management
-├── keyring/            # Key storage
-├── kms/                # DEK generation, wrapping, and distribution under NAC/DAC
-├── net/                # HTTP, TLS and gRPC on nuclei sockets: server loop, HTTP client, gRPC channel
-├── lens/               # Schema migration via WASM transforms
-├── orbis/              # Threshold BLS signing (Orbis ring client)
-├── p2p/                # P2P networking (libp2p + optional Iroh)
-├── p2p-adapter/        # The P2P operation surface every edge calls, and its adapters
-├── pg-compat/          # Postgres wire protocol compatibility
-├── query/              # Query engine (GraphQL, BM25)
-├── replication-filter/ # Query-filter-backed replication matcher
-├── schema/             # Schema validation
-├── vera/               # Vera on-chain ACP client (Cosmos/EVM)
-├── vera-embedded/      # Transports to a Vera node hosted in the same process
-├── storage/            # Storage layer over regolith, the one engine
-├── telemetry/          # OpenTelemetry exporter setup
-├── wasm/               # Browser client (WebAssembly)
-└── zanzibar/           # Google Zanzibar permission engine
+├── entry-points/
+│   ├── ffi/                # C-compatible FFI bindings
+│   ├── cli/                # Command-line interface
+│   └── defra-node/         # The node assembly: NodeBuilder, libp2p/iroh, FFI base
+├── surfaces/
+│   ├── http/               # HTTP API server
+│   ├── wasm/               # Browser client (WebAssembly)
+│   └── p2p-adapter/        # The P2P operation surface every edge calls, and its adapters
+├── database/
+│   ├── db/                 # Database core, one module per execution role:
+│   │                       #   txn/ (the transaction seam), read/, write/,
+│   │                       #   collection/, block/, definition/, access/,
+│   │                       #   database/, docid/, downsample/, view/,
+│   │                       #   event/, error/, plus the folded former crates:
+│   │                       #   backup/, block/builder/, index/, merge/, nac/,
+│   │                       #   search/. src/ holds only lib.rs; every test
+│   │                       #   lives in db/tests/.
+│   ├── replication-filter/ # Query-filter-backed replication matcher
+│   ├── p2p/                # P2P networking (libp2p + optional Iroh)
+│   ├── kms/                # DEK generation, wrapping, and distribution under NAC/DAC
+│   └── pg-compat/          # Postgres wire protocol compatibility
+├── engine/
+│   ├── query/              # Query engine (GraphQL, BM25)
+│   ├── vera-embedded/      # Transports to a Vera node hosted in the same process
+│   ├── vera/               # Vera document ACP provider (native vera.rs)
+│   ├── vera-delegation/    # Vera delegations and the policy commands they digest, without the provider
+│   ├── acp/                # Access Control Policy
+│   ├── datastore/          # Data persistence abstractions
+│   ├── blockstore/         # IPLD block storage
+│   └── storage/            # Storage layer over regolith, the one engine
+├── building-blocks/
+│   ├── crdt/               # CRDT implementations
+│   ├── inputs/             # Remote inputs: single-flight, batching, bounded cache, deadlines, retries
+│   ├── orbis/              # Threshold BLS signing (Orbis ring client)
+│   ├── telemetry/          # OpenTelemetry exporter setup
+│   ├── zanzibar/           # Google Zanzibar permission engine
+│   ├── document/           # Document handling
+│   ├── identity/           # Identity and JWT management
+│   ├── bitswap/            # Bitswap block exchange, wire-compatible with Go
+│   ├── net/                # HTTP, TLS and gRPC on nuclei sockets: server loop, HTTP client, gRPC channel
+│   └── chunk-split/        # @chunk splitter
+└── foundation/
+    ├── edge/               # The network runtime behind a narrow handle
+    ├── events/             # Pub/sub event bus (subscriptions)
+    ├── schema/             # Schema validation
+    ├── crypto/             # Cryptographic operations
+    ├── defra-core/         # Core types and traits
+    ├── lens/               # Schema migration via WASM transforms
+    ├── workers/            # Thread-per-core worker pool
+    ├── keyring/            # Key storage
+    ├── cursor/             # Opaque cursor token codec for GraphQL pagination
+    ├── defra-version/      # Version metadata and Go compat tracking
+    └── prolly/             # History-independent prolly tree: build, insert/remove, diff
 
 tools/
 ├── apple/                  # Apple embedding: .xcframework build + Swift import smoke test
@@ -101,13 +116,14 @@ tools/
 ├── hf_embedding_server.py  # Local HuggingFace embedding server for embedding benchmarks
 ├── integration-test/       # Rust-native integration tests (primary validation)
 ├── lens-host/              # Standalone WASM Lens transform runner (JSON stdin → stdout)
+├── lenses/                 # WASM lens modules the integration tests load (own workspace, `just build-lenses`)
 ├── otel-smoke/             # OTLP exporter smoke tests against a Compose-run collector
 ├── pg-compat-harness/      # Drizzle ORM harness for the Postgres wire protocol
 └── vector-bench/           # Corpus, warm-up, memory-cap and usearch tools for vector_disk_cost
 ```
 
 Only `ffi-test`, `integration-test`, and `lens-host` are workspace members; the
-rest are scripts and non-Rust harnesses.
+rest are scripts, non-Rust harnesses, and `lenses`, a wasm32 workspace of its own.
 
 ### File Size Guidelines
 
@@ -231,17 +247,17 @@ Disjoint parts of one document never conflict. A read that validates more than i
 ### Execution boundaries to preserve
 
 - Preserve the embedded autocommit owner in
-  [`execute_autocommit_request`](crates/defra-node/src/lib.rs) and its signed
-  caller in [`signed_query`](crates/defra-node/src/signed_query/mod.rs).
+  [`execute_autocommit_request`](crates/entry-points/defra-node/src/lib.rs) and its signed
+  caller in [`signed_query`](crates/entry-points/defra-node/src/signed_query/mod.rs).
   `prepare_request` and `resolve_retry_input` run on the caller, outside database
   workers; `execute_prepared` routes the database attempt. Replacing this sequence
   with `PooledExecutor::execute` moves remote preparation onto a database worker.
-  The placement contract is in [`PooledExecutor`](crates/query/src/pooled/mod.rs);
+  The placement contract is in [`PooledExecutor`](crates/engine/query/src/pooled/mod.rs);
   the one-preparation/one-attempt regression is in
-  [`request_preparation_tests`](crates/defra-node/src/request_preparation_tests.rs).
+  [`request_preparation_tests`](crates/entry-points/defra-node/src/request_preparation_tests.rs).
 - Preserve the worker-local commit path in
-  [`WorkerIo`](crates/storage/src/backends/regolith/worker_io/mod.rs) and
-  [`RegolithTxn::commit`](crates/storage/src/backends/regolith/transaction.rs).
+  [`WorkerIo`](crates/engine/storage/src/backends/regolith/worker_io/mod.rs) and
+  [`RegolithTxn::commit`](crates/engine/storage/src/backends/regolith/transaction.rs).
   A cache-only transaction commits with `commit_nowait`; its I/O queue completes
   the ticket. Do not move commit validation to `Pool::spawn_blocking`, call
   blocking `Transaction::commit` on a database worker, or move the transaction to
@@ -331,7 +347,7 @@ that is correct but slower is not done.
   inside `edge::compat`, the one place that tokio runtime is entered. The edge's owner thread builds it, so its workers
   and the blocking threads they start later run on the whole edge CPU set, in the ledger; async-compat starts none.
 - One exception to "no other runtime is built": the embedded Vera node. With the `embedded-vera` feature of `defra-node`
-  or of `cli` (`defradb start --document-acp-type verars-embedded`) a single-validator Vera node runs in the process
+  or of `cli` (`defradb start --document-acp-type vera-embedded`) a single-validator Vera node runs in the process
   on a runtime of its own, because Commonware 2026.10's runner always
   builds its own tokio runtime and takes none from outside. The exception is bounded. `vera-embedded`'s `HostedNode` is
   its only entry. It pins the node thread to the edge's CPUs (`Edge::pin_current_thread`) before that runtime is built,
@@ -370,6 +386,15 @@ that is correct but slower is not done.
 - Read-only queries decide ACP at the same snapshot as their rows. Remote ACP (Vera) stays at the network edge, with
   its staleness documented.
 
+### Requirements and tests
+
+- A change to what DefraDB does (a fix or a feature) starts in `reqs/`: the requirements it fulfils or adds say what
+  done means, error text included, before the code changes (`reqs/README.md`).
+- Every requirement a change adds or fulfils has a testo test under `tools/integration-test/tests/testo/` tagged with its
+  ID. Unit tests alone do not cover a behaviour change; a new integration test is always a testo test.
+- Exempt: refactors, speedups with identical results, CI, docs, proofs, and internal code no client can reach. A PR
+  that relies on the exemption says why.
+
 ### Proofs
 
 - No logic change without its models. A change to what the code does ships with its TLA+ model and its Lean proof
@@ -387,8 +412,8 @@ that is correct but slower is not done.
 - Each TLC configuration finishes in under 60 seconds, and the whole suite in under 10 minutes. A slow model is
   shrunk, never given a longer timeout or more shards.
 - Lean proofs use no `sorry`, `admit` or new `axiom`.
-- A model names the Rust code it models (file and function), and is wired into `proofs/tla/run-all.sh` and
-  `proofs/src/registry.rs`. A model that no longer matches the code is a defect.
+- A model names the Rust code it models (file and function), and is run by `proofs/tla/run-all.sh`, which picks up
+  every `proofs/tla/*.cfg` and reads its module and verdict from the cfg's first line (`\* run-all: <Module>.tla <verdict>`), and has its family file under `proofs/src/registry/`. A model that no longer matches the code is a defect.
 - Proofs read ELI5, line by line, for someone who knows nothing about proofs or model checkers:
   - each file opens with a plain-words story: who acts, what can happen, what must never happen;
   - every line of a spec has a plain-words comment (`\*` in TLA+, `--` in Lean), and every definition, action and
@@ -427,7 +452,7 @@ that is correct but slower is not done.
 ## Build Dependencies
 
 - **Rust**: `rustup`, which installs the version pinned in `rust-toolchain.toml`. Bumping that pin is a deliberate change of its own, never automatic.
-- **protoc**: `brew install protobuf` — required by `crates/orbis`, whose `build.rs` compiles `proto/orbis.proto` via `tonic-prost-build`
+- **protoc**: `brew install protobuf` — required by `crates/building-blocks/orbis`, whose `build.rs` compiles `proto/orbis.proto` via `tonic-prost-build`
 - **cbindgen**: `cargo install cbindgen` — generates C headers for FFI
 - **cargo-nextest**: `cargo install cargo-nextest --locked` — runs the tests; `.config/nextest.toml` builds the `defradb` binaries node tests launch once per run, then runs those tests in parallel
 - **Go** (1.26+): Required for FFI compatibility tests, and to build the pinned `GO_COMPAT_COMMIT`, which declares `go 1.26.10`
@@ -451,7 +476,7 @@ cargo nextest run -p integration-test --test legacy -- acp::basic::rust_acp_basi
 ```
 
 Integration tests live in `tools/integration-test/tests/` and build into three
-test binaries: `testo`, `legacy` and `verars`. Each top-level module is an area, so a
+test binaries: `testo`, `legacy` and `vera`. Each top-level module is an area, so a
 test's name starts with its area (`query::simple::…`), and `just
 integration-suite <area>` runs one area in both binaries.
 
@@ -459,7 +484,7 @@ integration-suite <area>` runs one area in both binaries.
 |--------|--------|------|
 | `testo` | `tests/testo/` | testo scenarios (`TestCase` + actions), run under every client by `DEFRA_CLIENT` (in-process, rust-http, go-http, cli). Most are generated from the Go corpus by `scripts/generate_scenarios.sh`. Every new integration test goes here. Areas: `acp`, `backup`, `chunk`, `collection`, `collection_version`, `cursor`, `encryption`, `explain`, `index`, `issues`, `mutation`, `net`, `node`, `query`, `searchable_encryption`, `signature`, `subscription`, `txn`, `view`, plus the framework self-tests `matchers` and `export`. |
 | `legacy` | `tests/legacy/` | hand-written `TestCluster`/`DefraClient` tests, deleted as testo covers them. Areas below. |
-| `verars` | `tests/verars/` | vera.rs native ACP tests (compartments, native_worker, p2p_acp, policy_generations, policy_lifecycle, smoke, verified_records). Its own binary so the Native consumer workflow builds only these in release; run with `--test verars`. |
+| `vera` | `tests/vera/` | vera.rs native ACP tests (chunk_access, compartments, encryption_acp, iroh_dac, native_worker, p2p_acp, policy_generations, policy_lifecycle, smoke, verified_records). Its own binary so the Native consumer workflow builds only these in release; run with `--test vera`. |
 
 Legacy areas with submodules:
 
@@ -476,7 +501,6 @@ Legacy areas with submodules:
 | Encryption | `encryption::` | acp, block_verify, cross_runtime_p2p, index, key_management, se_cross_runtime |
 | Identity | `identity::` | keyring_dev_mode, keyring_lifecycle, lifecycle, negative, node_identity, types |
 | Backup | `backup::` | dev_mode, dump, purge, restore |
-| Vera | `vera::` | acp_tuning, chunk_access, compartments, encryption_acp, p2p_acp, policy_lifecycle, resilience, smoke |
 
 Single-purpose legacy areas, one file each:
 
@@ -545,15 +569,21 @@ The Go repo has two remotes:
 - `fork` → `edjroz/defradb` (our fork)
 
 The rustffi client `ffi-test` runs is the commit `GO_FFI_CLIENT_COMMIT` in
-`crates/defra-version/src/lib.rs` names on `origin`.
+`crates/foundation/defra-version/src/lib.rs` names on `origin`.
 
 `DEFRADB_GO_REPO` covers the shell commands above and `ffi-test`, which also
-accepts `--go-path <PATH>` to override it. Integration tests that consume Go
-build artifacts resolve them at compile time under
-`$HOME/go/src/github.com/sourcenetwork/defradb` — see `COPY_WASM_PATH` in
-`tools/integration-test/tests/legacy/p2p_iroh/sync/version.rs`. A checkout elsewhere
-needs a symlink at that path, or the `p2p_iroh` lens tests fail on a missing
-WASM binary.
+accepts `--go-path <PATH>` to override it.
+
+`just setup-go-defradb` (part of `just setup`) puts the Go `defradb` at the
+pinned baseline in `~/.cache/defra-harness/<tag or commit>/defradb`, the way
+CI does: the release binary when `GO_COMPAT_TAG` is set, else a build of
+`GO_COMPAT_COMMIT` (from `DEFRADB_GO_REPO` when set). The justfile puts that
+directory on PATH and the go-http client looks there, so the `go_*` legacy
+tests and `DEFRA_CLIENT=go-http` run locally.
+
+The WASM lens modules the
+integration tests load live in `tools/lenses`; `just build-lenses` builds them
+(`just integration` and `just integration-suite` do so first).
 
 ### Git Worktrees
 
@@ -569,6 +599,70 @@ git worktree remove ../defradb.rs-foo              # Remove worktree
 2. `cargo clippy --all --all-targets -- -D warnings` clean
 3. `cargo fmt --all` applied
 4. If touching core behavior: `cargo nextest run -p integration-test` passes
+
+## Getting a Change to Main
+
+Main moves only through the merge queue, and a person always puts a PR in it:
+nothing enqueues on its own. Agents never enqueue or merge unless asked to.
+
+```
+open PR ──▶ lean CI ──▶ review ────▶ "Merge when ready" ──▶ queue ──▶ main
+               │                          ▲                   │
+               └── ci:full (optional) ────┘     full CI, unless the tree
+                                                already passed ci:full
+```
+
+### On the pull request
+
+- **Lean CI by default:** lint, dependency checks, docs, C API, unit tests and
+  in-process testo. A PR in the middle of a stack runs only the fast checks.
+- **Labels add jobs:** `ci:full` runs everything, `ci:<job>` one queue job,
+  `ci:macos` the macOS unit tests.
+- **Every run waits for a maintainer.** On a PR from this repository, CI starts
+  only once a member of `database-team` or `database-rust-team` approves its
+  `ci-approval` environment ("Review deployments" on the CI run). That one click
+  also starts CI (macOS), the quick benchmark and the native consumer, which
+  wait on it. Each push or label change starts a new CI run that waits again.
+  An agent that pushes to a PR tells its operator the run waits for that
+  approval. Main, the queue and forks (GitHub's fork approval) never wait here.
+- **One commit.** Its subject is the PR title, or the title followed by `(#N)` for
+  this PR. The queue rebase-merges, so every commit lands on main as it is:
+  squash before queueing. A PR with several commits is a batch (below).
+- **Review.** No approval is required, but every thread must be resolved. A
+  changes request from a reviewer with write access fails `Merge gate` until it
+  is approved or dismissed. A review or a title edit reruns only `Merge gate`.
+- **`Queue conflicts`** (advisory) names the first queue entry this PR
+  conflicts with, and says whether the queue would reuse a `ci:full` run on
+  this head. It is neutral when part of the queue could not be checked. It
+  covers only PRs based on main, and a fork PR gets no result from its own
+  pushes: it is checked again only when the queue changes.
+- **`human review`** asks a person, not an agent, to look at the PR. Whoever
+  adds it (a person or an agent) leaves a comment saying what needs a human eye.
+  An agent that opens, reviews, edits, batches or lists a PR carrying the label
+  tells its operator in its reply: the PR number, its title, and the reason from
+  that comment. `gh pr list --label "human review"` finds them all.
+
+### In the queue
+
+The queue runs full CI on each entry, unless the entry's tree is one a `ci:full`
+run on the PR already passed; then only `Merge gate` runs. To get that, rebase
+onto main, run `ci:full`, then queue while nothing is ahead of it. A PR keeps
+its own commit only, so it is never rebased onto a queue entry. The queue
+reads the passed tree only from a `Merge gate` job of a `ci.yml` pull request
+run, never from a check run another workflow or app created.
+Main runs CI once a night (07:00 UTC, or by hand with `gh workflow run ci.yml`): it saves the caches pull requests restore and runs the heavy suite.
+
+### Batches
+
+A batch is one PR carrying several PRs, so they share one full run.
+
+- One commit per carried PR, each its squash, with the subject `<title> (#N)`,
+  where #N is an open PR with that title. `Merge gate` checks only the subjects.
+- Whoever reviews the batch checks that each commit carries #N's change and
+  nothing else.
+- PRs that touch the same lines go in a batch as a stack: B is based on A, so
+  B's diff holds the resolution.
+- Once the batch lands, close each carried PR with `Landed in #<batch>`.
 
 ## ACP / Searchable Encryption
 

@@ -8,7 +8,7 @@
 \* are gone (INV_LiveParentHasChunks). While it runs, an article it is about to
 \* remove may already have lost its chunks; truncate is not one transaction.
 \* Chunks left behind with no live article are allowed: readers hide them,
-\* because no live article lists them.
+\* because no live article's text uses them.
 \*
 \* A purge is a second way to remove articles. It removes the chosen articles
 \* and their chunks in one transaction (it runs again if it conflicts, so it
@@ -16,9 +16,9 @@
 \* may remain (INV_PurgedHaveNoChunks).
 \*
 \* Code it models:
-\*   crates/db/src/collection/ops/truncate/all.rs  truncate_all (the order of the steps)
-\*   crates/db/src/write/autocommit/one_op.rs  a create on a chunked collection, one batch
-\*   crates/db/src/collection/ops/purge.rs  purge_documents (one filtered page or purge,
+\*   crates/database/db/src/collection/ops/truncate/all.rs  truncate_all (the order of the steps)
+\*   crates/database/db/src/write/autocommit/one_op.rs  a create on a chunked collection, one batch
+\*   crates/database/db/src/collection/ops/purge.rs  purge_documents (one filtered page or purge,
 \*     parents and their chunks, in one transaction that runs again on a conflict)
 \* Plain numbers are all this model needs.
 EXTENDS Naturals

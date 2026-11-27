@@ -1,0 +1,16 @@
+//! Secondary index management, bulk indexing and vector backfill.
+#[path = "../common/mod.rs"]
+mod common;
+
+mod backfill;
+mod bulk;
+mod create;
+mod deferred;
+mod deferred_task;
+mod drop;
+mod duplicate;
+mod fence;
+mod manager;
+mod manager_value_extraction;
+mod merged_crdt;
+mod patch;

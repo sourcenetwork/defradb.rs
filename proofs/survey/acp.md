@@ -2,9 +2,9 @@
 
 ## Purpose
 
-`crates/acp/` is DefraDB's access-control core. It provides document-level access
+`crates/engine/acp/` is DefraDB's access-control core. It provides document-level access
 control (DAC) and node-level access control (NAC) on top of a Zanzibar relation
-engine (re-exported from `crates/zanzibar/`). Responsibilities: DPI policy
+engine (re-exported from `crates/building-blocks/zanzibar/`). Responsibilities: DPI policy
 validation, relation-tuple storage (`store.rs`/`persistent.rs`/`local.rs`),
 `DocumentACP` checks (owner/direct/wildcard tuples, read-implying relations),
 P2P export/replace of doc-scoped relationships, and the NAC subsystem
@@ -29,7 +29,7 @@ P2P export/replace of doc-scoped relationships, and the NAC subsystem
 | name | kind | property | already-modeled | priority |
 |------|------|----------|-----------------|----------|
 | Zanzibar check soundness / no-escalation | Lean | `check=true` iff subject in rule closure; no accepted permission outside closure; positive-fragment removal monotonicity; deterministic eval | yes — **acp** slice (`Acp/Soundness.lean`) | low |
-| Tuple revocation + stale positive cache | TLA+ | After revoke propagates, no node grants the revoked tuple; positive cache must be invalidated on revoke | yes — **acp** slice (`MC_Acp_Green` / `MC_Acp_StaleCache_Red`) | low |
+| Tuple revocation reaches every replicated view | TLA+ | After revoke propagates, no node grants the revoked tuple; the local view must drop it | yes — **acp** slice (`MC_Acp_Green` / `MC_Acp_StaleStore_Red`) | low |
 | ACP-on-commits dual-path gating | TLA+ | Non-granted reader never obtains a protected doc via User path, local `_commits`, or replicated commit blocks | yes — **commits** slice (`MC_Commits_*`) | low |
 | NAC lifecycle privilege-escalation safety | TLA+ | Across `Enabled→DisabledTemporarily→re_enable` no non-admin/remote actor mutates the admin set; write-while-disabled is rejected; persisted disabled-flag survives restart so re-enable is not skippable | partial — **Auth** slice models management-channel gate + admin-delegation, but not the lifecycle status machine + write-block + restart-persistence invariant | medium |
 | NAC management-channel auth gate | TLA+ | Every NAC mutation requires a fresh signature-verified admin DID | yes — **Auth** slice | low |

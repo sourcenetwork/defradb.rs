@@ -39,7 +39,12 @@ impl Op for AddCollectionSubscription {
         let node = state.node_on(self.common.node())?;
         subscribed_everywhere(state, self.common.node(), || {
             state
-                .block_on(node.add_p2p_collections_as(&state.context_as(None, identity), &names))
+                .block_on(
+                    state
+                        .scope_as(None, identity)
+                        .scoped(&node)
+                        .add_p2p_collections(&names),
+                )
                 .map_err(failed)?;
             Ok(json!({}))
         })

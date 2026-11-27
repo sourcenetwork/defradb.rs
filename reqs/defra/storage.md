@@ -8,6 +8,13 @@ Requirements that start in defradb.rs rather than in a Go integration test.
 
 Index behaviour beyond what Go's integration suite checks.
 
+# `defra.index.keyspace_isolation`: Secondary index keyspace isolation
+
+- **Parents:** ["defra.index"]
+- **Scenarios:** ["collection.truncate.isolation.truncate_preserves_other_collections"]
+
+Secondary index entries occupy a keyspace disjoint from document and schema-version keys. Querying and dropping an index or truncating its collection leaves other collections' documents and definitions intact, including for collection short IDs whose legacy index prefixes overlapped other key families.
+
 # `defra.index.unique_writer`: Unique-index errors name only the writer
 
 - **Parents:** ["defra.index"]
@@ -21,6 +28,61 @@ With a unique index on `User.name` and a stored `{"name":"alice","age":1}`, addi
 - **Scenarios:** ["index::merged_field::text::a_text_index_follows_local_edits", "index::merged_field::text::a_text_index_follows_merged_edits", "index::merged_field::json::a_json_index_follows_merged_edits"]
 
 For a field whose CRDT merges by value (text, JSON), the index holds only the current value. After a local edit, or after two nodes edit the field concurrently and replicate to each other, a filter on the merged value fetches one index entry and one document, and a filter on any earlier value fetches none.
+
+# `defra.index.counter`: An index on a counter follows its total
+
+- **Parents:** ["defra.index"]
+- **Scenarios:** ["index::merged_field::counter::a_counter_index_follows_local_increments", "index::merged_field::counter::a_counter_index_follows_merged_increments", "index::crdt::index_new_with_collection_level_index_on_pn_counter_should_succeed", "index::crdt::index_new_with_composite_index_including_pn_counter_should_succeed", "index::crdt::index_new_with_p_counter_field_should_succeed", "index::crdt::index_new_with_p_counter_field_via_directive_should_succeed", "index::crdt::index_new_with_pn_counter_field_should_succeed", "index::crdt::index_new_with_pn_counter_field_via_directive_should_succeed", "index::crdt::index_new_with_pn_counter_float_field_should_succeed", "index::crdt::index_new_with_unique_index_on_pn_counter_should_succeed"]
+
+A counter field can be indexed. After local increments, or after two nodes increment concurrently and replicate to each other, an equality or range filter on the total fetches one index entry and one document, and a filter on any earlier total fetches none. An index on a counter can be created through the index API or `@index`, alone, in a composite, unique or collection-level index. Go rejects an index on a counter field.
+
+# `defra.index.offset_limit`: Ordered index paging reserves offset in its scan budget
+
+- **Parents:** ["defra.index"]
+- **Scenarios:** ["index::index_offset_limit::ordered_index_offset_limit_returns_the_requested_page"]
+
+An ordered query over an indexed field with `limit: 3, offset: 2` reads `limit + offset` index entries, returns exactly the page after skipping two, and leaves the query offset to the limit node so it is not applied twice. The same paging is correct when the ordered field is not indexed.
+
+# `defra.index.partial_lens_read`: A partial lens read is indexed but not stamped
+
+- **Parents:** ["defra.index"]
+- **Scenarios:** ["issues::t_3044::indexed_collection_query_after_two_lenses_returns_migrated_fields"]
+
+When any transition from a stored version to the active version runs no transform, a read applies the registered transforms, indexes the migrated result, and does not stamp it as the active version. Registering another transform later still applies it, and a query over an indexed field after two migrations returns the migrated fields.
+
+A transition without a lens may be given one later, so the same rule applies to an intended identity transition. Until the path is complete, reads may rerun the earlier lenses. Explicit identity materialization is a separate operation.
+
+# `defra.index.descending_json_path`: Descending JSON paths filter with unambiguous sentinels
+
+- **Parents:** ["defra.index"]
+- **Scenarios:** ["index::json_descending::descending_json_index_filters_an_array_path", "index::json_descending::descending_json_index_filters_a_nested_path_range"]
+
+A JSON field indexed `DESC` serves `_any` over an array path and `_gt` over a nested scalar path. The path remains in its ordinary encoded order while only the scalar value is inverted, so an array path and a longer property path cannot collide and the path range sentinels bracket every value at that path.
+
+# `defra.index.keyspace`: Collection short IDs cannot collide with another family
+
+- **Parents:** ["defra.index"]
+- **Scenarios:** ["index::keyspace::a_tagged_index_keyspace_keeps_collections_separate"]
+
+Collections whose short IDs are `100` and `118`, the bytes `d` and `v` that name the document and version key families, each answer a query filtered on their indexed field with only their own row. Since truncate removes one index at a time (`defra.collection.truncate.other_collections`), no client operation reads or deletes by a whole collection's index prefix, so this scenario also passes on the untagged layout. The fixed `/index/` tag that keeps index keys out of the other families is checked in storage, by `index_keyspace_is_tagged_across_the_byte_boundary` and `index_keyspace_scans_stay_per_collection_across_short_ids`.
+
+# `defra.index.patch_indexed_field`: A patch refuses to remove an indexed field
+
+- **Parents:** ["defra.index"]
+- **Scenarios:** ["index::remove_indexed_field::removing_an_indexed_field_names_the_index_and_keeps_the_collection_usable", "index::remove_indexed_field::removing_a_fulltext_field_names_the_field_and_keeps_the_collection_usable", "index::remove_indexed_field::removing_an_embedding_source_keeps_the_collection_usable"]
+
+A collection patch that removes a field named by an index, full-text index, or vector embedding is refused, and nothing changes: the collection keeps the field and its index or embedding, and documents can still be written. The error names what still uses the field:
+
+- a regular index: `index '<index name>' references field '<field>' which does not exist in schema`, e.g. `index 'Users_name_ASC' references field 'name' which does not exist in schema`;
+- a full-text index: `full-text index on field '<field>' references a field which does not exist in schema`;
+- a vector embedding's source field: `the given field does not exist. Embedding generation field: <field>`.
+
+# `defra.index.backfill_under_writes`: An index created under writes finishes its backfill
+
+- **Parents:** ["defra.index"]
+- **Scenarios:** ["index::backfill_under_writes::an_index_created_under_updates_is_built_and_used", "db::index::create::index_backfill_finishes_when_the_cache_lags_the_stored_definition"]
+
+An index created while documents of its collection are updated is built: its backfill completes, the listing shows no failed backfill, and a filter on the indexed field fetches through the index, for a value an update wrote during the build as for an untouched one. The backfill identifies its index by ID in the definition it reads from the store, so a node whose collection cache is behind the committed index definition still completes it and never fails with `index '<name>' disappeared during backfill`.
 
 # `defra.collection`: Collection-wide operations
 
@@ -264,7 +326,7 @@ As in Go DefraDB, a one-to-many relation field such as `Author.published` is an 
 # `defra.index.range_filter`: A two-sided range filter fetches only the range
 
 - **Parents:** ["defra.index"]
-- **Scenarios:** ["index::range_filter::a_closed_range_fetches_only_the_range", "index::range_filter::an_open_range_on_a_descending_index_fetches_only_the_range", "index::range_filter::an_empty_range_fetches_nothing"]
+- **Scenarios:** ["index::range_filter::a_closed_range_returns_matching_rows", "index::range_filter::an_open_descending_range_returns_matching_rows", "index::range_filter::an_empty_range_returns_no_rows", "index::range_filter::a_closed_range_limits_index_fetches", "index::range_filter::an_open_descending_range_limits_index_fetches", "index::range_filter::an_empty_range_limits_index_fetches"]
 
 Over the index suite's ten users (ages 20, 23, 28, 30, 32, 33, 42, 44, 48, 55), `User(filter: {age: {_geq: 28, _leq: 33}}) { name }` on `age: Int @index` returns Fred, John, Islam, Andy with `indexFetches: 4`; `filter: {age: {_gt: 28, _lt: 44}}` on `age: Int @index(direction: DESC)` returns Addo, Andy, Islam, John with `indexFetches: 4`; and the empty range `{_gt: 44, _lt: 30}` returns `[]` with `indexFetches: 0`. Both bounds limit the index scan, not just the lower one.
 
@@ -273,6 +335,17 @@ Over the index suite's ten users (ages 20, 23, 28, 30, 32, 33, 42, 44, 48, 55), 
 - **Parents:** ["defra"]
 
 Transaction behaviour beyond what Go's integration suite checks.
+
+# `defra.txn.http_commit_bound`: A live server bounds its answer on a commit
+
+- **Parents:** ["defra.txn"]
+- **Scenarios:** ["http::commit_bound::a_commit_past_its_bound_answers_unknown_and_keeps_running", "http::commit_bound::the_bound_is_only_for_transaction_commits", "http::commit_bound::a_begin_is_not_bounded_as_a_commit", "txn::http_commit_bound::an_http_commit_past_its_bound_answers_unknown_and_lands"]
+
+The HTTP server bounds only how long it waits to answer an explicit transaction commit. Past that bound, it answers `503` with JSON naming the bound and `outcome: "unknown"`. It does not cancel the commit: the worker-local commit keeps its ticket and lands or fails on its own, so the caller must not treat this as an abort. A transaction begin is not bounded this way, and a bound of `0` disables it.
+
+The bound is `commit_timeout_ms`, in milliseconds, on the HTTP server, and it is opt in: `0`, the default, disables it.
+
+The CLI's `client tx commit` sends a commit once and never retries it, so it reports the bound's answer, `commit outcome unknown after <bound> milliseconds`, rather than a later attempt's "not found".
 
 # `defra.txn.no_neighbour_conflict`: Updating one document does not conflict with its neighbour
 
@@ -288,11 +361,11 @@ A transaction that reads document alice and updates her `age` to 10 commits succ
 
 A transaction runs `update_Snap(input: {status: "claimed"}) { content }` and gets `content: "init"`; another writer sets `content` to `"changed"` and commits first. The transaction still commits, and the document reads `status: "claimed"`, `content: "changed"`. What an update returns is read, not decided on, so it is not validated at commit. Go conflicts here.
 
-# `defra.document`: Building documents from client values
+# `defra.document`: Documents
 
 - **Parents:** ["defra"]
 
-How client values become document fields.
+What a document is, how it is named (`defra.document.id`, in `document-id.md`), and how client values become its fields, beyond what Go's tests check.
 
 # `defra.document.typed_nillable_arrays`: Typed lists fill nillable-element arrays
 
@@ -308,6 +381,13 @@ A `[String]` field given a string list (`["bafyA", "bafyB", "bafyC"]`) and a `[D
 
 Adding `type Foo { name: String } type FooBar { name: String }` to a fresh node gives `Foo` the same version ID on every run, `bafyreigj37qgcjknekn3jqcmpai5ut6gqsfvjgczmu5iopkeeznjojbqri`, even though `Foo` is a name prefix of `FooBar`.
 
+# `defra.collection.id_added_alone`: A collection added on its own has the ID it has in a batch
+
+- **Parents:** ["defra.collection"]
+- **Scenarios:** ["collection::id_added_alone::a_collection_added_after_its_target_has_the_id_of_one_call", "collection::id_added_alone::a_chain_added_one_collection_per_call_relates_by_collection_id", "collection::id_added_alone::an_indexed_relation_to_a_stored_collection_indexes_its_id_field"]
+
+`AddCollection` with `type Book { title: String author: Author }`, sent after `type Author { name: String }` was added by an earlier call, gives `Book` the definition it has when both types are sent in one call: collection and version ID `bafyreieifr5ciohlbzxlrqy4laqdz7nsmnuxzqya44i2d22isyr7nyomja`, and an `author` field whose kind is the relation to `Author`'s collection ID, `bafyreibvcavbxqwimz5vdxe5q5href63g3skc6ytg45hm4fqh6wsx57wmq`. Either way `BookMutationInputArg.author` is the scalar `ID`, introspection answers, and a `Book` created with an `Author`'s docID is read back with its author. In a chain added one collection per call (`Country`, then `City { country: Country }`, then `Street { city: City }`), each relation's kind carries the collection ID `GetCollections` reports for its target. An `@index` on the relation is the index it is in one call as well: `type Book { title: String author: Author @index }` added after `Author` gives `Book`'s definition one index, named `Book__authorID_ASC`, over the field `_authorID` ascending.
+
 # `defra.replication_filter.receive_gate`: A refused push is not fetched or stored
 
 - **Parents:** ["defra.replication_filter"]
@@ -322,12 +402,26 @@ A node with a replication filter also asks it in the P2P receive path. On arriva
 
 Gossip has no reply and no retry, so a gossip head a node refuses for its per-peer rate limit or its pending-DAG capacity is kept as a durable pending record that takes no slot, and is fetched once a slot frees: a burst over both limits loses no document. These records are bounded by bytes, per source peer (`gossip_deferral_peer_bytes`) and in all (`gossip_deferral_total_bytes`). Past a budget the head is dropped, and the node reports a `p2p-gossip-head-dropped` event naming the peer and the root, so the application can resync it.
 
+# `defra.p2p.cid_check`: A block that does not hash to its CID is refused on every arrival path
+
+- **Parents:** ["defra"]
+- **Scenarios:** ["net::cid_check::a_pushed_block_not_matching_its_cid_stores_no_document", "p2p::sync::coordinator::access_tests::cid_check::a_pushed_head_not_matching_its_cid_is_refused", "p2p::sync::coordinator::access_tests::cid_check::the_receive_gate_leaves_a_head_not_matching_its_cid_to_the_ingest", "p2p::sync::coordinator::access_tests::cid_check::a_synced_block_not_matching_its_cid_is_refused", "p2p::sync::coordinator::access_tests::cid_check::a_fetched_car_with_a_block_not_matching_its_cid_is_refused", "p2p::sync::manager::process::gossip_deferral::tests::a_deferred_gossip_head_not_matching_its_cid_is_refused"]
+
+A block the node admits for processing whose bytes do not hash to the CID it names is refused before anything of it is stored, whichever way it arrives: a PushLog (gossip, pubsub or a replicator's direct push), a gossip head kept for later, a block fetched by block sync, or a fetched CAR, which is refused whole. An admitted push is answered with `block CID verification failed for <cid>: content hash does not match`, and no document is stored from it. The receive gate does not judge such a head, so a push it would refuse is still answered with that error rather than as a handled skip. A CAR refused this way leaves its document waiting for another provider. A push or gossip head the node sheds before processing it (at pending-DAG or byte-budget capacity) is not checked.
+
 # `defra.p2p.iroh_large_update`: An update too large for gossip still replicates over iroh
 
 - **Parents:** ["defra"]
 - **Scenarios:** ["net::iroh_large_update::a_document_too_large_for_gossip_replicates_over_iroh", "net::iroh_large_update::an_update_too_large_for_gossip_replicates_over_iroh"]
 
 Over iroh, a create or an update whose head block is larger than one gossip broadcast holds (4,023 bytes of payload) reaches the same peers a small one would, every subscriber of the collection connected to the writer: a document of a 160-field collection, created with every field set or updated in every field on one node, is queried with the same values on the other. Such an update goes to every connected peer as a direct PushLog request instead of a broadcast; a peer that does not subscribe declines it, and the write's broadcast reports any subscriber that did not take it.
+
+# `defra.p2p.peerless_broadcast`: A write no peer subscribes to is not logged as a failure
+
+- **Parents:** ["defra"]
+- **Scenarios:** ["net::peerless_writes::writes_on_a_networked_node_with_no_peer_succeed", "net::peerless_writes::writes_reach_a_peer_subscribed_to_the_collection_topic_alone", "p2p::peerless_broadcast::rust_p2p_writes_without_peers_log_no_broadcast_error", "p2p::peerless_broadcast::rust_p2p_write_announced_on_the_collection_topic_alone_logs_no_broadcast_error"]
+
+A node with P2P on announces each committed write on its document and collection topics. A topic no peer subscribes to reaches no one, which is not a failure: in all three combinations the write succeeds, nothing is logged at WARN or ERROR for it, and the node reports its broadcast as a success. When no peer subscribes to either topic, as on a node with no peers, the node logs only `No peer subscribed to the write's topics; nothing to announce` at DEBUG, as Go publishes such a write silently. When a peer subscribes to the collection topic but none to the document's, the usual case until a peer subscribes to that document, the write is announced on the collection topic and the node logs `No peer subscribed to the document topic; announced on the collection topic` at DEBUG, not a WARN. When a peer subscribes to the document topic but none to the collection's, the write is announced on the document topic and the node logs `No peer subscribed to the collection topic; announced on the document topic` at DEBUG, not a WARN. A publish that fails for any other reason, such as a transport error or a peer subscribed to a topic that the publish did not reach, is still logged at WARN or ERROR. The testo scenario checks that creates, a batched create and an update succeed and read back on such a node and that a second node subscribed only to the collection topic receives them; the legacy test reads the node's own log, which testo nodes do not write, for a writer with no peer and for one whose only peer subscribes to the collection topic alone.
 
 # `defra.commits`: Commit history queries beyond Go
 
@@ -341,6 +435,13 @@ Over iroh, a create or an update whose head block is larger than one gossip broa
 - **Scenarios:** ["query::commits::with_height_filter::commits_filter_on_height_ranges"]
 
 `_commits(docID: [X], filter: {height: …})` takes `_eq`, `_gt`, `_gte`, `_lt` and `_lte`, alone, combined in one condition, under `_and`, or under `_or`. A document created at height 1 and then updated twice has composite commits at heights 1, 2 and 3: `{height: {_gte: 2, _lte: 3}, fieldName: {_eq: "_C"}}` and `{height: {_gte: 2, _lt: 5}, …}` return heights 2 and 3, `{height: {_gt: 1, _lt: 3}, …}` returns 2, `{height: {_eq: 2}, fieldName: {_eq: "age"}}` returns the `age` commit at height 2, and an `_or` of heights 1 and 3 returns both. A range above every height (`_gt: 10`) or an empty one (`_gt: 10, _lt: 5`) returns no commits. Go returns `{"data": null}` for these filters.
+
+# `defra.commits.field_name_neq`: Filtering commits on a field name they do not have
+
+- **Parents:** ["defra.commits"]
+- **Scenarios:** ["query::commits::with_filter_neq::commits_filter_field_name_neq_excludes_the_named_field"]
+
+`CommitsFieldNameFilterArg` names its inequality operator `_neq`, as the standard query filters and Go do, and introspection lists `_eq`, `_in`, `_neq` and `_nin`. For a document with `name` and `age`, `_commits(filter: {fieldName: {_neq: "_C"}})` returns the `age` and `name` commits and not the composite one.
 
 # `defra.commits.immutable_block`: Commits of a shared immutable block
 

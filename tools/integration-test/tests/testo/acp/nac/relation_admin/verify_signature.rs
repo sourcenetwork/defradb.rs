@@ -1,4 +1,4 @@
-//! Generated from the conformance scenarios of tests/integration/acp/nac/relation_admin/verify_signature_test.go at defradb 137dc624052b.
+//! Generated from the conformance scenarios of tests/integration/acp/nac/relation_admin/verify_signature_test.go at defradb 307364d9d828.
 //! License: AGPL-3.0-only OR LicenseRef-BSL-tests. Copyright 2026 Democratized Data Foundation.
 
 use integration_test::actions::shared::NodeClient;
@@ -8,6 +8,7 @@ use integration_test::actions::{
 };
 use integration_test::scenario::{captures, Common, Text};
 use integration_test::test_case::TestCase;
+use integration_test::ClientType;
 use serde_json::json;
 
 #[test]
@@ -81,7 +82,7 @@ fn nac_admin_relation_can_verify_signature() {
             .into(),
             VerifyBlockSignature {
                 cid: Text::reference("head"),
-                signer_seed: Some(0),
+                signer_node: Some("db".into()),
                 expected_error: Some(
                     "not authorized to perform operation. Permission: verify-signature".into(),
                 ),
@@ -105,7 +106,7 @@ fn nac_admin_relation_can_verify_signature() {
             .into(),
             VerifyBlockSignature {
                 cid: Text::reference("head"),
-                signer_seed: Some(0),
+                signer_node: Some("db".into()),
                 common: Common {
                     identity_seed: Some(2),
                     ..Default::default()
@@ -114,6 +115,8 @@ fn nac_admin_relation_can_verify_signature() {
             }
             .into(),
         ],
+        client_types: Some(&[ClientType::RustHttp, ClientType::GoHttp, ClientType::Cli]),
+        // Deviates from Go: Go's signer is NodeIdentity(0), the node's own key, which the corpus wrote as client identity 0; the test verifies against node db's signing key.
         ..Default::default()
     }
     .execute();
@@ -217,6 +220,7 @@ fn nac_admin_relation_go_client_can_verify_signature() {
             }
             .into(),
         ],
+        client_types: Some(&[ClientType::InProcess]),
         ..Default::default()
     }
     .execute();

@@ -206,22 +206,22 @@ provider's permit.
 
 | Action | Code |
 |---|---|
-| `Commit` | `crates/db/src/merge/txn_broadcaster.rs:68` `SyncTxnBroadcaster::submit_update` → `crates/p2p/src/sync/coordinator/broadcast.rs:108` `broadcast_local_update`; the node is returned only after `crates/defra-node/src/assemble.rs:234` awaits `setup_iroh` |
-| `Register`, `RegFail` | `broadcast.rs:213` `admit_replicator_push` (returns on the first `None`, `:219-235`); `crates/p2p-adapter/src/retry.rs:89` `record_failure`; `crates/storage/src/stores/peerstore.rs:856` `register_scope_marker`; the failure is logged at `txn_broadcaster.rs:103-127` |
-| `Push` (sender) | `crates/p2p-adapter/src/retry.rs:374` `run_retry_pass`; `crates/db/src/merge/push_docs.rs:833` `retry_doc`; ack clear `peerstore.rs:1323` `complete_retry_scope` |
-| `Push` (admission) | `crates/p2p/src/sync/manager/process/pushlog.rs:241` `process_block_inner`: merged check, capacity shed, durable covered check (`:445`), `try_insert_pending_dag` (`:470`), durable register (`:568`) |
-| `Covered`, `Superseded` | `crates/p2p/src/sync/head_scope.rs:100` `ScopeDecision::of` |
-| `Schedule` | `crates/p2p/src/sync/coordinator/mod.rs:1082` `dispatch_due_pending_dag_fetches`: slot reserve (`:1091`, `reserve_pending_dag_fetch` `:604`) before the `try_reserve` on the event channel (`:1096`); `crates/p2p/src/sync/manager/process/pending_dag.rs:722` `due_pending_dag_retries` (oldest due first) |
-| `Acquire` | `crates/p2p/src/sync/coordinator/dag_fetcher.rs:232` awaits `mod.rs:363` `DagFetchLimiter::acquire` (FIFO, global and per peer) before the attempt and its quantum start (`:245`) |
-| `Progress`, `Stall`, `Preempt` | `dag_fetcher.rs:138` `poll_fetch_dag` (defers before the limiter when no provider is connected, `:189`; one attempt when clock-owned, `:201-205`), `:505` `fetch_dag_attempt`; quantum `crates/p2p/src/sync/coordinator/dag_retry.rs:42` `CLOCK_ATTEMPT_QUANTUM` |
-| `EndAttempt` | `crates/p2p/src/sync/coordinator/dag_context.rs:125` `DagFetchContext::finish_clock_attempt` → `pending_dag.rs:80` `PendingDagLease::finish_attempt` (backoff, preempted due at once, rotation after `PENDING_ROTATE_AFTER_DISPATCHES`, `crates/p2p/src/sync/manager/pending.rs:353`) |
-| `Progress` (merge, discharge, forward), `ForwardFail` | `crates/p2p/src/sync/replication/handlers.rs:254` `handle_block_received`: `mark_as_merged` (`:363`, discharges the record via `crates/p2p/src/sync/manager/process/mod.rs:300` `discharge_merged`) then `push_to_replicators_with_creator` (`:379`), whose failure is `MergedButBroadcastFailed`; #2556 swaps the two and leaves a failed forward's root unmarked |
+| `Commit` | `crates/database/db/src/merge/txn_broadcaster.rs:68` `SyncTxnBroadcaster::submit_update` → `crates/database/p2p/src/sync/coordinator/broadcast.rs:108` `broadcast_local_update`; the node is returned only after `crates/entry-points/defra-node/src/assemble.rs:234` awaits `setup_iroh` |
+| `Register`, `RegFail` | `broadcast.rs:213` `admit_replicator_push` (returns on the first `None`, `:219-235`); `crates/surfaces/p2p-adapter/src/retry.rs:89` `record_failure`; `crates/engine/storage/src/stores/peerstore.rs:856` `register_scope_marker`; the failure is logged at `txn_broadcaster.rs:103-127` |
+| `Push` (sender) | `crates/surfaces/p2p-adapter/src/retry.rs:374` `run_retry_pass`; `crates/database/db/src/merge/push_docs.rs:833` `retry_doc`; ack clear `peerstore.rs:1323` `complete_retry_scope` |
+| `Push` (admission) | `crates/database/p2p/src/sync/manager/process/pushlog.rs:241` `process_block_inner`: merged check, capacity shed, durable covered check (`:445`), the missing-link walk, whose failure is the frontier `[root]` (`frontier_or_unknown`, `DagReadiness.tla`), `try_insert_pending_dag` (`:470`), durable register (`:568`) |
+| `Covered`, `Superseded` | `crates/database/p2p/src/sync/head_scope.rs:100` `ScopeDecision::of` |
+| `Schedule` | `crates/database/p2p/src/sync/coordinator/mod.rs:1082` `dispatch_due_pending_dag_fetches`: slot reserve (`:1091`, `reserve_pending_dag_fetch` `:604`) before the `try_reserve` on the event channel (`:1096`); `crates/database/p2p/src/sync/manager/process/pending_dag.rs:722` `due_pending_dag_retries` (oldest due first) |
+| `Acquire` | `crates/database/p2p/src/sync/coordinator/dag_fetcher.rs:232` awaits `mod.rs:363` `DagFetchLimiter::acquire` (FIFO, global and per peer) before the attempt and its quantum start (`:245`) |
+| `Progress`, `Stall`, `Preempt` | `dag_fetcher.rs:138` `poll_fetch_dag` (defers before the limiter when no provider is connected, `:189`; one attempt when clock-owned, `:201-205`), `:505` `fetch_dag_attempt`; quantum `crates/database/p2p/src/sync/coordinator/dag_retry.rs:42` `CLOCK_ATTEMPT_QUANTUM` |
+| `EndAttempt` | `crates/database/p2p/src/sync/coordinator/dag_context.rs:125` `DagFetchContext::finish_clock_attempt` → `pending_dag.rs:80` `PendingDagLease::finish_attempt` (backoff, preempted due at once, rotation after `PENDING_ROTATE_AFTER_DISPATCHES`, `crates/database/p2p/src/sync/manager/pending.rs:353`) |
+| `Progress` (merge, discharge, forward), `ForwardFail` | `crates/database/p2p/src/sync/replication/handlers.rs:254` `handle_block_received`: `mark_as_merged` (`:363`, discharges the record via `crates/database/p2p/src/sync/manager/process/mod.rs:300` `discharge_merged`) then `push_to_replicators_with_creator` (`:379`), whose failure is `MergedButBroadcastFailed`; #2556 swaps the two and leaves a failed forward's root unmarked |
 | `BecomeDue` | `pending_dag.rs:562` `try_claim_pending_dag_dispatch`; `next_retry_at` passes |
 | `Resync` | `pending_dag.rs:955` `resync_persisted_pending_dags`, `:1188` `records_after_resync_cursor` (resumes after the root admitted last, cap and quota skip) |
 | `StartCont`, `EndCont` | `pending_dag.rs:609` `continue_merge`, `:679` `consume_pending_merge_continuation` (`MergeTurn`) |
-| `PullStart`, `PullEnd` | `crates/p2p/src/sync/coordinator/event_handler/doc_sync.rs:214` `handle_doc_sync_reply` (shares `DagFetchLimiter`, no slot) |
-| `Crash`, `RestoreReplicators` | `crates/defra-node/src/lib.rs:824` `Node::shutdown`: `stop_transport` (`:849`) before `network.drain` (`:855`); `crates/p2p-adapter/src/iroh_peer/peer.rs:70` `IrohPeer::assemble`: replication loop (`:233`), resync (`:258`) and retry loop (`:326`) start before `restore_iroh_p2p_state` (`:341`) |
-| `Reconnect` | `crates/p2p/src/iroh/endpoint_rpc.rs:392` `connect_with_cache` (caches, does not adopt); `crates/p2p/src/iroh/endpoint_streams.rs:35` `handle_incoming` (the acceptor caches it for its own requests, `:91`) |
+| `PullStart`, `PullEnd` | `crates/database/p2p/src/sync/coordinator/event_handler/doc_sync.rs:214` `handle_doc_sync_reply` (shares `DagFetchLimiter`, no slot) |
+| `Crash`, `RestoreReplicators` | `crates/entry-points/defra-node/src/lib.rs:824` `Node::shutdown`: `stop_transport` (`:849`) before `network.drain` (`:855`); `crates/surfaces/p2p-adapter/src/iroh_peer/peer.rs:70` `IrohPeer::assemble`: replication loop (`:233`), resync (`:258`) and retry loop (`:326`) start before `restore_iroh_p2p_state` (`:341`) |
+| `Reconnect` | `crates/database/p2p/src/iroh/endpoint_rpc.rs:392` `connect_with_cache` (caches, does not adopt); `crates/database/p2p/src/iroh/endpoint_streams.rs:35` `handle_incoming` (the acceptor caches it for its own requests, `:91`) |
 | `RetireTimedOut` | `endpoint_rpc.rs:52` `REQUEST_RESPONSE_TIMEOUT`, `:327` `retire_timed_out_connection` (evicts and closes, peer-map clones included) |
 
 ## Conformance binding
@@ -247,7 +247,7 @@ bounded instance stay Boundary for good.
 
 `Trace_P2PDelivery.tla` replays a run of the real binary through this model.
 A `defra` built with `--features model-trace` logs one JSON event per action
-under the `model_trace` log target (`crates/p2p/src/model_trace.rs`); without
+under the `model_trace` log target (`crates/database/p2p/src/model_trace.rs`); without
 the feature every site compiles to nothing. `proofs/src/model_trace.rs` orders
 the nodes' events by time, names the nodes and the heads of one document, and
 writes the constants and the trace; the replay must take each event as a model
@@ -317,7 +317,7 @@ generated configuration confirms the run is the known defect.
 | `MC_P2PDelivery_Trace_Red_DialerOnly` | a's connection to h serves only a (F27) | deadlock at the `Reconnect` (7) |
 | `MC_P2PDelivery_Trace_Red_Unsettled` | the run cut after the hub merged h2 | deadlock past the end (30) |
 
-Each RED row in `run-all.sh` names the index its replay must stop at
+Each RED cfg's `\* run-all:` header names the index its replay must stop at
 (`DEADLOCK:<l>`), so a mutant that slips past the event it plants and fails
 later does not count, and each GREEN row the depth it must reach
 (`TRACE:<events + 1>`), so a replay that starts from no state does not pass.

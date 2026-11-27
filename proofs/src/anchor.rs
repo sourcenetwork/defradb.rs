@@ -242,13 +242,11 @@ fn append_sources(dir: &Path, text: &mut String) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::registry::PROPERTIES;
 
     #[test]
     fn every_registry_anchor_resolves() {
         let root = repository_root();
-        let unresolved: Vec<String> = PROPERTIES
-            .iter()
+        let unresolved: Vec<String> = crate::registry::properties()
             .flat_map(|property| {
                 problems(&root, property.anchor)
                     .into_iter()
@@ -267,39 +265,39 @@ mod tests {
         let root = repository_root();
         let cases = [
             (
-                "crates/p2p/src/sync/no_such_module.rs",
-                "`crates/p2p/src/sync/no_such_module.rs`",
+                "crates/database/p2p/src/sync/no_such_module.rs",
+                "`crates/database/p2p/src/sync/no_such_module.rs`",
             ),
             (
-                "crates/p2p/src/sync/queue.rs ProcessQueue::no_such_item",
+                "crates/database/p2p/src/sync/queue.rs ProcessQueue::no_such_item",
                 "no `no_such_item`",
             ),
             (
-                "crates/p2p/src/sync/queue.rs; no_such_sibling.rs",
+                "crates/database/p2p/src/sync/queue.rs; no_such_sibling.rs",
                 "`no_such_sibling.rs`",
             ),
             (
-                "crates/p2p/src/sync/queue.rs::no_such_item",
+                "crates/database/p2p/src/sync/queue.rs::no_such_item",
                 "no `no_such_item`",
             ),
             (
-                "crates/p2p/src/sync/queue.rs try_acquire, no_such_item",
+                "crates/database/p2p/src/sync/queue.rs try_acquire, no_such_item",
                 "no `no_such_item`",
             ),
             (
-                "crates/p2p/src/sync/queue.rs the no_such_item path",
+                "crates/database/p2p/src/sync/queue.rs the no_such_item path",
                 "no `no_such_item`",
             ),
             (
-                "crates/p2p/src/sync/{queue,no_such_module}.rs",
-                "`crates/p2p/src/sync/no_such_module.rs`",
+                "crates/database/p2p/src/sync/{queue,no_such_module}.rs",
+                "`crates/database/p2p/src/sync/no_such_module.rs`",
             ),
             (
-                "crates/p2p/src/sync/queue.rs ProcessQueue::cid",
+                "crates/database/p2p/src/sync/queue.rs ProcessQueue::cid",
                 "`ProcessQueue` holds no `cid`",
             ),
             (
-                "crates/db/src/block/heads/document.rs supersede",
+                "crates/database/db/src/block/heads/document.rs supersede",
                 "no `supersede` declared",
             ),
         ];
@@ -316,9 +314,9 @@ mod tests {
     fn prose_directories_and_foreign_repositories_are_not_symbols() {
         let root = repository_root();
         for anchor in [
-            "crates/p2p/src/sync/queue.rs ProcessQueue::try_acquire, release_sync",
-            "crates/p2p/src/sync coordinator + pending DAG clock; crates/db (merge) push replay",
-            "crates/p2p/src/sync/queue.rs read-only admission order",
+            "crates/database/p2p/src/sync/queue.rs ProcessQueue::try_acquire, release_sync",
+            "crates/database/p2p/src/sync coordinator + pending DAG clock; crates/database/db (merge) push replay",
+            "crates/database/p2p/src/sync/queue.rs read-only admission order",
             "gents:crates/gents/src/lifecycle/claim.rs:claim_inner (foreign substrate)",
         ] {
             assert_eq!(problems(&root, anchor), Vec::<String>::new(), "{anchor}");

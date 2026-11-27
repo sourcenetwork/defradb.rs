@@ -1,0 +1,92 @@
+[package]
+name = "vera-embedded"
+description = "Transports that reach a Vera node hosted in the same process"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lib]
+bench = false
+
+[[test]]
+name = "hosted_node"
+required-features = ["node"]
+
+[[test]]
+name = "node_placement"
+required-features = ["node"]
+
+[[test]]
+name = "term_takeover"
+required-features = ["node"]
+
+[[test]]
+name = "stale_head"
+required-features = ["node"]
+
+[[test]]
+name = "policy_ids"
+required-features = ["node"]
+
+[[test]]
+name = "receipt_wait"
+required-features = ["node"]
+
+[features]
+# Start and stop the node itself, on the network runtime's cores.
+node = ["dep:vera-node"]
+
+[dependencies]
+# The two transports the vera.rs provider is built on, and their errors.
+vera = { path = "../../engine/vera" }
+# `MaybeBoxFuture`, the future type of the submission transport.
+defra-core = { path = "../../foundation/defra-core" }
+# The deadline of each wait for the node, on the network runtime's clock.
+edge = { path = "../../foundation/edge" }
+
+# The embedded node's in-process method table. The revision is the one
+# `tools/integration-test` pins for `vera-harness`; the native consumer check
+# refuses a difference.
+vera-jsonrpc = { git = "https://github.com/sourcenetwork/vera.rs", rev = "faf4a4f094c1b4f5786bce0cbeb6567966e27999" }
+
+# The node a host starts with the `node` feature, at the same revision.
+vera-node = { git = "https://github.com/sourcenetwork/vera.rs", rev = "faf4a4f094c1b4f5786bce0cbeb6567966e27999", optional = true }
+# The encoding of the node's consensus key, and of the newest block a
+# header subscription starts with.
+commonware-codec = "=2026.10.0"
+hex.workspace = true
+# The block and header types of that newest block.
+vera-domain = "0.2.0"
+
+futures.workspace = true
+# The atom a host closes its transports through.
+regolith.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+# The light client's freshness limit, at the revision `crates/engine/vera` builds on.
+acp-light-client = { git = "https://github.com/sourcenetwork/backbone.git", rev = "3421379115d69fd8bed8536943d5397ac6eb5ace" }
+# The document ACP layer the stopped-node test asks through.
+acp = { path = "../../engine/acp" }
+identity = { path = "../../building-blocks/identity" }
+# The term certificate the takeover test approves as the deployment's operator.
+vera-client = "0.2.0"
+# The node the tests host in their own process.
+vera-node = { git = "https://github.com/sourcenetwork/vera.rs", rev = "faf4a4f094c1b4f5786bce0cbeb6567966e27999" }
+commonware-codec = "=2026.10.0"
+edge = { path = "../../foundation/edge", features = ["testing"] }
+events = { path = "../../foundation/events" }
+hex.workspace = true
+keyring = { path = "../../foundation/keyring", default-features = false }
+nuclei.workspace = true
+mantra-macros = "0.9"
+tempfile = "3"
+# The CPU sets the placement test compares.
+workers = { path = "../../foundation/workers" }
+
+[lints]
+workspace = true

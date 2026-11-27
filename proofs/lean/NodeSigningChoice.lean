@@ -24,14 +24,14 @@ arrives as someone other than the transaction's owner. Before this fix an
 identity-only node owned its transactions as its DID but ran unsigned
 requests in them as no one, so they were all refused.
 
-Rust owner: crates/defra-node/src/lib.rs `Node::execute_prepared_request`
+Rust owner: crates/entry-points/defra-node/src/lib.rs `Node::execute_prepared_request`
 (the `signing_identity` filter), `Node::node_principal` and
 `Node::node_context` (the owner of the transactions the node begins), and
-crates/defra-node/src/assemble.rs `assemble` (`node_query_identity`, the
+crates/entry-points/defra-node/src/assemble.rs `assemble` (`node_query_identity`, the
 identity a request without its own acts as). The signed path stamps the
-principal in crates/defra-node/src/signed_query/mod.rs
+principal in crates/entry-points/defra-node/src/signed_query/mod.rs
 `execute_with_signing_context`. The HTTP server takes the same choice through
-`ServerConfig::no_signing` (crates/defra-node/src/node_builder.rs
+`ServerConfig::no_signing` (crates/entry-points/defra-node/src/node_builder.rs
 `NodeBuilder::build`).
 -/
 
@@ -53,6 +53,9 @@ inductive Outcome where
   | asCaller
   -- The request acts as the node's DID, and its blocks are signed with it.
   | asNodeSigned
+  -- `ScopedNode::execute` signs with the node's key but leaves the request
+  -- acting as its caller.
+  | signedAsCaller
   -- The node should sign but its signer is missing: the request is refused.
   | refused
   deriving DecidableEq
@@ -103,6 +106,70 @@ theorem identity_only_never_refused (n : Node) (h : n.identityOnly = true) :
   rw [identity_only_runs_as_caller n h]
   decide
 
+-- One caller's acting identity and DAC bypass. The caller hands both to the
+-- request and expects both back unchanged.
+structure Caller where
+  -- The caller has an acting DID.
+  identityKnown : Bool
+  -- The caller was granted a DAC bypass.
+  dacBypass : Bool
+  deriving DecidableEq
+
+-- What `ScopedNode::execute` does for a request that carries no signing config
+-- of its own. A node without an identity, or one told not to sign, leaves the
+-- request unsigned. A signing node signs with its node key. Without that key
+-- it refuses; it never falls back to an unsigned write.
+def runAs (n : Node) : Outcome :=
+  -- A node with no signer identity, or one told not to sign, stays unsigned.
+  if !n.hasIdentity || n.identityOnly then .asCaller
+  -- A signing node signs with the node key, without becoming the caller.
+  else if n.signerFound then .signedAsCaller
+  -- It cannot write unsigned just because its signer went missing.
+  else .refused
+
+-- `execute_as` returns its outcome and the caller's context unchanged.
+def executeAs (n : Node) (caller : Caller) : Outcome × Caller :=
+  (runAs n, caller)
+
+-- Whether the signed path preserved the caller's identity and bypass.
+theorem execute_as_keeps_the_caller (n : Node) (caller : Caller) :
+    (executeAs n caller).2 = caller := by
+  -- The second element is the caller itself, whatever the node chooses.
+  rfl
+
+-- A signing node's `execute_as` signs with the node key but does not make the
+-- request act as the node.
+theorem execute_as_signs_as_the_caller (n : Node)
+    (hIdentity : n.hasIdentity = true) (hNotOnly : n.identityOnly = false)
+    (hSigner : n.signerFound = true) :
+    runAs n = .signedAsCaller := by
+  -- Substitute the three node facts and compute the branch.
+  simp [runAs, hIdentity, hNotOnly, hSigner]
+
+-- The node key's signature is distinguishable from running as the node.
+theorem execute_as_does_not_act_as_the_node (n : Node)
+    (hIdentity : n.hasIdentity = true) (hNotOnly : n.identityOnly = false)
+    (hSigner : n.signerFound = true) :
+    runAs n ≠ .asNodeSigned := by
+  -- Its signed outcome is the caller-preserving one.
+  rw [execute_as_signs_as_the_caller n hIdentity hNotOnly hSigner]
+  decide
+
+-- A node told not to sign, or one with no signing identity, stays unsigned.
+theorem execute_as_unsigned_without_signing (n : Node)
+    (h : (!n.hasIdentity || n.identityOnly) = true) :
+    runAs n = .asCaller := by
+  -- The unsigned guard is exactly the caller's reason.
+  simp [runAs, h]
+
+-- A configured signer that cannot be found fails closed.
+theorem execute_as_refuses_a_missing_signer (n : Node)
+    (hIdentity : n.hasIdentity = true) (hNotOnly : n.identityOnly = false)
+    (hMissing : n.signerFound = false) :
+    runAs n = .refused := by
+  -- Substitute the node's facts and compute the final branch.
+  simp [runAs, hIdentity, hNotOnly, hMissing]
+
 -- Who a request, or a transaction's owner, is when the caller names no one.
 inductive Principal where
   -- The node's own DID.
@@ -127,7 +194,7 @@ def principal (n : Node) : Principal :=
   -- Only a node with an identity that is not identity-only acts as itself.
   if n.hasIdentity && !n.identityOnly then .node else .noOne
 
--- The owner of a transaction the node begins: `begin_transaction` and
+-- The owner of a transaction the node begins: `Node::new_txn` and
 -- `txn_owner` begin it in `node_context`, whose identity is the principal.
 def txnOwner (n : Node) : Principal :=
   -- The node's principal, nothing more.

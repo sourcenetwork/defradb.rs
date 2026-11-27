@@ -6,9 +6,9 @@
 //! `SendUpdate{IsRelay:true}` -> `pushLogToReplicators` ->
 //! `internal/se/coordinator.go:246` `HandlePushToReplicators`). Rust generates
 //! merge artifacts into its OWN store only
-//! (`crates/db/src/merge/merge_handler/composite_persist.rs:171-193`) and never
+//! (`crates/database/db/src/merge/merge_handler/composite_persist.rs:171-193`) and never
 //! pushes them, while its `encrypted_<Col>` query resolves exclusively through
-//! replicators (`crates/db/src/merge/se_query_transport.rs:142-167`).
+//! replicators (`crates/database/db/src/merge/se_query_transport.rs:142-167`).
 //!
 //! Topology for every test: CREATOR -> MIDDLE -> TAIL, a replicator chain.
 //! MIDDLE merges the document and is the node the `encrypted_User` query runs
@@ -29,11 +29,7 @@ const USER_SCHEMA: &str = "type User { name: String  age: Int  city: String }";
 
 /// The Go compat binary the spike pane provides; `defradb` is not on PATH.
 fn go_binary() -> PathBuf {
-    if let Ok(p) = std::env::var("DEFRA_GO_BIN") {
-        return PathBuf::from(p);
-    }
-    PathBuf::from(std::env::var("HOME").expect("HOME"))
-        .join(".cache/defra-harness/307364d9d/defradb")
+    integration_test::go_compat_binary()
 }
 
 fn p2p_addr(cluster: &TestCluster, idx: usize) -> String {
@@ -167,7 +163,7 @@ async fn se_query_hits(
 }
 
 /// All-Rust chain. Both write and query identities are `None`
-/// (`crates/cli/src/commands/start/server_p2p/libp2p.rs:145,429-438`), so a
+/// (`crates/entry-points/cli/src/commands/start/server_p2p/libp2p.rs:145,429-438`), so a
 /// miss here CANNOT be a tag mismatch: it isolates the missing
 /// regenerate-and-push-on-merge.
 #[nuclei::test]

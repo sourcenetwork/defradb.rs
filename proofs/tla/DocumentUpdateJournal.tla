@@ -16,14 +16,18 @@
 \* node has not merged that yet. The document is still alive here, and this
 \* page returns its rows as every other query on this node returns the
 \* document. Red_Unordered walks that trace.
+\* The arrival journal's page passes its rows through the same gate: an
+\* arrival row is the row of a document's first block, so what this model
+\* promises about which rows a reader is handed holds for it too.
 \* Not modeled: the reader's errors for a cursor beyond the head and for a
 \* missing row; a page here always finds every row it scans.
-\* Rust owners: crates/db/src/event/updates.rs (record, read, rows),
-\* crates/db/src/event/updates/gate.rs (Gate::decide, Gate::confirm),
-\* crates/db/src/txn/mod.rs (DbTxn::later),
-\* crates/db/src/write/update.rs (write_blocks),
-\* crates/db/src/merge/merge_handler/composite_persist.rs (persist_merged_document)
-\* and crates/query/src/runner/arrivals.rs (execute_arrivals_query).
+\* Rust owners: crates/database/db/src/event/updates.rs (record, read, rows),
+\* crates/database/db/src/event/arrivals.rs (read),
+\* crates/database/db/src/event/gate.rs (Gate::decide, Gate::confirm),
+\* crates/database/db/src/txn/mod.rs (DbTxn::later),
+\* crates/database/db/src/write/update.rs (write_blocks),
+\* crates/database/db/src/merge/merge_handler/composite_persist.rs (persist_merged_document)
+\* and crates/engine/query/src/runner/arrivals.rs (execute_arrivals_query).
 EXTENDS Naturals, FiniteSets, Sequences
 
 \* Docs are the documents of one collection and Blocks the block identities;

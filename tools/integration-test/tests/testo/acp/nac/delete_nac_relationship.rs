@@ -1,4 +1,4 @@
-//! Generated from the conformance scenarios of tests/integration/acp/nac/delete_nac_relationship_test.go at defradb 137dc624052b.
+//! Generated from the conformance scenarios of tests/integration/acp/nac/delete_nac_relationship_test.go at defradb e152b5cab59d.
 //! License: AGPL-3.0-only OR LicenseRef-BSL-tests. Copyright 2026 Democratized Data Foundation.
 
 use integration_test::actions::{
@@ -58,6 +58,22 @@ fn nac_delete_relationship_for_all_identities_all_implicit_identities_access_rev
                     identity_seed: Some(1),
                     ..Default::default()
                 },
+                ..Default::default()
+            }
+            .into(),
+            DeleteNACActorRelationship {
+                relation: "admin".into(),
+                target_actor: Some("".into()),
+                expected_error: Some("acp relationship target actor must not be empty".into()),
+                common: Common {
+                    identity_seed: Some(1),
+                    ..Default::default()
+                },
+                ..Default::default()
+            }
+            .into(),
+            GetNACStatus {
+                expected_data: json!({ "status": "enabled" }),
                 ..Default::default()
             }
             .into(),
@@ -169,6 +185,13 @@ fn nac_delete_relationship_still_requires_identity_even_if_all_identities_given_
             DeleteNACActorRelationship {
                 relation: "admin".into(),
                 target_identity_seed: Some(3),
+                expected_error: Some("node acp relationship operation requires identity".into()),
+                ..Default::default()
+            }
+            .into(),
+            DeleteNACActorRelationship {
+                relation: "admin".into(),
+                target_actor: Some("".into()),
                 expected_error: Some("node acp relationship operation requires identity".into()),
                 ..Default::default()
             }
@@ -338,9 +361,31 @@ fn nac_delete_relationship_when_nac_is_enabled_with_invalid_identities_error() {
             DeleteNACActorRelationship {
                 relation: "admin".into(),
                 target_actor: Some("".into()),
-                expected_data: json!({ "recordFound": false }),
+                expected_error: Some("acp relationship target actor must not be empty".into()),
                 common: Common {
                     identity_seed: Some(1),
+                    ..Default::default()
+                },
+                ..Default::default()
+            }
+            .into(),
+            AddNACActorRelationship {
+                relation: "admin".into(),
+                target_identity_seed: Some(2),
+                expected_data: json!({ "existedAlready": false }),
+                common: Common {
+                    identity_seed: Some(1),
+                    ..Default::default()
+                },
+                ..Default::default()
+            }
+            .into(),
+            DeleteNACActorRelationship {
+                relation: "admin".into(),
+                target_actor: Some("".into()),
+                expected_error: Some("acp relationship target actor must not be empty".into()),
+                common: Common {
+                    identity_seed: Some(2),
                     ..Default::default()
                 },
                 ..Default::default()

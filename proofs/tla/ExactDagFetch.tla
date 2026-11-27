@@ -34,12 +34,13 @@
 \*   - an honest provider sends a block the receiver already holds;
 \*   - an honest fetch needs more than one request, or two with a hole.
 \*
-\* Rust: crates/p2p/src/sync/car/region.rs collect_missing_region and Walk
+\* Rust: crates/database/p2p/src/sync/car/region.rs collect_missing_region and Walk
 \* (the walk: mark_held, mark_wanted, serve_attachments, the explicit-want
-\* rule); crates/p2p/src/sync/coordinator/haves.rs haves_from_heads (a head
-\* and its ancestors) and dag_fetcher.rs root_haves (a held root's heads); crates/p2p/src/sync/coordinator/dag_fetcher.rs
+\* rule); crates/database/p2p/src/sync/coordinator/haves.rs haves_from_heads (a head
+\* and its ancestors) and dag_fetcher.rs root_haves (a held root's heads); crates/database/p2p/src/sync/coordinator/dag_fetcher.rs
 \* fetch_dag_attempt (ask again from the missing frontier, merge only when
-\* find_all_missing_links is empty); crates/p2p/src/sync/coordinator/
+\* find_all_missing_links is empty, and a failed walk is never empty: links.rs
+\* frontier_or_unknown, DagReadiness.tla); crates/database/p2p/src/sync/coordinator/
 \* event_handler/car.rs handle_car_fetch_response_inner (verify_block_cid on
 \* every block, drop_held_blocks before storing). The root starts out of
 \* rhas here; in the code gossip often stores it first, and the response

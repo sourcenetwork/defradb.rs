@@ -1,0 +1,159 @@
+/// Database layer for DefraDB matching Go's internal/db/.
+///
+/// This crate provides the high-level database API including:
+///
+/// - `DB`: Main database struct for creating transactions and managing collections
+/// - `DbTxn`: Transaction wrapper with explicit/implicit handling
+/// - `Collection`: Document collection with CRUD operations
+///
+/// # Architecture
+///
+/// ```text
+/// User Code
+///     ↓
+/// db crate (DB, DbTxn, Collection)
+///     ↓
+/// datastore crate (BasicTxn, namespace views)
+///     ↓
+/// storage crate (corekv, backends)
+/// ```
+///
+/// # Example
+///
+/// ```ignore
+/// use db::{DB, Collection};
+/// use document::Document;
+/// use storage::RegolithStore;
+///
+/// // Create database
+/// let store = RegolithStore::in_memory().unwrap();
+/// let db = DB::new(store)?;
+///
+/// // Create a transaction
+/// let txn = db.new_txn(false).await?;
+///
+/// // Create a collection
+/// let col = Collection::new(schema, db.crdts().clone());
+///
+/// // Documents are written through the mutator APIs, which allocate the
+/// // node-local short ID and derive the public DocID from the genesis
+/// // composite block CID.
+///
+/// // Commit
+/// txn.commit().await?;
+/// ```
+pub mod access;
+pub mod backup;
+pub mod block;
+pub mod chunk;
+pub mod collection;
+pub use collection::stream::BackfillSource;
+pub mod database;
+// Definition validation moved to the `schema` crate (was #791 substitute
+// slice) — see `schema::definition_validation`.
+pub mod definition;
+pub mod docid;
+pub mod downsample;
+pub mod error;
+pub mod event;
+pub mod index;
+pub use event::emission::{BroadcastDone, TxnBroadcastEvent, TxnBroadcaster};
+pub mod document_projection;
+pub mod merge;
+pub mod nac;
+pub mod read;
+pub mod receive_gate;
+pub(crate) mod remote_inputs;
+pub mod replication_filter;
+pub mod search;
+pub mod txn;
+pub(crate) mod view;
+pub mod write;
+pub use datastore::multistore::GenesisReadAccess;
+pub use datastore::NamespaceView as DocumentMutationView;
+pub use document_projection::{DocumentMutationContext, DocumentMutationProjector};
+
+// Re-export commonly used types
+pub use crate::block::builder::{build_blocks_from_document, BlockResult};
+pub use crate::search::{
+    embed_text, hybrid_search_dense, require_query_success, DenseHybridSearchHit,
+    DenseHybridSearchRequest, DenseHybridSearchResponse,
+};
+pub use access::dac::{DacPolicies, DacPolicyError};
+pub use access::kms::{
+    DbBlockDocIDResolver, DbDocCollectionLookup, DbEncBlockStore, DbNodeAcpRead,
+};
+pub use access::nac_ops::NodeAcpError;
+pub use access::node::{bound_node_access_checker, node_access_checker, NodeAccessChecker};
+pub use collection::acp::{
+    block_unsafe_policy_transition, check_doc_permission, check_policy_transition,
+    register_collection_if_needed, register_doc_if_needed, unregister_doc_if_needed,
+    warn_on_unsafe_policy_transition, AcpContext, PolicyTransitionCheck,
+};
+pub use collection::cache::CollectionCache;
+pub use collection::create_gate::{
+    create_gate, create_gate_of, CreateGate, CreateGateError, DerivedRelationship,
+};
+pub use collection::name::CollectionName;
+pub use collection::ops::{AddCollectionError, TruncateError};
+pub use collection::provider::DbCollectionProvider;
+pub use collection::retriever::{resolve_collection_from_doc_id, DocCollectionInfo};
+pub use collection::snapshot::CollectionSnapshot;
+#[allow(deprecated)]
+pub use collection::{collection_short_id, Collection, DbCollectionTruncator};
+pub use collection::{Cached, CollectionMap};
+pub use database::{DbOptions, EmbeddingClientConfig, DB, DEFAULT_MAX_TXN_RETRIES};
+pub use definition::loader::{
+    get_collection_by_version_id, get_collection_version_ids, get_collections_by_collection_id,
+    load_active_collections,
+};
+pub use defra_core::encryption::EncryptionConfig;
+pub use defra_core::{Action, ActionExecution, ActionStatus};
+pub use downsample::GcDownsampleHistoriesOptions;
+pub use error::{Error, Result};
+pub use index::{index_listing, BulkIndexResult, IndexManager};
+pub use read::autocommit::AutoCommitFetcher;
+pub use read::commits::{CommitsFetcher, CommitsQueryOptions};
+pub use read::doc::DbDocFetcher;
+pub use read::lensed::autocommit::LensedAutoCommitFetcher;
+pub use read::lensed::fetcher::LensedDocFetcher;
+pub use read::versioned::VersionedFetcher;
+pub use schema::CollectionSelector;
+pub use txn::commit_gate::{CommitGate, CommitWait};
+pub use txn::context::DbTransactionContext;
+pub use txn::registry::{
+    CleanupResult, DbTransactionRegistry, TxnOwnership, DEFAULT_TRANSACTION_CLEANUP_INTERVAL,
+    DEFAULT_TRANSACTION_IDLE_TIMEOUT,
+};
+pub use txn::DbTxn;
+pub use view::ops::is_refreshable_view;
+pub use write::autocommit::AutoCommitMutator;
+pub use write::doc::DbDocMutator;
+
+// NAC exports
+#[cfg(not(target_arch = "wasm32"))]
+pub use nac::create_persistent_nac_manager;
+pub use nac::{
+    create_memory_nac_manager, NacCaller, NacChange, NacConfig, NacInfo, NacManager, NacManagerApi,
+    NacRelation, NacRelationshipRequest, NacTarget,
+};
+
+// Re-export related crate types for convenience
+pub use datastore::{BasicTxn, NamespaceView};
+pub use document::{DocID, Document, NormalValue};
+pub use schema::CollectionVersion;
+
+#[cfg(test)]
+#[path = "../tests/common/worker_io.rs"]
+mod worker_io;
+
+#[cfg(test)]
+#[path = "../tests/common/schema.rs"]
+#[allow(dead_code)]
+mod test_schemas;
+
+#[cfg(test)]
+mod common {
+    pub(crate) use super::test_schemas as schema;
+    pub(crate) use super::worker_io;
+}

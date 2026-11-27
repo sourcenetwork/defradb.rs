@@ -1,7 +1,7 @@
 //! KMS key distribution - an unauthorized node's request for a document's
 //! data-encryption key is DENIED by the holder's KMS policy. The denial is made
 //! observable by a `tracing::warn!` at the serve-side policy check in
-//! `crates/kms/src/defra_kms.rs` (otherwise it is a silent reply omission that
+//! `crates/database/kms/src/defra_kms.rs` (otherwise it is a silent reply omission that
 //! manifests only as a fetch timeout - see the registry note that previously
 //! marked this family Boundary).
 //! Model: `MC_Kms_Green` (proofs/tla); ECIES secrecy remains a crypto boundary.

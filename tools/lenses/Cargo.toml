@@ -1,0 +1,24 @@
+# The WASM lens modules the integration tests migrate and transform through.
+# A workspace of its own: they build for wasm32-unknown-unknown with
+# `just build-lenses`, apart from the defradb.rs workspace.
+[workspace]
+resolver = "2"
+members = [
+    "rust_wasm32_copy",
+    "rust_wasm32_filter",
+    "rust_wasm32_increment",
+    "rust_wasm32_prepend",
+    "rust_wasm32_remove",
+    "rust_wasm32_set_default",
+    "rust_wasm32_std_dev",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+
+[workspace.dependencies]
+lens_sdk = "^0.8"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0.87"
+serial_test = "3.0"

@@ -22,18 +22,18 @@
 \*      when it ignored the transaction header. (INV_TxnNeverAutocommits)
 \*
 \* The Rust code this models:
-\*   - Node's patch_collection_as, set_active_collection_version_as,
-\*     set_migration_as, add_lens_as, list_lenses_as,
-\*     get_collections_as                         crates/defra-node/src/ops/collection.rs
-\*   - the one dispatch per operation              crates/db/src/txn/registry/lifecycle.rs
+\*   - NodeCore's patch_collection, set_active_collection_version,
+\*     set_migration, add_lens, list_lenses,
+\*     get_collections                            crates/entry-points/defra-node/src/node_core/collection.rs
+\*   - the one dispatch per operation              crates/database/db/src/txn/registry/lifecycle.rs
 \*     get_collections_as, patch_collection_as, set_active_collection_version_as,
 \*     set_migration_as, add_lens_as, list_lenses_as
-\*   - the NAC checks                              crates/db/src/definition/patch/mod.rs,
-\*     crates/db/src/collection/ops/version.rs, crates/db/src/collection/ops/select.rs,
-\*     crates/db/src/definition/migration/{set,lenses}.rs, crates/db/src/txn/registry/lenses.rs
-\*   - the edges that call it                      crates/defra-node/src/ops/collection.rs,
-\*     crates/http/src/handlers/{collections,lens}.rs, crates/ffi/src/{lens,schema}.rs,
-\*     crates/ffi/src/collection/{write,migration}.rs
+\*   - the NAC checks                              crates/database/db/src/definition/patch/mod.rs,
+\*     crates/database/db/src/collection/ops/version.rs, crates/database/db/src/collection/ops/select.rs,
+\*     crates/database/db/src/definition/migration/{set,lenses}.rs, crates/database/db/src/txn/registry/lenses.rs
+\*   - the edges that call it                      crates/entry-points/defra-node/src/node_core/collection.rs,
+\*     crates/surfaces/http/src/handlers/{collections,lens}.rs, crates/entry-points/ffi/src/{lens,schema}.rs,
+\*     crates/entry-points/ffi/src/collection/{write,migration}.rs
 EXTENDS Naturals, FiniteSets
 
 CONSTANTS

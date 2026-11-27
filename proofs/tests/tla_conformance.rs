@@ -2,13 +2,16 @@
 //! scenario and assert the modeled invariant holds against the artifact.
 //!
 //! Each behavioral check is a submodule under `behavioral/`, bound to a registry
-//! Property (`conformance::registry::PROPERTIES`). Order-preserving encoding is
+//! Property (`conformance::registry::properties`). Order-preserving encoding is
 //! intentionally absent here — a plain ordered query may sort in memory rather
 //! than exercise the index key encoding, so it is marked `Boundary` in the
 //! registry (the byte table is verified against Lean statically instead).
 
 #[path = "support.rs"]
 mod support;
+
+#[path = "behavioral/mutation.rs"]
+mod mutation;
 
 #[path = "behavioral/cid.rs"]
 mod cid;

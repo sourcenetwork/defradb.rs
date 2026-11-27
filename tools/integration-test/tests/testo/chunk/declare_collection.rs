@@ -24,12 +24,6 @@ fn chunk_generates_a_queryable_collection() {
             ..Default::default()
         }
         .into(),
-        Request {
-            request: "query { Article { _body_chunks } }".into(),
-            expected_data: json!({ "Article": [] }),
-            ..Default::default()
-        }
-        .into(),
     ])
     .execute();
 }

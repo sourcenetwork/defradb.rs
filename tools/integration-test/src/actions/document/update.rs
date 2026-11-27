@@ -40,12 +40,12 @@ impl Op for UpdateDoc {
     fn run(&self, state: &State) -> Result<Value, Failure> {
         let identity = self.common.client_identity(Self::name())?;
         state
-            .block_on(state.node_on(self.common.node())?.update_doc(
-                &state.context_as(self.txn, identity),
-                &self.collection,
-                self.doc_id.as_str(),
-                &self.doc_map,
-            ))
+            .block_on(
+                state
+                    .scope_on(self.common.node(), self.txn, identity, None)
+                    .on(&*state.node_on(self.common.node())?)
+                    .update_doc(&self.collection, self.doc_id.as_str(), &self.doc_map),
+            )
             .map(|()| json!({}))
             .map_err(|e| Failure::operation(e.to_string()))
     }

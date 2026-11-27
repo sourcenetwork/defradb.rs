@@ -18,13 +18,13 @@
 \* head must reach the peer in the end (LIVE_AllDelivered).
 \*
 \* Code it models:
-\*   crates/db/src/merge/broadcast_mutator/heads.rs  register_committed_heads
+\*   crates/database/db/src/merge/broadcast_mutator/heads.rs  register_committed_heads
 \*     (the registration runs as a coordinator task the request only awaits)
-\*   crates/db/src/merge/broadcast_mutator/mod.rs  BroadcastMutator::register_write_heads,
+\*   crates/database/db/src/merge/broadcast_mutator/mod.rs  BroadcastMutator::register_write_heads,
 \*     BroadcastMutator::derived_heads, create_as, create_many_as, update, delete_as
-\*   crates/db/src/merge/broadcast_mutator/batch.rs  BroadcastBatchMutator::register_pending
-\*   crates/query/src/runner/executor.rs  await_with_timeout (the deadline drops the request)
-\*   crates/p2p/src/sync/coordinator/broadcast.rs  admit_replicator_push (one marker)
+\*   crates/database/db/src/merge/broadcast_mutator/batch.rs  BroadcastBatchMutator::register_pending
+\*   crates/engine/query/src/runner/executor.rs  await_with_timeout (the deadline drops the request)
+\*   crates/database/p2p/src/sync/coordinator/broadcast.rs  admit_replicator_push (one marker)
 \*
 \* KNOBS. Owner says who runs the registration.
 \*   Owner = "Coordinator"  a coordinator task runs it; the request only waits

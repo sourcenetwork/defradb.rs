@@ -18,10 +18,10 @@ What must never happen:
 Keys are any values; answers are any values of another type.
 
 Rust anchors: `DefraKms::with_inputs` sets the remote service's `max_batch`
-to the smallest `max_keys_per_request` (`crates/kms/src/defra_kms.rs`); the
+to the smallest `max_keys_per_request` (`crates/database/kms/src/defra_kms.rs`); the
 service cuts a group's keys with `members.chunks(max_batch)` and answers a
 failed chunk's keys one error each (`Inner::inline`, `Inner::answers`,
-`crates/inputs/src/service.rs`).
+`crates/building-blocks/inputs/src/service.rs`).
 -/
 
 namespace KmsChunks

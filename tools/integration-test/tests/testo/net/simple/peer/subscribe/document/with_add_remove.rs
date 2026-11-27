@@ -1,4 +1,4 @@
-//! Generated from the conformance scenarios of tests/integration/net/simple/peer/subscribe/document/with_add_remove_test.go at defradb 137dc624052b.
+//! Port of tests/integration/net/simple/peer/subscribe/document/with_add_remove_test.go at defradb 137dc624052b.
 //! License: AGPL-3.0-only OR LicenseRef-BSL-tests. Copyright 2026 Democratized Data Foundation.
 
 use integration_test::actions::shared::{EventType, Topic};
@@ -447,10 +447,38 @@ fn p2_p_document_add_and_remove_single() {
                 ..Default::default()
             }
             .into(),
+            WaitForPeersEvents {
+                topics: Some(vec![Topic {
+                    topic: Text::reference("doc0_0"),
+                    peers: vec!["db1".into()],
+                }]),
+                event_type: Some(EventType::Joined),
+                millis: Some(5000),
+                common: Common {
+                    node: Some("db0".into()),
+                    ..Default::default()
+                },
+                ..Default::default()
+            }
+            .into(),
             DeleteDocumentSubscription {
                 doc_ids: vec![Text::reference("doc0_0")],
                 common: Common {
                     node: Some("db1".into()),
+                    ..Default::default()
+                },
+                ..Default::default()
+            }
+            .into(),
+            WaitForPeersEvents {
+                topics: Some(vec![Topic {
+                    topic: Text::reference("doc0_0"),
+                    peers: vec!["db1".into()],
+                }]),
+                event_type: Some(EventType::Left),
+                millis: Some(5000),
+                common: Common {
+                    node: Some("db0".into()),
                     ..Default::default()
                 },
                 ..Default::default()

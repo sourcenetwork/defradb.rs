@@ -1,0 +1,30 @@
+//! Index selection and filter-to-index translation
+//!
+//! Provides utilities for determining when filters can use indexes
+//! and translating filter conditions to index scan parameters.
+
+mod conditions;
+mod empty_array;
+mod estimate;
+mod filter_to_scan;
+mod types;
+pub(crate) mod values;
+
+#[cfg(test)]
+mod empty_array_tests;
+#[cfg(test)]
+mod tests;
+
+pub use conditions::{
+    can_be_ordered_by_filtered_index, can_be_ordered_by_index, can_use_index,
+    extract_field_conditions, filtered_index_order_prefix, select_best_index,
+    select_best_index_with_estimates,
+};
+pub use estimate::{
+    estimate_filter_indexes, estimate_select, IndexEstimates, SelectEstimates, ESTIMATE_CAP,
+};
+pub use filter_to_scan::{can_or_filter_use_index, filter_to_index_scan, or_filter_to_index_scan};
+pub use types::{
+    ConditionValue, CursorSeek, FieldCondition, IndexScanParams, IndexScanType, ScanValueFilter,
+};
+pub(crate) use values::json_to_normal_value_for_index_field;

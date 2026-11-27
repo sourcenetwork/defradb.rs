@@ -5,16 +5,16 @@ on:
     paths:
       - Cargo.toml
       - Cargo.lock
-      - crates/crypto/**
-      - crates/defra-core/**
+      - crates/foundation/crypto/**
+      - crates/foundation/defra-core/**
       - .github/workflows/windows-crypto.yml
   push:
     branches: [main]
     paths:
       - Cargo.toml
       - Cargo.lock
-      - crates/crypto/**
-      - crates/defra-core/**
+      - crates/foundation/crypto/**
+      - crates/foundation/defra-core/**
       - .github/workflows/windows-crypto.yml
 
 permissions:

@@ -10,6 +10,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use testo::prelude::*;
 
+/// Go's `indexBackfillBatchSize`. A watermark gate holds the build after its
+/// first batch, so the corpus sizes its collections against this batch.
+const GO_BACKFILL_BATCH_DOCS: usize = 100;
+
 /// A Rust receiver's admission limits: its pending-DAG map and its per-peer
 /// rate bucket (tokens, and tokens refilled per second).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -22,6 +26,17 @@ pub struct AdmissionSpec {
     /// the default.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub deferral_peer_bytes: Option<u64>,
+}
+
+/// A Rust node's connection manager: it trims to `low_water` once it holds
+/// more than `high_water` connections, sparing those younger than
+/// `grace_period_ms`.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConnectionManagerSpec {
+    pub low_water: u32,
+    pub high_water: u32,
+    pub grace_period_ms: u64,
 }
 
 /// Starts a node. Without options it is a plain in-process node; every option below is one of the corpus's ways to start one.
@@ -45,6 +60,10 @@ pub struct NewNode {
     pub tick_millis: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ttl_millis: Option<u64>,
+    /// A Rust node that re-runs a transaction that lost a race at most this
+    /// many times, in place of its default retry budget.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_txn_retries: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub database_dir: Option<String>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
@@ -55,6 +74,13 @@ pub struct NewNode {
     pub client_type: Option<NodeClient>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub index_gate: Option<IndexGate>,
+    /// A Rust node whose explicit commits pass the test's commit gate.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub commit_gate: bool,
+    /// A Rust node whose HTTP server bounds its answer on a commit to this
+    /// many milliseconds.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub commit_timeout_ms: Option<u64>,
     /// Kept so corpus scenarios that set it still parse. It changes nothing:
     /// every node gets Go's `NodeIdentity(i)` and runs identity-only unless
     /// it signs.
@@ -65,9 +91,35 @@ pub struct NewNode {
     /// A Rust node with the given admission limits.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub admission: Option<AdmissionSpec>,
+    /// A Rust node with this connection manager.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub connection_manager: Option<ConnectionManagerSpec>,
     /// A Rust node whose network is iroh rather than libp2p.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub iroh: bool,
+    /// A Rust node that takes its node identity from the process's signing
+    /// registry, where the test registers it first as an FFI host does,
+    /// rather than loading it from a key it is given.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub registered_identity: bool,
+    /// A Rust node whose libp2p DNS layers read this `resolv.conf` text in
+    /// place of the host's file.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resolv_conf: Option<String>,
+    /// A Rust node with no node identity at all, neither one of Go's
+    /// `NodeIdentity(i)` nor a key of its own, so it neither signs nor
+    /// authenticates as a node.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub without_node_identity: bool,
+    /// A Rust node started from this Go-written `config.yaml` body, loaded
+    /// through the CLI's config loader: its `net` section decides whether the
+    /// node runs P2P and where it listens.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub go_config: Option<String>,
+    /// A Rust node started on a data directory that already holds the
+    /// Badger datastore Go DefraDB keeps there.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub go_datastore: bool,
     #[serde(default, skip_serializing_if = "Value::is_null")]
     pub expected_data: Value,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -98,7 +150,13 @@ impl Op for NewNode {
         probe.network = false;
         probe.database_dir = None;
         probe.admission = None;
+        probe.connection_manager = None;
+        probe.resolv_conf = None;
         probe.iroh = false;
+        probe.registered_identity = false;
+        probe.without_node_identity = false;
+        probe.go_config = None;
+        probe.go_datastore = false;
         probe.node_identity_seed = None;
         probe.enable_signing = false;
         probe.key_type = None;
@@ -110,6 +168,9 @@ impl Op for NewNode {
         probe.kms = false;
         (probe.ttl_millis, probe.tick_millis, probe.buckets) = (None, None, None);
         probe.index_gate = None;
+        probe.commit_gate = false;
+        probe.commit_timeout_ms = None;
+        probe.max_txn_retries = None;
         if probe != Self::default() {
             let options = serde_json::to_string(&probe).unwrap_or_default();
             return Err(Failure::unsupported(format!("{} {options}", Self::name())));
@@ -119,34 +180,97 @@ impl Op for NewNode {
         // and counts every node it starts, one with its own seed included.
         // `withIdentity` asks for no more than that.
         let go_index = state.next_go_node_index();
-        let node_identity = self.node_identity_seed.or(Some(go_index));
+        let node_identity = match self.without_node_identity(state.client_type())? {
+            true => None,
+            false => self.node_identity_seed.or(Some(go_index)),
+        };
         let signing = (self.enable_signing || self.key_type.is_some())
             .then(|| self.key_type.unwrap_or_default());
         let txn_ttl = self.txn_ttl(state.client_type())?;
         let index_gate = self.index_gate(state.client_type())?;
-        let dir = match self.database_dir {
-            Some(_) => Some(Arc::new(tempfile::tempdir().map_err(|e| {
+        if (self.commit_gate || self.commit_timeout_ms.is_some())
+            && !matches!(state.client_type(), ClientType::RustHttp | ClientType::Cli)
+        {
+            return Err(Failure::unsupported(format!(
+                "{} arguments commitGate and commitTimeoutMs under {:?}: they need a Rust \
+                 node's HTTP server in this process",
+                Self::name(),
+                state.client_type()
+            )));
+        }
+        let max_txn_retries = self.max_txn_retries(state.client_type())?;
+        let registered_identity = self.registered_identity(state.client_type())?;
+        let dir = match self.database_dir.is_some() || self.go_datastore {
+            true => Some(Arc::new(tempfile::tempdir().map_err(|e| {
                 Failure::operation(format!("could not make the node's directory: {e}"))
             })?)),
-            None => None,
+            false => None,
+        };
+        if let (true, Some(dir)) = (self.go_datastore, &dir) {
+            std::fs::write(dir.path().join("MANIFEST"), GO_BADGER_MANIFEST).map_err(|e| {
+                Failure::operation(format!("could not write the Go datastore's MANIFEST: {e}"))
+            })?;
+        }
+        let (network, listen) = match &self.go_config {
+            Some(body) => go_config_network(body)?,
+            None => (self.network, Vec::new()),
         };
         let spec = NodeSpec {
-            network: self.network,
+            network,
             dir,
-            listen: Vec::new(),
+            listen,
+            go_config: self.go_config.is_some(),
+            go_datastore: self.go_datastore,
             admission: self.admission.clone(),
+            connection_manager: self.connection_manager.clone(),
+            resolv_conf: self.resolv_conf(state.client_type())?,
             iroh_network: self.iroh,
             node_identity,
+            registered_identity,
             go_index: Some(go_index),
             signing,
             txn_ttl,
             se_key: self.searchable_encryption_key()?,
             index_gate,
+            backfill_batch_docs: (self.index_gate == Some(IndexGate::Watermark))
+                .then_some(GO_BACKFILL_BATCH_DOCS),
+            commit_gate: self
+                .commit_gate
+                .then(crate::commit_gate::TestCommitGate::default)
+                .map(Arc::new),
+            commit_timeout: self.commit_timeout_ms.map(Duration::from_millis),
+            max_txn_retries,
             ..Default::default()
         };
-        state.start_node(self.common.node(), spec);
+        state.try_start_node(self.common.node(), spec)?;
         Ok(json!({}))
     }
+}
+
+/// The `MANIFEST` Go DefraDB's Badger store holds once a new rootdir has
+/// started: Badger's magic text `Bdgr`, its format version 8, and the first
+/// change set.
+const GO_BADGER_MANIFEST: [u8; 32] = [
+    0x42, 0x64, 0x67, 0x72, 0x00, 0x00, 0x00, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x08, 0xb1, 0xdb, 0xb0, 0x99, 0x0a, 0x06, 0x08, 0x01, 0x20, 0x01, 0x30, 0x01,
+];
+
+/// Loads a Go-written `config.yaml` through the CLI's loader, as `defradb
+/// --rootdir <dir>` does, and answers whether the node runs P2P and the
+/// addresses it listens on.
+fn go_config_network(body: &str) -> Result<(bool, Vec<String>), Failure> {
+    use clap::Parser;
+    let root = tempfile::tempdir()
+        .map_err(|e| Failure::operation(format!("could not make the node's rootdir: {e}")))?;
+    std::fs::write(root.path().join("config.yaml"), body)
+        .map_err(|e| Failure::operation(format!("could not write config.yaml: {e}")))?;
+    let rootdir = root.path().to_string_lossy().into_owned();
+    let args = ["defradb", "--rootdir", rootdir.as_str(), "version"];
+    let args = cli::cli::Cli::try_parse_from(args)
+        .map_err(|e| Failure::operation(format!("could not parse the CLI arguments: {e}")))?;
+    let config = cli::config::Config::load(&args)
+        .map_err(|e| Failure::operation(format!("could not load config.yaml: {e}")))?;
+    Ok((!config.net.p2p_disabled, config.net.p2p_addresses))
 }
 
 impl NewNode {
@@ -161,6 +285,18 @@ impl NewNode {
         key.try_into()
             .map(Some)
             .map_err(|_| Failure::operation("an AES-256 key is 32 bytes".into()))
+    }
+
+    /// The `resolv.conf` text the node's DNS layers read. Only a unix host
+    /// reads one, so elsewhere the option is unsupported.
+    fn resolv_conf(&self, client: ClientType) -> Result<Option<String>, Failure> {
+        match (&self.resolv_conf, cfg!(unix)) {
+            (Some(_), false) => Err(Failure::unsupported(format!(
+                "{} argument resolvConf under {client:?}: only a unix host reads resolv.conf",
+                Self::name()
+            ))),
+            (text, _) => Ok(text.clone()),
+        }
     }
 
     /// The gate the node's index backfills pass, Go's `db.IndexBuildGate`. It
@@ -179,6 +315,59 @@ impl NewNode {
             )));
         }
         Ok(Some(Arc::new(crate::index_gate::TestIndexGate::new(kind))))
+    }
+
+    /// Whether the node takes its identity from the signing registry. The
+    /// registry is the node's process's, so a Go node cannot.
+    fn registered_identity(&self, client: ClientType) -> Result<bool, Failure> {
+        if self.registered_identity && client == ClientType::GoHttp {
+            return Err(Failure::unsupported(format!(
+                "{} argument registeredIdentity under {client:?}: the signing registry is the \
+                 node's process's",
+                Self::name()
+            )));
+        }
+        Ok(self.registered_identity)
+    }
+
+    /// Whether the node starts with no node identity. Go's harness gives
+    /// every node one, and an identity is what signing and a registered
+    /// identity are made from, so it takes neither.
+    fn without_node_identity(&self, client: ClientType) -> Result<bool, Failure> {
+        if !self.without_node_identity {
+            return Ok(false);
+        }
+        if client == ClientType::GoHttp {
+            return Err(Failure::unsupported(format!(
+                "{} argument withoutNodeIdentity under {client:?}: Go's harness gives every node \
+                 an identity",
+                Self::name()
+            )));
+        }
+        if self.node_identity_seed.is_some()
+            || self.enable_signing
+            || self.key_type.is_some()
+            || self.registered_identity
+        {
+            return Err(Failure::operation(format!(
+                "{} argument withoutNodeIdentity with nodeIdentitySeed, enableSigning, keyType \
+                 or registeredIdentity: each needs a node identity",
+                Self::name()
+            )));
+        }
+        Ok(true)
+    }
+
+    /// How many times the node re-runs a transaction that lost a race. Go's
+    /// harness has no such option, so a Go node cannot take it.
+    fn max_txn_retries(&self, client: ClientType) -> Result<Option<u32>, Failure> {
+        if self.max_txn_retries.is_some() && client == ClientType::GoHttp {
+            return Err(Failure::unsupported(format!(
+                "{} argument maxTxnRetries under {client:?}",
+                Self::name()
+            )));
+        }
+        Ok(self.max_txn_retries)
     }
 
     /// How long an idle explicit transaction lives and how often the node

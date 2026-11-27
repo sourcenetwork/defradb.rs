@@ -19,14 +19,14 @@
 \*   - a document that should be refused is merged;
 \*   - a document that should be kept is refused.
 \*
-\* Rust: crates/p2p/src/sync/coordinator/receive_gate.rs
+\* Rust: crates/database/p2p/src/sync/coordinator/receive_gate.rs
 \* SyncCoordinator::gate_arrival (the first check, called from the gossip
 \* and pushlog handlers before the manager stores the head) and
 \* SyncCoordinator::gate_fetched (the second check, called from
 \* event_handler/car.rs before a fetched CAR is imported);
-\* crates/db/src/receive_gate.rs DbReceiveGate::allows (both checks); the
+\* crates/database/db/src/receive_gate.rs DbReceiveGate::allows (both checks); the
 \* merge's own filter check in
-\* crates/db/src/merge/merge_handler/composite_fields.rs (the backstop).
+\* crates/database/db/src/merge/merge_handler/composite_fields.rs (the backstop).
 EXTENDS Naturals
 
 \* Each Bug value removes exactly one guard, so its RED config must fail on

@@ -16,7 +16,7 @@ A token is the JSON object `{"d":"<docID>","k":{<order field>: <value>, …}}`, 
 - **Parents:** ["defra.cursor"]
 - **Scenarios:** ["cursor::in_filter::an_unsorted_in_filter_pages_in_order", "cursor::in_filter::an_unsorted_in_filter_keeps_the_order_without_a_cursor"]
 
-The order of the values in an `_in` filter never decides the order of the rows. Over Users aged 25, 35, 45, 55 and 65 with `age: Int @index`, `_cursor { User(first: 2, filter: {age: {_in: [55, 25, 45, 35]}}, order: {age: ASC}) }` returns [25, 35] (`hasNext: true`), and `after` its `endCursor` returns [45, 55] (`hasNext: false`); 65 never appears. Without a cursor, `User(filter: {age: {_in: [55, 25, 45, 35]}}, order: {age: ASC})` returns [25, 35, 45, 55] and `order: {age: DESC}` returns [55, 45, 35, 25], whether `age` has an ascending index, a descending index or none.
+Under an `order`, the order of the values in an `_in` filter never decides the order of the rows. Over Users aged 25, 35, 45, 55 and 65 with `age: Int @index`, `_cursor { User(first: 2, filter: {age: {_in: [55, 25, 45, 35]}}, order: {age: ASC}) }` returns [25, 35] (`hasNext: true`), and `after` its `endCursor` returns [45, 55] (`hasNext: false`); 65 never appears. Without a cursor, `User(filter: {age: {_in: [55, 25, 45, 35]}}, order: {age: ASC})` returns [25, 35, 45, 55] and `order: {age: DESC}` returns [55, 45, 35, 25], whether `age` has an ascending index, a descending index or none.
 
 # `defra.cursor.paging`: `first`/`after` and `last`/`before` page without gaps or repeats
 

@@ -103,6 +103,24 @@ class Tests(unittest.TestCase):
         self.assertNotIn('/private/keys', public)
         self.assertNotIn(str(self.root), public)
 
+    def test_only_the_drivers_own_guard_messages_are_public(self):
+        self.assertEqual(driver.guard_failure(driver.Guard('tracked source changed')),
+                         {'error': 'tracked source changed'})
+        self.assertEqual(driver.guard_failure(RuntimeError('qualification phase failed')),
+                         {'error': 'qualification phase failed'})
+        undecodable = UnicodeDecodeError('utf-8', b'token=secret\xff', 12, 13, 'invalid start byte')
+        self.assertEqual(driver.guard_failure(undecodable), {})
+        outside = None
+        try:
+            Path('/private/secret/defradb').relative_to('/staged/target')
+        except ValueError as error:
+            outside = error
+        self.assertEqual(driver.guard_failure(outside), {})
+        self.assertEqual(driver.guard_failure(ValueError('/private/secret/defradb')), {})
+        self.assertEqual(driver.guard_failure(RuntimeError('/private/secret/defradb')), {})
+        self.assertEqual(driver.guard_failure(KeyboardInterrupt()), {})
+        self.assertEqual(driver.guard_failure(driver.Guard(b'bytes')), {})
+
     def test_panic_location_accepts_relative_and_windows_paths_but_not_messages(self):
         log = self.root / 'private.log'
         for path in ('src/poll.rs', r'C:\private\poll.rs', 'poll.rs'):
@@ -313,11 +331,14 @@ class Tests(unittest.TestCase):
     def test_environment_removes_profile_compiler_runtime_and_deadline_overrides(self):
         poison = {key: 'poison' for key in ('CARGO_PROFILE_RELEASE_LTO', 'RUSTC', 'RUSTDOC',
                   'CARGO_BUILD_RUSTC', 'RUSTFLAGS', 'CARGO_TARGET_DIR', 'VERAD_BINARY',
-                  'DEFRA_RUST_BINARY', 'VERA_E2E_DEADLINE_SCALE', 'ORBIS_LOCAL_STORAGE_KDF_M_COST')}
-        env = driver.clean_environment({**poison, 'PATH': '/usr/bin'})
+                  'DEFRA_RUST_BINARY', 'VERA_E2E_DEADLINE_SCALE', 'ORBIS_LOCAL_STORAGE_KDF_M_COST',
+                  'CARGO_BUILD_JOBS')}
+        stamps = {'DEFRA_NODE_BUILD_TIME_OVERRIDE': 'native-consumer',
+                  'DEFRA_NODE_GIT_HASH_OVERRIDE': 'native-consumer', 'DEFRA_NODE_GIT_DIRTY_OVERRIDE': ''}
+        env = driver.clean_environment({**poison, **{key: 'poison' for key in stamps}, 'PATH': '/usr/bin'})
         self.assertFalse(set(poison) & set(env))
         self.assertEqual(env['PATH'], '/usr/bin')
-        self.assertEqual(env['CARGO_BUILD_JOBS'], '2')
+        self.assertEqual({key: env[key] for key in stamps}, stamps)
 
     def test_node_readiness_events_remain_enabled_with_inherited_log_filters(self):
         for inherited in ('warn', 'error', 'off', 'trace', 'defra_http=off'):
@@ -428,8 +449,8 @@ class Tests(unittest.TestCase):
         self.assertEqual(runs['compile-native'][3]['DEFRA_VERA_BINARY'], '/staged/defradb')
         self.assertEqual(runs['compile-native'][3]['VERAD_BINARY'], '/staged/verad')
         tests = [c for c in runner.calls if c[0] == 'test']
-        self.assertEqual(len(tests), 25)
-        self.assertEqual(len(tests[0][4]), 70)
+        self.assertEqual(len(tests), 26)
+        self.assertEqual(len(tests[0][4]), 108)
         self.assertEqual({c[1] for c in tests[1:]}, {phase for phase, _ in driver.LIVE_CASES})
         for _, _, _, selectors, expected in tests[1:]:
             self.assertEqual(selectors, [expected[0], '--exact'])

@@ -5,14 +5,13 @@ use db::DB;
 use defra_http::{AppState, AppStateBuilder, ExtractIdentity};
 use query::mutator::DocMutator;
 use query::{QueryExecutor, QueryRequest, QueryRunner};
-use schema::{
-    CType, CollectionVersion, FieldDescription, FieldKind, IndexKind, IndexedFieldDescription,
-    OrderedIndexDescription,
-};
+use schema::{IndexKind, IndexedFieldDescription, OrderedIndexDescription};
 use storage::corekv::Store;
 use storage::{RegolithStore, RegolithStoreOptions};
 use telemetry::ConflictMetricsSnapshot;
 
+#[path = "projector.rs"]
+mod projector;
 #[cfg(test)]
 #[path = "verification_tests.rs"]
 mod verification_tests;
@@ -33,21 +32,11 @@ pub fn chunk_max_chars() -> Option<u32> {
         })
 }
 
-async fn create_plain(db: &DB<RegolithStore>) {
-    let collection = CollectionVersion::new(
-        COLLECTION,
-        "write-baseline-v1",
-        "write-baseline",
-        vec![
-            FieldDescription::new("1", "_docID", FieldKind::doc_id(), CType::LwwRegister),
-            FieldDescription::new("2", "label", FieldKind::string(), CType::LwwRegister),
-            FieldDescription::new("3", "left", FieldKind::string(), CType::LwwRegister),
-            FieldDescription::new("4", "right", FieldKind::string(), CType::LwwRegister),
-            FieldDescription::new("5", "count", FieldKind::int(), CType::LwwRegister)
-                .with_crdt_type(CType::PnCounter),
-        ],
-    );
-    db.create_collection(collection).await.unwrap();
+/// `DEFRA_BASELINE_EMBEDDING_URL` embeds the chunked `left` through that provider.
+pub fn embedding_url() -> Option<String> {
+    // Only a chunked field is embedded, so the URL alone changes nothing.
+    chunk_max_chars()?;
+    std::env::var("DEFRA_BASELINE_EMBEDDING_URL").ok()
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -55,26 +44,46 @@ pub enum Scenario {
     Creates,
     SharedUpdates,
     CountersIndexes,
+    /// Increments of a counter with no index, the cost a counter index adds to.
+    Counters,
+    /// Increments of a counter an index covers.
+    CounterIndex,
 }
 
 impl Scenario {
-    pub const ALL: [Self; 3] = [Self::Creates, Self::SharedUpdates, Self::CountersIndexes];
+    pub const ALL: [Self; 5] = [
+        Self::Creates,
+        Self::SharedUpdates,
+        Self::CountersIndexes,
+        Self::Counters,
+        Self::CounterIndex,
+    ];
 
     pub fn name(self) -> &'static str {
         match self {
             Self::Creates => "creates",
             Self::SharedUpdates => "shared_updates",
             Self::CountersIndexes => "counters_indexes",
+            Self::Counters => "counters",
+            Self::CounterIndex => "counter_index",
         }
     }
 
     fn mutation(self, writer: usize, operation: usize, ids: &[String]) -> String {
         let token = format!("writer-{writer}-operation-{operation}");
         match self {
-            Self::Creates => format!(
-                r#"mutation {{ add_Sample(input: {{label: "{token}", left: "same", right: "same", count: 0}}) {{ _docID }} }}"#
-            ),
-            Self::SharedUpdates | Self::CountersIndexes => {
+            Self::Creates => {
+                // Each create embeds a text of its own, so the cache answers none of them.
+                let left = if embedding_url().is_some() {
+                    token.as_str()
+                } else {
+                    "same"
+                };
+                format!(
+                    r#"mutation {{ add_Sample(input: {{label: "{token}", left: "{left}", right: "same", count: 0}}) {{ _docID }} }}"#
+                )
+            }
+            Self::SharedUpdates | Self::CountersIndexes | Self::Counters | Self::CounterIndex => {
                 let id = &ids[operation % ids.len()];
                 let input = match self {
                     Self::SharedUpdates => {
@@ -85,6 +94,7 @@ impl Scenario {
                         };
                         format!(r#"{field}: "{token}""#)
                     }
+                    Self::Counters | Self::CounterIndex => "count: 1".to_string(),
                     _ => format!(r#"count: 1, label: "{token}""#),
                 };
                 format!(
@@ -124,28 +134,50 @@ impl Fixture {
                 .unwrap(),
         );
         let db = Arc::new(DB::open_from_arc(store.clone()).await.unwrap());
-        match chunk_max_chars() {
-            Some(max_chars) => {
-                let sdl = format!(
-                    r#"type {COLLECTION} {{
-                        label: String
-                        left: String @chunk(maxChars: {max_chars})
-                        right: String
-                        count: Int @crdt(type: "pncounter")
-                    }}"#
-                );
-                db.create_collections_atomic(query::parse_sdl(&sdl).unwrap())
-                    .await
-                    .unwrap();
-            }
-            None => create_plain(&db).await,
+        if projector::requested() {
+            projector::install(&db);
         }
+        let chunk = chunk_max_chars()
+            .map(|max_chars| format!("@chunk(maxChars: {max_chars})"))
+            .unwrap_or_default();
+        let embedded = embedding_url()
+            .map(|url| {
+                format!(
+                    r#"left_v: [Float32!] @embedding(fields: ["left"], provider: "openai", model: "bench", url: "{url}")"#
+                )
+            })
+            .unwrap_or_default();
+        let sdl = format!(
+            r#"type {COLLECTION} {{
+                label: String
+                left: String {chunk}
+                {embedded}
+                right: String
+                count: Int @crdt(type: "pncounter")
+            }}"#
+        );
+        db.add_collection(&defra_core::RequestContext::ambient(), &sdl)
+            .await
+            .unwrap();
         if matches!(scenario, Scenario::CountersIndexes) {
             db.create_index(
                 COLLECTION,
                 Some("by_label"),
                 vec![IndexedFieldDescription {
                     name: "label".into(),
+                    descending: false,
+                }],
+                IndexKind::Ordered(OrderedIndexDescription { unique: false }),
+            )
+            .await
+            .unwrap();
+        }
+        if matches!(scenario, Scenario::CounterIndex) {
+            db.create_index(
+                COLLECTION,
+                Some("by_count"),
+                vec![IndexedFieldDescription {
+                    name: "count".into(),
                     descending: false,
                 }],
                 IndexKind::Ordered(OrderedIndexDescription { unique: false }),

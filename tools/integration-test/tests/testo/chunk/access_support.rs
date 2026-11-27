@@ -6,7 +6,7 @@ use integration_test::scenario::{captures, Common, Text};
 use integration_test::USER_ACP_POLICY;
 use serde_json::{json, Value};
 
-use super::support::{as_identity, body, chunks_are_listed, read_list};
+use super::support::{as_identity, body, chunks_are_listed, read_chunks};
 
 pub const ALICE: u64 = 1;
 pub const BOB: u64 = 2;
@@ -56,7 +56,7 @@ pub fn alice_owns_an_article() -> Vec<Actions> {
             ..Default::default()
         }
         .into(),
-        as_identity(read_list("plans", PARAGRAPHS, None), ALICE),
+        as_identity(read_chunks("plans", PARAGRAPHS, None), ALICE),
         as_identity(chunks_are_listed("plans", PARAGRAPHS, None), ALICE),
     ]
 }

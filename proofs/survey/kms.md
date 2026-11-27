@@ -1,4 +1,4 @@
-# Survey: `crates/kms/`
+# Survey: `crates/database/kms/`
 
 ## Purpose
 Key Management Service: distributes document/collection encryption keys (DEKs)

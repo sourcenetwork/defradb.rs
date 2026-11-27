@@ -39,10 +39,10 @@
 \* of them wins.
 \*
 \* Code this models (defradb.rs):
-\*   crates/acp/src/store.rs        AcpStore::register_doc_atomic (the contract)
-\*   crates/acp/src/persistent.rs   PersistentAcpStore::register_doc_atomic,
+\*   crates/engine/acp/src/store.rs        AcpStore::register_doc_atomic (the contract)
+\*   crates/engine/acp/src/persistent.rs   PersistentAcpStore::register_doc_atomic,
 \*                                  PersistentAcpStore::delete_doc_tuples
-\*   crates/storage/src/backends/regolith/iterator.rs  a validated scan is
+\*   crates/engine/storage/src/backends/regolith/iterator.rs  a validated scan is
 \*                                  regolith::ScanCheck::Range
 \* and regolith 0.2.1:
 \*   ScanCheck::Range               a write inside the scanned range newer than

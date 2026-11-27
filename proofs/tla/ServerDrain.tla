@@ -1,8 +1,8 @@
 ---- MODULE ServerDrain ----
 \* The story, in plain words.
 \*
-\* A node's servers (HTTP in crates/net/src/server.rs, Postgres in
-\* crates/pg-compat/src/lib.rs) serve each connection as a task on the network
+\* A node's servers (HTTP in crates/building-blocks/net/src/server.rs, Postgres in
+\* crates/database/pg-compat/src/lib.rs) serve each connection as a task on the network
 \* edge. A connection takes one request at a time (an HTTP/2 stream, a
 \* Postgres message, a COPY up to its end), works on it, and answers it.
 \* Shutdown runs the edge's rule: stop accepting, drain the work in flight up
@@ -31,19 +31,22 @@
 \*
 \* The Rust code each guard models:
 \*   Drained       the server's tasks are plain edge tasks the drain waits for
-\*                 (crates/net/src/rt.rs Executor::execute; PgServer::run's
-\*                 TaskSet in crates/pg-compat/src/lib.rs), not services the
+\*                 (crates/building-blocks/net/src/rt.rs Executor::execute; PgServer::run's
+\*                 TaskSet in crates/database/pg-compat/src/lib.rs), not services the
 \*                 edge stops as it begins closing;
 \*   BetweenOnly   a connection looks at `closing()` between requests, never
 \*                 inside one (net::server until_closing; wire::serve in
-\*                 crates/pg-compat/src/wire/process.rs);
+\*                 crates/database/pg-compat/src/wire/process.rs);
 \*   CheckClosing  a connection does look, so it closes after its request;
 \*   Deadline      the drain gives up at its deadline (edge::Scope::drain);
 \*   EndStreams    a subscription stream ends once its edge closes
-\*                 (crates/http/src/handlers/closing.rs next_unless_closing,
+\*                 (crates/surfaces/http/src/handlers/closing.rs next_unless_closing,
 \*                 used by graphql_sse in
-\*                 crates/http/src/handlers/graphql/query.rs and events_sse in
-\*                 crates/http/src/handlers/events.rs).
+\*                 crates/surfaces/http/src/handlers/graphql/query.rs and events_sse in
+\*                 crates/surfaces/http/src/handlers/events.rs).
+\*                 graphql_sse races its open check (the request run once
+\*                 through the plain path, SubscriptionOpenCheck.tla) with
+\*                 closing the same way, so a check still running ends too.
 
 EXTENDS Naturals
 

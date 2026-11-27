@@ -1,7 +1,11 @@
 mod acp;
 mod acp_branchable;
 mod branchable;
+mod caller_key;
+mod client_session;
+mod client_signed;
 mod commit;
+mod doc_id_determinism;
 mod fallback_signer;
 mod peer;
 mod per_op_signing;

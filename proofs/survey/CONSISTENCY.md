@@ -2,7 +2,8 @@
 
 > Historical survey of the pre-Regolith-adoption model set. The adapter-owned
 > SSI/range models and ConflictTracker anchors below have been retired. Consult
-> `proofs/README.md` and `proofs/src/registry.rs` for current bindings; this report
+> `proofs/README.md` and the family files under `proofs/src/registry/` for current
+> bindings; this report
 > is retained as historical analysis, not current verification evidence.
 
 Sweep of all 18 formal-model families across 5 clusters (replication-convergence,
@@ -139,7 +140,7 @@ freshness/scope and Nac establishing admin-set integrity. No double-modeling.
 
 **2. Content-addressing (integrity-cid ↔ replication-convergence).** AGREE.
 Cid's normal-form Block (sorted heads by `cid.to_string()`, sorted links, empty→None)
-matches `crates/defra-core/src/block.rs` and the Go upstream `block.go` wire contract.
+matches `crates/foundation/defra-core/src/block.rs` and the Go upstream `block.go` wire contract.
 Convergence/M1/DagReplication/Replicator all treat CIDs as opaque deterministic content
 addresses — precisely the determinism Cid proves. Integrity relies on the same fact for
 its `signedContent = content` comparison. One delta-DAG model (acyclic `Parents`,
@@ -178,8 +179,8 @@ No cross-cluster contradiction found.
 
 - **HARNESS WIRING — replication-convergence audit was INACCURATE.** That audit stated
   M1Convergence, Convergence, Replicator, and Claim are "intentionally NOT wired into
-  `run-all.sh`." **They ARE wired** (`run-all.sh` lines 10–25 cover M1Convergence/M1Naive/
-  S2/S3/S4/MC_Conv_*/MC_Claim_*; lines 36–37 cover MC_Replicator_*). The regression
+  `run-all.sh`." **They ARE wired** (the sweep covers M1Convergence/M1Naive/
+  S2/S3/S4/MC_Conv_*/MC_Claim_* and MC_Replicator_*). The regression
   sweep already includes them. This correction *improves* harness-readiness vs. the
   audit's pessimistic claim.
 
@@ -209,14 +210,14 @@ No cross-cluster contradiction found.
 
 4. **Lean build is a SEPARATE regression entry point from `run-all.sh`.** `run-all.sh`
    is TLA-only (it shells `tools/tlc`, never `lake`). The Lean half of the corpus is
-   gated by `cd proofs/lean && lake build` (documented in `proofs/README.md:71-72`).
+   gated by `cd proofs/lean && lake build -R` (documented in `proofs/README.md`).
    A unified one-shot "verify everything" entry point does not exist; CI must invoke both.
 
 5. **STALE/IMPRECISE ANCHORS (cosmetic, verified).**
    - `Replicator_DESIGN.md` cites `replicator.rs:35`/`:129`; actual is
      `ReplicatorStatus` enum at **:43**, `ReplicatorInfo` struct at **:135** (confirmed).
    - `Cid` DESIGN says `compute_merkle_root` sorts "by CID string"; actual
-     `crates/defra-core/src/batch_signing.rs:32` sorts `by_key(|a| a.to_bytes())`
+     `crates/foundation/defra-core/src/batch_signing.rs:32` sorts `by_key(|a| a.to_bytes())`
      (bytes). Order-independence holds either way (Lean uses an abstract key).
    - Convergence/Claim cites (`lww.rs`, `dag_sync/state.rs`) drifted a few lines.
    Symbols all present and semantically matching; only line numbers drifted.
@@ -252,9 +253,11 @@ property to the real Rust binary.
   symbols (e.g. `merge.rs validate_authorization`, `txn/registry/cleanup.rs:59-62`,
   `batch_signing.rs:31-32`, `mod.rs:284-323` for Jwt, `block.rs` for Cid). Spot-checks
   this run matched within a line or two.
-- **Regression oracle is automated for TLA.** `run-all.sh` encodes the expected
-  red/green verdict per config and exits non-zero on any mismatch — a CI-ready gate that
-  already covers all 64 TLA configs including the replication-convergence family.
+- **Regression oracle is automated for TLA.** `run-all.sh` discovers every
+  top-level `*.cfg`, takes each one's expected red/green verdict from its
+  `\* run-all:` header, and exits non-zero on any mismatch — a
+  CI-ready gate that covers every TLA config including the
+  replication-convergence family.
 - **Lean is `sorry`-free with audited axioms.** All five Lean libs build clean; axiom
   audits show only standard core axioms (`propext`, `Quot.sound`) plus the two NAMED
   crypto-boundary axioms in Cid and `native_decide`/`ofReduceBool` for negatives.
@@ -273,7 +276,7 @@ property to the real Rust binary.
    Cid/OrderEncoding/Acp Lean→TLA discharges are prose. A harness exercising the real
    binary could *empirically* close these (run real concurrent merges, observe
    convergence) — turning two prose hand-offs into binary-tested obligations.
-4. **No unified verify entry point.** TLA (`run-all.sh`) and Lean (`lake build`) are
+4. **No unified verify entry point.** TLA (`run-all.sh`) and Lean (`lake build -R`) are
    separate; the harness wrapper should invoke both plus the future binary checks.
 5. **[CRYPTO]/[CONN]/[BOUND] boundaries are out of binary scope by construction** — the
    harness can validate the *guard structure* (e.g. "merge refuses an unsigned block",

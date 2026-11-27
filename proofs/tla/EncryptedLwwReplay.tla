@@ -9,13 +9,13 @@
 \* the key request.
 \*
 \* Source anchors:
-\* - crates/db/src/merge/merge_handler/composite_fields.rs propagates transient
+\* - crates/database/db/src/merge/merge_handler/composite_fields.rs propagates transient
 \*   KMS failures so the merge remains pending;
-\* - crates/db/src/merge/push_docs.rs replays composite heads and
-\*   crates/p2p/src/sync/coordinator/selective_car_access.rs authorizes fetching
+\* - crates/database/db/src/merge/push_docs.rs replays composite heads and
+\*   crates/database/p2p/src/sync/coordinator/selective_car_access.rs authorizes fetching
 \*   their linked encrypted LWW blocks;
-\* - crates/p2p/src/sync/pending_store/mod.rs persists acknowledged pending DAGs;
-\* - crates/crdt/src/field/lww.rs selects the greatest (priority, value) version.
+\* - crates/database/p2p/src/sync/pending_store/mod.rs persists acknowledged pending DAGs;
+\* - crates/building-blocks/crdt/src/field/lww.rs selects the greatest (priority, value) version.
 EXTENDS Naturals
 
 CONSTANTS

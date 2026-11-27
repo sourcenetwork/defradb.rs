@@ -130,7 +130,7 @@ jobs:
         run: cargo install wasm-pack
 
       - name: Build WASM
-        run: CARGO_PROFILE_RELEASE_OPT_LEVEL=z wasm-pack build crates/wasm --release --target web --out-dir ../../pkg/wasm
+        run: CARGO_PROFILE_RELEASE_OPT_LEVEL=z wasm-pack build crates/surfaces/wasm --release --target web --out-dir ../../../pkg/wasm
 
       - name: Package
         run: |
@@ -162,25 +162,25 @@ jobs:
             runner: '["ubuntu-latest"]'
             variant: full
             artifact: defra-ffi
-            features: "native,wasmtime-runtime,vera,libp2p"
+            features: "native,wasmtime-runtime,libp2p"
           - target: aarch64-unknown-linux-gnu
             platform: linux_arm64
             runner: '["self-hosted", "Linux", "ARM64"]'
             variant: full
             artifact: defra-ffi
-            features: "native,wasmtime-runtime,vera,libp2p"
+            features: "native,wasmtime-runtime,libp2p"
           - target: x86_64-apple-darwin
             platform: darwin_amd64
             runner: '["self-hosted", "macOS", "ARM64", "studio"]'
             variant: full
             artifact: defra-ffi
-            features: "native,wasmtime-runtime,vera,libp2p"
+            features: "native,wasmtime-runtime,libp2p"
           - target: aarch64-apple-darwin
             platform: darwin_arm64
             runner: '["self-hosted", "macOS", "ARM64", "studio"]'
             variant: full
             artifact: defra-ffi
-            features: "native,wasmtime-runtime,vera,libp2p"
+            features: "native,wasmtime-runtime,libp2p"
           - target: x86_64-unknown-linux-gnu
             platform: linux_amd64
             runner: '["ubuntu-latest"]'
@@ -263,7 +263,16 @@ jobs:
             --no-default-features --features ${{ matrix.features }}
 
       - name: Generate header
-        run: cbindgen --config crates/ffi/cbindgen.toml --crate ffi --output defra.h
+        run: cbindgen --config crates/entry-points/ffi/cbindgen.toml --crate ffi --output defra.h
+
+      - name: Install just
+        uses: taiki-e/install-action@v2
+        with:
+          tool: just
+
+      # The same check as `just build-ffi-header`, so its flags live in one place.
+      - name: Compile header
+        run: just check-ffi-header defra.h
 
       - name: Package
         shell: bash
@@ -316,7 +325,7 @@ jobs:
         include:
           - variant: iroh
             artifact: defra-ffi-iroh
-            features: iroh,native,vera,libp2p
+            features: iroh,native,libp2p
           - variant: lean
             artifact: defra-ffi-lean
             features: native,libp2p

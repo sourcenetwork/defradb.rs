@@ -26,11 +26,11 @@ works on that list. A position found among fixed-width entries is the
 position in the list.
 
 Rust anchors: `codec::add_edges` and `codec::decode_record`
-(`crates/db/src/index/vector/engine/diskann/codec.rs`), called from
-`DiskAnn::add_back_edges` (`crates/db/src/index/vector/engine/diskann/graph.rs`)
+(`crates/database/db/src/index/vector/engine/diskann/codec.rs`), called from
+`DiskAnn::add_back_edges` (`crates/database/db/src/index/vector/engine/diskann/graph.rs`)
 when codes are not resident. Checked against the decoded loop by
 `adding_edges_in_place_writes_what_decoding_and_encoding_would`
-(`crates/db/tests/vector/diskann_back_edges.rs`).
+(`crates/database/db/tests/vector/diskann_back_edges.rs`).
 -/
 
 namespace BackEdgesInPlace

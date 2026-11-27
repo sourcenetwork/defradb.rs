@@ -1,0 +1,510 @@
+//! JSON path+value encoding for indexing
+//!
+//! Encodes JSON leaf values with their paths for secondary index keys.
+//! Format: `[JSON_MARKER][path_parts][ESCAPED_TERM][PATH_END][typed_value]`
+//!
+//! Path parts are encoded as:
+//! - Property names: encoded as escaped bytes
+//! - Array indices: encoded as uvarint (always 0 per Go behavior)
+
+use document::{JsonLeafValue, JsonPath, JsonPathPart, JsonScalarValue};
+
+use super::{
+    decode_bool_ascending, decode_bytes_ascending, decode_float64_ascending, decode_if_null,
+    decode_uvarint_ascending, encode_bool_ascending, encode_bytes_ascending,
+    encode_float64_ascending, encode_null_ascending, encode_uvarint_ascending, peek_type,
+    EncodedType, ESCAPED_TERM, INT_ZERO, JSON_MARKER,
+};
+use crate::corekv::{Error, Result};
+
+/// Path terminator after all path parts, before value
+pub const JSON_PATH_END: u8 = b'/'; // 0x2F - matches Go's jsonPathEnd
+
+/// Encode a JSON leaf value with path in ascending order.
+///
+/// Format: `[JSON_MARKER][path_parts...][ESCAPED_TERM][PATH_END][typed_value]`
+///
+/// Path encoding:
+/// - Properties: escaped bytes (using encode_bytes_ascending without marker)
+/// - Array indices: uvarint (always 0 per Go)
+///
+/// Special sentinel values for range bounds:
+/// - PathMin: Encodes path + `[ESCAPED_TERM][PATH_END][NULL_MARKER]` (comes before all values)
+/// - PathMax: Encodes path + `[ESCAPED_TERM][PATH_END + 1]` (comes after all values)
+pub fn encode_json_ascending(buf: Vec<u8>, leaf: &JsonLeafValue) -> Vec<u8> {
+    let mut buf = buf;
+    buf.push(JSON_MARKER);
+
+    // Encode path parts
+    buf = encode_path_ascending(buf, &leaf.path);
+
+    // Handle sentinel values specially
+    match &leaf.value {
+        JsonScalarValue::PathMax => {
+            // PathMax: use PATH_END + 1 to sort after all valid values
+            buf.push(ESCAPED_TERM);
+            buf.push(JSON_PATH_END + 1); // 0x30 comes after 0x2F
+            buf
+        }
+        JsonScalarValue::PathMin => {
+            // PathMin: encode null (lowest value type)
+            buf.push(ESCAPED_TERM);
+            buf.push(JSON_PATH_END);
+            encode_null_ascending(buf)
+        }
+        _ => {
+            // Normal value
+            buf.push(ESCAPED_TERM);
+            buf.push(JSON_PATH_END);
+            encode_scalar_ascending(buf, &leaf.value)
+        }
+    }
+}
+
+/// Encode a JSON leaf value with path in descending order.
+///
+/// Special sentinel values for range bounds:
+/// - PathMax: the path terminator alone, before every value of that path
+/// - PathMin: the next separator byte and a descending null, after every value
+pub fn encode_json_descending(buf: Vec<u8>, leaf: &JsonLeafValue) -> Vec<u8> {
+    let mut buf = buf;
+    buf.push(JSON_MARKER);
+
+    // The path stays in ascending order so it can be decoded unambiguously;
+    // only the typed value is inverted for descending JSON indexes.
+    buf = encode_path_ascending(buf, &leaf.path);
+
+    // Handle sentinel values specially
+    // Note: For descending, byte order is inverted, so PathMax becomes lower bound
+    match &leaf.value {
+        JsonScalarValue::PathMax => {
+            // PathMax ends at the separator, so it sorts before every value
+            // whose body continues after that separator.
+            buf.push(ESCAPED_TERM);
+            buf.push(JSON_PATH_END);
+            buf
+        }
+        JsonScalarValue::PathMin => {
+            // The next separator byte is above every normal value marker, and a
+            // descending null is above every normal value that shares it.
+            buf.push(ESCAPED_TERM);
+            buf.push(JSON_PATH_END + 1);
+            encode_scalar_descending(buf, &JsonScalarValue::Null)
+        }
+        _ => {
+            // Normal value
+            buf.push(ESCAPED_TERM);
+            buf.push(JSON_PATH_END);
+            encode_scalar_descending(buf, &leaf.value)
+        }
+    }
+}
+
+/// Encode the JSON path parts.
+fn encode_path_ascending(mut buf: Vec<u8>, path: &JsonPath) -> Vec<u8> {
+    for part in path.iter() {
+        match part {
+            JsonPathPart::Property(name) => {
+                // Encode property name as escaped bytes (without the BYTES_MARKER)
+                buf = encode_path_string_ascending(buf, name);
+            }
+            JsonPathPart::Index => {
+                // Array indices always encode as 0 per Go behavior
+                buf = encode_uvarint_ascending(buf, 0);
+            }
+            _ => {}
+        }
+    }
+    buf
+}
+
+/// Encode a path property string with escaping (no marker prefix).
+fn encode_path_string_ascending(mut buf: Vec<u8>, s: &str) -> Vec<u8> {
+    for byte in s.as_bytes() {
+        if *byte == 0x00 {
+            buf.push(0x00);
+            buf.push(0xff);
+        } else {
+            buf.push(*byte);
+        }
+    }
+    // Terminator
+    buf.push(0x00);
+    buf.push(ESCAPED_TERM);
+    buf
+}
+
+/// Encode a JSON scalar value in ascending order.
+fn encode_scalar_ascending(buf: Vec<u8>, value: &JsonScalarValue) -> Vec<u8> {
+    match value {
+        JsonScalarValue::Null => encode_null_ascending(buf),
+        JsonScalarValue::Bool(b) => encode_bool_ascending(buf, *b),
+        JsonScalarValue::Number(n) => encode_float64_ascending(buf, *n),
+        JsonScalarValue::String(s) => encode_bytes_ascending(buf, s.as_bytes()),
+        // PathMin/PathMax are handled specially in encode_json_ascending
+        JsonScalarValue::PathMin | JsonScalarValue::PathMax | _ => buf,
+    }
+}
+
+/// Encode a JSON scalar value in descending order.
+fn encode_scalar_descending(buf: Vec<u8>, value: &JsonScalarValue) -> Vec<u8> {
+    match value {
+        JsonScalarValue::Null => super::encode_null_descending(buf),
+        JsonScalarValue::Bool(value) => super::encode_bool_descending(buf, *value),
+        JsonScalarValue::Number(value) => super::encode_float64_descending(buf, *value),
+        JsonScalarValue::String(value) => super::encode_bytes_descending(buf, value.as_bytes()),
+        JsonScalarValue::PathMin | JsonScalarValue::PathMax | _ => buf,
+    }
+}
+
+/// Decode a JSON leaf value from bytes (ascending order).
+///
+/// Returns the remaining buffer and the decoded JsonLeafValue.
+pub fn decode_json_ascending(buf: &[u8]) -> Result<(&[u8], JsonLeafValue)> {
+    if buf.is_empty() || buf[0] != JSON_MARKER {
+        return Err(Error::Other(format!(
+            "expected JSON_MARKER (0x{:02x}), got 0x{:02x}",
+            JSON_MARKER,
+            buf.first().unwrap_or(&0)
+        )));
+    }
+
+    let mut rest = &buf[1..];
+
+    // Decode path parts until we hit the terminator
+    let mut path = JsonPath::new();
+    loop {
+        if rest.len() < 2 {
+            return Err(Error::Other("unexpected end of JSON path".into()));
+        }
+        // Check for path terminator: [ESCAPED_TERM][PATH_END]
+        if rest[0] == ESCAPED_TERM && rest[1] == JSON_PATH_END {
+            rest = &rest[2..];
+            break;
+        }
+
+        // Check if this is an array index (uvarint) or property (string)
+        // Array paths use the zero index marker; other bytes start a property.
+        if rest[0] == INT_ZERO {
+            // Array index - decode uvarint
+            let (remaining, _idx) = decode_uvarint_ascending(rest)?;
+            path = path.append_index();
+            rest = remaining;
+        } else {
+            // Property name - decode as escaped string
+            let (remaining, name) = decode_path_string_ascending(rest)?;
+            path = path.append_property(&name);
+            rest = remaining;
+        }
+    }
+
+    // Decode the value
+    let (rest, value) = decode_scalar_ascending(rest)?;
+
+    Ok((rest, JsonLeafValue::new(path, value)))
+}
+
+/// Decode a JSON leaf value from bytes (descending order).
+pub fn decode_json_descending(buf: &[u8]) -> Result<(&[u8], JsonLeafValue)> {
+    if buf.is_empty() || buf[0] != JSON_MARKER {
+        return Err(Error::Other(format!(
+            "expected JSON_MARKER (0x{:02x}), got 0x{:02x}",
+            JSON_MARKER,
+            buf.first().unwrap_or(&0)
+        )));
+    }
+
+    let mut rest = &buf[1..];
+    let separator;
+
+    // The path itself remains in ascending order.
+    let mut path = JsonPath::new();
+    loop {
+        if rest.len() < 2 {
+            return Err(Error::Other("unexpected end of JSON path".into()));
+        }
+
+        // The path stays ascending. Normal values and both sentinels use the
+        // ascending separator; PathMin uses the next separator byte.
+        if rest[0] == ESCAPED_TERM && (rest[1] == JSON_PATH_END || rest[1] == JSON_PATH_END + 1) {
+            separator = rest[1];
+            rest = &rest[2..];
+            break;
+        }
+
+        if rest[0] == INT_ZERO {
+            // Array index - decode ascending uvarint
+            let (remaining, _idx) = decode_uvarint_ascending(rest)?;
+            path = path.append_index();
+            rest = remaining;
+        } else {
+            // Property name - decode as ascending escaped string
+            let (remaining, name) = decode_path_string_ascending(rest)?;
+            path = path.append_property(&name);
+            rest = remaining;
+        }
+    }
+
+    if rest.is_empty() {
+        return Ok((rest, JsonLeafValue::new(path, JsonScalarValue::PathMax)));
+    }
+    if rest == [super::ENCODED_NULL_DESC] && separator == JSON_PATH_END + 1 {
+        return Ok((
+            &rest[1..],
+            JsonLeafValue::new(path, JsonScalarValue::PathMin),
+        ));
+    }
+
+    let (rest, value) = decode_scalar_descending(rest)?;
+
+    Ok((rest, JsonLeafValue::new(path, value)))
+}
+
+/// Decode a path property string (ascending).
+fn decode_path_string_ascending(buf: &[u8]) -> Result<(&[u8], String)> {
+    let mut result = Vec::new();
+    let mut i = 0;
+
+    while i < buf.len() {
+        if buf[i] == 0x00 {
+            if i + 1 >= buf.len() {
+                return Err(Error::Other("unexpected end of escaped string".into()));
+            }
+            match buf[i + 1] {
+                ESCAPED_TERM => {
+                    // End of string
+                    let s = String::from_utf8(result)
+                        .map_err(|e| Error::Other(format!("invalid utf-8 in path: {}", e)))?;
+                    return Ok((&buf[i + 2..], s));
+                }
+                0xff => {
+                    // Escaped null byte
+                    result.push(0x00);
+                    i += 2;
+                }
+                other => {
+                    return Err(Error::Other(format!(
+                        "invalid escape sequence in path: 0x00 0x{:02x}",
+                        other
+                    )));
+                }
+            }
+        } else {
+            result.push(buf[i]);
+            i += 1;
+        }
+    }
+
+    Err(Error::Other("unterminated path string".into()))
+}
+
+/// Decode a JSON scalar value (ascending).
+fn decode_scalar_ascending(buf: &[u8]) -> Result<(&[u8], JsonScalarValue)> {
+    let typ = peek_type(buf);
+    match typ {
+        EncodedType::Null => {
+            let (rest, _) = decode_if_null(buf);
+            Ok((rest, JsonScalarValue::Null))
+        }
+        EncodedType::Bool => {
+            let (rest, v) = decode_bool_ascending(buf)?;
+            Ok((rest, JsonScalarValue::Bool(v)))
+        }
+        EncodedType::Float64 => {
+            let (rest, v) = decode_float64_ascending(buf)?;
+            Ok((rest, JsonScalarValue::Number(v)))
+        }
+        EncodedType::Int => {
+            // JSON numbers are encoded as float64, but handle int just in case
+            let (rest, v) = decode_uvarint_ascending(buf)?;
+            Ok((rest, JsonScalarValue::Number(v as f64)))
+        }
+        EncodedType::Bytes | EncodedType::BytesDesc => {
+            let (rest, v) = decode_bytes_ascending(buf)?;
+            let s = String::from_utf8(v)
+                .map_err(|e| Error::Other(format!("invalid utf-8 in JSON string: {}", e)))?;
+            Ok((rest, JsonScalarValue::String(s)))
+        }
+        _ => Err(Error::Other(format!(
+            "cannot decode JSON scalar: unknown type {:?} (marker 0x{:02x})",
+            typ,
+            buf.first().unwrap_or(&0)
+        ))),
+    }
+}
+
+/// Decode a JSON scalar value (descending).
+fn decode_scalar_descending(buf: &[u8]) -> Result<(&[u8], JsonScalarValue)> {
+    if buf.is_empty() {
+        return Err(Error::Other("empty buffer for JSON scalar".into()));
+    }
+
+    match buf[0] {
+        super::ENCODED_NULL_DESC => Ok((&buf[1..], JsonScalarValue::Null)),
+        super::TRUE_MARKER => Ok((&buf[1..], JsonScalarValue::Bool(false))),
+        super::FALSE_MARKER => Ok((&buf[1..], JsonScalarValue::Bool(true))),
+        marker if (super::FLOAT64_NAN..=super::FLOAT64_NAN_DESC).contains(&marker) => {
+            let (rest, value) = super::decode_float64_descending(buf)?;
+            Ok((rest, JsonScalarValue::Number(value)))
+        }
+        super::BYTES_DESC_MARKER => {
+            let (rest, bytes) = super::decode_bytes_descending(buf)?;
+            let value = String::from_utf8(bytes)
+                .map_err(|error| Error::Other(format!("invalid utf-8 in JSON string: {error}")))?;
+            Ok((rest, JsonScalarValue::String(value)))
+        }
+        marker => Err(Error::Other(format!(
+            "cannot decode descending JSON scalar: marker 0x{marker:02x}"
+        ))),
+    }
+}
+
+#[cfg(test)]
+#[path = "json_array_path_tests.rs"]
+mod json_array_path_tests;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_encode_json_simple_number() {
+        let leaf = JsonLeafValue::new(JsonPath::new(), JsonScalarValue::Number(168.0));
+
+        let encoded = encode_json_ascending(vec![], &leaf);
+
+        // Should start with JSON_MARKER
+        assert_eq!(encoded[0], JSON_MARKER);
+        // Should have path terminator after marker (empty path)
+        assert_eq!(encoded[1], ESCAPED_TERM);
+        assert_eq!(encoded[2], JSON_PATH_END);
+        // Value follows
+        assert!(encoded.len() > 3);
+    }
+
+    #[test]
+    fn test_encode_json_with_path() {
+        let path = JsonPath::new()
+            .append_property("custom")
+            .append_property("height");
+        let leaf = JsonLeafValue::new(path, JsonScalarValue::Number(168.0));
+
+        let encoded = encode_json_ascending(vec![], &leaf);
+
+        // Should start with JSON_MARKER
+        assert_eq!(encoded[0], JSON_MARKER);
+        // Path should contain "custom" and "height" somewhere before terminator
+        assert!(encoded.len() > 20);
+    }
+
+    #[test]
+    fn test_encode_json_with_array_path() {
+        let path = JsonPath::new().append_property("tags").append_index();
+        let leaf = JsonLeafValue::new(path, JsonScalarValue::String("value".to_string()));
+
+        let encoded = encode_json_ascending(vec![], &leaf);
+
+        assert_eq!(encoded[0], JSON_MARKER);
+    }
+
+    #[test]
+    fn test_encode_json_string() {
+        let leaf = JsonLeafValue::new(
+            JsonPath::new(),
+            JsonScalarValue::String("hello".to_string()),
+        );
+
+        let encoded = encode_json_ascending(vec![], &leaf);
+        assert_eq!(encoded[0], JSON_MARKER);
+    }
+
+    #[test]
+    fn test_encode_json_bool() {
+        let leaf_true = JsonLeafValue::new(JsonPath::new(), JsonScalarValue::Bool(true));
+        let leaf_false = JsonLeafValue::new(JsonPath::new(), JsonScalarValue::Bool(false));
+
+        let encoded_true = encode_json_ascending(vec![], &leaf_true);
+        let encoded_false = encode_json_ascending(vec![], &leaf_false);
+
+        // false < true in ascending order
+        assert!(encoded_false < encoded_true);
+    }
+
+    #[test]
+    fn test_encode_json_null() {
+        let leaf = JsonLeafValue::new(JsonPath::new(), JsonScalarValue::Null);
+
+        let encoded = encode_json_ascending(vec![], &leaf);
+        assert_eq!(encoded[0], JSON_MARKER);
+    }
+
+    #[test]
+    fn test_encode_json_sort_order_by_path() {
+        // Same value, different paths - should sort by path
+        let leaf_a = JsonLeafValue::new(
+            JsonPath::new().append_property("aaa"),
+            JsonScalarValue::Number(1.0),
+        );
+        let leaf_b = JsonLeafValue::new(
+            JsonPath::new().append_property("bbb"),
+            JsonScalarValue::Number(1.0),
+        );
+
+        let encoded_a = encode_json_ascending(vec![], &leaf_a);
+        let encoded_b = encode_json_ascending(vec![], &leaf_b);
+
+        assert!(encoded_a < encoded_b);
+    }
+
+    #[test]
+    fn test_encode_json_sort_order_by_value() {
+        // Same path, different values - should sort by value
+        let path = JsonPath::new().append_property("num");
+        let leaf_1 = JsonLeafValue::new(path.clone(), JsonScalarValue::Number(1.0));
+        let leaf_2 = JsonLeafValue::new(path, JsonScalarValue::Number(2.0));
+
+        let encoded_1 = encode_json_ascending(vec![], &leaf_1);
+        let encoded_2 = encode_json_ascending(vec![], &leaf_2);
+
+        assert!(encoded_1 < encoded_2);
+    }
+
+    #[test]
+    fn test_encode_json_descending_reverses_order() {
+        let leaf_1 = JsonLeafValue::new(JsonPath::new(), JsonScalarValue::Number(1.0));
+        let leaf_2 = JsonLeafValue::new(JsonPath::new(), JsonScalarValue::Number(2.0));
+
+        let asc_1 = encode_json_ascending(vec![], &leaf_1);
+        let asc_2 = encode_json_ascending(vec![], &leaf_2);
+        let desc_1 = encode_json_descending(vec![], &leaf_1);
+        let desc_2 = encode_json_descending(vec![], &leaf_2);
+
+        // Ascending: 1 < 2
+        assert!(asc_1 < asc_2);
+        // Descending: 1 > 2
+        assert!(desc_1 > desc_2);
+    }
+
+    #[test]
+    fn descending_scalars_round_trip() {
+        let path = JsonPath::new().append_property("a").append_property("b");
+        for value in [
+            JsonScalarValue::Null,
+            JsonScalarValue::Bool(false),
+            JsonScalarValue::Bool(true),
+            JsonScalarValue::Number(-5.5),
+            JsonScalarValue::Number(0.0),
+            JsonScalarValue::Number(5.0),
+            JsonScalarValue::String("é".into()),
+        ] {
+            for path in [JsonPath::new(), path.clone()] {
+                let leaf = JsonLeafValue::new(path, value.clone());
+                let encoded = encode_json_descending(vec![], &leaf);
+                let (rest, decoded) =
+                    decode_json_descending(&encoded).unwrap_or_else(|e| panic!("{leaf:?}: {e}"));
+                assert!(rest.is_empty());
+                assert_eq!(decoded, leaf);
+            }
+        }
+    }
+}

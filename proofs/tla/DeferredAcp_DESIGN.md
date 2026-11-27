@@ -9,7 +9,7 @@ transaction has written but not committed. They are the transaction's own writes
 namespace. A local provider joins the transaction (`DocumentACP::bind_transaction`) and
 registers through its view; an external provider cannot, so the create records the
 registration it owes in the same view (`PendingRegistrations::record`) and
-`AcpRegistrationProjection` in `crates/query/src/txn/context.rs` reads it back. Access
+`AcpRegistrationProjection` in `crates/engine/query/src/txn/context.rs` reads it back. Access
 checks within the txn consult the projection FIRST (`check_doc_access_with_projection`);
 the writes reach committed ACP state only when the storage txn commits. What happens to an
 owed registration after the commit (settling it with the provider) is `AcpOutbox.tla`.
@@ -20,8 +20,8 @@ only one that models the **uncommitted projection → committed transition** its
 between concurrent txns, atomic commit-time hook application, no-op rollback, and the
 fail-closed gate across the projected→committed boundary.
 
-The model assumes public access to unregistered objects, matching the local and
-Cosmos backends. Rust now obtains that rule from
+The model assumes public access to unregistered objects, matching the local
+backend. Rust now obtains that rule from
 `DocumentACP::unregistered_documents_are_public()`. Native Vera returns `false`;
 its missing-registration behavior is covered by Rust and integration tests, not
 by this model. Branchable collection inheritance is also outside this slice.
@@ -65,16 +65,16 @@ states, so the invariants hold over a non-trivial space:
 
 | Symbol in model | Code | Anchor |
 |---|---|---|
-| `Reg(o)` (a projected registration and its owner) | `PendingRegistration { creator, .. }` for an external provider; the bound provider's own owner record for a local one | `crates/acp/src/pending.rs` |
-| `proj[t]` (the txn's own ACP writes) | the transaction's ACP namespace view, read by `PendingRegistrations::get` | `crates/acp/src/pending.rs`; `DbTxn::acpstore` in `crates/db/src/txn/mod.rs` |
-| one projection per txn (isolation by construction) | `DbTxn::acp_registration_projection` builds it over the txn's own view | `crates/db/src/txn/mod.rs` |
-| `proj[t][d] := Reg(o)` (`Register` action) | `register_created_doc`: `bind_transaction` then `register_doc_object`, or `PendingRegistrations::record` | `crates/db/src/write/autocommit/helpers.rs` |
-| `proj[t][d] := Unreg` (`Unregister` action) | `unregister_deleted_doc`: `unregister_doc_object` through the bound provider, or `PendingRegistrations::clear` | `crates/db/src/write/autocommit/helpers.rs` |
-| `EffectiveProj` / `OverlayGrant` (the gate: projection-first, else committed) | `check_doc_access_with_projection`, `is_doc_registered_with_projection` | `crates/query/src/txn/context.rs` |
-| `OwnerCheck="Strict"` (Registered grants only to owner) | `is_creator` | `crates/query/src/txn/context.rs` |
-| projected `Unregistered ⇒ open` for the modeled backend | `acp.unregistered_documents_are_public()` | `crates/query/src/txn/context.rs` |
-| `Commit` applies the projection atomically (one action) | the storage transaction's commit publishes its ACP-namespace writes with its rows | `DbTxn::commit` in `crates/db/src/txn/mod.rs` |
-| `Rollback` changes nothing | the writes are the transaction's own, dropped by `DbTxn::discard`; the projection holds only a weak view (`PendingRegistrations::active_view`) | `crates/db/src/txn/mod.rs`; `crates/acp/src/pending.rs` |
+| `Reg(o)` (a projected registration and its owner) | `PendingRegistration { creator, .. }` for an external provider; the bound provider's own owner record for a local one | `crates/engine/acp/src/pending.rs` |
+| `proj[t]` (the txn's own ACP writes) | the transaction's ACP namespace view, read by `PendingRegistrations::get` | `crates/engine/acp/src/pending.rs`; `DbTxn::acpstore` in `crates/database/db/src/txn/mod.rs` |
+| one projection per txn (isolation by construction) | `DbTxn::acp_registration_projection` builds it over the txn's own view | `crates/database/db/src/txn/mod.rs` |
+| `proj[t][d] := Reg(o)` (`Register` action) | `register_created_doc`: `bind_transaction` then `register_doc_object`, or `PendingRegistrations::record` | `crates/database/db/src/write/autocommit/helpers.rs` |
+| `proj[t][d] := Unreg` (`Unregister` action) | `unregister_deleted_doc`: `unregister_doc_object` through the bound provider, or `PendingRegistrations::clear` | `crates/database/db/src/write/autocommit/helpers.rs` |
+| `EffectiveProj` / `OverlayGrant` (the gate: projection-first, else committed) | `check_doc_access_with_projection`, `is_doc_registered_with_projection` | `crates/engine/query/src/txn/context.rs` |
+| `OwnerCheck="Strict"` (Registered grants only to owner) | `is_creator` | `crates/engine/query/src/txn/context.rs` |
+| projected `Unregistered ⇒ open` for the modeled backend | `acp.unregistered_documents_are_public()` | `crates/engine/query/src/txn/context.rs` |
+| `Commit` applies the projection atomically (one action) | the storage transaction's commit publishes its ACP-namespace writes with its rows | `DbTxn::commit` in `crates/database/db/src/txn/mod.rs` |
+| `Rollback` changes nothing | the writes are the transaction's own, dropped by `DbTxn::discard`; the projection holds only a weak view (`PendingRegistrations::active_view`) | `crates/database/db/src/txn/mod.rs`; `crates/engine/acp/src/pending.rs` |
 
 ### Go (origin/develop — the live upstream, not the stale checkout)
 
@@ -149,8 +149,10 @@ the named invariant "is violated" with a concrete two-txn counterexample trace.
   `proofs/README.md` "Model ≠ code"). Keep anchors in step manually if `txn/context.rs` changes
   the projection-first gate or the owner check, or if `DbTxn::acp_registration_projection`
   stops reading through the transaction's own view.
-- **Integrator TODO (run-all):** add the four `MC_DeferredAcp_*` rows to
-  `proofs/tla/run-all.sh` (shared file, intentionally not edited by this slice):
+- **Integrator TODO (run-all):** the four `MC_DeferredAcp_*` configs below
+  must run in `proofs/tla/run-all.sh` (it now picks up every top-level
+  `*.cfg`, taking the module and verdict from each cfg's `\* run-all:` header,
+  so no row is added to the script itself):
 
 ```
   "MC_DeferredAcp_Green.cfg              MC_DeferredAcp_Green.tla              GREEN"  # deferred-acp overlay correct

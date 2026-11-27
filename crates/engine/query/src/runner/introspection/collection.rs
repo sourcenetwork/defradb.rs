@@ -1,0 +1,493 @@
+use async_graphql::dynamic::*;
+use async_graphql::Value as GqlValue;
+use rapidhash::RapidHashMap;
+use schema::{CollectionVersion, FieldKind, ScalarArrayKind, ScalarKind};
+
+use super::descriptions as d;
+
+const SIMILARITY_DESCRIPTION: &str = "\nReturns how similar the given vector is to the specified field's value. The metric is\n whichever one the field's vector index was created with, defaulting to cosine similarity\n when the field has no vector index. Higher values are more similar for every metric.\n";
+
+/// Build the object type for a collection.
+///
+/// Fields are added in alphabetical order to match Go's introspection output.
+/// Aggregate fields (_count, _sum, _avg, _max, _min) have args referencing
+/// selector input types, matching Go's schema generation.
+pub(super) fn build_collection_type(
+    collection: &CollectionVersion,
+    id_to_name: &RapidHashMap<String, String>,
+) -> Object {
+    let mut obj = Object::new(&collection.name);
+    let coll_name = &collection.name;
+    let is_view = collection.query.is_some();
+
+    // We'll collect fields as Field objects (not just name+type) so we can add args
+    let mut named_fields: Vec<(String, Field)> = Vec::new();
+
+    // Views don't expose _docID, _deleted, or _version virtual fields
+    if !is_view {
+        named_fields.push((
+            "_docID".to_string(),
+            Field::new("_docID", TypeRef::named("ID"), |_| {
+                FieldFuture::new(async { Ok(Some(GqlValue::Null)) })
+            })
+            .description(d::DOC_ID_FIELD),
+        ));
+        named_fields.push((
+            "_deleted".to_string(),
+            Field::new("_deleted", TypeRef::named("Boolean"), |_| {
+                FieldFuture::new(async { Ok(Some(GqlValue::Null)) })
+            })
+            .description(d::DELETED_FIELD),
+        ));
+    }
+
+    named_fields.push((
+        "GROUP".to_string(),
+        list_join_args(
+            Field::new("GROUP", TypeRef::named_list(coll_name), |_| {
+                FieldFuture::new(async { Ok(Some(GqlValue::Null)) })
+            })
+            .description(d::GROUP_FIELD),
+            coll_name,
+        ),
+    ));
+
+    // _version field (not for views)
+    if !is_view {
+        named_fields.push((
+            "_version".to_string(),
+            Field::new("_version", TypeRef::named_list("Commit"), |_| {
+                FieldFuture::new(async { Ok(Some(GqlValue::Null)) })
+            })
+            .description(d::VERSION_FIELD),
+        ));
+    }
+
+    // Build aggregate fields with args
+
+    // _count: takes args for _group, _version (non-views), and each inline array/relation field
+    // Collect args and sort alphabetically
+    {
+        let mut count_args: Vec<(String, InputValue)> = Vec::new();
+        count_args.push((
+            "GROUP".to_string(),
+            InputValue::new(
+                "GROUP",
+                TypeRef::named(format!("{}__CountSelector", coll_name)),
+            ),
+        ));
+        if !is_view {
+            count_args.push((
+                "_version".to_string(),
+                InputValue::new(
+                    "_version",
+                    TypeRef::named(format!("{}___version__CountSelector", coll_name)),
+                ),
+            ));
+        }
+        for field in &collection.fields {
+            let selector = match relation_target(&field.kind, id_to_name, coll_name) {
+                Some((target, true)) => format!("{target}__CountSelector"),
+                _ if matches!(field.kind, FieldKind::ScalarArray(_)) => {
+                    format!("{}__{}__CountSelector", coll_name, field.name)
+                }
+                _ => continue,
+            };
+            count_args.push((
+                field.name.clone(),
+                InputValue::new(&field.name, TypeRef::named(selector)),
+            ));
+        }
+        count_args.sort_by(|a, b| a.0.cmp(&b.0));
+        let mut count_field = Field::new("COUNT", TypeRef::named_nn("Int"), |_| {
+            FieldFuture::new(async { Ok(Some(GqlValue::Null)) })
+        })
+        .description(d::COUNT);
+        for (_, arg) in count_args {
+            count_field = count_field.argument(arg);
+        }
+        named_fields.push(("COUNT".to_string(), count_field));
+    }
+
+    // _sum, _avg, _max, _min: take args for _group and each numeric inline array field
+    for (agg_name, agg_type, description) in &[
+        ("SUM", "Float", d::SUM),
+        ("AVG", "Float", d::AVG),
+        ("MAX", "Float", d::MAX),
+        ("MIN", "Float", d::MIN),
+    ] {
+        let mut agg_args: Vec<(String, InputValue)> = Vec::new();
+        agg_args.push((
+            "GROUP".to_string(),
+            InputValue::new(
+                "GROUP",
+                TypeRef::named(format!("{}__NumericSelector", coll_name)),
+            ),
+        ));
+        for field in &collection.fields {
+            if let Some((target, true)) = relation_target(&field.kind, id_to_name, coll_name) {
+                agg_args.push((
+                    field.name.clone(),
+                    InputValue::new(
+                        &field.name,
+                        TypeRef::named(format!("{target}__NumericSelector")),
+                    ),
+                ));
+            }
+            if let FieldKind::ScalarArray(arr) = &field.kind {
+                let is_numeric = matches!(
+                    arr,
+                    ScalarArrayKind::IntArray
+                        | ScalarArrayKind::Float64Array
+                        | ScalarArrayKind::Float32Array
+                        | ScalarArrayKind::NillableIntArray
+                        | ScalarArrayKind::NillableFloat64Array
+                        | ScalarArrayKind::NillableFloat32Array
+                );
+                if is_numeric {
+                    agg_args.push((
+                        field.name.clone(),
+                        InputValue::new(
+                            &field.name,
+                            TypeRef::named(format!(
+                                "{}__{}__NumericSelector",
+                                coll_name, field.name
+                            )),
+                        ),
+                    ));
+                }
+            }
+        }
+        agg_args.sort_by(|a, b| a.0.cmp(&b.0));
+        let output_type = match *agg_name {
+            "SUM" | "AVG" => TypeRef::named_nn(*agg_type),
+            _ => TypeRef::named(*agg_type),
+        };
+        let mut agg_field = Field::new(*agg_name, output_type, |_| {
+            FieldFuture::new(async { Ok(Some(GqlValue::Null)) })
+        })
+        .description(*description);
+        for (_, arg) in agg_args {
+            agg_field = agg_field.argument(arg);
+        }
+        named_fields.push((agg_name.to_string(), agg_field));
+    }
+
+    // _similarity: takes args for each numeric array field's similarity selector
+    {
+        let mut sim_args: Vec<(String, InputValue)> = Vec::new();
+        for field in &collection.fields {
+            if let FieldKind::ScalarArray(arr) = &field.kind {
+                let is_numeric = matches!(
+                    arr,
+                    ScalarArrayKind::IntArray
+                        | ScalarArrayKind::Float64Array
+                        | ScalarArrayKind::Float32Array
+                        | ScalarArrayKind::NillableIntArray
+                        | ScalarArrayKind::NillableFloat64Array
+                        | ScalarArrayKind::NillableFloat32Array
+                );
+                if is_numeric {
+                    sim_args.push((
+                        field.name.clone(),
+                        InputValue::new(
+                            &field.name,
+                            TypeRef::named(format!(
+                                "{}__{}__SimilaritySelector",
+                                coll_name, field.name
+                            )),
+                        )
+                        .description(format!(
+                            "Compares the given vector against the {} field.",
+                            field.name
+                        )),
+                    ));
+                }
+            }
+        }
+        sim_args.sort_by(|a, b| a.0.cmp(&b.0));
+        let mut similarity_field = Field::new("SIMILARITY", TypeRef::named("Float"), |_| {
+            FieldFuture::new(async { Ok(Some(GqlValue::Null)) })
+        })
+        .description(SIMILARITY_DESCRIPTION);
+        for (_, arg) in sim_args {
+            similarity_field = similarity_field.argument(arg);
+        }
+        named_fields.push(("SIMILARITY".to_string(), similarity_field));
+    }
+
+    // Add user-defined fields
+    for field in &collection.fields {
+        if field.name == "_docID" {
+            continue;
+        }
+        let type_ref = field_kind_to_type_ref(&field.kind, id_to_name, &collection.name);
+        let mut gql_field = Field::new(&field.name, type_ref, |_| {
+            FieldFuture::new(async { Ok(Some(GqlValue::Null)) })
+        });
+        if let Some((target, is_array)) = relation_target(&field.kind, id_to_name, coll_name) {
+            gql_field = if is_array {
+                list_join_args(gql_field, &target)
+            } else {
+                gql_field.argument(
+                    InputValue::new("filter", TypeRef::named(format!("{target}FilterArg")))
+                        .description(d::SINGLE_FIELD_FILTER_ARG),
+                )
+            };
+        }
+        named_fields.push((field.name.clone(), gql_field));
+    }
+
+    // Sort alphabetically to match Go introspection output
+    named_fields.sort_by(|a, b| a.0.cmp(&b.0));
+
+    // Add sorted fields to object
+    for (_name, field) in named_fields {
+        obj = obj.field(field);
+    }
+
+    obj
+}
+
+/// The arguments Go gives a field that joins a list of `target` documents
+/// (a one-to-many relation, or the `GROUP` selector), sorted by name.
+fn list_join_args(field: Field, target: &str) -> Field {
+    field
+        .argument(
+            InputValue::new("docID", TypeRef::named_nn_list("ID")).description(d::DOC_IDS_ARG),
+        )
+        .argument(
+            InputValue::new("filter", TypeRef::named(format!("{target}FilterArg")))
+                .description(d::LIST_FIELD_FILTER_ARG),
+        )
+        .argument(
+            InputValue::new("groupBy", TypeRef::named_nn_list(format!("{target}Field")))
+                .description(d::GROUP_BY_ARG),
+        )
+        .argument(InputValue::new("limit", TypeRef::named("Int")).description(d::LIMIT_ARG))
+        .argument(InputValue::new("offset", TypeRef::named("Int")).description(d::OFFSET_ARG))
+        .argument(
+            InputValue::new("order", TypeRef::named_list(format!("{target}OrderArg")))
+                .description(d::ORDER_ARG),
+        )
+}
+
+/// The collection a relation field joins, and whether it joins a list.
+fn relation_target(
+    kind: &FieldKind,
+    id_to_name: &RapidHashMap<String, String>,
+    current_name: &str,
+) -> Option<(String, bool)> {
+    match kind {
+        FieldKind::Relation {
+            collection_id,
+            is_array,
+        } => Some((
+            id_to_name
+                .get(collection_id)
+                .cloned()
+                .unwrap_or_else(|| collection_id.clone()),
+            *is_array,
+        )),
+        FieldKind::SelfRef {
+            relative_id,
+            is_array,
+        } if relative_id.is_empty() => Some((current_name.to_string(), *is_array)),
+        FieldKind::SelfRef {
+            relative_id,
+            is_array,
+        } => Some((
+            id_to_name
+                .get(relative_id)
+                .cloned()
+                .unwrap_or_else(|| relative_id.clone()),
+            *is_array,
+        )),
+        _ => None,
+    }
+}
+
+/// Build the Commit object type (used by _version and _commits fields).
+///
+/// Fields match Go's CommitObject() in commits.go, sorted alphabetically.
+pub(super) fn build_commit_type() -> Object {
+    macro_rules! null_field {
+        ($name:expr, $ty:expr) => {
+            Field::new($name, $ty, |_| {
+                FieldFuture::new(async { Ok(Some(GqlValue::Null)) })
+            })
+        };
+    }
+
+    fn with_commit_link_args(field: Field, description: &'static str) -> Field {
+        field
+            .description(description)
+            .argument(
+                InputValue::new("cid", TypeRef::named_nn_list("ID")).description(d::COMMIT_CID_ARG),
+            )
+            .argument(
+                InputValue::new("docID", TypeRef::named_nn_list("ID"))
+                    .description(d::COMMIT_DOC_ID_ARG),
+            )
+            .argument(
+                InputValue::new("filter", TypeRef::named("CommitsFilterArg"))
+                    .description(d::COMMIT_FILTER_ARG),
+            )
+            .argument(
+                InputValue::new("groupBy", TypeRef::named_nn_list("commitFields"))
+                    .description(d::GROUP_BY_ARG),
+            )
+            .argument(
+                InputValue::new("order", TypeRef::named_list("commitsOrderArg"))
+                    .description(d::ORDER_ARG),
+            )
+    }
+
+    Object::new("Commit")
+        .description(d::COMMIT)
+        .field(
+            null_field!("AVG", TypeRef::named_nn("Float")).argument(InputValue::new(
+                "field",
+                TypeRef::named("commitNumericFieldArg"),
+            )),
+        )
+        .field(
+            null_field!("COUNT", TypeRef::named("Int"))
+                .description(d::COUNT)
+                .argument(InputValue::new(
+                    "field",
+                    TypeRef::named("commitCountFieldArg"),
+                )),
+        )
+        .field(null_field!("GROUP", TypeRef::named_list("Commit")).description(d::GROUP_FIELD))
+        .field(
+            null_field!("MAX", TypeRef::named("Float")).argument(InputValue::new(
+                "field",
+                TypeRef::named("commitNumericFieldArg"),
+            )),
+        )
+        .field(
+            null_field!("MIN", TypeRef::named("Float")).argument(InputValue::new(
+                "field",
+                TypeRef::named("commitNumericFieldArg"),
+            )),
+        )
+        .field(
+            null_field!("SUM", TypeRef::named_nn("Float")).argument(InputValue::new(
+                "field",
+                TypeRef::named("commitNumericFieldArg"),
+            )),
+        )
+        .field(null_field!("cid", TypeRef::named("String")).description(d::COMMIT_CID))
+        .field(null_field!("collectionID", TypeRef::named("String")))
+        .field(
+            null_field!("collectionVersionId", TypeRef::named("String"))
+                .description(d::COMMIT_COLLECTION_VERSION_ID),
+        )
+        .field(null_field!("delta", TypeRef::named("String")).description(d::COMMIT_DELTA))
+        .field(null_field!("docID", TypeRef::named("String")).description(d::COMMIT_DOC_ID))
+        .field(null_field!("fieldName", TypeRef::named("String")).description(d::COMMIT_FIELD_NAME))
+        .field(with_commit_link_args(
+            null_field!("heads", TypeRef::named_list("Commit")),
+            d::COMMIT_HEADS,
+        ))
+        .field(null_field!("height", TypeRef::named("Int")).description(d::COMMIT_HEIGHT))
+        .field(with_commit_link_args(
+            null_field!("links", TypeRef::named_list("Commit")),
+            d::COMMIT_LINKS,
+        ))
+        .field(
+            null_field!("signature", TypeRef::named("Signature")).description(d::COMMIT_SIGNATURE),
+        )
+}
+
+/// Convert field kind to async-graphql TypeRef.
+/// `current_name` is the name of the collection being built (for self-reference resolution).
+pub(super) fn field_kind_to_type_ref(
+    kind: &FieldKind,
+    id_to_name: &RapidHashMap<String, String>,
+    current_name: &str,
+) -> TypeRef {
+    match kind {
+        FieldKind::Scalar(scalar) => {
+            let name = scalar_to_gql_name(scalar);
+            if scalar.is_nillable() {
+                TypeRef::named(name)
+            } else {
+                TypeRef::named_nn(name)
+            }
+        }
+        FieldKind::ScalarArray(array) => {
+            let element_type = scalar_to_gql_name(&array.element_kind());
+            if array.has_nillable_elements() {
+                TypeRef::named_list(element_type)
+            } else {
+                TypeRef::named_nn_list(element_type)
+            }
+        }
+        FieldKind::Relation {
+            collection_id,
+            is_array,
+        } => {
+            let type_name = id_to_name
+                .get(collection_id)
+                .cloned()
+                .unwrap_or_else(|| collection_id.clone());
+            if *is_array {
+                TypeRef::named_list(type_name)
+            } else {
+                TypeRef::named(type_name)
+            }
+        }
+        FieldKind::SelfRef {
+            relative_id,
+            is_array,
+        } => {
+            // Empty relative_id means self-reference within the same collection
+            let type_name = if relative_id.is_empty() {
+                current_name.to_string()
+            } else {
+                id_to_name
+                    .get(relative_id)
+                    .cloned()
+                    .unwrap_or_else(|| relative_id.clone())
+            };
+            if *is_array {
+                TypeRef::named_list(type_name)
+            } else {
+                TypeRef::named(type_name)
+            }
+        }
+        FieldKind::Named { name, is_array } => {
+            let type_name = id_to_name
+                .get(name)
+                .cloned()
+                .unwrap_or_else(|| name.clone());
+            if *is_array {
+                TypeRef::named_list(type_name)
+            } else {
+                TypeRef::named(type_name)
+            }
+        }
+        _ => TypeRef::named("String"),
+    }
+}
+
+/// Convert scalar kind to GraphQL type name.
+/// Go registers Float32 and Float64 as separate scalar types.
+/// Go maps unqualified `Float` in SDL to `Float64`.
+pub(super) fn scalar_to_gql_name(scalar: &ScalarKind) -> &'static str {
+    match scalar.base_kind() {
+        ScalarKind::None => "String",
+        ScalarKind::DocID => "ID",
+        ScalarKind::NillableBool => "Boolean",
+        ScalarKind::NillableInt => "Int",
+        ScalarKind::NillableFloat64 => "Float64",
+        ScalarKind::NillableFloat32 => "Float32",
+        ScalarKind::NillableDateTime => "DateTime",
+        ScalarKind::NillableString => "String",
+        ScalarKind::NillableBlob => "Blob",
+        ScalarKind::NillableJson => "JSON",
+        _ => "String",
+    }
+}

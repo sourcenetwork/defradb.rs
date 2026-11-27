@@ -19,8 +19,8 @@ What must never happen:
 * the default ladder is one the node would refuse (`default_accepted`).
 
 Rust anchors: `RetrySchedule::new` and `RetrySchedule::cap` in
-`crates/storage/src/stores/retry_info.rs`, and `RETRY_INTERVALS_SECS` beside
-them. `assemble` in `crates/defra-node/src/assemble.rs` builds the ladder with `new`
+`crates/engine/storage/src/stores/retry_info.rs`, and `RETRY_INTERVALS_SECS` beside
+them. `assemble` in `crates/entry-points/defra-node/src/assemble.rs` builds the ladder with `new`
 and refuses to start on its error. Intervals are `u64` seconds; `Nat` here is the
 same values without an upper limit, which no rule below needs.
 -/

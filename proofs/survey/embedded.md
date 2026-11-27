@@ -1,4 +1,4 @@
-# Survey: node assembly in `crates/defra-node/`
+# Survey: node assembly in `crates/entry-points/defra-node/`
 
 ## Purpose
 Node-assembly / wiring layer. `assemble` composes an `Node` from
@@ -19,7 +19,7 @@ the spawn/shutdown lifecycle.
 - **Event fan-out** (`spawn_*_event_handler`): routes `TransportEvent`s, special-casing
   SE artifact push / SE query request/reply, else dispatches to the coordinator under a
   32-permit semaphore with inline-ordering for ordered events. Pure dispatch.
-- **Recovery** (`libp2p_recovery.rs`, `iroh_restore.rs`): on boot, re-subscribe restored replicators/docs
+- **Recovery** (`libp2p_recovery.rs`, `restore.rs`): on boot, re-subscribe restored replicators/docs
   from the peerstore. Idempotent replay of persisted state.
 
 ## Candidates

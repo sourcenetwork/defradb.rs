@@ -60,7 +60,7 @@ jobs:
                 ({ data } = await github.rest.repos.compareCommitsWithBasehead({
                   ...context.repo, basehead: `${from}...${pr.head.sha}`, per_page: 300,
                 }));
-                if (stack) base = data.merge_base_commit.sha;
+                base = data.merge_base_commit.sha;
               } catch (e) {
                 // Measure rather than skip when the diff cannot be read.
                 core.warning(`compare failed, measuring anyway: ${e.message}`);
@@ -77,6 +77,15 @@ jobs:
             core.info(`stack=${stack ? `#${stack.number} ${stack.position}/${stack.size}` : 'none'} base=${base} run=${run}`);
             core.setOutput('run', run ? 'true' : 'false');
             core.setOutput('base', base);
+
+  # A run that would measure waits for CI's approval (ci-approved.yml).
+  approval:
+    name: Wait for CI approval
+    needs: scope
+    if: needs.scope.outputs.run == 'true'
+    permissions:
+      actions: read
+    uses: ./.github/workflows/ci-approved.yml
 
   # Every pull request, no ceremony. A few families on Linux, measured against
   # this PR's own merge base, and posted back as a comment.
@@ -106,8 +115,8 @@ jobs:
   # on our RunsOn instances, which can reach the team's AWS resources.
   quick:
     name: Quick benchmark
-    needs: scope
-    if: needs.scope.outputs.run == 'true'
+    needs: [scope, approval]
+    if: needs.scope.outputs.run == 'true' && needs.approval.outputs.approved == 'true'
     runs-on: ${{ github.event.pull_request.head.repo.full_name == github.repository && format('runs-on={0}-{1}/spot=false/family=c7i.4xlarge/env=v3/extras=s3-cache', github.run_id, github.run_attempt) || 'ubuntu-latest' }}
     timeout-minutes: 60
     permissions:
@@ -130,6 +139,7 @@ jobs:
         uses: runs-on/action@v2
       - uses: actions/checkout@v7
         with:
+          ref: ${{ github.event.pull_request.head.sha }}
           path: head
       - uses: actions/checkout@v7
         with:
@@ -211,14 +221,14 @@ jobs:
 
       - name: Assemble the four documents
         env:
-          PERF_HEAD: ${{ github.event.pull_request.head.sha }}
-          PERF_BASE: ${{ needs.scope.outputs.base }}
           PERF_NUMBER: ${{ github.event.pull_request.number }}
         run: |
           set -euo pipefail
           # Built from head's checkout in every case: the base may predate the
           # collector, and a document is only comparable when both sides were
           # assembled by the same version of it.
+          PERF_HEAD=$(git -C head rev-parse HEAD)
+          PERF_BASE=$(git -C base rev-parse HEAD)
           for tag in head1 head2 base1 base2; do
             case "$tag" in head*) commit="$PERF_HEAD"; label="pr-$PERF_NUMBER";;
                            base*) commit="$PERF_BASE"; label="base";; esac
@@ -236,6 +246,8 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p site-head1 site-head2 site-base1 site-base2
+          PERF_HEAD=$(git -C head rev-parse HEAD)
+          PERF_BASE=$(git -C base rev-parse HEAD)
           for tag in head1 head2 base1 base2; do
             python3 head/tools/perf-site/publish.py --site "site-$tag" "platform-$tag.json" >/dev/null
           done

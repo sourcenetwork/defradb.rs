@@ -25,15 +25,15 @@
 \* get-collection, then the operation's own permission, in the transaction.
 \*
 \* Code it models:
-\*   crates/defra-node/src/ops/index.rs           Node::create_index_as,
-\*                                                 Node::delete_index_as,
-\*                                                 Node::list_indexes_as (route a txn)
-\*   crates/db/src/txn/registry/indexes.rs        create_index_in_txn,
+\*   crates/entry-points/defra-node/src/node_core/index.rs     NodeCore::create_index,
+\*                                                 NodeCore::delete_index,
+\*                                                 NodeCore::list_indexes (route a txn)
+\*   crates/database/db/src/txn/registry/indexes.rs        create_index_in_txn,
 \*                                                 drop_index_in_txn, indexes_in_txn
-\*   crates/db/src/txn/registry/mod.rs            finish_statement
-\*   crates/db/src/index/in_txn.rs                DB::create_index_in,
+\*   crates/database/db/src/txn/registry/mod.rs            finish_statement
+\*   crates/database/db/src/index/in_txn.rs                DB::create_index_in,
 \*                                                 DB::drop_index_in
-\*   crates/http/src/handlers/index/go_api.rs     the x-defradb-tx branches
+\*   crates/surfaces/http/src/handlers/index/go_api.rs     the x-defradb-tx branches
 \* Encrypted indexes follow the same steps with no backfill: the change is
 \* staged in the caller's transaction and the shared cache takes it once the
 \* commit is durable, before the commit call returns (the "work" here). A
@@ -41,29 +41,29 @@
 \* one collection's encrypted indexes, or every collection's, in the
 \* transaction is List: both read the definitions from the transaction's
 \* store, never a cached copy, so they see the change as RefreshCatalog does:
-\*   crates/db/src/collection/encrypted_index.rs  DB::add_encrypted_index_in,
+\*   crates/database/db/src/collection/encrypted_index.rs  DB::add_encrypted_index_in,
 \*                                                 DB::delete_encrypted_index_in,
 \*                                                 DB::encrypted_indexes_in,
 \*                                                 DB::all_encrypted_indexes_in
-\*   crates/db/src/txn/registry/indexes.rs        add_encrypted_index_in_txn,
+\*   crates/database/db/src/txn/registry/indexes.rs        add_encrypted_index_in_txn,
 \*                                                 delete_encrypted_index_in_txn,
 \*                                                 encrypted_indexes_in_txn,
 \*                                                 all_encrypted_indexes_in_txn
-\*   crates/defra-node/src/ops/encrypted_index.rs NodeOps (routes a txn)
-\*   crates/cli/src/encrypted_index_adapter.rs    EncryptedIndexAdapter (routes a txn)
-\*   crates/http/src/handlers/encrypted_index.rs  the x-defradb-tx context
+\*   crates/entry-points/defra-node/src/ops/encrypted_index.rs NodeOps (routes a txn)
+\*   crates/entry-points/cli/src/encrypted_index_adapter.rs    EncryptedIndexAdapter (routes a txn)
+\*   crates/surfaces/http/src/handlers/encrypted_index.rs  the x-defradb-tx context
 \* Views follow them too. AddView stages its view collections in the
 \* caller's transaction, and building its materialized views (and
 \* bootstrapping its downsamples) is the follow-up work, run at commit and
 \* awaited. RefreshViews stages nothing; its rebuild is the follow-up work,
 \* run at commit from what the transaction committed. An AddView whose
 \* multi-type SDL fails part way is rolled back to its savepoint:
-\*   crates/db/src/collection/ops/create.rs        DB::stage_new_collections
-\*   crates/db/src/txn/registry/views.rs           add_view_in_txn,
+\*   crates/database/db/src/collection/ops/create.rs        DB::stage_new_collections
+\*   crates/database/db/src/txn/registry/views.rs           add_view_in_txn,
 \*                                                 refresh_views_in_txn
-\*   crates/defra-node/src/db_impls.rs             DbSchemaOps (routes a txn)
-\*   crates/cli/src/view_adapter.rs                ViewAdapter (routes a txn)
-\*   crates/http/src/handlers/views.rs             the x-defradb-tx context
+\*   crates/entry-points/defra-node/src/db_impls.rs             DbSchemaOps (routes a txn)
+\*   crates/entry-points/cli/src/view_adapter.rs                ViewAdapter (routes a txn)
+\*   crates/surfaces/http/src/handlers/views.rs             the x-defradb-tx context
 EXTENDS Naturals
 
 CONSTANTS

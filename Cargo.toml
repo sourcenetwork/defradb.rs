@@ -1,50 +1,53 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/defra-core",
-    "crates/crdt",
-    "crates/storage",
-    "crates/blockstore",
-    "crates/schema",
-    "crates/chunk-split",
-    "crates/query",
-    "crates/document",
-    "crates/p2p",
-    "crates/bitswap",
-    "crates/p2p-adapter",
-    "crates/crypto",
-    "crates/cursor",
-    "crates/http",
-    "crates/cli",
-    "crates/datastore",
-    "crates/db",
-    "crates/keyring",
-    "crates/kms",
-    "crates/identity",
-    "crates/zanzibar",
-    "crates/acp",
-    "crates/defra-version",
-    "crates/vera",
-    "crates/vera-embedded",
-    "crates/events",
-    "crates/ffi",
-    "crates/lens",
-    "crates/orbis",
-    "crates/wasm",
-    "crates/pg-compat",
-    "crates/defra-node",
-    "crates/replication-filter",
-    "crates/telemetry",
-    "crates/edge",
-    "crates/net",
-    "crates/workers",
-    "crates/inputs",
+    "crates/foundation/defra-core",
+    "crates/building-blocks/crdt",
+    "crates/engine/storage",
+    "crates/engine/blockstore",
+    "crates/foundation/schema",
+    "crates/building-blocks/chunk-split",
+    "crates/foundation/prolly",
+    "crates/engine/query",
+    "crates/building-blocks/document",
+    "crates/database/p2p",
+    "crates/building-blocks/bitswap",
+    "crates/surfaces/p2p-adapter",
+    "crates/foundation/crypto",
+    "crates/foundation/cursor",
+    "crates/surfaces/http",
+    "crates/entry-points/cli",
+    "crates/engine/datastore",
+    "crates/database/db",
+    "crates/foundation/keyring",
+    "crates/database/kms",
+    "crates/building-blocks/identity",
+    "crates/building-blocks/zanzibar",
+    "crates/engine/acp",
+    "crates/foundation/defra-version",
+    "crates/engine/vera",
+    "crates/engine/vera-delegation",
+    "crates/engine/vera-embedded",
+    "crates/foundation/events",
+    "crates/entry-points/ffi",
+    "crates/foundation/lens",
+    "crates/building-blocks/orbis",
+    "crates/surfaces/wasm",
+    "crates/database/pg-compat",
+    "crates/entry-points/defra-node",
+    "crates/database/replication-filter",
+    "crates/building-blocks/telemetry",
+    "crates/foundation/edge",
+    "crates/building-blocks/net",
+    "crates/foundation/workers",
+    "crates/building-blocks/inputs",
     "tools/lens-host",
     "tools/ffi-test",
     "tools/integration-test",
     "proofs",
     "benches",
 ]
+exclude = ["tools/lenses"]
 
 [workspace.package]
 version = "0.5.0"
@@ -71,7 +74,7 @@ await_holding_lock = "warn"
 await_holding_refcell_ref = "warn"
 
 [workspace.dependencies]
-defra-p2p-adapter = { path = "crates/p2p-adapter", default-features = false }
+defra-p2p-adapter = { path = "crates/surfaces/p2p-adapter", default-features = false }
 
 # Hashing for every map that needs no synchronization: the `fast` profile,
 # `unsafe` for unchecked reads (stable toolchain, so `nightly` is out).
@@ -95,7 +98,7 @@ rustls = { version = "0.23", default-features = false }
 # Runs every task, timer and socket of ours natively. A library that needs a
 # tokio runtime is reached through `edge::compat`, the one caller of
 # async-compat.
-nuclei = "0.5.8"
+nuclei = "0.5.9"
 async-compat = { version = "0.2.6", features = ["multi-thread"] }
 async-trait = "0.1.92"
 futures = "0.3"
@@ -208,10 +211,6 @@ criterion = { version = "0.8", features = ["async"] }
 
 # Synchronization (non-poisoning locks)
 
-# Caching
-lru = "0.19.0"
-
-
 [profile.dev]
 opt-level = 0
 debug = true
@@ -322,14 +321,10 @@ iroh = { git = "https://github.com/n0-computer/iroh", rev = "26dfe1d469e274d38fe
 iroh-base = { git = "https://github.com/n0-computer/iroh", rev = "26dfe1d469e274d38fe3b41617a20f9bb7a10072" }
 iroh-dns = { git = "https://github.com/n0-computer/iroh", rev = "26dfe1d469e274d38fe3b41617a20f9bb7a10072" }
 iroh-relay = { git = "https://github.com/n0-computer/iroh", rev = "26dfe1d469e274d38fe3b41617a20f9bb7a10072" }
-# Temporary: the unreleased Vera crates, from the revision the node crates use.
-vera-acp = { git = "https://github.com/sourcenetwork/vera.rs", rev = "bf4a4352cd620d6b498508e2dbf768edcbf3392b" }
-vera-client = { git = "https://github.com/sourcenetwork/vera.rs", rev = "bf4a4352cd620d6b498508e2dbf768edcbf3392b" }
-vera-crypto = { git = "https://github.com/sourcenetwork/vera.rs", rev = "bf4a4352cd620d6b498508e2dbf768edcbf3392b" }
-vera-domain = { git = "https://github.com/sourcenetwork/vera.rs", rev = "bf4a4352cd620d6b498508e2dbf768edcbf3392b" }
-vera-identity = { git = "https://github.com/sourcenetwork/vera.rs", rev = "bf4a4352cd620d6b498508e2dbf768edcbf3392b" }
-vera-modules = { git = "https://github.com/sourcenetwork/vera.rs", rev = "bf4a4352cd620d6b498508e2dbf768edcbf3392b" }
-vera-permission = { git = "https://github.com/sourcenetwork/vera.rs", rev = "bf4a4352cd620d6b498508e2dbf768edcbf3392b" }
-vera-zanzibar = { git = "https://github.com/sourcenetwork/vera.rs", rev = "bf4a4352cd620d6b498508e2dbf768edcbf3392b" }
-
-
+# Temporary: the unreleased Vera 0.2.0 crates, from vera.rs main.
+vera-client = { git = "https://github.com/sourcenetwork/vera.rs", rev = "faf4a4f094c1b4f5786bce0cbeb6567966e27999" }
+vera-crypto = { git = "https://github.com/sourcenetwork/vera.rs", rev = "faf4a4f094c1b4f5786bce0cbeb6567966e27999" }
+vera-domain = { git = "https://github.com/sourcenetwork/vera.rs", rev = "faf4a4f094c1b4f5786bce0cbeb6567966e27999" }
+vera-identity = { git = "https://github.com/sourcenetwork/vera.rs", rev = "faf4a4f094c1b4f5786bce0cbeb6567966e27999" }
+vera-modules = { git = "https://github.com/sourcenetwork/vera.rs", rev = "faf4a4f094c1b4f5786bce0cbeb6567966e27999" }
+vera-permission = { git = "https://github.com/sourcenetwork/vera.rs", rev = "faf4a4f094c1b4f5786bce0cbeb6567966e27999" }

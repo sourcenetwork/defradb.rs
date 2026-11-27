@@ -443,7 +443,8 @@ pub fn test_fn(
     clients: Option<&[&str]>,
     used: &mut Used,
 ) -> String {
-    let mut steps = loaded.scenario.steps.clone();
+    let (mut steps, deviation) =
+        super::deviations::steps(&loaded.scenario.id, &loaded.scenario.steps);
     let without_db = lifecycle::strip_implicit(&mut steps);
     let steps = parallel::expand(steps);
     used.txns = steps
@@ -533,11 +534,22 @@ pub fn test_fn(
             clients.join(", ")
         ));
     }
+    let source = &loaded.scenario.source;
+    if let Some((names, reason)) = super::multiplier_excludes::lookup(&source.path, &source.test) {
+        let names: Vec<String> = names.iter().map(|name| format!("{name:?}")).collect();
+        out.push_str(&format!(
+            "        // {reason}\n        multiplier_excludes: &[{}],\n",
+            names.join(", ")
+        ));
+    }
     if let Some((kind, reason)) = super::not_applying::lookup(&loaded.scenario.id) {
         out.push_str(&format!(
             "        not_applying: Some(NotApplying::{kind}({})),\n",
             literal::string(reason)
         ));
+    }
+    if let Some(reason) = deviation {
+        out.push_str(&format!("        // Deviates from Go: {reason}\n"));
     }
     out.push_str("        ..Default::default()\n    }\n    .execute();\n}\n");
     out

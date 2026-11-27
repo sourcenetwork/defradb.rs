@@ -29,16 +29,17 @@
 \*   - peers that have every edit hold different chunks (INV_SettledAgree).
 \*
 \* Code it models:
-\*   crates/db/src/chunk/sync/mod.rs      ChunkWrites::sync_chunks (an edit's deletes and creates)
-\*   crates/db/src/chunk/sync/lookup.rs   ChunkCollection::stored_of, unneeded (live chunks by hash, one kept per hash)
-\*   crates/db/src/chunk/sync/write.rs    ChunkWrites::create (the next free generation)
-\*   crates/db/src/chunk/generation.rs    is_taken, next_generation (skip the IDs used here)
-\*   crates/db/src/chunk/rebuild.rs       reconcile (a merge's deletes and creates)
-\*   crates/db/src/chunk/peer_delete.rs   delete_must_wait, parent_state (wait while the text uses the chunk)
-\*   crates/db/src/chunk/peer_create.rs   create_is_stale (drop a create the text does not use)
-\*   crates/db/src/merge/merge_handler/composite_persist.rs  where the merge calls them
-\* Encrypted chunks take a key of their own, so their IDs differ per peer and a
-\* merge neither builds nor drops them; that case is not modelled here.
+\*   crates/database/db/src/chunk/sync/mod.rs      ChunkWrites::sync_chunks (an edit's deletes and creates)
+\*   crates/database/db/src/chunk/sync/lookup.rs   ChunkCollection::stored_of, unneeded (live chunks by hash, one kept per hash)
+\*   crates/database/db/src/chunk/sync/write.rs    ChunkWrites::create (the next free generation)
+\*   crates/database/db/src/chunk/generation.rs    is_taken, next_generation (skip the IDs used here)
+\*   crates/database/db/src/chunk/rebuild.rs       reconcile (a merge's deletes and creates)
+\*   crates/database/db/src/chunk/peer_delete.rs   delete_must_wait, parent_state (wait while the text uses the chunk)
+\*   crates/database/db/src/chunk/peer_create.rs   create_is_stale (drop a create the text does not use)
+\*   crates/database/db/src/merge/merge_handler/composite_persist.rs  where the merge calls them
+\* Encrypted chunks take a key of their own, and embedded ones a vector only
+\* the writer's model gives, so a merge neither builds nor drops them; that
+\* case is not modelled here.
 \* Numbers and finite sets are all this model needs.
 EXTENDS Naturals, FiniteSets
 

@@ -16,8 +16,8 @@
 \* lookup and the write must decide on the same state, so nothing deletes
 \* the document between them.
 \*
-\* Rust: crates/query/src/documents/mod.rs `save` (the lookup, the refusal,
-\* the upsert) and crates/defra-node/src/ops/document.rs `Node::save_doc`
+\* Rust: crates/engine/query/src/documents/mod.rs `save` (the lookup, the refusal,
+\* the upsert) and crates/entry-points/defra-node/src/node_core/document.rs `NodeCore::save_doc`
 \* (one transaction around them: the caller's, else its own). The regression
 \* is mutation::update::with_delete::update_save_deleted_doc_does_nothing.
 \*

@@ -1,7 +1,7 @@
 ---------------------------- MODULE EndpointBind ----------------------------
 \* A caller selects an address or port before the endpoint opens sockets.
 \* Explicit addresses replace preset listeners; optional IPv6 may be unavailable.
-\* Rust: crates/p2p/src/iroh/endpoint_config.rs::apply_bind_config.
+\* Rust: crates/database/p2p/src/iroh/endpoint_config.rs::apply_bind_config.
 EXTENDS Naturals, FiniteSets, TLC
 \* Each negative configuration plants one concrete configuration mistake.
 CONSTANT Bug

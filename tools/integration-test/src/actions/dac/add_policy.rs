@@ -36,8 +36,9 @@ impl Op for AddDACPolicy {
         state
             .block_on(
                 state
-                    .node_on(self.common.node())?
-                    .add_dac_policy_as(&state.context_as(None, identity), &self.policy),
+                    .scope_as(None, identity)
+                    .scoped(&*state.node_on(self.common.node())?)
+                    .add_dac_policy(&self.policy, None),
             )
             .map(added)
             .map_err(|e| Failure::operation(e.to_string()))
@@ -64,7 +65,7 @@ impl HttpRun for AddDACPolicy {
             let policy = action.policy.clone();
             state
                 .http_as(action.common.node(), identity, |client| async move {
-                    client.acp_add_policy(&policy).await
+                    client.acp_add_policy(&policy, None).await
                 })?
                 .map(|response| added(response.policy_id))
                 .map_err(|e| Failure::operation(e.to_string()))

@@ -1,0 +1,713 @@
+//! Query error types
+
+use thiserror::Error;
+
+/// Result type alias for query operations
+pub type Result<T> = std::result::Result<T, QueryError>;
+
+/// Error type for transaction operations.
+///
+/// This provides structured errors for transaction lifecycle operations
+/// (`begin_txn`, `commit_txn`, `discard_txn`) enabling callers to handle
+/// different error conditions appropriately.
+#[derive(Debug, Error)]
+pub enum TransactionError {
+    /// The transaction was not found (may have been committed/rolled back).
+    #[error("transaction not found")]
+    NotFound(String),
+
+    /// The transaction was already finalized (double commit/discard).
+    #[error("transaction already finalized: {0}")]
+    AlreadyFinalized(String),
+
+    /// Transactions are not supported in this configuration.
+    #[error("transactions not supported: {0}")]
+    NotSupported(String),
+
+    /// A storage or execution error occurred.
+    #[error("transaction error: {0}")]
+    Execution(String),
+
+    /// Typed storage failure; it does not authorize resubmitting a transaction.
+    #[error("transaction storage error: {0}")]
+    Storage(#[from] storage::corekv::Error),
+
+    /// The commit lost a write conflict; re-running the transaction may succeed.
+    #[error("transaction conflict: {0}")]
+    Conflict(String),
+
+    /// An operation inside the transaction was refused; the message is the
+    /// reason, in Go's words, with no prefix.
+    #[error("{0}")]
+    Operation(String),
+
+    /// A field type declaration inside the transaction was refused, in Go's
+    /// words, with the code it reaches a client with.
+    #[error(transparent)]
+    UnsupportedFieldType(crate::sdl_parse::FieldTypeRefusals),
+
+    /// The transaction registry lock is poisoned (indicates a panic elsewhere).
+    #[error("lock poisoned: {0}")]
+    LockPoisoned(String),
+
+    /// A step needs a remote input fetched at the network edge: its
+    /// statement was undone, and it runs again once the input is answered.
+    #[error("a prepared input is required")]
+    NeedsInput(crate::prepared::PreparedInputRequest),
+}
+
+impl TransactionError {
+    /// Create a not found error.
+    pub fn not_found(msg: impl Into<String>) -> Self {
+        Self::NotFound(msg.into())
+    }
+
+    /// Create an already finalized error.
+    pub fn already_finalized(msg: impl Into<String>) -> Self {
+        Self::AlreadyFinalized(msg.into())
+    }
+
+    /// Create a not supported error.
+    pub fn not_supported(msg: impl Into<String>) -> Self {
+        Self::NotSupported(msg.into())
+    }
+
+    /// Create an execution error.
+    pub fn execution(msg: impl Into<String>) -> Self {
+        Self::Execution(msg.into())
+    }
+
+    /// Create an operation-refused error.
+    pub fn operation(msg: impl Into<String>) -> Self {
+        Self::Operation(msg.into())
+    }
+
+    /// Create a write-conflict error.
+    pub fn conflict(msg: impl Into<String>) -> Self {
+        Self::Conflict(msg.into())
+    }
+
+    /// Create a lock poisoned error.
+    pub fn lock_poisoned(msg: impl Into<String>) -> Self {
+        Self::LockPoisoned(msg.into())
+    }
+
+    /// Check if this is a retryable error.
+    ///
+    /// Retryable errors are transient failures where the same operation might
+    /// succeed if retried with a new transaction. Non-retryable errors indicate
+    /// permanent failures or unrecoverable state.
+    ///
+    /// - `NotFound`: Not retryable - the transaction never existed or was already
+    ///   finalized. Retrying with the same handle will never succeed.
+    /// - `AlreadyFinalized`: Not retryable - the transaction was already committed
+    ///   or rolled back.
+    /// - `NotSupported`: Not retryable - transactions aren't available in this config.
+    /// - `Operation`, `UnsupportedFieldType`: Not retryable - the operation
+    ///   itself was refused.
+    /// - `Execution`: Retryable - transient storage errors that may succeed on retry
+    ///   with a new transaction.
+    /// - `Storage`: Uses the storage owner's classification; a full disk or
+    ///   uncertain WAL does not authorize replay.
+    /// - `Conflict`: Retryable - another commit won a write conflict.
+    /// - `LockPoisoned`: Not retryable - indicates a panic occurred and the system
+    ///   may be in a corrupted state.
+    /// - `NeedsInput`: Not retryable as it is - the turn runs again only once
+    ///   its caller has answered the input.
+    pub fn is_retryable(&self) -> bool {
+        match self {
+            Self::NotFound(_) => false,
+            Self::AlreadyFinalized(_) => false,
+            Self::NotSupported(_) => false,
+            Self::Operation(_) | Self::UnsupportedFieldType(_) => false,
+            Self::Execution(_) => true,
+            Self::Storage(source) => source.is_retriable(),
+            Self::Conflict(_) => true,
+            Self::LockPoisoned(_) => false,
+            Self::NeedsInput(_) => false,
+        }
+    }
+}
+
+/// Query error types
+#[derive(Debug, Error)]
+pub enum QueryError {
+    /// GraphQL parse error
+    #[error("parse error: {0}")]
+    Parse(String),
+
+    /// A mutation names a collection that does not exist. The text is
+    /// GraphQL validation's, as a parse error; the collection API reports it
+    /// in Go's collection words.
+    #[error("parse error: {0}")]
+    UnknownMutationCollection(String),
+
+    /// A field type declaration the SDL may not make, in Go's words.
+    #[error(transparent)]
+    UnsupportedFieldType(#[from] crate::sdl_parse::FieldTypeRefusals),
+
+    /// Invalid filter condition
+    #[error("invalid filter: {0}")]
+    InvalidFilter(String),
+
+    /// Filter references a field not in the select list
+    #[error("filter field '{field}' must be included in the select list for '{collection}'")]
+    FilterFieldNotSelected { field: String, collection: String },
+
+    /// Unknown field referenced in query
+    #[error("{0}")]
+    UnknownField(String),
+
+    /// A scalar field was given a sub-selection (graphql-go's ScalarLeafs rule)
+    #[error("Field \"{field}\" of type \"{type_name}\" must not have a sub selection.")]
+    SubSelectionOnLeaf { field: String, type_name: String },
+
+    /// Collection not found
+    #[error("collection not found: {0}")]
+    CollectionNotFound(String),
+
+    /// Invalid aggregate target
+    #[error("invalid aggregate target: {0}")]
+    InvalidAggregateTarget(String),
+
+    /// Type mismatch in filter or assignment
+    #[error("type mismatch: expected {expected}, got {actual}")]
+    TypeMismatch { expected: String, actual: String },
+
+    /// Unexpected type in filter condition (Go-compatible format)
+    #[error("unexpected type. Property: {property}, Actual: {actual}")]
+    UnexpectedType { property: String, actual: String },
+
+    /// A mutation input names the secondary side of a relation, which Go's
+    /// mutation input types leave out (GraphQL validation's message).
+    #[error("Argument \"input\" has invalid value.\nIn field \"{0}\": Unknown field.")]
+    SecondaryRelationInput(String),
+
+    /// An argument the request gives does not fit what its field takes, in
+    /// GraphQL validation's words.
+    #[error("{0}")]
+    InvalidArgument(String),
+
+    /// A create's document ID, derived from its genesis block, is already
+    /// stored. Go's text; the ID is the create's own.
+    #[error("a document with the given ID already exists. DocID: {0}")]
+    DocumentAlreadyExists(String),
+
+    /// A create or save named a document that has been deleted. Go's text.
+    #[error("a document with the given ID has been deleted. DocID: {0}")]
+    DocumentDeleted(String),
+
+    /// A subscription sent as a plain request: it is served only over SSE.
+    #[error("parse error: {}", crate::subscription::SUBSCRIPTION_NEEDS_SSE)]
+    SubscriptionNeedsSse,
+
+    /// Storage layer error
+    #[error("storage error: {0}")]
+    Storage(#[from] storage::corekv::Error),
+
+    /// An auto-commit transaction conflicted and may be retried.
+    #[error("{0}")]
+    TransactionConflict(String),
+
+    /// Engine-owned retries reached their limit; this request is final.
+    #[error("{0}")]
+    TransactionRetryExhausted(String),
+
+    /// The document ACP provider could not be reached or did not answer in
+    /// time, after its own waits. Nothing is known about what was asked.
+    #[error("{0}")]
+    AcpProviderUnavailable(String),
+
+    /// A strict read (`RequestContext::with_strict_access_reads`) met a
+    /// document whose access check could not be answered, and returns no
+    /// rows rather than fewer than the caller may read. It names nothing
+    /// about that document. `retryable` when the provider was unavailable or
+    /// late: the same read may answer later.
+    #[error("access check unavailable: a document's access could not be checked, so the read returned nothing")]
+    AccessCheckUnavailable { retryable: bool },
+
+    /// A transaction attempt needs a remote input. The caller must end the
+    /// attempt, resolve this exact request outside the transaction, memoize
+    /// the response for the logical request, and execute again.
+    #[error("external input required")]
+    NeedsInput(crate::prepared::PreparedInputRequest),
+
+    /// An index scan found a reindex owed on the collection it planned from:
+    /// the index no longer holds what reads see, so the select re-plans as a
+    /// collection scan. It never reaches a client.
+    #[error("collection '{0}' owes a reindex since this query planned its index")]
+    IndexOwed(String),
+
+    /// Schema validation error
+    #[error("schema error: {0}")]
+    Schema(#[from] schema::SchemaError),
+
+    /// Plan execution failed
+    #[error("{0}")]
+    Execution(String),
+
+    /// Document not found
+    #[error("document not found: {0}")]
+    DocumentNotFound(String),
+
+    /// Invalid document ID format
+    #[error("invalid document id: {0}")]
+    InvalidDocId(String),
+
+    /// Field is required but missing
+    #[error("required field missing: {0}")]
+    RequiredFieldMissing(String),
+
+    /// Invalid mutation input
+    #[error("invalid mutation input: {0}")]
+    InvalidMutationInput(String),
+
+    /// Internal error (should not happen)
+    #[error("internal error: {0}")]
+    Internal(String),
+
+    /// Permission denied (ACP check failed)
+    #[error("permission denied: {0}")]
+    PermissionDenied(String),
+
+    /// A verified write was not staged: the node cannot send the document
+    /// ACP provider what the write owes it as the write's signer.
+    #[error("verified write refused: {0}")]
+    WriteAuthorityUnavailable(String),
+
+    /// A verified write was not staged: the delegation it carries does not
+    /// hold at the document ACP provider's time. Made again with a
+    /// delegation issued at the window's provider time, it is taken.
+    #[error("verified write refused: {reason}")]
+    DelegationOutsideWindow {
+        reason: String,
+        window: acp::DelegationWindow,
+    },
+
+    /// ACP registration failed during document creation
+    #[error("ACP registration failed for document '{doc_id}': {message}")]
+    AcpRegistrationFailed { doc_id: String, message: String },
+
+    /// ACP permission check failed (unable to verify access)
+    #[error("ACP {operation} permission check failed for document '{doc_id}': {message}")]
+    AcpCheckFailed {
+        operation: String,
+        doc_id: String,
+        message: String,
+    },
+
+    /// Commit access could not be verified; the cause may contain protected identifiers.
+    #[error("unable to verify access to commit history")]
+    CommitAccessCheckFailed(#[source] Box<QueryError>),
+
+    /// ACP registration status check failed
+    #[error("failed to check ACP registration status for document '{doc_id}': {message}")]
+    AcpRegistrationCheckFailed { doc_id: String, message: String },
+
+    /// Introspection query error
+    #[error("introspection error: {0}")]
+    Introspection(String),
+}
+
+impl QueryError {
+    /// Whether this error says the request itself is invalid, so running it
+    /// again unchanged can only fail the same way: it does not parse or
+    /// validate, names what does not exist, or was refused by an access
+    /// decision. A failure of the store, a provider, a deadline or a retry
+    /// budget is not: the same request may succeed later.
+    pub fn is_invalid_request(&self) -> bool {
+        match self {
+            Self::Parse(_)
+            | Self::UnknownMutationCollection(_)
+            | Self::UnsupportedFieldType(_)
+            | Self::InvalidFilter(_)
+            | Self::FilterFieldNotSelected { .. }
+            | Self::UnknownField(_)
+            | Self::SubSelectionOnLeaf { .. }
+            | Self::CollectionNotFound(_)
+            | Self::InvalidAggregateTarget(_)
+            | Self::TypeMismatch { .. }
+            | Self::UnexpectedType { .. }
+            | Self::SecondaryRelationInput(_)
+            | Self::InvalidArgument(_)
+            | Self::SubscriptionNeedsSse
+            | Self::Schema(_)
+            | Self::InvalidDocId(_)
+            | Self::RequiredFieldMissing(_)
+            | Self::InvalidMutationInput(_)
+            | Self::PermissionDenied(_)
+            | Self::DelegationOutsideWindow { .. }
+            | Self::Introspection(_)
+            | Self::DocumentAlreadyExists(_)
+            | Self::DocumentDeleted(_) => true,
+            Self::Storage(_)
+            | Self::TransactionConflict(_)
+            | Self::TransactionRetryExhausted(_)
+            | Self::AcpProviderUnavailable(_)
+            | Self::AccessCheckUnavailable { .. }
+            | Self::NeedsInput(_)
+            | Self::IndexOwed(_)
+            | Self::Execution(_)
+            | Self::DocumentNotFound(_)
+            | Self::Internal(_)
+            | Self::WriteAuthorityUnavailable(_)
+            | Self::AcpRegistrationFailed { .. }
+            | Self::AcpCheckFailed { .. }
+            | Self::CommitAccessCheckFailed(_)
+            | Self::AcpRegistrationCheckFailed { .. } => false,
+        }
+    }
+
+    /// The stable code of a document refusal: what `extensions.code` and the
+    /// documents API carry beside Go's text.
+    pub fn code(&self) -> Option<&'static str> {
+        match self {
+            Self::DocumentAlreadyExists(_) => {
+                Some(crate::executor::DOCUMENT_ALREADY_EXISTS_ERROR_CODE)
+            }
+            Self::DocumentDeleted(_) => Some(crate::executor::DOCUMENT_DELETED_ERROR_CODE),
+            _ => None,
+        }
+    }
+}
+
+impl QueryError {
+    /// Retain verification diagnostics without exposing them through a query response.
+    pub fn commit_access_check_failed(error: Self) -> Self {
+        Self::CommitAccessCheckFailed(Box::new(error))
+    }
+
+    /// Create a parse error
+    pub fn parse(msg: impl Into<String>) -> Self {
+        Self::Parse(msg.into())
+    }
+
+    /// Create an invalid filter error
+    pub fn invalid_filter(msg: impl Into<String>) -> Self {
+        Self::InvalidFilter(msg.into())
+    }
+
+    /// Create a filter field not selected error
+    pub fn filter_field_not_selected(
+        field: impl Into<String>,
+        collection: impl Into<String>,
+    ) -> Self {
+        Self::FilterFieldNotSelected {
+            field: field.into(),
+            collection: collection.into(),
+        }
+    }
+
+    /// Create an unknown field error
+    pub fn unknown_field(name: impl Into<String>) -> Self {
+        Self::UnknownField(name.into())
+    }
+
+    /// Create a sub-selection-on-scalar error
+    pub fn sub_selection_on_leaf(field: impl Into<String>, type_name: impl Into<String>) -> Self {
+        Self::SubSelectionOnLeaf {
+            field: field.into(),
+            type_name: type_name.into(),
+        }
+    }
+
+    /// Create a collection not found error
+    pub fn collection_not_found(name: impl Into<String>) -> Self {
+        Self::CollectionNotFound(name.into())
+    }
+
+    /// Create a document not found error
+    pub fn document_not_found(msg: impl Into<String>) -> Self {
+        Self::DocumentNotFound(msg.into())
+    }
+
+    /// Create an invalid argument error
+    pub fn invalid_argument(msg: impl Into<String>) -> Self {
+        Self::InvalidArgument(msg.into())
+    }
+
+    /// Create an execution error
+    pub fn execution(msg: impl Into<String>) -> Self {
+        Self::Execution(msg.into())
+    }
+
+    /// A document ACP error as a query error: an unavailable provider stays
+    /// [`Self::AcpProviderUnavailable`], so a caller can tell late from
+    /// wrong; anything else is an execution error with the ACP's words.
+    pub fn from_acp(error: acp::Error) -> Self {
+        match error {
+            acp::Error::ProviderUnavailable(_) => Self::AcpProviderUnavailable(error.to_string()),
+            other => Self::Execution(other.to_string()),
+        }
+    }
+
+    /// Create a retryable transaction conflict error.
+    pub fn transaction_conflict(msg: impl Into<String>) -> Self {
+        Self::TransactionConflict(msg.into())
+    }
+
+    pub fn transaction_retry_exhausted(msg: impl Into<String>) -> Self {
+        Self::TransactionRetryExhausted(msg.into())
+    }
+
+    /// Create an internal error
+    pub fn internal(msg: impl Into<String>) -> Self {
+        Self::Internal(msg.into())
+    }
+
+    /// Create a permission denied error
+    pub fn permission_denied(msg: impl Into<String>) -> Self {
+        Self::PermissionDenied(msg.into())
+    }
+
+    /// Create an ACP registration failed error
+    pub fn acp_registration_failed(
+        doc_id: impl Into<String>,
+        error: impl std::fmt::Display,
+    ) -> Self {
+        Self::AcpRegistrationFailed {
+            doc_id: doc_id.into(),
+            message: error.to_string(),
+        }
+    }
+
+    /// Create an ACP permission check failed error
+    pub fn acp_check_failed(
+        operation: impl Into<String>,
+        doc_id: impl Into<String>,
+        error: impl std::fmt::Display,
+    ) -> Self {
+        Self::AcpCheckFailed {
+            operation: operation.into(),
+            doc_id: doc_id.into(),
+            message: error.to_string(),
+        }
+    }
+
+    /// Create an ACP registration status check failed error
+    pub fn acp_registration_check_failed(
+        doc_id: impl Into<String>,
+        error: impl std::fmt::Display,
+    ) -> Self {
+        Self::AcpRegistrationCheckFailed {
+            doc_id: doc_id.into(),
+            message: error.to_string(),
+        }
+    }
+
+    /// Create an introspection error
+    pub fn introspection(msg: impl Into<String>) -> Self {
+        Self::Introspection(msg.into())
+    }
+
+    // ---- Cursor pagination errors (Go-exact surface strings) ----
+
+    /// `"invalid cursor"` — invalid base64, invalid JSON, or empty doc ID.
+    /// Mirrors Go's `internal/cursor/errors.go::errInvalidCursor`.
+    pub fn cursor_invalid() -> Self {
+        Self::invalid_argument("invalid cursor")
+    }
+
+    /// `"_cursor block must contain exactly one collection query"`.
+    /// Mirrors Go's `client/request/errors.go::errCursorMustContainQuery`.
+    pub fn cursor_must_contain_query() -> Self {
+        Self::invalid_argument("_cursor block must contain exactly one collection query")
+    }
+
+    /// `"_cursor block cannot contain multiple collection queries"`.
+    /// Mirrors Go's `errMultipleQueriesInCursor`.
+    pub fn cursor_multiple_queries() -> Self {
+        Self::invalid_argument("_cursor block cannot contain multiple collection queries")
+    }
+
+    /// `"first must be non-negative"`.
+    pub fn cursor_first_must_be_non_negative() -> Self {
+        Self::invalid_argument("first must be non-negative")
+    }
+
+    /// `"last must be non-negative"`.
+    pub fn cursor_last_must_be_non_negative() -> Self {
+        Self::invalid_argument("last must be non-negative")
+    }
+
+    /// `"forward parameters (first/after) cannot be combined with backward parameters (last/before)"`.
+    pub fn cursor_forward_backward_conflict() -> Self {
+        Self::invalid_argument(
+            "forward parameters (first/after) cannot be combined with backward parameters (last/before)",
+        )
+    }
+
+    /// `"no supporting index for cursor order field"` — order fields not covered by any index.
+    /// Mirrors Go's `internal/planner/errors.go::errNoSupportingIndexForCursor`.
+    pub fn cursor_no_supporting_index() -> Self {
+        Self::invalid_argument("no supporting index for cursor order field")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn commit_access_error_keeps_protected_details_out_of_responses() {
+        use std::error::Error as _;
+        let document = "private-document-id";
+        let provider = "private-proof-provider-detail";
+        for cause in [
+            QueryError::acp_check_failed("read", document, provider),
+            QueryError::Internal(format!("{document}: {provider}")),
+        ] {
+            let error = QueryError::commit_access_check_failed(cause);
+            let display = error.to_string();
+            assert_eq!(display, "unable to verify access to commit history");
+            let source = error.source().unwrap().to_string();
+            assert!(source.contains(document));
+            assert!(source.contains(provider));
+            let response = crate::executor::QueryResponseError::from_query_error(error);
+            let serialized = serde_json::to_string(&response).unwrap();
+            for text in [display, serialized] {
+                assert!(!text.contains(document));
+                assert!(!text.contains(provider));
+            }
+        }
+    }
+
+    #[test]
+    fn test_error_display() {
+        let err = QueryError::parse("unexpected token");
+        assert_eq!(err.to_string(), "parse error: unexpected token");
+
+        let err = QueryError::unknown_field("foo");
+        assert_eq!(err.to_string(), "foo");
+
+        let err = QueryError::TypeMismatch {
+            expected: "String".into(),
+            actual: "Int".into(),
+        };
+        assert_eq!(err.to_string(), "type mismatch: expected String, got Int");
+    }
+
+    #[test]
+    fn test_transaction_error_is_retryable() {
+        // NotFound is NOT retryable - the transaction doesn't exist
+        assert!(
+            !TransactionError::not_found("test").is_retryable(),
+            "NotFound should not be retryable"
+        );
+
+        // AlreadyFinalized is NOT retryable - can't use a finalized transaction
+        assert!(
+            !TransactionError::already_finalized("test").is_retryable(),
+            "AlreadyFinalized should not be retryable"
+        );
+
+        // NotSupported is NOT retryable - transactions aren't available
+        assert!(
+            !TransactionError::not_supported("test").is_retryable(),
+            "NotSupported should not be retryable"
+        );
+
+        // Execution IS retryable - transient errors may succeed on retry
+        assert!(
+            TransactionError::execution("test").is_retryable(),
+            "Execution should be retryable"
+        );
+
+        // LockPoisoned is NOT retryable - system is in corrupted state
+        assert!(
+            !TransactionError::lock_poisoned("test").is_retryable(),
+            "LockPoisoned should not be retryable"
+        );
+    }
+
+    #[test]
+    fn test_transaction_error_display() {
+        let err = TransactionError::not_found("txn-123");
+        assert_eq!(err.to_string(), "transaction not found");
+
+        let err = TransactionError::already_finalized("txn-456");
+        assert_eq!(err.to_string(), "transaction already finalized: txn-456");
+
+        let err = TransactionError::not_supported("no registry");
+        assert_eq!(err.to_string(), "transactions not supported: no registry");
+
+        let err = TransactionError::execution("commit failed");
+        assert_eq!(err.to_string(), "transaction error: commit failed");
+
+        let err = TransactionError::lock_poisoned("panic occurred");
+        assert_eq!(err.to_string(), "lock poisoned: panic occurred");
+    }
+}
+
+#[cfg(test)]
+mod cursor_error_tests {
+    use super::QueryError;
+
+    #[test]
+    fn invalid_cursor_message_matches_go() {
+        let e = QueryError::cursor_invalid();
+        assert_eq!(e.to_string(), "invalid cursor");
+    }
+
+    #[test]
+    fn no_supporting_index_message_matches_go() {
+        let e = QueryError::cursor_no_supporting_index();
+        assert_eq!(e.to_string(), "no supporting index for cursor order field");
+    }
+
+    #[test]
+    fn cursor_must_contain_query_message() {
+        let e = QueryError::cursor_must_contain_query();
+        assert_eq!(
+            e.to_string(),
+            "_cursor block must contain exactly one collection query"
+        );
+    }
+
+    #[test]
+    fn multiple_queries_in_cursor_message() {
+        let e = QueryError::cursor_multiple_queries();
+        assert_eq!(
+            e.to_string(),
+            "_cursor block cannot contain multiple collection queries"
+        );
+    }
+
+    #[test]
+    fn first_negative_message() {
+        let e = QueryError::cursor_first_must_be_non_negative();
+        assert_eq!(e.to_string(), "first must be non-negative");
+    }
+
+    #[test]
+    fn last_negative_message() {
+        let e = QueryError::cursor_last_must_be_non_negative();
+        assert_eq!(e.to_string(), "last must be non-negative");
+    }
+
+    #[test]
+    fn forward_backward_conflict_message() {
+        let e = QueryError::cursor_forward_backward_conflict();
+        assert_eq!(
+            e.to_string(),
+            "forward parameters (first/after) cannot be combined with backward parameters (last/before)"
+        );
+    }
+
+    /// A cursor argument written wrong fails the same way on every run, so a
+    /// subscription's open check refuses it instead of keeping the stream.
+    #[test]
+    fn cursor_errors_are_invalid_requests() {
+        for error in [
+            QueryError::cursor_invalid(),
+            QueryError::cursor_must_contain_query(),
+            QueryError::cursor_multiple_queries(),
+            QueryError::cursor_first_must_be_non_negative(),
+            QueryError::cursor_last_must_be_non_negative(),
+            QueryError::cursor_forward_backward_conflict(),
+            QueryError::cursor_no_supporting_index(),
+        ] {
+            assert!(error.is_invalid_request(), "{error}");
+        }
+    }
+}

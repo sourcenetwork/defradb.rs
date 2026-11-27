@@ -11,7 +11,7 @@ What must never happen:
 * a token carries a member beyond the DocID and the order values, or loses one;
 * a token an older build wrote, with an empty `o`, stops decoding.
 
-Rust anchors: `crates/cursor/src/lib.rs` `Cursor::encode`, `Cursor::decode`.
+Rust anchors: `crates/foundation/cursor/src/lib.rs` `Cursor::encode`, `Cursor::decode`.
 -/
 
 namespace CursorToken

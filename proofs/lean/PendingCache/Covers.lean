@@ -36,10 +36,10 @@ the TLA+ model `proofs/tla/PendingCache.tla`; this file proves the laws it
 rests on for logs of any length.
 
 Rust anchors: `PendingCache` and its catch-up
-(`crates/db/src/index/vector/engine/diskann/pending_cache.rs`), the append in
-`insert` (`crates/db/src/index/vector/engine/diskann/mod.rs`), and
+(`crates/database/db/src/index/vector/engine/diskann/pending_cache.rs`), the append in
+`insert` (`crates/database/db/src/index/vector/engine/diskann/mod.rs`), and
 `merge_plan`, `merge` and `truncate_pending_log`
-(`crates/db/src/index/vector/engine/diskann/merge.rs`).
+(`crates/database/db/src/index/vector/engine/diskann/merge.rs`).
 -/
 
 namespace PendingCache

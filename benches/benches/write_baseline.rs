@@ -5,7 +5,10 @@
 //! runs 1, 4, 16 and 64 writers, 256 requests each, three times. Override with
 //! DEFRA_BASELINE_WRITERS (comma-separated), DEFRA_BASELINE_OPERATIONS and
 //! DEFRA_BASELINE_REPETITIONS. DEFRA_BASELINE_CHUNK_MAX_CHARS makes `left` a
-//! `@chunk` field and emits the families with a `_chunked` suffix. Raw samples and provenance go to stdout as JSON
+//! `@chunk` field and emits the families with a `_chunked` suffix;
+//! DEFRA_BASELINE_EMBEDDING_URL also embeds it, with an `_embedded` suffix;
+//! DEFRA_BASELINE_PROJECTOR=empty installs a document projector that changes
+//! nothing. Raw samples and provenance go to stdout as JSON
 //! lines; dashboard families use DEFRA_BENCH_OUT through the existing emitter.
 
 use defra_perf::emit::{Family, Group, Row, Trust};
@@ -107,6 +110,7 @@ fn main() {
                 "operations_per_writer": operations, "repetitions": repetitions,
             "shared_documents": workload::SHARED_DOCUMENTS,
                 "chunk_max_chars": workload::chunk_max_chars(),
+                "embedded": workload::embedding_url().is_some(),
                 "load_guard": guard,
             }
         })
@@ -171,10 +175,13 @@ fn main() {
         for group in groups {
             family = family.group(group);
         }
-        let suffix = if workload::chunk_max_chars().is_some() {
-            "_chunked"
-        } else {
-            ""
+        let suffix = match (
+            workload::chunk_max_chars().is_some(),
+            workload::embedding_url().is_some(),
+        ) {
+            (true, true) => "_chunked_embedded",
+            (true, false) => "_chunked",
+            (false, _) => "",
         };
         family.emit(&format!("write_baseline_{}{suffix}", scenario.name()));
     }

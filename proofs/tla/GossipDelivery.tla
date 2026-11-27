@@ -19,7 +19,7 @@
 \* on its way, or reported: to its publisher as an error, or in the log as a
 \* dropped message. And every broadcast gossip queues fits a frame.
 \*
-\* Code it models (crates/p2p/src/iroh):
+\* Code it models (crates/database/p2p/src/iroh):
 \*   gossip/frame.rs          MAX_BROADCAST, FRAME_LIMIT, encode_gossip_frame
 \*   gossip/mod.rs            GossipHandle::publish   (refuses over the budget)
 \*   gossip/driver.rs         Driver::new (config, FRAME_LIMIT), write_stream, write_queue
