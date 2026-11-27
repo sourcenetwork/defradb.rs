@@ -27,6 +27,12 @@ pub struct WaitForPeersEvents {
     /// return how many were dropped and from how many peers.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub gossip_dropped: Option<usize>,
+    /// Wait until the node read a peer exchange list from each of these
+    /// nodes and every discovery dial the list scheduled landed or failed
+    /// (pinc). A list is sent only by a node holding other peers when the
+    /// two connect.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub peers_learned: Option<Vec<String>>,
     #[serde(default, skip_serializing_if = "Value::is_null")]
     pub expected_data: Value,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -65,6 +71,21 @@ impl Op for WaitForPeersEvents {
             let roots: RapidHashSet<String> =
                 dropped.iter().map(|event| event.cid.to_string()).collect();
             return Ok(json!({ "dropped": roots.len(), "peers": peers.len() }));
+        }
+        if let Some(from) = &self.peers_learned {
+            let mut peers = Vec::with_capacity(from.len());
+            for name in from {
+                let addresses = addresses_of(state, &[name.as_str()])?;
+                let address = addresses.first().ok_or_else(|| {
+                    Failure::operation(format!("{name} has no address to name it by"))
+                })?;
+                peers.push(peer_id(address).to_owned());
+            }
+            let events = node.events().map_err(Failure::operation)?;
+            state
+                .block_on(events.peers_learned(peers, deadline))
+                .map_err(Failure::operation)?;
+            return Ok(json!({}));
         }
         let mut wanted = RapidHashSet::new();
         for topic in self.topics.iter().flatten() {

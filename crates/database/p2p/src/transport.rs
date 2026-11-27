@@ -182,6 +182,12 @@ pub enum TransportEvent<ResponseToken> {
         topic: String,
         hub: PeerId,
     },
+    /// pinc: a peer list `peer_id` sent was read, and every discovery dial
+    /// it scheduled has landed, failed or been skipped. A test waits on it
+    /// instead of a window long enough for the dials (#2992).
+    PeersLearned {
+        peer_id: PeerId,
+    },
     BlockSyncProgress {
         query_id: QueryId,
         missing_count: usize,
@@ -287,6 +293,7 @@ impl<ResponseToken> TransportEvent<ResponseToken> {
             Self::PeerSubscribed { .. } => "peer_subscribed",
             Self::PeerUnsubscribed { .. } => "peer_unsubscribed",
             Self::TopicMissed { .. } => "topic_missed",
+            Self::PeersLearned { .. } => "peers_learned",
             Self::BlockSyncProgress { .. } => "block_sync_progress",
             Self::BlockSyncComplete { .. } => "block_sync_complete",
             Self::BlockSyncBlockReceived { .. } => "block_sync_block_received",
@@ -316,7 +323,8 @@ impl<ResponseToken> TransportEvent<ResponseToken> {
             BlockSyncProgress,
             BlockSyncComplete,
             BlockSyncBlockReceived,
-            Self::TopicMissed { .. }
+            Self::TopicMissed { .. },
+            Self::PeersLearned { .. }
         )
     }
 }

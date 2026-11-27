@@ -18,6 +18,7 @@ use serde::{Deserialize, Serialize};
 use tracing::debug;
 
 use crate::error::Result;
+use crate::transport::TransportEvent;
 
 use super::addr::node_to_peer_id;
 use super::endpoint::Node;
@@ -90,9 +91,11 @@ impl<H: Hosted + 'static> Node<H> {
     }
 
     /// Keep the records `payload` carries and dial each peer this node is not
-    /// connected to.
-    pub(super) fn learn_peers(self: &Rc<Self>, payload: &[u8]) -> Result<()> {
+    /// connected to, then tell the engine the list from `from` is done with:
+    /// `PeersLearned` follows every dial it scheduled, landed or failed.
+    pub(super) fn learn_peers(self: &Rc<Self>, from: &NodeId, payload: &[u8]) -> Result<()> {
         let shared: Vec<SharedPeer> = wire::decode(payload)?;
+        let mut dials = Vec::new();
         for peer in shared.into_iter().take(MAX_SHARED_PEERS) {
             let Ok(node) = pinc::node_from_str(&peer.id) else {
                 continue;
@@ -105,7 +108,7 @@ impl<H: Hosted + 'static> Node<H> {
             }
             let direct = peer.addr.into_iter().collect();
             let dialer = Rc::clone(self);
-            self.spawn(async move {
+            dials.push(async move {
                 // A hang-up can land after this list was read and before the
                 // dial does: the quiet is read again at each end of the dial,
                 // and a dial that landed on a peer hung up on meanwhile is
@@ -122,6 +125,19 @@ impl<H: Hosted + 'static> Node<H> {
                 }
             });
         }
+        let learner = Rc::clone(self);
+        let from = node_to_peer_id(from);
+        self.spawn(async move {
+            futures::future::join_all(dials).await;
+            if learner
+                .events
+                .send(TransportEvent::PeersLearned { peer_id: from })
+                .await
+                .is_err()
+            {
+                debug!("Event channel closed, cannot emit PeersLearned");
+            }
+        });
         Ok(())
     }
 

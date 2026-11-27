@@ -3,7 +3,7 @@
 //! the peer it hung up on does not dial back either.
 
 use integration_test::actions::{
-    Actions, ActivePeers, ConnectPeers, DisconnectPeers, NewNode, PeerInfo, Wait,
+    Actions, ActivePeers, ConnectPeers, DisconnectPeers, NewNode, PeerInfo, WaitForPeersEvents,
 };
 use integration_test::m;
 use integration_test::scenario::{captures, Common};
@@ -36,15 +36,37 @@ fn node(name: &str, peer: &str) -> [Actions; 2] {
     ]
 }
 
-fn three_connected_nodes() -> Vec<Actions> {
-    let mut actions: Vec<Actions> = [
-        node("db0", "peer0"),
-        node("db1", "peer1"),
-        node("db2", "peer2"),
-    ]
-    .into_iter()
-    .flatten()
-    .collect();
+fn watch(name: &str) -> Actions {
+    WaitForPeersEvents {
+        start: true,
+        common: on(name),
+        ..Default::default()
+    }
+    .into()
+}
+
+/// Wait until `name` read a peer exchange list from each of `from` and every
+/// discovery dial the list scheduled landed or failed.
+fn learned(name: &str, from: &[&str]) -> Actions {
+    WaitForPeersEvents {
+        peers_learned: Some(from.iter().map(|peer| (*peer).into()).collect()),
+        common: on(name),
+        ..Default::default()
+    }
+    .into()
+}
+
+/// db1 connects db0 and db2. With `watched`, each node records its events
+/// from the start, and the scenario waits for db2 to have read db1's list
+/// naming db0 and dialed db0: db0 and db2 are then connected too.
+fn three_connected_nodes(watched: bool) -> Vec<Actions> {
+    let mut actions = Vec::new();
+    for (name, peer) in [("db0", "peer0"), ("db1", "peer1"), ("db2", "peer2")] {
+        actions.extend(node(name, peer));
+        if watched {
+            actions.push(watch(name));
+        }
+    }
     actions.extend([
         ConnectPeers {
             target: "db0".into(),
@@ -65,6 +87,9 @@ fn three_connected_nodes() -> Vec<Actions> {
         }
         .into(),
     ]);
+    if watched {
+        actions.push(learned("db2", &["db1"]));
+    }
     actions
 }
 
@@ -75,7 +100,7 @@ fn three_connected_nodes() -> Vec<Actions> {
 #[test]
 #[mantra_macros::req_test("defra.net.peers.disconnect_sticks.explicit_connect")]
 fn an_explicit_connect_undoes_a_disconnect() {
-    let mut actions = three_connected_nodes();
+    let mut actions = three_connected_nodes(false);
     actions.extend([
         DisconnectPeers {
             targets: vec!["db0".into()],
@@ -105,18 +130,15 @@ fn an_explicit_connect_undoes_a_disconnect() {
     .execute();
 }
 
-/// Longer than every discovery dial that follows a connect: a peer exchange
-/// list lands within milliseconds of the connect that sends it.
-const DISCOVERY_WINDOW_MILLIS: u64 = 1500;
-
 /// Printed where a pinc-only scenario does not run: libp2p's close carries no
 /// reason, so the peer hung up on still dials back there.
 const LIBP2P_SKIP: &str =
     "skipped: pinc only; set DEFRA_TRANSPORT=pinc and build with --features pinc";
 
-/// db1 disconnects both its peers, and neither comes back through discovery,
-/// whichever side's discovery would dial. pinc only: libp2p's close carries
-/// no reason, so there the peers' own Kademlia dials db1 back.
+/// db1 disconnects both its peers. A new node, db3, then connects db1 and
+/// db0, and hands db0 and, through db0's list, db2 a list naming db1: neither
+/// dials db1 back. pinc only: libp2p's close carries no reason, so there the
+/// peers' own Kademlia dials db1 back.
 #[test]
 #[mantra_macros::req_test("defra.net.peers.disconnect_sticks.discovery")]
 fn a_disconnected_peer_is_not_dialed_back_by_discovery() {
@@ -124,21 +146,43 @@ fn a_disconnected_peer_is_not_dialed_back_by_discovery() {
         eprintln!("{LIBP2P_SKIP}");
         return;
     }
-    let mut actions = three_connected_nodes();
-    actions.extend([
+    let mut actions = three_connected_nodes(true);
+    actions.push(
         DisconnectPeers {
             targets: vec!["db0".into(), "db2".into()],
             common: on("db1"),
             ..Default::default()
         }
         .into(),
-        Wait {
-            millis: Some(DISCOVERY_WINDOW_MILLIS),
+    );
+    actions.extend(node("db3", "peer3"));
+    actions.extend([
+        watch("db3"),
+        ConnectPeers {
+            target: "db1".into(),
+            common: on("db3"),
+            ..Default::default()
+        }
+        .into(),
+        ConnectPeers {
+            target: "db0".into(),
+            common: on("db3"),
+            ..Default::default()
+        }
+        .into(),
+        // db3's list names db1 to db0; db0's names db2 to db3, which dials
+        // it and names db1 to db2.
+        learned("db0", &["db3"]),
+        learned("db3", &["db0"]),
+        learned("db2", &["db3"]),
+        ActivePeers {
+            expected_data: json!({ "addresses": m::unordered(json!([m::r("peer0"), m::r("peer1"), m::r("peer2")])) }),
+            common: on("db3"),
             ..Default::default()
         }
         .into(),
         ActivePeers {
-            expected_data: json!({ "addresses": m::unordered(json!([])) }),
+            expected_data: json!({ "addresses": m::unordered(json!([m::r("peer3")])) }),
             common: on("db1"),
             ..Default::default()
         }
@@ -162,15 +206,9 @@ fn a_fresh_list_does_not_redial_a_disconnected_peer() {
         eprintln!("{LIBP2P_SKIP}");
         return;
     }
-    let mut actions = three_connected_nodes();
+    let mut actions = three_connected_nodes(true);
     actions.extend([
-        // db2 must hold db0 for its fresh list to name it: db1's peer
-        // exchange introduced them, so wait for that dial to land.
-        Wait {
-            millis: Some(DISCOVERY_WINDOW_MILLIS),
-            ..Default::default()
-        }
-        .into(),
+        // db2 holds db0, so its fresh list names it.
         ActivePeers {
             expected_data: json!({ "addresses": m::unordered(json!([m::r("peer0"), m::r("peer1")])) }),
             common: on("db2"),
@@ -189,11 +227,7 @@ fn a_fresh_list_does_not_redial_a_disconnected_peer() {
             ..Default::default()
         }
         .into(),
-        Wait {
-            millis: Some(DISCOVERY_WINDOW_MILLIS),
-            ..Default::default()
-        }
-        .into(),
+        learned("db1", &["db2"]),
         ActivePeers {
             expected_data: json!({ "addresses": m::unordered(json!([m::r("peer2")])) }),
             common: on("db1"),

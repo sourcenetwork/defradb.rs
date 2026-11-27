@@ -231,7 +231,8 @@ impl TestNode {
         }
     }
 
-    /// Start recording the node's update, merge and topic events.
+    /// Start recording the node's update, merge, topic and peer exchange
+    /// events.
     pub fn watch(&self) -> Result<(), String> {
         let node = self
             .embedded
@@ -243,6 +244,7 @@ impl TestNode {
             EventName::TopicPeerEvent,
             EventName::P2PGossipHeadDropped,
             EventName::SEArtifactReceived,
+            EventName::PeersLearned,
         ]);
         self.events
             .store(Some(Arc::new(Events::new(subscription.into_receiver()))));
@@ -605,6 +607,9 @@ struct EventLog {
     topics: VecDeque<(String, String, String)>,
     /// Gossip heads the node dropped past a deferral budget, not yet awaited.
     gossip_dropped: VecDeque<events::P2PGossipHeadDroppedData>,
+    /// The peers whose lists the node read and settled the dials of, not yet
+    /// awaited, oldest first.
+    peers_learned: VecDeque<String>,
     /// Every document a searchable-encryption artifact arrived for.
     se_synced: RapidHashSet<String>,
     /// The field blocks each local update's head links to, by head: field
@@ -679,6 +684,9 @@ impl Events {
             MessageData::SEArtifactReceived(event) => self.update(|log| {
                 log.se_synced.insert(event.doc_id);
             }),
+            MessageData::PeersLearned(event) => {
+                self.update(|log| log.peers_learned.push_back(event.peer_id))
+            }
             _ => {}
         }
         Ok(())
@@ -776,6 +784,35 @@ impl Events {
             })?;
         }
         Ok(dropped)
+    }
+
+    /// Wait until the node read a peer list from each of `peers` (peer IDs)
+    /// and every discovery dial the list scheduled settled, consuming one
+    /// such event per peer; events from other peers stay for a later wait.
+    pub async fn peers_learned(
+        &self,
+        mut peers: Vec<String>,
+        deadline: Duration,
+    ) -> Result<(), String> {
+        let end = std::time::Instant::now() + deadline;
+        loop {
+            let mut log = self.log.load_clone();
+            peers.retain(|peer| {
+                let Some(at) = log.peers_learned.iter().position(|from| from == peer) else {
+                    return true;
+                };
+                log.peers_learned.remove(at);
+                false
+            });
+            self.log.store(log);
+            if peers.is_empty() {
+                return Ok(());
+            }
+            let left = end.saturating_duration_since(std::time::Instant::now());
+            self.receive(left)
+                .await
+                .map_err(|reason| format!("no peer list learned from {peers:?}: {reason}"))?;
+        }
     }
 
     /// Wait until every (topic, peer) in `wanted` has an event of `kind`,

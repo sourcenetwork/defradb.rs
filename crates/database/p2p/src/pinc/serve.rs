@@ -201,7 +201,7 @@ impl<H: Hosted + 'static> Node<H> {
                 let _ = send.finish().await;
             }
             services::STREAM_PEERS => {
-                let learned = self.learn_peers(&payload);
+                let learned = self.learn_peers(peer, &payload);
                 drop(lease);
                 let _ = send.finish().await;
                 learned?;

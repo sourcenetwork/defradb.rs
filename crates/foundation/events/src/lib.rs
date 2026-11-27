@@ -46,8 +46,8 @@ pub use event::{
     AcpCacheInvalidatedData, AcpHeightAdvancedData, AcpOwedChangeRefusedData,
     AcpTakeoverReconciledData, AcpTakeoverSubmission, AcpTakeoverUnrestorable, EventName,
     MergeCompleteData, Message, MessageData, P2PBroadcastDroppedData, P2PGossipHeadDroppedData,
-    PeerConnectionData, PendingDagQuarantinedData, ReplicatorCompletedData, SEArtifactReceivedData,
-    TopicPeerEventData, UniqueIndexConflictData, Update,
+    PeerConnectionData, PeersLearnedData, PendingDagQuarantinedData, ReplicatorCompletedData,
+    SEArtifactReceivedData, TopicPeerEventData, UniqueIndexConflictData, Update,
 };
 pub use noop_bus::NoOpBus;
 pub use subscription::{Subscription, TryRecvError};

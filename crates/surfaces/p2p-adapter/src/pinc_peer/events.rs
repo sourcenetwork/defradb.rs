@@ -181,6 +181,11 @@ async fn publish_peer_lifecycle<T, S: Store + 'static>(
         TransportEvent::PeerUnsubscribed { peer_id, topic } => {
             publish_topic_peer(event_bus, peer_id, topic, "LEFT");
         }
+        TransportEvent::PeersLearned { peer_id } => {
+            event_bus.publish(events::Message::peers_learned(events::PeersLearnedData {
+                peer_id: peer_id.to_string(),
+            }));
+        }
         _ => {}
     }
 }

@@ -22,6 +22,9 @@ pub enum EventName {
     TopicPeerEvent,
     /// A transport connection to a peer opened or closed.
     PeerConnection,
+    /// pinc: a peer list from a peer was read and every discovery dial it
+    /// scheduled has settled.
+    PeersLearned,
     /// SE artifact received after merge (encrypted index document).
     SEArtifactReceived,
     /// ACP light client advanced to a new finalized header.
@@ -71,6 +74,7 @@ impl std::fmt::Display for EventName {
             EventName::ReplicatorCompleted => write!(f, "replicator-completed"),
             EventName::TopicPeerEvent => write!(f, "topic-peer-event"),
             EventName::PeerConnection => write!(f, "peer-connection"),
+            EventName::PeersLearned => write!(f, "peers-learned"),
             EventName::SEArtifactReceived => write!(f, "se-artifact-received"),
             EventName::AcpHeightAdvanced => write!(f, "acp-height-advanced"),
             EventName::AcpCacheInvalidated => write!(f, "acp-cache-invalidated"),
@@ -118,6 +122,14 @@ pub struct PeerConnectionData {
     pub peer_id: String,
     /// True when the connection opened, false when it closed.
     pub connected: bool,
+}
+
+/// A peer list one peer sent was read, and every discovery dial it scheduled
+/// has landed, failed or been skipped (pinc peer exchange).
+#[derive(Debug, Clone)]
+pub struct PeersLearnedData {
+    /// The peer whose list was read.
+    pub peer_id: String,
 }
 
 /// SE artifact received event data.
@@ -411,6 +423,8 @@ pub enum MessageData {
     TopicPeerEvent(TopicPeerEventData),
     /// Peer connection opened or closed.
     PeerConnection(PeerConnectionData),
+    /// A peer's list was read and its discovery dials settled.
+    PeersLearned(PeersLearnedData),
     /// SE artifact received after merge.
     SEArtifactReceived(SEArtifactReceivedData),
     /// ACP light client finalized height advanced.
@@ -493,6 +507,14 @@ impl Message {
         Self {
             name: EventName::PeerConnection,
             data: MessageData::PeerConnection(data),
+        }
+    }
+
+    /// Create a new PeersLearned message.
+    pub fn peers_learned(data: PeersLearnedData) -> Self {
+        Self {
+            name: EventName::PeersLearned,
+            data: MessageData::PeersLearned(data),
         }
     }
 
