@@ -433,35 +433,19 @@ pub(crate) async fn index_action_executions(
     systemstore: &datastore::NamespaceView,
     collection_id: &str,
 ) -> Result<RapidHashMap<u32, ActionExecution>> {
-    index_action_records(systemstore, collection_id, false).await
-}
-
-/// [`index_action_statuses`] read as a validated scan: a status written in
-/// the range before this transaction commits aborts it. What a transaction
-/// publishes to the collection cache from these statuses is then the state
-/// at its own commit, so a publication never puts back an index status that
-/// a concurrent commit changed (`proofs/tla/IndexCachePublication.tla`).
-pub(crate) async fn validated_index_action_statuses(
-    systemstore: &datastore::NamespaceView,
-    collection_id: &str,
-) -> Result<RapidHashMap<u32, ActionStatus>> {
-    Ok(index_action_records(systemstore, collection_id, true)
-        .await?
-        .into_iter()
-        .map(|(index_id, execution)| (index_id, execution.status))
-        .collect())
+    index_action_records(systemstore, collection_id).await
 }
 
 async fn index_action_records(
     systemstore: &datastore::NamespaceView,
     collection_id: &str,
-    validated: bool,
 ) -> Result<RapidHashMap<u32, ActionExecution>> {
     let mut iter = systemstore
         .iterator(
-            IterOptions::new()
-                .with_prefix(ActionStatusKey::collection_prefix(collection_id))
-                .with_validation(validated),
+            IterOptions::new().with_prefix(ActionStatusKey::action_prefix(
+                collection_id,
+                Action::BACKFILL_INDEX,
+            )),
         )
         .await
         .map_err(Error::Storage)?;

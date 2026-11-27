@@ -148,6 +148,7 @@ where
                 index: index_name.to_string(),
             })?;
         let index = schema.indexes.remove(position);
+        let index_id = index.id;
         retire_index_id(&txn.datastore()?, schema.resolved_root_id(), index.id).await?;
         let data = serde_json::to_vec(&schema).map_err(|error| {
             Error::collection_schema_json(
@@ -192,11 +193,7 @@ where
         let cached = Collection::load_index_actions(schema, &systemstore).await?;
         let cache = Arc::clone(&self.collections);
         txn.on_commit(OnCommit::OrderedAndWait(Box::new(move || {
-            cache.rcu(|old| {
-                let mut cache = old.clone();
-                cache.put(cached.clone());
-                cache
-            });
+            cache.publish(cached, &[(index_id, None)]);
         })))?;
         Ok(DroppedIndex {
             lease,

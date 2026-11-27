@@ -57,9 +57,9 @@ fn updates() -> Vec<Actions> {
         .collect()
 }
 
-fn by_value_on(field: &str) -> IndexSpec {
+fn index_on(name: &str, field: &str) -> IndexSpec {
     IndexSpec {
-        name: "by_value".into(),
+        name: name.into(),
         unique: false,
         fields: vec![IndexField {
             name: field.into(),
@@ -77,7 +77,6 @@ fn an_index_dropped_and_created_again_under_updates_is_built_and_used() {
         DeleteIndex {
             collection: "U".into(),
             index_name: "by_value".into(),
-            expected_data: succeeds(),
             common: Common {
                 envelope: true,
                 ..Default::default()
@@ -90,8 +89,7 @@ fn an_index_dropped_and_created_again_under_updates_is_built_and_used() {
     create_under_writes.push(
         NewIndex {
             collection: "U".into(),
-            index: by_value_on("h"),
-            expected_data: succeeds(),
+            index: index_on("by_value", "h"),
             common: Common {
                 envelope: true,
                 ..Default::default()
@@ -110,12 +108,18 @@ fn an_index_dropped_and_created_again_under_updates_is_built_and_used() {
     actions.extend([
         NewIndex {
             collection: "U".into(),
-            index: by_value_on("g"),
+            index: index_on("by_value", "g"),
             ..Default::default()
         }
         .into(),
         Parallel {
             actions: drop_under_writes,
+            ..Default::default()
+        }
+        .into(),
+        ListIndexes {
+            collection: "U".into(),
+            expected_data: json!({ "indexes": m::unordered(json!([])) }),
             ..Default::default()
         }
         .into(),
@@ -147,6 +151,76 @@ fn an_index_dropped_and_created_again_under_updates_is_built_and_used() {
         Request {
             request: "query @explain(type: execute) { U(filter: {h: {_eq: 101}}) { h } }".into(),
             expected_data: m::explain_scan(json!({ "indexFetches": 1 })),
+            ..Default::default()
+        }
+        .into(),
+    ]);
+    TestCase {
+        id: integration_test::scenario_id!(),
+        actions: actions.into_iter().map(Into::into).collect(),
+        ..Default::default()
+    }
+    .execute();
+}
+
+#[test]
+#[mantra_macros::req_test("defra.index.ddl_under_writes")]
+fn indexes_created_together_under_updates_are_built() {
+    let mut actions: Vec<Actions> = vec![AddCollection {
+        sdl: "type U { n: Int @crdt(type: pcounter)  g: Int  h: Int }".into(),
+        ..Default::default()
+    }
+    .into()];
+    actions.extend((0..DOCS).map(add));
+    let mut together = updates();
+    together.extend([
+        NewIndex {
+            collection: "U".into(),
+            index: index_on("by_g", "g"),
+            common: Common {
+                envelope: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        }
+        .into(),
+        NewIndex {
+            collection: "U".into(),
+            index: index_on("by_h", "h"),
+            common: Common {
+                envelope: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        }
+        .into(),
+    ]);
+    actions.extend([
+        Parallel {
+            actions: together,
+            ..Default::default()
+        }
+        .into(),
+        ListIndexes {
+            collection: "U".into(),
+            expected_data: json!({
+                "indexes": m::unordered(json!([
+                    m::object(json!({
+                        "Description": m::object(json!({
+                            "Name": "by_g",
+                            "Fields": [m::object(json!({ "Name": "g" }))],
+                        })),
+                        "Execution": m::object(json!({ "Status": 3 })),
+                    })),
+                    m::object(json!({
+                        "Description": m::object(json!({
+                            "Name": "by_h",
+                            "Fields": [m::object(json!({ "Name": "h" }))],
+                        })),
+                        "Execution": m::object(json!({ "Status": 3 })),
+                    })),
+                ])),
+            }),
             ..Default::default()
         }
         .into(),

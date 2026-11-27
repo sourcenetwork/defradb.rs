@@ -5,14 +5,14 @@
 //! The planner reads only the cache, so a settlement that reached the store
 //! but not the cache would leave a built index unused, or a failed one still
 //! maintained by writers. The publication runs on the settling commit, in
-//! commit order, and carries the statuses that commit read as a validated
-//! scan, so it is the state at that commit and no other publication can be
-//! overtaken by it (`proofs/tla/IndexCachePublication.tla`).
+//! commit order, and changes only its own index's status in the cache entry it
+//! finds there, so another index's settlement cannot be overtaken
+//! (`proofs/tla/IndexCachePublication.tla`).
 
 use std::sync::Arc;
 
 use datastore::NamespaceView;
-use defra_core::Action;
+use defra_core::{Action, ActionExecution};
 use storage::corekv::{
     Key, OnCommit, RetryAttemptError, RetryAttemptFn, RetryAttemptFuture, RetryAttemptValue,
     RetryTxn,
@@ -25,23 +25,24 @@ use crate::error::{Error, Result};
 use crate::index::backfill::{ensure_backfill_index_unchanged, BackfillPlan};
 use crate::index::IndexManager;
 
-/// Publish `collection`, as the transaction of `systemstore` reads it with
-/// its own writes, to the cache once that transaction commits, before the
-/// commit returns.
+/// Publish `collection`'s definition and the transaction's index `changes` to
+/// the cache once that transaction commits, before the commit returns.
 async fn publish_on_commit(
     systemstore: &NamespaceView,
     cache: &Arc<EpochedCollections>,
-    collection: &Collection,
+    collection_id: &str,
+    changes: Vec<(u32, Option<defra_core::ActionStatus>)>,
+    event_bus: Option<Arc<dyn events::Bus>>,
+    execution: ActionExecution,
 ) -> Result<()> {
-    let settled = Collection::load_index_actions(collection.schema().clone(), systemstore).await?;
+    let collection_id = collection_id.to_string();
     let cache = Arc::clone(cache);
     systemstore
         .on_commit(OnCommit::OrderedAndWait(Box::new(move || {
-            cache.rcu(|old| {
-                let mut cache = old.clone();
-                cache.put(settled.clone());
-                cache
-            });
+            cache.publish_statuses(&collection_id, &changes);
+            if let Some(bus) = event_bus {
+                bus.publish(events::Message::action_execution(execution));
+            }
         })))
         .await
         .map_err(Error::Storage)
@@ -54,6 +55,8 @@ pub(super) struct FinishIndexAttempt {
     pub(super) collection: Collection,
     pub(super) plan: BackfillPlan,
     pub(super) cache: Arc<EpochedCollections>,
+    pub(super) event_bus: Option<Arc<dyn events::Bus>>,
+    pub(super) execution: ActionExecution,
 }
 
 impl RetryAttemptFn for FinishIndexAttempt {
@@ -87,7 +90,15 @@ impl RetryAttemptFn for FinishIndexAttempt {
                     &self.plan.index_id().to_string(),
                 )
                 .await?;
-                publish_on_commit(&systemstore, &self.cache, &collection).await
+                publish_on_commit(
+                    &systemstore,
+                    &self.cache,
+                    collection.collection_id(),
+                    vec![(self.plan.index_id(), None)],
+                    self.event_bus.clone(),
+                    self.execution.clone(),
+                )
+                .await
             }
             .await;
             built.map_err(|error| RetryAttemptError::Abort(Box::new(error)))?;
@@ -105,6 +116,8 @@ pub(super) struct FailBackfillAttempt {
     pub(super) reason: String,
     pub(super) crdts: storage::Crdts,
     pub(super) cache: Arc<EpochedCollections>,
+    pub(super) event_bus: Option<Arc<dyn events::Bus>>,
+    pub(super) execution: ActionExecution,
 }
 
 impl RetryAttemptFn for FailBackfillAttempt {
@@ -142,7 +155,18 @@ impl RetryAttemptFn for FailBackfillAttempt {
                     .delete(&self.plan.progress_key().bytes())
                     .await
                     .map_err(Error::Storage)?;
-                publish_on_commit(&systemstore, &self.cache, &collection).await?;
+                publish_on_commit(
+                    &systemstore,
+                    &self.cache,
+                    collection.collection_id(),
+                    vec![(
+                        self.plan.index_id(),
+                        Some(defra_core::ActionStatus::ERRORED),
+                    )],
+                    self.event_bus.clone(),
+                    self.execution.clone(),
+                )
+                .await?;
                 Ok(true)
             }
             .await;

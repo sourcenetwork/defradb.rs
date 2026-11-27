@@ -205,15 +205,15 @@ fn serialize_definition_hint(def: &CollectionVersion) -> Option<Arc<[u8]>> {
 }
 
 impl Collection {
-    /// `def` with the index statuses its transaction reads, as a validated
-    /// scan: what a transaction publishes to the collection cache. A status
-    /// another commit writes first aborts the transaction, so the handle it
-    /// publishes is the state at its own commit.
+    /// `def` with the index statuses its transaction reads. A publication
+    /// takes the statuses of indexes already in the cache at its ordered
+    /// commit callback, so this snapshot supplies only indexes the cache has
+    /// not seen and the reindex marker this transaction read.
     pub(crate) async fn load_index_actions(
         def: CollectionVersion,
         systemstore: &datastore::NamespaceView,
     ) -> crate::error::Result<Self> {
-        let statuses = IndexStatuses::load_validated_for(systemstore, &def).await?;
+        let statuses = IndexStatuses::load_for(systemstore, &def).await?;
         Ok(Self::with_index_actions(
             def,
             &statuses,
@@ -324,6 +324,71 @@ impl Collection {
                 &self.crdts,
             ),
             ..self.clone()
+        }
+    }
+
+    /// This definition with index statuses current at its commit callback.
+    /// `changes` carries only the statuses this transaction changed; every
+    /// other index keeps the status already in the cache, or this snapshot's
+    /// status when the cache has not seen that index.
+    pub(crate) fn with_current_index_actions(
+        &self,
+        current: Option<&Self>,
+        changes: &[(u32, Option<defra_core::ActionStatus>)],
+    ) -> Self {
+        let mut def = self.schema().clone();
+        if let Some(current) = current {
+            def.indexes = current.schema().indexes.clone();
+            for (index_id, _) in changes {
+                if let Some(index) = self
+                    .schema()
+                    .indexes
+                    .iter()
+                    .find(|index| index.id == *index_id)
+                {
+                    match def.indexes.iter_mut().find(|index| index.id == *index_id) {
+                        Some(current) => *current = index.clone(),
+                        None => def.indexes.push(index.clone()),
+                    }
+                } else {
+                    def.indexes.retain(|index| index.id != *index_id);
+                }
+            }
+        }
+        let def = Arc::new(def);
+        let definition_wire = serialize_definition_hint(&def);
+        let mut actions = rapidhash::RapidHashMap::default();
+        for index in &def.indexes {
+            let change = changes
+                .iter()
+                .find_map(|(id, status)| (*id == index.id).then_some(status));
+            let status = match change {
+                Some(status) => *status,
+                None => current
+                    .and_then(|collection| collection.index_action_status(index.id))
+                    .or_else(|| self.index_action_status(index.id)),
+            };
+            if let Some(status) = status {
+                actions.insert(index.id, status);
+            }
+        }
+        let statuses = IndexStatuses::from_parts(actions, self.reindex_owed);
+        Self::with_index_actions_and_wire(
+            def,
+            definition_wire,
+            Arc::clone(&self.part_id_snapshot),
+            &statuses,
+            self.crdts.clone(),
+        )
+    }
+
+    fn index_action_status(&self, index_id: u32) -> Option<defra_core::ActionStatus> {
+        if self.built_indexes.iter().any(|index| index.id == index_id) {
+            None
+        } else if self.write_indexes.iter().any(|index| index.id == index_id) {
+            Some(defra_core::ActionStatus::IN_PROGRESS)
+        } else {
+            Some(defra_core::ActionStatus::ERRORED)
         }
     }
 

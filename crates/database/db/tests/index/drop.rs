@@ -145,7 +145,6 @@ async fn half_backfilled(
             .unwrap();
     }
     txn.commit().await.unwrap();
-    db.reload_cache().await.unwrap();
     (store, db, schema, index)
 }
 
@@ -311,7 +310,6 @@ fn a_restart_clears_a_failed_backfill_of_a_dropped_index() {
                 .unwrap();
         }
         txn.commit().await.unwrap();
-        db.reload_cache().await.unwrap();
         assert_eq!(actions_for(&db, Action::BACKFILL_INDEX).await.len(), 1);
         drop(db);
 

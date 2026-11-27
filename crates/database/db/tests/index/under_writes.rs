@@ -10,6 +10,7 @@ use std::sync::{
 use db::{AutoCommitMutator, DB};
 use document::{DocID, Document, NormalValue};
 use query::DocMutator;
+use regolith::sync::Event;
 use schema::{CollectionVersion, IndexKind, IndexedFieldDescription, OrderedIndexDescription};
 use storage::RegolithStore;
 
@@ -120,6 +121,14 @@ where
     F: FnOnce(Arc<DB<RegolithStore>>) -> Fut + Send + 'static,
     Fut: std::future::Future<Output = ()> + 'static,
 {
+    struct StopOnDrop(Arc<AtomicBool>);
+
+    impl Drop for StopOnDrop {
+        fn drop(&mut self) {
+            self.0.store(true, Ordering::Relaxed);
+        }
+    }
+
     workers::block_on(async {
         let (db, ids) = open().await;
         let (fields, kind) = on("n");
@@ -127,6 +136,7 @@ where
             .await
             .unwrap();
         let stop = Arc::new(AtomicBool::new(false));
+        let stop_on_drop = StopOnDrop(Arc::clone(&stop));
         let writers = start_writers(&db, &ids, &stop);
         let stepper = db.clone();
         workers::spawn(Some(crate::common::worker_io::pool()), "steps", move || {
@@ -135,7 +145,7 @@ where
         .unwrap()
         .await
         .unwrap();
-        stop.store(true, Ordering::Relaxed);
+        drop(stop_on_drop);
         for writer in writers {
             writer.await.unwrap();
         }
@@ -169,4 +179,36 @@ fn a_second_index_created_while_updates_run_is_built() {
         assert_built(&db, "by_g").await;
         assert_built(&db, "by_n").await;
     })
+}
+
+#[test]
+#[mantra_macros::req_test("defra.index.ddl_under_writes")]
+fn two_indexes_created_together_are_built() {
+    workers::block_on(async {
+        let (db, _) = open().await;
+        let start = Arc::new(Event::new());
+        let create = |name: &'static str, field: &'static str| {
+            let db = Arc::clone(&db);
+            let start = Arc::clone(&start);
+            workers::spawn(
+                Some(crate::common::worker_io::pool()),
+                "create-index",
+                move || async move {
+                    start.wait().await;
+                    let (fields, kind) = on(field);
+                    db.create_index("U", Some(name), fields, kind).await
+                },
+            )
+            .unwrap()
+        };
+        let first = create("by_g", "g");
+        let second = create("by_n", "n");
+        start.set();
+        let (first, second) = futures::join!(first, second);
+        let (first, second) = (first.unwrap().unwrap(), second.unwrap().unwrap());
+        assert_ne!(first.id, second.id);
+        assert_built(&db, "by_g").await;
+        assert_built(&db, "by_n").await;
+    })
+    .unwrap();
 }

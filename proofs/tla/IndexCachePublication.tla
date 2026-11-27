@@ -16,8 +16,12 @@
 \*   - something else on the node that publishes an unrelated cache change
 \*     (another collection's schema, say) once, at any time.
 \*
-\* Cache publications run in commit order, after the commit. Each one puts
-\* the whole collection as the publishing transaction read it.
+\* Cache publications run in commit order, after the commit. A publication
+\* carries its transaction's definition and applies only the index status
+\* that transaction changed; every other index keeps the status already in
+\* the cache at that point in commit order.
+\* A create reserves its index ID before its transaction, so two creates name
+\* two indexes even when their snapshots both predate either definition.
 \*
 \* What must never happen:
 \*   - a create returns while the cache does not have its index yet, so the
@@ -28,21 +32,27 @@
 \*     and the cache still calls it building, so it is never used.
 \*
 \* Code it models (crates/database/db/src/index):
-\*   create.rs    DB::stage_index_definition (definition and record in one
-\*                commit, the cache publication awaited before the create
-\*                returns: OnCommit::OrderedAndWait)
+\*   create.rs    DB::define_index, DB::allocate_index_id,
+\*                DB::stage_index_definition (the ID is reserved before the
+\*                transaction; the definition and record commit together, and
+\*                the create waits for their cache publication:
+\*                OnCommit::OrderedAndWait)
+\*   manager/mod.rs IndexManager::create_index_of_kind_with_id (uses the
+\*                reserved ID instead of choosing one from a stale snapshot)
 \*   drop.rs      DB::stage_index_drop (the same publication for a drop)
 \*   settle.rs    FinishIndexAttempt (the build and the cleared record in one
 \*                commit, which publishes the built index), FailBackfillAttempt
 \*                (the errored record, published the same way), publish_on_commit
 \*   backfill.rs  DB::backfill_index (no cache reload after settling)
 \*   crates/database/db/src/collection/index_status.rs
-\*                IndexStatuses::load_validated_for (the statuses a publication
-\*                carries, read as a validated scan, through
-\*                Collection::load_index_actions)
+\*                IndexStatuses::load_for (the snapshot that supplies indexes
+\*                the cache has not seen)
+\*   crates/database/db/src/collection/mod.rs
+\*                Collection::load_index_actions, with_current_index_actions
 \*   crates/database/db/src/collection/epoch.rs
-\*                EpochedCollections::rcu_if_epoch (a reload that any other
-\*                publication overtakes is dropped)
+\*                EpochedCollections::publish, publish_statuses, rcu_if_epoch
+\*                (per-index changes; a settlement never restores a stale
+\*                definition; a reload another publication overtakes is dropped)
 \*   crates/engine/storage/src/corekv/callbacks.rs OnCommit::Ordered,
 \*                OnCommit::OrderedAndWait
 EXTENDS Naturals, Sequences
@@ -50,12 +60,12 @@ EXTENDS Naturals, Sequences
 CONSTANTS
   PublishMode, \* "Wait": a create returns after its cache publication ran | "Queue": right after its commit
   SettleMode,  \* "Commit": a backfill's settling commit publishes the cache | "Reload": a reload after it does
-  StatusRead   \* "Validated": a publishing transaction's read of the index statuses is validated | "Snapshot": it is not
+  StatusRead   \* "Incremental": a publication applies its own index only | "Validated" or "Snapshot": it puts every status it read
 
 \* Each switch takes one of its two values.
 ASSUME PublishMode \in {"Wait", "Queue"}
 ASSUME SettleMode \in {"Commit", "Reload"}
-ASSUME StatusRead \in {"Validated", "Snapshot"}
+ASSUME StatusRead \in {"Incremental", "Validated", "Snapshot"}
 
 \* The two indexes someone creates.
 Indexes == {"a", "b"}
@@ -75,14 +85,14 @@ Status == {"None", "Building", "Built", "Errored"}
 \*   ReloadPub  the reload read the epoch and the store, about to publish
 \*   Done       finished
 Pcs == {"Idle", "Created", "AwaitPub", "Returned", "Settling", "SettlePub",
-        "ReloadRead", "ReloadPub", "Done"}
+        "ReloadRead", "ReloadPub", "Done", "DropPub", "Dropped"}
 
 \* A queued publication: the whole collection it puts, or, when other is
 \* TRUE, the unrelated change, which puts nothing of this collection.
-Pub == [other : BOOLEAN, val : [Indexes -> Status]]
+Pub == [other : BOOLEAN, target : Indexes, val : [Indexes -> Status]]
 
 \* The states in which the create has returned to its caller.
-ReturnedPcs == {"Returned", "Settling", "SettlePub", "ReloadRead", "ReloadPub", "Done"}
+CreatedPcs == {"Returned", "Settling", "SettlePub", "ReloadRead", "ReloadPub", "Done"}
 
 VARIABLES
   store,     \* each index's status on disk
@@ -151,12 +161,12 @@ Open(i) ==
 \* it read it (always validated), or, when that read is validated, a status.
 Conflicts(i) ==
   \/ defVer # readDef[i]                                   \* a definition change landed first
-  \/ (StatusRead = "Validated" /\ statVer # readStat[i])   \* a status change landed first
+  \/ (StatusRead # "Incremental" /\ statVer # readStat[i]) \* an old whole-scan publication conflicts
 
 \* Queue the publication of i's transaction: the whole collection as it
 \* read it, with its own write applied.
 Publish(i, status) ==
-  /\ queue' = Append(queue, [other |-> FALSE, val |-> [snap[i] EXCEPT ![i] = status]]) \* what it computed from its reads
+  /\ queue' = Append(queue, [other |-> FALSE, target |-> i, val |-> [snap[i] EXCEPT ![i] = status]]) \* what it computed from its reads
   /\ appended' = appended + 1                               \* one more queued
   /\ mySeq' = [mySeq EXCEPT ![i] = appended + 1]            \* remember where it sits
 
@@ -247,6 +257,29 @@ SettleReturn(i) ==
                  applied, held, otherDone, snap, readDef, readStat, mySeq,
                  reloadEp, outcome>>
 
+\* The index is dropped: its definition and status record leave in one commit,
+\* and the publication names None for that index. With "Wait" the drop returns
+\* only after the publication; with "Queue" it returns at once.
+Drop(i) ==
+  /\ pc[i] = "Done"                                      \* the index finished building
+  /\ snap' = [snap EXCEPT ![i] = store]                  \* the statuses the drop read
+  /\ store' = [store EXCEPT ![i] = "None"]               \* definition and record are gone
+  /\ defVer' = defVer + 1                                \* the definition key changed
+  /\ statVer' = statVer + 1                              \* the backfill status changed
+  /\ Publish(i, "None")                                  \* its cache change waits in order
+  /\ pc' = [pc EXCEPT ![i] = IF PublishMode = "Wait" THEN "DropPub" ELSE "Dropped"]
+  /\ UNCHANGED <<cache, epoch, applied, held, otherDone, readDef,
+                 readStat, reloadEp, outcome>>
+
+\* The drop returns once its own publication has run.
+DropReturn(i) ==
+  /\ pc[i] = "DropPub"                                   \* waiting for its publication
+  /\ applied >= mySeq[i]                                 \* it has run
+  /\ pc' = [pc EXCEPT ![i] = "Dropped"]                  \* back to the caller
+  /\ UNCHANGED <<store, defVer, statVer, cache, epoch, queue, appended,
+                 applied, held, otherDone, snap, readDef, readStat, mySeq,
+                 reloadEp, outcome>>
+
 \* The reload reads the cache's epoch and everything on disk.
 ReloadRead(i) ==
   /\ pc[i] = "ReloadRead"                        \* the settle committed
@@ -282,7 +315,7 @@ Release ==
 Other ==
   /\ ~otherDone                                  \* once
   /\ otherDone' = TRUE                           \* done
-  /\ queue' = Append(queue, [other |-> TRUE, val |-> cache]) \* its publication waits its turn
+  /\ queue' = Append(queue, [other |-> TRUE, target |-> "a", val |-> cache]) \* its publication waits its turn
   /\ appended' = appended + 1                    \* one more queued
   /\ UNCHANGED <<store, defVer, statVer, cache, epoch, applied, held, pc,
                  snap, readDef, readStat, mySeq, reloadEp, outcome>>
@@ -292,7 +325,11 @@ Other ==
 Dispatch ==
   /\ ~held                                       \* nothing holds it back
   /\ queue # <<>>                                \* something to run
-  /\ cache' = IF Head(queue).other THEN cache ELSE Head(queue).val \* put the whole collection
+  /\ cache' = IF Head(queue).other
+                THEN cache                    \* the unrelated change touches no index
+                ELSE IF StatusRead = "Incremental"
+                     THEN [cache EXCEPT ![Head(queue).target] = Head(queue).val[Head(queue).target]] \* apply only the publishing index
+                     ELSE Head(queue).val         \* the old whole-collection publication
   /\ epoch' = epoch + 1                          \* one more publication
   /\ queue' = Tail(queue)                        \* it is done
   /\ applied' = applied + 1                      \* and counted
@@ -304,7 +341,7 @@ Next ==
   \/ \E i \in Indexes:
        \/ CreateRead(i) \/ CreateConflict(i) \/ CreateCommit(i) \/ CreateReturn(i)
        \/ SettleRead(i) \/ SettleConflict(i) \/ SettleCommit(i) \/ SettleReturn(i)
-       \/ ReloadRead(i) \/ ReloadPublish(i)
+       \/ ReloadRead(i) \/ ReloadPublish(i) \/ Drop(i) \/ DropReturn(i)
   \/ Release \/ Other \/ Dispatch
 
 \* The system starts in Init and every step is one of Next.
@@ -312,7 +349,7 @@ Spec == Init /\ [][Next]_vars
 
 \* Everyone has finished and nothing is left to publish.
 Quiet ==
-  /\ \A i \in Indexes: pc[i] = "Done"            \* both indexes settled
+  /\ \A i \in Indexes: pc[i] \in {"Done", "Dropped"} \* every index settled or dropped
   /\ otherDone                                   \* the unrelated change happened
   /\ queue = <<>>                                \* every publication ran
 
@@ -324,7 +361,8 @@ INV_TypeOK == TypeOK
 \* A create that returned left its index in the cache, so its caller's next
 \* request sees the definition it committed.
 INV_ReturnSeesOwn ==
-  \A i \in Indexes: pc[i] \in ReturnedPcs => cache[i] # "None"
+  /\ \A i \in Indexes: pc[i] \in CreatedPcs => cache[i] # "None"
+  /\ \A i \in Indexes: pc[i] = "Dropped" => cache[i] = "None"
 
 \* Once everyone has finished, the cache says what the store says about every
 \* index: an index built on disk is used, and a failed one is listed failed.

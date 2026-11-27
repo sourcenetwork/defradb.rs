@@ -15,7 +15,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use datastore::NamespaceView;
-use defra_core::{Action, ActionStatus};
+use defra_core::{Action, ActionExecution, ActionStatus};
 use document::Document;
 use lens::{TargetedHistoryLink, TransformStore};
 use schema::IndexDescription;
@@ -122,7 +122,7 @@ impl<S: Store> DB<S> {
         lease: ActionExecutionLease,
         plan: BackfillPlan,
     ) -> Result<()> {
-        match self.backfill_batches(&plan).await {
+        match self.backfill_batches(&plan, &lease).await {
             Ok(indexed) => {
                 tracing::info!(
                     collection_id = %plan.collection_id,
@@ -130,7 +130,6 @@ impl<S: Store> DB<S> {
                     indexed,
                     "index backfill completed"
                 );
-                self.publish_completed_action(&lease);
             }
             // Stopped by the close: the action stays in progress, as after a
             // crash, and the next open resumes it from its watermark.
@@ -144,14 +143,13 @@ impl<S: Store> DB<S> {
             }
             Err(error) => {
                 let reason = error.to_string();
-                if self.record_backfill_failure(&plan, &reason).await? {
+                if self.record_backfill_failure(&plan, &reason, &lease).await? {
                     tracing::error!(
                         collection_id = %plan.collection_id,
                         index_id = plan.index_id,
                         %error,
                         "index backfill failed"
                     );
-                    self.publish_failed_action(&lease, &reason);
                 } else {
                     tracing::info!(
                         collection_id = %plan.collection_id,
@@ -169,12 +167,25 @@ impl<S: Store> DB<S> {
     /// a failure written after it would show a failed backfill for an index
     /// that no longer exists. The definition is read in the same transaction
     /// as the write, so a drop committing first makes the attempt run again.
-    async fn record_backfill_failure(&self, plan: &BackfillPlan, reason: &str) -> Result<bool> {
+    async fn record_backfill_failure(
+        &self,
+        plan: &BackfillPlan,
+        reason: &str,
+        lease: &ActionExecutionLease,
+    ) -> Result<bool> {
         let attempt = FailBackfillAttempt {
             plan: plan.clone(),
             reason: reason.to_string(),
             crdts: self.crdts().clone(),
             cache: Arc::clone(&self.collections),
+            event_bus: self.event_bus().cloned(),
+            execution: ActionExecution {
+                collection_id: lease.collection_id().to_string(),
+                action: lease.action(),
+                subject: lease.subject().to_string(),
+                status: ActionStatus::ERRORED,
+                reason: reason.to_string(),
+            },
         };
         match self
             .store()
@@ -305,7 +316,11 @@ impl<S: Store> DB<S> {
         Ok(())
     }
 
-    async fn backfill_batches(&self, plan: &BackfillPlan) -> Result<usize> {
+    async fn backfill_batches(
+        &self,
+        plan: &BackfillPlan,
+        lease: &ActionExecutionLease,
+    ) -> Result<usize> {
         let mut last = plan.last;
         let mut indexed = 0;
         let mut max_docs = self.options().backfill_batch_docs();
@@ -335,6 +350,14 @@ impl<S: Store> DB<S> {
             collection: self.require_collection(&plan.collection_name)?,
             plan: plan.clone(),
             cache: Arc::clone(&self.collections),
+            event_bus: self.event_bus().cloned(),
+            execution: ActionExecution {
+                collection_id: lease.collection_id().to_string(),
+                action: lease.action(),
+                subject: lease.subject().to_string(),
+                status: ActionStatus::COMPLETED,
+                reason: String::new(),
+            },
         };
         match self
             .store()

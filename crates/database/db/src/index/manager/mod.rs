@@ -360,6 +360,41 @@ impl IndexManager {
         fields: Vec<IndexedFieldDescription>,
         kind: IndexKind,
     ) -> Result<IndexDescription> {
+        self.create_index_of_kind_at(datastore, collection_name, name, fields, kind, None)
+            .await
+    }
+
+    /// [`Self::create_index_of_kind`] with an ID allocated before the
+    /// transaction, so concurrent creates cannot choose the same ID.
+    pub(crate) async fn create_index_of_kind_with_id(
+        &mut self,
+        datastore: &NamespaceView,
+        collection_name: &str,
+        name: String,
+        fields: Vec<IndexedFieldDescription>,
+        kind: IndexKind,
+        index_id: u32,
+    ) -> Result<IndexDescription> {
+        self.create_index_of_kind_at(
+            datastore,
+            collection_name,
+            name,
+            fields,
+            kind,
+            Some(index_id),
+        )
+        .await
+    }
+
+    async fn create_index_of_kind_at(
+        &mut self,
+        datastore: &NamespaceView,
+        collection_name: &str,
+        name: String,
+        fields: Vec<IndexedFieldDescription>,
+        kind: IndexKind,
+        index_id: Option<u32>,
+    ) -> Result<IndexDescription> {
         let name = if name.is_empty() {
             let first_field = fields.first().map(|f| f.name.as_str()).unwrap_or("unknown");
             let existing: Vec<String> = self.indexes.keys().cloned().collect();
@@ -395,7 +430,10 @@ impl IndexManager {
             }
         }
 
-        let index_id = self.next_index_id(datastore).await?;
+        let index_id = match index_id {
+            Some(index_id) => index_id,
+            None => self.next_index_id(datastore).await?,
+        };
 
         let desc = IndexDescription {
             name: name.clone(),

@@ -339,7 +339,10 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
             txn.on_commit(OnCommit::Ordered(Box::new(move || {
                 collections.rcu(|old| {
                     let mut cache = old.clone();
-                    let offered = cache.offer(collection.clone());
+                    let offered = cache.offer(
+                        collection
+                            .with_current_index_actions(old.by_id(collection.collection_id()), &[]),
+                    );
                     cache_result_for_commit.store(
                         offered == crate::collection::Cached::Taken,
                         std::sync::atomic::Ordering::Release,

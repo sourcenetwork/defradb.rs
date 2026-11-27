@@ -14,6 +14,7 @@ mod composite_in_order;
 mod crdt;
 mod ddl_under_writes;
 mod delete;
+mod failed_backfill;
 mod get;
 mod group_order;
 mod index_offset_limit;

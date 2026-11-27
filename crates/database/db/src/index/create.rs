@@ -11,6 +11,7 @@ use storage::corekv::{
     RetryTxn, Store,
 };
 use storage::keys::systemstore::{CollectionKey, CollectionNameKey};
+use storage::keys::IndexIDSequenceKey;
 
 use crate::collection::Collection;
 use crate::database::action::ActionExecutionLease;
@@ -26,6 +27,72 @@ use crate::DB;
 enum IndexDefinition {
     Ready(IndexDescription),
     Defined(IndexDescription, ActionExecutionLease),
+}
+
+/// The index definition an attempt stages with its reserved ID.
+pub(super) struct IndexCreation<'name> {
+    pub(super) index_id: u32,
+    pub(super) name: Option<&'name str>,
+    pub(super) fields: Vec<IndexedFieldDescription>,
+    pub(super) kind: IndexKind,
+}
+
+/// One attempt of [`DB::define_index`]'s definition change.
+struct DefineIndexAttempt<S>
+where
+    S: Store + 'static,
+{
+    db: Arc<DB<S>>,
+    collection: Collection,
+    collection_name: String,
+    index_id: u32,
+    name: Option<String>,
+    fields: Vec<IndexedFieldDescription>,
+    kind: IndexKind,
+}
+
+impl<S> RetryAttemptFn for DefineIndexAttempt<S>
+where
+    S: Store + 'static,
+{
+    fn run<'a>(&'a mut self, retry: &'a mut dyn RetryTxn) -> RetryAttemptFuture<'a> {
+        Box::pin(async move {
+            let io = retry.begin_attempt_io()?;
+            let txn = self
+                .db
+                .new_db_txn(datastore::BasicTxn::from_retry_attempt_io(
+                    io,
+                    0,
+                    self.db.crdts().clone(),
+                ));
+            let collection = txn
+                .load_collection_for_write_attempt(&self.collection_name, &self.collection)
+                .await
+                .map_err(|error| RetryAttemptError::Abort(Box::new(error)))?;
+            txn.validate_collection_for_write(&collection)
+                .await
+                .map_err(|error| RetryAttemptError::Abort(Box::new(error)))?;
+            let (index, lease) = self
+                .db
+                .stage_index_definition(
+                    &txn,
+                    &collection,
+                    &self.collection_name,
+                    IndexCreation {
+                        index_id: self.index_id,
+                        name: self.name.as_deref(),
+                        fields: self.fields.clone(),
+                        kind: self.kind,
+                    },
+                )
+                .await
+                .map_err(|error| RetryAttemptError::Abort(Box::new(error)))?;
+            let collection_id = collection.collection_id().to_string();
+            let (io, callbacks) = txn.into_retry_attempt()?;
+            retry.finish_attempt_io(io, callbacks)?;
+            Ok(Box::new((index, lease, collection_id)) as RetryAttemptValue)
+        })
+    }
 }
 
 impl<S: Store> DB<S> {
@@ -80,8 +147,7 @@ impl<S: Store> DB<S> {
         let index_id = index.id;
         spawn_task(self.pool(), "db::index_backfill", async move {
             // The build's outcome is on the index's action record. An error
-            // here comes from settling that record or reloading the cache
-            // after it, and nothing else reports it.
+            // here is settling that record, and nothing else reports it.
             if let Err(error) = db.backfill_index(lease, plan).await {
                 tracing::error!(
                     collection = %collection,
@@ -117,11 +183,13 @@ impl<S: Store> DB<S> {
             ));
         }
         let collection = self.require_collection(collection_name)?;
+        let index_id = self.allocate_index_id(&collection).await?;
         let collection_id = collection.collection_id().to_string();
         let attempt = EnsureIndexAttempt {
             db: Arc::clone(self),
             collection_name: collection_name.to_string(),
             collection,
+            index_id,
             name: name.to_string(),
             fields,
         };
@@ -172,23 +240,59 @@ impl<S: Store> DB<S> {
         Ok(index)
     }
 
+    /// Allocate an index ID in the store's lock-free sequence, before the
+    /// retry closure that uses it.
+    pub(super) async fn allocate_index_id(&self, collection: &Collection) -> Result<u32> {
+        let range = storage::stores::Systemstore::new(self.store().clone())
+            .allocate(
+                &IndexIDSequenceKey::new(collection.resolved_root_id().to_string()).bytes(),
+                1,
+            )
+            .await
+            .map_err(Error::Storage)?;
+        u32::try_from(range.start)
+            .map_err(|_| Error::Other("the index ID sequence exceeded u32".into()))
+    }
+
     async fn define_index(
-        &self,
+        self: &Arc<Self>,
         collection_name: &str,
         name: Option<&str>,
         fields: Vec<IndexedFieldDescription>,
         kind: IndexKind,
-    ) -> Result<(IndexDescription, ActionExecutionLease, BackfillPlan)> {
+    ) -> Result<(IndexDescription, ActionExecutionLease, BackfillPlan)>
+    where
+        S: 'static,
+    {
         let collection = self.require_collection(collection_name)?;
-
-        let txn = self.new_txn(false).await?;
-        txn.validate_collection_for_write(&collection).await?;
-        let (index, lease) = self
-            .stage_index_definition(&txn, &collection, collection_name, name, fields, kind)
-            .await?;
-        txn.commit().await?;
+        let index_id = self.allocate_index_id(&collection).await?;
+        let attempt = DefineIndexAttempt {
+            db: Arc::clone(self),
+            collection,
+            collection_name: collection_name.to_string(),
+            index_id,
+            name: name.map(str::to_owned),
+            fields,
+            kind,
+        };
+        let (index, lease, collection_id) = match self
+            .store()
+            .transact_retry(self.options().retry_options(), Box::new(attempt))
+            .await
+        {
+            Ok(value) => value
+                .downcast::<(IndexDescription, ActionExecutionLease, String)>()
+                .map(|defined| *defined)
+                .map_err(|_| Error::Other("invalid index definition result".into()))?,
+            Err(error) => {
+                return Err(match error.downcast_abort::<Error>() {
+                    Ok(error) => error,
+                    Err(error) => Error::Storage(error.into_storage()),
+                })
+            }
+        };
         let plan = self
-            .publish_index_definition(collection_name, collection.collection_id(), &index, &lease)
+            .publish_index_definition(collection_name, &collection_id, &index, &lease)
             .await?;
         Ok((index, lease, plan))
     }
@@ -203,9 +307,7 @@ impl<S: Store> DB<S> {
         txn: &DbTxn<S>,
         collection: &Collection,
         collection_name: &str,
-        name: Option<&str>,
-        fields: Vec<IndexedFieldDescription>,
-        kind: IndexKind,
+        creation: IndexCreation<'_>,
     ) -> Result<(IndexDescription, ActionExecutionLease)> {
         crate::chunk::ensure_admin_changeable(collection.schema())?;
         let collection_id = collection.collection_id().to_string();
@@ -218,12 +320,13 @@ impl<S: Store> DB<S> {
                 collection.crdts(),
             )?;
             let index = manager
-                .create_index_of_kind(
+                .create_index_of_kind_with_id(
                     &datastore,
                     collection_name,
-                    name.unwrap_or("").to_string(),
-                    fields,
-                    kind,
+                    creation.name.unwrap_or("").to_string(),
+                    creation.fields,
+                    creation.kind,
+                    creation.index_id,
                 )
                 .await?;
             let mut schema = collection.schema().clone();
@@ -259,12 +362,12 @@ impl<S: Store> DB<S> {
         )
         .await?;
         let cache = std::sync::Arc::clone(&self.collections);
+        let index_id = index.id;
         txn.on_commit(OnCommit::OrderedAndWait(Box::new(move || {
-            cache.rcu(|old| {
-                let mut cache = old.clone();
-                cache.put(cached_collection.clone());
-                cache
-            });
+            cache.publish(
+                cached_collection,
+                &[(index_id, Some(defra_core::ActionStatus::IN_PROGRESS))],
+            );
         })))?;
         Ok((index, lease))
     }
@@ -310,6 +413,7 @@ impl<S: Store> DB<S> {
         &self,
         txn: &DbTxn<S>,
         expected: &Collection,
+        index_id: u32,
         collection_name: &str,
         name: &str,
         fields: Vec<IndexedFieldDescription>,
@@ -325,7 +429,17 @@ impl<S: Store> DB<S> {
             .find(|index| index.name == name)
         else {
             let (index, lease) = self
-                .stage_index_definition(txn, &collection, collection_name, Some(name), fields, kind)
+                .stage_index_definition(
+                    txn,
+                    &collection,
+                    collection_name,
+                    IndexCreation {
+                        index_id,
+                        name: Some(name),
+                        fields,
+                        kind,
+                    },
+                )
                 .await?;
             return Ok(IndexDefinition::Defined(index, lease));
         };
@@ -362,6 +476,7 @@ where
     db: Arc<DB<S>>,
     collection_name: String,
     collection: Collection,
+    index_id: u32,
     name: String,
     fields: Vec<IndexedFieldDescription>,
 }
@@ -385,6 +500,7 @@ where
                 .reconcile_ordinary_index(
                     &txn,
                     &self.collection,
+                    self.index_id,
                     &self.collection_name,
                     &self.name,
                     self.fields.clone(),

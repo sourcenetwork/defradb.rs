@@ -477,13 +477,9 @@ impl<S: Store> crate::database::DB<S> {
             None
         };
         txn.on_commit(OnCommit::OrderedAndWait(Box::new(move || {
-            collections.rcu(|old| {
-                let mut cache = old.clone();
-                if let Some(collection) = &cached_collection {
-                    cache.put_named(&registered_name, collection.clone());
-                }
-                cache
-            });
+            if let Some(collection) = cached_collection {
+                collections.publish_named(&registered_name, collection, &[]);
+            }
         })))?;
         if new_schema.is_active {
             let view = txn.datastore()?;
@@ -639,11 +635,7 @@ impl<S: Store> crate::database::DB<S> {
                 let collections = std::sync::Arc::clone(&self.collections);
                 let registered_name = coll_name.to_string();
                 txn.on_commit(OnCommit::OrderedAndWait(Box::new(move || {
-                    collections.rcu(|old| {
-                        let mut cache = old.clone();
-                        cache.put_named(&registered_name, cached_collection.clone());
-                        cache
-                    });
+                    collections.publish_named(&registered_name, cached_collection, &[]);
                 })))?;
             }
         }

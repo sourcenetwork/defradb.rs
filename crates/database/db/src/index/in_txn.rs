@@ -15,6 +15,7 @@ use storage::corekv::{OnCommit, Store};
 
 use crate::database::spawn::spawn_task;
 use crate::error::{Error, Result};
+use crate::index::create::IndexCreation;
 use crate::txn::DbTxn;
 use crate::DB;
 
@@ -37,8 +38,19 @@ where
             .await?
             .ok_or_else(|| Error::CollectionNotFound(collection_name.to_string()))?;
         txn.validate_collection_for_write(&collection).await?;
+        let index_id = self.allocate_index_id(&collection).await?;
         let (index, lease) = self
-            .stage_index_definition(txn, &collection, collection_name, name, fields, kind)
+            .stage_index_definition(
+                txn,
+                &collection,
+                collection_name,
+                IndexCreation {
+                    index_id,
+                    name,
+                    fields,
+                    kind,
+                },
+            )
             .await?;
         // The rest of the transaction reads and maintains the new definition.
         txn.uncache_collection(collection_name);

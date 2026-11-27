@@ -56,32 +56,6 @@ impl IndexStatuses {
         Self::load_actions(systemstore, &def.collection_id).await
     }
 
-    /// [`Self::load_for`] with the index actions read as a validated scan:
-    /// what a transaction that publishes `def` to the collection cache
-    /// reads, so that a status another commit writes first aborts it.
-    pub(crate) async fn load_validated_for(
-        systemstore: &NamespaceView,
-        def: &CollectionVersion,
-    ) -> Result<Self> {
-        if def.indexes.is_empty() {
-            return Ok(Self::default());
-        }
-        Ok(Self {
-            reindex_owed: crate::definition::migration::reindex_owed(
-                systemstore,
-                &def.collection_id,
-            )
-            .await?,
-            ..Self::from_actions(
-                crate::database::action::validated_index_action_statuses(
-                    systemstore,
-                    &def.collection_id,
-                )
-                .await?,
-            )
-        })
-    }
-
     /// The index actions alone, for a check that compares which indexes take
     /// writes and which are built, where an owed reindex changes nothing.
     pub(crate) async fn load_actions(
@@ -98,6 +72,14 @@ impl IndexStatuses {
         Self {
             actions,
             reindex_owed: false,
+        }
+    }
+
+    /// Statuses with `actions` and the collection's reindex marker.
+    pub(crate) fn from_parts(actions: RapidHashMap<u32, ActionStatus>, reindex_owed: bool) -> Self {
+        Self {
+            actions,
+            reindex_owed,
         }
     }
 

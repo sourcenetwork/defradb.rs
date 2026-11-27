@@ -78,9 +78,16 @@ An index created while documents of its collection are updated is built: its bac
 # `defra.index.ddl_under_writes`: An index dropped or created under writes is used once built
 
 - **Parents:** ["defra.index"]
-- **Scenarios:** ["index::ddl_under_writes::an_index_dropped_and_created_again_under_updates_is_built_and_used", "db::index::publication::an_index_created_while_a_commit_hook_holds_events_is_used", "db::index::publication::an_index_dropped_while_a_commit_hook_holds_events_can_be_created_again", "db::index::under_writes::an_index_recreated_while_updates_run_is_built", "db::index::under_writes::a_second_index_created_while_updates_run_is_built"]
+- **Scenarios:** ["index::ddl_under_writes::an_index_dropped_and_created_again_under_updates_is_built_and_used", "index::ddl_under_writes::indexes_created_together_under_updates_are_built", "db::index::publication::an_index_created_while_a_commit_hook_holds_events_is_used", "db::index::publication::an_index_dropped_while_a_commit_hook_holds_events_can_be_created_again", "db::index::under_writes::an_index_recreated_while_updates_run_is_built", "db::index::under_writes::a_second_index_created_while_updates_run_is_built", "db::index::under_writes::two_indexes_created_together_are_built"]
 
-An index created, or dropped and created again under the same name, while documents of its collection are updated behaves as it does with no writes running. A drop or a create returns only once the node's own view of the collection has the change, so a create right after a drop succeeds and is never refused with `cached schema differs from persisted version '<version>'`. When the backfill completes, the listing shows the index's execution as completed and a filter on the indexed field fetches through the index from then on, without a restart. When the backfill fails, the listing shows the failure with its reason, and writers stop maintaining the index.
+An index created, or dropped and created again under the same name, while documents of its collection are updated behaves as it does with no writes running. A drop or a create returns only once the node's own view of the collection has the change, so a create right after a drop succeeds and is never refused with `cached schema differs from persisted version '<version>'`. When the backfill completes, the listing shows the index's execution as completed and a filter on the indexed field fetches through the index from then on, without a restart. A backfill that fails is covered by `defra.index.backfill_failed`.
+
+# `defra.index.backfill_failed`: A failed backfill stops maintaining its index
+
+- **Parents:** ["defra.index"]
+- **Scenarios:** ["index::failed_backfill::a_failed_unique_backfill_stops_maintaining_the_index"]
+
+A unique index whose backfill fails because existing documents share a value stays in the listing with status `2` and the backfill's `can not index` reason. Writers stop maintaining it: another document with that same value is accepted without a restart, and queries scan the collection instead of fetching through the failed index.
 
 # `defra.collection`: Collection-wide operations
 

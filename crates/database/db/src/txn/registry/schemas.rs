@@ -74,7 +74,13 @@ impl<S: Store + 'static> DbTransactionRegistry<S> {
                                 cached.schema().version_id == cache_destination.version_id
                             });
                         if matches_destination {
-                            cache.put_named(&cache_destination.name, cache_collection.clone());
+                            cache.put_named(
+                                &cache_destination.name,
+                                cache_collection.with_current_index_actions(
+                                    old.by_id(cache_collection.collection_id()),
+                                    &[],
+                                ),
+                            );
                         }
                         cache
                     });
@@ -166,13 +172,7 @@ impl<S: Store + 'static> DbTransactionRegistry<S> {
                     for schema in &schemas_for_cache {
                         let _ = db.unforbid_collection_id(&schema.collection_id);
                     }
-                    db.collections.rcu(|old| {
-                        let mut cache = old.clone();
-                        for collection in &collections_for_cache {
-                            cache.put(collection.clone());
-                        }
-                        cache
-                    });
+                    db.collections.publish_many(collections_for_cache);
                 })))?;
 
                 Ok(finalized)
