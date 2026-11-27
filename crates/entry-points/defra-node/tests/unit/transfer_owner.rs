@@ -155,6 +155,69 @@ fn a_transfer_lands_once_after_the_creators_grant_and_hands_the_document_over() 
     .unwrap();
 }
 
+/// T1 stages the transfer first (lower seq), T2 stages the owner's grant, T2
+/// commits, then T1 commits. Either the transfer's commit is aborted, or the
+/// grant lands first under the owner. The reader then reads the document.
+#[test]
+#[mantra_macros::req_test("defra.acp.vera_owner_transfer")]
+fn a_grant_committed_before_an_earlier_staged_transfer_lands_first_or_aborts_it() {
+    workers::block_on(async {
+        let _serial = super::tests::SIGNING_STORE_GUARD.lock().await;
+        let remote = Remote::new();
+        remote.keys.insert(NEW_OWNER.to_string(), ());
+        let node = node_on(Some(&remote)).await;
+        let doc = created(node.execute_request(create("raced")).await);
+        eventually("registered", || async {
+            owner_of(&remote, &doc).as_deref() == Some(OWNER)
+        })
+        .await;
+        eventually("registration settles", || async {
+            owed(&node, OWNER).await.is_empty()
+        })
+        .await;
+
+        let t1 = node.new_txn(false).await.unwrap();
+        let h1 = t1.id();
+        transfer(&node, &h1, OWNER, &doc, NEW_OWNER).await.unwrap();
+        let t2 = node.new_txn(false).await.unwrap();
+        let h2 = t2.id();
+        grant(&node, &h2, OWNER, &doc, READER).await.unwrap();
+        // Nothing reaches the provider until both have committed, so the
+        // queue's order, not the drainer's timing, decides what lands first.
+        remote.down.store(true, Ordering::SeqCst);
+        let c2 = t2.commit().await;
+        let c1 = t1.commit().await;
+        assert!(c2.is_ok(), "the grant commits first");
+        remote.down.store(false, Ordering::SeqCst);
+        for _ in 0..3 {
+            let _ = node
+                .document_acp()
+                .settle_owed_changes(acp::OwedScope::All)
+                .await;
+        }
+        eventually("the grant or the transfer lands", || async {
+            remote.holds(&doc, READER) || owner_of(&remote, &doc).as_deref() == Some(NEW_OWNER)
+        })
+        .await;
+        if c1.is_ok() {
+            eventually("the transfer lands", || async {
+                owner_of(&remote, &doc).as_deref() == Some(NEW_OWNER)
+            })
+            .await;
+        }
+        let writes = remote.take_writes();
+        assert_eq!(
+            writes.first(),
+            Some(&(true, doc.clone(), READER.to_string())),
+            "the grant committed first must reach the provider first, as the owner's"
+        );
+        assert!(remote.holds(&doc, READER));
+        assert_eq!(reads(&node, READER).await, ["raced"]);
+        node.shutdown().await.unwrap();
+    })
+    .unwrap();
+}
+
 /// Only the owner may give a document away: a reader's transfer and the
 /// intended new owner's own are refused before the commit, and the document
 /// stays its creator's.
