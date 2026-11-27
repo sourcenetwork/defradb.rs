@@ -1,5 +1,7 @@
 //! A migration's reindex that stops part way stays owed: the next open
-//! resumes it, and the next schema change settles it.
+//! settles it, and so does the next schema change. Where the open resumes
+//! (after the last committed page) is pinned by
+//! `db::index::reindex_resume`, since starting over builds the same index.
 //!
 //! The `increment` lens fails on the one document stored without `age`. It
 //! is created last, so the rebuild commits its first pages before it reaches
@@ -26,6 +28,11 @@ const FILTER_BY_AGE: &str = "query { Users(filter: {age: {_eq: 25}}) { name age 
 
 const EXPLAIN_FILTER_BY_AGE: &str =
     "query @explain(type: execute) { Users(filter: {age: {_eq: 25}}) { name } }";
+
+const FILTER_FROM_FIVE: &str = "query { Users(filter: {age: {_ge: 5}}) { age } }";
+
+const EXPLAIN_FILTER_FROM_FIVE: &str =
+    "query @explain(type: execute) { Users(filter: {age: {_ge: 5}}) { age } }";
 
 fn users() -> Vec<Value> {
     (0..USERS)
@@ -107,7 +114,8 @@ fn owed() -> Vec<ActionInstance<integration_test::actions::Actions>> {
 }
 
 /// Once the reindex settles, the index answers the filter with the migrated
-/// value of every document.
+/// value of every document. The range is read from the index, so a document
+/// the rebuild skipped is missing from it rather than found by a scan.
 fn settled() -> Vec<ActionInstance<integration_test::actions::Actions>> {
     vec![
         Request {
@@ -123,7 +131,13 @@ fn settled() -> Vec<ActionInstance<integration_test::actions::Actions>> {
         }
         .into(),
         Request {
-            request: "query { Users(filter: {age: {_ge: 5}}) { age } }".into(),
+            request: EXPLAIN_FILTER_FROM_FIVE.into(),
+            expected_data: m::explain_scan(json!({ "indexFetches": USERS })),
+            ..Default::default()
+        }
+        .into(),
+        Request {
+            request: FILTER_FROM_FIVE.into(),
             expected_data: json!({
                 "Users": m::unordered(json!(
                     (0..USERS).map(|user| json!({ "age": user + 5 })).collect::<Vec<_>>()
@@ -137,7 +151,7 @@ fn settled() -> Vec<ActionInstance<integration_test::actions::Actions>> {
 
 #[test]
 #[mantra_macros::req_test("defra.index.owed_reindex.resume")]
-fn a_stopped_rebuild_stays_owed_and_resumes_at_the_next_open() {
+fn a_stopped_rebuild_stays_owed_and_the_next_open_settles_it() {
     TestCase {
         id: integration_test::scenario_id!(),
         client_types: Some(RUST_CLIENTS),
