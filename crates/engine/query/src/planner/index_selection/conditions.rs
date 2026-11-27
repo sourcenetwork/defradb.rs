@@ -1,6 +1,6 @@
 //! Condition analysis and scoring for index selection.
 
-use document::NormalValue;
+use document::{JsonPathPart, NormalValue};
 use schema::{FieldKind, IndexDescription};
 use serde_json::Map;
 use serde_json::Value as JsonValue;
@@ -45,6 +45,21 @@ pub(super) fn should_fallback_to_full_scan(
     // JSON indexes only store leaf values (scalars), not objects or arrays.
     // If the filter value is a complex type, fall back to full scan.
     if is_json_field {
+        // An element that is an object or an array has no entry, and a negative
+        // op passes it, so the index would miss the document.
+        if matches!(cond.array_op, Some(FilterOp::Any | FilterOp::All))
+            && (cond.nested_array_op
+                || matches!(
+                    cond.op,
+                    FilterOp::Ne | FilterOp::Nin | FilterOp::Nlike | FilterOp::Nilike
+                )
+                || !cond.json_path.as_ref().is_some_and(|path| {
+                    path.iter().any(|part| matches!(part, JsonPathPart::Index))
+                }))
+        {
+            return true;
+        }
+
         // JSON ordering operators only work with numeric values. Non-numeric
         // values must take the normal scan path so filter evaluation returns
         // the correct type error.
@@ -81,6 +96,34 @@ pub(super) fn should_fallback_to_full_scan(
     field_kind.map(|kind| kind.is_array()).unwrap_or(false)
         && matches!(cond.op, FilterOp::Eq | FilterOp::Ne)
         && matches!(cond.value, ConditionValue::Multiple(_))
+}
+
+/// A condition served by a scan of every entry at its path.
+pub(super) fn is_full_scan(cond: &FieldCondition) -> bool {
+    // An array or object at a path has its entries deeper, so a scan of the
+    // path misses it and a negative op passes it.
+    let bare_negative_at_path = cond.array_op.is_none()
+        && cond.json_path.as_ref().is_some_and(|path| !path.is_empty())
+        && matches!(
+            cond.op,
+            FilterOp::Ne | FilterOp::Nin | FilterOp::Nlike | FilterOp::Nilike
+        );
+    cond.array_op != Some(FilterOp::None)
+        && !bare_negative_at_path
+        && matches!(
+            cond.op,
+            FilterOp::Ne
+                | FilterOp::Nin
+                | FilterOp::Like
+                | FilterOp::Nlike
+                | FilterOp::Ilike
+                | FilterOp::Nilike
+        )
+}
+
+/// A `_nin` outside an array operator, which a missing property passes.
+pub(super) fn accepts_missing(cond: &FieldCondition) -> bool {
+    cond.op == FilterOp::Nin && cond.array_op.is_none()
 }
 
 fn is_numeric_filter_value(value: &ConditionValue) -> bool {

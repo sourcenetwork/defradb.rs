@@ -167,6 +167,8 @@ pub struct FieldCondition {
     /// Which field filter of an `_and` the condition came from. Two `_any`
     /// clauses on one path may match different elements.
     pub clause: usize,
+    /// Set under an array operator inside another one, which no JSON index serves.
+    pub nested_array_op: bool,
 }
 
 /// Value in a filter condition.
@@ -184,7 +186,7 @@ pub enum ConditionValue {
 impl FieldCondition {
     /// Parse a field condition from JSON value.
     pub fn parse(field_name: &str, ops: &serde_json::Map<String, JsonValue>) -> Vec<Self> {
-        Self::parse_with_path(field_name, ops, None, None)
+        Self::parse_with_path(field_name, ops, None, None, false)
     }
 
     /// Parse a field condition with optional JSON path and array operator.
@@ -193,6 +195,7 @@ impl FieldCondition {
         ops: &serde_json::Map<String, JsonValue>,
         json_path: Option<JsonPath>,
         array_op: Option<FilterOp>,
+        nested_array_op: bool,
     ) -> Vec<Self> {
         let mut conditions = Vec::new();
 
@@ -205,8 +208,13 @@ impl FieldCondition {
                     if let Some(inner_ops) = value.as_object() {
                         // For JSON fields with _any, add Index to path
                         let new_path = json_path.as_ref().map(|p| p.append_index());
-                        let inner_conditions =
-                            Self::parse_with_path(field_name, inner_ops, new_path, Some(op));
+                        let inner_conditions = Self::parse_with_path(
+                            field_name,
+                            inner_ops,
+                            new_path,
+                            Some(op),
+                            nested_array_op || array_op.is_some(),
+                        );
                         conditions.extend(inner_conditions);
                     }
                     continue;
@@ -264,6 +272,7 @@ impl FieldCondition {
                     array_op,
                     json_path: json_path.clone(),
                     clause: 0,
+                    nested_array_op,
                 });
             } else {
                 // Not an operator - this is a JSON path property
@@ -273,8 +282,13 @@ impl FieldCondition {
                         Some(p) => p.append_property(op_str),
                         None => JsonPath::default().append_property(op_str),
                     };
-                    let inner_conditions =
-                        Self::parse_with_path(field_name, inner_ops, Some(new_path), array_op);
+                    let inner_conditions = Self::parse_with_path(
+                        field_name,
+                        inner_ops,
+                        Some(new_path),
+                        array_op,
+                        nested_array_op,
+                    );
                     conditions.extend(inner_conditions);
                 }
             }
