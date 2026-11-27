@@ -5,8 +5,28 @@ use storage::RegolithStore;
 
 use super::tests::{create_composite_block, create_lww_block, TestTransport};
 use crate::message::{DocSyncItem, DocSyncReply};
-use crate::sync::{SyncConfig, SyncCoordinator, SyncEvent};
+use crate::sync::{DocumentHeadProvider, SyncConfig, SyncCoordinator, SyncEvent};
 use crate::transport::PeerId;
+
+struct OwnedHeads {
+    doc_id: &'static str,
+    heads: Vec<cid::Cid>,
+}
+
+#[async_trait::async_trait]
+impl DocumentHeadProvider for OwnedHeads {
+    async fn get_document_heads(&self, doc_id: &str) -> crate::Result<Vec<cid::Cid>> {
+        Ok(if doc_id == self.doc_id {
+            self.heads.clone()
+        } else {
+            Vec::new()
+        })
+    }
+
+    async fn get_collection_heads(&self, _collection_id: &str) -> crate::Result<Vec<cid::Cid>> {
+        Ok(Vec::new())
+    }
+}
 
 fn reply(doc_id: &str, heads: &[cid::Cid]) -> DocSyncReply {
     DocSyncReply {
@@ -37,7 +57,7 @@ async fn a_reply_with_every_head_merged_reports_the_document() {
         Arc::new(RegolithStore::in_memory().unwrap()),
         true,
     ));
-    let (coordinator, mut events) = SyncCoordinator::new(
+    let (mut coordinator, mut events) = SyncCoordinator::new(
         TestTransport::new(),
         blockstore.clone(),
         crate::network::test_network(),
@@ -50,6 +70,10 @@ async fn a_reply_with_every_head_merged_reports_the_document() {
     blockstore.put(&field_cid, &field_block).await.unwrap();
     blockstore.put(&root_cid, &root_block).await.unwrap();
     blockstore.mark_as_merged(&root_cid).await.unwrap();
+    coordinator.subscriptions.head_provider = Arc::new(OwnedHeads {
+        doc_id: "doc1",
+        heads: vec![root_cid],
+    });
 
     coordinator
         .handle_doc_sync_reply(PeerId::new("peer".to_string()), reply("doc1", &[root_cid]))
@@ -70,7 +94,7 @@ async fn a_reply_with_a_head_still_to_fetch_does_not_report_the_document() {
         Arc::new(RegolithStore::in_memory().unwrap()),
         true,
     ));
-    let (coordinator, mut events) = SyncCoordinator::new(
+    let (mut coordinator, mut events) = SyncCoordinator::new(
         TestTransport::new(),
         blockstore.clone(),
         crate::network::test_network(),
@@ -84,11 +108,51 @@ async fn a_reply_with_a_head_still_to_fetch_does_not_report_the_document() {
     blockstore.put(&field_cid, &field_block).await.unwrap();
     blockstore.put(&held_cid, &held_block).await.unwrap();
     blockstore.mark_as_merged(&held_cid).await.unwrap();
+    coordinator.subscriptions.head_provider = Arc::new(OwnedHeads {
+        doc_id: "doc1",
+        heads: vec![held_cid],
+    });
 
     coordinator
         .handle_doc_sync_reply(
             PeerId::new("peer".to_string()),
             reply("doc1", &[held_cid, absent_cid]),
+        )
+        .await
+        .unwrap();
+
+    assert!(already_merged_reports(&mut events).is_empty());
+}
+
+/// A peer cannot complete document B by advertising a merged head of document A.
+#[nuclei::test(threads = 0)]
+async fn a_head_owned_by_another_document_does_not_report_this_document() {
+    let blockstore = Arc::new(DefraBlockstore::new(
+        Arc::new(RegolithStore::in_memory().unwrap()),
+        true,
+    ));
+    let (mut coordinator, mut events) = SyncCoordinator::new(
+        TestTransport::new(),
+        blockstore.clone(),
+        crate::network::test_network(),
+        SyncConfig::default(),
+    )
+    .await
+    .expect("coordinator");
+    let (field_cid, field_block) = create_lww_block("name");
+    let (doc_a_head, doc_a_block) = create_composite_block("doc-a", "name", field_cid);
+    blockstore.put(&field_cid, &field_block).await.unwrap();
+    blockstore.put(&doc_a_head, &doc_a_block).await.unwrap();
+    blockstore.mark_as_merged(&doc_a_head).await.unwrap();
+    coordinator.subscriptions.head_provider = Arc::new(OwnedHeads {
+        doc_id: "doc-a",
+        heads: vec![doc_a_head],
+    });
+
+    coordinator
+        .handle_doc_sync_reply(
+            PeerId::new("peer".to_string()),
+            reply("doc-b", &[doc_a_head]),
         )
         .await
         .unwrap();

@@ -16,6 +16,13 @@
 \* held as merged when a second peer sends it
 \* (publish_replication_result in crates/surfaces/p2p-adapter/src/replication_events.rs).
 \* Reports for documents the sync did not ask for arrive on the same bus.
+\* A composite can also be terminally refused, as when a remote update changes
+\* an immutable field. A refusal that did not apply anything is not a merge
+\* report: before treating a report as completion, the merge handler checks
+\* that the terminal skip means the node already holds the block
+\* (MergeOutcome::skip_reason_is_applied in the composite merge handler).
+\* Reject below models the old false report, and RejectSpec gives a RED run
+\* showing why INV_CompleteMeansEveryDocMerged must keep that report out.
 \*
 \* The sync returns in one of two ways. It returns early, before any
 \* timeout, when its completion rule says it has everything ("complete").
@@ -33,11 +40,13 @@
 \* A peer may also answer with heads of an asked document that the node
 \* already holds and has merged: nothing is fetched or merged for it, so no
 \* merge would ever report it. The reply handler reports such a document
-\* itself, once every head the peer advertised for it is merged here
+\* itself, once every head the peer advertised for it is merged here and the
+\* local document-head lookup confirms each head belongs to that document
 \* (handle_doc_sync_reply in
 \* crates/database/p2p/src/sync/coordinator/event_handler/doc_sync.rs sends
 \* SyncEvent::HeadsAlreadyMerged, which the replication loop turns into the
-\* same "already merged" report).
+\* same "already merged" report). A head paired with another document's ID is
+\* ignored, so a peer cannot complete one document with another's head.
 \*
 \* What must never happen:
 \*   1. the sync returns early while a document it asked for has not
@@ -70,6 +79,8 @@
 \*                 merged here reports the document (HeadsAlreadyMerged).
 \*                 FALSE: the code before, which skipped such heads and
 \*                 reported nothing, so the sync waited out its timeouts.
+\*   Reject        models a terminal refusal that is reported without merging;
+\*                 RejectSpec includes it, while the fixed Spec does not.
 
 EXTENDS Naturals, Sequences, FiniteSets
 
@@ -153,6 +164,16 @@ Echo(d) ==
   /\ published' = published + 1           \* one more report
   /\ UNCHANGED <<asked, holds, current, answered, arrived, merged, seen, count, state, result>>  \* nothing else happened
 
+\* Peer p's head of document d is terminally refused, and the old merge handler
+\* reports it anyway. Nothing merged, but the report can still complete the sync.
+Reject(p, d) ==
+  /\ d \in holds[p]                       \* the peer holds a head the node lacks
+  /\ <<p, d>> \notin arrived              \* that head has not merged
+  /\ published < MaxReports               \* within the run's bound
+  /\ queue' = Append(queue, d)            \* the false report is published
+  /\ published' = published + 1           \* one more report
+  /\ UNCHANGED <<asked, holds, current, answered, arrived, merged, seen, count, state, result>>  \* nothing merged
+
 \* The sync reads the oldest report while its rule does not say done.
 Read ==
   /\ state = "waiting"                    \* still waiting
@@ -191,6 +212,9 @@ Next ==                                   \* any of these, in any order:
   \/ Timeout                              \* the sync times out
 
 Spec == Init /\ [][Next]_vars             \* every behaviour
+
+\* The old merge handler's behaviour, used only by the RED refusal report run.
+RejectSpec == Init /\ [][Next \/ (\E p \in Peers, d \in Docs : Reject(p, d))]_vars
 
 TypeOK ==                                 \* every variable holds what it should
   /\ asked \subseteq Docs

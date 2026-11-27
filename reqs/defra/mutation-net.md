@@ -335,7 +335,7 @@ A node that holds none of a document with 31 updates, told of its next head, fet
 - **Parents:** ["go.net.sync.documents"]
 - **Scenarios:** ["net::sync::documents_complete::a_document_sync_returns_once_every_asked_document_merged"]
 
-`SyncDocuments` on an iroh node, asking one peer for six documents the node lacks, returns only after all six have merged: a query on the node right after the call returns all six. A merge reported more than once does not stand in for another document, and once every asked document has merged the call does not wait for more reports.
+`SyncDocuments` on an iroh node, asking one peer for six documents the node lacks, returns only after all six have merged: a query on the node right after the call returns all six. A merge reported more than once does not stand in for another document, and once every asked document has merged the call does not wait for more reports. A composite terminally refused without being applied is not reported as merged, so it cannot complete the sync early.
 
 The wait is per document, not per head, and in that it differs from Go. Go's `SyncDocuments` merges every head every peer advertises before it returns. This sync returns once each asked document has merged at least one head, so when two peers hold different heads of one document it can return after the first merges, with the second still on its way. A sync that ends on its timeout returns `Ok` with documents still missing, as before.
 
@@ -344,7 +344,7 @@ The wait is per document, not per head, and in that it differs from Go. Go's `Sy
 - **Parents:** ["defra.net.sync.documents_complete"]
 - **Scenarios:** ["net::sync::documents_complete::a_document_already_held_does_not_hold_up_the_sync"]
 
-A sync on an iroh node that asks for six documents, one of which it already holds and has merged at the head the peer advertises, returns as soon as the other five merge, well before the sync's 3 second idle timeout: a peer's answer whose every head of a document is already merged on the node counts as that document merged. Go answers this case at once too, since its merge of a head it holds returns right away.
+A sync on an iroh node that asks for six documents, one of which it already holds and has merged at the head the peer advertises, returns as soon as the other five merge, well before the sync's 3 second idle timeout: a peer's answer whose every head of a document is already merged on the node and belongs to that document counts as that document merged. A head paired with another document's ID does not count, so a peer cannot complete one document with another's head. Go answers the held case at once too, since its merge of a head it holds returns right away.
 
 # `defra.net.replicator.list_shape`: Replicator list response shape
 

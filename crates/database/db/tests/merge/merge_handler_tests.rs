@@ -1692,8 +1692,20 @@ async fn make_handler_with_immutable_schema() -> (
     DbMergeHandler<RegolithStore, DefraBlockstore<RegolithStore>>,
     Arc<DefraBlockstore<RegolithStore>>,
 ) {
+    let (handler, blockstore, _) = make_handler_with_immutable_schema_and_bus().await;
+    (handler, blockstore)
+}
+
+async fn make_handler_with_immutable_schema_and_bus() -> (
+    DbMergeHandler<RegolithStore, DefraBlockstore<RegolithStore>>,
+    Arc<DefraBlockstore<RegolithStore>>,
+    Arc<ChannelBus>,
+) {
     let store = Arc::new(RegolithStore::in_memory().unwrap());
-    let db = Arc::new(DB::from_arc(store.clone()).unwrap());
+    let bus = Arc::new(ChannelBus::new());
+    let mut db = DB::from_arc(store.clone()).unwrap();
+    db.set_event_bus(bus.clone());
+    let db = Arc::new(db);
 
     db.add_collection(&defra_core::RequestContext::ambient(), AGENTDOCS_SDL)
         .await
@@ -1701,7 +1713,7 @@ async fn make_handler_with_immutable_schema() -> (
 
     let blockstore = Arc::new(DefraBlockstore::new(store, false));
     let handler = DbMergeHandler::new(db, blockstore.clone());
-    (handler, blockstore)
+    (handler, blockstore, bus)
 }
 
 /// Remote-merge enforcement of `@immutable` (filtered-replication B3 hazard).
@@ -1716,7 +1728,7 @@ async fn make_handler_with_immutable_schema() -> (
 #[test]
 fn remote_composite_merge_rejects_immutable_field_change() {
     workers::block_on(async {
-        let (handler, blockstore) = make_handler_with_immutable_schema().await;
+        let (handler, blockstore, bus) = make_handler_with_immutable_schema_and_bus().await;
         let collection = handler
             .db()
             .find_collection_by_id(agentdocs_collection_id())
@@ -1737,6 +1749,7 @@ fn remote_composite_merge_rejects_immutable_field_change() {
         let (doc_id, _doc_short_id, create_blocks) =
             create_doc_locally(&handler, &collection, &mut doc).await;
         let doc_id_str = doc_id.to_string();
+        let mut merge_events = bus.subscribe(&[EventName::MergeComplete]);
 
         // Craft a higher-priority remote update that flips the immutable field.
         let mut update_data = Vec::new();
@@ -1808,6 +1821,15 @@ fn remote_composite_merge_rejects_immutable_field_change() {
         assert!(
             outcome.is_terminal_skip(),
             "remote merge changing an immutable field must be terminally skipped, got {outcome:?}"
+        );
+        let reported_remote = std::iter::from_fn(|| merge_events.try_recv().ok()).any(|event| {
+            event
+                .as_merge_complete()
+                .is_some_and(|merge| merge.cid == update_composite_cid)
+        });
+        assert!(
+            !reported_remote,
+            "a refused composite must not be reported as merged"
         );
 
         // The locally-stored immutable value must be unchanged.
@@ -2428,7 +2450,7 @@ fn remote_merge_allows_partial_update_to_deleted_doc() {
 #[test]
 fn batch_merge_rejects_immutable_change_without_partial_write() {
     workers::block_on(async {
-        let (handler, blockstore) = make_handler_with_immutable_schema().await;
+        let (handler, blockstore, bus) = make_handler_with_immutable_schema_and_bus().await;
         let collection = handler
             .db()
             .find_collection_by_id(agentdocs_collection_id())
@@ -2503,6 +2525,7 @@ fn batch_merge_rejects_immutable_change_without_partial_write() {
             .put(&bad_cid, &bad_block.to_dag_cbor().unwrap())
             .await
             .unwrap();
+        let mut merge_events = bus.subscribe(&[EventName::MergeComplete]);
         let bad_merge = MergeBlock {
             cid: bad_cid,
             block_data: bytes::Bytes::from(bad_block.to_dag_cbor().unwrap()),
@@ -2554,6 +2577,15 @@ fn batch_merge_rejects_immutable_change_without_partial_write() {
             matches!(results[0], Ok(ref o) if o.is_terminal_skip()),
             "immutable-violating batch block must be terminally skipped, got {:?}",
             results[0]
+        );
+        let reported_refused = std::iter::from_fn(|| merge_events.try_recv().ok()).any(|event| {
+            event
+                .as_merge_complete()
+                .is_some_and(|merge| merge.cid == bad_cid)
+        });
+        assert!(
+            !reported_refused,
+            "a refused composite must not be reported as merged"
         );
         assert!(
             matches!(results[1], Ok(MergeOutcome::Merged)),
