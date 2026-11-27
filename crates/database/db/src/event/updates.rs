@@ -40,10 +40,14 @@ pub(super) async fn stored_head(store: &NamespaceView, collection: u32) -> Resul
     }
 }
 
-fn once_key(collection: u32, doc: &str, cid: &str) -> Vec<u8> {
+/// The key that lets one block of one document add one row. It names the
+/// document by its short ID, not its DocID: a full truncate drops the rows but
+/// cannot drop their once keys (regolith writes them, and only `append` may),
+/// and a document re-created after it takes a new short ID, so its updates
+/// add rows again even when they repeat a dropped row's DocID and CID.
+fn once_key(collection: u32, doc_short_id: u64, cid: &str) -> Vec<u8> {
     let mut key = format!("/arrival/updates/{collection}/once/").into_bytes();
-    key.extend_from_slice(&(doc.len() as u64).to_be_bytes());
-    key.extend_from_slice(doc.as_bytes());
+    key.extend_from_slice(&doc_short_id.to_be_bytes());
     key.extend_from_slice(cid.as_bytes());
     key
 }
@@ -53,6 +57,7 @@ pub(crate) async fn record(
     store: &NamespaceView,
     collection: u32,
     doc: &str,
+    doc_short_id: u64,
     cid: &str,
 ) -> Result<()> {
     let row = serde_json::to_vec(&Update {
@@ -64,7 +69,7 @@ pub(crate) async fn record(
         .append(
             &log(collection),
             &row,
-            Some(&once_key(collection, doc, cid)),
+            Some(&once_key(collection, doc_short_id, cid)),
         )
         .await
         .map_err(Error::Storage)

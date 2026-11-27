@@ -9,9 +9,15 @@ async fn journal(rows: u64) -> Arc<DB<RegolithStore>> {
     let db = Arc::new(DB::new(RegolithStore::in_memory().unwrap()).unwrap());
     let txn = db.new_txn(false).await.unwrap();
     for n in 1..=rows {
-        record(&txn.systemstore().unwrap(), 1, "doc", &format!("cid-{n}"))
-            .await
-            .unwrap();
+        record(
+            &txn.systemstore().unwrap(),
+            1,
+            "doc",
+            1,
+            &format!("cid-{n}"),
+        )
+        .await
+        .unwrap();
     }
     txn.commit().await.unwrap();
     db
@@ -43,7 +49,7 @@ fn a_full_drop_leaves_a_cursor_before_it_unavailable() {
 
         // The head kept counting: the next update is cursor 4, not 1.
         let txn = db.new_txn(false).await.unwrap();
-        record(&txn.systemstore().unwrap(), 1, "doc", "cid-4")
+        record(&txn.systemstore().unwrap(), 1, "doc", 1, "cid-4")
             .await
             .unwrap();
         txn.commit().await.unwrap();
@@ -82,7 +88,7 @@ fn a_drop_keeps_the_rows_after_the_head_it_read() {
     workers::block_on(async {
         let db = journal(2).await;
         let txn = db.new_txn(false).await.unwrap();
-        record(&txn.systemstore().unwrap(), 1, "doc", "cid-3")
+        record(&txn.systemstore().unwrap(), 1, "doc", 1, "cid-3")
             .await
             .unwrap();
         // Committed after the drop read its head, so the drop keeps it.
@@ -116,6 +122,29 @@ fn a_hole_below_kept_rows_is_a_missing_row() {
             let error = rows(&store, 1, after, 3).await.unwrap_err();
             assert!(error.to_string().contains("missing update row"), "{error}");
         }
+    })
+    .unwrap();
+}
+
+#[test]
+fn a_document_recreated_after_a_full_drop_adds_rows_again() {
+    workers::block_on(async {
+        let db = journal(2).await;
+        drop_rows(&db, 1).await.unwrap();
+        let txn = db.new_txn(false).await.unwrap();
+        let store = txn.systemstore().unwrap();
+        // The document the drop outlived replays a block: still once.
+        record(&store, 1, "doc", 1, "cid-1").await.unwrap();
+        // The same DocID and block under the short ID a re-create takes.
+        record(&store, 1, "doc", 2, "cid-1").await.unwrap();
+        drop(store);
+        txn.commit().await.unwrap();
+        let reader = db.new_txn(true).await.unwrap();
+        let store = reader.systemstore().unwrap();
+        assert_eq!(stored_head(&store, 1).await.unwrap(), 3);
+        let page = rows(&store, 1, 2, 3).await.unwrap();
+        assert_eq!(page.len(), 1);
+        assert_eq!(page[0].1.cid, "cid-1");
     })
     .unwrap();
 }

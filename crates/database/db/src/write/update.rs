@@ -134,6 +134,7 @@ where
         stores.systemstore,
         collection.resolved_root_id(),
         target.doc_id,
+        target.doc_short_id,
         &built.block_result.cid.to_string(),
     )
     .await

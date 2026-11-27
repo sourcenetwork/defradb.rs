@@ -309,6 +309,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                 systemstore,
                 collection.resolved_root_id(),
                 context.doc_id_str,
+                context.doc_short_id,
                 &context.cid.to_string(),
             )
             .await

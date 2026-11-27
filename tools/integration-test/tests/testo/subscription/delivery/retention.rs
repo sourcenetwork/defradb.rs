@@ -3,7 +3,9 @@
 //! `defra.events.delivery.unavailable`).
 
 use integration_test::actions::shared::Filter;
-use integration_test::actions::{Actions, AddCollection, AddDoc, Request, Truncate, UpdateDoc};
+use integration_test::actions::{
+    Actions, AddCollection, AddDoc, DeleteDoc, PurgeDocs, Request, Truncate, UpdateDoc,
+};
 use integration_test::m;
 use integration_test::scenario::{captures, Common, Text};
 use integration_test::test_case::TestCase;
@@ -123,6 +125,82 @@ fn a_filtered_truncate_drops_no_row() {
                 kind: "map".into(),
                 value: Some(json!({ "_docID": { "_in": [m::r("ann")] } })),
             }),
+            ..Default::default()
+        }
+        .into(),
+        updates(
+            "User",
+            Text::from("0"),
+            "head next entries { cursor docID }",
+            None,
+            json!({ "_documentUpdates": {
+                "head": "2",
+                "next": "2",
+                "entries": [
+                    { "cursor": "1", "docID": m::r("ann") },
+                    { "cursor": "2", "docID": m::r("bob") },
+                ],
+            }}),
+            Common::default(),
+        )
+        .into(),
+    ]);
+    let mut case = TestCase::from_actions(actions);
+    case.id = integration_test::scenario_id!();
+    // `_documentUpdates` is defradb.rs only.
+    case.client_types = Some(&[ClientType::InProcess, ClientType::RustHttp, ClientType::Cli]);
+    case.execute();
+}
+
+#[test]
+#[mantra_macros::req_test("defra.events.delivery.retention")]
+fn a_document_recreated_after_a_full_truncate_adds_rows_again() {
+    let mut actions = two_updates();
+    actions.extend([
+        Truncate {
+            collection: "User".into(),
+            ..Default::default()
+        }
+        .into(),
+        // The same content and the same update as before the truncate: the
+        // same DocID and the same block CID as the dropped row "1".
+        add("Ann", "ann2").into(),
+        update("ann2", "Ann 2").into(),
+        updates(
+            "User",
+            Text::from("2"),
+            "head next entries { cursor docID }",
+            None,
+            json!({ "_documentUpdates": {
+                "head": "3",
+                "next": "3",
+                "entries": [{ "cursor": "3", "docID": m::r("ann2") }],
+            }}),
+            Common::default(),
+        )
+        .into(),
+    ]);
+    let mut case = TestCase::from_actions(actions);
+    case.id = integration_test::scenario_id!();
+    // `_documentUpdates` is defradb.rs only.
+    case.client_types = Some(&[ClientType::InProcess, ClientType::RustHttp, ClientType::Cli]);
+    case.execute();
+}
+
+#[test]
+#[mantra_macros::req_test("defra.events.delivery.retention")]
+fn a_delete_and_a_purge_drop_no_row() {
+    let mut actions = two_updates();
+    actions.extend([
+        DeleteDoc {
+            collection: "User".into(),
+            doc_id: Text::reference("ann"),
+            ..Default::default()
+        }
+        .into(),
+        PurgeDocs {
+            collection: "User".into(),
+            doc_ids: vec![Text::reference("ann")],
             ..Default::default()
         }
         .into(),
