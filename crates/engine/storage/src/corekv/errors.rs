@@ -154,6 +154,15 @@ pub enum Error {
     #[error("backend error: {0}")]
     Backend(String),
 
+    /// The store folder holds a Badger datastore, which Go DefraDB writes
+    /// and regolith cannot read. Go's export holds documents but not the
+    /// schema, and the import looks each collection up by name, so the
+    /// schema has to be added here before the documents are moved.
+    #[error(
+        "the data directory '{0}' holds a Badger datastore written by Go DefraDB, which defradb.rs cannot read; start this node on an empty data directory (another --rootdir or datastore.path), add the same schema to it first, then move the documents with Go's `defradb client backup export` (run against Go DefraDB on the old rootdir) and this node's `defradb client backup import`"
+    )]
+    GoBadgerStore(String),
+
     /// Generic error with custom message.
     ///
     /// Used for errors that don't fit other categories.

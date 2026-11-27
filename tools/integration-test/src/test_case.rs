@@ -159,6 +159,26 @@ impl State {
         self.nodes.0.insert(name.to_owned(), slot);
     }
 
+    /// [`State::start_node`], failing with the node builder's error and
+    /// leaving no node `name` when the start is refused.
+    pub fn try_start_node(&mut self, name: &str, spec: NodeSpec) -> Result<(), Failure> {
+        self.stop_node(name, false);
+        self.start_stopped(name, spec)
+    }
+
+    /// Start node `name`, already stopped, keeping its stopped slot when the
+    /// start is refused.
+    fn start_stopped(&mut self, name: &str, spec: NodeSpec) -> Result<(), Failure> {
+        let node =
+            TestNode::try_start(self.client_type(), spec.clone()).map_err(Failure::operation)?;
+        let slot = Slot {
+            spec,
+            node: Some(Arc::new(node)),
+        };
+        self.nodes.0.insert(name.to_owned(), slot);
+        Ok(())
+    }
+
     /// Start stopped node `name` again with NAC options, as Go's `Start`:
     /// `enable_nac` turns NAC on, owned by `owner` when it was never set up.
     /// A start the node refuses leaves it stopped, with the refusal.
@@ -180,14 +200,7 @@ impl State {
         spec.nac_owner = owner;
         configure(&mut spec);
         self.stop_node(name, true);
-        let node =
-            TestNode::try_start(self.client_type(), spec.clone()).map_err(Failure::operation)?;
-        let slot = Slot {
-            spec,
-            node: Some(Arc::new(node)),
-        };
-        self.nodes.0.insert(name.to_owned(), slot);
-        Ok(())
+        self.start_stopped(name, spec)
     }
 
     /// Start the in-process iroh node `name` as `spec` says, failing with the
@@ -261,6 +274,43 @@ impl State {
                 .unwrap_or_else(|| panic!("no transaction {index}: TxnBegin did not run"))
         });
         RequestContext::ambient().with_txn(id)
+    }
+
+    /// The scope an in-process node call runs in: inside transaction number
+    /// `txn` when the action names one, as client identity `identity` when it
+    /// names one.
+    pub fn scope_as(
+        &self,
+        txn: Option<usize>,
+        identity: Option<u64>,
+    ) -> crate::node_scope::NodeScope {
+        crate::node_scope::NodeScope {
+            did: identity.map(|seed| {
+                ::identity::Did::new(crate::scenario::identity::did(seed))
+                    .expect("a client identity has a valid DID")
+            }),
+            signing: None,
+            txn: self.context(txn).txn(),
+        }
+    }
+
+    /// [`State::scope_as`] for an in-process write to node `node`, signing
+    /// with the acting client identity's own key where
+    /// [`State::context_on`] attaches it.
+    pub fn scope_on(
+        &self,
+        node: &str,
+        txn: Option<usize>,
+        identity: Option<u64>,
+        enable_signing: Option<bool>,
+    ) -> crate::node_scope::NodeScope {
+        crate::node_scope::NodeScope {
+            signing: self
+                .context_on(node, txn, identity, enable_signing)
+                .signing()
+                .cloned(),
+            ..self.scope_as(txn, identity)
+        }
     }
 
     /// [`State::context`] with client identity `identity` acting in it when

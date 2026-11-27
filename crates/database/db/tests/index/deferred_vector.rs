@@ -221,10 +221,7 @@ fn an_update_and_a_delete_before_the_drain_hide_the_stale_graph() {
             NodeId(moved_id),
             "the updated node ranks by its new vector"
         );
-        let expected = Metric::Cosine.distance(
-            &[1.0f32, 0.0, 0.0],
-            &[0.95f32, 0.05, 0.0],
-        );
+        let expected = Metric::Cosine.distance(&[1.0f32, 0.0, 0.0], &[0.95f32, 0.05, 0.0]);
         assert!(
             (found[0].distance - expected).abs() < 1e-6,
             "the updated node is scored from its new vector"

@@ -181,7 +181,7 @@ async fn reads_doc(node: &Node, actor: &identity::Did, policy: &str, doc: &str) 
 fn a_node_decides_document_access_through_its_own_vera_node_across_a_restart() {
     workers::block_on(async {
         let directory = tempfile::tempdir().unwrap();
-        let stranger = identity::Did::new(STRANGER).unwrap();
+        let stranger = identity::Did::new(STRANGER.to_string()).unwrap();
 
         let first = node(directory.path()).await;
         let vera = first.vera_acp().expect("vera.rs document ACP").clone();
@@ -192,7 +192,7 @@ fn a_node_decides_document_access_through_its_own_vera_node_across_a_restart() {
             .expect("policy");
         first
             .document_acp()
-            .register_doc_object(&owner, &policy, "users", "first")
+            .register_doc_object(&owner, &policy, "users", "first", &[])
             .await
             .expect("registration");
         assert!(reads(&first, &owner, &policy).await);
@@ -248,14 +248,14 @@ fn a_node_acts_for_a_signer_of_another_key_type() {
                 .await
                 .expect("policy");
             node.document_acp()
-                .register_doc_object(&owner, &policy, "users", "first")
+                .register_doc_object(&owner, &policy, "users", "first", &[])
                 .await
                 .expect("registration");
             assert!(
                 reads(&node, &owner, &policy).await,
                 "{actor} reads its document"
             );
-            let stranger = identity::Did::new(STRANGER).unwrap();
+            let stranger = identity::Did::new(STRANGER.to_string()).unwrap();
             assert!(!reads(&node, &stranger, &policy).await);
             drop(vera);
             node.shutdown().await.expect("shutdown");
@@ -278,7 +278,8 @@ fn seed(creator: &str) -> EmbeddedVeraPolicy {
 async fn seeded_policy(node: &Node, creator: &str) -> String {
     let id = seed(creator).id().expect("policy ID");
     let found = node
-        .get_dac_policy_as(&defra_core::RequestContext::default(), &id)
+        .anonymous()
+        .get_dac_policy(&id)
         .await
         .expect("policy read")
         .expect("seeded policy");
@@ -330,8 +331,7 @@ fn a_node_adopts_a_policy_its_vera_node_was_seeded_with() {
         let signer: Arc<dyn DelegationSigner> =
             Arc::new(Ed25519Signer::from_slice(&[42; 32]).expect("key"));
         let owner = identity::Did::new(signer.did()).unwrap();
-        let stranger = identity::Did::new(STRANGER).unwrap();
-        let context = defra_core::RequestContext::default().with_identity(Some(owner.to_string()));
+        let stranger = identity::Did::new(STRANGER.to_string()).unwrap();
         let seeded = seed(owner.as_str());
         let predicted = seeded.id().expect("policy ID");
 
@@ -342,31 +342,33 @@ fn a_node_adopts_a_policy_its_vera_node_was_seeded_with() {
         )
         .await;
         let adopted = first
-            .add_dac_policy_with_nonce_as(&context, POLICY, seeded.nonce)
+            .with_identity(identity::Did::new(owner.to_string()).unwrap())
+            .add_dac_policy(POLICY, Some(seeded.nonce))
             .await
             .expect("seeded policy");
         assert_eq!(adopted, predicted);
         let another = first
-            .add_dac_policy_with_nonce_as(&context, POLICY, PolicyNonce([1; 32]))
+            .with_identity(identity::Did::new(owner.to_string()).unwrap())
+            .add_dac_policy(POLICY, Some(PolicyNonce([1; 32])))
             .await
             .expect("a policy of its own");
         assert_ne!(another, adopted);
         assert!(first
-            .add_dac_policy_with_counter_as(&context, POLICY, 0)
+            .with_identity(identity::Did::new(owner.to_string()).unwrap())
+            .add_dac_policy_with_counter(POLICY, 0)
             .await
             .is_err());
         // The node creates as its actor, so another caller's nonce would name
         // a policy derived from the actor's DID, not the caller's own.
-        let as_stranger =
-            defra_core::RequestContext::default().with_identity(Some(STRANGER.into()));
         let refused = first
-            .add_dac_policy_with_nonce_as(&as_stranger, POLICY, seeded.nonce)
+            .with_identity(identity::Did::new(STRANGER.to_string()).unwrap())
+            .add_dac_policy(POLICY, Some(seeded.nonce))
             .await
             .expect_err("a nonce from a caller that is not the node's actor");
         assert!(refused.to_string().contains("node's actor"), "{refused}");
         first
             .document_acp()
-            .register_doc_object(&owner, &adopted, "users", "first")
+            .register_doc_object(&owner, &adopted, "users", "first", &[])
             .await
             .expect("registration");
         assert!(reads(&first, &owner, &adopted).await);
@@ -382,7 +384,8 @@ fn a_node_adopts_a_policy_its_vera_node_was_seeded_with() {
         .await;
         assert_eq!(
             second
-                .add_dac_policy_with_nonce_as(&context, POLICY, seeded.nonce)
+                .with_identity(identity::Did::new(owner.to_string()).unwrap())
+                .add_dac_policy(POLICY, Some(seeded.nonce))
                 .await
                 .expect("seeded policy"),
             predicted
@@ -438,18 +441,15 @@ fn a_second_node_shares_the_first_nodes_vera_deployment() {
             .expect("second node");
 
         let policy = first
-            .add_dac_policy_with_nonce_as(
-                &defra_core::RequestContext::default().with_identity(Some(owner.to_string())),
-                POLICY,
-                PolicyNonce::default(),
-            )
+            .with_identity(identity::Did::new(owner.to_string()).unwrap())
+            .add_dac_policy(POLICY, Some(PolicyNonce::default()))
             .await
             .expect("seeded policy");
         assert_eq!(seeded_policy(&second, owner.as_str()).await, policy);
 
         first
             .document_acp()
-            .register_doc_object(&owner, &policy, "users", "first")
+            .register_doc_object(&owner, &policy, "users", "first", &[])
             .await
             .expect("registration");
         assert!(reads(&second, &owner, &policy).await);
@@ -457,7 +457,7 @@ fn a_second_node_shares_the_first_nodes_vera_deployment() {
 
         second
             .document_acp()
-            .register_doc_object(&peer, &policy, "users", "second")
+            .register_doc_object(&peer, &policy, "users", "second", &[])
             .await
             .expect("registration by the second node");
         let seen = first
@@ -526,7 +526,7 @@ fn a_caller_that_keeps_its_key_writes_through_its_own_delegation() {
         let vera = node.vera_acp().expect("vera.rs document ACP").clone();
         let owner = vera.self_did().expect("actor DID");
         let policy = vera.add_policy(&owner, POLICY, None).await.expect("policy");
-        node.add_collection(&defra_core::RequestContext::ambient(), &format!(
+        node.add_collection(&format!(
             "type Users @policy(id: \"{policy}\", resource: \"users\") {{ name: String }}"
         ))
         .await
@@ -681,7 +681,7 @@ fn a_caller_that_keeps_its_key_writes_through_its_own_delegation() {
             .unwrap();
         assert!(granted.status().is_success(), "{}", granted.status());
         assert!(reads_doc(&node, &reader_did, &policy, &doc).await);
-        assert!(!reads_doc(&node, &identity::Did::new(STRANGER).unwrap(), &policy, &doc).await);
+        assert!(!reads_doc(&node, &identity::Did::new(STRANGER.to_string()).unwrap(), &policy, &doc).await);
 
         let token = identity::new_token(
             &reader,
@@ -768,31 +768,22 @@ fn a_grant_staged_beside_its_document_lets_the_grantee_read_after_the_commit() {
         let node = node(directory.path()).await;
         let vera = node.vera_acp().expect("vera.rs document ACP").clone();
         let owner = identity::Did::new(vera.self_did().expect("actor DID")).unwrap();
-        let reader = identity::Did::new(STRANGER).unwrap();
+        let reader = identity::Did::new(STRANGER.to_string()).unwrap();
         let policy = vera
             .add_policy(owner.as_str(), POLICY, None)
             .await
             .expect("policy");
-        node.add_collection(&defra_core::RequestContext::ambient(), &users(&policy))
+        node.add_collection(&users(&policy))
             .await
             .expect("collection");
-        let acting = defra_core::RequestContext::default().with_identity(Some(owner.to_string()));
 
-        let transaction = node.begin_transaction_guard(false).await.unwrap();
+        let transaction = node.new_txn(false).await.unwrap();
         let doc = created(
             transaction
                 .execute_request(create_user("fresh", &owner))
                 .await,
         );
-        let staged = node
-            .add_dac_actor_relationship_change_for_in_txn(
-                transaction.handle(),
-                &acting,
-                "Users",
-                &doc,
-                "reader",
-                reader.as_str(),
-            )
+        let staged = transaction.acting_for(identity::Did::new(owner.to_string()).unwrap()).change_dac_actor_relationship("Users", &doc, "reader", reader.as_str(), false)
             .await
             .expect("staged grant");
         assert!(
@@ -893,12 +884,12 @@ fn an_observation_under_writes_is_asked_again_when_a_block_overtakes_it() {
         let node = node(directory.path()).await;
         let vera = node.vera_acp().expect("vera.rs document ACP").clone();
         let owner = identity::Did::new(vera.self_did().expect("actor DID")).unwrap();
-        let reader = identity::Did::new(STRANGER).unwrap();
+        let reader = identity::Did::new(STRANGER.to_string()).unwrap();
         let policy = vera
             .add_policy(owner.as_str(), POLICY, None)
             .await
             .expect("policy");
-        node.add_collection(&defra_core::RequestContext::ambient(), &users(&policy))
+        node.add_collection(&users(&policy))
             .await
             .expect("collection");
         let doc = created(node.execute_request(create_user("observed", &owner)).await);
@@ -950,30 +941,23 @@ fn the_grants_one_transaction_stages_land_together() {
         let node = node(directory.path()).await;
         let vera = node.vera_acp().expect("vera.rs document ACP").clone();
         let owner = identity::Did::new(vera.self_did().expect("actor DID")).unwrap();
-        let first = identity::Did::new(STRANGER).unwrap();
+        let first = identity::Did::new(STRANGER.to_string()).unwrap();
         let second =
             identity::Did::new(Ed25519Signer::from_slice(&[44; 32]).expect("key").did()).unwrap();
         let policy = vera
             .add_policy(owner.as_str(), POLICY, None)
             .await
             .expect("policy");
-        node.add_collection(&defra_core::RequestContext::ambient(), &users(&policy))
+        node.add_collection(&users(&policy))
             .await
             .expect("collection");
-        let acting = defra_core::RequestContext::default().with_identity(Some(owner.to_string()));
         let doc = created(node.execute_request(create_user("shared", &owner)).await);
 
-        let transaction = node.begin_transaction_guard(false).await.unwrap();
+        let transaction = node.new_txn(false).await.unwrap();
         for grantee in [&first, &second] {
-            let staged = node
-                .add_dac_actor_relationship_change_for_in_txn(
-                    transaction.handle(),
-                    &acting,
-                    "Users",
-                    &doc,
-                    "reader",
-                    grantee.as_str(),
-                )
+            let staged = transaction
+                .acting_for(identity::Did::new(owner.to_string()).unwrap())
+                .change_dac_actor_relationship("Users", &doc, "reader", grantee.as_str(), false)
                 .await
                 .expect("staged grant");
             assert!(
@@ -986,7 +970,8 @@ fn the_grants_one_transaction_stages_land_together() {
         assert!(chain_reads(&node, &first, &policy, &doc).await);
         assert!(chain_reads(&node, &second, &policy, &doc).await);
         assert!(node
-            .owed_acp_as(&acting, owner.as_str())
+            .with_identity(identity::Did::new(owner.to_string()).unwrap())
+            .owed_acp(owner.as_str())
             .await
             .expect("what is owed")
             .is_empty());
@@ -1006,36 +991,30 @@ fn a_revocation_staged_in_a_transaction_denies_at_the_commit_and_the_chain_follo
         let node = node(directory.path()).await;
         let vera = node.vera_acp().expect("vera.rs document ACP").clone();
         let owner = identity::Did::new(vera.self_did().expect("actor DID")).unwrap();
-        let reader = identity::Did::new(STRANGER).unwrap();
+        let reader = identity::Did::new(STRANGER.to_string()).unwrap();
         let policy = vera
             .add_policy(owner.as_str(), POLICY, None)
             .await
             .expect("policy");
         drop(vera);
-        node.add_collection(&defra_core::RequestContext::ambient(), &users(&policy))
+        node.add_collection(&users(&policy))
             .await
             .expect("collection");
-        let acting = defra_core::RequestContext::default().with_identity(Some(owner.to_string()));
         let doc = created(node.execute_request(create_user("shared", &owner)).await);
-        node.add_dac_actor_relationship(owner.as_str(), "Users", &doc, "reader", reader.as_str())
+        node.with_identity(identity::Did::new(owner.as_str()).unwrap())
+            .add_dac_actor_relationship("Users", &doc, "reader", reader.as_str())
             .await
             .expect("grant");
         assert!(chain_reads(&node, &reader, &policy, &doc).await);
 
-        let transaction = node.begin_transaction_guard(false).await.unwrap();
+        let transaction = node.new_txn(false).await.unwrap();
         assert_eq!(
             names(transaction.execute_request(read_users(&reader)).await),
             ["shared"]
         );
-        let staged = node
-            .delete_dac_actor_relationship_change_for_in_txn(
-                transaction.handle(),
-                &acting,
-                "Users",
-                &doc,
-                "reader",
-                reader.as_str(),
-            )
+        let staged = transaction
+            .acting_for(identity::Did::new(owner.to_string()).unwrap())
+            .change_dac_actor_relationship("Users", &doc, "reader", reader.as_str(), true)
             .await
             .expect("staged revocation");
         assert!(
@@ -1078,8 +1057,7 @@ fn a_restart_settles_a_change_the_chain_could_not_take() {
             Arc::new(Ed25519Signer::from_slice(&[43; 32]).expect("key"));
         let chain_owner = identity::Did::new(chain_signer.did()).unwrap();
         let creator = identity::Did::new(signer.did()).unwrap();
-        let reader = identity::Did::new(STRANGER).unwrap();
-        let acting = defra_core::RequestContext::default().with_identity(Some(creator.to_string()));
+        let reader = identity::Did::new(STRANGER.to_string()).unwrap();
 
         // The deployment runs in one node; the node under test verifies
         // against it and keeps its own store on disk.
@@ -1134,27 +1112,21 @@ fn a_restart_settles_a_change_the_chain_could_not_take() {
             .expect("hosted genesis");
         let node = consumer(trust.clone(), genesis_id, rpc).await;
         let policy = seeded_policy(&node, chain_owner.as_str()).await;
-        node.add_collection(&defra_core::RequestContext::ambient(), &users(&policy))
+        node.add_collection(&users(&policy))
             .await
             .expect("collection");
         first_chain.shutdown().await.expect("shutdown");
         drop(first_chain);
 
-        let transaction = node.begin_transaction_guard(false).await.unwrap();
+        let transaction = node.new_txn(false).await.unwrap();
         let doc = created(
             transaction
                 .execute_request(create_user("kept", &creator))
                 .await,
         );
-        let staged = node
-            .add_dac_actor_relationship_change_for_in_txn(
-                transaction.handle(),
-                &acting,
-                "Users",
-                &doc,
-                "reader",
-                reader.as_str(),
-            )
+        let staged = transaction
+            .acting_for(identity::Did::new(creator.to_string()).unwrap())
+            .change_dac_actor_relationship("Users", &doc, "reader", reader.as_str(), false)
             .await
             .expect("staged grant");
         assert!(
@@ -1211,8 +1183,7 @@ fn an_idle_node_settles_a_staged_grant_once_its_deployment_is_back() {
             Arc::new(Ed25519Signer::from_slice(&[43; 32]).expect("key"));
         let chain_owner = identity::Did::new(chain_signer.did()).unwrap();
         let creator = identity::Did::new(signer.did()).unwrap();
-        let reader = identity::Did::new(STRANGER).unwrap();
-        let acting = defra_core::RequestContext::default().with_identity(Some(creator.to_string()));
+        let reader = identity::Did::new(STRANGER.to_string()).unwrap();
         let chain_dir = directory.path().join("chain");
         let policies = vec![seed(chain_owner.as_str())];
 
@@ -1246,27 +1217,21 @@ fn an_idle_node_settles_a_staged_grant_once_its_deployment_is_back() {
             .await
             .expect("consumer node");
         let policy = seeded_policy(&node, chain_owner.as_str()).await;
-        node.add_collection(&defra_core::RequestContext::ambient(), &users(&policy))
+        node.add_collection(&users(&policy))
             .await
             .expect("collection");
         first_chain.shutdown().await.expect("shutdown");
         drop(first_chain);
 
-        let transaction = node.begin_transaction_guard(false).await.unwrap();
+        let transaction = node.new_txn(false).await.unwrap();
         let doc = created(
             transaction
                 .execute_request(create_user("kept", &creator))
                 .await,
         );
-        let staged = node
-            .add_dac_actor_relationship_change_for_in_txn(
-                transaction.handle(),
-                &acting,
-                "Users",
-                &doc,
-                "reader",
-                reader.as_str(),
-            )
+        let staged = transaction
+            .acting_for(identity::Did::new(creator.to_string()).unwrap())
+            .change_dac_actor_relationship("Users", &doc, "reader", reader.as_str(), false)
             .await
             .expect("staged grant");
         assert!(
@@ -1386,12 +1351,12 @@ impl Grouped {
             .await
             .expect("policy");
         drop(vera);
-        node.add_collection(&defra_core::RequestContext::ambient(), &users(&policy))
+        node.add_collection(&users(&policy))
             .await
             .expect("collection");
         let owner = registered_identity();
         assert_ne!(owner, actor);
-        let member = identity::Did::new(STRANGER).unwrap();
+        let member = identity::Did::new(STRANGER.to_string()).unwrap();
         let own = created(node.execute_request(create_user("own", &actor)).await);
         let theirs = created(node.execute_request(create_user("theirs", &owner)).await);
         node.document_acp()
@@ -1443,14 +1408,16 @@ fn a_direct_userset_change_is_decided_on_its_requestors_authority() {
         let grant = |requestor: &identity::Did, doc: &str| {
             let (requestor, doc) = (requestor.to_string(), doc.to_owned());
             async move {
-                node.add_dac_actor_relationship(&requestor, "Users", &doc, "reader", MEMBERS)
+                node.with_identity(identity::Did::new(&requestor).unwrap())
+                    .add_dac_actor_relationship("Users", &doc, "reader", MEMBERS)
                     .await
             }
         };
         let revoke = |requestor: &identity::Did, doc: &str| {
             let (requestor, doc) = (requestor.to_string(), doc.to_owned());
             async move {
-                node.delete_dac_actor_relationship(&requestor, "Users", &doc, "reader", MEMBERS)
+                node.with_identity(identity::Did::new(&requestor).unwrap())
+                    .delete_dac_actor_relationship("Users", &doc, "reader", MEMBERS)
                     .await
             }
         };
@@ -1505,18 +1472,13 @@ fn a_staged_userset_change_is_decided_on_its_actors_authority() {
         let grouped = Grouped::new(directory.path()).await;
         let node = &grouped.node;
         let outsider = registered_identity();
-        let acting = |did: &identity::Did| {
-            defra_core::RequestContext::default().with_identity(Some(did.to_string()))
-        };
-
-        let transaction = node.begin_transaction_guard(false).await.unwrap();
+        let transaction = node.new_txn(false).await.unwrap();
         let stage = |actor: &identity::Did, doc: &str| {
-            let (context, doc, handle) = (acting(actor), doc.to_owned(), transaction.handle());
+            let (acting, doc) = (transaction.acting_for(actor.clone()), doc.to_owned());
             async move {
-                node.add_dac_actor_relationship_change_for_in_txn(
-                    handle, &context, "Users", &doc, "reader", MEMBERS,
-                )
-                .await
+                acting
+                    .change_dac_actor_relationship("Users", &doc, "reader", MEMBERS, false)
+                    .await
             }
         };
         for doc in [&grouped.own, &grouped.theirs] {
@@ -1550,17 +1512,12 @@ fn a_staged_userset_change_is_decided_on_its_actors_authority() {
         assert!(grouped.member_reads(&grouped.own).await);
         assert!(grouped.member_reads(&grouped.theirs).await);
 
-        let transaction = node.begin_transaction_guard(false).await.unwrap();
-        node.delete_dac_actor_relationship_change_for_in_txn(
-            transaction.handle(),
-            &acting(&grouped.owner),
-            "Users",
-            &grouped.theirs,
-            "reader",
-            MEMBERS,
-        )
-        .await
-        .expect("the owner's staged revocation");
+        let transaction = node.new_txn(false).await.unwrap();
+        transaction
+            .acting_for(grouped.owner.clone())
+            .change_dac_actor_relationship("Users", &grouped.theirs, "reader", MEMBERS, true)
+            .await
+            .expect("the owner's staged revocation");
         transaction.commit().await.expect("commit");
         assert!(!grouped.member_reads(&grouped.theirs).await);
         assert!(grouped.member_reads(&grouped.own).await);
@@ -1617,24 +1574,17 @@ fn a_key_registered_under_another_spelling_signs_its_staged_changes() {
             .await
             .expect("policy");
         drop(vera);
-        node.add_collection(&defra_core::RequestContext::ambient(), &users(&policy))
+        node.add_collection(&users(&policy))
             .await
             .expect("collection");
         let owner = registered_under_the_compressed_spelling();
-        let reader = identity::Did::new(STRANGER).unwrap();
-        let acting = defra_core::RequestContext::default().with_identity(Some(owner.to_string()));
+        let reader = identity::Did::new(STRANGER.to_string()).unwrap();
         let doc = created(node.execute_request(create_user("theirs", &owner)).await);
 
-        let transaction = node.begin_transaction_guard(false).await.unwrap();
-        let staged = node
-            .add_dac_actor_relationship_change_for_in_txn(
-                transaction.handle(),
-                &acting,
-                "Users",
-                &doc,
-                "reader",
-                reader.as_str(),
-            )
+        let transaction = node.new_txn(false).await.unwrap();
+        let staged = transaction
+            .acting_for(identity::Did::new(owner.to_string()).unwrap())
+            .change_dac_actor_relationship("Users", &doc, "reader", reader.as_str(), false)
             .await
             .expect("staged grant");
         assert!(
@@ -1650,17 +1600,12 @@ fn a_key_registered_under_another_spelling_signs_its_staged_changes() {
         transaction.commit().await.expect("commit");
         assert!(chain_reads(&node, &reader, &policy, &doc).await);
 
-        let transaction = node.begin_transaction_guard(false).await.unwrap();
-        node.delete_dac_actor_relationship_change_for_in_txn(
-            transaction.handle(),
-            &acting,
-            "Users",
-            &doc,
-            "reader",
-            reader.as_str(),
-        )
-        .await
-        .expect("staged revocation");
+        let transaction = node.new_txn(false).await.unwrap();
+        transaction
+            .acting_for(identity::Did::new(owner.to_string()).unwrap())
+            .change_dac_actor_relationship("Users", &doc, "reader", reader.as_str(), true)
+            .await
+            .expect("staged revocation");
         transaction.commit().await.expect("commit");
         assert!(!chain_reads(&node, &reader, &policy, &doc).await);
         node.shutdown().await.expect("shutdown");

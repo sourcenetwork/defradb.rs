@@ -29,7 +29,7 @@ defra-core = { path = "../../foundation/defra-core" }
 # vera.rs's token claims, its typed policy commands and their relationship types.
 vera-crypto = "0.2.0"
 vera-modules = "0.2.0"
-vera-acp = "0.2.0"
+vera-identity = "0.2.0"
 
 # The actor keys a delegation is signed with.
 k256.workspace = true

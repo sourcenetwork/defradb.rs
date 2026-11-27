@@ -39,12 +39,12 @@ impl Op for ListLenses {
 
     fn run(&self, state: &State) -> Result<Value, Failure> {
         let identity = self.common.client_identity(Self::name())?;
+        let (node, scope) = (
+            state.node_on(self.common.node())?,
+            state.scope_as(self.txn, identity),
+        );
         let lenses = state
-            .block_on(
-                state
-                    .node_on(self.common.node())?
-                    .list_lenses_as(&state.context_as(self.txn, identity)),
-            )
+            .block_on(async { scope.on(&node).list_lenses().await })
             .map_err(|e| Failure::operation(e.to_string()))?;
         Ok(self.shape(lenses))
     }

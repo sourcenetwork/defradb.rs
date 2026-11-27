@@ -35,12 +35,12 @@ impl Op for TxnDiscard {
     fn run(&self, state: &State) -> Result<Value, Failure> {
         let identity = self.common.client_identity(Self::name())?;
         let id = self.id(state)?;
+        let (node, scope) = (
+            state.node_on(self.common.node())?,
+            state.scope_as(None, identity),
+        );
         state
-            .block_on(
-                state
-                    .node_on(self.common.node())?
-                    .txn_discard(&state.context_as(None, identity), id),
-            )
+            .block_on(scope.scoped(&node).with_transaction(id).discard())
             .map(|()| json!({}))
             .map_err(|e| Failure::operation(e.to_string()))
     }

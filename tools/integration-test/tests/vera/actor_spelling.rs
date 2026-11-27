@@ -65,7 +65,7 @@ async fn either_spelling_of_a_secp256k1_actor_is_one_vera_actor() {
             .await
             .expect("delegation");
         provider
-            .register_object(&token, &policy, "users", "document")
+            .register_object(&token, &policy, "users", "document", &[])
             .await
             .expect("register object");
         assert_eq!(

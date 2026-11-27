@@ -4,7 +4,7 @@ use std::ffi::c_char;
 
 use acp::nac::NodePermission;
 
-use crate::request::Request;
+use crate::request::{on_scope, Request};
 use crate::target::{go_string, non_empty, CollectionArgs};
 use crate::types::{CollectionOptions, DefraResult};
 use crate::{ffi_async, ffi_async_ok, ffi_entry, try_ffi};
@@ -31,13 +31,13 @@ pub unsafe fn defra_view_add(
         let sdl = go_string(sdl);
         let transform = non_empty(transform_cid);
         let node = try_ffi!(request.node_handle());
-        let context = request.context();
+        let scope = try_ffi!(request.node_scope());
 
         ffi_async!(caller, {
-            let created = node
-                .add_view_as(&context, &query, &sdl, transform.as_deref())
-                .await
-                .map_err(|e| e.to_string())?;
+            let created = on_scope!(node, &scope, |scoped| {
+                scoped.add_view(&query, &sdl, transform.as_deref()).await
+            })
+            .map_err(|e| e.to_string())?;
             serde_json::to_string(&created).map_err(|e| format!("failed to serialize result: {}", e))
         })
     }
@@ -58,11 +58,10 @@ pub unsafe fn defra_view_refresh(
         let request = try_ffi!(Request::begin(node_ptr, identity_ptr, NodePermission::ViewRefresh));
         let selector = CollectionArgs::read(&opts).selector();
         let node = try_ffi!(request.node_handle());
-        let context = request.context();
+        let scope = try_ffi!(request.node_scope());
 
         ffi_async_ok!(caller, {
-            node.refresh_views_as(&context, selector)
-                .await
+            on_scope!(node, &scope, |scoped| scoped.refresh_views(selector).await)
                 .map_err(|e| e.to_string())
         })
     }

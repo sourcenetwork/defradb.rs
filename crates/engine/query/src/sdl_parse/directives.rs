@@ -19,7 +19,7 @@ pub const KNOWN_FIELD_DIRECTIVES: &[&str] = &[
     "encryptedIndex",
     "fulltext",
     "immutable",
-    "policy", // Go allows @policy on fields in some contexts
+    "policy", // `relation:` binds the field to a policy relation
     "chunk",
 ];
 
@@ -54,7 +54,7 @@ pub fn known_directive_arguments(directive_name: &str) -> &'static [&'static str
         "materialized" => &["if"],
         "downsample" => &["interval", "timeField", "retention"],
         "branchable" => &["if"],
-        "policy" => &["id", "resource"],
+        "policy" => &["id", "resource", "relation"],
         "governed" => &["root"],
         "embedding" => &["provider", "model", "url", "fields", "template"],
         "encryptedIndex" => &["type"],
@@ -199,6 +199,8 @@ pub struct ParsedDirectives {
     pub vector_index: Vec<VectorIndexConfig>,
     /// Whether this field is immutable after document creation
     pub immutable: bool,
+    /// The policy relation from `@policy(relation:)`.
+    pub policy_relation: Option<String>,
     /// Settings from a `@chunk` directive.
     pub chunk: Option<ChunkDirective>,
 }

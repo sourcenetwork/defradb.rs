@@ -25,8 +25,8 @@ The script defaults to an iroh-capable build by setting
 `FEATURES=iroh,native` and `NO_DEFAULT_FEATURES=1`.
 It also defaults to `APPLE_DEPLOYMENT_TARGET=15.0` so Rust and native dependencies
 are linked against a modern iOS target instead of Rust's legacy iOS 10 default.
-The default iOS feature set avoids desktop-only FFI defaults such as libp2p,
-Vera, and the Wasmtime lens runtime. The store is regolith on every target.
+The default iOS feature set avoids desktop-only FFI defaults such as libp2p and
+the Wasmtime lens runtime. The store is regolith on every target.
 
 Override the defaults with environment variables when needed:
 

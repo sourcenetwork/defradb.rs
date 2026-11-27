@@ -255,7 +255,6 @@ impl<S: Store + 'static, B: blockstore::Blockstore + 'static> DbMergeHandler<S, 
             .map(str::to_owned)
             .or_else(|| recovered.as_ref().map(|value| value.creator.clone()));
         let mut retry_deks = super::retry_decryption_keys();
-        let mut prepared = self.clone();
         let mut history_mode = false;
         let mut prepare_history_keys = false;
         let mut history_rejection = None;
@@ -286,7 +285,7 @@ impl<S: Store + 'static, B: blockstore::Blockstore + 'static> DbMergeHandler<S, 
                 }
                 prepare_history_keys = false;
             }
-            let mut handler = prepared.with_retry_decryption_context(
+            let mut handler = self.with_retry_decryption_context(
                 Arc::clone(&retry_deks),
                 Arc::clone(&prefetch_requested),
             );
@@ -319,7 +318,6 @@ impl<S: Store + 'static, B: blockstore::Blockstore + 'static> DbMergeHandler<S, 
                             MergeError::MergeFailed("invalid merge retry result".into())
                         })?;
                     if matches!(outcome, MergeOutcome::Yielded) && !self.single_history_turn {
-                        prepared.registration_inputs = Default::default();
                         retry_deks = super::retry_decryption_keys();
                         prepare_history_keys = history_mode;
                         workers::yield_now().await;
@@ -328,11 +326,6 @@ impl<S: Store + 'static, B: blockstore::Blockstore + 'static> DbMergeHandler<S, 
                     break Ok(outcome);
                 }
                 Err(error) => match error.downcast_abort::<MergeError>() {
-                    Ok(MergeError::NeedsRegistration(lookup)) => {
-                        if let Err(error) = prepared.resolve_registration(*lookup).await {
-                            break Err(error);
-                        }
-                    }
                     Ok(MergeError::HistoryRequired | MergeError::DepthExceeded { .. })
                         if !history_mode =>
                     {
