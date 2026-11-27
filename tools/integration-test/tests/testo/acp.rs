@@ -89,6 +89,7 @@ mod dac {
     mod register_and_read;
     mod register_and_update;
     mod relation_objects;
+    mod remote_dac_cli;
     mod relationship {
         mod doc_actor {
             mod add {
