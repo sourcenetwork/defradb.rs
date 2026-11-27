@@ -69,7 +69,7 @@ async fn build_sender(dir: &std::path::Path, statistics: &Arc<Statistics>, down:
         .build()
         .await
         .expect("build the sender");
-    node.add_collection(&defra_core::RequestContext::ambient(), BENCH_SDL)
+    node.add_collection(BENCH_SDL)
         .await
         .expect("add the bench schema");
     node
@@ -81,7 +81,7 @@ async fn build_receiver() -> Node {
         .build()
         .await
         .expect("build a receiver");
-    node.add_collection(&defra_core::RequestContext::ambient(), BENCH_SDL)
+    node.add_collection(BENCH_SDL)
         .await
         .expect("add the bench schema");
     node
