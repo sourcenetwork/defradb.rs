@@ -52,6 +52,7 @@ where
 pub(crate) struct Chain {
     owners: Map<String, Did>,
     relations: Map<(String, String, String), ()>,
+    archived: Map<String, ()>,
     held_relations: Map<String, ()>,
     pub(crate) hold_registrations: AtomicBool,
     pub(crate) reads: AtomicUsize,
@@ -62,6 +63,7 @@ impl Chain {
         Arc::new(Self {
             owners: map(),
             relations: map(),
+            archived: map(),
             held_relations: map(),
             hold_registrations: AtomicBool::new(false),
             reads: AtomicUsize::new(0),
@@ -70,6 +72,22 @@ impl Chain {
 
     pub(crate) fn owner(&self, doc: &str) -> Option<Did> {
         self.owners.get(doc)
+    }
+
+    /// The object's owner, unless it is archived.
+    fn live_owner(&self, doc: &str) -> Option<Did> {
+        self.owner(doc).filter(|_| !self.archived.contains_key(doc))
+    }
+
+    /// Archive `doc` as vera.rs does on its owner's delete: the owner record
+    /// stays, so nobody registers the object again, but reads show it
+    /// unregistered and every access check denies.
+    pub(crate) fn archive(&self, doc: &str) {
+        assert!(
+            self.owners.contains_key(doc),
+            "only a registered object is archived"
+        );
+        self.archived.insert(doc.to_owned(), ());
     }
 
     pub(crate) fn holds(&self, doc: &str, relation: &str, did: &Did) -> bool {
@@ -126,7 +144,7 @@ impl ChainView {
         if add && self.chain.held_relations.contains_key(relation) {
             return Err(acp::Error::ProviderUnavailable("held".into()));
         }
-        if self.chain.owner(doc).as_ref() != Some(requestor) {
+        if self.chain.live_owner(doc).as_ref() != Some(requestor) {
             return Err(acp::Error::NotOwner {
                 operation: "create actor relationship".into(),
             });
@@ -174,12 +192,12 @@ impl DocumentACP for ChainView {
 
     async fn is_doc_registered(&self, _: &str, _: &str, doc: &str) -> acp::Result<bool> {
         self.read();
-        Ok(self.chain.owners.contains_key(doc))
+        Ok(self.chain.live_owner(doc).is_some())
     }
 
     async fn get_doc_owner(&self, _: &str, _: &str, doc: &str) -> acp::Result<Option<Did>> {
         self.read();
-        Ok(self.chain.owner(doc))
+        Ok(self.chain.live_owner(doc))
     }
 
     async fn check_doc_access(
@@ -194,6 +212,9 @@ impl DocumentACP for ChainView {
         let Identity::Authenticated(did) = identity else {
             return Ok(false);
         };
+        if self.chain.archived.contains_key(doc) {
+            return Ok(false);
+        }
         if self.chain.owner(doc).as_ref() == Some(did) {
             return Ok(true);
         }
