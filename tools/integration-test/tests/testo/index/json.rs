@@ -2277,7 +2277,18 @@ fn json_index_with_n_like_filter_on_string_field_should_use_index() {
                         }
                 "#
                 .into(),
-                expected_data: json!({ "User": [{ "name": "John" }, { "name": "Islam" }] }),
+                expected_data: json!({
+                    "User": [
+                        { "name": "John" },
+                        { "name": "Islam" },
+                        { "name": "Keenan" },
+                        { "name": "Bruno" },
+                    ],
+                }),
+                common: Common {
+                    unordered_documents: vec!["/data/User".into()],
+                    ..Default::default()
+                },
                 ..Default::default()
             }
             .into(),
@@ -2290,7 +2301,7 @@ fn json_index_with_n_like_filter_on_string_field_should_use_index() {
                         }
                 "#
                 .into(),
-                expected_data: json!(m::explain_scan(json!({ "indexFetches": 5 }))),
+                expected_data: json!(m::explain_scan(json!({ "indexFetches": 0 }))),
                 ..Default::default()
             }
             .into(),
@@ -2303,7 +2314,17 @@ fn json_index_with_n_like_filter_on_string_field_should_use_index() {
                         }
                 "#
                 .into(),
-                expected_data: json!({ "User": [{ "name": "John" }] }),
+                expected_data: json!({
+                    "User": [
+                        { "name": "John" },
+                        { "name": "Keenan" },
+                        { "name": "Bruno" },
+                    ],
+                }),
+                common: Common {
+                    unordered_documents: vec!["/data/User".into()],
+                    ..Default::default()
+                },
                 ..Default::default()
             }
             .into(),
@@ -2316,7 +2337,7 @@ fn json_index_with_n_like_filter_on_string_field_should_use_index() {
                         }
                 "#
                 .into(),
-                expected_data: json!(m::explain_scan(json!({ "indexFetches": 5 }))),
+                expected_data: json!(m::explain_scan(json!({ "indexFetches": 0 }))),
                 ..Default::default()
             }
             .into(),
@@ -2395,7 +2416,7 @@ fn json_index_with_ne_filter_against_bool_field_should_fetch_null_values() {
                         }
                 "#
                 .into(),
-                expected_data: json!(m::explain_scan(json!({ "indexFetches": 3 }))),
+                expected_data: json!(m::explain_scan(json!({ "indexFetches": 0 }))),
                 ..Default::default()
             }
             .into(),
@@ -2474,7 +2495,7 @@ fn json_index_with_ne_filter_against_number_field_should_fetch_null_values() {
                         }
                 "#
                 .into(),
-                expected_data: json!(m::explain_scan(json!({ "indexFetches": 3 }))),
+                expected_data: json!(m::explain_scan(json!({ "indexFetches": 0 }))),
                 ..Default::default()
             }
             .into(),
@@ -2553,7 +2574,7 @@ fn json_index_with_ne_filter_against_string_field_should_fetch_null_values() {
                         }
                 "#
                 .into(),
-                expected_data: json!(m::explain_scan(json!({ "indexFetches": 3 }))),
+                expected_data: json!(m::explain_scan(json!({ "indexFetches": 0 }))),
                 ..Default::default()
             }
             .into(),
@@ -2677,7 +2698,7 @@ fn json_index_with_ne_filter_on_bool_field_should_use_index() {
                         }
                 "#
                 .into(),
-                expected_data: json!(m::explain_scan(json!({ "indexFetches": 5 }))),
+                expected_data: json!(m::explain_scan(json!({ "indexFetches": 0 }))),
                 ..Default::default()
             }
             .into(),
@@ -2754,6 +2775,10 @@ fn json_index_with_ne_filter_on_null_nested_field_should_use_index() {
                 "#
                 .into(),
                 expected_data: json!({ "User": [{ "name": "Bruno" }, { "name": "Keenan" }] }),
+                common: Common {
+                    unordered_documents: vec!["/data/User".into()],
+                    ..Default::default()
+                },
                 ..Default::default()
             }
             .into(),
@@ -2766,7 +2791,7 @@ fn json_index_with_ne_filter_on_null_nested_field_should_use_index() {
                         }
                 "#
                 .into(),
-                expected_data: json!(m::explain_scan(json!({ "indexFetches": 3 }))),
+                expected_data: json!(m::explain_scan(json!({ "indexFetches": 0 }))),
                 ..Default::default()
             }
             .into(),
@@ -2870,6 +2895,10 @@ fn json_index_with_ne_filter_on_number_field_should_use_index() {
                         { "name": "Keenan" },
                     ],
                 }),
+                common: Common {
+                    unordered_documents: vec!["/data/User".into()],
+                    ..Default::default()
+                },
                 ..Default::default()
             }
             .into(),
@@ -2882,7 +2911,7 @@ fn json_index_with_ne_filter_on_number_field_should_use_index() {
                         }
                 "#
                 .into(),
-                expected_data: json!(m::explain_scan(json!({ "indexFetches": 5 }))),
+                expected_data: json!(m::explain_scan(json!({ "indexFetches": 0 }))),
                 ..Default::default()
             }
             .into(),
@@ -3058,6 +3087,10 @@ fn json_index_with_nin_filter_should_use_index() {
                 "#
                 .into(),
                 expected_data: json!({ "User": [{ "name": "Shahzad" }, { "name": "Keenan" }] }),
+                common: Common {
+                    unordered_documents: vec!["/data/User".into()],
+                    ..Default::default()
+                },
                 ..Default::default()
             }
             .into(),
@@ -3070,7 +3103,7 @@ fn json_index_with_nin_filter_should_use_index() {
                         }
                 "#
                 .into(),
-                expected_data: json!(m::explain_scan(json!({ "indexFetches": 4 }))),
+                expected_data: json!(m::explain_scan(json!({ "indexFetches": 0 }))),
                 ..Default::default()
             }
             .into(),

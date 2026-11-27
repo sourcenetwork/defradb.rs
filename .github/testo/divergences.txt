@@ -56,6 +56,17 @@ testo index::json_range_paths::nin_and_like_with_a_missing_nin_path
 # Go's JSON index has no entry for an empty array, and Go refuses `_ne` on a JSON field; Rust finds the empty arrays at either path, as without the index.
 testo index::empty_array::like_under_all_on_two_json_paths_finds_the_empty_array
 testo index::empty_array::ne_under_all_on_two_json_paths_finds_the_empty_array
+# Go writes no entry for an empty array in a JSON index and refuses `_ne` on a JSON field; Rust answers each filter as a full scan does.
+testo index::json_index_matches_scan::ne_under_all_matches_a_full_scan
+testo index::json_index_matches_scan::nested_array_operators_match_a_full_scan
+testo index::json_index_matches_scan::bare_negatives_match_a_full_scan
+testo index::json_index_matches_scan::positive_all_and_any_match_a_full_scan
+testo index::json_index_matches_scan::array_operators_on_a_path_match_a_full_scan
+testo index::json_index_matches_scan::the_index_serves_positive_all_and_not_negative_all
+testo index::json_index_matches_scan::a_composite_json_index_matches_a_full_scan
+testo index::json_index_matches_scan::a_descending_json_index_matches_a_full_scan
+testo index::json_index_matches_scan::a_unique_json_index_matches_a_full_scan
+testo index::json_index_matches_scan::updates_and_deletes_keep_the_index_matching_a_full_scan
 # With `_in` on an indexed field Go ignores `order` on that field and returns the rows as the filter lists them; Rust applies it.
 testo index::composite_in_order::in_on_descending_first_field_ordered_ascending_follows_the_order
 testo index::composite_in_order::in_on_descending_first_field_ordered_descending_follows_the_order
@@ -68,3 +79,12 @@ testo query::relation_order_with_filter::selected_relation_id::indexed
 testo query::relation_order_with_filter::selected_relation_id_unfiltered::indexed
 testo query::relation_order_with_filter::selected_relation_id_unfiltered_with_limit::indexed
 testo query::relation_order_with_filter::selected_relation_id_with_limit::indexed
+# Rust reads every document for `_ne`, `_nin` and `_nlike` at a path inside a JSON value, because an array or object there has its entries deeper; Go reads the index and misses those documents, and its `_nlike` drops non-string values.
+testo index::json::json_index_with_n_like_filter_on_string_field_should_use_index
+testo index::json::json_index_with_ne_filter_against_bool_field_should_fetch_null_values
+testo index::json::json_index_with_ne_filter_against_number_field_should_fetch_null_values
+testo index::json::json_index_with_ne_filter_against_string_field_should_fetch_null_values
+testo index::json::json_index_with_ne_filter_on_bool_field_should_use_index
+testo index::json::json_index_with_ne_filter_on_null_nested_field_should_use_index
+testo index::json::json_index_with_ne_filter_on_number_field_should_use_index
+testo index::json::json_index_with_nin_filter_should_use_index
