@@ -11,7 +11,7 @@ Which nameservers the node then uses (the host's accepted lines, or Go's `127.0.
 
 - **Parents:** ["defra"]
 
-A host that embeds the node through the C API (a Swift or Kotlin app) passes a keyring it owns, such as the Keychain or the Android Keystore, in the `peer_keyring_get`, `peer_keyring_set`, `peer_keyring_delete` and `peer_keyring_context` fields of `DefraNodeInitOptions`. The node keeps its peer key there, under the name `peer-key`, instead of in plaintext in its store. Choosing and securing the keystore is the host's job. It is a C API surface with no HTTP, CLI or Go equivalent, so no testo client reaches it and its scenarios are the `ffi` crate's tests.
+A host that embeds the node through the C API (a Swift or Kotlin app) passes a keyring it owns, such as the Keychain or the Android Keystore, in the `peer_keyring_get`, `peer_keyring_set` and `peer_keyring_context` fields of `DefraNodeInitOptions`. The node keeps its peer key there, under the name `peer-key`, instead of in plaintext in its store. Choosing and securing the keystore is the host's job. It is a C API surface with no HTTP, CLI or Go equivalent, so no testo client reaches it and its scenarios are the `ffi` crate's tests.
 
 # `defra.node.ffi_peer_keyring.identity`: The node's peer identity is the key in the host keyring
 
@@ -25,14 +25,14 @@ On its first start with a host keyring the node generates an Ed25519 peer key an
 - **Parents:** ["defra.node.ffi_peer_keyring"]
 - **Scenarios:** ["peer_keyring::tests::node::a_keyring_failure_stops_the_node", "peer_keyring::tests::node::a_plaintext_peer_key_is_refused"]
 
-A get callback that returns any status other than `0` or `DEFRA_KEYRING_NOT_FOUND` (`1`) fails `defra_node_new` with `failed to read peer key from keyring: system keyring error: host keyring get of 'peer-key' failed with status <status>`, and nothing is written to the store. A store that already holds a plaintext peer key is refused with `plaintext peerstore /p2p/local-peer-key requires explicit keyring migration`, and the keyring is left untouched. A store started with a keyring is refused without one: `this database requires its application-owned peer keyring`.
+A get callback that returns any status other than `0` or `DEFRA_KEYRING_NOT_FOUND` (`1`) fails `defra_node_new` with `failed to read peer key from keyring: system keyring error: host keyring get of 'peer-key' failed with status <status>`, and nothing is written to the store. A store that already holds a plaintext peer key is refused with `plaintext peerstore /p2p/local-peer-key requires explicit keyring migration`, and the keyring is left untouched. The C API has no migration entry point: such a store must keep starting without a keyring or move its data to a new path. A store started with a keyring is refused without one: `this database requires its application-owned peer keyring`.
 
 # `defra.node.ffi_peer_keyring.callbacks`: The host's callbacks and what their answers mean
 
 - **Parents:** ["defra.node.ffi_peer_keyring"]
-- **Scenarios:** ["peer_keyring::tests::keys_round_trip_through_the_host_callbacks", "peer_keyring::tests::a_host_failure_is_an_error_never_a_missing_key", "peer_keyring::tests::the_three_callbacks_are_set_together", "peer_keyring::tests::node::a_node_refuses_part_of_a_keyring"]
+- **Scenarios:** ["peer_keyring::tests::keys_round_trip_through_the_host_callbacks", "peer_keyring::tests::a_host_failure_is_an_error_never_a_missing_key", "peer_keyring::tests::the_callbacks_are_set_together", "peer_keyring::tests::node::a_node_refuses_part_of_a_keyring"]
 
-The three callbacks are set together or not at all; setting only some fails `defra_node_new` with `peer_keyring_get, peer_keyring_set and peer_keyring_delete must be set together`. Each returns `0` on success. Get writes the key into a buffer of `DEFRA_KEYRING_MAX_KEY_LEN` (4096) bytes and reports its length; a longer key is an error (`host keyring key '<name>' is <n> bytes, more than the 4096 a key may hold`). Get and delete return `DEFRA_KEYRING_NOT_FOUND` only for a missing key; any other non-zero status is a failure (`host keyring <get|set|delete> of '<name>' failed with status <status>`), never a missing key. The key the node reads back is zeroed when it is dropped.
+The two callbacks are set together or not at all; setting only one fails `defra_node_new` with `peer_keyring_get and peer_keyring_set must be set together`. Each returns `0` on success. Get writes the key into a buffer of `DEFRA_KEYRING_MAX_KEY_LEN` (4096) bytes and reports its length; a longer key is an error (`host keyring key '<name>' is <n> bytes, more than the 4096 a key may hold`). Get returns `DEFRA_KEYRING_NOT_FOUND` only for a missing key; any other non-zero status is a failure (`host keyring <get|set> of '<name>' failed with status <status>`), never a missing key. The key the node reads back is zeroed when it is dropped. The callbacks run on a network edge thread, so they must be quick and nonblocking, must not prompt, and an Android host must attach that thread to its JVM before reaching the Keystore.
 
 # `defra.node.start.go_datastore`: A Go DefraDB datastore is refused at start with what to do
 

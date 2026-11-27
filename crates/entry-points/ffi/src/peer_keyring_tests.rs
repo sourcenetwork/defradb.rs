@@ -82,22 +82,10 @@ unsafe extern "C" fn set(
     0
 }
 
-unsafe extern "C" fn delete(context: usize, name: *const c_char) -> c_int {
-    let (store, name) = store_and_name(context, name);
-    if store.locked.load(Ordering::SeqCst) {
-        return LOCKED;
-    }
-    match store.keys.remove(name.as_str()) {
-        Some(_) => 0,
-        None => DEFRA_KEYRING_NOT_FOUND,
-    }
-}
-
 fn host_keyring(store: &Store) -> HostKeyring {
     HostKeyring {
         get,
         set,
-        delete,
         context: store.context(),
     }
 }
@@ -106,7 +94,6 @@ fn keyring_options(store: &Store) -> NodeInitOptions {
     NodeInitOptions {
         peer_keyring_get: Some(get),
         peer_keyring_set: Some(set),
-        peer_keyring_delete: Some(delete),
         peer_keyring_context: store.context(),
         ..NodeInitOptions::default()
     }
@@ -120,16 +107,11 @@ fn keys_round_trip_through_the_host_callbacks() {
 
     keyring.set("peer-key", &[3; 64]).unwrap();
     assert_eq!(&keyring.get("peer-key").unwrap()[..], &[3; 64]);
-    keyring.delete("peer-key").unwrap();
-
-    assert!(matches!(
-        keyring.get("peer-key"),
-        Err(keyring::Error::NotFound(name)) if name == "peer-key"
-    ));
-    assert!(matches!(
-        keyring.delete("peer-key"),
-        Err(keyring::Error::NotFound(_))
-    ));
+    let delete_error = keyring.delete("peer-key").unwrap_err().to_string();
+    assert!(
+        delete_error.contains("host keyring delete of 'peer-key' is not supported"),
+        "{delete_error}"
+    );
     assert!(matches!(
         keyring.list(),
         Err(keyring::Error::SystemKeyringListNotSupported)
@@ -150,7 +132,6 @@ fn a_host_failure_is_an_error_never_a_missing_key() {
     for error in [
         keyring.get("peer-key").unwrap_err(),
         keyring.set("peer-key", &[1]).unwrap_err(),
-        keyring.delete("peer-key").unwrap_err(),
     ] {
         assert!(
             matches!(&error, keyring::Error::SystemKeyring(message) if message.contains("failed with status 7")),
@@ -171,7 +152,7 @@ fn a_host_failure_is_an_error_never_a_missing_key() {
 
 #[test]
 #[mantra_macros::req_test("defra.node.ffi_peer_keyring.callbacks")]
-fn the_three_callbacks_are_set_together() {
+fn the_callbacks_are_set_together() {
     let store = Store::new();
     assert!(from_options(&NodeInitOptions::default()).unwrap().is_none());
     assert!(from_options(&keyring_options(&store)).unwrap().is_some());
@@ -185,15 +166,11 @@ fn the_three_callbacks_are_set_together() {
             peer_keyring_set: None,
             ..keyring_options(&store)
         },
-        NodeInitOptions {
-            peer_keyring_delete: None,
-            ..keyring_options(&store)
-        },
     ];
     for options in partial {
         assert_eq!(
             from_options(&options).err().as_deref(),
-            Some("peer_keyring_get, peer_keyring_set and peer_keyring_delete must be set together")
+            Some("peer_keyring_get and peer_keyring_set must be set together")
         );
     }
 }
@@ -224,7 +201,6 @@ mod node {
         NodeInitOptions {
             peer_keyring_get: Some(get),
             peer_keyring_set: Some(set),
-            peer_keyring_delete: Some(delete),
             peer_keyring_context: store.context(),
             ..options
         }
@@ -343,13 +319,11 @@ mod node {
     fn a_node_refuses_part_of_a_keyring() {
         let store = Store::new();
         let error = refused(NodeInitOptions {
-            peer_keyring_delete: None,
+            peer_keyring_set: None,
             ..with_keyring(local_options(), &store)
         });
         assert!(
-            error.contains(
-                "peer_keyring_get, peer_keyring_set and peer_keyring_delete must be set together"
-            ),
+            error.contains("peer_keyring_get and peer_keyring_set must be set together"),
             "{error}"
         );
     }

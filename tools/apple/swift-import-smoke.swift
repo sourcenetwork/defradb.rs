@@ -13,15 +13,10 @@ let defraSwiftKeyringSet: DefraKeyringSetCallback = { _, _, _, _ in
     return 0
 }
 
-let defraSwiftKeyringDelete: DefraKeyringDeleteCallback = { _, _ in
-    return DEFRA_KEYRING_NOT_FOUND
-}
-
 func defraSwiftKeyringSmoke() {
     var options = DefraNodeInitOptions()
     options.peer_keyring_get = defraSwiftKeyringGet
     options.peer_keyring_set = defraSwiftKeyringSet
-    options.peer_keyring_delete = defraSwiftKeyringDelete
     options.peer_keyring_context = 1
     let _ = defra_node_new(options)
 }

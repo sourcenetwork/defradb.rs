@@ -201,22 +201,26 @@ pub struct NodeInitOptions {
     pub _reserved6: u32,
     /// Optional host keyring holding the node's peer key instead of the
     /// store: a platform keystore the host owns and secures. Set
-    /// `peer_keyring_get`, `peer_keyring_set` and `peer_keyring_delete`
-    /// together, or none of them. A `DefraKeyringGetCallback`, spelled out so
-    /// C sees a nullable function pointer.
+    /// `peer_keyring_get` and `peer_keyring_set` together, or neither. A
+    /// `DefraKeyringGetCallback`, spelled out so C sees a nullable function
+    /// pointer.
     ///
     /// The node reads the key under the name `peer-key` when it starts, and
     /// stores a new one there on its first start. A keyring failure stops
     /// `defra_node_new`, which never falls back to the store; a store that
-    /// already holds a plaintext peer key is refused until it is migrated,
-    /// and a store started with a keyring is refused without one. A start
-    /// with `p2p_private_key` uses that key and leaves the keyring alone.
-    /// Use one keyring namespace per node.
+    /// already holds a plaintext peer key is refused. The C API has no
+    /// migration entry point, so such a store must keep starting without a
+    /// keyring or move its data to a new path. A store started with a keyring
+    /// is refused without one. A start with `p2p_private_key` uses that key
+    /// and leaves the keyring alone. Use one keyring namespace per node.
     ///
-    /// The callbacks may be called from any thread, so they must be
-    /// thread-safe, and they must not call back into DefraDB. They and
-    /// `peer_keyring_context` must stay valid until `defra_node_close`
-    /// returns.
+    /// The node calls the callbacks on its network edge thread, not
+    /// necessarily the thread that calls `defra_node_new`. An Android host
+    /// must attach that thread to its JVM before the callback can reach the
+    /// Keystore. The callbacks must be quick and nonblocking, and must not
+    /// prompt, so startup does not stall the edge thread. They must be
+    /// thread-safe and must not call back into DefraDB. They and
+    /// `peer_keyring_context` must stay valid until `defra_node_close`.
     pub peer_keyring_get: Option<
         unsafe extern "C" fn(
             context: usize,
@@ -235,10 +239,6 @@ pub struct NodeInitOptions {
             key_len: usize,
         ) -> c_int,
     >,
-    /// The host keyring's `DefraKeyringDeleteCallback`; see
-    /// `peer_keyring_get`.
-    pub peer_keyring_delete:
-        Option<unsafe extern "C" fn(context: usize, name: *const c_char) -> c_int>,
     /// Passed back to the host keyring's callbacks on every call.
     pub peer_keyring_context: usize,
 }
@@ -317,7 +317,6 @@ impl Default for NodeInitOptions {
             _reserved6: 0,
             peer_keyring_get: None,
             peer_keyring_set: None,
-            peer_keyring_delete: None,
             peer_keyring_context: 0,
         }
     }

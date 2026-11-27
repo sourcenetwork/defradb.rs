@@ -43,16 +43,9 @@ pub type DefraKeyringSetCallback = unsafe extern "C" fn(
     key_len: usize,
 ) -> c_int;
 
-/// Removes the key stored under `name`. Return `0` once removed,
-/// `DEFRA_KEYRING_NOT_FOUND` when no key has that name, any other value on
-/// failure.
-pub type DefraKeyringDeleteCallback =
-    unsafe extern "C" fn(context: usize, name: *const c_char) -> c_int;
-
 struct HostKeyring {
     get: DefraKeyringGetCallback,
     set: DefraKeyringSetCallback,
-    delete: DefraKeyringDeleteCallback,
     context: usize,
 }
 
@@ -106,13 +99,9 @@ impl keyring::Keyring for HostKeyring {
     }
 
     fn delete(&self, name: &str) -> keyring::Result<()> {
-        let c_name = key_name(name)?;
-        // SAFETY: as for `set`.
-        match unsafe { (self.delete)(self.context, c_name.as_ptr()) } {
-            0 => Ok(()),
-            DEFRA_KEYRING_NOT_FOUND => Err(keyring::Error::NotFound(name.to_owned())),
-            status => Err(failed("delete", name, status)),
-        }
+        Err(keyring::Error::SystemKeyring(format!(
+            "host keyring delete of '{name}' is not supported"
+        )))
     }
 
     fn list(&self) -> keyring::Result<Vec<String>> {
@@ -120,29 +109,19 @@ impl keyring::Keyring for HostKeyring {
     }
 }
 
-/// The host keyring `options` sets, if any: its three callbacks are set
+/// The host keyring `options` sets, if any: its two callbacks are set
 /// together or not at all.
 pub(crate) fn from_options(
     options: &NodeInitOptions,
 ) -> Result<Option<defra_node::PeerKeyring>, String> {
-    match (
-        options.peer_keyring_get,
-        options.peer_keyring_set,
-        options.peer_keyring_delete,
-    ) {
-        (Some(get), Some(set), Some(delete)) => {
-            Ok(Some(defra_node::PeerKeyring::new(Arc::new(HostKeyring {
-                get,
-                set,
-                delete,
-                context: options.peer_keyring_context,
-            }))))
-        }
-        (None, None, None) => Ok(None),
-        _ => Err(
-            "peer_keyring_get, peer_keyring_set and peer_keyring_delete must be set together"
-                .to_string(),
-        ),
+    match (options.peer_keyring_get, options.peer_keyring_set) {
+        (Some(get), Some(set)) => Ok(Some(defra_node::PeerKeyring::new(Arc::new(HostKeyring {
+            get,
+            set,
+            context: options.peer_keyring_context,
+        })))),
+        (None, None) => Ok(None),
+        _ => Err("peer_keyring_get and peer_keyring_set must be set together".to_string()),
     }
 }
 
