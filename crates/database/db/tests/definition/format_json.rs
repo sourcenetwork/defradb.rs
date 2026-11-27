@@ -9,18 +9,25 @@ use db::AutoCommitMutator;
 use document::{Document, NormalValue};
 use query::DocMutator;
 use storage::corekv::{IterOptions, Iterator as _};
-use storage::encoding::json::{JSON_EMPTY_ARRAY, JSON_PATH_END};
+use storage::encoding::json::{JSON_EMPTY_ARRAY, JSON_EMPTY_ARRAY_DESC, JSON_PATH_END};
 use storage::keys::IndexDataStoreKey;
 use storage::RegolithStore;
 
 const SDL: &str = r#"type Profiles {
     count: Int @index(name: "counts")
     custom: JSON @index(name: "customs")
+    descending: JSON @index(name: "descending", direction: DESC)
 }"#;
 
-fn is_marker_entry(key: &[u8]) -> bool {
+fn is_marker_entry(key: &[u8], marker: u8) -> bool {
     key.windows(3)
-        .any(|window| window == [0x01, JSON_PATH_END, JSON_EMPTY_ARRAY])
+        .any(|window| window == [0x01, JSON_PATH_END, marker])
+}
+
+fn marker_count(keys: &[Vec<u8>], marker: u8) -> usize {
+    keys.iter()
+        .filter(|key| is_marker_entry(key, marker))
+        .count()
 }
 
 async fn index_keys(db: &db::DB<RegolithStore>, prefix: &[u8]) -> Vec<Vec<u8>> {
@@ -68,7 +75,11 @@ fn rebuilds_json_indexes_stamped(stored: u32, every: bool) {
                 .unwrap();
             IndexDataStoreKey::index_prefix(collection.resolved_root_id(), index.id)
         };
-        let (counts, customs) = (prefix_of("counts"), prefix_of("customs"));
+        let (counts, customs, descending) = (
+            prefix_of("counts"),
+            prefix_of("customs"),
+            prefix_of("descending"),
+        );
         let mut doc = Document::new(collection.schema().clone());
         doc.set("count", NormalValue::Int(42)).unwrap();
         doc.set(
@@ -76,18 +87,33 @@ fn rebuilds_json_indexes_stamped(stored: u32, every: bool) {
             NormalValue::Json(serde_json::json!({ "a": [], "b": 1 })),
         )
         .unwrap();
+        doc.set(
+            "descending",
+            NormalValue::Json(serde_json::json!({ "a": [] })),
+        )
+        .unwrap();
         AutoCommitMutator::new(db.clone())
             .create("Profiles", doc)
             .await
             .unwrap();
         let written = index_keys(&db, &customs).await;
-        assert_eq!(written.iter().filter(|key| is_marker_entry(key)).count(), 1);
+        let written_descending = index_keys(&db, &descending).await;
+        assert_eq!(marker_count(&written, JSON_EMPTY_ARRAY), 1);
+        assert_eq!(marker_count(&written_descending, JSON_EMPTY_ARRAY_DESC), 1);
 
         // Leave the store as format `stored` wrote it, without the marker, and drop
         // the count entry to see that its index is not rebuilt.
         let txn = db.new_txn(false).await.unwrap();
         let data = txn.datastore().unwrap();
-        for key in written.iter().filter(|key| is_marker_entry(key)) {
+        for key in written
+            .iter()
+            .filter(|key| is_marker_entry(key, JSON_EMPTY_ARRAY))
+            .chain(
+                written_descending
+                    .iter()
+                    .filter(|key| is_marker_entry(key, JSON_EMPTY_ARRAY_DESC)),
+            )
+        {
             data.delete(key).await.unwrap();
         }
         for key in index_keys(&db, &counts).await {
@@ -103,15 +129,82 @@ fn rebuilds_json_indexes_stamped(stored: u32, every: bool) {
         drop(collection);
         drop(db);
 
-        let db = db::DB::open(store).await.unwrap();
+        let db = db::DB::open(store.clone()).await.unwrap();
         assert_eq!(
             db.stored_index_format().await.unwrap(),
             Some(CURRENT_INDEX_FORMAT)
         );
         let rebuilt = index_keys(&db, &customs).await;
+        let rebuilt_descending = index_keys(&db, &descending).await;
         assert_eq!(rebuilt.len(), written.len());
-        assert_eq!(rebuilt.iter().filter(|key| is_marker_entry(key)).count(), 1);
+        assert_eq!(marker_count(&rebuilt, JSON_EMPTY_ARRAY), 1);
+        assert_eq!(marker_count(&rebuilt_descending, JSON_EMPTY_ARRAY_DESC), 1);
         assert_eq!(index_keys(&db, &counts).await.is_empty(), !every);
+
+        // A current-format store must not send JSON indexes through the rebuild
+        // again: remove their markers and check the second open leaves them out.
+        let collection = db.require_collection("Profiles").unwrap();
+        let mut markers_to_delete = Vec::new();
+        for (name, marker) in [
+            ("customs", JSON_EMPTY_ARRAY),
+            ("descending", JSON_EMPTY_ARRAY_DESC),
+        ] {
+            let index = collection
+                .schema()
+                .indexes
+                .iter()
+                .find(|index| index.name == name)
+                .unwrap();
+            let prefix = IndexDataStoreKey::index_prefix(collection.resolved_root_id(), index.id);
+            markers_to_delete.extend(
+                index_keys(&db, &prefix)
+                    .await
+                    .into_iter()
+                    .filter(|key| is_marker_entry(key, marker)),
+            );
+        }
+        let txn = db.new_txn(false).await.unwrap();
+        let data = txn.datastore().unwrap();
+        for key in markers_to_delete {
+            data.delete(&key).await.unwrap();
+        }
+        drop(data);
+        txn.commit().await.unwrap();
+        for (name, marker) in [
+            ("customs", JSON_EMPTY_ARRAY),
+            ("descending", JSON_EMPTY_ARRAY_DESC),
+        ] {
+            let index = collection
+                .schema()
+                .indexes
+                .iter()
+                .find(|index| index.name == name)
+                .unwrap();
+            let prefix = IndexDataStoreKey::index_prefix(collection.resolved_root_id(), index.id);
+            assert_eq!(marker_count(&index_keys(&db, &prefix).await, marker), 0);
+        }
+        drop(collection);
+        drop(db);
+
+        let db = db::DB::open(store).await.unwrap();
+        assert_eq!(
+            db.stored_index_format().await.unwrap(),
+            Some(CURRENT_INDEX_FORMAT)
+        );
+        let collection = db.require_collection("Profiles").unwrap();
+        for (name, marker) in [
+            ("customs", JSON_EMPTY_ARRAY),
+            ("descending", JSON_EMPTY_ARRAY_DESC),
+        ] {
+            let index = collection
+                .schema()
+                .indexes
+                .iter()
+                .find(|index| index.name == name)
+                .unwrap();
+            let prefix = IndexDataStoreKey::index_prefix(collection.resolved_root_id(), index.id);
+            assert_eq!(marker_count(&index_keys(&db, &prefix).await, marker), 0);
+        }
     })
     .unwrap()
 }

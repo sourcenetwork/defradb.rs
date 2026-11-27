@@ -20,33 +20,39 @@ pub(super) fn with_json_empty_arrays(
     first_field: &str,
     is_composite: bool,
 ) -> IndexScanType {
-    let Some(path) = conditions
+    let mut paths: Vec<&JsonPath> = Vec::new();
+    for path in conditions
         .iter()
         .filter(|c| c.field_name == first_field && c.array_op == Some(FilterOp::All))
-        .find_map(|c| c.json_path.as_ref().filter(|path| !path.is_empty()))
-    else {
-        return scan;
-    };
-    if reads_path_top(&scan, path) {
+        .filter_map(|c| c.json_path.as_ref().filter(|path| !path.is_empty()))
+    {
+        if !paths.contains(&path) && !reads_path_top(&scan, path) {
+            paths.push(path);
+        }
+    }
+    if paths.is_empty() {
         return scan;
     }
-    let marker = NormalValue::JsonLeaf(JsonLeafValue::new(
-        path.clone(),
-        JsonScalarValue::EmptyArray,
-    ));
-    let empty = if is_composite {
-        IndexScanType::PrefixScan {
-            prefix_values: vec![marker],
-            reverse: false,
-        }
-    } else {
-        IndexScanType::ExactMatch {
-            values: vec![marker],
-        }
-    };
-    IndexScanType::OrScan {
-        branches: vec![scan, empty],
+
+    let mut branches = Vec::with_capacity(paths.len() + 1);
+    branches.push(scan);
+    for path in paths {
+        let marker = NormalValue::JsonLeaf(JsonLeafValue::new(
+            path.clone(),
+            JsonScalarValue::EmptyArray,
+        ));
+        branches.push(if is_composite {
+            IndexScanType::PrefixScan {
+                prefix_values: vec![marker],
+                reverse: false,
+            }
+        } else {
+            IndexScanType::ExactMatch {
+                values: vec![marker],
+            }
+        });
     }
+    IndexScanType::OrScan { branches }
 }
 
 /// Whether `scan` reaches the top of `path`, where the marker sorts, so

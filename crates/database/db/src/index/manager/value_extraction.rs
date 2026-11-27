@@ -168,16 +168,17 @@ impl IndexManager {
 
         match value {
             NormalValue::Json(ref json) => {
-                let mut leaves = value.json_leaves();
-                if leaves.is_empty() {
-                    leaves.push(NormalValue::Null);
+                if json.is_null() {
+                    return vec![NormalValue::Null];
                 }
-                leaves.extend(
-                    document::json_empty_array_markers(json)
-                        .into_iter()
-                        .map(NormalValue::JsonLeaf),
-                );
-                leaves
+                let entries = document::json_index_leaves(json);
+                let has_value = entries.iter().any(|leaf| !leaf.is_empty_array_marker());
+                let mut expanded = Vec::with_capacity(entries.len() + usize::from(!has_value));
+                if !has_value {
+                    expanded.push(NormalValue::Null);
+                }
+                expanded.extend(entries.into_iter().map(NormalValue::JsonLeaf));
+                expanded
             }
 
             NormalValue::Null

@@ -85,6 +85,34 @@ fn all_on_a_composite_index_reads_every_marker_entry() {
 }
 
 #[test]
+fn all_on_two_paths_reads_a_marker_for_each_path() {
+    let scan = scan(
+        json!({
+            "a": {"_all": {"_gt": 0}},
+            "b": {"_all": {"_eq": 1}}
+        }),
+        &[("custom", false)],
+    );
+    let IndexScanType::OrScan { branches } = scan else {
+        panic!("expected an OrScan, got {scan:?}");
+    };
+    assert_eq!(branches.len(), 3);
+    let marker_paths: Vec<&JsonPath> = branches
+        .iter()
+        .filter_map(|branch| match branch {
+            IndexScanType::ExactMatch { values } => values.first(),
+            _ => None,
+        })
+        .filter_map(|value| match value {
+            NormalValue::JsonLeaf(leaf) if leaf.is_empty_array_marker() => Some(&leaf.path),
+            _ => None,
+        })
+        .collect();
+    assert!(marker_paths.contains(&&JsonPath::new().append_property("a").append_index()));
+    assert!(marker_paths.contains(&&JsonPath::new().append_property("b").append_index()));
+}
+
+#[test]
 fn all_below_a_bound_reads_the_marker_as_a_branch() {
     for descending in [false, true] {
         let scan = scan(

@@ -79,27 +79,27 @@ impl JsonLeafValue {
     }
 }
 
-/// The empty-array marker of every empty array in `json`, at the path its
-/// elements would have.
-pub fn json_empty_array_markers(json: &serde_json::Value) -> Vec<JsonLeafValue> {
-    let mut markers = Vec::new();
-    collect_empty_arrays(json, &JsonPath::new(), &mut markers);
-    markers
+/// Every indexable leaf in `json`, including the empty-array marker of every
+/// empty array at the path its elements would have.
+pub fn json_index_leaves(json: &serde_json::Value) -> Vec<JsonLeafValue> {
+    let mut leaves = Vec::new();
+    collect_index_leaves(json, &JsonPath::new(), &mut leaves);
+    leaves
 }
 
-fn collect_empty_arrays(
+fn collect_index_leaves(
     value: &serde_json::Value,
     path: &JsonPath,
-    markers: &mut Vec<JsonLeafValue>,
+    leaves: &mut Vec<JsonLeafValue>,
 ) {
     match value {
         serde_json::Value::Object(map) => {
             for (key, child) in map {
-                collect_empty_arrays(child, &path.append_property(key), markers);
+                collect_index_leaves(child, &path.append_property(key), leaves);
             }
         }
         serde_json::Value::Array(elements) if elements.is_empty() => {
-            markers.push(JsonLeafValue::new(
+            leaves.push(JsonLeafValue::new(
                 path.append_index(),
                 JsonScalarValue::EmptyArray,
             ));
@@ -107,9 +107,13 @@ fn collect_empty_arrays(
         serde_json::Value::Array(elements) => {
             let element_path = path.append_index();
             for element in elements {
-                collect_empty_arrays(element, &element_path, markers);
+                collect_index_leaves(element, &element_path, leaves);
             }
         }
-        _ => {}
+        _ => {
+            if let Some(leaf) = JsonLeafValue::from_json(path.clone(), value) {
+                leaves.push(leaf);
+            }
+        }
     }
 }

@@ -91,6 +91,14 @@ fn nested_array_paths_round_trip_descending() {
     let nested = path().append_index();
     for leaf in [
         marker(),
+        JsonLeafValue::new(
+            JsonPath::new()
+                .append_property("orders")
+                .append_index()
+                .append_property("status")
+                .append_index(),
+            JsonScalarValue::EmptyArray,
+        ),
         JsonLeafValue::new(nested.clone(), JsonScalarValue::EmptyArray),
         JsonLeafValue::new(path(), JsonScalarValue::Number(1.0)),
         JsonLeafValue::new(path(), JsonScalarValue::Null),

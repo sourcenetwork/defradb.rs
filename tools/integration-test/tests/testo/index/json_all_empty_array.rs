@@ -130,9 +130,56 @@ fn all_on_a_descending_json_index_finds_an_empty_array() {
         "type User { name: String  custom: JSON @index(direction: DESC) }",
         vec![
             request(&query("{a: {_all: {_eq: 1}}}"), names(&["empty", "one"])),
+            request(
+                &query("{a: {_all: {_gt: 0}}}"),
+                names(&["empty", "one", "two"]),
+            ),
             request(&query("{a: {_all: {_lt: 2}}}"), names(&["empty", "one"])),
         ],
     )
+    .execute();
+}
+
+#[test]
+#[mantra_macros::req_test("defra.index.json.all-empty")]
+fn all_on_two_paths_finds_an_empty_array_at_either_path() {
+    TestCase {
+        id: integration_test::scenario_id!(),
+        client_types: Some(CLIENTS),
+        ..TestCase::from_actions(vec![
+            AddCollection {
+                sdl: SDL.into(),
+                ..Default::default()
+            }
+            .into(),
+            add(json!({ "name": "a empty b filled", "custom": { "a": [], "b": [1] } })),
+            add(json!({ "name": "a filled b empty", "custom": { "a": [1], "b": [] } })),
+            request(
+                &query("{a: {_all: {_gt: 0}}, b: {_all: {_eq: 1}}}"),
+                names(&["a empty b filled", "a filled b empty"]),
+            ),
+        ])
+    }
+    .execute();
+}
+
+#[test]
+#[mantra_macros::req_test("defra.index.json.all-empty")]
+fn all_on_a_top_level_empty_array_finds_it() {
+    TestCase {
+        id: integration_test::scenario_id!(),
+        client_types: Some(CLIENTS),
+        ..TestCase::from_actions(vec![
+            AddCollection {
+                sdl: SDL.into(),
+                ..Default::default()
+            }
+            .into(),
+            add(json!({ "name": "empty", "custom": [] })),
+            add(json!({ "name": "one", "custom": [1] })),
+            request(&query("{_all: {_eq: 1}}"), names(&["empty", "one"])),
+        ])
+    }
     .execute();
 }
 
