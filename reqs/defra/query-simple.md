@@ -502,12 +502,26 @@ On a field with `@index(vector: {dimensions: 3, hnsw: {metric: COSINE}})`, `User
 
 A similarity query with a non-empty scalar filter—including one wrapped in `_and`—does not use the vector index. It exhaustively scores the filter's matches and returns the `VECTOR_INDEX_UNUSED` warning with `reason: filter`. An empty filter selects every row and keeps vector routing.
 
+# `defra.query.simple.similarity.alias_under_combinator`: An alias condition under `_or` sees the scores
+
+- **Parents:** ["go.query.simple.similarity"]
+- **Scenarios:** ["query::simple::with_similarity_or_alias::similarity_alias_under_or_keeps_rows_the_alias_matches"]
+
+`User(filter: {_or: [{status: {_eq: "public"}}, {_alias: {sim: {_gt: 0.9}}}]}) { name sim: SIMILARITY(vector: {...}) }` returns every document that is public or scores above 0.9. The whole filter is decided after the scores exist, so a document the alias branch matches is never dropped. The same holds under `_and` and `_not`.
+
 # `go.query.simple.select.fields`: Plain query returns every document with the selected fields
 
 - **Parents:** ["go.query.simple.select"]
 - **Scenarios:** ["query.simple", "query.simple.empty-document", "query.simple.missing-fields", "query.simple.multiple-rows", "query.simple.with-restart"]
 
 `query { Users { Name Age } }` returns one object per document holding exactly the selected fields (including `_docID` when selected); fields never set on a document come back as `null`. Documents added after a node restart are returned like any others.
+
+# `defra.similarity.access_first`: A similarity query scores only documents the reader may see
+
+- **Parents:** ["defra"]
+- **Scenarios:** ["acp::dac::similarity::a_root_similarity_never_scores_a_hidden_note", "acp::dac::similarity::a_nested_similarity_never_scores_a_hidden_note"]
+
+Under a local policy, with only Alice's note holding a 3-dimension `vec`, `SIMILARITY(vec: {vector: [1, 0]})` in `Note { ... }` returns no notes to Bob, and in `Author { notes { ... } }` returns the author with no notes, with no error. For Alice both fail with `source and vector must be of the same length. Source: 3, Vector: 2`. The scores are computed after the access check, so a hidden document never changes the answer.
 
 # `defra.query.filter.input-validation`: Filters are checked against their generated input types
 

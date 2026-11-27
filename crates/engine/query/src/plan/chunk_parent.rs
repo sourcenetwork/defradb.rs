@@ -1,7 +1,7 @@
 //! Checks whether a parent's current text uses a chunk.
 
 use chunk_split::hash::text_hash;
-use chunk_split::split::{split, ChunkConfig};
+use chunk_split::split::{split, ChunkConfig, UnknownSplitterVersion};
 use document::{Document, NormalValue};
 use rapidhash::RapidHashSet;
 use schema::{ChunkedField, CHUNK_HASH_FIELD, CHUNK_SOURCE_ID_FIELD, CHUNK_TEXT_FIELD};
@@ -47,11 +47,13 @@ pub(crate) fn parent_hashes(
     let parent_text = parent
         .get(&chunked.field_name)
         .and_then(NormalValue::as_str)?;
-    let config = match ChunkConfig::new(
-        chunked.splitter_version,
-        chunked.max_chars as usize,
-        chunked.overlap as usize,
-    ) {
+    text_hashes(parent_text, chunked)
+}
+
+/// The hashes of the chunks `text` cuts into, or `None` when this node
+/// can't run the field's splitter.
+pub(crate) fn text_hashes(text: &str, chunked: &ChunkedField) -> Option<RapidHashSet<String>> {
+    let config = match splitter(chunked) {
         Ok(config) => config,
         Err(error) => {
             tracing::warn!(
@@ -63,12 +65,38 @@ pub(crate) fn parent_hashes(
             return None;
         }
     };
-    Some(
-        split(parent_text, &config)
-            .into_iter()
-            .map(|chunk| chunk.hash)
-            .collect(),
+    Some(cut_hashes(text, &config))
+}
+
+/// The splitter `chunked` cuts its text with, if this node can run it.
+pub(crate) fn splitter(chunked: &ChunkedField) -> Result<ChunkConfig, UnknownSplitterVersion> {
+    ChunkConfig::new(
+        chunked.splitter_version,
+        chunked.max_chars as usize,
+        chunked.overlap as usize,
     )
+}
+
+/// The hashes of the chunks `config` cuts `text` into.
+pub(crate) fn cut_hashes(text: &str, config: &ChunkConfig) -> RapidHashSet<String> {
+    split(text, config)
+        .into_iter()
+        .map(|chunk| chunk.hash)
+        .collect()
+}
+
+/// The parent a chunk names.
+pub(crate) fn chunk_parent_id(chunk: &Document) -> Option<&str> {
+    chunk
+        .get(CHUNK_SOURCE_ID_FIELD)
+        .and_then(NormalValue::as_str)
+}
+
+/// The chunk's hash, if it matches its text, so a chunk can't claim another's hash.
+pub(crate) fn verified_hash(chunk: &Document) -> Option<&str> {
+    let text = chunk.get(CHUNK_TEXT_FIELD).and_then(NormalValue::as_str)?;
+    let hash = chunk.get(CHUNK_HASH_FIELD).and_then(NormalValue::as_str)?;
+    (text_hash(text) == hash).then_some(hash)
 }
 
 pub(crate) fn chunk_fields() -> RapidHashSet<String> {

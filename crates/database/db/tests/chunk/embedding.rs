@@ -24,13 +24,13 @@ const PARAGRAPHS: usize = 4;
 const ARTICLES: usize = 3;
 
 /// An embedding provider that counts the requests it answers.
-struct Provider {
+pub(super) struct Provider {
     requests: Arc<AtomicUsize>,
     server: HttpServer,
 }
 
 impl Provider {
-    fn start() -> Self {
+    pub(super) fn start() -> Self {
         let requests = Arc::new(AtomicUsize::new(0));
         let counted = Arc::clone(&requests);
         let server = HttpServer::start(&["/embeddings"], move |request| {
@@ -58,7 +58,7 @@ impl Provider {
     }
 
     /// `Article` with an embedded chunked `body`, and `extra` fields.
-    fn sdl(&self, extra: &str) -> String {
+    pub(super) fn sdl(&self, extra: &str) -> String {
         format!(
             "type Article {{ body: String @chunk(maxChars: 64) body_v: [Float32!] {} {extra} }}",
             self.embedding("body")
@@ -86,26 +86,30 @@ fn chunk_count(text: &str) -> u64 {
     split(&text.replace("\\n", "\n"), &CONFIG).len() as u64
 }
 
-type Runner = QueryRunner<
+pub(super) type Runner = QueryRunner<
     LensedAutoCommitFetcher<storage::RegolithStore>,
     DbTransactionRegistry<storage::RegolithStore>,
 >;
 
-async fn setup(sdl: &str) -> (Arc<db::DB<storage::RegolithStore>>, Runner) {
+pub(super) async fn setup(sdl: &str) -> (Arc<db::DB<storage::RegolithStore>>, Runner) {
     let (db, _bus) = make_test_db_with_bus().await;
     db.add_collection(&defra_core::RequestContext::ambient(), sdl)
         .await
         .expect("schema");
-    let runner = QueryRunner::with_arc_registry_and_provider(
-        LensedAutoCommitFetcher::new(Arc::clone(&db)),
-        DbCollectionProvider::new_arc(Arc::clone(&db)),
-        Arc::new(DbTransactionRegistry::new(Arc::clone(&db))),
-    )
-    .with_mutator(Arc::new(AutoCommitMutator::new(Arc::clone(&db))));
+    let runner = runner(&db);
     (db, runner)
 }
 
-async fn run(runner: &Runner, query: &str) -> Value {
+pub(super) fn runner(db: &Arc<db::DB<storage::RegolithStore>>) -> Runner {
+    QueryRunner::with_arc_registry_and_provider(
+        LensedAutoCommitFetcher::new(Arc::clone(db)),
+        DbCollectionProvider::new_arc(Arc::clone(db)),
+        Arc::new(DbTransactionRegistry::new(Arc::clone(db))),
+    )
+    .with_mutator(Arc::new(AutoCommitMutator::new(Arc::clone(db))))
+}
+
+pub(super) async fn run(runner: &Runner, query: &str) -> Value {
     let response = runner.execute(QueryRequest::new(query)).await;
     assert!(!response.has_errors(), "{:?}", response.errors);
     response.data.expect("data")
