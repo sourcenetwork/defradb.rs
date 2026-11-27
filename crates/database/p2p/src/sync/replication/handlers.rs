@@ -1110,6 +1110,11 @@ where
             .await
         }
         SyncEvent::SyncError { cid, error } => ReplicationResult::Failed { cid, error },
+        SyncEvent::HeadsAlreadyMerged {
+            cid,
+            doc_id,
+            collection_id,
+        } => already_merged_result(cid, &doc_id, &collection_id),
         SyncEvent::GossipHeadDropped {
             root_cid,
             doc_id,
