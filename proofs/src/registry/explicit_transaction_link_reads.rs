@@ -31,4 +31,13 @@ pub(super) const PROPERTIES: &[Property] = &[
         tiers: &[Behavioral],
         bound_by: "tools/integration-test/tests/testo/txn/relation_join_read.rs a_one_to_one_join_read_does_not_fail_the_commit, a_writer_of_the_same_link_still_loses_the_commit; tools/integration-test/tests/testo/mutation/add/field_kinds/one_to_one_to_one/with_txn.rs transactional_creation_and_linking_of_relational_documents_backward",
     },
+    Property {
+        family: "Explicit transaction link reads",
+        name: "distinct_publisher_commits / same_publisher_aborts / one_book_per_publisher",
+        axis: Lean,
+        anchor: "crates/engine/query/src/runner/query/nested.rs QueryRunner::execute_nested_select_with_planner; crates/database/db/src/index/manager/unique.rs IndexManager::save_local_unique_validated",
+        model_ref: "RelationJoinRead (lake build)",
+        tiers: &[Contract],
+        bound_by: "tools/integration-test/tests/testo/txn/relation_join_read.rs a_one_to_one_join_read_does_not_fail_the_commit, a_writer_of_the_same_link_still_loses_the_commit; tools/integration-test/tests/testo/mutation/add/field_kinds/one_to_one_to_one/with_txn.rs transactional_creation_and_linking_of_relational_documents_backward",
+    },
 ];
