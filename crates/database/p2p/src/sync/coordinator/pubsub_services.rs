@@ -20,7 +20,7 @@ use tracing::{debug, warn};
 use super::authorizer::AccessAuthorizer;
 use crate::message::pubsub as wire;
 use crate::pubsub_rpc::{MessageHandler, TopicHandler};
-use crate::sync::doc_sync_ids::{check_doc_id_limit, with_followers};
+use crate::sync::doc_sync_ids::with_followers;
 use crate::sync::head_provider::DocumentHeadProvider;
 
 pub(super) const DOC_SYNC_TOPIC: &str = "doc-sync";
@@ -183,9 +183,22 @@ impl MessageHandler for DocSyncHandler {
         let req: wire::DocSyncRequest =
             ciborium::from_reader(data.as_slice()).map_err(|e| format!("decode request: {e}"))?;
 
-        check_doc_id_limit(req.doc_ids.len(), self.ctx.max_doc_sync_request_doc_ids)
-            .map_err(|e| e.to_string())?;
-        let doc_ids = with_followers(self.ctx.head_provider.as_ref(), &req.doc_ids).await;
+        let doc_ids = with_followers(
+            self.ctx.head_provider.as_ref(),
+            &req.doc_ids,
+            self.ctx.max_doc_sync_request_doc_ids,
+        )
+        .await
+        .map_err(|refusal| {
+            warn!(
+                peer_id = %from,
+                doc_ids_count = refusal.count(),
+                max = self.ctx.max_doc_sync_request_doc_ids,
+                error = %refusal,
+                "doc-sync: request exceeds the doc ID limit, rejecting"
+            );
+            crate::error::Error::from(refusal).to_string()
+        })?;
 
         let mut results = Vec::new();
         for doc_id in &doc_ids {
@@ -644,6 +657,59 @@ mod tests {
         assert!(over.contains("limit of 2"), "{over}");
         let at = error_of(deliver(vec!["a".into(), "b".into()]).await);
         assert_eq!(at, "", "a request at the limit must be served");
+    }
+
+    /// A document with three chunks follows the other one.
+    struct ChunkedHeadProvider;
+
+    #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+    #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+    impl DocumentHeadProvider for ChunkedHeadProvider {
+        async fn get_document_heads(&self, _doc_id: &str) -> crate::error::Result<Vec<cid::Cid>> {
+            Ok(Vec::new())
+        }
+
+        async fn get_collection_heads(
+            &self,
+            _collection_id: &str,
+        ) -> crate::error::Result<Vec<cid::Cid>> {
+            Ok(Vec::new())
+        }
+
+        async fn following_doc_ids(&self, doc_id: &str) -> crate::error::Result<Vec<String>> {
+            Ok(match doc_id {
+                "book" => (0..3).map(|i| format!("chunk{i}")).collect(),
+                _ => Vec::new(),
+            })
+        }
+    }
+
+    /// A parent's chunks count against the limit, so a request cannot fan out past it.
+    #[nuclei::test]
+    async fn doc_sync_handler_counts_chunks_against_the_doc_id_limit() {
+        let peer = a_libp2p_peer();
+        let services = PubsubServices::try_new(
+            &peer.to_string(),
+            Arc::new(ChunkedHeadProvider),
+            Arc::new(AllowAllAuthorizer),
+            2,
+        )
+        .unwrap();
+        let mut bytes = Vec::new();
+        ciborium::into_writer(&wire::DocSyncRequest::new(vec!["book".into()]), &mut bytes).unwrap();
+        let outcome = services
+            .doc_sync
+            .deliver_gossip_message(DOC_SYNC_TOPIC, a_libp2p_peer(), bytes)
+            .await;
+
+        use crate::pubsub_rpc::{DeliveryOutcome, InternalResponse};
+        let DeliveryOutcome::Respond(response) = outcome else {
+            panic!("expected Respond, got {outcome:?}");
+        };
+        assert_eq!(
+            InternalResponse::from_cbor(&response.bytes).unwrap().err,
+            "invalid configuration: DocSyncRequest with its documents' chunks exceeds the limit of 2 doc IDs"
+        );
     }
 
     /// Parity regression: the pubsub doc-sync handler must accept a peer

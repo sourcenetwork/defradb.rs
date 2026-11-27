@@ -37,9 +37,11 @@
 \* a peer before the article's delete. A peer can also send a chunk delete no
 \* article delete made. A delete names its chunk only through the chunk's first
 \* block, so it can't merge on a peer before that block has merged there. It
-\* waits while the article here is live or has not arrived, and merges once
-\* the article is gone. A chunk the text does not use now may be used again by
-\* a later edit, so it waits too.
+\* waits while the article here has not arrived, or is live and its text uses
+\* the chunk, and merges otherwise. A later edit or merge whose text uses a
+\* deleted chunk again makes a new document for it (ChunkCleanup.tla models
+\* its ID, which names the commit of the text), so a delete of an unused
+\* chunk is safe to take.
 \*
 \* What must never happen:
 \*   - once every edit and chunk has reached both peers, they show different
@@ -60,11 +62,14 @@
 \*   crates/building-blocks/crdt/src/field/lww.rs            merge (the text's tie break)
 \*   crates/database/db/src/chunk/guard.rs            check_chunk_merge
 \*   crates/database/db/src/merge/merge_handler/composite_persist.rs  the guard's call on a chunk merge
-\*   crates/database/db/src/chunk/peer_delete.rs      delete_must_wait (a chunk delete waits for its article)
+\*   crates/database/db/src/chunk/peer_delete.rs      delete_verdict (a chunk delete waits for its article)
 \*   crates/database/db/src/merge/merge_handler/doc_identity.rs  resolve_composite_doc_id_in_txn (a delete needs its chunk's first block)
 \*   crates/database/db/src/merge/merge_handler/composite.rs     process_composite_delta_locked (older blocks merge first)
-\*   crates/database/db/src/chunk/rebuild.rs          build_missing (a merge builds the chunks it lacks,
+\*   crates/database/db/src/chunk/rebuild.rs          reconcile (a merge builds the chunks it lacks,
 \*                                                     but not those of an encrypted text)
+\*   crates/database/db/src/chunk/source.rs           set_source (a chunk made again names its new commit)
+\*   crates/database/db/src/chunk/rebuild.rs          remove_all (the merge of the article's delete
+\*                                                     deletes the chunks it stores)
 \*   crates/database/db/src/chunk/follow.rs           current_chunk_ids (a document sync sends the
 \*                                                     chunks of the current text; ChunkFollow.tla)
 \*   crates/database/p2p/src/sync/coordinator/broadcast.rs  SyncCoordinator::push_jobs (a chunk's
@@ -86,7 +91,8 @@ CONSTANTS
   CheckHash,   \* TRUE: the merge refuses a chunk whose hash does not match its text (the fix)
   Immutable,   \* TRUE: the merge refuses any change to a chunk that is already stored (the fix)
   Deletes,     \* TRUE: the article and its chunks can be deleted (kept off where a model would be too big)
-  DeleteRule,  \* how a chunk delete is judged: "wait" (the fix), "used", "none" or "refuse"
+  DeleteRule,  \* how a chunk delete is judged: "text" (the fix), "none" or "refuse"
+  Regenerate,  \* TRUE: a text that uses a deleted chunk again makes a new document for it (the fix)
   GenesisFirst, \* TRUE: a chunk delete merges only after the chunk's first block (the fix)
   Rebuild,     \* TRUE: a merge builds the merged text's chunks this peer lacks (the fix)
   SameIds,     \* TRUE: chunk blocks are unsigned, so a chunk's ID is the same on every peer (the fix)
@@ -100,9 +106,11 @@ ASSUME CheckHash \in BOOLEAN
 ASSUME Immutable \in BOOLEAN
 \* Deletes are on or off.
 ASSUME Deletes \in BOOLEAN
-\* "used" waits only for a chunk the text uses now, "none" merges every chunk
+\* "text" waits while the text uses the chunk, "none" merges every chunk
 \* delete, and "refuse" refuses a blocked one for good.
-ASSUME DeleteRule \in {"wait", "used", "none", "refuse"}
+ASSUME DeleteRule \in {"text", "none", "refuse"}
+\* Making a deleted chunk again is on or off.
+ASSUME Regenerate \in BOOLEAN
 \* Needing the chunk's first block is on or off.
 ASSUME GenesisFirst \in BOOLEAN
 \* The merge's rebuild and unsigned chunks are each on or off.
@@ -179,10 +187,13 @@ Allowed(p) == ChunksOf(TextOn(p))
 Shown(p) == IF known[p] = {} \/ dead[p] THEN {} ELSE (Allowed(p) \cap chunks[p]) \ gone[p]
 
 \* Whether a chunk delete of c must not merge on p yet: the article is not gone
-\* here. The "used" rule blocks only a chunk the article uses now.
+\* here, and it has not arrived or its text uses c.
 Blocked(p, c) ==
-  /\ ~dead[p]                                                   \* the article is not gone here
-  /\ (DeleteRule = "used" => (known[p] = {} \/ c \in Allowed(p)))  \* and, for "used", uses c
+  /\ ~dead[p]                                  \* the article is not gone here
+  /\ (known[p] = {} \/ c \in Allowed(p))       \* and is not here yet, or uses c
+
+\* The chunks of text t a step on p makes again after a delete took them.
+Remade(p, t) == IF Regenerate /\ ~dead[p] THEN ChunksOf(t) \cap gone[p] ELSE {}
 
 \* The heights an edit may use: one above what the peer has merged.
 NextHeight(p) ==
@@ -233,7 +244,8 @@ Edit(p, t, x) ==
   /\ ids' = [ids EXCEPT ![p] = @ \cup {DocId(p, c, x) : c \in ChunksOf(t) \ chunks[p]}]
   /\ count' = [count EXCEPT ![p] = @ + 1]                  \* one more edit by p
   /\ ~dead[p]                                              \* p's article is not deleted
-  /\ UNCHANGED <<owed, forged, changed, dead, chunkDels, gone, refused>>  \* no lie or delete is involved
+  /\ gone' = [gone EXCEPT ![p] = @ \ Remade(p, t)]         \* a deleted chunk t uses is made again
+  /\ UNCHANGED <<owed, forged, changed, dead, chunkDels, refused>>  \* no lie or delete is involved
 
 \* Peer p merges an edit another peer made. The text merges by its tie break.
 \* With the fix the merge then builds the chunks of the text that won that p
@@ -253,7 +265,9 @@ MergeEdit(p) ==
        /\ ids' = [ids EXCEPT ![p] = @ \cup {ChunkId(p, c) : c \in build}]       \* under p's IDs for them
        \* With the fix, an encrypted text that just won is owed to p by its writer.
        /\ owed' = [owed EXCEPT ![p] = IF Ship /\ w.enc /\ w = e THEN @ \cup {e} ELSE @]
-       /\ UNCHANGED <<made, count, forged, changed, dead, chunkDels, gone, refused>>  \* nothing else changes
+       \* A deleted chunk the merge builds again is made again.
+       /\ gone' = [gone EXCEPT ![p] = IF Rebuild /\ ~w.enc THEN @ \ Remade(p, t) ELSE @]
+       /\ UNCHANGED <<made, count, forged, changed, dead, chunkDels, refused>>  \* nothing else changes
 
 \* The chunks of an owed encrypted edit reach p: the writer's documents for
 \* the edit's text, sent with the article's push or a document sync of it.
@@ -300,19 +314,21 @@ DeleteArticle(p) ==
   /\ gone' = [gone EXCEPT ![p] = @ \cup chunks[p]]         \* and its chunks are gone on p
   /\ UNCHANGED <<owed, made, known, chunks, count, forged, changed, refused, ids>>  \* nothing else changes
 
-\* The article's delete reaches peer p from a peer that holds it.
+\* The article's delete reaches peer p from a peer that holds it. Its merge
+\* deletes every chunk p stores, the ones only p built too.
 MergeArticleDelete(p) ==
   /\ ~dead[p] /\ \E q \in Peers : dead[q]                  \* p lacks a delete some peer holds
   /\ dead' = [dead EXCEPT ![p] = TRUE]                     \* p holds it now
-  /\ UNCHANGED <<owed, made, known, chunks, count, forged, changed, chunkDels, gone, refused, ids>>  \* nothing else changes
+  /\ gone' = [gone EXCEPT ![p] = @ \cup chunks[p]]         \* and its chunks are gone on p
+  /\ UNCHANGED <<owed, made, known, chunks, count, forged, changed, chunkDels, refused, ids>>  \* nothing else changes
 
 \* A delete of chunk c reaches peer p: an honest one an article delete made,
 \* or a forged one. DeleteRule decides what p does with it.
 ReceiveChunkDelete(p) ==
   /\ Deletes                                              \* deletes are modelled
   /\ \E c \in chunks[p] \ (gone[p] \cup refused[p]) :       \* a chunk p stores and still judges
-      \* With "wait" or "used" a blocked delete does not merge yet; it stays on its way.
-      /\ (DeleteRule \in {"wait", "used"}) => ~Blocked(p, c)
+      \* With "text" a blocked delete does not merge yet; it stays on its way.
+      /\ DeleteRule = "text" => ~Blocked(p, c)
       \* With "refuse" a blocked delete is refused for good.
       /\ IF DeleteRule = "refuse" /\ Blocked(p, c)
          THEN /\ refused' = [refused EXCEPT ![p] = @ \cup {c}]  \* refused

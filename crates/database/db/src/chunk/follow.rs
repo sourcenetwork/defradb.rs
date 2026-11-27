@@ -10,10 +10,7 @@ use crate::database::DB;
 use crate::error::Result;
 use crate::txn::DbTxn;
 
-/// The DocIDs of the chunks the current text of `doc_id` uses.
-///
-/// Old chunks stay stored, so only the current text bounds the answer. A
-/// deleted, missing or unchunked parent has none.
+/// The DocIDs of the current chunks of `doc_id` a peer can't make: with vectors or encrypted.
 pub(crate) async fn current_chunk_ids<S>(
     db: &DB<S>,
     txn: &DbTxn<S>,
@@ -47,9 +44,15 @@ where
         let Some(text) = doc.get(&chunked.field_name).and_then(NormalValue::as_str) else {
             continue;
         };
+        let target = ChunkCollection::open(txn, &chunked.collection(parent.name())).await?;
+        // A peer's merge makes the others itself, under the same IDs.
+        if target.collection.schema().vector_embeddings.is_empty()
+            && !encrypts(txn, doc_ref, &chunked.field_name).await?
+        {
+            continue;
+        }
         let config = crate::chunk::chunk_config(parent.name(), chunked)?;
         let chunks = split(text, &config);
-        let target = ChunkCollection::open(txn, &chunked.collection(parent.name())).await?;
         for chunk in distinct(&chunks) {
             for short_id in target.chunks_with(doc_id, &chunk.hash).await? {
                 match crate::docid::map::get_doc_id(&systemstore, short_id).await? {
@@ -64,4 +67,23 @@ where
         }
     }
     Ok(ids)
+}
+
+async fn encrypts<S>(
+    txn: &DbTxn<S>,
+    parent: storage::keys::doc_id_index::DocRef,
+    field: &str,
+) -> Result<bool>
+where
+    S: Store + 'static,
+{
+    let (encrypt_doc, fields) = crate::block::builder::inherited_encryption_policy(
+        &txn.blockstore()?,
+        &txn.headstore()?,
+        parent,
+        &[field.to_string()],
+    )
+    .await
+    .map_err(crate::error::Error::Other)?;
+    Ok(encrypt_doc || !fields.is_empty())
 }

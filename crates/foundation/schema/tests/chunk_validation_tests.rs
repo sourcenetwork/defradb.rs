@@ -123,13 +123,15 @@ fn a_chunked_collection_that_is_not_a_view_is_created() {
 
 fn generated_chunk() -> CollectionVersion {
     let mut chunk = chunk();
-    for (id, name) in [("3", "_sourceID"), ("4", "hash"), ("5", "source")] {
-        chunk.fields.push(FieldDescription::new(
-            id,
-            name,
-            FieldKind::string(),
-            CType::LwwRegister,
-        ));
+    for (id, name, kind) in [
+        ("3", "_sourceID", FieldKind::string()),
+        ("4", "hash", FieldKind::string()),
+        ("5", "source", FieldKind::string()),
+        ("6", "sourceCID", FieldKind::string()),
+    ] {
+        chunk
+            .fields
+            .push(FieldDescription::new(id, name, kind, CType::LwwRegister));
     }
     chunk
 }

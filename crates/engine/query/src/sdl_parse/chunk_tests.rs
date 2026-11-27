@@ -21,7 +21,10 @@ fn chunk_collection_has_source_text_and_hash() {
     let collections = parse_sdl(SDL).unwrap();
     let (article, chunk) = (&collections[0], &collections[1]);
     let names: Vec<&str> = chunk.fields.iter().map(|f| f.name.as_str()).collect();
-    assert_eq!(names, vec!["_docID", "_sourceID", "hash", "source", "text"]);
+    assert_eq!(
+        names,
+        vec!["_docID", "_sourceID", "hash", "source", "sourceCID", "text"]
+    );
     assert_eq!(
         chunk.field_by_name("text").unwrap().kind,
         FieldKind::string()
@@ -38,7 +41,7 @@ fn chunk_collection_has_source_text_and_hash() {
         .iter()
         .map(|f| f.name.as_str())
         .collect();
-    assert_eq!(indexed, vec![CHUNK_SOURCE_ID_FIELD, "hash"]);
+    assert_eq!(indexed, vec![CHUNK_SOURCE_ID_FIELD, "hash", "sourceCID"]);
     let source_of = chunk.chunk_of.as_ref().unwrap();
     assert_eq!(source_of.collection, "Article");
     assert_eq!(source_of.field_name, "body");
@@ -224,7 +227,8 @@ fn chunk_refuses_a_repeated_argument() {
     );
 }
 
-/// Definitions made before the splitter version existed keep their IDs.
+/// The splitter version leaves the IDs as they were. The chunk collection's
+/// pin is the one with its `sourceCID` field.
 #[test]
 fn chunk_ids_match_the_ones_made_before_the_splitter_version() {
     let ids: Vec<(String, String)> = parse_sdl(SDL)
@@ -237,7 +241,7 @@ fn chunk_ids_match_the_ones_made_before_the_splitter_version() {
         ids,
         vec![
             pinned("bafyreibhwcm7e5z3dnkm4bdln3brw2yzepkcuedo2gm5tndai37xxshypu"),
-            pinned("bafyreiexmt3lfq2dpckd4dllhurkfuvdj6t3hn4du647bb6xolokfox7ea"),
+            pinned("bafyreig7cuac77bgjpez7tkhkpaurzie2fwb2elss3n2rt43ubf7kruhka"),
         ]
     );
 }
@@ -368,6 +372,21 @@ fn an_embedding_field_named_like_a_chunk_field_is_refused() {
     assert!(
         err.contains(
             "@chunk needs the field name Article__body_chunk.text, which is already taken"
+        ),
+        "{err}"
+    );
+}
+
+#[test]
+fn an_embedding_field_named_source_cid_is_refused() {
+    let sdl = r#"type Article {
+        body: String @chunk
+        sourceCID: [Float32!] @embedding(fields: ["body"])
+    }"#;
+    let err = parse_sdl(sdl).unwrap_err().to_string();
+    assert!(
+        err.contains(
+            "@chunk needs the field name Article__body_chunk.sourceCID, which is already taken"
         ),
         "{err}"
     );

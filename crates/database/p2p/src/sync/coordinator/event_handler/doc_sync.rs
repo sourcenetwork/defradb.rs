@@ -11,7 +11,7 @@ use super::super::SyncCoordinator;
 use crate::error::{Error, Result};
 use crate::message::{DocSyncItem, DocSyncReply};
 use crate::signing::sign_with_transport;
-use crate::sync::doc_sync_ids::{check_doc_id_limit, with_followers};
+use crate::sync::doc_sync_ids::with_followers;
 use crate::transport::{P2PTransport, PeerId};
 
 impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
@@ -130,17 +130,6 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
     ) -> Result<()> {
         self.check_peer_is_replicator(&peer_id).await?;
 
-        let max_doc_ids = self.runtime.max_doc_sync_request_doc_ids;
-        if let Err(error) = check_doc_id_limit(request.doc_ids.len(), max_doc_ids) {
-            tracing::warn!(
-                peer_id = %peer_id,
-                doc_ids_count = request.doc_ids.len(),
-                max = max_doc_ids,
-                "DocSyncRequest exceeds configured doc ID limit, rejecting"
-            );
-            return Err(error);
-        }
-
         tracing::debug!(
             peer_id = %peer_id,
             doc_ids = ?request.doc_ids,
@@ -148,10 +137,29 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
             "Received DocSync request"
         );
 
-        let mut results: Vec<DocSyncItem> = Vec::new();
-        for doc_id in
-            with_followers(self.subscriptions.head_provider.as_ref(), &request.doc_ids).await
+        let max_doc_ids = self.runtime.max_doc_sync_request_doc_ids;
+        let doc_ids = match with_followers(
+            self.subscriptions.head_provider.as_ref(),
+            &request.doc_ids,
+            max_doc_ids,
+        )
+        .await
         {
+            Ok(doc_ids) => doc_ids,
+            Err(refusal) => {
+                tracing::warn!(
+                    peer_id = %peer_id,
+                    doc_ids_count = refusal.count(),
+                    max = max_doc_ids,
+                    error = %refusal,
+                    "DocSyncRequest exceeds configured doc ID limit, rejecting"
+                );
+                return Err(refusal.into());
+            }
+        };
+
+        let mut results: Vec<DocSyncItem> = Vec::new();
+        for doc_id in doc_ids {
             let doc_id = &doc_id;
             tracing::trace!(doc_id = %doc_id, "Looking up heads for document");
             match self

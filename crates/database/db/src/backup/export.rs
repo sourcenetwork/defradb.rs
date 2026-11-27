@@ -280,7 +280,7 @@ fn with_chunk_collections<S: Store>(
     Ok(names)
 }
 
-/// Each current chunk's text with its vectors, once per text.
+/// Each current chunk's parent, `sourceCID` and text with its vectors, once per parent and text.
 async fn chunk_vectors(
     runner: &Arc<dyn query::QueryExecutor>,
     context: &defra_core::RequestContext,
@@ -296,8 +296,10 @@ async fn chunk_vectors(
     // A restore answers each text once, so peers that embedded the same text
     // differently keep the vector of the lowest `_docID`, the same every export.
     let query = format!(
-        "{{ {}(order: {{_docID: ASC}}) {{ {} {} }} }}",
+        "{{ {}(order: {{_docID: ASC}}) {{ {} {} {} {} }} }}",
         name,
+        schema::CHUNK_SOURCE_ID_FIELD,
+        schema::CHUNK_SOURCE_CID_FIELD,
         schema::CHUNK_TEXT_FIELD,
         vectors.join(" ")
     );
@@ -323,22 +325,33 @@ async fn chunk_vectors(
             continue;
         };
         doc_map.retain(|_, v| !v.is_null());
-        let text = doc_map
-            .get(schema::CHUNK_TEXT_FIELD)
-            .and_then(JsonValue::as_str);
-        if doc_map.len() > 1 && text.is_some_and(|text| seen.insert(text.to_string())) {
-            docs.push(doc_map);
-        }
-    }
-    // A stable order keeps two exports of the same data byte for byte equal.
-    docs.sort_by(|a, b| {
-        let text = |doc: &Map<String, JsonValue>| {
-            doc.get(schema::CHUNK_TEXT_FIELD)
+        let field = |doc: &Map<String, JsonValue>, name: &str| {
+            doc.get(name)
                 .and_then(JsonValue::as_str)
                 .unwrap_or("")
                 .to_string()
         };
-        text(a).cmp(&text(b))
+        let has_vector = vectors.iter().any(|vector| doc_map.contains_key(*vector));
+        let key = (
+            field(&doc_map, schema::CHUNK_SOURCE_ID_FIELD),
+            field(&doc_map, schema::CHUNK_TEXT_FIELD),
+        );
+        if has_vector && !key.1.is_empty() && seen.insert(key) {
+            docs.push(doc_map);
+        }
+    }
+    // A stable order keeps two exports of the same data byte for byte equal.
+    docs.sort_by_key(|doc| {
+        let field = |name: &str| {
+            doc.get(name)
+                .and_then(JsonValue::as_str)
+                .unwrap_or("")
+                .to_string()
+        };
+        (
+            field(schema::CHUNK_TEXT_FIELD),
+            field(schema::CHUNK_SOURCE_ID_FIELD),
+        )
     });
     Ok(docs)
 }

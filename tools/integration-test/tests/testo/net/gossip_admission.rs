@@ -143,6 +143,7 @@ fn a_gossip_burst_over_the_admission_limits_loses_no_document() {
             rate_limit_burst: 5,
             rate_limit_rate: 1.0,
             deferral_peer_bytes: None,
+            max_doc_sync_request_doc_ids: None,
         },
         LOGS,
     );
@@ -163,6 +164,7 @@ fn a_gossip_head_past_the_deferral_budget_is_reported() {
             rate_limit_burst: 1,
             rate_limit_rate: 0.0,
             deferral_peer_bytes: Some(0),
+            max_doc_sync_request_doc_ids: None,
         },
         LOGS,
     );

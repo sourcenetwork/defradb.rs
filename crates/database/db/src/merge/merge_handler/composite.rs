@@ -108,6 +108,8 @@ pub struct CompositeMergeState {
     pub(crate) unique_conflicts: Vec<events::UniqueIndexConflictData>,
     /// The chunks this merge built for the merged text, published after commit.
     pub(crate) rebuilt_chunks: Vec<events::Update>,
+    /// A merged chunked parent and whether it is encrypted, for its chunks after the heads.
+    pub(crate) chunked_parent: Option<(Document, bool)>,
     /// The document before this composite's field merges, read only when the
     /// collection has an index.
     pub(crate) indexed_before: Option<Option<Document>>,
@@ -622,10 +624,19 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                     .await
                 {
                     Ok(Some(outcome)) => Ok(Some(outcome)),
-                    Ok(None) => self
-                        .update_heads(&headstore, &context, &mut state)
-                        .await
-                        .map(|()| None),
+                    Ok(None) => match self.update_heads(&headstore, &context, &mut state).await {
+                        Ok(()) => self
+                            .reconcile_chunks(
+                                &datastore,
+                                &systemstore,
+                                &headstore,
+                                &context,
+                                &mut state,
+                            )
+                            .await
+                            .map(|()| None),
+                        Err(e) => Err(e),
+                    },
                     Err(MergeError::UniqueConstraintViolation(reason)) => {
                         Ok(Some(MergeOutcome::rejected(reason)))
                     }
@@ -1136,6 +1147,8 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
             }
             Ok(None) => {
                 self.update_heads(headstore, &context, &mut state).await?;
+                self.reconcile_chunks(datastore, systemstore, headstore, &context, &mut state)
+                    .await?;
                 self.record_block_ownership(
                     systemstore,
                     doc_id_str,

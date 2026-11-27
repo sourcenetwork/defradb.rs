@@ -7,11 +7,12 @@
 \* and runs again.
 \*
 \* The hook that keeps chunks in step runs inside the parent's own transaction:
-\* an update writes the new text and creates the chunk documents of that text
-\* that don't exist yet; a delete deletes the article and all its chunks. Old
-\* chunks the new text no longer uses are kept (a deleted document ID can never
-\* be made again, and a later edit back to the old text reuses them); readers
-\* hide them because they cut the text and find only the chunks it uses.
+\* an update writes the new text, creates the chunk documents of that text
+\* that don't exist yet, and deletes the ones the new text no longer uses; a
+\* delete deletes the article and all its chunks. A deleted document ID can
+\* never be made again, so a later edit back to an old text makes its chunks
+\* again under its new commit, a new ID (ChunkCleanup.tla models that). Here
+\* a chunk is named by its hash alone.
 \*
 \* Who acts: a local user, who creates the article once; a peer, whose copy of
 \* the same article sends its chunks first (P2P order is arbitrary, so chunks
@@ -24,12 +25,13 @@
 \* What must never happen:
 \*   - a live article whose text uses a chunk that doesn't exist (INV_TextChunksExist);
 \*   - a chunk left behind after its article was deleted (INV_NoChunkOfDeletedParent);
+\*   - a live article keeps a chunk its text no longer uses (INV_OnlyTextChunks);
 \*   - a valid create or update refused because one of its chunks exists (INV_ValidWritesSucceed).
 \*
 \* Code it models (crates/database/db/src/chunk/sync):
-\*   mod.rs      plan_chunks (the chunks a write's text needs), ChunkWrites::create_missing,
-\*               ChunkWrites::delete_all (missing chunks, and the cascade on delete)
-\*   lookup.rs   ChunkCollection::existing_of (which planned chunks exist, in one scan)
+\*   mod.rs      plan_chunks (the chunks a write's text needs), ChunkWrites::sync_chunks,
+\*               ChunkWrites::delete_all (missing and unused chunks, and the cascade on delete)
+\*   lookup.rs   ChunkCollection::stored_of, ChunkCollection::settle (the parent's chunks, in one scan)
 \*   crates/database/db/src/write/autocommit/one_op.rs AutoCommitMutator::in_batch (a single write runs as one batch)
 \*   crates/database/db/src/write/autocommit/batch.rs  BatchMutator::update_as, delete_as (call the hook)
 \*   crates/database/db/src/write/doc.rs               DbDocMutator update and delete (call the hook)
@@ -43,14 +45,15 @@ CONSTANTS
   Validate,  \* TRUE: a commit whose snapshot is stale aborts (regolith's validation)
   SameTxn,   \* TRUE: chunks are created in the parent's transaction; FALSE: in a follow-up one
   Cascade,   \* TRUE: deleting the article deletes its chunks in the same transaction
-  Lookup     \* TRUE: a write skips the chunks that exist; FALSE: it creates every chunk
+  Lookup,    \* TRUE: a write skips the chunks that exist; FALSE: it creates every chunk
+  Prune      \* TRUE: an update deletes the chunks its new text does not use
 
 \* Each writer finishes at least one write.
 ASSUME MaxOps \in Nat \ {0}
 \* The first three switches are yes-or-no.
 ASSUME Validate \in BOOLEAN /\ SameTxn \in BOOLEAN /\ Cascade \in BOOLEAN
-\* So is the last one.
-ASSUME Lookup \in BOOLEAN
+\* So are the last two.
+ASSUME Lookup \in BOOLEAN /\ Prune \in BOOLEAN
 
 \* The texts a writer may write. Each is cut into chunks named by their hash.
 Texts == {"t1", "t2", "t3"}
@@ -212,8 +215,10 @@ CommitUpdate(w) ==
   /\ ~SameTxn \/ ChunksFit(op[w].text)
   \* The new text is written;
   /\ text' = op[w].text
-  \* with SameTxn the missing chunks are created now, in the same commit;
-  /\ chunks' = IF SameTxn THEN chunks \cup ChunksOf(op[w].text) ELSE chunks
+  \* with Prune the chunks the new text does not use are deleted in this commit,
+  \* and with SameTxn the missing ones are created now too;
+  /\ LET kept == IF Prune THEN chunks \cap ChunksOf(op[w].text) ELSE chunks  \* the chunks the update keeps
+     IN chunks' = IF SameTxn THEN kept \cup ChunksOf(op[w].text) ELSE kept   \* plus the new text's, now or later
   \* without it, they are left for a follow-up transaction.
   /\ pending' = [pending EXCEPT ![w] = IF SameTxn THEN {} ELSE ChunksOf(op[w].text)]
   /\ pc' = [pc EXCEPT ![w] = IF SameTxn THEN "idle" ELSE "follow"]
@@ -314,4 +319,7 @@ INV_NoChunkOfDeletedParent == (created /\ ~alive /\ ~failed) => chunks = {}
 
 \* No valid create or update is refused.
 INV_ValidWritesSucceed == ~failed
+
+\* A live article holds only the chunks its text uses.
+INV_OnlyTextChunks == alive => chunks \subseteq ChunksOf(text)
 ====
