@@ -25,15 +25,17 @@ edge (`no_since_keeps_a_covered_edge`).
 What covers what is left abstract (`covers`), so the result holds whatever
 distance and `alpha` decide it.
 
-Rust anchors: `RobustPrune::select`
+Rust anchors: `RobustPrune::keep`
 (`crates/database/db/src/index/vector/engine/select/robust_prune.rs`), whose blocks are
 `pool.chunks(BLOCK)`; `squared_euclidean_block`
 (`crates/foundation/defra-core/src/vector/kernel/mod.rs`) computes the distances behind
 the before-the-block answers, bit-equal per pair to `squared_euclidean`
 (`crates/foundation/defra-core/tests/vector_kernel.rs` `a_block_is_bit_equal_to_each_pair`).
-The Rust loop over earlier edges stops once every candidate of the block is
-covered; an answer that is already "covered" stays so, which is why the full
-`any` below is the same answer.
+The Rust loop over earlier edges stops measuring a candidate once an edge
+covers it (`distances` sizes the block call to the candidates still
+open), and stops altogether once every candidate of the block is covered; an
+answer that is already "covered" stays so, which is why the full `any` below
+is the same answer (`skipping_covered_eq_any`).
 -/
 
 namespace RobustPruneBlocks
@@ -58,6 +60,28 @@ def inner (before : List α) (kept : List α) (cf : α × Bool) : List α :=
   if max ≤ kept.length then kept
   else if cf.2 || (kept.drop before.length).any (fun e => covers e cf.1) then kept
   else kept ++ [cf.1]
+
+-- How the Rust code answers "covered by an edge kept before the block?" for
+-- one candidate: it goes through the edges in order, and once one edge covers
+-- the candidate it stops asking the later ones (`flag` stays true).
+def coveredSkipping (c : α) (edges : List α) : Bool :=
+  edges.foldl (fun flag e => if flag then flag else covers e c) false
+
+-- Asking a covered candidate nothing more gives the same answer as asking every
+-- edge: the candidate is covered exactly when some edge covers it.
+theorem skipping_covered_eq_any (c : α) (edges : List α) :
+    coveredSkipping covers c edges = edges.any (fun e => covers e c) := by
+  unfold coveredSkipping
+  -- generalise the starting flag: a fold from `flag` is `flag || any`
+  suffices h : ∀ flag : Bool, edges.foldl (fun flag e => if flag then flag else covers e c) flag
+      = (flag || edges.any (fun e => covers e c)) by
+    simpa using h false
+  induction edges with
+  | nil => intro flag; simp
+  | cons e rest ih =>
+    intro flag
+    -- one edge: a covered flag stays covered, an open one takes this edge's answer
+    cases flag <;> simp [List.foldl_cons, ih]
 
 -- One block: nothing to do once `max` are kept; otherwise answer "covered by
 -- an edge kept before the block?" for every candidate, then walk the block.
