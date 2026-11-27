@@ -15,9 +15,7 @@ mod reindex;
 mod set;
 mod shortid;
 
-use std::sync::Arc;
-
-use lens::{TransformId, TransformStore};
+use lens::TransformId;
 use storage::corekv::Store;
 
 use crate::error::Result;
@@ -38,16 +36,8 @@ impl<S: Store> DB<S> {
         self.reload_lens_configs().await
     }
 
-    /// Get a reference to the lens transform store.
-    ///
-    /// The lens store manages schema migration transforms that can be applied
-    /// when documents are fetched from older schema versions.
-    pub fn lens_store(&self) -> &Arc<dyn TransformStore> {
-        &self.lens_store
-    }
-
     /// Check if a migration exists between two schema versions.
     pub fn has_migration(&self, transform_id: &TransformId) -> bool {
-        self.lens_store.has_transform(transform_id)
+        self.lens_store().has_transform(transform_id)
     }
 }

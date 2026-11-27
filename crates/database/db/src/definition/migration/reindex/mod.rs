@@ -190,7 +190,7 @@ where
                 fence,
                 restamp_identity,
                 persist_migrations,
-                lens_store: Arc::clone(&self.lens_store),
+                lens_store: Arc::clone(self.lens_store()),
                 collections: Arc::clone(&self.collections),
             };
             match self.run_page(page, &mut size).await? {

@@ -318,7 +318,7 @@ impl<S: Store> crate::database::DB<S> {
 
         // Build query runner with modified collection (is_materialized=false)
         let query_runner = query::QueryRunner::new(fetcher, modified_collections)
-            .with_lens_store(self.lens_store.clone());
+            .with_lens_store(self.lens_store().clone());
 
         let results = query_runner
             .execute_query(&query_str)

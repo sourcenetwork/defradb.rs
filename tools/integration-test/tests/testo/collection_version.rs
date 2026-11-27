@@ -40,6 +40,7 @@ mod migrations {
         mod with_restart;
         mod with_set_default;
         mod with_txn;
+        mod with_txn_concurrent_read;
         mod with_update;
     }
     mod simple;

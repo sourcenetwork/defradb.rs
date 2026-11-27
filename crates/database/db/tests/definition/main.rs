@@ -8,4 +8,5 @@ mod document_parts;
 mod format;
 mod helpers;
 mod keyspace;
+mod lens_commit_window;
 mod loader;

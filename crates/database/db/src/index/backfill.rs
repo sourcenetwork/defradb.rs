@@ -340,7 +340,7 @@ impl<S: Store> DB<S> {
             collection: self.require_collection(&plan.collection_name)?,
             plan: plan.clone(),
             last,
-            lens_store: Arc::clone(&self.lens_store),
+            lens_store: Arc::clone(self.lens_store()),
             drains: self.deferred_drains.clone(),
         };
         self.run_page(page, max_docs).await

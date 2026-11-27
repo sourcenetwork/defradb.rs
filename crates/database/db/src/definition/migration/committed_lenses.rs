@@ -12,11 +12,15 @@
 //! while registration still fails. A crash loses nothing: the next open
 //! registers every persisted config again.
 //!
-//! A commit that publishes a collection version naming its lens owes the lens
-//! first, in the same ordered publication ([`DB::owe_lens_on_commit`]): a
-//! request that sees the version finds its transform even while the follow-up
-//! registration is still compiling it.
+//! A commit that stores a collection version naming its lens holds the
+//! transaction's own registration of the lens in flight from just before the
+//! commit is attempted, and owes the lens in its ordered publication before it
+//! lets that go ([`DB::owe_lens_on_commit`]): a request that sees the version,
+//! in storage or in the collection cache, finds its transform even while the
+//! follow-up registration is still compiling it. A commit that fails lets its
+//! hold go and leaves nothing behind.
 
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -26,7 +30,7 @@ use kovan_map::HopscotchMap;
 use lens::{LensConfig, LensDoc, LensDocResultStream, LensDocStream, TransformId, TransformStore};
 use rapidhash::fast::RandomState;
 use rapidhash::RapidHashMap;
-use storage::corekv::{IterOptions, Key, OnCommit, Store};
+use storage::corekv::{IterOptions, Key, OnAbort, OnCommit, Store};
 use storage::keys::systemstore::LensConfigKey;
 
 use crate::error::{Error, Result};
@@ -35,10 +39,18 @@ use crate::DB;
 /// Committed lenses whose registration is owed, with their configs.
 type Owed = HopscotchMap<TransformId, Arc<LensConfig>, RandomState>;
 
+/// The lenses of commits in flight, each under its commit's own ticket, with
+/// the store holding that transaction's registration of it. A ticket per
+/// commit, not per lens, so a commit that fails lets go of its hold alone,
+/// never one a commit of the same lens still needs.
+type InFlight = HopscotchMap<u64, (TransformId, Arc<dyn TransformStore>), RandomState>;
+
 /// The database's transform store, holding the registrations its commits owe.
 pub(crate) struct CommittedLensStore {
     base: Arc<dyn TransformStore>,
     owed: Arc<Owed>,
+    in_flight: InFlight,
+    next_ticket: AtomicU64,
 }
 
 impl CommittedLensStore {
@@ -46,7 +58,34 @@ impl CommittedLensStore {
         Arc::new(Self {
             base,
             owed: Arc::new(HopscotchMap::with_hasher(RandomState::default())),
+            in_flight: HopscotchMap::with_hasher(RandomState::default()),
+            next_ticket: AtomicU64::new(0),
         })
+    }
+
+    /// Holds `holder`'s registration of `id` for the commit of `ticket`.
+    fn hold(&self, ticket: u64, id: TransformId, holder: Arc<dyn TransformStore>) {
+        self.in_flight.insert(ticket, (id, holder));
+    }
+
+    /// Lets go of the hold of `ticket`, if it took one.
+    fn let_go(&self, ticket: u64) {
+        self.in_flight.remove(&ticket);
+    }
+
+    /// The store that runs `id`: the database's, unless only a commit still in
+    /// flight holds it, whose version a reader of storage may already see.
+    fn holder(&self, id: &TransformId) -> Arc<dyn TransformStore> {
+        if !self.in_flight.is_empty() && !self.base.has_transform(id) {
+            let held = self
+                .in_flight
+                .iter()
+                .find_map(|(_, (lens, holder))| (&lens == id).then_some(holder));
+            if let Some(holder) = held {
+                return holder;
+            }
+        }
+        Arc::clone(&self.base)
     }
 
     /// Owes the committed lens `id` unless it is registered already, so its
@@ -65,8 +104,8 @@ impl CommittedLensStore {
     ) -> lens::Result<LensDocResultStream> {
         match self.owed.get(id) {
             Some(config) => Ok(self.run_after_registration(id.clone(), config, docs, inverse)),
-            None if inverse => self.base.inverse(id, docs),
-            None => self.base.transform(id, docs),
+            None if inverse => self.holder(id).inverse(id, docs),
+            None => self.holder(id).transform(id, docs),
         }
     }
 
@@ -175,10 +214,13 @@ impl TransformStore for CommittedLensStore {
         doc: LensDoc,
         inverse: bool,
     ) -> lens::Result<LensDoc> {
-        if let Some(config) = self.owed.get(id) {
-            register_owed(self.base.as_ref(), &self.owed, id, &config).await?;
+        match self.owed.get(id) {
+            Some(config) => {
+                register_owed(self.base.as_ref(), &self.owed, id, &config).await?;
+                self.base.transform_doc(id, doc, inverse).await
+            }
+            None => self.holder(id).transform_doc(id, doc, inverse).await,
         }
-        self.base.transform_doc(id, doc, inverse).await
     }
 
     fn has_transform(&self, id: &TransformId) -> bool {
@@ -401,7 +443,7 @@ where
                 let transform_id = key_str.strip_prefix(prefix_str).map(TransformId::new);
 
                 let Some(id) = transform_id else {
-                    if let Err(e) = self.lens_store.add(config).await {
+                    if let Err(e) = self.lens_store().add(config).await {
                         tracing::warn!(
                             error = %e,
                             key = ?String::from_utf8_lossy(&pair.key),
@@ -420,21 +462,39 @@ where
         Ok(())
     }
 
-    /// Owes the lens `id` when `txn` commits, in its ordered publication, ahead
-    /// of what `txn` publishes after this call: a collection version that names
-    /// the lens is never visible while its transform is unknown. The
-    /// registration after the commit ([`Self::register_committed_lens`]) then
-    /// settles it, unless a use got there first.
+    /// Keeps the lens `id`, which `txn` registered in `holder`, known to every
+    /// request that sees what `txn` commits. From just before the commit is
+    /// attempted the lens runs on `holder`, so a reader of storage finds it
+    /// the moment the commit lands; the commit's ordered publication owes the
+    /// lens, ahead of what `txn` publishes after this call, and only then lets
+    /// go of `holder`. The registration after the commit
+    /// ([`Self::register_committed_lens`]) settles the owed lens, unless a use
+    /// got there first. A commit that fails lets go of `holder` and owes
+    /// nothing.
     pub(crate) fn owe_lens_on_commit(
         &self,
         txn: &crate::txn::DbTxn<S>,
         id: TransformId,
         config: LensConfig,
+        holder: Arc<dyn TransformStore>,
     ) -> Result<()> {
-        let lenses = Arc::clone(&self.committed_lenses);
+        let ticket = self
+            .committed_lenses()
+            .next_ticket
+            .fetch_add(1, Ordering::Relaxed);
+        let lenses = Arc::clone(self.committed_lenses());
+        let held = id.clone();
+        txn.before_commit(Box::new(move || {
+            lenses.hold(ticket, held, holder);
+            Ok(())
+        }))?;
+        let lenses = Arc::clone(self.committed_lenses());
+        txn.on_abort(OnAbort::Sync(Box::new(move || lenses.let_go(ticket))))?;
+        let lenses = Arc::clone(self.committed_lenses());
         let config = Arc::new(config);
         txn.on_commit(OnCommit::Ordered(Box::new(move || {
             lenses.owe(id, config);
+            lenses.let_go(ticket);
         })))
     }
 
@@ -442,7 +502,7 @@ where
     /// commit stands whatever happens here: a registration that fails is
     /// reported and owed, and runs again when the lens is next used.
     pub(crate) async fn register_committed_lens(&self, id: TransformId, config: LensConfig) {
-        if let Err(error) = self.lens_store.add_with_id(id.clone(), config).await {
+        if let Err(error) = self.lens_store().add_with_id(id.clone(), config).await {
             tracing::warn!(
                 transform_id = %id,
                 %error,

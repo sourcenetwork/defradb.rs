@@ -122,6 +122,11 @@ where
         self.lens_store.clone()
     }
 
+    /// The store holding this transaction's own lens registrations.
+    pub(crate) fn lens_registrations(&self) -> Arc<dyn lens::TransformStore> {
+        self.lens_store.registrations()
+    }
+
     /// What its requests' fetchers derived from its schema.
     pub(crate) fn caches(&self) -> FetcherCaches {
         self.caches.clone()

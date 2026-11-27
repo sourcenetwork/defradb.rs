@@ -255,11 +255,12 @@ pub struct DB<S: Store> {
     projection_binding: regolith::sync::OnceCell<ProjectionBinding>,
     /// Event bus for subscription notifications.
     event_bus: Option<Arc<dyn Bus>>,
-    /// Lens transform store for schema migrations, the store `committed_lenses` holds.
-    pub lens_store: Arc<dyn TransformStore>,
+    /// Lens transform store for schema migrations: `committed_lenses`, as a
+    /// [`TransformStore`]. Only [`Self::set_lens_store`] replaces either, and
+    /// it replaces both, so they stay one store.
+    lens_store: Arc<dyn TransformStore>,
     /// The same store, typed, for the commits that owe it a lens.
-    pub(crate) committed_lenses:
-        Arc<crate::definition::migration::committed_lenses::CommittedLensStore>,
+    committed_lenses: Arc<crate::definition::migration::committed_lenses::CommittedLensStore>,
     /// Pending migrations registered before their destination version exists.
     /// Maps dest_version_id -> (source_version_id, transform_id_string).
     pub(crate) pending_migrations: HopscotchMap<String, (String, String), RandomState>,
@@ -618,6 +619,21 @@ impl<S: Store> DB<S> {
     /// True when no process-local action claim is held.
     pub fn has_no_active_actions(&self) -> bool {
         self.active_actions.is_empty()
+    }
+
+    /// Get a reference to the lens transform store.
+    ///
+    /// The lens store manages schema migration transforms that can be applied
+    /// when documents are fetched from older schema versions.
+    pub fn lens_store(&self) -> &Arc<dyn TransformStore> {
+        &self.lens_store
+    }
+
+    /// The lens store, typed, for the commits that owe it a lens.
+    pub(crate) fn committed_lenses(
+        &self,
+    ) -> &Arc<crate::definition::migration::committed_lenses::CommittedLensStore> {
+        &self.committed_lenses
     }
 
     /// Replace the transform store backing lens migrations.

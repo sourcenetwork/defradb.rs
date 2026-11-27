@@ -267,9 +267,9 @@ An `update_` mutation on a document written at an older version returns migrated
 # `defra.collection_version.migrations.transform_with_version`: A visible version's transform is never missing
 
 - **Parents:** ["go.collection_version.migrations"]
-- **Scenarios:** ["collection_version::migrations::query::with_concurrent_update::collection_migration_updates_during_a_lens_patch_find_the_transform"]
+- **Scenarios:** ["collection_version::migrations::query::with_concurrent_update::collection_migration_updates_during_a_lens_patch_find_the_transform", "collection_version::migrations::query::with_txn_concurrent_read::collection_migration_reads_during_a_txn_migration_commit_find_the_transform"]
 
-A collection version whose `PreviousVersion.Transform` names a lens, committed by `PATCH /api/v0/collections` with a lens or by a migration set in an explicit transaction, has its transform available to every request that sees the version: reads, `update_` mutations and deferred index drains that run while the patch or commit is still returning migrate documents through the lens, and none fails with `transform not found: <lens id>` or `lens migration failed for document <docID>: transform not found: <lens id>`.
+A collection version whose `PreviousVersion.Transform` names a lens, committed by `PATCH /api/v0/collections` with a lens or by a migration set in an explicit transaction, has its transform available to every request that sees the version, from the moment the commit lands: reads, `update_` mutations, deferred index drains and P2P merges that read the version from storage or from the collection cache while the patch or commit is still returning migrate documents through the lens, and none fails with `transform not found: <lens id>` or `lens migration failed for document <docID>: transform not found: <lens id>`. A commit that fails leaves its lens unknown.
 
 # `go.collection_version.define.scalar_kinds`: Every scalar kind is accepted and introspected
 
