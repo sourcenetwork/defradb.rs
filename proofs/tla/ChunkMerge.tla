@@ -191,12 +191,27 @@ Shown(p) == IF known[p] = {} \/ dead[p] THEN {} ELSE (Allowed(p) \cap chunks[p])
 \* The chunk documents peer p stores for chunk c.
 Docs(p, c) == {d \in ids[p] : d[1] = c}
 
-\* The documents a reader on p shows for chunk c. With the fix, one of them:
-\* CHOOSE picks the same one from the same set on every peer, as the smallest
-\* DocID does. The bug shows every one.
+\* The rank of a chunk in the DocID order used by the model.
+ChunkRank(c) == CASE c = "a" -> 0 [] c = "b" -> 1 [] c = "c" -> 2 [] c = "d" -> 3
+
+\* The rank of a DocID writer. "any" stands for an unsigned chunk ID, which is
+\* the same on every peer.
+WriterRank(w) ==
+  IF w = "any" THEN Cardinality(Peers) ELSE IF w = "p1" THEN 0 ELSE 1
+
+\* A numeric order for DocIDs. The code compares DocID strings; the order only
+\* has to be total and identical on every peer.
+DocRank(d) == ChunkRank(d[1]) * (Cardinality(Peers) + 1) + WriterRank(d[2])
+
+\* The smallest DocID among docs.
+MinDoc(docs) == CHOOSE d \in docs : \A e \in docs : DocRank(d) <= DocRank(e)
+
+\* The documents a reader on p shows for chunk c. With the fix, one readable
+\* copy: the one with the smallest DocID, which every peer picks from the same
+\* documents. The bug shows every one.
 ShownDocs(p, c) ==
   IF OneCopy /\ Docs(p, c) # {}
-  THEN {CHOOSE d \in Docs(p, c) : TRUE}  \* one pick, the same everywhere
+  THEN {MinDoc(Docs(p, c))}              \* the smallest DocID, the same everywhere
   ELSE Docs(p, c)                         \* every copy, or none stored
 
 \* Whether a chunk delete of c must not merge on p yet: the article is not gone
@@ -400,10 +415,11 @@ INV_EachChunkOnce ==
   \A p \in Peers : \A c \in Shown(p) :                       \* for every chunk shown on p,
     Cardinality(ShownDocs(p, c)) = 1                         \* one document shows it
 
-\* With no encrypted edit, a peer stores each chunk as at most one document:
-\* unsigned blocks give every peer's copy the same ID.
+\* In a config that permits no encrypted edit, a peer stores each chunk as at
+\* most one document: unsigned blocks give every peer's copy the same ID. This
+\* is a config guard, not a check that no state happened to contain encryption.
 INV_PlainChunkStoredOnce ==
-  ~Encrypt =>                                                \* when nothing is encrypted,
+  ~Encrypt =>                                                \* in a config without encryption,
     \A p \in Peers : \A c \in AllChunks :                     \* for every chunk on every peer,
       Cardinality(Docs(p, c)) <= 1                           \* at most one document holds it
 
@@ -412,6 +428,8 @@ Settled ==
   /\ made # {}                                    \* someone edited
   /\ \A p \in Peers : known[p] = made              \* every peer has every edit
   /\ \A p, q \in Peers : chunks[p] = chunks[q]    \* and every chunk
+  /\ \A p \in Peers : owed[p] = {}                 \* and no encrypted chunk is still owed
+  /\ (Encrypt => \A p, q \in Peers : ids[p] = ids[q]) \* and encryption's extra copies have all arrived
   /\ \A p \in Peers : ~dead[p]                     \* and the article is live
 
 \* Settled peers show the same chunks: all of the text's, and no others.
@@ -420,4 +438,12 @@ INV_SettledPeersAgree ==
     \A p, q \in Peers :                       \* for any two peers,
       /\ Shown(p) = Shown(q)                  \* they show the same chunks,
       /\ Shown(p) = ChunksOf(TextOn(p))       \* exactly those of the text
+
+\* Settled peers show the same document for every chunk. This is the property
+\* the smallest-DocID choice gives them when their stored documents agree.
+INV_SettledPeersShowSameDocument ==
+  Settled =>
+    \A p, q \in Peers :                       \* for any two settled peers,
+      \A c \in Shown(p) :                     \* and every chunk they show,
+        ShownDocs(p, c) = ShownDocs(q, c)     \* they show the same document
 ====

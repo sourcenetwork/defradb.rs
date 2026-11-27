@@ -1,11 +1,12 @@
 //! Index scan implementation for LensedAutoCommitFetcher.
 
+use futures::stream::{self, StreamExt, TryStreamExt};
 use rapidhash::{HashSetExt, RapidHashSet};
 
 use defra_core::thread_bounds::MaybeBoxFuture;
 use query::planner::index_selection::{IndexScanParams, IndexScanType};
 use storage::corekv::Store;
-use storage::index::IndexIterator;
+use storage::index::{IndexEntry, IndexIterator};
 
 use crate::index::IndexManager;
 use crate::read::seek::apply_cursor_seek_to_iterator;
@@ -34,6 +35,87 @@ pub(super) async fn refuse_owed_index(
 }
 
 impl<S: Store + 'static> LensedAutoCommitFetcher<S> {
+    pub(super) fn get_by_index_prefix_with_values_impl<'a>(
+        &'a self,
+        collection_name: &'a str,
+        index_name: &'a str,
+        prefix_values: &'a [document::NormalValue],
+    ) -> MaybeBoxFuture<'a, query::error::Result<Option<Vec<query::fetcher::IndexScanEntry>>>> {
+        Box::pin(async move {
+            let collection = self
+                .db
+                .get_collection(collection_name)
+                .map_err(|e| query::error::QueryError::execution(format!("db error: {e}")))?
+                .ok_or_else(|| query::error::QueryError::collection_not_found(collection_name))?;
+            let txn = self.db.new_txn(true).await.map_err(|e| {
+                query::error::QueryError::execution(format!("failed to create txn: {e}"))
+            })?;
+            let datastore = txn.datastore().map_err(|e| {
+                query::error::QueryError::execution(format!("failed to get datastore: {e}"))
+            })?;
+            let systemstore = txn.systemstore().map_err(|e| {
+                query::error::QueryError::execution(format!("failed to get systemstore: {e}"))
+            })?;
+            refuse_owed_index(&systemstore, &collection).await?;
+            let index_manager = IndexManager::from_indexes(
+                collection.resolved_root_id(),
+                collection.schema(),
+                collection.write_indexes(),
+                collection.crdts(),
+            )
+            .map_err(|e| {
+                query::error::QueryError::execution(format!("index manager error: {e}"))
+            })?;
+            let Some(index) = index_manager
+                .read_index(
+                    &datastore,
+                    &systemstore,
+                    Some(self.db.lens_store()),
+                    &collection,
+                    index_name,
+                )
+                .await
+                .map_err(|e| query::error::QueryError::execution(e.to_string()))?
+            else {
+                let _ = txn.discard();
+                return Ok(None);
+            };
+            let mut iter = index
+                .scan_prefix(&datastore, prefix_values, false)
+                .await
+                .map_err(|e| query::error::QueryError::execution(format!("index error: {e}")))?;
+            let entries = iter.collect_all().await.map_err(|e| {
+                query::error::QueryError::execution(format!("index iteration error: {e}"))
+            })?;
+            let entries = stream::iter(entries.into_iter().map(
+                |IndexEntry {
+                     doc_short_id,
+                     values,
+                 }| {
+                    let systemstore = &systemstore;
+                    async move {
+                        let doc_id = crate::docid::map::get_doc_id(systemstore, doc_short_id)
+                            .await
+                            .map_err(|e| {
+                                query::error::QueryError::execution(format!(
+                                    "doc ID resolution error: {e}"
+                                ))
+                            })?;
+                        Ok::<_, query::error::QueryError>(
+                            doc_id.map(|doc_id| query::fetcher::IndexScanEntry { doc_id, values }),
+                        )
+                    }
+                },
+            ))
+            .buffered(32)
+            .try_filter_map(|entry| async move { Ok(entry) })
+            .try_collect()
+            .await?;
+            let _ = txn.discard();
+            Ok(Some(entries))
+        })
+    }
+
     /// Count the index entries `params` would visit, stopping at `cap`.
     pub(super) async fn estimate_index_scan_inner(
         &self,

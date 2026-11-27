@@ -129,18 +129,49 @@ fn disconnect() -> Actions {
     .into()
 }
 
-/// Names the chunk documents `db0` shows `chunk0` to `chunk<n-1>`.
-fn read_chunk_ids() -> Actions {
+/// Names the chunk documents `node` shows `<prefix>0` to `<prefix><n-1>`.
+fn read_chunk_ids(prefix: &str, node: &str) -> Actions {
     let common = Common {
         capture: (0..PARAGRAPHS)
-            .map(|i| (format!("chunk{i}"), format!("/data/{CHUNKS}/{i}/_docID")))
+            .map(|i| (format!("{prefix}{i}"), format!("/data/{CHUNKS}/{i}/_docID")))
             .collect(),
-        ..on(Some("db0"))
+        ..on(Some(node))
     };
     Request {
         request: format!("query {{ {CHUNKS} {{ _docID }} }}").into(),
         expected_data: json!({ CHUNKS: integration_test::m::length(PARAGRAPHS as u64) }),
         common,
+        ..Default::default()
+    }
+    .into()
+}
+
+/// A query that names the three documents each node built for the shared text.
+fn both_chunk_ids() -> Text {
+    let mut ids = Vec::with_capacity(PARAGRAPHS * 2);
+    for prefix in ["chunk", "own"] {
+        ids.extend((0..PARAGRAPHS).map(|i| Text::reference(&format!("{prefix}{i}"))));
+    }
+    let mut parts = vec![Text::from(format!("query {{ {CHUNKS}(docID: ["))];
+    for (i, id) in ids.into_iter().enumerate() {
+        if i > 0 {
+            parts.push(Text::from(", "));
+        }
+        parts.push(Text::from("\""));
+        parts.push(id);
+        parts.push(Text::from("\""));
+    }
+    parts.push(Text::from("]) { _docID } }"));
+    Text::concat(parts)
+}
+
+/// The six stored documents contain three visible chunks: each pair of copies
+/// has one shown member, and a direct lookup of the other member returns none.
+fn hidden_copies_are_not_addressable() -> Actions {
+    Request {
+        request: both_chunk_ids(),
+        expected_data: json!({ CHUNKS: integration_test::m::length(PARAGRAPHS as u64) }),
+        common: on(Some("db1")),
         ..Default::default()
     }
     .into()
@@ -183,7 +214,8 @@ fn encrypting_peers_that_write_the_same_text_show_each_chunk_once() {
     actions.extend([
         update_article_on("article", &shared, Some("db0")),
         update_article_on("article", &shared, Some("db1")),
-        read_chunk_ids(),
+        read_chunk_ids("chunk", "db0"),
+        read_chunk_ids("own", "db1"),
         chunk_ids_differ(),
         connect(),
         sync("Article", vec![Text::reference("article")], "db1"),
@@ -195,6 +227,7 @@ fn encrypting_peers_that_write_the_same_text_show_each_chunk_once() {
             "db1",
         ),
         holds_db0_copy(),
+        hidden_copies_are_not_addressable(),
         chunks_are(&shared, "db1"),
     ]);
     without_default_node(actions).execute();

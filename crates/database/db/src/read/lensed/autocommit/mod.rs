@@ -183,6 +183,16 @@ impl<S: Store + 'static> DocFetcher for LensedAutoCommitFetcher<S> {
         self.get_by_index_scan_impl(collection_name, params).await
     }
 
+    async fn get_by_index_prefix_with_values(
+        &self,
+        collection_name: &str,
+        index_name: &str,
+        prefix_values: &[document::NormalValue],
+    ) -> query::error::Result<Option<Vec<query::fetcher::IndexScanEntry>>> {
+        self.get_by_index_prefix_with_values_impl(collection_name, index_name, prefix_values)
+            .await
+    }
+
     fn supports_index_queries(&self) -> bool {
         true
     }
