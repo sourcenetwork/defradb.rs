@@ -82,7 +82,11 @@ async fn create_at(
 async fn taken(on: &Deployed, user: &User, attempt: Attempt) {
     let Attempt { doc, txn, response } = attempt;
     assert!(!response.has_errors(), "{:?}", response.errors);
-    on.node.commit_transaction(&txn).await.expect("commit");
+    on.node
+        .with_transaction(txn)
+        .commit()
+        .await
+        .expect("commit");
     assert_eq!(
         on.owner_on_chain(&doc).await.as_deref(),
         Some(user.did.as_str())
@@ -113,7 +117,7 @@ async fn refused_for_its_window(on: &Deployed, attempt: Attempt, says: &str) -> 
         provider_time.abs_diff(now()) <= 5,
         "{provider_time} is the node's time"
     );
-    assert!(on.node.commit_transaction(&txn).await.is_err());
+    assert!(on.node.with_transaction(txn).commit().await.is_err());
     assert_eq!(on.owner_on_chain(&doc).await, None);
     provider_time
 }
@@ -223,7 +227,7 @@ fn a_delegation_issued_at_the_reported_chain_time_is_taken() {
             create_at(&on, &user, "at chain time", 1, chain_time, LIFETIME).await;
         assert!(!response.has_errors(), "{:?}", response.errors);
 
-        let reader = identity::Did::new(STRANGER).unwrap();
+        let reader = identity::Did::new(STRANGER.to_string()).unwrap();
         let subject = SubjectRef::Actor(reader.to_string());
         let grant = || PolicyAction::SetRelationship {
             relation: "reader",
@@ -232,18 +236,11 @@ fn a_delegation_issued_at_the_reported_chain_time_is_taken() {
         let stage = |token: String| {
             let (on, txn, doc, reader, user) = (&on, &txn, &doc, &reader, &user);
             async move {
-                let context = defra_core::RequestContext::default()
-                    .with_identity(Some(user.did.to_string()))
-                    .with_request_delegation(user.did.to_string(), token);
                 on.node
-                    .add_dac_actor_relationship_change_for_in_txn(
-                        txn,
-                        &context,
-                        "Users",
-                        doc,
-                        "reader",
-                        reader.as_str(),
-                    )
+                    .with_transaction(*txn)
+                    .acting_for(user.did.clone())
+                    .with_request_delegation(token)
+                    .change_dac_actor_relationship("Users", doc, "reader", reader.as_str(), false)
                     .await
             }
         };
@@ -271,7 +268,11 @@ fn a_delegation_issued_at_the_reported_chain_time_is_taken() {
                 ..
             })
         ));
-        on.node.commit_transaction(&txn).await.expect("commit");
+        on.node
+            .with_transaction(txn)
+            .commit()
+            .await
+            .expect("commit");
         assert_eq!(
             on.owner_on_chain(&doc).await.as_deref(),
             Some(user.did.as_str())

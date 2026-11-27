@@ -48,12 +48,17 @@ impl Op for PatchCollection {
     fn run(&self, state: &State) -> Result<Value, Failure> {
         self.check_arguments()?;
         let migration = self.lens.as_ref().map(Lens::to_wire);
+        let (node, scope) = (
+            state.node_on(self.common.node())?,
+            state.scope_as(self.txn, self.common.identity_seed),
+        );
         state
-            .block_on(state.node_on(self.common.node())?.patch_collection_as(
-                &state.context_as(self.txn, self.common.identity_seed),
-                self.patch.as_str(),
-                migration.as_ref(),
-            ))
+            .block_on(async {
+                scope
+                    .on(&node)
+                    .patch_collection(self.patch.as_str(), migration.as_ref())
+                    .await
+            })
             .map(|()| json!({}))
             .map_err(|e| Failure::operation(e.to_string()))
     }

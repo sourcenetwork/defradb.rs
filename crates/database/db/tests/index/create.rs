@@ -287,13 +287,51 @@ fn create_index_backfills_more_documents_than_a_batch_holds() {
     .unwrap()
 }
 
+/// Records, at each batch boundary of a backfill, how many entries the index
+/// already holds, and never holds a batch.
+#[derive(Default)]
+struct BatchSizes {
+    db: regolith::sync::OnceCell<std::sync::Weak<DB<RegolithStore>>>,
+    indexed_before: regolith::sync::SegQueue<usize>,
+}
+
+impl BatchSizes {
+    /// The documents each batch indexed, from the counts at its boundaries
+    /// and the index's final count.
+    fn per_batch(&self, total: usize) -> Vec<usize> {
+        let mut counts = Vec::new();
+        while let Some(count) = self.indexed_before.pop() {
+            counts.push(count);
+        }
+        counts.push(total);
+        counts.windows(2).map(|pair| pair[1] - pair[0]).collect()
+    }
+}
+
+impl IndexBuildGate for BatchSizes {
+    fn enter<'gate>(&'gate self, _collection_id: &'gate str, index_id: u32) -> GateWait<'gate> {
+        Box::pin(async move {
+            if let Some(db) = self.db.get().and_then(std::sync::Weak::upgrade) {
+                self.indexed_before
+                    .push(index_entries(&db, "Batched", index_id).await);
+            }
+        })
+    }
+}
+
+/// A committed batch grows the next one, but never past the configured size.
 #[test]
 fn create_index_honors_a_smaller_backfill_batch() {
     workers::block_on(async {
-        let total = 4;
-        let options = db::database::DbOptions::new().with_backfill_batch_docs(2);
+        let total = 8;
+        let batch = 2;
+        let sizes = Arc::new(BatchSizes::default());
+        let options = db::database::DbOptions::new()
+            .with_backfill_batch_docs(batch)
+            .with_index_build_gate(sizes.clone());
         let store = Arc::new(RegolithStore::in_memory().unwrap());
         let db = Arc::new(DB::from_arc_with_options(store, options).unwrap());
+        assert!(sizes.db.set(Arc::downgrade(&db)).is_ok());
         db.add_collection(
             &defra_core::RequestContext::ambient(),
             &users_sdl("Batched"),
@@ -318,6 +356,12 @@ fn create_index_honors_a_smaller_backfill_batch() {
             .unwrap()
             .contains_key(&index.id));
         assert!(!progress_recorded(&db, &users_schema("Batched").collection_id, index.id).await);
+        let per_batch = sizes.per_batch(total);
+        assert!(
+            per_batch.iter().all(|&indexed| indexed <= batch),
+            "no batch may index more than {batch} documents: {per_batch:?}"
+        );
+        assert!(per_batch.len() >= total / batch, "{per_batch:?}");
     })
     .unwrap()
 }

@@ -34,7 +34,8 @@ pub struct BlockWithCid {
 /// A schema opts into carrying them by declaring a governance root. Without
 /// one, nothing here but the `@chunk` settings reaches the delta, and every
 /// identity is byte-identical to what it was before any of this existed,
-/// whatever `@immutable` or `@branchable` the schema carries. The gate is the root because identity is
+/// whatever `@immutable`, `@policy(relation:)` or `@branchable` the schema
+/// carries. The gate is the root because identity is
 /// derived from the schema: an opt-in that lived in node configuration would
 /// let two nodes running the same schema disagree about what a collection is,
 /// which is the failure the commitment exists to rule out.
@@ -423,7 +424,8 @@ fn field_to_delta_with_priority(
     let mut delta = FieldDefinitionDeltaPayload::new(priority)
         .with_name(&field.name)
         .with_crdt(field.crdt_type.to_u8())
-        .with_immutable(governed && field.immutable);
+        .with_immutable(governed && field.immutable)
+        .with_policy_relation(field.policy_relation.clone().filter(|_| governed));
     if let Some(name) = field.crdt_type.custom_name() {
         delta = delta.with_custom_crdt(name.as_str());
     }

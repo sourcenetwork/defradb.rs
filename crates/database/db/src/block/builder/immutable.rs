@@ -47,6 +47,7 @@ pub(crate) fn immutable_fields(
     schema: &CollectionVersion,
     encryption_config: Option<&EncryptionConfig>,
 ) -> Result<BTreeMap<String, serde_bytes::ByteBuf>, String> {
+    refuse_encrypted_bindings(schema, encryption_config)?;
     let immutable = immutable_field_names(schema);
     let mut fields = BTreeMap::new();
     if immutable.is_empty() {
@@ -63,6 +64,31 @@ pub(crate) fn immutable_fields(
         fields.insert(field_name.clone(), serde_bytes::ByteBuf::from(data));
     }
     Ok(fields)
+}
+
+/// Refuse a create that would encrypt a field bound to a policy relation.
+/// The relationship a create is checked and registered with is derived from
+/// the field's plaintext in the Immutable block, which an encrypted field
+/// stays out of; encryption is chosen per request, so this is where it is
+/// known.
+fn refuse_encrypted_bindings(
+    schema: &CollectionVersion,
+    encryption_config: Option<&EncryptionConfig>,
+) -> Result<(), String> {
+    let Some(config) = encryption_config else {
+        return Ok(());
+    };
+    match schema
+        .policy_bindings()
+        .find(|binding| config.should_encrypt_field(&binding.id_field.name))
+    {
+        Some(binding) => Err(format!(
+            "field {} is bound to policy relation {} and cannot be encrypted",
+            binding.declared_name(),
+            binding.policy_relation
+        )),
+        None => Ok(()),
+    }
 }
 
 /// Build the Immutable block over `fields`, as [`immutable_fields`] gave

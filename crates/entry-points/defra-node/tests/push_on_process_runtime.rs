@@ -28,8 +28,7 @@ async fn node() -> Result<Node> {
         .with_p2p(iroh_config())
         .build()
         .await?;
-    node.add_collection(&defra_core::RequestContext::ambient(), SDL)
-        .await?;
+    node.add_collection(SDL).await?;
     Ok(node)
 }
 

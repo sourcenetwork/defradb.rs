@@ -8,7 +8,7 @@ pub(super) const PROPERTIES: &[Property] = &[
         family: "Document save",
         name: "INV_NoFork / INV_DeletedStaysDeleted / INV_RefusedOnlyDeleted",
         axis: Tla,
-        anchor: "crates/engine/query/src/documents/mod.rs save; crates/entry-points/defra-node/src/ops/document.rs Node::save_doc; tools/integration-test/tests/testo/mutation/update/with_delete.rs update_save_deleted_doc_does_nothing",
+        anchor: "crates/engine/query/src/documents/mod.rs save; crates/entry-points/defra-node/src/node_core/document.rs NodeCore::save_doc; tools/integration-test/tests/testo/mutation/update/with_delete.rs update_save_deleted_doc_does_nothing",
         model_ref: "MC_DocumentSave_{Green,Red_NoDeletedCheck,Red_SplitTxn}.cfg",
         tiers: &[Boundary],
         bound_by: "",

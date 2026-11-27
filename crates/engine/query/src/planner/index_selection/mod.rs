@@ -4,11 +4,17 @@
 //! and translating filter conditions to index scan parameters.
 
 mod conditions;
+mod empty_array;
 mod estimate;
 mod filter_to_scan;
+mod json_empty_array;
 mod types;
 pub(crate) mod values;
 
+#[cfg(test)]
+mod empty_array_tests;
+#[cfg(test)]
+mod json_empty_array_tests;
 #[cfg(test)]
 mod tests;
 

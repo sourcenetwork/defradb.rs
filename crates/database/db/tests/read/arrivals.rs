@@ -1,3 +1,4 @@
+use crate::common::arrivals::arrivals_page;
 use crate::common::schema::{users_schema, USERS_SDL};
 use db::{AutoCommitMutator, LensedAutoCommitFetcher, DB};
 use document::Document;
@@ -82,7 +83,7 @@ fn hidden_updates_advance_page_without_disclosing_identity_or_cid() {
         mutator.update("Users", doc, ["name".to_string()].into_iter().collect()).await.unwrap();
         let acp = Arc::new(acp::LocalDocumentACP::new(Arc::new(acp::MemoryAcpStore::new())));
         let owner = identity::Did::new("did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK").unwrap();
-        acp.register_doc_object(&owner, "update-policy", "users", &id.to_string()).await.unwrap();
+        acp.register_doc_object(&owner, "update-policy", "users", &id.to_string(), &[]).await.unwrap();
         let runner = query::QueryRunner::with_provider(
             LensedAutoCommitFetcher::new(db.clone()),
             db::DbCollectionProvider::new_arc(db),
@@ -162,7 +163,7 @@ fn hidden_arrivals_advance_page_without_disclosing_document_ids() {
         )));
         let owner =
             identity::Did::new("did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK").unwrap();
-        acp.register_doc_object(&owner, "arrival-policy", "users", &id)
+        acp.register_doc_object(&owner, "arrival-policy", "users", &id, &[])
             .await
             .unwrap();
         let runner = query::QueryRunner::with_provider(
@@ -208,15 +209,12 @@ fn explicit_transaction_arrival_is_invisible_and_rollback_discards_it() {
             limit: 10,
             doc_ids: None,
         };
-        let page = reader.get_document_arrivals(&options).await.unwrap();
+        let page = arrivals_page(&reader, &options).await;
         assert_eq!(page.head, 0);
         assert!(page.entries.is_empty());
         reader.take_txn().await.unwrap().discard().unwrap();
         let reader = LensedAutoCommitFetcher::new(db);
-        assert_eq!(
-            reader.get_document_arrivals(&options).await.unwrap().head,
-            0
-        );
+        assert_eq!(arrivals_page(&reader, &options).await.head, 0);
         assert!(reader
             .get_by_ids("Users", &[id.to_string()])
             .await
@@ -230,7 +228,7 @@ fn explicit_transaction_arrival_is_invisible_and_rollback_discards_it() {
 #[test]
 fn concurrent_autocommit_arrivals_are_contiguous() {
     workers::block_on(async {
-        use query::fetcher::{DocFetcher, DocumentArrivalOptions};
+        use query::fetcher::DocumentArrivalOptions;
         let db = Arc::new(DB::new(RegolithStore::in_memory().unwrap()).unwrap());
         db.add_collection(&defra_core::RequestContext::ambient(), USERS_SDL)
             .await
@@ -254,15 +252,16 @@ fn concurrent_autocommit_arrivals_are_contiguous() {
         while let Some(created) = futures::StreamExt::next(&mut creates).await {
             ids.insert(created.unwrap().unwrap().doc_id.to_string());
         }
-        let page = LensedAutoCommitFetcher::new(db)
-            .get_document_arrivals(&DocumentArrivalOptions {
+        let page = arrivals_page(
+            &LensedAutoCommitFetcher::new(db),
+            &DocumentArrivalOptions {
                 collection: "Users".into(),
                 after: 0,
                 limit: 64,
                 doc_ids: None,
-            })
-            .await
-            .unwrap();
+            },
+        )
+        .await;
         assert_eq!(page.head, 64);
         assert_eq!(page.next, 64);
         assert_eq!(page.entries.len(), 64);
@@ -278,7 +277,7 @@ fn concurrent_autocommit_arrivals_are_contiguous() {
 #[test]
 fn overlapping_explicit_transaction_creates_both_commit() {
     workers::block_on(async {
-        use query::fetcher::{DocFetcher, DocumentArrivalOptions};
+        use query::fetcher::DocumentArrivalOptions;
         let db = Arc::new(DB::new(RegolithStore::in_memory().unwrap()).unwrap());
         db.add_collection(&defra_core::RequestContext::ambient(), USERS_SDL)
             .await
@@ -299,15 +298,16 @@ fn overlapping_explicit_transaction_creates_both_commit() {
         second.take_txn().await.unwrap().commit().await.unwrap();
         first.take_txn().await.unwrap().commit().await.unwrap();
         let reader = LensedAutoCommitFetcher::new(db);
-        let page = reader
-            .get_document_arrivals(&DocumentArrivalOptions {
+        let page = arrivals_page(
+            &reader,
+            &DocumentArrivalOptions {
                 collection: "Users".into(),
                 after: 0,
                 limit: 10,
                 doc_ids: None,
-            })
-            .await
-            .unwrap();
+            },
+        )
+        .await;
         assert_eq!(page.head, 2);
         assert_eq!(page.entries[0].doc_id, second_id);
         assert_eq!(page.entries[1].doc_id, first_id);
@@ -318,7 +318,7 @@ fn overlapping_explicit_transaction_creates_both_commit() {
 #[test]
 fn explicit_transaction_arrival_gets_a_cursor_only_on_commit() {
     workers::block_on(async {
-        use query::fetcher::{DocFetcher, DocumentArrivalOptions};
+        use query::fetcher::DocumentArrivalOptions;
         let db = Arc::new(DB::new(RegolithStore::in_memory().unwrap()).unwrap());
         db.add_collection(&defra_core::RequestContext::ambient(), USERS_SDL)
             .await
@@ -339,15 +339,10 @@ fn explicit_transaction_arrival_gets_a_cursor_only_on_commit() {
             limit: 10,
             doc_ids: Some(vec![id.clone()]),
         };
-        assert!(reader
-            .get_document_arrivals(&options)
-            .await
-            .unwrap()
-            .entries
-            .is_empty());
+        assert!(arrivals_page(&reader, &options).await.entries.is_empty());
         reader.take_txn().await.unwrap().commit().await.unwrap();
         let reader = LensedAutoCommitFetcher::new(db);
-        let page = reader.get_document_arrivals(&options).await.unwrap();
+        let page = arrivals_page(&reader, &options).await;
         assert_eq!(page.entries[0].cursor, 1);
         assert_eq!(page.entries[0].doc_id, id);
     })

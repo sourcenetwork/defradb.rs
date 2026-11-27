@@ -26,10 +26,13 @@ use super::dag_retry::{
 use super::fetch_failures::{FetchFailures, WindowFailure};
 use super::fetch_logs::{log_exhausted, log_no_progress_batch, log_retry};
 use super::provider_health::ProviderHealth;
+use super::rooted_request::rooted_request;
 use super::DagFetchLimiter;
 use crate::sync::arbitration::AttemptSample;
 use crate::sync::car::MAX_HAVE_CIDS;
-use crate::sync::manager::links::{find_all_missing_links, frontier_or_unknown};
+use crate::sync::manager::links::{
+    find_all_missing_links, frontier_or_unknown, walk_missing_links, WalkEnd,
+};
 use crate::sync::manager::SyncEvent;
 use crate::sync::manager::{FetchCompletion, SyncDiagnostics};
 use crate::transport::{FetchFailureCause, P2PTransport, PeerId};
@@ -180,7 +183,7 @@ pub async fn poll_fetch_dag<B: Blockstore + 'static, T: P2PTransport>(
     // between the clock claim and this task starting. Do not require a live
     // provider for local terminal progress.
     if let Ok(Some(root_data)) = blockstore.get(&root_cid).await {
-        if find_all_missing_links(blockstore.as_ref(), &root_data)
+        if find_all_missing_links(blockstore.as_ref(), &root_data, diagnostics.as_ref())
             .await
             .is_ok_and(|missing| missing.is_empty())
         {
@@ -584,7 +587,7 @@ async fn fetch_dag_attempt<B: Blockstore + 'static, T: P2PTransport>(
     state.providers.begin_attempt();
     let car_missing_watch = match blockstore.get(&root_cid).await {
         Ok(Some(root_data)) => {
-            match find_all_missing_links(blockstore.as_ref(), &root_data).await {
+            match find_all_missing_links(blockstore.as_ref(), &root_data, state.diagnostics).await {
                 Ok(missing) => Some(missing).filter(|missing| !missing.is_empty()),
                 Err(e) => {
                     state.diagnostics.record_missing_link_walk_error();
@@ -598,15 +601,15 @@ async fn fetch_dag_attempt<B: Blockstore + 'static, T: P2PTransport>(
 
     // Sender demotion removes per-CID provider advertisements. Exercise the
     // rooted authority at the announcing publisher with a cancellable,
-    // bounded descendant closure rooted at the already-known missing
-    // frontier. This mirrors Go's one per-root blockservice session without
-    // returning to an unbounded recursive historical-root walk.
+    // bounded request (see rooted_request for what it names). This mirrors
+    // Go's one per-root blockservice session.
     let rooted_wants = car_missing_watch
         .as_deref()
         .unwrap_or(std::slice::from_ref(&root_cid));
     let mut car_answered = false;
     // A missing root is usually a new head over held history, which a
-    // whole-DAG CAR would re-send; on iroh the rotating fetch below depth-cuts it.
+    // whole-DAG CAR would re-send; on a rooted transport the rotating fetch
+    // below asks for it with the receiver's haves.
     let rooted_asked = !state.providers.cannot_serve(rooted_wants)
         && match car_missing_watch {
             Some(_) => context.needs_rooted_provider_discovery(),
@@ -669,11 +672,18 @@ async fn fetch_dag_attempt<B: Blockstore + 'static, T: P2PTransport>(
         if let Ok(Some(root_data)) = blockstore.get(&root_cid).await {
             // A failed walk leaves the frontier unknown: the selective walk
             // below reads it again and ends the attempt incomplete.
-            let missing = frontier_or_unknown(
-                root_cid,
-                find_all_missing_links(blockstore.as_ref(), &root_data).await,
+            let walk = walk_missing_links(
+                blockstore.as_ref(),
+                &root_data,
                 state.diagnostics,
-            );
+                state.walk_deadline(),
+            )
+            .await;
+            let missing = match walk {
+                Ok(WalkEnd::Preempted) => return FetchAttemptOutcome::Preempted,
+                Ok(WalkEnd::Frontier(missing)) => missing,
+                Err(e) => frontier_or_unknown(root_cid, Err(e), state.diagnostics),
+            };
             if missing.is_empty() {
                 info!(root_cid = %root_cid, doc_id = %context.doc_id, "DAG fetch complete via rooted CAR");
                 return FetchAttemptOutcome::Complete(root_data);
@@ -740,8 +750,16 @@ async fn fetch_dag_attempt<B: Blockstore + 'static, T: P2PTransport>(
             }
         };
 
-        let missing = match find_all_missing_links(blockstore.as_ref(), &root_data).await {
-            Ok(m) => m,
+        let walk = walk_missing_links(
+            blockstore.as_ref(),
+            &root_data,
+            state.diagnostics,
+            state.walk_deadline(),
+        )
+        .await;
+        let missing = match walk {
+            Ok(WalkEnd::Frontier(m)) => m,
+            Ok(WalkEnd::Preempted) => return FetchAttemptOutcome::Preempted,
             Err(e) => {
                 state.diagnostics.record_missing_link_walk_error();
                 warn!(root_cid = %root_cid, error = %e, "find_all_missing_links failed");
@@ -806,8 +824,16 @@ async fn fetch_dag_attempt<B: Blockstore + 'static, T: P2PTransport>(
         Ok(Some(data)) => data,
         _ => return FetchAttemptOutcome::Incomplete(1, attempt_failures),
     };
-    let remaining = match find_all_missing_links(blockstore.as_ref(), &root_data).await {
-        Ok(remaining) => remaining,
+    let walk = walk_missing_links(
+        blockstore.as_ref(),
+        &root_data,
+        state.diagnostics,
+        state.walk_deadline(),
+    )
+    .await;
+    let remaining = match walk {
+        Ok(WalkEnd::Frontier(remaining)) => remaining,
+        Ok(WalkEnd::Preempted) => return FetchAttemptOutcome::Preempted,
         Err(e) => {
             frontier_or_unknown(root_cid, Err(e), state.diagnostics);
             return FetchAttemptOutcome::Incomplete(1, attempt_failures);
@@ -1010,11 +1036,10 @@ async fn count_missing<B: Blockstore>(blockstore: &Arc<B>, cids: &[Cid]) -> usiz
 }
 
 /// Exercise one authenticated provider's rooted CAR authority with the
-/// missing frontier already known from the local root. Iroh returns a capped
-/// descendant closure from that frontier; other transports retain their
-/// native session/exact-want behavior. The query is cancellable and bounded,
-/// so an unavailable provider cannot retain a transport task or monopolize the
-/// receiver fetch owner.
+/// missing frontier already known from the local root, asking for what
+/// [`rooted_request`] names; the frontier measures progress. The query is
+/// cancellable and bounded, so an unavailable provider cannot retain a
+/// transport task or monopolize the receiver fetch owner.
 async fn poll_fetch_rooted_provider<B: Blockstore, T: P2PTransport>(
     root_cid: &Cid,
     watch_cids: &[Cid],
@@ -1033,11 +1058,13 @@ async fn poll_fetch_rooted_provider<B: Blockstore, T: P2PTransport>(
     if initially_missing == 0 {
         return ProviderWindowOutcome::Complete;
     }
+    let (wants, depth) =
+        rooted_request(blockstore.as_ref(), root_cid, watch_cids, context, depth).await;
     let query_id = match transport
         .sync_blocks_within(
             *root_cid,
             vec![source_peer.clone()],
-            watch_cids.to_vec(),
+            wants,
             depth.get(),
             context.haves().to_vec(),
         )
@@ -1174,6 +1201,15 @@ impl<'a> ProviderFetchState<'a> {
         self.quantum_ends =
             clock_owned.then(|| crate::rt::time::Instant::now() + CLOCK_ATTEMPT_QUANTUM);
         self
+    }
+
+    /// The deadline a walk may stop at: the quantum, once this attempt has
+    /// fetched a block. Before that a walk runs whole, so every dispatch does
+    /// at least one complete walk and one productive window, and a DAG whose
+    /// walk outlasts the quantum still converges.
+    fn walk_deadline(&self) -> Option<crate::rt::time::Instant> {
+        self.quantum_ends
+            .filter(|_| self.providers.attempt_progressed())
     }
 
     fn quantum_spent(&self) -> bool {
@@ -1364,11 +1400,16 @@ async fn poll_fetch_blocks<B: Blockstore, T: P2PTransport>(
         return ProviderWindowOutcome::Complete;
     }
 
+    let (wants, depth) = if transport.supports_cancellable_rooted_sync() {
+        rooted_request(blockstore.as_ref(), root_cid, &missing, context, depth).await
+    } else {
+        (missing.clone(), depth)
+    };
     let query_id = match transport
         .sync_blocks_within(
             *root_cid,
             vec![source_peer.clone()],
-            missing.clone(),
+            wants,
             depth.get(),
             context.haves().to_vec(),
         )

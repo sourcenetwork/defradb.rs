@@ -86,7 +86,12 @@ fn listed_actions(state: &State, node: &str) -> Result<Value, Failure> {
     match state.client_type() {
         ClientType::InProcess => {
             let listed = state
-                .block_on(state.node_on(node)?.list_actions_as(&state.context(None)))
+                .block_on(
+                    state
+                        .scope_as(None, None)
+                        .scoped(&*state.node_on(node)?)
+                        .list_actions(),
+                )
                 .map_err(|e| Failure::operation(e.to_string()))?;
             serde_json::to_value(listed).map_err(|e| Failure::operation(e.to_string()))
         }

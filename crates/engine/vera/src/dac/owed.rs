@@ -165,10 +165,7 @@ pub(super) async fn submit(acp: &VeraDocumentACP, change: &OwedChange) -> Submis
         }
     };
     match written {
-        Ok(_) => {
-            acp.invalidate_cached_access(&tuple.policy_id);
-            Submission::Applied
-        }
+        Ok(_) => Submission::Applied,
         Err(ProviderError::Unavailable(reason)) => Submission::Unavailable { reason },
         Err(error) if acp.provider.write_refused(&error) => {
             // A delegation that expired on the way is not the provider's

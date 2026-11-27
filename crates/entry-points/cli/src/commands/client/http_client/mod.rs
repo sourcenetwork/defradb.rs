@@ -26,6 +26,7 @@ mod graphql;
 mod index;
 mod p2p;
 mod peer;
+mod server_error;
 mod transaction;
 mod types;
 mod view;
@@ -324,10 +325,7 @@ impl HttpClient {
             .text()
             .await
             .unwrap_or_else(|e| format!("[failed to read body: {}]", e));
-        match serde_json::from_str::<types::ErrorResponse>(&body) {
-            Ok(parsed) => Error::Server(parsed.error),
-            Err(_) => Error::Server(format!("HTTP {}: {}", status, body.trim())),
-        }
+        server_error::server_error(status, &body)
     }
 
     /// Helper for POST requests with plain text body

@@ -11,6 +11,9 @@
             // Unit tests that prove a requirement nothing in the integration
             // suite can reach — the OpenAPI document is built in `defra-http`.
             { path: "crates/surfaces/http/", source: "content", pattern: "*.rs" },
+            // Node tests of requirements testo cannot reach: testo cannot
+            // install `AccessHooks` such as a write validator.
+            { path: "crates/entry-points/defra-node/tests/", source: "content", pattern: "*.rs" },
         ],
     }],
 }

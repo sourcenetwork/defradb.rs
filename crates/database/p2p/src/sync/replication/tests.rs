@@ -550,7 +550,9 @@ impl P2PTransport for PollFetchTransport {
             // transmitted, so nothing is served and nothing completes.
             return Ok(QueryId(1));
         }
-        if missing.is_empty() {
+        // A rooted transport answers a request naming the root with the
+        // root's closure, as pinc and iroh do.
+        if missing.is_empty() || (self.rooted_sync.load(Ordering::SeqCst) && missing == [root]) {
             if let Some(source) = &self.source_blockstore {
                 let collected =
                     crate::sync::car::collect_dag_blocks_from_roots(source.as_ref(), &[root])
@@ -3613,4 +3615,46 @@ async fn peer_details_follows_a_pending_root_into_quarantine() {
         .await;
     assert!(other.quarantined.is_empty());
     assert_eq!(other.history, crate::sync::PeerHistory::default());
+}
+
+/// #3493: a DocSync document whose every head is already merged comes out of
+/// the loop as an applied terminal skip, which the adapter publishes as a
+/// merge report, and it runs no merge.
+#[nuclei::test(threads = 0)]
+async fn heads_already_merged_is_an_applied_skip_without_a_merge() {
+    let blockstore = Arc::new(DefraBlockstore::new(
+        Arc::new(RegolithStore::in_memory().unwrap()),
+        true,
+    ));
+    let cid = test_cid();
+    let (coordinator, _pending_store) = coordinator_with_live_pending_dag(blockstore, cid).await;
+    let handler = TestMergeHandler::new(true, false);
+
+    let result = process_event(
+        &coordinator,
+        SyncEvent::HeadsAlreadyMerged {
+            cid,
+            doc_id: "doc1".to_string(),
+            collection_id: String::new(),
+        },
+        &handler,
+        &ReplicationConfig::default(),
+    )
+    .await;
+
+    match result {
+        ReplicationResult::Skipped {
+            cid: skipped,
+            doc_id,
+            reason,
+            terminal: true,
+            ..
+        } => {
+            assert_eq!(skipped, cid);
+            assert_eq!(doc_id, "doc1");
+            assert!(MergeOutcome::skip_reason_is_applied(&reason), "{reason}");
+        }
+        other => panic!("expected an applied terminal skip, got {other:?}"),
+    }
+    assert_eq!(handler.calls(), 0);
 }

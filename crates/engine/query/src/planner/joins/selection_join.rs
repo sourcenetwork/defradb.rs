@@ -52,7 +52,9 @@ impl Planner {
         // Find the relation field in the parent collection
         let relation_field = parent_collection
             .field_by_name(relation_field_name)
-            .ok_or_else(|| QueryError::unknown_field(relation_field_name))?;
+            .ok_or_else(|| {
+                QueryError::undefined_field(relation_field_name, &parent_collection.name)
+            })?;
 
         // Verify it's a relation field
         if !relation_field.kind.is_relation() {
