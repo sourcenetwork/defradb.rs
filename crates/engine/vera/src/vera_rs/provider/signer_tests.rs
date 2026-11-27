@@ -150,6 +150,38 @@ async fn the_provider_signs_its_delegations_through_its_signer() {
 }
 
 #[nuclei::test]
+async fn a_create_left_in_the_journal_is_reported_for_its_policy() {
+    let signer = Recording::returning(Returns::Genuine);
+    let rpc = Recorded::answering(Ok(Value::Null));
+    let mut workers = Workers::new();
+    let provider = provider(signer, rpc, &mut workers).await;
+
+    assert!(matches!(
+        provider.create_policy("name: test", None).await,
+        Err(ProviderError::Unavailable(_))
+    ));
+    let (created, other) = {
+        let worker = provider.worker.lock().await;
+        let wire = worker.pending().expect("retained create");
+        let tx = NativeTx::decode_wire(wire).expect("native transaction");
+        assert_eq!(tx.target, super::ACP_ADDRESS);
+        let call = IAcp::bearerCreatePolicyCall::abi_decode(&tx.calldata).expect("create call");
+        let policy = std::str::from_utf8(&call.policy).expect("policy text");
+        let created = provider
+            .predict_policy_id(policy, acp::PolicyNonce(call.nonce.0))
+            .expect("predicted ID");
+        let other = if created == "0".repeat(64) {
+            "1".repeat(64)
+        } else {
+            "0".repeat(64)
+        };
+        (created, other)
+    };
+    assert!(provider.create_policy_pending(&created).await.unwrap());
+    assert!(!provider.create_policy_pending(&other).await.unwrap());
+}
+
+#[nuclei::test]
 async fn a_signature_vera_rs_would_refuse_is_never_sent() {
     let mut workers = Workers::new();
     for (returns, reason) in [

@@ -58,9 +58,19 @@ impl VeraDocumentACP {
     /// after this check sees the claim and is refused before it is sent;
     /// one that ended before it left the policy where this read sees it
     /// (`proofs/tla/ForeignPolicyCreate.tla`).
-    async fn unheld_here(&self, policy_id: &str) -> Result<crate::foreign::Held, ProviderError> {
+    async fn unheld_here(
+        &self,
+        policy_id: &str,
+    ) -> Result<crate::foreign::Held<'_>, ProviderError> {
         let claim = self.foreign_policies().claim(policy_id)?;
         let policy = route_key(policy_id)?;
+        let pending = policy.clone();
+        if self
+            .remote(move |provider| async move { provider.create_policy_pending(&pending).await })
+            .await?
+        {
+            return Err(ProviderError::PolicyBeingCreated { policy });
+        }
         let asked = policy.clone();
         let held = self
             .remote(move |provider| async move { provider.query_policy(&asked).await })

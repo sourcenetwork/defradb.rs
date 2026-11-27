@@ -20,38 +20,65 @@ use std::sync::Arc;
 use kovan_map::HopscotchMap;
 use rapidhash::fast::RandomState;
 
+type Counts = HopscotchMap<String, Arc<AtomicUsize>, RandomState>;
+type Tracked<'a> = (&'a Counts, String);
+
 /// The policies adds are routing now and creates are making now, each by
-/// how many: an entry is kept once made, one per policy ever claimed or
-/// created on this node.
+/// how many.
 #[derive(Default)]
 pub(crate) struct Claims {
-    claims: HopscotchMap<String, Arc<AtomicUsize>, RandomState>,
-    creating: HopscotchMap<String, Arc<AtomicUsize>, RandomState>,
+    claims: Counts,
+    creating: Counts,
     unnamed: Arc<AtomicUsize>,
 }
 
 /// One add or create in progress, until it is dropped.
-pub(crate) struct Held {
+pub(crate) struct Held<'a> {
     count: Arc<AtomicUsize>,
+    tracked: Option<Tracked<'a>>,
 }
 
-impl Drop for Held {
+impl Drop for Held<'_> {
     fn drop(&mut self) {
-        self.count.fetch_sub(1, Ordering::SeqCst);
+        if self.count.fetch_sub(1, Ordering::SeqCst) == 1 && self.count.load(Ordering::SeqCst) == 0
+        {
+            if let Some((map, key)) = &self.tracked {
+                map.remove_if(key, |held| {
+                    Arc::ptr_eq(held, &self.count) && held.load(Ordering::SeqCst) == 0
+                });
+            }
+        }
     }
 }
 
-impl Held {
-    fn on(count: Arc<AtomicUsize>) -> Self {
+impl<'a> Held<'a> {
+    fn untracked(count: Arc<AtomicUsize>) -> Self {
         count.fetch_add(1, Ordering::SeqCst);
-        Self { count }
+        Self {
+            count,
+            tracked: None,
+        }
+    }
+
+    fn tracked(map: &'a Counts, key: String) -> Self {
+        loop {
+            let count = map.get_or_insert(key.clone(), Arc::default());
+            count.fetch_add(1, Ordering::SeqCst);
+            if map.get(&key).is_some_and(|held| Arc::ptr_eq(&held, &count)) {
+                return Self {
+                    count,
+                    tracked: Some((map, key)),
+                };
+            }
+            count.fetch_sub(1, Ordering::SeqCst);
+        }
     }
 }
 
 impl Claims {
     /// Mark `policy` (in its one spelling) as being routed.
-    pub(crate) fn claim(&self, policy: String) -> Held {
-        Held::on(self.claims.get_or_insert(policy, Arc::default()))
+    pub(crate) fn claim(&self, policy: String) -> Held<'_> {
+        Held::tracked(&self.claims, policy)
     }
 
     /// Whether an add is routing `policy` now.
@@ -70,10 +97,10 @@ impl Claims {
 
     /// Mark a create of `policy`, or of a policy not known yet, as in
     /// flight.
-    pub(crate) fn create(&self, policy: Option<String>) -> Held {
+    pub(crate) fn create(&self, policy: Option<String>) -> Held<'_> {
         match policy {
-            Some(policy) => Held::on(self.creating.get_or_insert(policy, Arc::default())),
-            None => Held::on(Arc::clone(&self.unnamed)),
+            Some(policy) => Held::tracked(&self.creating, policy),
+            None => Held::untracked(Arc::clone(&self.unnamed)),
         }
     }
 
@@ -85,5 +112,31 @@ impl Claims {
                 .creating
                 .get(policy)
                 .is_some_and(|count| count.load(Ordering::SeqCst) > 0)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ended_claims_and_creates_leave_no_entries() {
+        let claims = Claims::default();
+        let first = claims.claim("policy-a".into());
+        let second = claims.claim("policy-a".into());
+        drop(first);
+        assert_eq!(claims.claims.len(), 1, "another add still holds the entry");
+        drop(second);
+        assert_eq!(claims.claims.len(), 0);
+
+        let first = claims.create(Some("policy-b".into()));
+        let second = claims.create(Some("policy-b".into()));
+        drop(first);
+        assert_eq!(claims.creating.len(), 1, "another create still holds it");
+        drop(second);
+        assert_eq!(claims.creating.len(), 0);
+
+        drop(claims.create(None));
+        assert_eq!(claims.unnamed.load(Ordering::SeqCst), 0);
     }
 }

@@ -64,6 +64,12 @@ def Registry.add (r : Registry) (p : Policy) (h : Home) : Registry :=
   -- `p` now goes to `h`; any other `q` keeps its route.
   fun q => if q = p then some h else r q
 
+/-- Move `p` to `h` only if it still points at `expected`, as the
+conditional write made when a home changes address. -/
+def Registry.moveIf (r : Registry) (p : Policy) (expected h : Home) : Registry :=
+  -- A route that changed since it was read keeps its newer value.
+  if r p = some expected then r.add p h else r
+
 /-- Forget `p`: the node's own deployment decides it again. -/
 def Registry.remove (r : Registry) (p : Policy) : Registry :=
   -- `p` now goes nowhere else; any other `q` keeps its route.
@@ -146,6 +152,22 @@ theorem add_keeps_others (r : Registry) (p q : Policy) (h : Home) (hq : q ≠ p)
     (r.add p h) q = r q := by
   -- The `if` takes its second branch, since `q` is not `p`.
   simp [Registry.add, hq]
+
+/-- A route moved only if it still names the home it was read from; a
+route reassigned in the meantime is not overwritten by the move. -/
+theorem move_if_keeps_newer (r : Registry) (p : Policy) (expected newer moved : Home)
+    (hnewer : r p = some newer) (hchanged : newer ≠ expected) :
+    r.moveIf p expected moved = r := by
+  -- The equality test fails, so the conditional move leaves the registry alone.
+  simp [Registry.moveIf, hnewer, hchanged]
+
+/-- A route moved only if it still names the home it was read from; when it
+does, the move changes that policy and no other. -/
+theorem move_if_matches (r : Registry) (p q : Policy) (expected moved : Home)
+    (hsame : r p = some expected) :
+    (r.moveIf p expected moved) q = if q = p then some moved else r q := by
+  -- The equality test succeeds, so the move is an ordinary add.
+  simp [Registry.moveIf, hsame, Registry.add]
 
 /-- A policy just removed goes to the node's own deployment. -/
 theorem route_after_remove (r : Registry) (p : Policy) :

@@ -30,6 +30,8 @@ pub(super) struct Answers {
     /// Whether a create lets the other task in a join run once before it
     /// lands.
     yields: bool,
+    /// A create this provider's journal still holds, if any.
+    pending_create: Option<String>,
 }
 
 impl Answers {
@@ -48,6 +50,7 @@ impl Answers {
             creates: None,
             created: AtomicUsize::new(0),
             yields: false,
+            pending_create: None,
         }
     }
 
@@ -82,6 +85,14 @@ impl Answers {
     pub(super) fn naming_on_create(creates: &'static str) -> Arc<Self> {
         Arc::new(Self {
             creates: Some(creates.to_owned()),
+            ..Self::answering(Some(true), "did:key:z6Mkowner")
+        })
+    }
+
+    /// The node's own provider with a retained create of `policy`.
+    pub(super) fn with_pending_create(policy: &str) -> Arc<Self> {
+        Arc::new(Self {
+            pending_create: Some(policy.to_owned()),
             ..Self::answering(Some(true), "did:key:z6Mkowner")
         })
     }
@@ -134,6 +145,10 @@ impl VeraProvider for Answers {
         };
         self.held.lock().expect("held").push(id.clone());
         Ok(id)
+    }
+
+    async fn create_policy_pending(&self, policy_id: &str) -> Result<bool, ProviderError> {
+        Ok(self.pending_create.as_deref() == Some(policy_id))
     }
 
     async fn register_object(

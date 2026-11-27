@@ -120,3 +120,26 @@ async fn a_route_is_refused_while_its_policy_is_being_created_and_after() {
         "{refused:?}"
     );
 }
+
+/// A route stays refused while a create whose caller failed is still in the
+/// provider's journal.
+#[nuclei::test]
+#[mantra_macros::req_test("defra.acp.foreign_policy")]
+async fn a_route_is_refused_while_a_retained_create_can_still_land() {
+    let nonce = acp::PolicyNonce([5; 32]);
+    let predicted = crate::vera_rs::predict_policy_id(YAML, nonce, ACTOR).expect("ID");
+    let node = acp_over(Answers::with_pending_create(&predicted));
+    let refused = route_at(
+        &node,
+        &predicted,
+        "home",
+        "http://home",
+        acp_over(Answers::new(Some(true), "")),
+    )
+    .await;
+    assert!(
+        matches!(&refused, Err(ProviderError::PolicyBeingCreated { policy }) if *policy == predicted),
+        "{refused:?}"
+    );
+    assert!(!node.is_foreign_policy(&predicted));
+}

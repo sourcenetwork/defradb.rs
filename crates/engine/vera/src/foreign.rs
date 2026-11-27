@@ -152,7 +152,7 @@ impl ForeignPolicies {
     /// Mark `policy_id` as being routed until the claim is dropped. Refused
     /// while a create on the node's own deployment may be making it
     /// ([`ProviderError::PolicyBeingCreated`]).
-    pub(crate) fn claim(&self, policy_id: &str) -> Result<Held, ProviderError> {
+    pub(crate) fn claim(&self, policy_id: &str) -> Result<Held<'_>, ProviderError> {
         let policy = route_key(policy_id)?;
         let claim = self.claims.claim(policy.clone());
         if self.claims.creating(&policy) {
@@ -167,7 +167,7 @@ impl ForeignPolicies {
     /// policy is routed or being routed
     /// ([`ProviderError::PolicyRoutedElsewhere`]), and, for an unknown ID,
     /// while any policy is ([`ProviderError::UnnamedPolicyCreate`]).
-    pub(crate) fn begin_create(&self, policy_id: Option<&str>) -> Result<Held, ProviderError> {
+    pub(crate) fn begin_create(&self, policy_id: Option<&str>) -> Result<Held<'_>, ProviderError> {
         let Some(policy_id) = policy_id else {
             let create = self.claims.create(None);
             if self.any_claimed() {
@@ -282,7 +282,11 @@ impl ForeignPolicies {
         };
         for (other, moved) in self.routes.iter() {
             if moved.deployment == route.deployment && moved.address != route.address {
-                self.routes.insert(other, route.clone());
+                let _ = self.routes.replace_if(other, route.clone(), |current| {
+                    current.deployment == moved.deployment
+                        && current.address == moved.address
+                        && Arc::ptr_eq(&current.acp, &moved.acp)
+                });
             }
         }
         self.routes.insert(key.clone(), route);

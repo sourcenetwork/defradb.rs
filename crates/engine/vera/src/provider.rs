@@ -306,6 +306,11 @@ pub trait VeraProvider: MaybeSendSync {
         nonce: Option<acp::PolicyNonce>,
     ) -> Result<String, ProviderError>;
 
+    /// Whether the provider's journal still holds a create of `policy_id`.
+    async fn create_policy_pending(&self, _policy_id: &str) -> Result<bool, ProviderError> {
+        Ok(false)
+    }
+
     /// Register `object_id` with the token's actor as its owner, together
     /// with `relationships`, what the document carries through its
     /// `@policy(relation:)` fields: the provider checks the collection's

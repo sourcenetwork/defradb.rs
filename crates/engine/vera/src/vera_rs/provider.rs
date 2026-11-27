@@ -656,6 +656,10 @@ impl VeraProvider for VeraRsProvider {
         self.create_policy_with(policy_yaml, nonce).await
     }
 
+    async fn create_policy_pending(&self, policy_id: &str) -> Result<bool, ProviderError> {
+        self.pending_policy_create(policy_id).await
+    }
+
     async fn register_object(
         &self,
         bearer_token: &str,
