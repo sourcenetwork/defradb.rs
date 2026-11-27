@@ -12,7 +12,9 @@ use super::conditions::{
 };
 use super::empty_array::{all_path, with_empty_arrays, with_json_empty_arrays};
 use super::path_bounds::{composite_range, order_in_values, path_high_end, path_low_end};
-use super::types::{ConditionValue, IndexScanParams, IndexScanType, ScanValueFilter};
+use super::types::{
+    ConditionValue, FieldCondition, IndexScanParams, IndexScanType, ScanValueFilter,
+};
 use super::values::{
     normalize_for_index_field, wrap_value_for_json_path, wrap_values_for_json_path,
 };
@@ -52,37 +54,21 @@ pub fn filter_to_index_scan(
         return None;
     }
 
-    let conditions = extract_field_conditions(filter);
+    let conditions: Vec<FieldCondition> = extract_field_conditions(filter)
+        .into_iter()
+        .map(|c| {
+            let is_json = is_json_field(field_kind(collection_fields, &c.field_name));
+            at_entry_path(c, is_json)
+        })
+        .collect();
     let first_field = &index.fields[0].name;
+    let first_field_kind = field_kind(collection_fields, first_field);
+    let first_field_is_json = is_json_field(first_field_kind);
 
-    // Check if the first index field is JSON-typed
-    let first_field_kind = collection_fields
-        .iter()
-        .find(|f| &f.name == first_field)
-        .map(|f| &f.kind);
-    let first_field_is_json = first_field_kind
-        .and_then(FieldKind::as_scalar)
-        .is_some_and(|kind| kind.base_kind() == ScalarKind::NillableJson);
-
-    // Find conditions on the first index field
-    // For JSON fields, ensure top-level conditions get an empty json_path
     let first_field_conditions: Vec<_> = conditions
         .iter()
-        .map(|c| {
-            if &c.field_name == first_field && first_field_is_json && c.json_path.is_none() {
-                // Top-level JSON filter (e.g., custom: {_gt: 20}) needs an empty path.
-                // Under `_any`/`_all` only array elements match, as Go's index marker.
-                let mut c = c.clone();
-                c.json_path = Some(match c.array_op {
-                    Some(_) => JsonPath::new().append_index(),
-                    None => JsonPath::new(),
-                });
-                c
-            } else {
-                c.clone()
-            }
-        })
         .filter(|c| &c.field_name == first_field)
+        .cloned()
         .collect();
 
     if first_field_conditions.is_empty() {
@@ -102,13 +88,15 @@ pub fn filter_to_index_scan(
     // Track JSON path for wrapping values when needed
     let mut has_eq = false;
     let mut eq_value = None;
+    let mut eq_cond: Option<&FieldCondition> = None;
     let mut eq_json_path: Option<JsonPath> = None;
     let mut has_in = false;
     let mut in_values = None;
+    let mut in_cond: Option<&FieldCondition> = None;
     let mut in_json_path: Option<JsonPath> = None;
     let mut has_scan_all = false;
     let mut scan_value_filter: Option<ScanValueFilter> = None;
-    let mut value_filter_path: Option<JsonPath> = None;
+    let mut value_filter_cond: Option<&FieldCondition> = None;
     let mut lower_bound = Bound::Unbounded;
     let mut upper_bound = Bound::Unbounded;
     let mut range_json_path: Option<JsonPath> = None;
@@ -122,7 +110,7 @@ pub fn filter_to_index_scan(
             )
             && matches!(cond.value, ConditionValue::Single(_))
     });
-    let in_range = |cond: &super::types::FieldCondition| {
+    let in_range = |cond: &FieldCondition| {
         first_range.is_some_and(|first| {
             first.json_path == cond.json_path
                 && (cond.array_op != Some(FilterOp::Any) || first.clause == cond.clause)
@@ -151,6 +139,7 @@ pub fn filter_to_index_scan(
                 if let ConditionValue::Single(v) = &cond.value {
                     has_eq = true;
                     eq_value = Some(v.clone());
+                    eq_cond = Some(cond);
                     eq_json_path = cond.json_path.clone();
                     eq_all = all_path(cond, first_field_is_json);
                 }
@@ -159,6 +148,7 @@ pub fn filter_to_index_scan(
                 if let ConditionValue::Multiple(vs) = &cond.value {
                     has_in = true;
                     in_values = Some(vs.clone());
+                    in_cond = Some(cond);
                     in_json_path = cond.json_path.clone();
                     in_all = all_path(cond, first_field_is_json);
                 }
@@ -220,7 +210,7 @@ pub fn filter_to_index_scan(
                         FilterOp::Nilike => ScanValueFilter::Nilike(pattern.clone()),
                         _ => unreachable!(),
                     });
-                    value_filter_path = cond.json_path.clone();
+                    value_filter_cond = Some(cond);
                 }
                 if cond.json_path.is_some() || scan_all_all.is_some() {
                     scan_json_path = cond.json_path.clone();
@@ -252,27 +242,11 @@ pub fn filter_to_index_scan(
     // - _none: cannot narrow scan (requires checking ALL elements don't match)
     // - _all: index provides candidates but residual filter verifies ALL match
     let is_composite = index.fields.len() > 1;
-    let mut subsequent_eq_values: Vec<NormalValue> = Vec::new();
-    if is_composite && has_eq {
-        for field_desc in index.fields.iter().skip(1) {
-            let field_cond = conditions.iter().find(|c| {
-                c.field_name == field_desc.name
-                    && c.op == FilterOp::Eq
-                    && c.array_op != Some(FilterOp::None)
-                    && c.array_op != Some(FilterOp::All)
-            });
-            if let Some(cond) = field_cond {
-                if let ConditionValue::Single(v) = &cond.value {
-                    subsequent_eq_values
-                        .push(wrap_value_for_json_path(v.clone(), cond.json_path.as_ref()));
-                } else {
-                    break;
-                }
-            } else {
-                break;
-            }
-        }
-    }
+    let subsequent_eq_values = if is_composite && (has_eq || has_in) {
+        suffix_eq_values(index, &conditions, collection_fields)?
+    } else {
+        Vec::new()
+    };
     let all_fields_matched =
         is_composite && has_eq && subsequent_eq_values.len() == index.fields.len() - 1;
 
@@ -307,11 +281,6 @@ pub fn filter_to_index_scan(
         Bound::Unbounded => Bound::Unbounded,
         _ => Bound::Unbounded,
     };
-    for (i, v) in subsequent_eq_values.iter_mut().enumerate() {
-        if let Some(field_desc) = index.fields.get(i + 1) {
-            *v = normalize_for_index_field(v.clone(), &field_desc.name, collection_fields);
-        }
-    }
 
     // Determine scan type (narrowing scans take priority over full scans)
     // Wrap values in JsonLeafValue when JSON path is present
@@ -372,40 +341,10 @@ pub fn filter_to_index_scan(
             first_field_descending,
             order_by.map(|_| reverse),
         );
-        // For composite indexes, check if subsequent fields have Eq conditions.
-        // If so, attach them as suffix_values to enable exact-match lookups
-        // instead of prefix scans (e.g., _in on first field + _eq on second).
-        let mut in_suffix_values: Vec<NormalValue> = Vec::new();
-        if is_composite {
-            for field_desc in index.fields.iter().skip(1) {
-                let field_cond = conditions.iter().find(|c| {
-                    c.field_name == field_desc.name
-                        && c.op == FilterOp::Eq
-                        && c.array_op != Some(FilterOp::None)
-                        && c.array_op != Some(FilterOp::All)
-                });
-                if let Some(cond) = field_cond {
-                    if let ConditionValue::Single(v) = &cond.value {
-                        let normalized = normalize_for_index_field(
-                            v.clone(),
-                            &field_desc.name,
-                            collection_fields,
-                        );
-                        in_suffix_values.push(wrap_value_for_json_path(
-                            normalized,
-                            cond.json_path.as_ref(),
-                        ));
-                    } else {
-                        break;
-                    }
-                } else {
-                    break;
-                }
-            }
-        }
+        // Eq values on the later fields make each lookup exact.
         IndexScanType::InScan {
             values: wrapped_values,
-            suffix_values: in_suffix_values,
+            suffix_values: subsequent_eq_values,
         }
     } else if !lower_bound.is_unbounded() || !upper_bound.is_unbounded() {
         // Wrap range bounds for JSON paths
@@ -475,18 +414,24 @@ pub fn filter_to_index_scan(
         is_composite,
     );
 
-    // The executor tests the pattern on the scanned value, so a pattern from
-    // another path would drop matches; the filter checks it instead.
-    let scan_path = if has_eq {
-        &eq_json_path
+    // The executor tests the pattern on the scanned entry, so it must name the
+    // element the scan matched; the filter checks any other pattern.
+    let scan_cond = if has_eq {
+        eq_cond
     } else if has_in {
-        &in_json_path
+        in_cond
     } else if ranged {
-        &range_json_path
+        first_range
     } else {
-        &value_filter_path
+        value_filter_cond
     };
-    if *scan_path != value_filter_path {
+    let same_element = scan_cond
+        .zip(value_filter_cond)
+        .is_some_and(|(scan, like)| {
+            scan.json_path == like.json_path
+                && (like.array_op != Some(FilterOp::Any) || scan.clause == like.clause)
+        });
+    if !same_element {
         scan_value_filter = None;
     }
 
@@ -532,6 +477,66 @@ pub fn filter_to_index_scan(
         value_filter: scan_value_filter,
         cursor_seek: None,
     })
+}
+
+fn field_kind<'a>(
+    collection_fields: &'a [schema::FieldDescription],
+    name: &str,
+) -> Option<&'a FieldKind> {
+    collection_fields
+        .iter()
+        .find(|f| f.name == name)
+        .map(|f| &f.kind)
+}
+
+fn is_json_field(kind: Option<&FieldKind>) -> bool {
+    kind.and_then(FieldKind::as_scalar)
+        .is_some_and(|kind| kind.base_kind() == ScalarKind::NillableJson)
+}
+
+/// `cond` at the path its JSON index entries are stored under.
+fn at_entry_path(mut cond: FieldCondition, is_json: bool) -> FieldCondition {
+    if is_json && cond.json_path.is_none() {
+        // Under `_any`/`_all` only array elements match, as Go's index marker.
+        cond.json_path = Some(match cond.array_op {
+            Some(_) => JsonPath::new().append_index(),
+            None => JsonPath::new(),
+        });
+    }
+    cond
+}
+
+/// The `_eq` values of the later index fields, or `None` when one of them
+/// needs a full scan.
+fn suffix_eq_values(
+    index: &IndexDescription,
+    conditions: &[FieldCondition],
+    collection_fields: &[schema::FieldDescription],
+) -> Option<Vec<NormalValue>> {
+    let mut values = Vec::new();
+    for field_desc in index.fields.iter().skip(1) {
+        let Some(cond) = conditions.iter().find(|c| {
+            c.field_name == field_desc.name
+                && c.op == FilterOp::Eq
+                && c.array_op != Some(FilterOp::None)
+                && c.array_op != Some(FilterOp::All)
+        }) else {
+            break;
+        };
+        let ConditionValue::Single(v) = &cond.value else {
+            break;
+        };
+        let kind = field_kind(collection_fields, &field_desc.name);
+        if should_fallback_to_full_scan(cond, is_json_field(kind), kind) {
+            return None;
+        }
+        let normalized = normalize_for_index_field(v.clone(), &field_desc.name, collection_fields);
+        values.push(wrap_value_for_json_path(
+            normalized,
+            cond.json_path.as_ref(),
+        ));
+    }
+    Some(values)
 }
 
 /// Check if a filter with a top-level `_or` can use any of the given indexes.

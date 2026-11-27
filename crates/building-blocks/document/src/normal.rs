@@ -408,8 +408,7 @@ impl NormalValue {
 
     /// Extract all indexable leaf values from a JSON value.
     ///
-    /// Each scalar and each empty array becomes a JsonLeaf with its path. An
-    /// empty object yields nothing, and a null JSON field a single Null.
+    /// An empty array gets a leaf too, so an `_all` scan can find it.
     pub fn json_leaves(&self) -> Vec<NormalValue> {
         match self {
             NormalValue::Json(json) => {

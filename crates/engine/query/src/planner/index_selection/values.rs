@@ -99,20 +99,11 @@ pub(super) fn wrap_values_for_json_path(
     values: Vec<NormalValue>,
     json_path: Option<&JsonPath>,
 ) -> Vec<NormalValue> {
-    match json_path {
-        Some(path) => values
-            .into_iter()
-            .filter_map(|v| {
-                normal_value_to_json_scalar(&v).map(|scalar| {
-                    NormalValue::JsonLeaf(JsonLeafValue {
-                        path: path.clone(),
-                        value: scalar,
-                    })
-                })
-            })
-            .collect(),
-        None => values,
-    }
+    values
+        .into_iter()
+        .filter(|v| json_path.is_none() || normal_value_to_json_scalar(v).is_some())
+        .map(|v| wrap_value_for_json_path(v, json_path))
+        .collect()
 }
 
 /// Normalize a NormalValue to match the schema field's encoding type.

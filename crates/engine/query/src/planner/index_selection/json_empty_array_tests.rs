@@ -70,6 +70,12 @@ fn filters_the_index_cannot_answer_take_a_full_scan() {
         json!({"_any": {"_all": {"_eq": 1}}}),
         json!({"_none": {"_all": {"_eq": 1}}}),
         json!({"_all": {"a": {"_eq": 1}}}),
+        json!({"tags": {"_all": {"a": {"_eq": 1}}}}),
+        json!({"tags": {"_any": {"a": {"_eq": 1}}}}),
+        json!({"tags": {"_all": {"_in": [1, {"x": 1}]}}}),
+        json!({"tags": {"_in": [1, [2]]}}),
+        json!({"title": {"_eq": null}}),
+        json!({"title": {"_in": [null, 5]}}),
     ] {
         assert!(scan(filter.clone()).is_none(), "{filter}");
     }
@@ -79,7 +85,6 @@ fn filters_the_index_cannot_answer_take_a_full_scan() {
 fn all_eq_looks_up_the_marker_at_the_array_path() {
     assert_marker_at(json!({"_all": {"_eq": 1}}), &[]);
     assert_marker_at(json!({"tags": {"_all": {"_eq": 1}}}), &["tags"]);
-    assert_marker_at(json!({"tags": {"_all": {"a": {"_eq": 1}}}}), &["tags"]);
 }
 
 #[test]
@@ -115,4 +120,35 @@ fn an_any_on_the_same_array_skips_the_marker() {
 fn an_any_on_another_array_keeps_the_marker() {
     let scan = scan(json!({"a": {"_all": {"_eq": 1}}, "b": {"_any": {"_eq": 2}}})).unwrap();
     assert_eq!(marker_branch(&scan), Some(&marker(&["a"])));
+}
+
+#[test]
+fn a_top_level_in_looks_null_up_as_stored() {
+    let Some(IndexScanType::InScan { values, .. }) = scan(json!({"_in": [null, 5]})) else {
+        panic!("no in scan");
+    };
+    assert!(values.contains(&NormalValue::Null), "{values:?}");
+}
+
+#[test]
+fn null_equality_under_any_keeps_the_index() {
+    assert!(scan(json!({"tags": {"_any": {"_eq": null}}})).is_some());
+}
+
+fn keeps_value_filter(filter: serde_json::Value) -> bool {
+    let filter = Filter::from_conditions(filter.as_object().unwrap().clone());
+    filter_to_index_scan(&filter, &index(), None, &fields(), None, 0)
+        .unwrap()
+        .value_filter
+        .is_some()
+}
+
+#[test]
+fn a_pattern_from_another_any_clause_is_left_to_the_filter() {
+    let any = |op: serde_json::Value| json!({"custom": {"tags": {"_any": op}}});
+    for scan in [json!({"_eq": 5}), json!({"_lt": 100})] {
+        let filter = json!({"_and": [any(scan), any(json!({"_like": "x%"}))]});
+        assert!(!keeps_value_filter(filter.clone()), "{filter}");
+    }
+    assert!(keeps_value_filter(any(json!({"_lt": 100, "_like": "x%"}))));
 }

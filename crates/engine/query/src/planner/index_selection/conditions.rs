@@ -46,17 +46,25 @@ pub(super) fn should_fallback_to_full_scan(
     // If the filter value is a complex type, fall back to full scan.
     if is_json_field {
         // An element that is an object or an array has no entry, and a negative
-        // op passes it, so the index would miss the document.
+        // op passes it, so the index would miss the document. A property under
+        // an array operator is an error the full scan must raise.
         if matches!(cond.array_op, Some(FilterOp::Any | FilterOp::All))
             && (cond.nested_array_op
                 || matches!(
                     cond.op,
                     FilterOp::Ne | FilterOp::Nin | FilterOp::Nlike | FilterOp::Nilike
                 )
-                || !cond.json_path.as_ref().is_some_and(|path| {
-                    path.iter().any(|part| matches!(part, JsonPathPart::Index))
-                }))
+                || !cond
+                    .json_path
+                    .as_ref()
+                    .and_then(|path| path.0.last())
+                    .is_some_and(|part| matches!(part, JsonPathPart::Index)))
         {
+            return true;
+        }
+
+        // A document without the path passes a null check but has no entry there.
+        if cond.array_op.is_none() && has_nested_path && looks_for_null(cond) {
             return true;
         }
 
@@ -83,13 +91,12 @@ pub(super) fn should_fallback_to_full_scan(
             return true;
         }
 
-        // _in/_nin with empty values (all objects were filtered out) → fallback
-        if matches!(cond.op, FilterOp::In | FilterOp::Nin) {
-            if let ConditionValue::Multiple(vs) = &cond.value {
-                if vs.is_empty() {
-                    return true;
-                }
-            }
+        // An object or an array in the list has no entry to look up.
+        if matches!(cond.op, FilterOp::In | FilterOp::Nin)
+            && (cond.non_scalar_member
+                || matches!(&cond.value, ConditionValue::Multiple(vs) if vs.is_empty()))
+        {
+            return true;
         }
     }
 
@@ -98,7 +105,16 @@ pub(super) fn should_fallback_to_full_scan(
         && matches!(cond.value, ConditionValue::Multiple(_))
 }
 
-/// A condition served by a scan of every entry at its path.
+fn looks_for_null(cond: &FieldCondition) -> bool {
+    match &cond.value {
+        ConditionValue::Single(NormalValue::Null) => cond.op == FilterOp::Eq,
+        ConditionValue::Multiple(vs) => {
+            cond.op == FilterOp::In && vs.iter().any(|v| matches!(v, NormalValue::Null))
+        }
+        _ => false,
+    }
+}
+
 pub(super) fn is_full_scan(cond: &FieldCondition) -> bool {
     // An array or object at a path has its entries deeper, so a scan of the
     // path misses it and a negative op passes it.

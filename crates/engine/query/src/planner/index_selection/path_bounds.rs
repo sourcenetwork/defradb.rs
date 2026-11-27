@@ -39,10 +39,7 @@ pub(super) fn path_high_end(path: &JsonPath, descending: bool) -> Bound {
     }
 }
 
-/// `values`, each once. With `scan_reverse` set they go in the order the
-/// index holds their keys, backward when it is `true`; without it they keep
-/// the order they came in. A value that does not encode is never a duplicate,
-/// and sorts after those that do.
+/// Each value once, in index key order when the scan's order is relied on.
 pub(super) fn order_in_values(
     values: &mut Vec<NormalValue>,
     descending: bool,
@@ -62,6 +59,7 @@ pub(super) fn order_in_values(
     if let Some(reverse) = scan_reverse {
         keyed.sort_by(|(a, _), (b, _)| match (a, b) {
             (Some(a), Some(b)) => a.cmp(b),
+            // A value that does not encode has no key to compare, so it goes last.
             (Some(_), None) => std::cmp::Ordering::Less,
             (None, Some(_)) => std::cmp::Ordering::Greater,
             (None, None) => std::cmp::Ordering::Equal,

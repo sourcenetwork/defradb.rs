@@ -169,6 +169,8 @@ pub struct FieldCondition {
     pub clause: usize,
     /// Set under an array operator inside another one, which no JSON index serves.
     pub nested_array_op: bool,
+    /// Set when an `_in` or `_nin` lists an object or an array, which no entry holds.
+    pub non_scalar_member: bool,
 }
 
 /// Value in a filter condition.
@@ -202,6 +204,7 @@ impl FieldCondition {
         for (op_str, value) in ops {
             // First check if this is a recognized operator
             if let Some(op) = FilterOp::parse(op_str) {
+                let mut non_scalar_member = false;
                 // Handle array element operators (_any, _all, _none)
                 // These wrap inner conditions: {_any: {_eq: 30}}
                 if op.is_array_element_op() {
@@ -223,9 +226,10 @@ impl FieldCondition {
                 let condition_value = match op {
                     FilterOp::In | FilterOp::Nin => {
                         if let Some(arr) = value.as_array() {
-                            ConditionValue::Multiple(
-                                arr.iter().filter_map(json_to_normal_value).collect(),
-                            )
+                            let members: Vec<_> =
+                                arr.iter().filter_map(json_to_normal_value).collect();
+                            non_scalar_member = members.len() < arr.len();
+                            ConditionValue::Multiple(members)
                         } else {
                             continue;
                         }
@@ -273,6 +277,7 @@ impl FieldCondition {
                     json_path: json_path.clone(),
                     clause: 0,
                     nested_array_op,
+                    non_scalar_member,
                 });
             } else {
                 // Not an operator - this is a JSON path property
