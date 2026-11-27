@@ -241,6 +241,13 @@ pub enum QueryError {
     #[error("document not found: {0}")]
     DocumentNotFound(String),
 
+    /// A version read names a commit whose history a retention prune removed.
+    #[error(
+        "document {doc_id} cannot be read at a commit: its history was pruned to the \
+         collection's @retention depth (commit {cid} is gone); read it without a cid"
+    )]
+    HistoryPruned { doc_id: String, cid: String },
+
     /// Invalid document ID format
     #[error("invalid document id: {0}")]
     InvalidDocId(String),
@@ -326,6 +333,7 @@ impl QueryError {
             | Self::InvalidDocId(_)
             | Self::RequiredFieldMissing(_)
             | Self::InvalidMutationInput(_)
+            | Self::HistoryPruned { .. }
             | Self::PermissionDenied(_)
             | Self::DelegationOutsideWindow { .. }
             | Self::Introspection(_) => true,

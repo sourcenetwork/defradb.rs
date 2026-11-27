@@ -15,9 +15,9 @@ What must never happen:
   than `n` (`short_history_kept`).
 What must happen: a commit that is not a head and lies `n` or more heights
 below the top is deleted (`below_pruned`), so the prune does its job.
-And a decision made from an older, lower `top` deletes nothing the newer
-`top` would keep (`stale_top_safe`): a prune that read the document before
-an update committed is still correct.
+And, while the head flag stays fixed, a decision made from an older, lower
+`top` deletes nothing the newer `top` would keep (`stale_top_safe`). Transaction
+safety when an update changes the head flag belongs to the temporal model.
 
 Rust anchor: `prune_doc_in` in
 `crates/database/db/src/collection/ops/prune_history.rs`.

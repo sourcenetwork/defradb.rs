@@ -182,7 +182,12 @@ where
     let mut retained =
         crate::block::cleanup::referenced_blocks(&blockstore, kept.into_iter().map(|(_, cid)| cid))
             .await?;
-    retained.extend(heads);
+    for cid in &heads {
+        retained.insert(*cid);
+        if let Some(block) = crate::block::cleanup::load_block(&blockstore, cid).await? {
+            retained.extend(block.encryption);
+        }
+    }
     for (_, cid) in &pruned {
         crate::block::cleanup::delete_owned_commit(
             &blockstore,

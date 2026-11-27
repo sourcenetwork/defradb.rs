@@ -1,7 +1,7 @@
 use super::{Axis::*, Property, Tier::*};
 
 /// The crates this family's models cover.
-pub(super) const CRATES: &str = "db";
+pub(super) const CRATES: &str = "db, query";
 
 pub(super) const PROPERTIES: &[Property] = &[
     Property {
@@ -14,10 +14,10 @@ pub(super) const PROPERTIES: &[Property] = &[
         // taken again by the next prune) and a version read that meets a
         // pruned block fails instead of returning a partial document.
         family: "History retention",
-        name: "INV_HeadsStored / INV_FieldHeadsStored / INV_OwnedStored / INV_WindowKept / INV_NoStaleHead / INV_Pruned / INV_Reclaimed / INV_NoPartialRead",
+        name: "INV_HeadsStored / INV_FieldHeadsStored / INV_OwnedStored / INV_WindowKept / INV_NoStaleHead / INV_Pruned / INV_Reclaimed / INV_KeptLinksStored / INV_NoPartialRead",
         axis: Tla,
-        anchor: "crates/database/db/src/collection/ops/prune_history.rs DB::prune_history_as, DB::prune_doc_history, prune_doc_in; crates/database/db/src/block/cleanup.rs delete_owned_commit, delete_owned_block; crates/database/db/src/docid/map.rs block_has_owners; crates/database/db/src/merge/merge_handler/history.rs composite_was_applied; crates/database/db/src/read/versioned.rs VersionedFetcher::collect_blocks_to_genesis, VersionedFetcher::refuse_pruned",
-        model_ref: "MC_HistoryRetention_{Green,Red_PruneHead,Red_PruneFieldHead,Red_PlainScan,Red_DropMarker,Red_OffByOne,Red_LinksOnly,Red_SkipRead}.cfg",
+        anchor: "crates/database/db/src/collection/ops/prune_history.rs DB::prune_history_as, DB::prune_doc_history, prune_doc_in; crates/database/db/src/block/cleanup.rs delete_owned_commit, delete_owned_block; crates/database/db/src/docid/map.rs block_has_owners; crates/database/db/src/merge/merge_handler/history.rs composite_was_applied; crates/database/db/src/read/versioned.rs VersionedFetcher::collect_blocks_to_genesis, VersionedFetcher::refuse_pruned; crates/engine/query/src/runner/version.rs QueryRunner::execute_cid_query_with_version; crates/engine/query/src/error.rs QueryError::HistoryPruned",
+        model_ref: "MC_HistoryRetention_{Green,Red_PruneHead,Red_PruneFieldHead,Red_PlainScan,Red_DropMarker,Red_OffByOne,Red_LinksOnly,Red_DropLinks,Red_SkipRead}.cfg",
         tiers: &[Boundary],
         bound_by: "",
     },

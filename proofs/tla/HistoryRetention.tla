@@ -57,6 +57,7 @@ CONSTANTS
   MaxActs,      \* how many updates, adoptions and replays may happen in all
   HeadMode,     \* "Keep": a live composite head is never pruned | "Prune": it is, by height alone
   FieldMode,    \* "Keep": live field heads are retained | "Prune": only kept composites' links are
+  LinkMode,     \* "Keep": kept composites' field links are retained | "Drop": they are reclaimed with the others
   ScanMode,     \* "Validated": the owner scan deciding a delete is validated | "Plain": it is not
   MarkerMode,   \* "Keep": a pruned commit's priority entry stays | "Drop": it is deleted with the block
   WindowMode,   \* "Exact": prune heights <= top - N | "OffByOne": prune heights <= top - N + 1
@@ -69,6 +70,7 @@ ASSUME MaxDepth \in Nat \ {0}
 ASSUME MaxActs \in Nat
 ASSUME HeadMode \in {"Keep", "Prune"}
 ASSUME FieldMode \in {"Keep", "Prune"}
+ASSUME LinkMode \in {"Keep", "Drop"}
 ASSUME ScanMode \in {"Validated", "Plain"}
 ASSUME MarkerMode \in {"Keep", "Drop"}
 ASSUME WindowMode \in {"Exact", "OffByOne"}
@@ -191,9 +193,10 @@ Cutoff == IF WindowMode = "Exact"
 \* The composites the attempt prunes: at or below the cutoff, and, with the
 \* Keep switch, not a live head.
 PrunedC == {c \in Found : H(c) <= Cutoff /\ (HeadMode = "Prune" \/ c \notin snap.heads)}
-\* The field blocks kept: those a kept composite links, and, with the Keep
-\* switch, every live field head.
-Retained == LinkedBy(Found \ PrunedC) \cup (IF FieldMode = "Keep" THEN snap.fieldHeads ELSE {})
+\* The field blocks kept: those a kept composite links when this guard is on,
+\* and, with the Keep switch, every live field head.
+Retained == (IF LinkMode = "Keep" THEN LinkedBy(Found \ PrunedC) ELSE {})
+            \cup (IF FieldMode = "Keep" THEN snap.fieldHeads ELSE {})
 \* The field blocks the attempt may delete: with the Scan switch, every field
 \* block of a its snapshot holds (the priority index names them all); with
 \* the Links switch, only those a pruned composite links.
@@ -313,10 +316,13 @@ INV_WindowKept ==
 \* A composite a committed prune deleted never becomes a head again.
 INV_NoStaleHead == heads \cap pruned = {}
 
-\* Right after a prune commits, c2 (below the window, no head, owned by a alone)
-\* is gone, unless a peer sent it back while the attempt ran (the next prune
-\* takes it then).
-INV_Pruned == justPruned => ("c2" \notin present \/ "c2" \in dirty)
+\* Right after a prune commits, every composite this attempt selected is gone,
+\* unless a peer stored it again after the snapshot (the next prune takes it
+\* then). This includes a previously pruned composite that was replayed before
+\* this attempt began.
+INV_Pruned ==
+  justPruned =>
+    \A c \in PrunedC : c \notin present \/ c \in dirty
 
 \* Right after a prune commits, every field block its attempt saw is gone
 \* unless it is kept (a kept composite links it or it was a field head),
@@ -336,6 +342,12 @@ ReadOutcome(c) ==
      ELSE IF ReadMode = "Refuse" /\ missing \cap published # {} THEN "refused"
      ELSE "partial"
 
-\* No version read of a stored composite returns a partial document.
-INV_NoPartialRead == \A c \in present \cap Composites : ReadOutcome(c) # "partial"
+\* The field links of every kept composite stay stored, independently of the
+\* `Retained` set used to decide the delete.
+INV_KeptLinksStored ==
+  justPruned => LinkedBy(Found \ PrunedC) \subseteq present
+
+\* No version read rooted at a published composite returns a partial document;
+\* a pruned root must refuse just as a pruned ancestor does.
+INV_NoPartialRead == \A c \in published \cap Composites : ReadOutcome(c) # "partial"
 ====

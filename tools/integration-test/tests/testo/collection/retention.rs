@@ -8,7 +8,8 @@ mod access;
 mod p2p;
 
 use integration_test::actions::{
-    Actions, AddCollection, AddDoc, DeleteDoc, PruneHistory, Request, UpdateDoc,
+    Actions, AddCollection, AddDoc, Close, DeleteDoc, NewNode, PruneHistory, Request, Start,
+    UpdateDoc,
 };
 use integration_test::scenario::{captures, Common, Text};
 use integration_test::test_case::TestCase;
@@ -46,6 +47,21 @@ fn add_as(doc: &str, doc_map: Value) -> Actions {
         doc_map: Some(doc_map),
         common: Common {
             capture: captures([(doc, "/docID")]),
+            ..Default::default()
+        },
+        ..Default::default()
+    }
+    .into()
+}
+
+fn add_with_encrypted_name() -> Actions {
+    AddDoc {
+        collection: "User".into(),
+        doc_map: Some(json!({ "name": "John", "age": 21 })),
+        is_doc_encrypted: Some(false),
+        encrypted_fields: Some(vec!["name".into()]),
+        common: Common {
+            capture: captures([("john", "/docID")]),
             ..Default::default()
         },
         ..Default::default()
@@ -229,6 +245,43 @@ fn a_field_head_kept_by_a_prune_goes_once_superseded() {
         Request {
             request: "query { User { name age } }".into(),
             expected_data: json!({ "User": [{ "name": "Bob", "age": 26 }] }),
+            ..Default::default()
+        }
+        .into(),
+    ])
+    .execute();
+}
+
+/// A field head inherited the encryption block of the older field block the
+/// prune deletes, so the head's key must remain when no kept composite links
+/// it, including after the KMS key cache is gone with the node.
+#[test]
+#[mantra_macros::req_test("defra.retention.prune")]
+fn a_field_head_keeps_an_inherited_encryption_block() {
+    rust_only(vec![
+        NewNode {
+            database_dir: Some(String::new()),
+            ..Default::default()
+        }
+        .into(),
+        collection("type User @retention(maxDepth: 1) { name: String age: Int }"),
+        add_with_encrypted_name(),
+        rename("Bob"),
+        rename("Carol"),
+        update(22),
+        prune(3),
+        heights("name", &[3]),
+        heights("age", &[2]),
+        Close {
+            keep_data: true,
+            ..Default::default()
+        }
+        .into(),
+        Start::default().into(),
+        rename("Dave"),
+        Request {
+            request: "query { User { name age } }".into(),
+            expected_data: json!({ "User": [{ "name": "Dave", "age": 22 }] }),
             ..Default::default()
         }
         .into(),
