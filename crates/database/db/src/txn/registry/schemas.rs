@@ -121,15 +121,21 @@ impl<S: Store + 'static> DbTransactionRegistry<S> {
                 let txn = owned.alone()?;
 
                 let existing = db.get_all_collection_versions_with_txn(txn).await?;
-                let mut known_types: rapidhash::RapidHashSet<String> = db
-                    .list_collections()
-                    .map_err(|e| Error::Other(format!("failed to list collections: {}", e)))?
-                    .into_iter()
-                    .collect();
-                known_types.extend(existing.iter().map(|c| c.name.clone()));
+                // A name is the collection its active version in this
+                // transaction names, then the cached one, then any other.
+                let named = |active: bool| {
+                    existing
+                        .iter()
+                        .filter(move |version| version.is_active == active)
+                        .map(|version| (version.name.clone(), version.collection_id.clone()))
+                };
+                let mut known_collections: rapidhash::RapidHashMap<String, String> =
+                    named(false).collect();
+                known_collections.extend(db.known_collections());
+                known_collections.extend(named(true));
 
                 let collections = db
-                    .prepare_new_collections(&sdl, known_types)
+                    .prepare_new_collections(&sdl, known_collections)
                     .await
                     .map_err(to_error)?;
                 schema::definition_validation::validate_new_collections_with_existing(

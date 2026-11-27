@@ -381,6 +381,13 @@ A `[String]` field given a string list (`["bafyA", "bafyB", "bafyC"]`) and a `[D
 
 Adding `type Foo { name: String } type FooBar { name: String }` to a fresh node gives `Foo` the same version ID on every run, `bafyreigj37qgcjknekn3jqcmpai5ut6gqsfvjgczmu5iopkeeznjojbqri`, even though `Foo` is a name prefix of `FooBar`.
 
+# `defra.collection.id_added_alone`: A collection added on its own has the ID it has in a batch
+
+- **Parents:** ["defra.collection"]
+- **Scenarios:** ["collection::id_added_alone::a_collection_added_after_its_target_has_the_id_of_one_call", "collection::id_added_alone::a_chain_added_one_collection_per_call_relates_by_collection_id", "collection::id_added_alone::an_indexed_relation_to_a_stored_collection_indexes_its_id_field"]
+
+`AddCollection` with `type Book { title: String author: Author }`, sent after `type Author { name: String }` was added by an earlier call, gives `Book` the definition it has when both types are sent in one call: collection and version ID `bafyreieifr5ciohlbzxlrqy4laqdz7nsmnuxzqya44i2d22isyr7nyomja`, and an `author` field whose kind is the relation to `Author`'s collection ID, `bafyreibvcavbxqwimz5vdxe5q5href63g3skc6ytg45hm4fqh6wsx57wmq`. Either way `BookMutationInputArg.author` is the scalar `ID`, introspection answers, and a `Book` created with an `Author`'s docID is read back with its author. In a chain added one collection per call (`Country`, then `City { country: Country }`, then `Street { city: City }`), each relation's kind carries the collection ID `GetCollections` reports for its target. An `@index` on the relation is the index it is in one call as well: `type Book { title: String author: Author @index }` added after `Author` gives `Book`'s definition one index, named `Book__authorID_ASC`, over the field `_authorID` ascending.
+
 # `defra.replication_filter.receive_gate`: A refused push is not fetched or stored
 
 - **Parents:** ["defra.replication_filter"]
