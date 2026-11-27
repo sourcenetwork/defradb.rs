@@ -34,8 +34,15 @@ impl Op for PrintDump {
     }
 
     fn run(&self, state: &State) -> Result<Value, Failure> {
+        let identity = self.common.client_identity(Self::name())?;
+        let node = state.node_on(self.common.node())?;
         let lines = state
-            .block_on(state.node_on(self.common.node())?.print_dump())
+            .block_on(
+                state
+                    .scope_on(self.common.node(), None, identity, None)
+                    .scoped(&node)
+                    .print_dump(),
+            )
             .map_err(|e| Failure::operation(e.to_string()))?;
         Ok(listed(!lines.is_empty()))
     }

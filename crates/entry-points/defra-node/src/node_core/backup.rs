@@ -42,9 +42,13 @@ impl NodeCore<'_> {
     }
 
     /// Go's `PrintDump`: every key of the node's store, one line each naming
-    /// its namespace, the key and its value's size.
-    pub(crate) async fn print_dump(&self) -> Result<Vec<String>> {
-        self.node.ops().print_dump().await
+    /// its namespace, the key and its value's size, as `context`'s identity
+    /// and only with the `read-document` node permission.
+    pub(crate) async fn print_dump(&self, context: &RequestContext) -> Result<Vec<String>> {
+        self.node
+            .ops()
+            .print_dump_as(self.node.admitted_caller(context)?)
+            .await
     }
 
     /// The import of [`Self::import_backup`] as one admitted request, every

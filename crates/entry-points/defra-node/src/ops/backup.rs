@@ -90,4 +90,17 @@ impl NodeOps {
         self.on_pool(move || async move { Ok(database.print_dump().await?) })
             .await
     }
+
+    /// [`crate::Node::print_dump`] for `context`'s caller, checked before the
+    /// store is read.
+    pub(crate) async fn print_dump_as(&self, context: RequestContext) -> Result<Vec<String>> {
+        let database = self.database.clone();
+        self.on_pool(move || async move {
+            database
+                .check_node_access_as(&context, acp::nac::NodePermission::DocumentRead)
+                .await?;
+            Ok(database.print_dump().await?)
+        })
+        .await
+    }
 }

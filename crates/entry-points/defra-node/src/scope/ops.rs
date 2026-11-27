@@ -334,6 +334,11 @@ macro_rules! standalone_ops {
             /// as the JSON a backup file holds. Go's `BasicExport`.
             fn export_backup(collections: &[String], pretty: bool) -> crate::Result<String>;
 
+            /// Every key of the node's store, one line each naming its
+            /// namespace, the key and its value's size. Go's `PrintDump`, with
+            /// the `read-document` check its HTTP route applies.
+            fn print_dump() -> crate::Result<Vec<String>>;
+
             /// Import the documents of backup `data`; they get new document
             /// IDs, as Go's import gives them. One admitted request, run to
             /// its end if its caller stops waiting. Go's `BasicImport`.

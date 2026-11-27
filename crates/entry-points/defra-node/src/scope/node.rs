@@ -64,13 +64,6 @@ impl Node {
         TxnNode::begin(self, Scope::default(), read_only).await
     }
 
-    /// Go's `PrintDump`: every key of the node's store, one line each naming
-    /// its namespace, the key and its value's size. Unwise on a large store.
-    /// As in Go, it checks no node permission.
-    pub async fn print_dump(&self) -> Result<Vec<String>> {
-        self.core().print_dump().await
-    }
-
     fn in_scope(&self) -> (NodeCore<'_>, RequestContext) {
         (self.core(), Scope::default().context(self))
     }
