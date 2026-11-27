@@ -40,7 +40,7 @@ ASSUME /\ MaxRows \in Nat \ {0}
 \* The document is created at least once.
        /\ MaxLives \in Nat \ {0}
 \* "safe" is the design; every other mode breaks exactly one guard.
-       /\ Mode \in {"safe", "anywhere", "skip", "reset", "docid"}
+       /\ Mode \in {"safe", "anywhere", "skip", "reset", "docid", "duplicate"}
 
 \* No truncate target yet.
 None == 0
@@ -99,14 +99,15 @@ Init == /\ added = 0
 
 \* A write commits block b to the live document. When its once key is held
 \* it adds nothing (the same block merged again); otherwise it adds the next
-\* row number at the next cursor and holds its once key.
+\* row number at the next cursor and holds its once key. The "duplicate" bug
+\* adds a row even when its once key is already held.
 Add(b) ==
   /\ live
   /\ added < MaxRows
   /\ head < MaxRows
   /\ LET w == <<life, b>>
      IN /\ written' = written \cup {w}
-        /\ IF Key(w) \in once
+        /\ IF Mode # "duplicate" /\ Key(w) \in once
              THEN UNCHANGED <<added, head, at, given, wrote, once>>
              ELSE /\ added' = added + 1
                   /\ head' = head + 1
@@ -212,4 +213,7 @@ INV_ToldOnlyDropped == \A r \in told : given[r] \in dropped
 \* Every write that committed added a row, or repeats one that did: a write
 \* never adds nothing because a dropped row of an earlier life held its key.
 INV_EveryWriteHasRow == \A w \in written : \E r \in 1..added : wrote[r] = w
+\* Each write appears at most once, even when its block is merged again or a
+\* truncate drops the row it first added.
+INV_OneRowPerWrite == \A r, s \in 1..added : r # s => wrote[r] # wrote[s]
 ====
