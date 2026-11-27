@@ -6,6 +6,7 @@
 //! wrapper owns the bump rather than each of the many swap sites, so a swap
 //! that skips it cannot be written.
 
+use crate::collection::Collection;
 use crate::collection::CollectionMap;
 use kovan::Atom;
 
@@ -45,6 +46,65 @@ impl EpochedCollections {
         self.map.rcu(|old| VersionedMap {
             map: f(&old.map),
             epoch: old.epoch.wrapping_add(1),
+        });
+    }
+
+    /// Publish `collection`, carrying every unchanged index status from the
+    /// cache entry visible in commit order. `changes` names only the statuses
+    /// the publishing transaction changed; `None` means built.
+    pub(crate) fn publish(
+        &self,
+        collection: Collection,
+        changes: &[(u32, Option<defra_core::ActionStatus>)],
+    ) {
+        let name = collection.name().to_string();
+        self.publish_named(&name, collection, changes);
+    }
+
+    /// [`Self::publish`] for a collection whose registered lookup name is not
+    /// the name in its definition.
+    pub(crate) fn publish_named(
+        &self,
+        name: &str,
+        collection: Collection,
+        changes: &[(u32, Option<defra_core::ActionStatus>)],
+    ) {
+        self.rcu(|old| {
+            let mut cache = old.clone();
+            let current = old.by_id(collection.collection_id());
+            cache.put_named(
+                name,
+                collection.with_current_index_actions(current, changes),
+            );
+            cache
+        });
+    }
+
+    /// Change index statuses on the collection already in the cache, leaving
+    /// its definition as later publications made it.
+    pub(crate) fn publish_statuses(
+        &self,
+        collection_id: &str,
+        changes: &[(u32, Option<defra_core::ActionStatus>)],
+    ) {
+        self.rcu(|old| {
+            let mut cache = old.clone();
+            if let Some(current) = old.by_id(collection_id) {
+                cache.put(current.with_current_index_actions(Some(current), changes));
+            }
+            cache
+        });
+    }
+
+    /// Publish several unchanged-status collections in one cache swap.
+    pub(crate) fn publish_many(&self, collections: Vec<Collection>) {
+        self.rcu(|old| {
+            let mut cache = old.clone();
+            for collection in &collections {
+                let current = old.by_id(collection.collection_id());
+                cache.put(collection.with_current_index_actions(current, &[]));
+            }
+            cache
         });
     }
 

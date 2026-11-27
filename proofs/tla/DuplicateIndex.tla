@@ -12,7 +12,7 @@
 \* caller is refused although no listed index matches its request.
 \*
 \* Rust: crates/database/db/src/index/duplicate.rs refuse_duplicate_index,
-\* called from crates/database/db/src/index/create.rs DB::define_index and
+\* called from crates/database/db/src/index/create.rs DefineIndexAttempt::run and
 \* crates/database/db/src/index/in_txn.rs DB::create_index_in (index creation
 \* requests only; ensure_ordinary_index does not run it);
 \* the validated definition read is

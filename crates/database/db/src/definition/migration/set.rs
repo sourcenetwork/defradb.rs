@@ -254,7 +254,13 @@ impl<S: Store> DB<S> {
                         .get(collection_name.as_str())
                         .is_some_and(|cached| cached.schema().version_id == dest_version_id);
                     if matches_dest {
-                        cache.put_named(collection_name.as_str(), cached_collection.clone());
+                        cache.put_named(
+                            collection_name.as_str(),
+                            cached_collection.with_current_index_actions(
+                                old.by_id(cached_collection.collection_id()),
+                                &[],
+                            ),
+                        );
                     }
                     cache
                 });

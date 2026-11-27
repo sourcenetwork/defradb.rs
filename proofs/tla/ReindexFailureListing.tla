@@ -57,7 +57,8 @@
 \*   crates/database/db/src/collection/index_status.rs
 \*     IndexStatuses::takes_writes, IndexStatuses::rebuilds
 \*   crates/database/db/src/collection/mod.rs Collection::with_reindex_owed,
-\*     Collection::write_indexes, Collection::rebuilt_indexes
+\*     Collection::with_current_index_actions, Collection::write_indexes,
+\*     Collection::rebuilt_indexes
 \*   crates/database/db/src/database/action.rs index_listing_executions
 \*     (the listing shows the owed record's failure as an errored build)
 EXTENDS Naturals, FiniteSets

@@ -51,11 +51,7 @@ impl<S: Store> crate::database::DB<S> {
             let collections = std::sync::Arc::clone(&self.collections);
             let registered_name = version.name.clone();
             txn.on_commit(OnCommit::OrderedAndWait(Box::new(move || {
-                collections.rcu(|old| {
-                    let mut cache = old.clone();
-                    cache.put_named(&registered_name, cached_collection.clone());
-                    cache
-                });
+                collections.publish_named(&registered_name, cached_collection, &[]);
             })))?;
         }
 
