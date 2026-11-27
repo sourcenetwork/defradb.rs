@@ -6,6 +6,10 @@ fn values() -> impl Strategy<Value = Vec<Vec<u8>>> {
     prop::collection::vec(prop::collection::vec(any::<u8>(), 0..300), 0..6)
 }
 
+fn whole_keys() -> impl Strategy<Value = Vec<Vec<u8>>> {
+    prop::collection::vec(prop::collection::vec(any::<u8>(), 1..300), 0..6)
+}
+
 fn framing() -> impl Strategy<Value = (u32, u32, u64)> {
     (any::<u32>(), any::<u32>(), 1..u64::MAX)
 }
@@ -20,7 +24,7 @@ proptest! {
     }
 
     #[test]
-    fn a_record_of_whole_keys_still_reads_back((collection, index, doc) in framing(), keys in values()) {
+    fn a_record_of_whole_keys_still_reads_back((collection, index, doc) in framing(), keys in whole_keys()) {
         let prefix = IndexDataStoreKey::index_prefix(collection, index);
         let frame = Frame::new(&prefix, doc);
         prop_assert_eq!(decode_record(&frame, &encode_keys(&keys)).unwrap(), keys);
@@ -45,7 +49,7 @@ proptest! {
         let frame = Frame::new(&prefix, doc);
         let keys: Vec<Vec<u8>> = values.iter().map(|values| frame.key(values)).collect();
         let lengths: usize = values.iter().map(|values| values.len() + if values.len() < 255 { 1 } else { 5 }).sum();
-        prop_assert_eq!(encode_record(&frame, &keys).unwrap().len(), 1 + lengths);
+        prop_assert_eq!(encode_record(&frame, &keys).unwrap().len(), VALUES.len() + lengths);
     }
 }
 
@@ -57,7 +61,11 @@ fn a_length_of_255_and_over_takes_four_more_bytes() {
         let keys = vec![frame.key(&vec![7; len])];
         let bytes = encode_record(&frame, &keys).unwrap();
         let header = if len < 255 { 1 } else { 5 };
-        assert_eq!(bytes.len(), 1 + header + len, "values of {len} bytes");
+        assert_eq!(
+            bytes.len(),
+            VALUES.len() + header + len,
+            "values of {len} bytes"
+        );
         assert_eq!(decode_record(&frame, &bytes).unwrap(), keys);
     }
 }
@@ -74,9 +82,17 @@ fn a_key_of_another_document_is_refused() {
 }
 
 #[test]
-fn a_record_of_whole_keys_never_starts_as_a_record_of_values() {
-    let key = vec![0; 8 * 1024 * 1024];
-    assert_eq!(encode_keys(&[key])[0], 0);
+fn a_large_whole_key_record_is_not_taken_for_values() {
+    let prefix = IndexDataStoreKey::index_prefix(3, 1);
+    let frame = Frame::new(&prefix, 9);
+    let key = vec![0; 16 * 1024 * 1024];
+    let bytes = encode_keys(&[key.clone()]);
+    assert_eq!(
+        bytes[..4],
+        [1, 0, 0, 0],
+        "a legacy length can start with one"
+    );
+    assert_eq!(decode_record(&frame, &bytes).unwrap(), [key]);
     assert!(encode_keys(&[]).is_empty());
 }
 

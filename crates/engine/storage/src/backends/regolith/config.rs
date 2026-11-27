@@ -104,16 +104,9 @@ impl RegolithStoreOptions {
     /// extractor its tables' prefix filters are built and read with. The
     /// writable and the read-only open both take their options from here, so
     /// a read-only open reads a merged value, and seeks a prefix, as a
-    /// writable one does. The open caps the key limit at regolith's
-    /// [`DEFAULT_MAX_KEY_SIZE`](regolith::DEFAULT_MAX_KEY_SIZE), keeping a
-    /// caller's lower limit.
+    /// writable one does.
     pub(super) fn engine_for_open(&self) -> Options {
-        let max_key_size = self
-            .engine
-            .get_max_key_size()
-            .min(regolith::DEFAULT_MAX_KEY_SIZE);
         self.engine_with_keys()
-            .max_key_size(max_key_size)
             .merge_operator(Some(Arc::new(super::merge::DefraMergeOperator::new(
                 self.crdts.clone(),
             ))))
@@ -228,9 +221,17 @@ impl std::fmt::Debug for RegolithStoreOptions {
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
     use crate::backends::RegolithTxn;
-    use crate::corekv::{Reader, Store, Writer};
+    use crate::corekv::{Reader, Store};
     use crate::merge::counter_i64;
     use crate::{RegolithStore, RegolithStoreOptions};
+
+    #[test]
+    fn an_open_keeps_the_configured_key_limit() {
+        let limit = regolith::DEFAULT_MAX_KEY_SIZE * 2;
+        let mut options = RegolithStoreOptions::memory();
+        options.engine = options.engine.max_key_size(limit);
+        assert_eq!(options.engine_for_open().get_max_key_size(), limit);
+    }
 
     /// A read-only open folds merged values as the writable open does. It
     /// opened without the merge operator before, and the read failed.
@@ -252,35 +253,6 @@ mod tests {
                 txn.get(b"counter").await.unwrap().as_deref(),
                 Some(5i64.to_be_bytes().as_slice())
             );
-        })
-        .unwrap()
-    }
-
-    /// A caller may lower the key limit but cannot raise it past the bound
-    /// the position-record format relies on.
-    #[test]
-    fn an_open_caps_the_key_limit_at_regoliths_default() {
-        workers::block_on(async {
-            let mut options = RegolithStoreOptions::memory();
-            options.engine = options
-                .engine
-                .max_key_size(regolith::DEFAULT_MAX_KEY_SIZE * 2);
-            assert_eq!(
-                options.engine_for_open().get_max_key_size(),
-                regolith::DEFAULT_MAX_KEY_SIZE
-            );
-
-            let dir = tempfile::tempdir().unwrap();
-            let store = RegolithStore::open_with_options(dir.path(), options).unwrap();
-            let mut txn = store.new_txn(false).await.unwrap();
-            let too_long = vec![b'k'; regolith::DEFAULT_MAX_KEY_SIZE + 1];
-            txn.set(&too_long, b"value").await.unwrap();
-            assert!(txn.commit().await.is_err());
-            store.close().await.unwrap();
-
-            let mut lower = RegolithStoreOptions::memory();
-            lower.engine = lower.engine.max_key_size(1024);
-            assert_eq!(lower.engine_for_open().get_max_key_size(), 1024);
         })
         .unwrap()
     }

@@ -7,16 +7,15 @@ The story, in plain words. A position record lives under a key that already
 names the collection, the index and the document. Every entry key of that
 document in that index starts with the same bytes (the index's prefix) and
 ends with the same bytes (the document's suffix); only the field values in
-between differ. So a record keeps just those values. It starts with the byte
-1, then gives each entry's values behind their length: one byte for a length
-below 255, else the byte 255 and the length in four bytes. Reading it puts
-the prefix and the suffix back around each value.
+between differ. So a record keeps just those values. It starts with four zero
+bytes, then gives each entry's values behind their length: one byte for a
+length below 255, else the byte 255 and the length in four bytes. Reading it
+puts the prefix and the suffix back around each value.
 
 Records written before kept whole keys, each behind a four-byte length (the
-`encode` of `PositionRecord.Codec`). Such a record is still read: it is empty
-or starts with the byte 0, because regolith refuses every key longer than its
-`DEFAULT_MAX_KEY_SIZE` of 8 MiB and the store caps every open at that limit,
-so it can never be taken for a record of values.
+`encode` of `PositionRecord.Codec`). Such a record is still read. It cannot
+start with the four tag bytes: those would name an empty key, while every
+entry key has an index prefix and a document suffix.
 
 What must never happen: a record of values reads back as different keys
 (`decodeRecord_encodeValues`); a record of whole keys is read as a record of
@@ -31,8 +30,8 @@ Rust anchors: `encode_record`, `decode_record`, `Frame` in
 
 namespace PositionRecord
 
--- The first byte of a record that keeps field values (`VALUES`).
-def valuesTag : Nat := 1
+-- The first four bytes of a record that keeps field values (`VALUES`).
+def valuesTag : List Nat := [0, 0, 0, 0]
 
 -- The length byte that says four more bytes give the length (`LONG`).
 def long : Nat := 255
@@ -102,7 +101,7 @@ def body (p s : List Nat) : List (List Nat) → List Nat
 
 -- A record of values: the tag, then the body (`encode_record`).
 def encodeValues (p s : List Nat) (ks : List (List Nat)) : List Nat :=
-  valuesTag :: body p s ks
+  valuesTag ++ body p s ks
 
 -- Read the body until its bytes run out, putting the prefix and suffix back
 -- around each value. `fuel` bounds the keys read, so the reading always ends.
@@ -120,15 +119,16 @@ def decodeBody (p s : List Nat) : Nat → List Nat → Option (List (List Nat))
         (decodeBody p s fuel (rest.drop len)).map ((p ++ rest.take len ++ s) :: ·)
       else none
 
--- Read either form (`decode_record`): a record starting with the tag keeps
--- values; any other is a record of whole keys.
-def decodeRecord (p s : List Nat) : List Nat → Option (List (List Nat))
-  -- An empty record names no entries.
-  | [] => some []
-  -- The first byte says which form it is.
-  | b :: rest =>
-    if b = valuesTag then decodeBody p s rest.length rest
-    else decode (b :: rest).length (b :: rest)
+-- Read either form (`decode_record`): a record starting with the four tag
+-- bytes keeps values; any other is a record of whole keys.
+def decodeRecord (p s : List Nat) (bytes : List Nat) : Option (List (List Nat)) :=
+  -- The first four bytes say which form it is.
+  if bytes.take valuesTag.length = valuesTag then
+    -- Values: drop the tag and read the body.
+    decodeBody p s (bytes.drop valuesTag.length).length (bytes.drop valuesTag.length)
+  else
+    -- Whole keys: read their lengths and keys.
+    decode bytes.length bytes
 
 -- Promise: with fuel for every key, the body reads back as exactly its keys.
 theorem decodeBody_body (p s : List Nat) (ks : List (List Nat))
@@ -191,39 +191,48 @@ theorem decodeRecord_encodeValues (p s : List Nat) (ks : List (List Nat))
     (hfit : ∀ k ∈ ks, (mid p s k).length < 4294967296) :
     decodeRecord p s (encodeValues p s ks) = some ks := by
   -- The tag sends the reading to the body, with its length as fuel.
-  simp only [encodeValues, decodeRecord, if_true]
-  exact decodeBody_body p s ks hframed hfit _ (length_le_body p s ks)
+  simp only [encodeValues, decodeRecord]
+  rw [if_pos (by simp)]
+  exact decodeBody_body p s ks hframed hfit (body p s ks).length (length_le_body p s ks)
 
--- Promise: a record of whole keys, each at most regolith's 8 MiB limit, starts
--- with the byte 0 unless it is empty, so it is never taken for values.
-theorem encode_starts_with_zero (k : List Nat) (ks : List (List Nat))
-    (hk : k.length ≤ 8388608) :
-    ∃ rest, encode (k :: ks) = 0 :: rest := by
-  -- The first byte is the top byte of the first key's length, which is 0.
-  refine ⟨[k.length / 65536 % 256, k.length / 256 % 256, k.length % 256] ++ k ++ encode ks, ?_⟩
-  have htop : k.length / 16777216 % 256 = 0 := by
-    rw [Nat.div_eq_of_lt (by omega)]
-  simp only [encode, be32, htop, List.cons_append, List.nil_append, List.append_assoc]
+-- Every key's four-byte length has exactly four bytes.
+theorem be32_shape (n : Nat) : ∃ a b c d, be32 n = [a, b, c, d] := by
+  -- The definition spells out all four bytes.
+  exact ⟨n / 16777216 % 256, n / 65536 % 256, n / 256 % 256, n % 256, rfl⟩
 
--- Promise: a record of whole keys, each at most regolith's 8 MiB limit, still
--- reads back as exactly its keys.
+-- Promise: a nonempty key's length is not the all-zero values tag.
+theorem be32_ne_zero_tag (n : Nat)
+    -- Given the key has at least one byte,
+    (hpos : 0 < n)
+    -- and its length fits a `u32`,
+    (hfit : n < 4294967296) :
+    be32 n ≠ [0, 0, 0, 0] := by
+  intro htag
+  -- Reading four zero bytes gives a zero length.
+  have hread := readBe32_be32 n [] hfit
+  rw [htag] at hread
+  simp [readBe32] at hread
+  omega
+
+-- Promise: a record of whole keys still reads back as exactly its keys.
 theorem decodeRecord_encode (p s : List Nat) (ks : List (List Nat))
-    -- Given every key is at most 8 MiB, as the store's open enforces,
-    (hsmall : ∀ k ∈ ks, k.length ≤ 8388608) :
+    -- Given every key is nonempty,
+    (hne : ∀ k ∈ ks, k ≠ [])
+    -- and every key's length fits a `u32`,
+    (hfit : ∀ k ∈ ks, k.length < 4294967296) :
     decodeRecord p s (encode ks) = some ks := by
   cases ks with
   -- No keys: an empty record, read as no keys.
   | nil => rfl
-  -- Keys: the record starts with 0, not the tag, so it is read as whole keys.
+  -- Keys: their first length cannot be the four-zero tag.
   | cons k ks =>
-    obtain ⟨rest, hzero⟩ := encode_starts_with_zero k ks (hsmall k (by simp))
-    have hfit : ∀ q ∈ k :: ks, q.length < 4294967296 :=
-      fun q hq => by
-        have hq := hsmall q hq
-        omega
-    rw [hzero]
-    simp only [decodeRecord, valuesTag, Nat.zero_ne_one, if_false]
-    rw [← hzero]
+    have hnot : (encode (k :: ks)).take valuesTag.length ≠ valuesTag := by
+      intro htag
+      have hbe : be32 k.length = valuesTag := by
+        simpa [encode, valuesTag, be32, List.append_assoc] using htag
+      have hpos : 0 < k.length := List.length_pos_iff.mpr (hne k (by simp))
+      exact be32_ne_zero_tag k.length hpos (hfit k (by simp)) hbe
+    simp only [decodeRecord, if_neg hnot]
     exact decode_encode (k :: ks) hfit
 
 end PositionRecord

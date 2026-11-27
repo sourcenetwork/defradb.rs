@@ -10,11 +10,10 @@ use storage::keys::IndexDataStoreKey;
 
 use crate::index::{Error, Result};
 
-/// The first byte of a record that keeps field values. A record of whole keys
-/// is empty or starts with a zero byte, the top byte of its first key's
-/// four-byte length, because regolith refuses keys over its
-/// `DEFAULT_MAX_KEY_SIZE` of 8 MiB and every store open caps the limit there.
-const VALUES: u8 = 1;
+/// The first bytes of a record that keeps field values. A record of whole keys
+/// cannot start with them: its first four bytes would name an empty key, while
+/// every entry key has an index prefix and a document suffix.
+const VALUES: [u8; 4] = [0; 4];
 
 /// A length byte that says the length follows in four big-endian bytes.
 const LONG: u8 = u8::MAX;
@@ -49,12 +48,13 @@ impl<'a> Frame<'a> {
 pub(crate) fn encode_record(frame: &Frame<'_>, keys: &[Vec<u8>]) -> Result<Vec<u8>> {
     let framing = frame.prefix.len() + frame.suffix.len();
     let mut out = Vec::with_capacity(
-        1 + keys
-            .iter()
-            .map(|key| key.len().saturating_sub(framing) + 1)
-            .sum::<usize>(),
+        VALUES.len()
+            + keys
+                .iter()
+                .map(|key| key.len().saturating_sub(framing) + 1)
+                .sum::<usize>(),
     );
-    out.push(VALUES);
+    out.extend_from_slice(&VALUES);
     for key in keys {
         let values = frame.values(key).ok_or_else(|| {
             Error::Other("index entry key is not one of its document's entries".into())
@@ -67,7 +67,7 @@ pub(crate) fn encode_record(frame: &Frame<'_>, keys: &[Vec<u8>]) -> Result<Vec<u
 
 /// The entry keys a record names, in either form.
 pub(crate) fn decode_record(frame: &Frame<'_>, bytes: &[u8]) -> Result<Vec<Vec<u8>>> {
-    let Some((&VALUES, mut rest)) = bytes.split_first() else {
+    let Some(mut rest) = bytes.strip_prefix(&VALUES) else {
         return decode_keys(bytes);
     };
     let mut keys = Vec::new();

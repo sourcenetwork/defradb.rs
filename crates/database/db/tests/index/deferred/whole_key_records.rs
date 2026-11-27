@@ -107,7 +107,11 @@ fn records_of_whole_keys_still_move_their_entries() {
         let rewritten = records(&node, short_id).await;
         assert_eq!(rewritten.len(), 1, "the deleted document lost its record");
         let (_, value) = &rewritten[0];
-        assert_eq!(value[0], 1, "the rewritten record keeps field values");
+        assert_eq!(
+            value[..4],
+            [0; 4],
+            "the rewritten record keeps field values"
+        );
         assert!(
             whole.iter().all(|&len| value.len() < len),
             "{} bytes against {whole:?}",
