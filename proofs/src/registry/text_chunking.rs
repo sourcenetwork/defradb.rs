@@ -107,4 +107,13 @@ pub(super) const PROPERTIES: &[Property] = &[
         tiers: &[Contract],
         bound_by: "crates/database/db/tests/merge/chunk_definition_guard.rs a_patch_that_changes_max_chars_is_rejected, a_first_version_with_max_chars_below_the_minimum_is_rejected, an_honest_patch_that_keeps_the_chunk_settings_is_accepted, activating_a_version_with_other_chunk_settings_is_refused, a_patch_that_changes_the_splitter_version_is_rejected, activating_a_version_with_another_splitter_version_is_refused, a_patch_that_renames_the_parent_is_rejected, activating_a_renamed_version_is_refused; crates/foundation/schema/tests/chunk_validation_tests.rs renaming_the_parent_is_refused, renaming_the_chunk_collection_is_refused",
     },
+    Property {
+        family: "Text chunking",
+        name: "INV_NoModelCallInTxn / INV_ListedChunkHasVector / INV_VectorIsItsText / INV_UnchangedChunkNoCall / INV_OneWave",
+        axis: Tla,
+        anchor: "crates/database/db/src/chunk/sync/mod.rs ChunkWrites::create_missing; crates/database/db/src/chunk/sync/write.rs ChunkWrites::embed; crates/database/db/src/search/embedding.rs set_embedding_from_inputs, prepared_embedding_request; crates/engine/query/src/prepared.rs PreparedInputMemo::get_or_want, PreparedInputMemo::answer_wave, FirstMiss; crates/engine/query/src/mutator.rs DocMutator::create_many_as; crates/engine/query/src/plan/mutation/update.rs UpdateNode::next; crates/database/db/src/write/autocommit/one_op.rs CreateWork::run, AutoCommitMutator::in_batch; crates/engine/query/src/runner/turn.rs QueryRunner::drive; crates/engine/query/src/runner/executor.rs QueryRunner::resolve_retry_input, QueryRunner::execute; crates/engine/query/src/runner/mutation.rs QueryRunner::execute_mutation_with_identity_and_vars; crates/engine/query/src/runner/prepare.rs QueryRunner::prepare_mutations; crates/database/db/src/chunk/sync/prefetch.rs embedding_requests",
+        model_ref: "MC_ChunkEmbedding_Green.cfg / MC_ChunkEmbedding_Green_Unconfigured.cfg / MC_ChunkEmbedding_Red_SkipUnconfigured.cfg / MC_ChunkEmbedding_Red_EmbedAllChunks.cfg / MC_ChunkEmbedding_Red_ResolveInsideAttempt.cfg / MC_ChunkEmbedding_Red_MemoKeyedByPosition.cfg / MC_ChunkEmbedding_Red_FirstMissOnly.cfg / MC_ChunkEmbedding_Red_CommitWithMisses.cfg",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
 ];

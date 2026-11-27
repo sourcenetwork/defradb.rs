@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
-use defra_node::{Node, QueryRequest, TransactionHandle};
+use defra_core::TxnId;
+use defra_node::{Node, QueryRequest};
 
 const CREATE: &str = r#"mutation { add_Users(input: {name: "Alice"}) { _docID } }"#;
 const READ: &str = "{ Users { name } }";
@@ -13,9 +14,10 @@ async fn node() -> Node {
     node
 }
 
-async fn assert_discarded(node: &Node, handle: &TransactionHandle) {
+async fn assert_discarded(node: &Node, txn: TxnId) {
     assert!(node
-        .execute_request_in_txn(QueryRequest::new(READ), handle)
+        .with_transaction(txn)
+        .execute_request(QueryRequest::new(READ))
         .await
         .has_errors());
     let response = node.execute(READ).await;
@@ -27,12 +29,12 @@ async fn assert_discarded(node: &Node, handle: &TransactionHandle) {
 fn dropped_guard_invalidates_saved_handle_and_discards_writes() {
     workers::block_on(async {
         let node = node().await;
-        let txn = node.begin_transaction_guard(false).await.unwrap();
+        let txn = node.new_txn(false).await.unwrap();
         let response = txn.execute(CREATE).await;
         assert!(!response.has_errors(), "{:?}", response.errors);
-        let saved = txn.handle().clone();
+        let saved = txn.id();
         drop(txn);
-        assert_discarded(&node, &saved).await;
+        assert_discarded(&node, saved).await;
     })
     .unwrap()
 }
@@ -44,17 +46,17 @@ fn aborted_task_discards_owned_transaction() {
         let owner = node.clone();
         let (ready, handle) = regolith::sync::bounded(1);
         let task = edge::testing::edge().spawn(async move {
-            let txn = owner.begin_transaction_guard(false).await.unwrap();
+            let txn = owner.new_txn(false).await.unwrap();
             let response = txn.execute(CREATE).await;
             assert!(!response.has_errors(), "{:?}", response.errors);
-            ready.try_send(txn.handle().clone()).unwrap();
+            ready.try_send(txn.id()).unwrap();
             std::future::pending::<()>().await;
             drop(txn);
         });
         let saved = handle.recv_async().await.unwrap();
         task.abort();
         assert!(matches!(task.await, Err(edge::EdgeError::Cancelled)));
-        assert_discarded(&node, &saved).await;
+        assert_discarded(&node, saved).await;
     })
     .unwrap()
 }
@@ -63,15 +65,14 @@ fn aborted_task_discards_owned_transaction() {
 fn explicit_commit_and_discard_consume_the_guard() {
     workers::block_on(async {
         let node = node().await;
-        let txn = node.begin_transaction_guard(false).await.unwrap();
+        let txn = node.new_txn(false).await.unwrap();
         assert!(!txn.execute(CREATE).await.has_errors());
-        let saved = txn.handle().clone();
+        let saved = txn.id();
         txn.discard().await.unwrap();
-        assert_discarded(&node, &saved).await;
+        assert_discarded(&node, saved).await;
 
-        let txn = node.begin_transaction_guard(false).await.unwrap();
+        let txn = node.new_txn(false).await.unwrap();
         assert!(!txn.execute(CREATE).await.has_errors());
-        drop(txn.handle().clone());
         assert!(!txn.execute(READ).await.has_errors());
         txn.commit().await.unwrap();
         let response = node.execute(READ).await;
@@ -115,7 +116,7 @@ fn owned_transaction_keeps_node_signing_context() {
         node.add_collection("type Users { name: String }")
             .await
             .unwrap();
-        let txn = node.begin_transaction_guard(false).await.unwrap();
+        let txn = node.new_txn(false).await.unwrap();
         let response = txn.execute(CREATE).await;
         assert!(!response.has_errors(), "{:?}", response.errors);
         let doc_id = response.data.unwrap()["add_Users"][0]["_docID"]
@@ -131,27 +132,22 @@ fn owned_transaction_keeps_node_signing_context() {
             .as_str()
             .unwrap()
             .to_owned();
-        assert_eq!(
-            node.verified_block_signer_did_in_txn(&cid, txn.handle())
-                .await
-                .unwrap(),
-            did
-        );
+        assert_eq!(txn.verified_block_signer_did(&cid).await.unwrap(), did);
         txn.commit().await.unwrap();
         assert_eq!(node.verified_block_signer_did(&cid).await.unwrap(), did);
         for commit in [false, true] {
-            let handle = node.begin_transaction(false).await.unwrap();
+            let handle = node.new_txn(false).await.map(|txn| txn.detach()).unwrap();
             let response = node
-                .execute_request_in_txn(
-                    QueryRequest::new(r#"mutation { add_Users(input: {name: "Bob"}) { _docID } }"#),
-                    &handle,
-                )
+                .with_transaction(handle)
+                .execute_request(QueryRequest::new(
+                    r#"mutation { add_Users(input: {name: "Bob"}) { _docID } }"#,
+                ))
                 .await;
             assert!(!response.has_errors(), "{:?}", response.errors);
             if commit {
-                node.commit_transaction(&handle).await.unwrap();
+                node.with_transaction(handle).commit().await.unwrap();
             } else {
-                node.discard_transaction(&handle).await.unwrap();
+                node.with_transaction(handle).discard().await.unwrap();
             }
         }
     })
@@ -169,22 +165,26 @@ fn unconfigured_node_preserves_the_callers_transaction_identity() {
             .did()
             .unwrap()
             .to_string();
-        let handle = with_scoped_identity(Some(owner.clone()), node.begin_transaction(false))
-            .await
-            .unwrap();
+        let handle = with_scoped_identity(Some(owner.clone()), async {
+            node.new_txn(false).await.map(|txn| txn.detach())
+        })
+        .await
+        .unwrap();
         assert!(node
-            .execute_request_in_txn(QueryRequest::new(READ), &handle)
+            .with_transaction(handle)
+            .execute_request(QueryRequest::new(READ))
             .await
             .has_errors());
         with_scoped_identity(Some(owner), async {
             assert!(!node
-                .execute_request_in_txn(QueryRequest::new(CREATE), &handle)
+                .with_transaction(handle)
+                .execute_request(QueryRequest::new(CREATE))
                 .await
                 .has_errors());
-            node.discard_transaction(&handle).await.unwrap();
+            node.with_transaction(handle).discard().await.unwrap();
         })
         .await;
-        assert_discarded(&node, &handle).await;
+        assert_discarded(&node, handle).await;
     })
     .unwrap()
 }

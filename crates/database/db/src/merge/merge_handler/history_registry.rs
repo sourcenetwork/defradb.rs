@@ -7,7 +7,10 @@ pub(super) fn admission_key(root: &Cid) -> Vec<u8> {
     [PREFIX, root.to_string().as_bytes()].concat()
 }
 
-/// Only admission and release change this range; history pages do not.
+/// The first [`MAX_ROOTS`] admitted roots. Only admission and release change
+/// this range; history pages do not. An index holding more (a lowered limit,
+/// or a store from an older node) reads as full: nothing more is admitted,
+/// and idle reclamation drains it below the limit.
 pub(super) async fn live_roots(
     store: &NamespaceView,
 ) -> Result<Vec<(Cid, Option<String>)>, MergeError> {
@@ -20,10 +23,10 @@ pub(super) async fn live_roots(
         .await
         .map_err(storage_error)?;
     let mut roots = Vec::new();
-    while let Some(entry) = iter.next().await.map_err(storage_error)? {
-        if roots.len() >= MAX_ROOTS {
-            return Err(storage_error("invalid history admission index"));
-        }
+    while roots.len() < MAX_ROOTS {
+        let Some(entry) = iter.next().await.map_err(storage_error)? else {
+            break;
+        };
         let cid = std::str::from_utf8(&entry.key[PREFIX.len()..])
             .map_err(storage_error)?
             .parse()

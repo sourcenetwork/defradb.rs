@@ -18,7 +18,7 @@ use crate::plan::{
 use crate::planner::{Doc, PlanNode};
 
 pub(crate) use super::plan_aggregates::add_aggregate_nodes;
-pub(crate) use super::plan_validation::validate_select;
+pub(crate) use super::plan_validation::{validate_root_select, validate_select};
 
 /// ACP filter configuration for inserting PermissionFilterNode into plan trees.
 pub(crate) struct AcpFilter {
@@ -310,13 +310,9 @@ pub(crate) fn build_plan(
 
     let mut plan: Box<dyn PlanNode> = Box::new(scan);
 
-    // Add SelectNode (Go always wraps in selectNode, even without a filter)
-    // Use the same filter we used for scanNode
-    let mut select_node = if let Some(ref filter) = filter_for_scan {
-        SelectNode::new(plan, mapping.clone()).with_filter(filter.clone())
-    } else {
-        SelectNode::new(plan, mapping.clone())
-    };
+    // Go always wraps the scan in a selectNode. The scan already applies the
+    // filter, so the selectNode carries none, as in Go's plan.
+    let mut select_node = SelectNode::new(plan, mapping.clone());
     // Pass doc_ids to SelectNode for explain output
     if let Some(ref doc_ids) = select.doc_ids {
         select_node = select_node.with_doc_ids(doc_ids.clone());

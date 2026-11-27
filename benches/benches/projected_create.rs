@@ -15,8 +15,7 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use defra_core::RequestContext;
-use defra_node::{Node, QueryRequest};
+use defra_node::{Node, QueryRequest, ScopedNode};
 use defra_perf::emit::{Family, Group, Row, Trust};
 use defra_perf::measure::{self, median, min_max, CountingAllocator};
 
@@ -56,7 +55,7 @@ fn counts(name: &str, default: &str) -> Vec<usize> {
 }
 
 /// One batch of `docs` creates in one request, timed, with its allocations.
-async fn batch(node: &Node, owner: &RequestContext, docs: usize, round: usize) -> (Duration, u64) {
+async fn batch(owner: &ScopedNode<'_>, docs: usize, round: usize) -> (Duration, u64) {
     let inputs: Vec<String> = (0..docs)
         .map(|doc| format!(r#"{{label: "round-{round}-doc-{doc}"}}"#))
         .collect();
@@ -66,10 +65,7 @@ async fn batch(node: &Node, owner: &RequestContext, docs: usize, round: usize) -
     );
     measure::reset();
     let start = Instant::now();
-    let response = node
-        .execute_request_as(owner, QueryRequest::new(mutation))
-        .await
-        .unwrap();
+    let response = owner.execute_request(QueryRequest::new(mutation)).await;
     let elapsed = start.elapsed();
     let allocations = measure::taken().count;
     assert!(
@@ -98,14 +94,16 @@ fn main() {
                 .build()
                 .await
                 .unwrap();
-            let owner = RequestContext::default()
-                .with_identity(Some(node.node_identity_did().unwrap().to_owned()));
-            node.add_collection_as(&owner, &format!("type {COLLECTION} {{ label: String }}"))
+            let owner = node.with_identity(
+                identity::Did::new(node.node_identity_did().unwrap().to_owned()).unwrap(),
+            );
+            owner
+                .add_collection(&format!("type {COLLECTION} {{ label: String }}"))
                 .await
                 .unwrap();
             let mut values: [Vec<f64>; 3] = Default::default();
             for repetition in 0..repetitions {
-                let (elapsed, allocations) = batch(&node, &owner, docs, repetition).await;
+                let (elapsed, allocations) = batch(&owner, docs, repetition).await;
                 let metrics = [
                     elapsed.as_secs_f64() * 1000.0,
                     docs as f64 / elapsed.as_secs_f64(),

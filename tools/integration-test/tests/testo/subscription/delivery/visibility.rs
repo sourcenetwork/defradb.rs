@@ -13,7 +13,7 @@ use serde_json::json;
 
 use super::updates;
 
-const POLICY: &str = r#"
+pub(super) const POLICY: &str = r#"
 description: a policy that makes the collection's documents private
 name: test
 resources:
@@ -34,10 +34,10 @@ resources:
     - actor
 "#;
 
-const OWNER: u64 = 1;
-const STRANGER: u64 = 2;
+pub(super) const OWNER: u64 = 1;
+pub(super) const STRANGER: u64 = 2;
 
-fn as_identity(seed: u64) -> Common {
+pub(super) fn as_identity(seed: u64) -> Common {
     Common {
         identity_seed: Some(seed),
         retry: true,
@@ -45,7 +45,7 @@ fn as_identity(seed: u64) -> Common {
     }
 }
 
-fn collection(policy: bool) -> Vec<Actions> {
+pub(super) fn collection(policy: bool) -> Vec<Actions> {
     if !policy {
         return vec![AddCollection {
             sdl: "type Users { name: String }".into(),
@@ -101,7 +101,7 @@ fn updated(name: &str, capture: &str) -> [Actions; 2] {
     ]
 }
 
-fn delete(capture: &str) -> Actions {
+pub(super) fn delete(capture: &str) -> Actions {
     DeleteDoc {
         collection: "Users".into(),
         doc_id: Text::reference(capture),
@@ -128,7 +128,7 @@ fn page(seed: u64, entries: serde_json::Value) -> Actions {
     .into()
 }
 
-fn case(actions: Vec<Actions>) -> TestCase {
+pub(super) fn case(actions: Vec<Actions>) -> TestCase {
     let mut case = TestCase::from_actions(actions);
     // `_documentUpdates` is defradb.rs only.
     case.client_types = Some(&[ClientType::InProcess, ClientType::RustHttp, ClientType::Cli]);

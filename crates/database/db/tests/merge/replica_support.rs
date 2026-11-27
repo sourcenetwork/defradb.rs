@@ -25,13 +25,14 @@ use identity::{Did, Identity as _};
 use query::mutator::DocMutator;
 use rapidhash::RapidHashSet;
 use regolith::sync::HopscotchMap;
-use schema::{CType, CollectionVersion, FieldDescription, FieldKind, PolicyDescription};
+use schema::CollectionVersion;
 use storage::RegolithStore;
 use zanzibar::types::Subject;
 
 pub(crate) const POLICY: &str = "replica-policy";
 pub(crate) const RESOURCE: &str = "users";
-pub(crate) const COLLECTION_ID: &str = "col-users";
+pub(crate) const USERS_SDL: &str =
+    r#"type Users @policy(id: "replica-policy", resource: "users") { name: String }"#;
 
 type Map<K, V> = HopscotchMap<K, V, rapidhash::fast::RandomState>;
 type Blocks = DefraBlockstore<RegolithStore>;
@@ -155,6 +156,7 @@ impl DocumentACP for ChainView {
         _: &str,
         _: &str,
         doc: &str,
+        _relationships: &[acp::DerivedRelationship],
     ) -> acp::Result<()> {
         if self.chain.hold_registrations.load(Ordering::SeqCst) {
             return Err(acp::Error::ProviderUnavailable("held".into()));
@@ -168,33 +170,6 @@ impl DocumentACP for ChainView {
             return Err(acp::Error::DocumentAlreadyRegistered(doc.to_owned()));
         }
         Ok(())
-    }
-
-    async fn registration_parent(
-        &self,
-        _: &str,
-        _: &str,
-        id: &str,
-    ) -> acp::Result<acp::RegistrationParent> {
-        Ok(acp::RegistrationParent {
-            resource: "nodes".into(),
-            object_id: id.into(),
-        })
-    }
-
-    async fn register_under_parent(
-        &self,
-        actor: &Did,
-        policy: &str,
-        child: &str,
-        doc: &str,
-        parent: &acp::RegistrationParent,
-    ) -> acp::Result<()> {
-        if parent.resource != "nodes" || self.chain.owner(&parent.object_id).as_ref() != Some(actor)
-        {
-            return Err(acp::Error::PermissionDenied("parent requires owner".into()));
-        }
-        self.register_doc_object(actor, policy, child, doc).await
     }
 
     async fn is_doc_registered(&self, _: &str, _: &str, doc: &str) -> acp::Result<bool> {
@@ -286,19 +261,6 @@ impl ReplicaOwnership for Embedder {
     }
 }
 
-pub(crate) fn users() -> CollectionVersion {
-    CollectionVersion::new(
-        "Users",
-        "v1",
-        COLLECTION_ID,
-        vec![
-            FieldDescription::new("1", "_docID", FieldKind::doc_id(), CType::LwwRegister),
-            FieldDescription::new("2", "name", FieldKind::string(), CType::LwwRegister),
-        ],
-    )
-    .with_policy(PolicyDescription::new(POLICY, RESOURCE))
-}
-
 /// A key that signs blocks, and its DID.
 #[derive(Clone)]
 pub(crate) struct Key {
@@ -329,16 +291,27 @@ pub(crate) fn key() -> Key {
 pub(crate) struct Source {
     db: Arc<DB<RegolithStore>>,
     pub(crate) blocks: Arc<Blocks>,
+    version: CollectionVersion,
 }
 
 impl Source {
     pub(crate) async fn open() -> Self {
+        Self::with_sdl(USERS_SDL).await
+    }
+
+    /// A creator's node holding the `Users` that `sdl` defines.
+    pub(crate) async fn with_sdl(sdl: &str) -> Self {
         let store = Arc::new(RegolithStore::in_memory().unwrap());
         let db = Arc::new(DB::from_arc(store.clone()).unwrap());
-        db.create_collection(users()).await.unwrap();
+        let version = db
+            .add_collection(&defra_core::RequestContext::ambient(), sdl)
+            .await
+            .unwrap()
+            .remove(0);
         Self {
             db,
             blocks: Arc::new(DefraBlockstore::new(store, false)),
+            version,
         }
     }
 
@@ -352,13 +325,16 @@ impl Source {
         )
     }
 
+    /// `by` creates a document named `name`.
     pub(crate) async fn create(&self, by: &Key, name: &str) -> (String, Composite) {
         let mut doc = self.document();
         doc.set("name", NormalValue::String(name.into())).unwrap();
         set_signing_config(Some(by.signing.clone()));
-        let created = AutoCommitMutator::new(self.db.clone())
-            .create("Users", doc)
-            .await;
+        let created = defra_core::signing::scope_broadcast_creator_did(
+            None,
+            AutoCommitMutator::new(self.db.clone()).create("Users", doc),
+        )
+        .await;
         set_signing_config(None);
         let created = created.unwrap();
         (
@@ -395,7 +371,7 @@ impl Source {
     ) -> Composite {
         let mut block = Block::new(
             CrdtDelta::Composite(CompositeDeltaPayload {
-                collection_version_id: "v1".to_string(),
+                collection_version_id: self.version.version_id.clone(),
                 priority,
                 status,
             }),
@@ -426,7 +402,7 @@ impl Source {
     pub(crate) async fn unsigned(&self, heads: Vec<Cid>, priority: u64) -> Composite {
         let block = Block::new(
             CrdtDelta::Composite(CompositeDeltaPayload {
-                collection_version_id: "v1".to_string(),
+                collection_version_id: self.version.version_id.clone(),
                 priority,
                 status: 1,
             }),
@@ -453,6 +429,7 @@ impl Source {
 /// A receiving node of the shared deployment, signing as `actor`, under an
 /// identity of its own.
 pub(crate) struct Receiver {
+    collection_id: String,
     handler: AcpMergeHandler<RegolithStore, Blocks>,
     blocks: Arc<Blocks>,
     pub(crate) db: Arc<DB<RegolithStore>>,
@@ -476,11 +453,12 @@ impl Receiver {
         replicas: Option<Arc<dyn ReplicaOwnership>>,
         strict: bool,
     ) -> Self {
-        Self::open_collection(users(), acp, replicas, strict).await
+        Self::open_collection(USERS_SDL, acp, replicas, strict).await
     }
 
+    /// A node holding the `Users` that `sdl` defines.
     pub(crate) async fn open_collection(
-        definition: CollectionVersion,
+        sdl: &str,
         acp: impl FnOnce(Arc<RegolithStore>) -> Arc<dyn DocumentACP>,
         replicas: Option<Arc<dyn ReplicaOwnership>>,
         strict: bool,
@@ -494,7 +472,12 @@ impl Receiver {
             DB::from_arc_with_options(store.clone(), DbOptions::new().with_node_identity(node))
                 .unwrap(),
         );
-        db.create_collection(definition).await.unwrap();
+        let collection_id = db
+            .add_collection(&defra_core::RequestContext::ambient(), sdl)
+            .await
+            .unwrap()
+            .remove(0)
+            .collection_id;
         if let Some(ownership) = replicas {
             db.set_replica_registration(ReplicaRegistration::new(["Users"], ownership));
         }
@@ -504,6 +487,7 @@ impl Receiver {
                 .with_document_acp(acp);
         handler.set_strict_replicated_doc_access(strict);
         Self {
+            collection_id,
             handler,
             blocks,
             db,
@@ -534,7 +518,7 @@ impl Receiver {
                 &composite.1,
                 BlockMetadata::normal(
                     doc_id,
-                    COLLECTION_ID,
+                    &self.collection_id,
                     "did:key:z6MkCarrier",
                     Some("peer"),
                     false,
@@ -559,34 +543,6 @@ impl Receiver {
             }
             self.blocks.put(&cid, &data).await.unwrap();
         }
-    }
-
-    pub(crate) async fn receive_in_batch(
-        &self,
-        from: &Source,
-        doc_id: &str,
-        composite: &Composite,
-    ) -> MergeOutcome {
-        self.copy_blocks(from, composite).await;
-        let block = defra_core::merge::MergeBlock {
-            cid: composite.0,
-            block_data: composite.1.clone(),
-            doc_id: doc_id.to_owned(),
-            collection_id: COLLECTION_ID.into(),
-            creator: "did:key:z6MkCarrier".into(),
-            sender_peer: Some("peer".into()),
-            is_explicit_replicator: false,
-            explicit_replay_authorization: None,
-            verified_creator: None,
-        };
-        let mut results = self
-            .handler
-            .inner()
-            .try_batch_merge(&[block])
-            .await
-            .unwrap();
-        assert_eq!(results.len(), 1);
-        results.pop().unwrap().unwrap()
     }
 
     /// Re-drive what is ready to be tried again.

@@ -121,6 +121,11 @@ pub enum Error {
     #[error("server returned error: {0}")]
     Server(String),
 
+    /// The server's refusal with the stable code its body carries. Printed
+    /// as [`Self::Server`] is, so the CLI shows Go's text alone.
+    #[error("server returned error: {message}")]
+    ServerRefused { message: String, code: String },
+
     #[error(transparent)]
     Documents(#[from] query::documents::Error),
 
@@ -168,4 +173,16 @@ pub enum Error {
 
     #[error("invalid URL '{0}': {1}")]
     InvalidUrl(String, String),
+}
+
+impl Error {
+    /// The stable code the server or the documents API reported with this
+    /// refusal, when it reported one.
+    pub fn code(&self) -> Option<&str> {
+        match self {
+            Self::ServerRefused { code, .. } => Some(code),
+            Self::Documents(error) => error.code(),
+            _ => None,
+        }
+    }
 }

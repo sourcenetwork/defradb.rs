@@ -19,6 +19,10 @@ spelling it refuses.
 Rust owner: `defra`, `wire` and `same_actor` in
 `crates/engine/vera-delegation/src/did_spelling.rs`.
 
+The model is over the point encoding only: both functions also write every
+key, an Ed25519 key included, in base58btc whatever multibase it came in,
+which `VeraIssuerSpelling` models.
+
 The model is over an abstract key. The constructors are distinct strings in
 Rust; that two different keys never share a spelling is the encoding's
 injectivity, assumed here.

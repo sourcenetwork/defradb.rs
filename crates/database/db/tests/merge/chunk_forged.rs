@@ -30,19 +30,32 @@ pub(super) struct Node {
     handler: Handler,
 }
 
+/// Chunks that carry a vector; merges never call the model, so its URL is never used.
+const EMBEDDED_SDL: &str = r#"
+    type Article {
+        title: String
+        body: String @chunk(maxChars: 64)
+        body_v: [Float32!] @embedding(fields: ["body"], provider: "openai", model: "m", url: "http://127.0.0.1:9")
+    }
+"#;
+
 pub(super) async fn node() -> Node {
-    node_with_bus(None).await
+    node_with(SDL, None).await
 }
 
 /// A node that publishes its events on `bus`.
 pub(super) async fn node_with_bus(bus: Option<Arc<dyn events::Bus>>) -> Node {
+    node_with(SDL, bus).await
+}
+
+async fn node_with(sdl: &str, bus: Option<Arc<dyn events::Bus>>) -> Node {
     let store = Arc::new(RegolithStore::in_memory().unwrap());
     let mut db = DB::from_arc(store.clone()).unwrap();
     if let Some(bus) = bus {
         db.set_event_bus(bus);
     }
     let db = Arc::new(db);
-    db.add_collection(&defra_core::RequestContext::ambient(), SDL)
+    db.add_collection(&defra_core::RequestContext::ambient(), sdl)
         .await
         .unwrap();
     let blockstore = Arc::new(DefraBlockstore::new(store, false));
@@ -357,6 +370,58 @@ fn a_chunk_with_a_null_text_and_a_real_hash_is_refused() {
         assert_rejected(&outcome, "must both be strings");
         let chunk_id = DocID::from_string(&built.doc_id).unwrap();
         assert!(stored(&peer, &chunks_of(&peer), &chunk_id).await.is_none());
+    })
+    .unwrap()
+}
+
+#[test]
+fn a_chunk_vector_cannot_be_changed_after_it_merged() {
+    workers::block_on(async {
+        let author = node_with(EMBEDDED_SDL, None).await;
+        let peer = node_with(EMBEDDED_SDL, None).await;
+        // With no body the parent has no chunks of its own, so its create needs no model.
+        let articles = peer.db.get_collection("Article").unwrap().unwrap();
+        let mut untitled = Document::new(articles.schema_arc());
+        untitled
+            .set("title", NormalValue::String("t".into()))
+            .unwrap();
+        let parent = db::AutoCommitMutator::new(Arc::clone(&peer.db))
+            .create("Article", untitled)
+            .await
+            .unwrap()
+            .doc_id;
+        let collection = chunks_of(&author);
+        let text = "original text";
+        let mut genuine = chunk(&collection, &parent, text, &text_hash(text));
+        genuine
+            .set("body_v", NormalValue::Float64Array(vec![1.0, 0.0]))
+            .unwrap();
+        let (chunk_id, short_id, created) = super::merge_handler_tests::create_doc_locally(
+            &author.handler,
+            &collection,
+            &mut genuine,
+        )
+        .await;
+        let chunk_id_str = chunk_id.to_string();
+        let merged = merge(&author, &peer, &collection, &created.cid, &chunk_id_str)
+            .await
+            .expect("the genuine chunk merges");
+        assert!(merged.is_merged(), "{merged:?}");
+        let peer_chunks = chunks_of(&peer);
+        let kept = stored(&peer, &peer_chunks, &chunk_id).await.unwrap();
+
+        let mut revector = Document::new(collection.schema_arc());
+        revector.set_id(chunk_id.clone());
+        revector
+            .set("body_v", NormalValue::Float64Array(vec![0.0, 1.0]))
+            .unwrap();
+        let update = write_update(&author, &collection, short_id, &revector, &["body_v"]).await;
+
+        let outcome = merge(&author, &peer, &collection, &update, &chunk_id_str)
+            .await
+            .unwrap();
+        assert_rejected(&outcome, "cannot change after it is created. Field: body_v");
+        assert_eq!(stored(&peer, &peer_chunks, &chunk_id).await.unwrap(), kept);
     })
     .unwrap()
 }

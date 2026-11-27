@@ -35,7 +35,14 @@ impl DocumentACP for Provider {
         Ok(self.owed.clone())
     }
 
-    async fn register_doc_object(&self, _: &Did, _: &str, _: &str, _: &str) -> acp::Result<()> {
+    async fn register_doc_object(
+        &self,
+        _: &Did,
+        _: &str,
+        _: &str,
+        _: &str,
+        _: &[acp::DerivedRelationship],
+    ) -> acp::Result<()> {
         Ok(())
     }
 

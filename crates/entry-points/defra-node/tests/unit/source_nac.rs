@@ -20,7 +20,8 @@ async fn begin(node: &Node, who: &RequestContext) -> (TransactionHandle, Request
 }
 
 async fn change(node: &Node, tx: &RequestContext, source: &str, delete: bool) -> bool {
-    node.change_nac_source_permission_as(tx, &edge(None, "source", source, delete))
+    node.core()
+        .change_nac_source_permission(tx, &edge(None, "source", source, delete))
         .await
         .unwrap()
 }
@@ -66,7 +67,8 @@ fn source_grants_are_transactional_and_independent() {
             edge(Some("context:one"), "actor", OTHER, false),
         ] {
             assert!(node
-                .change_nac_source_permission_as(&tx, &item)
+                .core()
+                .change_nac_source_permission(&tx, &item)
                 .await
                 .unwrap());
         }
@@ -78,14 +80,16 @@ fn source_grants_are_transactional_and_independent() {
         node.runner().commit_txn_as(&owner, &handle).await.unwrap();
         assert!(allowed(&node, ACTOR).await);
         assert!(allowed(&node, OTHER).await);
-        node.add_nac_actor_relationship_as(&owner, PERMISSION.as_str(), ACTOR)
+        node.with_identity(identity::Did::new(OWNER).unwrap())
+            .add_nac_actor_relationship(PERMISSION.as_str(), ACTOR)
             .await
             .unwrap();
         let (handle, tx) = begin(&node, &owner).await;
         assert!(change(&node, &tx, "tools:two", true).await);
         node.runner().commit_txn_as(&owner, &handle).await.unwrap();
         assert!(allowed(&node, ACTOR).await);
-        node.delete_nac_actor_relationship_as(&owner, PERMISSION.as_str(), ACTOR)
+        node.with_identity(identity::Did::new(OWNER).unwrap())
+            .delete_nac_actor_relationship(PERMISSION.as_str(), ACTOR)
             .await
             .unwrap();
         assert!(!allowed(&node, ACTOR).await);
@@ -101,18 +105,21 @@ fn source_grants_are_transactional_and_independent() {
         node.runner().commit_txn_as(&owner, &handle).await.unwrap();
         assert!(!allowed(&node, ACTOR).await);
         assert!(!allowed(&node, OTHER).await);
-        node.add_nac_actor_relationship_as(&owner, "admin", OTHER)
+        node.with_identity(identity::Did::new(OWNER).unwrap())
+            .add_nac_actor_relationship("admin", OTHER)
             .await
             .unwrap();
         assert!(allowed(&node, OTHER).await);
-        node.delete_nac_actor_relationship_as(&owner, "admin", OTHER)
+        node.with_identity(identity::Did::new(OWNER).unwrap())
+            .delete_nac_actor_relationship("admin", OTHER)
             .await
             .unwrap();
         assert!(!allowed(&node, OTHER).await);
         let outsider = context(OTHER);
         let (handle, tx) = begin(&node, &outsider).await;
         assert!(node
-            .change_nac_source_permission_as(&tx, &edge(None, "source", "tools:one", false))
+            .core()
+            .change_nac_source_permission(&tx, &edge(None, "source", "tools:one", false))
             .await
             .is_err());
         node.runner()
@@ -133,7 +140,7 @@ fn revoked_source_invalidates_a_concurrent_claim() {
             .await
             .unwrap();
         let owner = context(OWNER);
-        node.add_collection_as(&owner, "type ClaimMarker { value: String }")
+        node.with_identity(identity::Did::new(OWNER).unwrap()).add_collection("type ClaimMarker { value: String }")
             .await
             .unwrap();
         let created = node.execute_request(
@@ -150,7 +157,7 @@ fn revoked_source_invalidates_a_concurrent_claim() {
         let request = query::QueryRequest::new(format!("mutation {{ update_ClaimMarker(docID:\"{doc}\", input:{{value:\"after\"}}) {{_docID}} }}"))
             .with_identity(Some(Did::new(OWNER).unwrap()))
             .with_context(owner.clone());
-        let changed = node.execute_request_in_txn(request, &claim).await;
+        let changed = node.with_transaction(claim.parse::<defra_core::TxnId>().unwrap()).execute_request(request).await;
         assert!(!changed.has_errors(), "{:?}", changed.errors);
         let (revoke, revoke_tx) = begin(&node, &owner).await;
         assert!(change(&node, &revoke_tx, "tools:one", true).await);
@@ -198,7 +205,7 @@ fn source_admission_matches_executed_lean_model() {
                 (true, true) => "tools:one",
                 (true, false) => "tools:present",
             };
-            let result = node.change_nac_source_permission_as(&tx, &edge(None, "source", source, false)).await;
+            let result = node.core().change_nac_source_permission(&tx, &edge(None, "source", source, false)).await;
             observations.push((admission(same_owner, writable, authorized, valid_source, false, changed), result.is_ok()));
             node.runner().discard_txn_as(&owner, &handle).await.unwrap();
         }
@@ -211,10 +218,9 @@ fn source_admission_matches_executed_lean_model() {
             (false, true, true, edge(None, "source", "tools:one", false), true),
             (true, false, false, edge(None, "source", "", false), false),
         ] {
-            let actor = context(if authorized { OWNER } else { OTHER });
-            let transaction = node.begin_transaction_guard(!writable).await.unwrap();
+            let transaction = node.new_txn(!writable).await.unwrap();
             let result = node
-                .change_nac_source_permission_for_in_txn(transaction.handle(), &actor, &item)
+                .with_transaction(transaction.id()).acting_for(identity::Did::new(if authorized { OWNER } else { OTHER }).unwrap()).change_nac_source_permission(&item)
                 .await;
             observations.push((admission(true, writable, authorized, valid_source, true, changed), result.is_ok()));
             transaction.discard().await.unwrap();
@@ -259,7 +265,8 @@ fn embedded_actor_restates_unchanged_edges_without_authority() {
         let (handle, tx) = begin(&node, &owner).await;
         for item in [&root, &member] {
             assert!(node
-                .change_nac_source_permission_as(&tx, item)
+                .core()
+                .change_nac_source_permission(&tx, item)
                 .await
                 .unwrap());
         }
@@ -267,10 +274,12 @@ fn embedded_actor_restates_unchanged_edges_without_authority() {
         assert!(allowed(&node, ACTOR).await);
 
         let outsider = context(OTHER);
-        let transaction = node.begin_transaction_guard(false).await.unwrap();
+        let transaction = node.new_txn(false).await.unwrap();
         for item in [&root, &member, &absent] {
             assert!(!node
-                .change_nac_source_permission_for_in_txn(transaction.handle(), &outsider, item)
+                .with_transaction(transaction.id())
+                .acting_for(identity::Did::new(OTHER).unwrap())
+                .change_nac_source_permission(item)
                 .await
                 .unwrap());
         }
@@ -283,9 +292,11 @@ fn embedded_actor_restates_unchanged_edges_without_authority() {
             edge(None, "source", "tools:absent", false),
             edge(Some("tools:one"), "actor", OTHER, false),
         ] {
-            let transaction = node.begin_transaction_guard(false).await.unwrap();
+            let transaction = node.new_txn(false).await.unwrap();
             let denied = node
-                .change_nac_source_permission_for_in_txn(transaction.handle(), &outsider, &item)
+                .with_transaction(transaction.id())
+                .acting_for(identity::Did::new(OTHER).unwrap())
+                .change_nac_source_permission(&item)
                 .await
                 .unwrap_err();
             assert!(
@@ -302,20 +313,19 @@ fn embedded_actor_restates_unchanged_edges_without_authority() {
         assert!(allowed(&node, ACTOR).await);
         assert!(!allowed(&node, OTHER).await);
 
-        let transaction = node.begin_transaction_guard(false).await.unwrap();
+        let transaction = node.new_txn(false).await.unwrap();
         assert!(node
-            .change_nac_source_permission_for_in_txn(
-                transaction.handle(),
-                &owner,
-                &edge(None, "source", "tools:absent", false),
-            )
+            .with_transaction(transaction.id())
+            .acting_for(identity::Did::new(OWNER).unwrap())
+            .change_nac_source_permission(&edge(None, "source", "tools:absent", false))
             .await
             .unwrap());
         transaction.discard().await.unwrap();
 
         let (handle, tx) = begin(&node, &outsider).await;
         assert!(node
-            .change_nac_source_permission_as(&tx, &root)
+            .core()
+            .change_nac_source_permission(&tx, &root)
             .await
             .is_err());
         node.runner()
@@ -345,7 +355,8 @@ fn source_graph_survives_restart() {
             edge(Some("context:one"), "actor", ACTOR, false),
         ] {
             assert!(node
-                .change_nac_source_permission_as(&tx, &item)
+                .core()
+                .change_nac_source_permission(&tx, &item)
                 .await
                 .unwrap());
         }
@@ -389,7 +400,8 @@ fn cyclic_source_graph_does_not_grant_an_unrelated_actor() {
             edge(Some("b"), "source", "a", false),
         ] {
             assert!(node
-                .change_nac_source_permission_as(&tx, &item)
+                .core()
+                .change_nac_source_permission(&tx, &item)
                 .await
                 .unwrap());
         }
@@ -410,21 +422,23 @@ fn trusted_host_source_change_keeps_user_transaction_owner() {
             .await
             .unwrap();
         let node_did = node.node_identity_did().unwrap().to_owned();
-        let owner = context(OWNER);
         let user = context(ACTOR);
         let (handle, tx) = begin(&node, &user).await;
         let root = edge(None, "source", "plugin:installed", false);
         assert!(node
-            .change_host_nac_source_permission_in_txn(&tx, &root)
+            .core()
+            .change_host_nac_source_permission(&tx, &root)
             .await
             .is_err());
         node.runner().discard_txn_as(&user, &handle).await.unwrap();
-        node.add_nac_actor_relationship_as(&owner, "admin", &node_did)
+        node.with_identity(identity::Did::new(OWNER).unwrap())
+            .add_nac_actor_relationship("admin", &node_did)
             .await
             .unwrap();
         let (handle, tx) = begin(&node, &user).await;
         let denied = node
-            .change_host_nac_source_permission_in_txn(&tx, &root)
+            .core()
+            .change_host_nac_source_permission(&tx, &root)
             .await
             .unwrap_err();
         assert!(
@@ -440,20 +454,23 @@ fn trusted_host_source_change_keeps_user_transaction_owner() {
         let repair = context(&node_did);
         let (handle, tx) = begin(&node, &repair).await;
         assert!(node
-            .change_host_nac_source_permission_in_txn(&tx, &root)
+            .core()
+            .change_host_nac_source_permission(&tx, &root)
             .await
             .unwrap());
         node.runner()
             .discard_txn_as(&repair, &handle)
             .await
             .unwrap();
-        node.add_nac_actor_relationship_as(&owner, "admin", ACTOR)
+        node.with_identity(identity::Did::new(OWNER).unwrap())
+            .add_nac_actor_relationship("admin", ACTOR)
             .await
             .unwrap();
         let (handle, tx) = begin(&node, &user).await;
         let wrong_owner = context(OTHER).with_txn(Some(handle.as_str().parse().unwrap()));
         assert!(node
-            .change_host_nac_source_permission_in_txn(&wrong_owner, &root)
+            .core()
+            .change_host_nac_source_permission(&wrong_owner, &root)
             .await
             .is_err());
         for item in [
@@ -461,7 +478,8 @@ fn trusted_host_source_change_keeps_user_transaction_owner() {
             edge(Some("plugin:installed"), "actor", OTHER, false),
         ] {
             assert!(node
-                .change_host_nac_source_permission_in_txn(&tx, &item)
+                .core()
+                .change_host_nac_source_permission(&tx, &item)
                 .await
                 .unwrap());
         }
@@ -471,7 +489,8 @@ fn trusted_host_source_change_keeps_user_transaction_owner() {
         let (handle, tx) = begin(&node, &user).await;
         for item in [root, edge(Some("plugin:installed"), "actor", OTHER, false)] {
             assert!(node
-                .change_host_nac_source_permission_in_txn(&tx, &item)
+                .core()
+                .change_host_nac_source_permission(&tx, &item)
                 .await
                 .unwrap());
         }
@@ -528,14 +547,15 @@ fn failed_host_source_projection_rolls_back_its_source_statement() {
             .await
             .unwrap();
         let user = context(ACTOR);
-        let node_owner = context(node.node_identity_did().unwrap());
-        node.add_nac_actor_relationship_as(&node_owner, "admin", ACTOR)
+        node.with_identity(identity::Did::new(node.node_identity_did().unwrap()).unwrap())
+            .add_nac_actor_relationship("admin", ACTOR)
             .await
             .unwrap();
         let (handle, tx) = begin(&node, &user).await;
         let root = edge(None, "source", "plugin:failed", false);
         assert!(node
-            .change_host_nac_source_permission_in_txn(&tx, &root)
+            .core()
+            .change_host_nac_source_permission(&tx, &root)
             .await
             .is_err());
         node.runner().commit_txn_as(&user, &handle).await.unwrap();
@@ -543,16 +563,18 @@ fn failed_host_source_projection_rolls_back_its_source_statement() {
             .fail
             .store(false, std::sync::atomic::Ordering::Release);
         let (handle, tx) = begin(&node, &user).await;
-        node.change_host_nac_source_permission_in_txn(
-            &tx,
-            &edge(Some("plugin:failed"), "actor", OTHER, false),
-        )
-        .await
-        .unwrap();
+        node.core()
+            .change_host_nac_source_permission(
+                &tx,
+                &edge(Some("plugin:failed"), "actor", OTHER, false),
+            )
+            .await
+            .unwrap();
         node.runner().commit_txn_as(&user, &handle).await.unwrap();
         assert!(!allowed(&node, OTHER).await);
         let (handle, tx) = begin(&node, &user).await;
-        node.change_host_nac_source_permission_in_txn(&tx, &root)
+        node.core()
+            .change_host_nac_source_permission(&tx, &root)
             .await
             .unwrap();
         node.runner().commit_txn_as(&user, &handle).await.unwrap();
@@ -578,7 +600,6 @@ fn host_source_admission_matches_executed_lean_model() {
             .unwrap();
         let node_did = Did::new(node.node_identity_did().unwrap()).unwrap();
         let owner = context(ACTOR);
-        let admin = context(OWNER);
         let mut observations = Vec::new();
         for (node_is_granted, actor_is_granted, readonly, different_owner, expired, omit_transaction) in [
             (false, false, false, false, false, false),
@@ -590,12 +611,12 @@ fn host_source_admission_matches_executed_lean_model() {
             (true, true, false, false, false, true),
         ] {
             if node_is_granted {
-                node.add_nac_actor_relationship_as(&admin, "admin", node_did.as_str())
+                node.with_identity(identity::Did::new(OWNER).unwrap()).add_nac_actor_relationship("admin", node_did.as_str())
                     .await
                     .unwrap();
             }
             if actor_is_granted {
-                node.add_nac_actor_relationship_as(&admin, "admin", ACTOR)
+                node.with_identity(identity::Did::new(OWNER).unwrap()).add_nac_actor_relationship("admin", ACTOR)
                     .await
                     .unwrap();
             }
@@ -620,10 +641,7 @@ fn host_source_admission_matches_executed_lean_model() {
                 "edgeChanged": true,
             });
             let accepted = node
-                .change_host_nac_source_permission_in_txn(
-                    &tx,
-                    &edge(None, "source", "test:modeled", false),
-                )
+                .core().change_host_nac_source_permission(&tx, &edge(None, "source", "test:modeled", false))
                 .await
                 .is_ok();
             observations.push((inputs, accepted));
@@ -643,10 +661,7 @@ fn host_source_admission_matches_executed_lean_model() {
             "edgeChanged": true,
         });
         let accepted = no_identity
-            .change_host_nac_source_permission_in_txn(
-                &tx,
-                &edge(None, "source", "test:modeled", false),
-            )
+            .core().change_host_nac_source_permission(&tx, &edge(None, "source", "test:modeled", false))
             .await
             .is_ok();
         observations.push((inputs, accepted));
@@ -687,7 +702,7 @@ fn host_source_noop_validates_the_edge_and_does_not_borrow_node_authority() {
             .unwrap();
         let owner = context(node.node_identity_did().unwrap());
         let user = context(ACTOR);
-        node.add_collection_as(&owner, "type SourceNoopMarker { value: String }")
+        node.with_identity(identity::Did::new(node.node_identity_did().unwrap()).unwrap()).add_collection("type SourceNoopMarker { value: String }")
             .await
             .unwrap();
         let created = node.execute_request(query::QueryRequest::new(
@@ -699,33 +714,30 @@ fn host_source_noop_validates_the_edge_and_does_not_borrow_node_authority() {
         let root = edge(None, "source", "plugin:stable", false);
         let (handle, tx) = begin(&node, &owner).await;
         assert!(node
-            .change_host_nac_source_permission_in_txn(&tx, &root)
+            .core().change_host_nac_source_permission(&tx, &root)
             .await
             .unwrap());
         node.runner().commit_txn_as(&owner, &handle).await.unwrap();
 
         let (pending, tx) = begin(&node, &user).await;
         assert!(!node
-            .change_host_nac_source_permission_in_txn(&tx, &root)
+            .core().change_host_nac_source_permission(&tx, &root)
             .await
             .unwrap());
         node.runner().commit_txn_as(&user, &pending).await.unwrap();
 
         let (pending, tx) = begin(&node, &owner).await;
         assert!(!node
-            .change_host_nac_source_permission_in_txn(&tx, &root)
+            .core().change_host_nac_source_permission(&tx, &root)
             .await
             .unwrap());
-        let updated = node.execute_request_in_txn(query::QueryRequest::new(format!(
+        let updated = node.with_transaction(pending.parse::<defra_core::TxnId>().unwrap()).execute_request(query::QueryRequest::new(format!(
             "mutation {{ update_SourceNoopMarker(docID:\"{marker}\",input:{{value:\"after\"}}) {{ _docID }} }}"
-        )), &pending).await;
+        ))).await;
         assert!(!updated.has_errors(), "{:?}", updated.errors);
         let (remove, tx_owner) = begin(&node, &owner).await;
         assert!(node
-            .change_host_nac_source_permission_in_txn(
-                &tx_owner,
-                &edge(None, "source", "plugin:stable", true)
-            )
+            .core().change_host_nac_source_permission(&tx_owner, &edge(None, "source", "plugin:stable", true))
             .await
             .unwrap());
         node.runner().commit_txn_as(&owner, &remove).await.unwrap();
@@ -741,14 +753,11 @@ fn host_source_noop_validates_the_edge_and_does_not_borrow_node_authority() {
 
         let (handle, tx) = begin(&node, &user).await;
         assert!(!node
-            .change_host_nac_source_permission_in_txn(
-                &tx,
-                &edge(None, "source", "plugin:stable", true)
-            )
+            .core().change_host_nac_source_permission(&tx, &edge(None, "source", "plugin:stable", true))
             .await
             .unwrap());
         let denied = node
-            .change_host_nac_source_permission_in_txn(&tx, &root)
+            .core().change_host_nac_source_permission(&tx, &root)
             .await
             .unwrap_err();
         assert!(
@@ -846,7 +855,8 @@ fn unchanged_host_root_reconciles_descendants_as_the_original_actor() {
         let root = edge(None, "source", "plugin:stable", false);
         let (handle, tx) = begin(&node, &owner).await;
         assert!(node
-            .change_host_nac_source_permission_in_txn(&tx, &root)
+            .core()
+            .change_host_nac_source_permission(&tx, &root)
             .await
             .unwrap());
         node.runner().commit_txn_as(&owner, &handle).await.unwrap();
@@ -855,7 +865,8 @@ fn unchanged_host_root_reconciles_descendants_as_the_original_actor() {
         observer.mode.store(1, Ordering::SeqCst);
         let (handle, tx) = begin(&node, &user).await;
         let denied = node
-            .change_host_nac_source_permission_in_txn(&tx, &root)
+            .core()
+            .change_host_nac_source_permission(&tx, &root)
             .await
             .unwrap_err();
         assert!(
@@ -873,7 +884,8 @@ fn unchanged_host_root_reconciles_descendants_as_the_original_actor() {
         observer.mode.store(2, Ordering::SeqCst);
         let (handle, tx) = begin(&node, &owner).await;
         assert!(node
-            .change_host_nac_source_permission_in_txn(&tx, &root)
+            .core()
+            .change_host_nac_source_permission(&tx, &root)
             .await
             .is_err());
         node.runner().commit_txn_as(&owner, &handle).await.unwrap();
@@ -885,7 +897,8 @@ fn unchanged_host_root_reconciles_descendants_as_the_original_actor() {
         observer.mode.store(1, Ordering::SeqCst);
         let (handle, tx) = begin(&node, &owner).await;
         assert!(!node
-            .change_host_nac_source_permission_in_txn(&tx, &root)
+            .core()
+            .change_host_nac_source_permission(&tx, &root)
             .await
             .unwrap());
         node.runner().commit_txn_as(&owner, &handle).await.unwrap();
@@ -893,7 +906,8 @@ fn unchanged_host_root_reconciles_descendants_as_the_original_actor() {
 
         let (handle, tx) = begin(&node, &user).await;
         assert!(!node
-            .change_host_nac_source_permission_in_txn(&tx, &root)
+            .core()
+            .change_host_nac_source_permission(&tx, &root)
             .await
             .unwrap());
         node.runner().commit_txn_as(&user, &handle).await.unwrap();
@@ -977,7 +991,8 @@ fn embedded_actor_replays_descendants_under_its_own_authority() {
             acp::NodePermission::NacRelationDelete,
             PERMISSION,
         ] {
-            node.add_nac_actor_relationship_as(&owner, permission.as_str(), DELEGATE)
+            node.with_identity(identity::Did::new(OWNER).unwrap())
+                .add_nac_actor_relationship(permission.as_str(), DELEGATE)
                 .await
                 .unwrap();
         }
@@ -996,7 +1011,8 @@ fn embedded_actor_replays_descendants_under_its_own_authority() {
         let delegate = context(DELEGATE);
         let (handle, tx) = begin(&node, &delegate).await;
         assert!(!node
-            .change_nac_source_permission_as(&tx, &root)
+            .core()
+            .change_nac_source_permission(&tx, &root)
             .await
             .unwrap());
         node.runner()
@@ -1009,9 +1025,11 @@ fn embedded_actor_replays_descendants_under_its_own_authority() {
         );
         assert_eq!(observer.calls.load(Ordering::SeqCst), 0);
 
-        let transaction = node.begin_transaction_guard(false).await.unwrap();
+        let transaction = node.new_txn(false).await.unwrap();
         assert!(!node
-            .change_nac_source_permission_for_in_txn(transaction.handle(), &delegate, &root)
+            .with_transaction(transaction.id())
+            .acting_for(identity::Did::new(DELEGATE).unwrap())
+            .change_nac_source_permission(&root)
             .await
             .unwrap());
         transaction.commit().await.unwrap();
@@ -1021,10 +1039,11 @@ fn embedded_actor_replays_descendants_under_its_own_authority() {
         );
         assert_eq!(observer.calls.load(Ordering::SeqCst), 1);
 
-        let outsider = context(ACTOR);
-        let transaction = node.begin_transaction_guard(false).await.unwrap();
+        let transaction = node.new_txn(false).await.unwrap();
         assert!(!node
-            .change_nac_source_permission_for_in_txn(transaction.handle(), &outsider, &root)
+            .with_transaction(transaction.id())
+            .acting_for(identity::Did::new(ACTOR).unwrap())
+            .change_nac_source_permission(&root)
             .await
             .unwrap());
         transaction.commit().await.unwrap();
@@ -1032,9 +1051,11 @@ fn embedded_actor_replays_descendants_under_its_own_authority() {
 
         observer.phase.store(2, Ordering::SeqCst);
         let fresh = edge(None, "source", "plugin:fresh", false);
-        let transaction = node.begin_transaction_guard(false).await.unwrap();
+        let transaction = node.new_txn(false).await.unwrap();
         let denied = node
-            .change_nac_source_permission_for_in_txn(transaction.handle(), &delegate, &fresh)
+            .with_transaction(transaction.id())
+            .acting_for(identity::Did::new(DELEGATE).unwrap())
+            .change_nac_source_permission(&fresh)
             .await
             .unwrap_err();
         assert!(
@@ -1055,14 +1076,12 @@ fn embedded_actor_replays_descendants_under_its_own_authority() {
         );
 
         observer.phase.store(0, Ordering::SeqCst);
-        let transaction = node.begin_transaction_guard(false).await.unwrap();
+        let transaction = node.new_txn(false).await.unwrap();
         assert!(
             !node
-                .change_nac_source_permission_for_in_txn(
-                    transaction.handle(),
-                    &outsider,
-                    &edge(None, "source", "plugin:fresh", true),
-                )
+                .with_transaction(transaction.id())
+                .acting_for(identity::Did::new(ACTOR).unwrap())
+                .change_nac_source_permission(&edge(None, "source", "plugin:fresh", true))
                 .await
                 .unwrap(),
             "the refused statement rolls back its new root"

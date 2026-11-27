@@ -13,6 +13,21 @@ use serial_test::serial;
 const SCHEMA: &str = "type Users { name: String  age: Int }";
 const P2P_TIMEOUT: Duration = Duration::from_secs(15);
 
+/// The node's endpoint ticket from `p2p info`. It names every direct address
+/// the node knows, so a dial reaches it over the local interface. The first
+/// `p2p info` entry can be the NAT-reflexive address, which a host that does
+/// not hairpin never delivers, leaving the dial to a public relay.
+fn ticket_addr(cluster: &TestCluster, node: usize) -> String {
+    let info = cluster.client(node).p2p_info().expect("p2p info");
+    info.as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|address| address.as_str())
+        .find(|address| p2p::iroh::is_ticket_string(address))
+        .unwrap_or_else(|| panic!("node{node} has no endpoint ticket: {info}"))
+        .to_string()
+}
+
 /// Port: TestP2PCreateDoesNotSync
 /// Without collection subscription or replicator, new docs do NOT sync.
 #[nuclei::test]
@@ -245,8 +260,8 @@ async fn create_propagates_to_last_node_in_chain() {
                 .unwrap_or_else(|_| panic!("collection add node{}", i));
         }
 
-        let addr1 = integration_test::extract_p2p_addr(&cluster, 1);
-        let addr2 = integration_test::extract_p2p_addr(&cluster, 2);
+        let addr1 = ticket_addr(&cluster, 1);
+        let addr2 = ticket_addr(&cluster, 2);
 
         // Connect chain: 0→1→2
         cluster
@@ -367,7 +382,7 @@ async fn head_hint_fanout_above_car_worker_bound_quiesces() {
 
         let source = cluster.client(0);
         for receiver in 1..NODE_COUNT {
-            let address = integration_test::extract_p2p_addr(&cluster, receiver);
+            let address = ticket_addr(&cluster, receiver);
             source
                 .p2p_connect(&[&address])
                 .unwrap_or_else(|error| panic!("connect source to node{receiver}: {error:#}"));

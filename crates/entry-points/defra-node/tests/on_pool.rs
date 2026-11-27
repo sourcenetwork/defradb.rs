@@ -1,7 +1,6 @@
 //! The node's API calls run on the database's worker pool: none of
 //! the storage calls they make is made off the pool, which the store counts.
 
-use defra_core::RequestContext;
 use defra_node::{Node, NodeBuilder};
 use storage::Store;
 
@@ -24,15 +23,11 @@ fn api_calls_make_no_storage_call_off_the_pool() {
             .await
             .unwrap();
         let added = node
-            .execute_as(
-                &RequestContext::ambient(),
-                r#"mutation { add_Note(input: { title: "first" }) { _docID } }"#,
-            )
+            .anonymous()
+            .execute(r#"mutation { add_Note(input: { title: "first" }) { _docID } }"#)
             .await;
         assert!(added.errors.is_empty(), "{:?}", added.errors);
-        let read = node
-            .execute_as(&RequestContext::ambient(), "query { Note { title } }")
-            .await;
+        let read = node.anonymous().execute("query { Note { title } }").await;
         assert!(read.errors.is_empty(), "{:?}", read.errors);
         node.add_encrypted_index("Note", "title").await.unwrap();
 

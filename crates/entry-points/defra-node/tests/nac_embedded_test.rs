@@ -199,8 +199,8 @@ fn an_identity_only_node_is_checked_as_its_caller_under_nac() {
                 .is_err(),
             "an anonymous schema change must be denied"
         );
-        let owner = defra_core::RequestContext::default().with_identity(Some(did.clone()));
-        node.add_collection_as(&owner, "type Widget { name: String }")
+        node.with_identity(identity::Did::new(did.clone()).unwrap())
+            .add_collection("type Widget { name: String }")
             .await
             .expect("the node's DID keeps full access");
 
@@ -217,13 +217,15 @@ fn an_identity_only_node_is_checked_as_its_caller_under_nac() {
             "an anonymous create must be denied: {anonymous:?}"
         );
 
-        let handle = node.begin_transaction(false).await.unwrap();
+        let handle = node.new_txn(false).await.map(|txn| txn.detach()).unwrap();
         let named = node
-            .execute_request_in_txn(as_node(&add("node")), &handle)
+            .with_transaction(handle)
+            .execute_request(as_node(&add("node")))
             .await;
         assert!(named.errors.is_empty(), "{:?}", named.errors);
         let anonymous = node
-            .execute_request_in_txn(QueryRequest::new(add("anonymous in txn")), &handle)
+            .with_transaction(handle)
+            .execute_request(QueryRequest::new(add("anonymous in txn")))
             .await;
         assert!(
             anonymous
@@ -236,7 +238,7 @@ fn an_identity_only_node_is_checked_as_its_caller_under_nac() {
                     .contains("not authorized to perform operation")),
             "an anonymous create in the transaction must be denied: {anonymous:?}"
         );
-        node.commit_transaction(&handle).await.unwrap();
+        node.with_transaction(handle).commit().await.unwrap();
 
         let read = node
             .execute_request(as_node("query { Widget { name } }"))

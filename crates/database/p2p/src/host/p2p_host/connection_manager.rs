@@ -4,6 +4,10 @@
 //! peers when the host holds too many connections, and a per-peer rule that
 //! keeps a single connection to each peer. Both mark their victims `closing` in
 //! the same map, so neither re-selects what the other already gave up.
+//!
+//! As in go-libp2p's `BasicConnMgr`, a trim that closes connections starts a
+//! silence period during which no other trim runs, so peers that reconnect
+//! right after a trim are not cut again on the next pass (#3357).
 
 use rapidhash::{HashMapExt, RapidHashMap};
 use std::time::Duration;
@@ -21,11 +25,15 @@ pub(super) enum ConnectionPath {
     Direct,
 }
 
+/// go-libp2p connmgr's default `silencePeriod`: the least time between trims.
+pub(super) const SILENCE_PERIOD: Duration = Duration::from_secs(10);
+
 #[derive(Debug)]
 pub(in crate::host) struct ActiveConnectionManager {
     low_water: usize,
     high_water: usize,
     grace_period: Duration,
+    last_trim: Option<Instant>,
     connections: RapidHashMap<ConnectionId, ManagedConnection>,
 }
 
@@ -54,6 +62,7 @@ impl ActiveConnectionManager {
             low_water,
             high_water,
             grace_period,
+            last_trim: None,
             connections: RapidHashMap::new(),
         }
     }
@@ -170,7 +179,7 @@ impl ActiveConnectionManager {
             .filter(|connection| !connection.closing)
             .count();
 
-        if active_count <= self.high_water {
+        if active_count <= self.high_water || self.silenced(now) {
             return Vec::new();
         }
 
@@ -216,7 +225,16 @@ impl ActiveConnectionManager {
                 });
             }
         }
+        if !selected.is_empty() {
+            self.last_trim = Some(now);
+        }
         selected
+    }
+
+    /// Whether `now` falls in the silence period of the last trim.
+    fn silenced(&self, now: Instant) -> bool {
+        self.last_trim
+            .is_some_and(|last_trim| now.duration_since(last_trim) < SILENCE_PERIOD)
     }
 }
 
@@ -355,6 +373,58 @@ mod tests {
         assert!(manager
             .prune_candidates(now + Duration::from_secs(31))
             .is_empty());
+    }
+
+    /// #3357: peers that come straight back after a trim push the host over
+    /// high water again, and no trim runs until the silence period is over.
+    #[test]
+    fn no_trim_runs_during_the_silence_period() {
+        let grace_period = Duration::from_secs(1);
+        let mut manager = ActiveConnectionManager::new(2, 3, grace_period);
+        let now = Instant::now();
+
+        for id in 0..4 {
+            direct(&mut manager, id, PeerId::random(), now);
+        }
+        let first_trim = now + grace_period;
+        let pruned = manager.prune_candidates(first_trim);
+        assert_eq!(pruned.len(), 2);
+        for candidate in &pruned {
+            manager.on_closed(candidate.connection_id);
+        }
+        for (id, candidate) in (4..).zip(&pruned) {
+            direct(&mut manager, id, candidate.peer_id, first_trim);
+        }
+
+        let silence_ends = first_trim + SILENCE_PERIOD;
+        assert!(manager
+            .prune_candidates(first_trim + grace_period)
+            .is_empty());
+        assert!(manager
+            .prune_candidates(silence_ends - Duration::from_millis(1))
+            .is_empty());
+        assert_eq!(manager.prune_candidates(silence_ends).len(), 2);
+    }
+
+    /// A pass that closes nothing starts no silence period.
+    #[test]
+    fn a_trim_that_closes_nothing_does_not_silence_the_next() {
+        let mut manager = ActiveConnectionManager::new(2, 4, Duration::from_secs(20));
+        let now = Instant::now();
+
+        for id in 0..5 {
+            direct(&mut manager, id, PeerId::random(), now);
+        }
+
+        assert!(manager
+            .prune_candidates(now + Duration::from_secs(10))
+            .is_empty());
+        assert_eq!(
+            manager
+                .prune_candidates(now + Duration::from_secs(20))
+                .len(),
+            3
+        );
     }
 
     #[test]

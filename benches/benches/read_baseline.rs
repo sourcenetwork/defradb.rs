@@ -21,7 +21,6 @@ use defra_perf::measure::{median, min_max, percentile_ms};
 use document::{Document, NormalValue};
 use query::mutator::DocMutator;
 use query::QueryRequest;
-use schema::{CollectionVersion, FieldDescription, FieldKind};
 use storage::corekv::Store;
 use storage::{RegolithStore, RegolithStoreOptions};
 use tower::ServiceExt;
@@ -30,6 +29,7 @@ mod common;
 use common::{counts, git, positive};
 
 const COLLECTION: &str = "User";
+const COLLECTION_SDL: &str = "type User { name: String age: Int }";
 const DOCUMENTS: usize = 1024;
 const PAGE: usize = 10;
 const CHUNK_COLLECTION: &str = "Article__body_chunk";
@@ -151,44 +151,13 @@ impl Fixture {
             .await
             .unwrap(),
         );
-        db.create_collection(CollectionVersion::new(
-            COLLECTION,
-            "read-baseline-v1",
-            "read-baseline",
-            vec![
-                FieldDescription::new(
-                    "1",
-                    "_docID",
-                    FieldKind::doc_id(),
-                    schema::CType::LwwRegister,
-                ),
-                FieldDescription::new("2", "name", FieldKind::string(), schema::CType::LwwRegister),
-                FieldDescription::new("3", "age", FieldKind::int(), schema::CType::LwwRegister),
-            ],
-        ))
-        .await
-        .unwrap();
+        db.add_collection(&defra_core::RequestContext::ambient(), COLLECTION_SDL)
+            .await
+            .unwrap();
         db.add_collection(&defra_core::RequestContext::ambient(), CHUNK_SDL)
             .await
             .unwrap();
         let mutator = Arc::new(db::write::autocommit::AutoCommitMutator::new(db.clone()));
-        let mut ids = Vec::with_capacity(DOCUMENTS);
-        let user = db.query_schema(COLLECTION).unwrap();
-        for index in 0..DOCUMENTS {
-            let mut doc = Document::new((*user).clone());
-            doc.set("name", NormalValue::String(format!("user-{index}")))
-                .unwrap();
-            doc.set("age", NormalValue::Int(18 + (index % 80) as i64))
-                .unwrap();
-            ids.push(
-                mutator
-                    .create(COLLECTION, doc)
-                    .await
-                    .unwrap()
-                    .doc_id
-                    .to_string(),
-            );
-        }
         let body = (0..CHUNK_DOCUMENTS)
             .map(|index| format!("Paragraph {index:03} is about a numbered topic."))
             .collect::<Vec<_>>()
@@ -210,6 +179,22 @@ impl Fixture {
         )
         .with_mutator(mutator.clone() as Arc<dyn DocMutator>);
         let executor = query::pooled::PooledExecutor::wrap(Arc::new(runner), db.pool());
+        let mut ids = Vec::with_capacity(DOCUMENTS);
+        for index in 0..DOCUMENTS {
+            let response = executor
+                .execute(QueryRequest::new(format!(
+                    r#"mutation {{ add_User(input: {{name: "user-{index}", age: {}}}) {{ _docID }} }}"#,
+                    18 + index % 80
+                )))
+                .await;
+            assert!(response.errors.is_empty(), "seed: {:?}", response.errors);
+            ids.push(
+                response.data.unwrap()["add_User"][0]["_docID"]
+                    .as_str()
+                    .unwrap()
+                    .to_owned(),
+            );
+        }
         let response = executor
             .execute(QueryRequest::new(Shape::Chunks.query(0, 0, &[])))
             .await;

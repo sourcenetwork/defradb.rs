@@ -42,12 +42,9 @@ fn embedded_transaction_mutation_uses_node_signer() {
         .await
         .expect("add schema");
 
-    let txn = node.begin_transaction(false).await.expect("begin txn");
+    let txn = node.new_txn(false).await.map(|txn| txn.detach()).expect("begin txn");
     let create = node
-        .execute_request_in_txn(
-            QueryRequest::new(r#"mutation { create_Widget(input: {name: "gadget"}) { _docID } }"#),
-            &txn,
-        )
+        .with_transaction(txn).execute_request(QueryRequest::new(r#"mutation { create_Widget(input: {name: "gadget"}) { _docID } }"#))
         .await;
     assert!(
         create.errors.is_empty(),
@@ -64,12 +61,9 @@ fn embedded_transaction_mutation_uses_node_signer() {
         .to_string();
 
     let commits_in_txn = node
-        .execute_request_in_txn(
-            QueryRequest::new(format!(
+        .with_transaction(txn).execute_request(QueryRequest::new(format!(
                 r#"query {{ _commits(docID: "{doc_id}", filter: {{fieldName: {{_eq: "_C"}}}}) {{ cid }} }}"#
-            )),
-            &txn,
-        )
+            )))
         .await;
     assert!(
         commits_in_txn.errors.is_empty(),
@@ -83,12 +77,12 @@ fn embedded_transaction_mutation_uses_node_signer() {
         .and_then(serde_json::Value::as_str)
         .expect("uncommitted composite CID");
     let uncommitted_verified_did = node
-        .verified_block_signer_did_in_txn(uncommitted_composite_cid, &txn)
+        .with_transaction(txn).verified_block_signer_did(uncommitted_composite_cid)
         .await
         .expect("verify uncommitted embedded block signature");
     assert_eq!(uncommitted_verified_did, did);
 
-    node.commit_transaction(&txn).await.expect("commit txn");
+    node.with_transaction(txn).commit().await.expect("commit txn");
 
     let commits = node
         .execute(&format!(
@@ -130,7 +124,7 @@ fn embedded_transaction_mutation_uses_node_signer() {
     assert_eq!(verified_did, did);
 
     let (block_bytes, signature_bytes) = node
-        .authorized_signed_block_bytes(composite_cid, Some(&did))
+        .with_identity(identity::Did::new(&did).unwrap()).authorized_signed_block_bytes(composite_cid)
         .await
         .expect("load authorized signed block bytes");
     let returned_block_cid = defra_core::block::generate_cid_from_bytes(&block_bytes)
@@ -159,14 +153,11 @@ fn embedded_transaction_mutation_uses_node_signer() {
         create_without_signer.errors
     );
 
-    let txn_without_signer = node.begin_transaction(false).await.expect("begin txn");
+    let txn_without_signer = node.new_txn(false).await.map(|txn| txn.detach()).expect("begin txn");
     let create_in_txn_without_signer = node
-        .execute_request_in_txn(
-            QueryRequest::new(
+        .with_transaction(txn_without_signer).execute_request(QueryRequest::new(
                 r#"mutation { create_Widget(input: {name: "must-also-fail"}) { _docID } }"#,
-            ),
-            &txn_without_signer,
-        )
+            ))
         .await;
     assert!(
         create_in_txn_without_signer.has_errors()
@@ -179,7 +170,7 @@ fn embedded_transaction_mutation_uses_node_signer() {
         "configured transactional execute must fail closed when its signer disappears: {:?}",
         create_in_txn_without_signer.errors
     );
-    node.discard_transaction(&txn_without_signer)
+    node.with_transaction(txn_without_signer).discard()
         .await
         .expect("discard txn");
 

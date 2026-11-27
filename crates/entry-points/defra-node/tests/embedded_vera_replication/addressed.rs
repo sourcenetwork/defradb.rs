@@ -109,13 +109,8 @@ fn a_note_addressed_to_a_node_of_the_home_reaches_that_node_only() {
         .await;
 
         a.node
-            .delete_dac_actor_relationship(
-                creator.did.as_str(),
-                "Notes",
-                &doc,
-                "reader",
-                receiver.did.as_str(),
-            )
+            .with_identity(identity::Did::new(creator.did.as_str()).unwrap())
+            .delete_dac_actor_relationship("Notes", &doc, "reader", receiver.did.as_str())
             .await
             .expect("revoke");
         eventually(

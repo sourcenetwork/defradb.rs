@@ -1,14 +1,23 @@
 //! Deciding whether a query can be answered by a vector index.
 //!
-//! Ported from Go's `tryRouteSimilarityToVectorIndex`, with one deliberate
-//! difference: Go refuses a query that carries a filter, because its graph
-//! would have to over-fetch and backfill (its issue 5071). This engine does the
-//! over-fetch instead of refusing: the filter is applied to documents, and
-//! `ScanNode` asks the index for a wider `k` whenever the filter leaves the page
-//! short, so a filtered query routes like any other and still returns a full
-//! page. That matters because the hybrid retrieval path in `db-search` folds
-//! `exclude_doc_ids` into a filter on essentially every call, and under Go's
-//! rule it could never be routed at all.
+//! Ported from Go's `tryRouteSimilarityToVectorIndex`. [`route`] never looks at
+//! a filter; its callers decide what a filter means before calling it.
+//!
+//! A top-level select (`planner/builder/mod.rs`) is not routed when its filter
+//! has conditions, as in Go. It reads its candidates through a secondary index
+//! when one serves the filter, or the whole collection otherwise, scores every
+//! match exactly, then sorts and applies the limit. When the similarity field
+//! has a vector index, the planner attaches the `VECTOR_INDEX_UNUSED` warning
+//! with reason `filter`; a field without one never warns. That check runs
+//! before [`route`], so a filtered query without a limit warns `filter` where
+//! Go warns `noLimit`. An empty filter does not keep a query from routing;
+//! [`route`] still decides on the rest of its shape.
+//!
+//! A one-to-many child select (`planner/joins/child_plan.rs`) differs from Go:
+//! a scalar filter does not keep it from routing. The routed child scan applies
+//! that filter to each candidate and widens the search when it drops some. A
+//! relation or `_alias` filter keeps the child off the vector index, and a
+//! child that is not routed gets no warning.
 
 use crate::executor::{GqlWarning, WARNING_CODE_VECTOR_INDEX_UNUSED};
 use crate::mapper::{OrderDirection, Requestable, Select};

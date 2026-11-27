@@ -71,7 +71,12 @@ impl Op for WaitForIndexReady {
         let deadline = Instant::now() + BUILD_TIMEOUT;
         loop {
             let listing = state
-                .block_on(core.list_indexes_as(&state.context(None), collection))
+                .block_on(
+                    state
+                        .scope_as(None, None)
+                        .on(&core)
+                        .list_indexes(collection),
+                )
                 .map_err(|e| Failure::operation(e.to_string()))?;
             let listing =
                 serde_json::to_value(listing).map_err(|e| Failure::operation(e.to_string()))?;

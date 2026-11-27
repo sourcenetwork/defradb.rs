@@ -94,12 +94,14 @@ pub enum MergeError {
     #[error("history requires a resumable merge turn")]
     HistoryRequired,
 
-    #[error("merge requires a remote registration lookup")]
-    NeedsRegistration(Box<super::RegistrationLookup>),
-
     /// Discard the data attempt before recording a history's rejection.
     #[error(transparent)]
     HistoryAborted(Box<HistoryRejection>),
+
+    /// Every merge admission slot stayed taken until the wait's deadline.
+    /// Nothing of the block was applied; its delivery retries later.
+    #[error("merge admission timed out: the node is at its merge capacity; try again")]
+    AdmissionTimedOut,
 
     /// DAG traversal depth limit exceeded.
     ///
@@ -126,7 +128,7 @@ impl MergeError {
     /// leaves the block parked ([`MergeError::needs_key`]).
     pub fn fails_block(&self) -> bool {
         match self {
-            MergeError::Storage(_) => false,
+            MergeError::Storage(_) | MergeError::AdmissionTimedOut => false,
             MergeError::Database(error) => !matches!(
                 error,
                 crate::error::Error::Storage(_) | crate::error::Error::Datastore(_)
@@ -165,9 +167,9 @@ impl MergeError {
             | Self::Kms(_)
             | Self::NeedsDecryptionKey(_)
             | Self::NeedsBatchDecryptionKey { .. }
-            | Self::NeedsRegistration(_)
             | Self::HistoryRequired
-            | Self::HistoryAborted(_) => MergeErrorDisposition::Retryable,
+            | Self::HistoryAborted(_)
+            | Self::AdmissionTimedOut => MergeErrorDisposition::Retryable,
         }
     }
 }
@@ -178,7 +180,10 @@ impl MergeError {
 /// merge obligation even when the underlying failure needs investigation.
 impl From<workers::Error> for MergeError {
     fn from(error: workers::Error) -> Self {
-        MergeError::Storage(error.report("merge").to_string())
+        match error {
+            workers::Error::TimedOut => MergeError::AdmissionTimedOut,
+            error => MergeError::Storage(error.report("merge").to_string()),
+        }
     }
 }
 
@@ -195,6 +200,19 @@ mod tests {
             "storage error: the node is shutting down; try again"
         );
         assert_eq!(error.disposition(), MergeErrorDisposition::Retryable);
+    }
+
+    #[test]
+    fn a_timed_out_admission_is_a_typed_retry_that_keeps_a_parked_block() {
+        let error = MergeError::from(workers::Error::TimedOut);
+
+        assert!(matches!(error, MergeError::AdmissionTimedOut));
+        assert_eq!(
+            error.to_string(),
+            "merge admission timed out: the node is at its merge capacity; try again"
+        );
+        assert_eq!(error.disposition(), MergeErrorDisposition::Retryable);
+        assert!(!error.fails_block());
     }
 
     #[test]

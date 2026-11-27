@@ -30,18 +30,18 @@ fn api_calls_make_no_storage_call_off_the_pool() {
         let before = off_pool_calls(&node);
 
         let policy_id = node
-            .add_dac_policy_as(
-                &defra_core::RequestContext::ambient().with_identity(Some(String::from(OWNER))),
-                POLICY_YAML,
-            )
+            .with_identity(identity::Did::new(String::from(OWNER)).unwrap())
+            .add_dac_policy(POLICY_YAML, None)
             .await
             .unwrap();
-        node.add_collection(&format!(
-            "type Notes @policy(id: \"{policy_id}\", resource: \"notes\") {{ title: String }}"
-        ))
-        .await
-        .unwrap();
-        node.add_collection("type Tag { label: String }")
+        node.with_identity(identity::Did::new(String::from(OWNER)).unwrap())
+            .add_collection(&format!(
+                "type Notes @policy(id: \"{policy_id}\", resource: \"notes\") {{ title: String }}"
+            ))
+            .await
+            .unwrap();
+        node.with_identity(identity::Did::new(String::from(OWNER)).unwrap())
+            .add_collection("type Tag { label: String }")
             .await
             .unwrap();
         let versions = node.get_all_collection_versions().await.unwrap();

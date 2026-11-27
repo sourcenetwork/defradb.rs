@@ -1,6 +1,8 @@
 //! One page of a reindex, in its own engine transaction.
 //!
-//! A page first checks that the reindex it runs is still the one owed, then
+//! A page first checks that the reindex it runs is still the one owed (and,
+//! on the first page that tries a failed rebuild again, removes the failure,
+//! so writers maintain the failed index while it walks), then
 //! carries the stage on from where the last committed page left it, at most
 //! `size` items: index keys removed while clearing, documents indexed again
 //! while walking. The page that walks past the last document trains what
@@ -93,7 +95,11 @@ impl ReindexPage {
             (self.indexes.clone(), self.persist_migrations)
         } else {
             match owed::owed_under(systemstore, collection_id, self.token).await? {
-                Some(owed) => (owed.indexes, owed.persists_migrations),
+                Some(owed) => {
+                    let resumed = (owed.indexes.clone(), owed.persists_migrations);
+                    owed::retry_failed(systemstore, &self.collections, collection_id, owed).await?;
+                    resumed
+                }
                 None => return Ok(Step::Superseded),
             }
         };
@@ -104,7 +110,7 @@ impl ReindexPage {
         )
         .await?;
         let indexes: Vec<_> = collection
-            .write_indexes()
+            .rebuilt_indexes()
             .iter()
             .filter(|index| rebuilt.as_ref().is_none_or(|ids| ids.contains(&index.id)))
             .cloned()
@@ -272,12 +278,16 @@ impl ReindexPage {
                     restamped
                 }
                 ToActive::Identity => doc,
-                ToActive::Migrated(migrated) => {
+                ToActive::Migrated {
+                    document: migrated,
+                    complete,
+                } => {
                     original_keys.insert(
                         doc_short_id,
                         manager.unique_index_keys(&doc, collection.schema())?,
                     );
-                    if persists
+                    if complete
+                        && persists
                         && cache_migrated_document(datastore, systemstore, collection, &migrated)
                             .await?
                     {

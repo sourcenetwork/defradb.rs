@@ -83,13 +83,11 @@ impl UniqueIndex {
         Ok(())
     }
 
-    /// Check if any value is nil (special case for unique index with NULL).
-    ///
-    /// Matches Go's `hasIndexKeyNilField()` behavior: if ANY field is NULL,
-    /// the uniqueness constraint is bypassed, allowing multiple documents
-    /// with the same partial values.
-    fn has_nil_field(values: &[NormalValue]) -> bool {
-        values.iter().any(|v| v.is_nil())
+    /// Whether any value is outside the unique check: a nil, as Go's
+    /// `hasIndexKeyNilField()`, or the JSON empty-array marker. Such an entry
+    /// keeps the doc short ID in its key, so many documents may share it.
+    fn has_never_unique_field(values: &[NormalValue]) -> bool {
+        values.iter().any(NormalValue::is_never_unique)
     }
 
     /// Build the index key for given field values.
@@ -140,7 +138,7 @@ impl UniqueIndex {
         validate_doc_short_id(doc_short_id, &self.desc.name)?;
         self.validate_field_count(values, doc_short_id)?;
 
-        if Self::has_nil_field(values) {
+        if Self::has_never_unique_field(values) {
             let key = self.build_key_with_doc_short_id(values, doc_short_id)?;
             return txn.set(&key, &[]).await;
         }
@@ -165,7 +163,7 @@ impl UniqueIndex {
         txn: &R,
         values: &[NormalValue],
     ) -> Result<Option<u64>> {
-        if Self::has_nil_field(values) {
+        if Self::has_never_unique_field(values) {
             return Ok(None);
         }
         let key = self.build_key(values)?;
@@ -186,7 +184,7 @@ impl UniqueIndex {
         txn: &R,
         values: &[NormalValue],
     ) -> Result<Option<u64>> {
-        if Self::has_nil_field(values) {
+        if Self::has_never_unique_field(values) {
             return Ok(None);
         }
         let fields = self.build_indexed_fields(values);
@@ -294,7 +292,7 @@ impl CollectionIndex for UniqueIndex {
 
         // Special case: if any value is nil, allow multiple entries
         // by appending the doc short ID to the key (like SimpleIndex)
-        if Self::has_nil_field(values) {
+        if Self::has_never_unique_field(values) {
             let key = self.build_key_with_doc_short_id(values, doc_short_id)?;
             return txn.set(&key, &[]).await;
         }
@@ -327,7 +325,7 @@ impl CollectionIndex for UniqueIndex {
 
         // Check uniqueness of new values BEFORE deleting old entry
         // This prevents data loss if the uniqueness check fails
-        if !Self::has_nil_field(new_values) {
+        if !Self::has_never_unique_field(new_values) {
             let new_key = self.build_key(new_values)?;
             if let Some(existing) = txn.get(&new_key).await? {
                 let existing_doc_short_id = decode_doc_short_id(&existing)?;
@@ -338,7 +336,7 @@ impl CollectionIndex for UniqueIndex {
         }
 
         // Delete old entry (safe now that we've validated the new values)
-        if Self::has_nil_field(old_values) {
+        if Self::has_never_unique_field(old_values) {
             let old_key = self.build_key_with_doc_short_id(old_values, doc_short_id)?;
             txn.delete(&old_key).await?;
         } else {
@@ -347,7 +345,7 @@ impl CollectionIndex for UniqueIndex {
         }
 
         // Insert new entry
-        if Self::has_nil_field(new_values) {
+        if Self::has_never_unique_field(new_values) {
             let key = self.build_key_with_doc_short_id(new_values, doc_short_id)?;
             txn.set(&key, &[]).await
         } else {
@@ -365,7 +363,7 @@ impl CollectionIndex for UniqueIndex {
         validate_doc_short_id(doc_short_id, &self.desc.name)?;
         self.validate_field_count(values, doc_short_id)?;
 
-        if Self::has_nil_field(values) {
+        if Self::has_never_unique_field(values) {
             let key = self.build_key_with_doc_short_id(values, doc_short_id)?;
             txn.delete(&key).await
         } else {

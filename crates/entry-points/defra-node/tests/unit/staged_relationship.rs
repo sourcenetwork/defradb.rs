@@ -70,6 +70,11 @@ pub(super) struct Remote {
     pub(super) hold_owner_read: AtomicBool,
     pub(super) owner_read_waiting: regolith::sync::Event,
     pub(super) owner_reads_released: regolith::sync::Event,
+    /// A registration the provider admits does not take effect until
+    /// `registrations_released`: what keeps the node's drainer from
+    /// settling one while a test looks at it.
+    pub(super) hold_registrations: AtomicBool,
+    registrations_released: regolith::sync::Event,
     /// Objects whose access checks fail as unavailable while every other
     /// call answers.
     pub(super) unchecked: Map<String, ()>,
@@ -90,10 +95,9 @@ fn named(command: &PolicyCommand<'_>) -> String {
     let object = command.object_id;
     match &command.action {
         PolicyAction::RegisterObject => format!("register {object}"),
-        PolicyAction::RegisterUnderParent {
-            resource,
-            object_id,
-        } => format!("register {object} under {resource}:{object_id}"),
+        PolicyAction::RegisterObjectWithRelationships { relationships } => {
+            format!("register {object} with {}", relationships.len())
+        }
         PolicyAction::SetRelationship {
             relation,
             subject: on,
@@ -131,8 +135,15 @@ impl Remote {
             hold_owner_read: AtomicBool::new(false),
             owner_read_waiting: regolith::sync::Event::new(),
             owner_reads_released: regolith::sync::Event::new(),
+            hold_registrations: AtomicBool::new(false),
+            registrations_released: regolith::sync::Event::new(),
             unchecked: map(),
         })
+    }
+
+    /// Let every registration held by `hold_registrations` take effect.
+    pub(super) fn release_registrations(&self) {
+        self.registrations_released.set();
     }
 
     /// Fail every relationship write on `object` as unreachable, or take
@@ -360,6 +371,7 @@ impl VeraProvider for Remote {
         policy_id: &str,
         resource: &str,
         object_id: &str,
+        _relationships: &[acp::DerivedRelationship],
     ) -> Result<(), ProviderError> {
         self.reachable()?;
         self.executes(
@@ -371,6 +383,9 @@ impl VeraProvider for Remote {
                 action: PolicyAction::RegisterObject,
             },
         )?;
+        if self.hold_registrations.load(Ordering::SeqCst) {
+            self.registrations_released.wait().await;
+        }
         self.owners
             .insert(object_id.to_string(), Self::actor(bearer_token).to_string());
         Ok(())
@@ -572,12 +587,17 @@ pub(super) async fn start(
 }
 
 pub(super) async fn provision(node: &Node) {
-    let policy = node.add_dac_policy_as(&actor(OWNER), POLICY).await.unwrap();
-    node.add_collection(&format!(
-        "type Record @policy(id: \"{policy}\", resource: \"rows\") {{ name: String }}"
-    ))
-    .await
-    .unwrap();
+    let policy = node
+        .with_identity(identity::Did::new(OWNER).unwrap())
+        .add_dac_policy(POLICY, None)
+        .await
+        .unwrap();
+    node.with_identity(identity::Did::new(OWNER).unwrap())
+        .add_collection(&format!(
+            "type Record @policy(id: \"{policy}\", resource: \"rows\") {{ name: String }}"
+        ))
+        .await
+        .unwrap();
 }
 
 /// A node with a policy-bound collection, on local ACP or on `remote`.
@@ -631,22 +651,22 @@ fn a_local_provider_applies_in_the_transaction_and_a_remote_one_stages() {
 
         let local = node_on(None).await;
         let doc = created(local.execute_request(create("local")).await);
-        let transaction = local.begin_transaction_guard(false).await.unwrap();
-        let handle = transaction.handle().clone();
+        let transaction = local.new_txn(false).await.unwrap();
+        let handle = transaction.id();
         let change = |delete: bool| {
-            let (local, handle, owner, doc) = (&local, &handle, &owner, &doc);
+            let (local, handle, doc) = (&local, &handle, &doc);
             async move {
                 if delete {
                     local
-                        .delete_dac_actor_relationship_change_for_in_txn(
-                            handle, owner, "Record", doc, "reader", READER,
-                        )
+                        .with_transaction(*handle)
+                        .acting_for(identity::Did::new(OWNER).unwrap())
+                        .change_dac_actor_relationship("Record", doc, "reader", READER, true)
                         .await
                 } else {
                     local
-                        .add_dac_actor_relationship_change_for_in_txn(
-                            handle, owner, "Record", doc, "reader", READER,
-                        )
+                        .with_transaction(*handle)
+                        .acting_for(identity::Did::new(OWNER).unwrap())
+                        .change_dac_actor_relationship("Record", doc, "reader", READER, false)
                         .await
                 }
                 .unwrap()
@@ -661,9 +681,9 @@ fn a_local_provider_applies_in_the_transaction_and_a_remote_one_stages() {
             RelationshipChange::Applied { existed: true }
         );
         assert!(local
-            .add_dac_actor_relationship_for_in_txn(
-                &handle, &owner, "Record", &doc, "reader", READER
-            )
+            .with_transaction(handle)
+            .acting_for(identity::Did::new(OWNER).unwrap())
+            .add_dac_actor_relationship("Record", &doc, "reader", READER)
             .await
             .unwrap());
         assert_eq!(
@@ -675,9 +695,9 @@ fn a_local_provider_applies_in_the_transaction_and_a_remote_one_stages() {
             RelationshipChange::Applied { existed: false }
         );
         assert!(!local
-            .delete_dac_actor_relationship_for_in_txn(
-                &handle, &owner, "Record", &doc, "reader", READER
-            )
+            .with_transaction(handle)
+            .acting_for(identity::Did::new(OWNER).unwrap())
+            .delete_dac_actor_relationship("Record", &doc, "reader", READER)
             .await
             .unwrap());
         transaction.discard().await.unwrap();
@@ -686,12 +706,12 @@ fn a_local_provider_applies_in_the_transaction_and_a_remote_one_stages() {
         let remote = Remote::new();
         let node = node_on(Some(&remote)).await;
         let doc = created(node.execute_request(create("remote")).await);
-        let transaction = node.begin_transaction_guard(false).await.unwrap();
-        let handle = transaction.handle().clone();
+        let transaction = node.new_txn(false).await.unwrap();
+        let handle = transaction.id();
         let first = node
-            .add_dac_actor_relationship_change_for_in_txn(
-                &handle, &owner, "Record", &doc, "reader", READER,
-            )
+            .with_transaction(handle)
+            .acting_for(identity::Did::new(OWNER).unwrap())
+            .change_dac_actor_relationship("Record", &doc, "reader", READER, false)
             .await
             .unwrap();
         let RelationshipChange::Staged {
@@ -704,15 +724,15 @@ fn a_local_provider_applies_in_the_transaction_and_a_remote_one_stages() {
         // The booleans report a staged add as new and a staged delete as found.
         assert!(!first.existed_already());
         assert!(!node
-            .add_dac_actor_relationship_for_in_txn(
-                &handle, &owner, "Record", &doc, "reader", READER
-            )
+            .with_transaction(handle)
+            .acting_for(identity::Did::new(OWNER).unwrap())
+            .add_dac_actor_relationship("Record", &doc, "reader", READER)
             .await
             .unwrap());
         let deleted = node
-            .delete_dac_actor_relationship_change_for_in_txn(
-                &handle, &owner, "Record", &doc, "reader", READER,
-            )
+            .with_transaction(handle)
+            .acting_for(identity::Did::new(OWNER).unwrap())
+            .change_dac_actor_relationship("Record", &doc, "reader", READER, true)
             .await
             .unwrap();
         assert!(
@@ -721,18 +741,17 @@ fn a_local_provider_applies_in_the_transaction_and_a_remote_one_stages() {
         );
         assert!(deleted.record_found());
         assert!(node
-            .delete_dac_actor_relationship_for_in_txn(
-                &handle, &owner, "Record", &doc, "reader", READER
-            )
+            .with_transaction(handle)
+            .acting_for(identity::Did::new(OWNER).unwrap())
+            .delete_dac_actor_relationship("Record", &doc, "reader", READER)
             .await
             .unwrap());
         // A caller stages in a transaction of its own through its context.
         let own = node.runner().begin_txn_as(&owner, false).await.unwrap();
-        let in_own = owner
-            .clone()
-            .with_txn(own.as_str().parse().ok().map(defra_core::TxnId));
+        let in_own = owner.clone().with_txn(own.as_str().parse().ok());
         assert!(matches!(
-            node.change_dac_actor_relationship_as(&in_own, "Record", &doc, "reader", READER, false)
+            node.core()
+                .change_dac_actor_relationship(&in_own, "Record", &doc, "reader", READER, false)
                 .await,
             Ok(RelationshipChange::Staged { .. })
         ));
@@ -745,7 +764,8 @@ fn a_local_provider_applies_in_the_transaction_and_a_remote_one_stages() {
         assert!(remote.take_writes().is_empty(), "a rollback owes nothing");
         // Outside a transaction the provider is asked at once.
         assert_eq!(
-            node.change_dac_actor_relationship_as(&owner, "Record", &doc, "reader", READER, false)
+            node.with_identity(identity::Did::new(OWNER).unwrap())
+                .change_dac_actor_relationship("Record", &doc, "reader", READER, false)
                 .await
                 .unwrap(),
             RelationshipChange::Applied { existed: false }
@@ -762,16 +782,19 @@ fn a_staged_grant_waits_for_the_provider_and_a_staged_revocation_does_not() {
         let _serial = super::tests::SIGNING_STORE_GUARD.lock().await;
         let remote = Remote::new();
         let node = node_on(Some(&remote)).await;
-        let owner = actor(OWNER);
 
         // A grant on a document created in the same transaction.
-        let transaction = node.begin_transaction_guard(false).await.unwrap();
-        let handle = transaction.handle().clone();
-        let doc = created(node.execute_request_in_txn(create("fresh"), &handle).await);
+        let transaction = node.new_txn(false).await.unwrap();
+        let handle = transaction.id();
+        let doc = created(
+            node.with_transaction(handle)
+                .execute_request(create("fresh"))
+                .await,
+        );
         let granted = node
-            .add_dac_actor_relationship_change_for_in_txn(
-                &handle, &owner, "Record", &doc, "reader", READER,
-            )
+            .with_transaction(handle)
+            .acting_for(identity::Did::new(OWNER).unwrap())
+            .change_dac_actor_relationship("Record", &doc, "reader", READER, false)
             .await
             .unwrap();
         assert!(matches!(
@@ -785,7 +808,8 @@ fn a_staged_grant_waits_for_the_provider_and_a_staged_revocation_does_not() {
             let (node, handle) = (&node, &handle);
             async move {
                 names(
-                    node.execute_request_in_txn(as_identity("{ Record { name } }", did), handle)
+                    node.with_transaction(*handle)
+                        .execute_request(as_identity("{ Record { name } }", did))
                         .await,
                 )
             }
@@ -806,23 +830,24 @@ fn a_staged_grant_waits_for_the_provider_and_a_staged_revocation_does_not() {
         assert_eq!(reads(&node, READER).await, ["fresh"]);
 
         // A revocation denies its subject from the statement that staged it.
-        let transaction = node.begin_transaction_guard(false).await.unwrap();
-        let handle = transaction.handle().clone();
+        let transaction = node.new_txn(false).await.unwrap();
+        let handle = transaction.id();
         let read_in_txn = |did: &'static str| {
             let (node, handle) = (&node, &handle);
             async move {
                 names(
-                    node.execute_request_in_txn(as_identity("{ Record { name } }", did), handle)
+                    node.with_transaction(*handle)
+                        .execute_request(as_identity("{ Record { name } }", did))
                         .await,
                 )
             }
         };
         assert_eq!(read_in_txn(READER).await, ["fresh"]);
-        node.delete_dac_actor_relationship_change_for_in_txn(
-            &handle, &owner, "Record", &doc, "reader", READER,
-        )
-        .await
-        .unwrap();
+        node.with_transaction(handle)
+            .acting_for(identity::Did::new(OWNER).unwrap())
+            .change_dac_actor_relationship("Record", &doc, "reader", READER, true)
+            .await
+            .unwrap();
         assert!(read_in_txn(READER).await.is_empty());
         assert_eq!(read_in_txn(OWNER).await, ["fresh"]);
         assert_eq!(reads(&node, READER).await, ["fresh"], "not committed yet");
@@ -842,17 +867,12 @@ fn a_staged_grant_waits_for_the_provider_and_a_staged_revocation_does_not() {
         // A commit submits what is owed on the documents its own
         // transaction staged on, and is not held by what is owed elsewhere.
         let other = created(node.execute_request(create("other")).await);
-        let transaction = node.begin_transaction_guard(false).await.unwrap();
-        node.add_dac_actor_relationship_change_for_in_txn(
-            transaction.handle(),
-            &owner,
-            "Record",
-            &other,
-            "reader",
-            READER,
-        )
-        .await
-        .unwrap();
+        let transaction = node.new_txn(false).await.unwrap();
+        node.with_transaction(transaction.id())
+            .acting_for(identity::Did::new(OWNER).unwrap())
+            .change_dac_actor_relationship("Record", &other, "reader", READER, false)
+            .await
+            .unwrap();
         transaction.commit().await.unwrap();
         assert_eq!(
             remote.take_writes(),
@@ -864,17 +884,12 @@ fn a_staged_grant_waits_for_the_provider_and_a_staged_revocation_does_not() {
         // A change committed on the first document after the revocation
         // goes after it: once the provider takes writes there again, the
         // revocation is submitted first.
-        let transaction = node.begin_transaction_guard(false).await.unwrap();
-        node.add_dac_actor_relationship_change_for_in_txn(
-            transaction.handle(),
-            &owner,
-            "Record",
-            &doc,
-            "reader",
-            CALLER,
-        )
-        .await
-        .unwrap();
+        let transaction = node.new_txn(false).await.unwrap();
+        node.with_transaction(transaction.id())
+            .acting_for(identity::Did::new(OWNER).unwrap())
+            .change_dac_actor_relationship("Record", &doc, "reader", CALLER, false)
+            .await
+            .unwrap();
         transaction.commit().await.unwrap();
         assert!(remote.take_writes().is_empty());
         remote.cut_off(&doc, false);
@@ -905,20 +920,22 @@ fn a_change_is_staged_only_with_authority_to_submit_it_later() {
         // The caller's key never reaches the node; it owns one object.
         remote.owners.insert("bae-callers".into(), CALLER.into());
 
-        let transaction = node.begin_transaction_guard(false).await.unwrap();
-        let handle = transaction.handle().clone();
+        let transaction = node.new_txn(false).await.unwrap();
+        let handle = transaction.id();
         let stage = |context: RequestContext| {
             let (node, handle) = (&node, &handle);
             async move {
-                node.add_dac_actor_relationship_change_for_in_txn(
-                    handle,
-                    &context,
-                    "Record",
-                    "bae-callers",
-                    "reader",
-                    READER,
-                )
-                .await
+                node.core()
+                    .change_dac_actor_relationship_for(
+                        *handle,
+                        &context,
+                        "Record",
+                        "bae-callers",
+                        "reader",
+                        READER,
+                        false,
+                    )
+                    .await
             }
         };
         for context in [actor(CALLER), carrying(CALLER, "an.identity.token")] {
@@ -941,15 +958,10 @@ fn a_change_is_staged_only_with_authority_to_submit_it_later() {
         ));
         // A change by someone the provider would refuse fails as with local ACP.
         assert!(matches!(
-            node.add_dac_actor_relationship_change_for_in_txn(
-                &handle,
-                &actor(OWNER),
-                "Record",
-                "bae-callers",
-                "reader",
-                READER,
-            )
-            .await,
+            node.with_transaction(handle)
+                .acting_for(identity::Did::new(OWNER).unwrap())
+                .change_dac_actor_relationship("Record", "bae-callers", "reader", READER, false)
+                .await,
             Err(crate::Error::Acp(acp::Error::NotOwner { .. }))
         ));
         transaction.commit().await.unwrap();
@@ -976,16 +988,11 @@ fn a_restart_submits_what_the_provider_could_not_take_at_the_commit() {
         provision(&first).await;
         let doc = created(first.execute_request(create("kept")).await);
         remote.down.store(true, Ordering::SeqCst);
-        let transaction = first.begin_transaction_guard(false).await.unwrap();
+        let transaction = first.new_txn(false).await.unwrap();
         let staged = first
-            .add_dac_actor_relationship_change_for_in_txn(
-                transaction.handle(),
-                &actor(OWNER),
-                "Record",
-                &doc,
-                "reader",
-                READER,
-            )
+            .with_transaction(transaction.id())
+            .acting_for(identity::Did::new(OWNER).unwrap())
+            .change_dac_actor_relationship("Record", &doc, "reader", READER, false)
             .await
             .unwrap();
         assert!(matches!(
@@ -1029,23 +1036,19 @@ fn a_revocation_is_not_staged_while_nobody_can_check_its_actor() {
         let remote = Remote::new();
         let node = node_on(Some(&remote)).await;
         let doc = created(node.execute_request(create("shared")).await);
-        node.add_dac_actor_relationship(OWNER, "Record", &doc, "reader", READER)
+        node.with_identity(identity::Did::new(OWNER).unwrap())
+            .add_dac_actor_relationship("Record", &doc, "reader", READER)
             .await
             .unwrap();
         remote.take_writes();
         assert_eq!(reads(&node, READER).await, ["shared"]);
         remote.down.store(true, Ordering::SeqCst);
 
-        let transaction = node.begin_transaction_guard(false).await.unwrap();
+        let transaction = node.new_txn(false).await.unwrap();
         let revoked = node
-            .delete_dac_actor_relationship_change_for_in_txn(
-                transaction.handle(),
-                &actor(OWNER),
-                "Record",
-                &doc,
-                "reader",
-                "*",
-            )
+            .with_transaction(transaction.id())
+            .acting_for(identity::Did::new(OWNER).unwrap())
+            .change_dac_actor_relationship("Record", &doc, "reader", "*", true)
             .await;
         assert!(
             matches!(
@@ -1061,17 +1064,12 @@ fn a_revocation_is_not_staged_while_nobody_can_check_its_actor() {
         // from this commit on, and the next commit on the document would
         // submit it.
         assert_eq!(reads(&node, READER).await, ["shared"]);
-        let transaction = node.begin_transaction_guard(false).await.unwrap();
-        node.add_dac_actor_relationship_change_for_in_txn(
-            transaction.handle(),
-            &actor(OWNER),
-            "Record",
-            &doc,
-            "reader",
-            CALLER,
-        )
-        .await
-        .unwrap();
+        let transaction = node.new_txn(false).await.unwrap();
+        node.with_transaction(transaction.id())
+            .acting_for(identity::Did::new(OWNER).unwrap())
+            .change_dac_actor_relationship("Record", &doc, "reader", CALLER, false)
+            .await
+            .unwrap();
         transaction.commit().await.unwrap();
         assert_eq!(
             remote.take_writes(),
@@ -1094,17 +1092,12 @@ fn a_commit_returns_at_the_deadline_with_the_change_still_staged() {
         let doc = created(node.execute_request(create("shared")).await);
         let deadline = crate::acp_ops::transactional::OWED_SETTLE_DEADLINE;
 
-        let transaction = node.begin_transaction_guard(false).await.unwrap();
-        node.add_dac_actor_relationship_change_for_in_txn(
-            transaction.handle(),
-            &actor(OWNER),
-            "Record",
-            &doc,
-            "reader",
-            READER,
-        )
-        .await
-        .unwrap();
+        let transaction = node.new_txn(false).await.unwrap();
+        node.with_transaction(transaction.id())
+            .acting_for(identity::Did::new(OWNER).unwrap())
+            .change_dac_actor_relationship("Record", &doc, "reader", READER, false)
+            .await
+            .unwrap();
         remote.stalled.store(true, Ordering::SeqCst);
         let committing = std::time::Instant::now();
         transaction.commit().await.unwrap();
@@ -1121,17 +1114,12 @@ fn a_commit_returns_at_the_deadline_with_the_change_still_staged() {
         remote.cut_off(&doc, true);
         remote.stalled.store(false, Ordering::SeqCst);
         remote.released.set();
-        let transaction = node.begin_transaction_guard(false).await.unwrap();
-        node.add_dac_actor_relationship_change_for_in_txn(
-            transaction.handle(),
-            &actor(OWNER),
-            "Record",
-            &doc,
-            "reader",
-            CALLER,
-        )
-        .await
-        .unwrap();
+        let transaction = node.new_txn(false).await.unwrap();
+        node.with_transaction(transaction.id())
+            .acting_for(identity::Did::new(OWNER).unwrap())
+            .change_dac_actor_relationship("Record", &doc, "reader", CALLER, false)
+            .await
+            .unwrap();
         transaction.commit().await.unwrap();
         assert!(!remote.holds(&doc, READER));
         remote.cut_off(&doc, false);
@@ -1166,15 +1154,17 @@ fn a_userset_grant_is_decided_under_its_own_actors_authority() {
         let stage = |context: RequestContext| {
             let (node, doc) = (&node, &doc);
             async move {
-                let transaction = node.begin_transaction_guard(false).await.unwrap();
+                let transaction = node.new_txn(false).await.unwrap();
                 let staged = node
-                    .add_dac_actor_relationship_change_for_in_txn(
-                        transaction.handle(),
+                    .core()
+                    .change_dac_actor_relationship_for(
+                        transaction.id(),
                         &context,
                         "Record",
                         doc,
                         "reader",
                         members,
+                        false,
                     )
                     .await;
                 transaction.commit().await.unwrap();
@@ -1202,9 +1192,9 @@ fn a_userset_grant_is_decided_under_its_own_actors_authority() {
         remote.down.store(false, Ordering::SeqCst);
         // The node's drainer submits it once the provider is back; the
         // owner stages after that, so neither commit races the other.
-        let caller = actor(CALLER);
         eventually("the drainer did not submit the caller's change", || async {
-            node.owed_acp_as(&caller, CALLER)
+            node.with_identity(identity::Did::new(CALLER).unwrap())
+                .owed_acp(CALLER)
                 .await
                 .unwrap()
                 .iter()
@@ -1229,17 +1219,12 @@ fn a_userset_grant_is_decided_under_its_own_actors_authority() {
         remote
             .tuples
             .remove(&(doc.clone(), "reader".into(), members.into()));
-        let transaction = node.begin_transaction_guard(false).await.unwrap();
-        node.add_dac_actor_relationship_change_for_in_txn(
-            transaction.handle(),
-            &actor(OWNER),
-            "Record",
-            &doc,
-            "reader",
-            READER,
-        )
-        .await
-        .unwrap();
+        let transaction = node.new_txn(false).await.unwrap();
+        node.with_transaction(transaction.id())
+            .acting_for(identity::Did::new(OWNER).unwrap())
+            .change_dac_actor_relationship("Record", &doc, "reader", READER, false)
+            .await
+            .unwrap();
         transaction.commit().await.unwrap();
         assert_eq!(
             remote.take_writes(),

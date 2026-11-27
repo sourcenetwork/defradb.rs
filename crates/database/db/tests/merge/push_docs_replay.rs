@@ -491,6 +491,14 @@ fn a_newer_marker_on_one_failed_document_does_not_stop_the_rest() {
 /// old one must register no marker and send nothing for the removed
 /// collection after that, so the new install's retry sweep has nothing of it
 /// to send.
+fn body_sdl(name: &str) -> String {
+    format!("type {name} {{ body: String }}")
+}
+
+fn collection_id_of(name: &str) -> String {
+    crate::common::schema::parsed(&body_sdl(name)).collection_id
+}
+
 #[test]
 fn a_replay_outlived_by_a_collection_removal_registers_nothing_for_it() {
     workers::block_on(async {
@@ -499,28 +507,10 @@ fn a_replay_outlived_by_a_collection_removal_registers_nothing_for_it() {
         );
         db.set_network(edge::testing::edge());
         let mut removed_docs = Vec::new();
-        for (name, id) in [("Kept", "col-kept"), ("Removed", "col-removed")] {
-            db.create_collection(schema::CollectionVersion::new(
-                name,
-                format!("{id}-v1"),
-                id,
-                vec![
-                    schema::FieldDescription::new(
-                        "1",
-                        "_docID",
-                        schema::FieldKind::doc_id(),
-                        schema::CType::LwwRegister,
-                    ),
-                    schema::FieldDescription::new(
-                        "2",
-                        "body",
-                        schema::FieldKind::string(),
-                        schema::CType::LwwRegister,
-                    ),
-                ],
-            ))
-            .await
-            .unwrap();
+        for name in ["Kept", "Removed"] {
+            db.add_collection(&defra_core::RequestContext::ambient(), &body_sdl(name))
+                .await
+                .unwrap();
             let schema = db.get_collection(name).unwrap().unwrap().schema_arc();
             let mutator = db::AutoCommitMutator::new(db.clone());
             for index in 0..3 {
@@ -538,7 +528,7 @@ fn a_replay_outlived_by_a_collection_removal_registers_nothing_for_it() {
         let peerstore = Arc::new(db.peerstore());
         let installed = p2p::ReplicatorInfo::from_raw(
             peer.to_string(),
-            vec!["col-kept".into(), "col-removed".into()],
+            vec![collection_id_of("Kept"), collection_id_of("Removed")],
             Vec::new(),
         );
         peerstore
@@ -563,7 +553,7 @@ fn a_replay_outlived_by_a_collection_removal_registers_nothing_for_it() {
                     if !removed.swap(true, Ordering::SeqCst) {
                         let kept = p2p::ReplicatorInfo::from_raw(
                             peer.to_string(),
-                            vec!["col-kept".into()],
+                            vec![collection_id_of("Kept")],
                             Vec::new(),
                         );
                         peerstore
@@ -619,7 +609,8 @@ fn a_replay_outlived_by_a_collection_removal_registers_nothing_for_it() {
         let markers = peerstore.get_retry_documents(peer.as_str()).await.unwrap();
         for marker in &markers {
             assert!(
-                !removed_docs.contains(&marker.doc_id) && marker.collection_id != "col-removed",
+                !removed_docs.contains(&marker.doc_id)
+                    && marker.collection_id != collection_id_of("Removed"),
                 "the outlived replay left a retry marker for the removed collection: {}",
                 marker.doc_id
             );
@@ -756,6 +747,22 @@ pub(super) type ReplyScript = Arc<
         + Sync,
 >;
 
+/// What a gossip publish to [`ConnectedPeerTransport`] does. The remote peer
+/// is connected but never subscribed, so the default finds no peer on either
+/// topic.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(super) enum PublishFails {
+    /// No peer subscribed to either topic: gossipsub's `InsufficientPeers`.
+    #[default]
+    BothTopics,
+    /// Only the collection topic has no peer.
+    CollectionTopic,
+    /// Only the document topic has no peer.
+    DocumentTopic,
+    /// The transport is gone, which is not a no-subscriber case.
+    Transport,
+}
+
 #[derive(Clone)]
 pub(super) struct ConnectedPeerTransport {
     local: PeerId,
@@ -770,6 +777,7 @@ pub(super) struct ConnectedPeerTransport {
     script: Option<ReplyScript>,
     arrivals: Arc<kovan::Atom<Vec<Instant>>>,
     publishes: Arc<AtomicUsize>,
+    publish_fails: PublishFails,
 }
 
 impl ConnectedPeerTransport {
@@ -786,7 +794,14 @@ impl ConnectedPeerTransport {
             script: None,
             arrivals: Arc::new(kovan::Atom::new(Vec::new())),
             publishes: Arc::new(AtomicUsize::new(0)),
+            publish_fails: PublishFails::BothTopics,
         }
+    }
+
+    /// What this transport's gossip publishes do.
+    pub(super) fn with_publish_fails(mut self, publish_fails: PublishFails) -> Self {
+        self.publish_fails = publish_fails;
+        self
     }
 
     pub(super) fn listing_replicators(mut self, replicators: Vec<p2p::ReplicatorInfo>) -> Self {
@@ -911,12 +926,22 @@ impl p2p::P2PTransport for ConnectedPeerTransport {
 
     async fn publish(
         &self,
-        _topic: p2p::DefraTopic,
+        topic: p2p::DefraTopic,
         _msg: p2p::PushLogBroadcast,
     ) -> p2p::Result<p2p::transport::MessageId> {
         self.publishes.fetch_add(1, Ordering::SeqCst);
+        let document_topic = matches!(topic, p2p::DefraTopic::Document(_));
+        match self.publish_fails {
+            PublishFails::Transport => {
+                return Err(p2p::Error::Transport("the transport is gone".to_string()));
+            }
+            PublishFails::CollectionTopic if !document_topic => {}
+            PublishFails::DocumentTopic if document_topic => {}
+            PublishFails::BothTopics => {}
+            _ => return Ok(p2p::transport::MessageId::new("published".to_string())),
+        }
         Err(p2p::Error::GossipSubPublish(
-            "gossipsub publish error: InsufficientPeers".to_string(),
+            "InsufficientPeers".to_string(),
         ))
     }
 

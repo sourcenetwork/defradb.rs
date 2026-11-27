@@ -63,6 +63,7 @@ pub async fn export_database_as<S: Store>(
         }
         collections.to_vec()
     };
+    let filtered_names = with_chunk_collections(database, filtered_names)?;
 
     // Sort collections by collection_id (CID) to match Go's ordering.
     let mut name_cid_pairs: Vec<(String, String)> = Vec::new();
@@ -105,8 +106,19 @@ pub async fn export_database_as<S: Store>(
             })?;
 
         let schema = collection.schema().clone();
-        // Import rebuilds `@chunk` collections from the parents' text.
+        // Import rebuilds `@chunk` collections from the parents' text, so
+        // only their vectors are kept: a restore needs no model for them.
         if schema.is_generated() {
+            if !schema.vector_embeddings.is_empty() {
+                let docs = chunk_vectors(runner, context, &identity, name, &schema).await?;
+                all_collections.push(CollectionData {
+                    name: name.clone(),
+                    docs: docs
+                        .into_iter()
+                        .map(|doc_map| DocEntry { doc_map })
+                        .collect(),
+                });
+            }
             continue;
         }
         let fields = classify_schema_fields(&schema);
@@ -239,4 +251,94 @@ pub async fn export_database_as<S: Store>(
     };
 
     Ok(json_output)
+}
+
+/// `names` with the chunk collection of every chunked field they hold, so a
+/// parent's export keeps its chunk vectors.
+fn with_chunk_collections<S: Store>(
+    database: &Arc<DB<S>>,
+    mut names: Vec<String>,
+) -> Result<Vec<String>, String> {
+    let mut chunk_collections = Vec::new();
+    for name in &names {
+        let Some(collection) = database
+            .get_collection(name)
+            .map_err(|e| format!("failed to get collection '{}': {}", name, e))?
+        else {
+            continue;
+        };
+        let schema = collection.schema();
+        for chunked in &schema.chunked_fields {
+            chunk_collections.push(chunked.collection(&schema.name));
+        }
+    }
+    for name in chunk_collections {
+        if !names.contains(&name) {
+            names.push(name);
+        }
+    }
+    Ok(names)
+}
+
+/// Each current chunk's text with its vectors, once per text.
+async fn chunk_vectors(
+    runner: &Arc<dyn query::QueryExecutor>,
+    context: &defra_core::RequestContext,
+    identity: &Option<identity::Did>,
+    name: &str,
+    schema: &schema::CollectionVersion,
+) -> Result<Vec<Map<String, JsonValue>>, String> {
+    let vectors: Vec<&str> = schema
+        .vector_embeddings
+        .iter()
+        .map(|embedding| embedding.field_name.as_str())
+        .collect();
+    // A restore answers each text once, so peers that embedded the same text
+    // differently keep the vector of the lowest `_docID`, the same every export.
+    let query = format!(
+        "{{ {}(order: {{_docID: ASC}}) {{ {} {} }} }}",
+        name,
+        schema::CHUNK_TEXT_FIELD,
+        vectors.join(" ")
+    );
+    let request = query::QueryRequest::new(query)
+        .with_context(context.clone())
+        .with_identity(identity.clone());
+    let response = runner.execute(request).await;
+    if !response.errors.is_empty() {
+        let errs: Vec<String> = response.errors.iter().map(|e| e.message.clone()).collect();
+        return Err(format!("query errors for '{}': {}", name, errs.join("; ")));
+    }
+    let response_json = serde_json::to_value(&response.data)
+        .map_err(|e| format!("failed to serialize response: {}", e))?;
+    let mut seen = rapidhash::RapidHashSet::default();
+    let mut docs = Vec::new();
+    for doc in response_json
+        .get(name)
+        .and_then(JsonValue::as_array)
+        .into_iter()
+        .flatten()
+    {
+        let Some(mut doc_map) = doc.as_object().cloned() else {
+            continue;
+        };
+        doc_map.retain(|_, v| !v.is_null());
+        let text = doc_map
+            .get(schema::CHUNK_TEXT_FIELD)
+            .and_then(JsonValue::as_str);
+        if doc_map.len() > 1 && text.is_some_and(|text| seen.insert(text.to_string())) {
+            docs.push(doc_map);
+        }
+    }
+    // A stable order keeps two exports of the same data byte for byte equal.
+    docs.sort_by(|a, b| {
+        let text = |doc: &Map<String, JsonValue>| {
+            doc.get(schema::CHUNK_TEXT_FIELD)
+                .and_then(JsonValue::as_str)
+                .unwrap_or("")
+                .to_string()
+        };
+        text(a).cmp(&text(b))
+    });
+    Ok(docs)
 }

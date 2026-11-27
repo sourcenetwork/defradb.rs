@@ -1,7 +1,8 @@
 //! Opening a store upgrades older secondary-index encodings.
 
-use db::definition::migration::format::CURRENT_INDEX_FORMAT;
-use schema::{CollectionVersion, FieldDescription, FieldKind};
+use crate::common::schema::parsed;
+use db::definition::migration::format::{CURRENT_INDEX_FORMAT, INDEX_FORMAT_KEY};
+use schema::CollectionVersion;
 use storage::RegolithStore;
 
 /// The marker byte every encoded time key starts with, per `encoding::mod`.
@@ -70,21 +71,10 @@ fn a_fresh_store_opens_clean() {
     .unwrap()
 }
 
+const SIMPLE_SDL: &str = "type Tallies { count: Int }";
+
 fn simple_schema() -> CollectionVersion {
-    CollectionVersion::new(
-        "Tallies",
-        "tallies-v1",
-        "tallies-collection",
-        vec![
-            FieldDescription::new(
-                "1",
-                "_docID",
-                FieldKind::doc_id(),
-                schema::CType::LwwRegister,
-            ),
-            FieldDescription::new("2", "count", FieldKind::int(), schema::CType::LwwRegister),
-        ],
-    )
+    parsed(SIMPLE_SDL)
 }
 
 /// Older and unstamped stores are rebuilt and stamped on open.
@@ -94,7 +84,9 @@ fn older_index_formats_are_upgraded() {
         for format in [None, Some(1u32), Some(2), Some(3)] {
             let store = RegolithStore::in_memory().unwrap();
             let db = db::DB::open(store.clone()).await.unwrap();
-            db.create_collection(simple_schema()).await.unwrap();
+            db.add_collection(&defra_core::RequestContext::ambient(), SIMPLE_SDL)
+                .await
+                .unwrap();
             let txn = db.new_txn(false).await.unwrap();
             let systemstore = txn.systemstore().unwrap();
             match format {
@@ -144,7 +136,7 @@ fn upgrade_rebuilds_entries_without_deleting_legacy_keys() {
     use db::AutoCommitMutator;
     use document::{Document, NormalValue};
     use query::DocMutator;
-    use schema::IndexDescription;
+
     use std::sync::Arc;
     use storage::corekv::{IterOptions, Iterator as _};
     use storage::keys::IndexDataStoreKey;
@@ -152,15 +144,18 @@ fn upgrade_rebuilds_entries_without_deleting_legacy_keys() {
     workers::block_on(async {
         let store = RegolithStore::in_memory().unwrap();
         let db = Arc::new(db::DB::open(store.clone()).await.unwrap());
-        let schema =
-            simple_schema().with_index(IndexDescription::new("counts").with_field("count", false));
-        db.create_collection(schema.clone()).await.unwrap();
+        db.add_collection(
+            &defra_core::RequestContext::ambient(),
+            r#"type Tallies { count: Int @index(name: "counts") }"#,
+        )
+        .await
+        .unwrap();
         let collection = db.require_collection("Tallies").unwrap();
         let prefix = IndexDataStoreKey::index_prefix(
             collection.resolved_root_id(),
             collection.schema().indexes[0].id,
         );
-        let mut doc = Document::new(schema);
+        let mut doc = Document::new(simple_schema());
         doc.set("count", NormalValue::Int(42)).unwrap();
         AutoCommitMutator::new(db.clone())
             .create("Tallies", doc)
@@ -186,8 +181,8 @@ fn upgrade_rebuilds_entries_without_deleting_legacy_keys() {
             .await
             .unwrap();
         let system = txn.systemstore().unwrap();
-        system.set(b"/reindex/owed/tallies-collection", br#"{"token":17,"migration_destination":null}"#).await.unwrap();
-        system.set(b"/reindex/progress/tallies-collection", br#"{"token":17,"stage":{"Walk":{"fence":null,"last":18446744073709551615}},"deferred":[]}"#).await.unwrap();
+        system.set(format!("/reindex/owed/{}", simple_schema().collection_id).as_bytes(), br#"{"token":17,"migration_destination":null}"#).await.unwrap();
+        system.set(format!("/reindex/progress/{}", simple_schema().collection_id).as_bytes(), br#"{"token":17,"stage":{"Walk":{"fence":null,"last":18446744073709551615}},"deferred":[]}"#).await.unwrap();
         drop(system);
         drop(data);
         txn.commit().await.unwrap();
@@ -218,7 +213,9 @@ fn a_collection_created_without_open_is_reopenable() {
     workers::block_on(async {
         let store = RegolithStore::in_memory().unwrap();
         let db = db::DB::new(store.clone()).expect("construct");
-        db.create_collection(simple_schema()).await.expect("schema");
+        db.add_collection(&defra_core::RequestContext::ambient(), SIMPLE_SDL)
+            .await
+            .expect("schema");
         drop(db);
 
         let db = db::DB::open(store).await.expect("reopen");
@@ -261,4 +258,126 @@ fn an_old_format_entry_falls_outside_new_format_range_bounds() {
         "the old-format entry for the same instant is outside the window, so a \
          scan over these bounds never returns it"
     );
+}
+
+/// A store stamped before the index keyspace tag and descending JSON paths is
+/// rebuilt to the current format in one pass.
+#[test]
+fn a_format_three_descending_json_index_is_rebuilt_on_open() {
+    rebuilds_a_descending_json_index_stamped(3, false);
+}
+
+/// A full reindex a format-3 build left part-way through its walk is started
+/// over, not resumed past the documents whose keys it never rewrote.
+#[test]
+fn a_format_three_walk_left_part_way_is_restarted_on_open() {
+    rebuilds_a_descending_json_index_stamped(3, true);
+}
+
+/// A store stamped by the index keyspace tag is rebuilt for descending JSON paths.
+#[test]
+fn a_format_four_descending_json_index_is_rebuilt_on_open() {
+    rebuilds_a_descending_json_index_stamped(4, false);
+}
+
+/// A descending JSON index stamped `stored` must be rebuilt before a path range
+/// query uses current bounds. Removing the entries models keys the new scan
+/// cannot read. With `stale_walk`, an older build's reindex is owed and its
+/// walk cursor already sits past the document.
+fn rebuilds_a_descending_json_index_stamped(stored: u32, stale_walk: bool) {
+    use std::sync::Arc;
+
+    use db::{AutoCommitMutator, LensedAutoCommitFetcher, DB};
+    use document::Document;
+    use query::mutator::DocMutator;
+    use query::{QueryExecutor, QueryRequest, QueryRunner};
+    use storage::corekv::{IterOptions, Iterator as _};
+    use storage::keys::IndexDataStoreKey;
+
+    workers::block_on(async {
+        let store = RegolithStore::in_memory().unwrap();
+        let db = Arc::new(DB::open(store.clone()).await.unwrap());
+        db.add_collection(
+            &defra_core::RequestContext::ambient(),
+            "type User { name: String, custom: JSON @index(direction: DESC) }",
+        )
+        .await
+        .unwrap();
+        let collection = db.require_collection("User").unwrap();
+        let schema = collection.schema_arc();
+        let document =
+            Document::from_json_str(r#"{"name":"John","custom":{"height":180}}"#, schema.clone())
+                .unwrap();
+        AutoCommitMutator::new(db.clone())
+            .create("User", document)
+            .await
+            .unwrap();
+        let index_id = schema.indexes[0].id;
+        let prefix = IndexDataStoreKey::index_prefix(collection.resolved_root_id(), index_id);
+        let txn = db.new_txn(false).await.unwrap();
+        let datastore = txn.datastore().unwrap();
+        let mut iter = datastore
+            .iterator(IterOptions::new().with_prefix(prefix).with_keys_only(true))
+            .await
+            .unwrap();
+        let mut keys = Vec::new();
+        while let Some(pair) = iter.next().await.unwrap() {
+            keys.push(pair.key);
+        }
+        iter.close().await.unwrap();
+        drop(iter);
+        assert!(!keys.is_empty(), "the document has index entries");
+        for key in keys {
+            datastore.delete(&key).await.unwrap();
+        }
+        drop(datastore);
+        let systemstore = txn.systemstore().unwrap();
+        systemstore
+            .set(INDEX_FORMAT_KEY, &stored.to_be_bytes())
+            .await
+            .unwrap();
+        if stale_walk {
+            let collection_id = collection.collection_id();
+            systemstore
+                .set(
+                    format!("/reindex/owed/{collection_id}").as_bytes(),
+                    br#"{"token":7,"migration_destination":null}"#,
+                )
+                .await
+                .unwrap();
+            systemstore
+                .set(
+                    format!("/reindex/progress/{collection_id}").as_bytes(),
+                    br#"{"token":7,"stage":{"Walk":{"fence":1000000,"last":1000000}},"deferred":[]}"#,
+                )
+                .await
+                .unwrap();
+        }
+        drop(systemstore);
+        txn.commit().await.unwrap();
+        drop(db);
+
+        let reopened = Arc::new(DB::open(store).await.unwrap());
+        let schema = reopened
+            .require_collection("User")
+            .unwrap()
+            .schema()
+            .clone();
+        let runner = QueryRunner::new(LensedAutoCommitFetcher::new(reopened.clone()), vec![schema]);
+        let result = runner
+            .execute(QueryRequest::new(
+                "query { User(filter: {custom: {height: {_gt: 170}}}) { name } }",
+            ))
+            .await;
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+        assert_eq!(
+            result.data.unwrap(),
+            serde_json::json!({"User": [{"name": "John"}]})
+        );
+        assert_eq!(
+            reopened.stored_index_format().await.unwrap(),
+            Some(CURRENT_INDEX_FORMAT)
+        );
+    })
+    .unwrap();
 }

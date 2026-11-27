@@ -16,6 +16,7 @@ mod comment;
 mod crdt_type;
 mod describe_string_kind;
 mod duplicate_relation_name;
+mod field_type_forms;
 mod filter;
 mod get_collection_version;
 mod group;
@@ -38,6 +39,7 @@ mod migrations {
         mod with_restart;
         mod with_set_default;
         mod with_txn;
+        mod with_unique_index;
         mod with_update;
     }
     mod simple;

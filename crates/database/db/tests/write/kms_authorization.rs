@@ -1,30 +1,21 @@
+use crate::common::schema::parsed;
 use std::sync::Arc;
 
 use acp::DocumentACP;
 use db::AutoCommitMutator;
 use document::Document;
 use query::{mutator::DocMutator, QueryExecutor, QueryRequest};
-use schema::{CollectionVersion, FieldDescription, FieldKind, PolicyDescription};
 
 #[test]
 fn prepared_upsert_keeps_hidden_matches_out_of_its_target_set() {
     workers::block_on(async {
     for has_visible_match in [false, true] {
         let fixture = super::kms::fixture().await;
-        let protected = CollectionVersion::new(
-                    "Protected",
-                    "protected-v1",
-                    "protected",
-                    vec![
-                        FieldDescription::new("1", "_docID", FieldKind::doc_id(), schema::CType::LwwRegister),
-                        FieldDescription::new("2", "left", FieldKind::string(), schema::CType::LwwRegister),
-                        FieldDescription::new("3", "right", FieldKind::string(), schema::CType::LwwRegister),
-                    ],
-                )
-                .with_policy(PolicyDescription::new("policy", "protected"));
+        let protected_sdl = r#"type Protected @policy(id: "policy", resource: "protected") { left: String right: String }"#;
+        let protected = parsed(protected_sdl);
         fixture
             .db
-            .create_collection(protected.clone())
+            .add_collection(&defra_core::RequestContext::ambient(), protected_sdl)
             .await
             .unwrap();
         let acp = Arc::new(acp::LocalDocumentACP::new(Arc::new(
@@ -48,7 +39,7 @@ fn prepared_upsert_keeps_hidden_matches_out_of_its_target_set() {
                 )
                 .await
                 .unwrap();
-            acp.register_doc_object(owner, "policy", "protected", &doc.doc_id.to_string())
+            acp.register_doc_object(owner, "policy", "protected", &doc.doc_id.to_string(), &[])
                 .await
                 .unwrap();
         }

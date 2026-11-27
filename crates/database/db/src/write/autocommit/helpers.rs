@@ -159,8 +159,9 @@ pub(crate) async fn register_created_doc(
     doc: &Document,
     doc_short_id: u64,
     block_result: &BlockResult,
-    inputs: Option<&query::prepared::PreparedInputMemo>,
+    gate: crate::collection::create_gate::CreateGate,
 ) -> query::error::Result<DocID> {
+    let relationships = gate.derived.clone();
     let doc_id_str = &block_result.doc_id;
 
     if let Some(existing_id) = crate::docid::map::get_doc_id(systemstore, doc_short_id)
@@ -181,13 +182,13 @@ pub(crate) async fn register_created_doc(
             .await
             .map_err(|e| query::error::QueryError::execution(e.to_string()))?;
         if is_deleted {
-            return Err(query::error::QueryError::execution(format!(
-                "a document with the given ID has been deleted. DocID: {doc_id_str}"
-            )));
+            return Err(query::error::QueryError::DocumentDeleted(
+                doc_id_str.to_string(),
+            ));
         }
-        return Err(query::error::QueryError::execution(format!(
-            "a document with the given ID already exists. DocID: {doc_id_str}"
-        )));
+        return Err(query::error::QueryError::DocumentAlreadyExists(
+            doc_id_str.to_string(),
+        ));
     }
 
     crate::docid::map::set_doc_id_mapping(
@@ -202,101 +203,74 @@ pub(crate) async fn register_created_doc(
     // Registration happens only here, on the create branch. A local provider
     // registers in this transaction; an external one cannot join it, so the
     // registration it is owed is recorded here and settled after the commit.
-    let parent_field = collection
-        .schema()
-        .policy
-        .as_ref()
-        .and_then(|policy| policy.parent_field.as_deref());
-    if parent_field.is_some() && (acp.is_none() || context.creator().is_none()) {
-        return Err(query::error::QueryError::execution(
-            "parent-authorized registration requires an authenticated creator and ACP provider",
-        ));
-    }
     if let (Some(provider), Some(policy), Some(creator)) =
         (acp, collection.schema().policy.as_ref(), context.creator())
     {
         let creator = identity::Did::new(creator)
             .map_err(|e| query::error::QueryError::execution(e.to_string()))?;
         let acpstore = systemstore.sibling(storage::namespace::Namespace::Acpstore);
-        let scoped = provider.bind_transaction(acpstore.clone());
-        let registrar = scoped.as_deref().unwrap_or(provider.as_ref());
-        let parent = match parent_field {
-            Some(field) => {
-                let id = doc
-                    .get(field)
-                    .and_then(document::NormalValue::as_str)
-                    .filter(|s| !s.is_empty())
-                    .ok_or_else(|| {
-                        query::error::QueryError::execution(format!(
-                            "missing parent document ID in '{field}'"
-                        ))
-                    })?;
-                let parent = if scoped.is_some() {
-                    registrar
-                        .registration_parent(&policy.id, &policy.resource_name, id)
-                        .await
-                        .map_err(query::error::QueryError::from_acp)?
-                } else {
-                    inputs
-                        .ok_or_else(|| {
-                            query::error::QueryError::execution(
-                                "remote parent registration requires prepared inputs",
-                            )
-                        })?
-                        .registration_parent(
-                            &creator,
-                            context,
-                            &policy.id,
-                            &policy.resource_name,
-                            id,
-                        )?
-                };
-                Some(parent)
-            }
-            None => None,
-        };
-        match scoped {
-            Some(local) => {
-                match &parent {
-                    Some(parent) => {
-                        local
-                            .register_under_parent(
-                                &creator,
-                                &policy.id,
-                                &policy.resource_name,
-                                doc_id_str,
-                                parent,
-                            )
-                            .await
-                    }
-                    None => {
-                        local
-                            .register_doc_object(
-                                &creator,
-                                &policy.id,
-                                &policy.resource_name,
-                                doc_id_str,
-                            )
-                            .await
+        match provider.bind_transaction(acpstore.clone()) {
+            Some(scoped) => {
+                // The local engine decides `create` in this transaction, on
+                // reads the commit validates, before it registers.
+                if let Some(create) = gate.create.as_deref().filter(|_| !context.dac_bypass()) {
+                    let allowed = acp::authorize_create_through(
+                        scoped.as_ref(),
+                        &creator,
+                        &policy.id,
+                        create,
+                        &relationships,
+                    )
+                    .await
+                    .map_err(query::error::QueryError::from_acp)?;
+                    if !allowed {
+                        return Err(query::error::QueryError::from_acp(
+                            acp::Error::CreateNotAuthorized {
+                                doc_id: doc_id_str.to_owned(),
+                                reason: format!(
+                                    "{creator} may not create {}/{doc_id_str} in its collection",
+                                    policy.resource_name
+                                ),
+                            },
+                        ));
                     }
                 }
-                .map_err(|e| query::error::QueryError::execution(e.to_string()))?;
+                scoped
+                    .register_doc_object(
+                        &creator,
+                        &policy.id,
+                        &policy.resource_name,
+                        doc_id_str,
+                        &relationships,
+                    )
+                    .await
+                    .map_err(|e| query::error::QueryError::execution(e.to_string()))?
             }
             None => {
-                let mut owed = acp::PendingRegistration::new(
-                    creator.clone(),
-                    &policy.id,
-                    &policy.resource_name,
-                    doc_id_str,
+                // What is recorded is used when no request is there: a
+                // bearer this request carries for the creator, or a key the
+                // node holds. A request that carries none records none.
+                let authority = acp::bound_to_request(provider, context).command_authority(
+                    &creator,
+                    acp::ProviderCommand::RegisterObject {
+                        policy_id: &policy.id,
+                        resource: &policy.resource_name,
+                        object: doc_id_str,
+                        relationships: &relationships,
+                    },
                 );
-                owed.parent = parent;
-                let authority = acp::bound_to_request(provider, context)
-                    .command_authority(&creator, owed.command());
                 acp::PendingRegistrations::new(&acpstore)
                     .record(
-                        &owed
-                            .with_authority(authority, context.bearer_names_request())
-                            .in_transaction(context.txn().map(|txn| txn.0)),
+                        &acp::PendingRegistration::new(
+                            creator.clone(),
+                            &policy.id,
+                            &policy.resource_name,
+                            doc_id_str,
+                        )
+                        .with_relationships(relationships)
+                        .gated(gate.gated)
+                        .with_authority(authority, context.bearer_names_request())
+                        .in_transaction(context.txn().map(|txn| txn.route)),
                     )
                     .await
                     .map_err(|e| query::error::QueryError::execution(e.to_string()))?;
@@ -687,7 +661,7 @@ pub(crate) async fn unregister_deleted_doc(
     };
     outbox
         .stage_archive(acp::StageArchive {
-            txn: context.txn().map(|txn| txn.0),
+            txn: context.txn().map(|txn| txn.route),
             actor: &actor,
             policy_id: &policy.id,
             resource: &policy.resource_name,

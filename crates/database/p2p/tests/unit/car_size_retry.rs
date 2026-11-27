@@ -15,10 +15,13 @@ async fn unservable_batch_does_not_hide_later_servable_blocks() {
     let root_data = encode_ipld(ipld!({ "children": links }));
     let root = make_cid(&root_data);
     blockstore.put(&root, &root_data).await.unwrap();
-    let missing =
-        crate::sync::manager::links::find_all_missing_links(blockstore.as_ref(), &root_data)
-            .await
-            .unwrap();
+    let missing = crate::sync::manager::links::find_all_missing_links(
+        blockstore.as_ref(),
+        &root_data,
+        &crate::sync::SyncDiagnostics::default(),
+    )
+    .await
+    .unwrap();
     let oversized = missing[0];
     let last = *missing.last().unwrap();
     let transport = TestTransport::new(

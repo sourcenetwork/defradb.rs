@@ -91,19 +91,27 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
             );
         }
         let page = fetcher
-            .get_document_arrivals(&DocumentArrivalOptions {
-                collection: collection_name.clone(),
-                after: select.arrival_after,
-                limit,
-                doc_ids: select.doc_ids.clone(),
-            })
+            .get_document_arrivals(
+                &DocumentArrivalOptions {
+                    collection: collection_name.clone(),
+                    after: select.arrival_after,
+                    limit,
+                    doc_ids: select.doc_ids.clone(),
+                },
+                &DocumentReader {
+                    context: &context,
+                    acp: self.acp.as_ref(),
+                    projection: self.acp_registration_projection.as_deref(),
+                    identity: &identity,
+                },
+            )
             .await?;
         let (head, next) = (page.head, page.next);
         let mut entries = Vec::new();
         for entry in page.entries {
-            let allowed = match &collection.policy {
-                None if collection.chunk_of.is_some() => {
-                    self.chunk_readable(
+            if collection.chunk_of.is_some()
+                && !self
+                    .chunk_readable(
                         &mut chunk_reads,
                         fetcher,
                         &identity,
@@ -112,27 +120,10 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
                         &entry.doc_id,
                     )
                     .await?
-                }
-                None => true,
-                Some(policy) => {
-                    crate::txn::check_doc_read_access_as(
-                        &context,
-                        self.acp.as_ref(),
-                        self.acp_registration_projection.as_deref(),
-                        &identity,
-                        &policy.id,
-                        &policy.resource_name,
-                        &collection.collection_id,
-                        collection.is_branchable,
-                        &entry.doc_id,
-                        None,
-                    )
-                    .await?
-                }
-            };
-            if allowed {
-                entries.push(json!({"cursor": entry.cursor.to_string(), "docID": entry.doc_id}));
+            {
+                continue;
             }
+            entries.push(json!({"cursor": entry.cursor.to_string(), "docID": entry.doc_id}));
         }
         project(
             &json!({"head":head.to_string(), "next":next.to_string(), "entries":entries}),

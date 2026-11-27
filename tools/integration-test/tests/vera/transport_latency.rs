@@ -45,7 +45,7 @@ async fn measure(setup: &str, provider: Arc<VeraRsProvider>) -> serde_json::Valu
     for index in 0..WRITES {
         let started = Instant::now();
         provider
-            .register_object(&token, &policy, "users", &format!("document-{index}"))
+            .register_object(&token, &policy, "users", &format!("document-{index}"), &[])
             .await
             .expect("registration");
         writes.push(started.elapsed());

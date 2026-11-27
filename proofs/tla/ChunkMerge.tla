@@ -19,8 +19,10 @@
 \* that receives the other's copy holds two documents for one chunk.
 \*
 \* An edit can encrypt its text. Each node encrypts a chunk with a key of its
-\* own, so a chunk another node builds would get an ID of its own. A merge
-\* that keeps an encrypted text therefore builds none of its chunks. They come
+\* own, so a chunk another node builds would get an ID of its own. Chunks that
+\* carry a vector are the same: only the writer's model makes the vector, and
+\* the vector is part of the ID. In the model both are an encrypted edit
+\* (`enc`). A merge that keeps such a text therefore builds none of its chunks. They come
 \* from the edit's writer instead: a chunk's push follows its article's push,
 \* and a document sync of the article sends the chunks of its current text.
 \* Until they arrive, the chunks of that text are owed to the peer.

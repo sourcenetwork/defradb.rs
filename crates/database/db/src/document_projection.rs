@@ -336,7 +336,7 @@ impl DocumentMutationContext<'_> {
                 .view
                 .projection_context()
                 .and_then(|context| context.txn())
-                .map(|id| id.0);
+                .map(|id| id.route);
             let change = acp::StageRelationship {
                 txn,
                 actor: &actor,

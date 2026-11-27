@@ -189,9 +189,12 @@ fn cancelling_a_statement_rolls_back_only_that_statement_before_commit() {
             })
             .unwrap(),
         );
-        for schema in query::parse_sdl("type Users { name: String }").unwrap() {
-            db.create_collection(schema).await.unwrap();
-        }
+        db.add_collection(
+            &defra_core::RequestContext::ambient(),
+            "type Users { name: String }",
+        )
+        .await
+        .unwrap();
         let registry = Arc::new(DbTransactionRegistry::new(Arc::clone(&db)));
         let runner = Arc::new(query::QueryRunner::with_arc_registry_and_provider(
             LensedAutoCommitFetcher::new(Arc::clone(&db)),
@@ -255,9 +258,12 @@ fn timing_out_a_statement_rolls_back_only_that_statement_before_commit() {
         .unwrap();
         db.set_event_bus(bus.clone());
         let db = Arc::new(db);
-        for schema in query::parse_sdl("type Users { name: String }").unwrap() {
-            db.create_collection(schema).await.unwrap();
-        }
+        db.add_collection(
+            &defra_core::RequestContext::ambient(),
+            "type Users { name: String }",
+        )
+        .await
+        .unwrap();
         let registry = Arc::new(DbTransactionRegistry::new(Arc::clone(&db)));
         let runner = Arc::new(
             query::QueryRunner::with_arc_registry_and_provider(
@@ -337,9 +343,7 @@ fn failed_partial_batch_keeps_prior_statements_and_discards_its_own_writes() {
     .unwrap();
     db.set_event_bus(bus.clone());
     let db = Arc::new(db);
-    for schema in query::parse_sdl("type Users { email: String @index(unique: true) }").unwrap() {
-        db.create_collection(schema).await.unwrap();
-    }
+    db.add_collection(&defra_core::RequestContext::ambient(), "type Users { email: String @index(unique: true) }").await.unwrap();
     let after_schema = gate.block_keys.load().len();
     let registry = Arc::new(DbTransactionRegistry::new(Arc::clone(&db)));
     let runner = Arc::new(query::QueryRunner::with_arc_registry_and_provider(

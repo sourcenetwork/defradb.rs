@@ -100,10 +100,9 @@ just ci                # Reproduce the CI pipeline locally
 ### FFI release variants
 
 Every release ships three FFI families: **full** (`defra-ffi_*`), carrying the
-libp2p transport, Lens migrations, and Vera ACP; **iroh**
+libp2p transport and Lens migrations; **iroh**
 (`defra-ffi-iroh_*`), an iOS XCFramework that adds the iroh transport on top of
-libp2p; and **lean** (`defra-ffi-lean_*`), libp2p-only with no Lens migrations
-and no Vera ACP. Iroh ships in that XCFramework alone, so no single
+libp2p; and **lean** (`defra-ffi-lean_*`), libp2p-only with no Lens migrations. Iroh ships in that XCFramework alone, so no single
 artifact carries every capability. All of them expose the same `defra.h`
 and the same mobile JSON schema, so the choice is a size tradeoff and not an API
 one: configuring a capability the build does not carry fails with an explicit

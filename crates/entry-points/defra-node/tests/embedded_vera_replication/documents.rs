@@ -62,13 +62,8 @@ impl Peer {
     /// Grant `relation` on `doc` to `target`, as this peer's owner.
     pub async fn grant(&self, doc: &str, relation: &str, target: &Did) {
         self.node
-            .add_dac_actor_relationship(
-                self.owner().did.as_str(),
-                "Users",
-                doc,
-                relation,
-                target.as_str(),
-            )
+            .with_identity(identity::Did::new(self.owner().did.as_str()).unwrap())
+            .add_dac_actor_relationship("Users", doc, relation, target.as_str())
             .await
             .expect("grant");
     }
@@ -76,13 +71,8 @@ impl Peer {
     /// Revoke `relation` on `doc` from `target`, as this peer's owner.
     pub async fn revoke(&self, doc: &str, relation: &str, target: &Did) {
         self.node
-            .delete_dac_actor_relationship(
-                self.owner().did.as_str(),
-                "Users",
-                doc,
-                relation,
-                target.as_str(),
-            )
+            .with_identity(identity::Did::new(self.owner().did.as_str()).unwrap())
+            .delete_dac_actor_relationship("Users", doc, relation, target.as_str())
             .await
             .expect("revoke");
     }
