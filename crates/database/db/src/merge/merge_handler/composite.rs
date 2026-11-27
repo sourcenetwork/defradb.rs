@@ -641,7 +641,14 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
         match process_result {
             Ok(Some(outcome)) => {
                 txn.force_discard()?;
-                if outcome.is_terminal_skip() && !from_collection {
+                let applied_skip = matches!(
+                    &outcome,
+                    MergeOutcome::Skipped {
+                        reason,
+                        terminal: true,
+                    } if MergeOutcome::skip_reason_is_applied(reason)
+                );
+                if applied_skip && !from_collection {
                     if let Some(bus) = self.db.event_bus() {
                         let merge_complete = MergeCompleteData {
                             doc_id: doc_id_str.to_string(),
@@ -1103,7 +1110,14 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
 
         let result = match process_result {
             Ok(Some(outcome)) => {
-                if outcome.is_terminal_skip() && !from_collection {
+                let applied_skip = matches!(
+                    &outcome,
+                    MergeOutcome::Skipped {
+                        reason,
+                        terminal: true,
+                    } if MergeOutcome::skip_reason_is_applied(reason)
+                );
+                if applied_skip && !from_collection {
                     let merge_complete = MergeCompleteData {
                         doc_id: doc_id_str.to_string(),
                         subject_doc_id: None,

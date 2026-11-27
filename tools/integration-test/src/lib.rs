@@ -5,6 +5,7 @@ mod cli_command;
 mod client_type;
 pub mod clients;
 pub mod commit_gate;
+pub mod crash;
 mod cross_runtime;
 pub mod export;
 mod feature_binaries;
