@@ -1,4 +1,4 @@
-use crate::actions::shared::{IndexGate, KeyType, NodeClient};
+use crate::actions::shared::{IndexGate, KeyType, NodeClient, RefuseWrites};
 use crate::client_type::ClientType;
 use std::sync::Arc;
 use std::time::Duration;
@@ -120,6 +120,11 @@ pub struct NewNode {
     /// Badger datastore Go DefraDB keeps there.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub go_datastore: bool,
+    /// A Rust node whose embedder's write validator refuses the writes this
+    /// describes. Access hooks need the iroh network, so it also takes
+    /// `network` and `iroh`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub write_validator: Option<RefuseWrites>,
     #[serde(default, skip_serializing_if = "Value::is_null")]
     pub expected_data: Value,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -171,6 +176,7 @@ impl Op for NewNode {
         probe.commit_gate = false;
         probe.commit_timeout_ms = None;
         probe.max_txn_retries = None;
+        probe.write_validator = None;
         if probe != Self::default() {
             let options = serde_json::to_string(&probe).unwrap_or_default();
             return Err(Failure::unsupported(format!("{} {options}", Self::name())));
@@ -240,6 +246,9 @@ impl Op for NewNode {
                 .map(Arc::new),
             commit_timeout: self.commit_timeout_ms.map(Duration::from_millis),
             max_txn_retries,
+            write_validator: self.write_validator.clone().map(|validator| {
+                Arc::new(validator) as Arc<dyn query::access_hooks::WriteValidator>
+            }),
             ..Default::default()
         };
         state.try_start_node(self.common.node(), spec)?;

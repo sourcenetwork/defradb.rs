@@ -7,6 +7,7 @@ mod key_type;
 mod lens;
 mod node_client;
 mod topic;
+mod write_validator;
 
 pub use event_type::EventType;
 pub use expected_action::ExpectedAction;
@@ -17,3 +18,4 @@ pub use key_type::KeyType;
 pub use lens::{Lens, LensModule};
 pub use node_client::NodeClient;
 pub use topic::Topic;
+pub use write_validator::RefuseWrites;

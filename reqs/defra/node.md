@@ -19,8 +19,9 @@ A node whose data directory holds the Badger datastore Go DefraDB writes there (
 # `defra.write_validator`: An embedder's validator of local writes
 
 - **Parents:** ["defra"]
+- **Scenarios:** ["mutation::upsert::write_validator::a_write_validator_refuses_an_upsert_that_would_add", "mutation::upsert::write_validator::a_write_validator_refuses_an_upsert_that_would_update"]
 
-An embedder may give a node a `query::access_hooks::WriteValidator` (`AccessHooks::with_write_validator`), asked `validate_write` for every local `add`, `update` and `delete` mutation a client sends, before ACP checks and before any block is built. `Err(message)` refuses the mutation with that message; `Ok(())` lets it run. `truncate` is not a document write and is not asked: its whole-collection delete collects no document inputs a validator could judge (#3501).
+An embedder may give a node a `query::access_hooks::WriteValidator` (`AccessHooks::with_write_validator`), asked `validate_write` for every local `add`, `update`, `upsert` and `delete` mutation a client sends, before ACP checks and before any block is built. `Err(message)` refuses the mutation with that message; `Ok(())` lets it run. An `upsert` is asked with both its `add` and its `update` input, whether its filter matches a document (the update arm) or not (the add arm), so a refusal blocks either arm and nothing is written. `truncate` is not a document write and is not asked: its whole-collection delete collects no document inputs a validator could judge (#3501).
 
 # `defra.write_validator.once`: The validator is asked once per mutation
 

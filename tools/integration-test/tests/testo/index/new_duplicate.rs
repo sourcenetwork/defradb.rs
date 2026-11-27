@@ -254,8 +254,9 @@ fn index_new_over_the_hidden_relation_index_is_created() {
 }
 
 /// A vector index the collection already has is refused too, whichever of its
-/// unset defaults the second request spells out. A vector index repeated with
-/// different parameters is a different index and is created.
+/// unset defaults the second request spells out or leaves out. A vector index
+/// repeated with a different HNSW parameter or metric is a different index
+/// and is created.
 #[test]
 #[mantra_macros::req_test("defra.index.definition.create-duplicate")]
 fn index_new_same_vector_index_twice_is_refused() {
@@ -307,13 +308,32 @@ fn index_new_same_vector_index_twice_is_refused() {
                 }),
                 Some("index with the same definition already exists. Name: by_embedding"),
             ),
+            // No HNSW block means HNSW with its defaults: refused too.
+            by_embedding(
+                "by_embedding_bare",
+                json!({ "Dimensions": 3, "Metric": "COSINE" }),
+                Some("index with the same definition already exists. Name: by_embedding"),
+            ),
             // A different HNSW parameter is a different index.
             by_embedding(
                 "by_embedding_wide",
                 json!({ "Dimensions": 3, "HNSW": { "M": 32 }, "Metric": "COSINE" }),
                 None,
             ),
-            listed("User", &["by_embedding", "by_embedding_wide"]),
+            // So is a different metric.
+            by_embedding(
+                "by_embedding_euclidean",
+                json!({ "Dimensions": 3, "HNSW": {}, "Metric": "EUCLIDEAN" }),
+                None,
+            ),
+            listed(
+                "User",
+                &[
+                    "by_embedding",
+                    "by_embedding_wide",
+                    "by_embedding_euclidean",
+                ],
+            ),
         ],
     );
 }

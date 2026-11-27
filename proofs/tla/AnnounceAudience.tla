@@ -48,10 +48,13 @@
 \*     receives, so they cannot break INV_GoAudience.
 \*   * How a publish result is classified is left out: the model has one
 \*     topic and no per-topic outcome. Broadcaster::broadcast_update
-\*     classify_publishes marks a topic with no subscriber in
-\*     `*_is_no_topic_peer` for each of the three combinations (both,
-\*     collection only, document only), and broadcast_with_creator reports
-\*     Success for each. That decides what is logged and reported, never who
+\*     classify_publishes returns NoSubscribers when neither topic has a
+\*     subscriber. When only one has none, it returns the partial result
+\*     for the other (PartialDocumentOnly when the collection topic has
+\*     none, PartialCollectionOnly when the document topic has none) with
+\*     that topic's `*_is_no_topic_peer` flag set. broadcast_with_creator
+\*     reports Success for NoSubscribers and for a partial result whose
+\*     flag is set. That decides what is logged and reported, never who
 \*     receives the write, so it cannot break INV_GoAudience; the
 \*     broadcaster's unit tests cover it.
 
