@@ -255,6 +255,20 @@ fn as_int(value: Option<&Value>) -> i64 {
     value.and_then(Value::as_i64).unwrap_or_default()
 }
 
+/// Nodes that wrap a request's `selectNode`, in whatever order each runtime
+/// nests them (Go puts `sumNode` above `countNode`, Rust the other way round).
+const WRAPPER_NODES: [&str; 9] = [
+    "limitNode",
+    "orderNode",
+    "similarityNode",
+    "groupNode",
+    "countNode",
+    "sumNode",
+    "averageNode",
+    "minNode",
+    "maxNode",
+];
+
 pub fn match_explain_scan(want: &Map<String, Value>, actual: &Value) -> bool {
     let Some(explain) = actual.get("explain").and_then(Value::as_object) else {
         return false;
@@ -272,10 +286,8 @@ pub fn match_explain_scan(want: &Map<String, Value>, actual: &Value) -> bool {
     let Some(mut node) = operation.get("selectTopNode").and_then(Value::as_object) else {
         return false;
     };
-    for key in ["limitNode", "orderNode", "similarityNode"] {
-        if let Some(child) = object(node, key) {
-            node = child;
-        }
+    while let Some(child) = WRAPPER_NODES.iter().find_map(|key| object(node, key)) {
+        node = child;
     }
     let Some(select) = object(node, "selectNode") else {
         return false;

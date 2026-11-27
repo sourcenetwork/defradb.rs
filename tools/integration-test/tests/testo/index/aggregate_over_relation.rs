@@ -73,23 +73,27 @@ fn scenario(id: &'static str, sdl: &str, request: Request) -> TestCase {
     }
 }
 
-fn group_by_indexed_fk_with_fk_filter() -> Request {
-    Request {
-        request: Text::concat([
-            Text::from(
-                r#"query {
-                Bar(groupBy: [_fooID], filter: {_fooID: {_eq: ""#,
-            ),
-            Text::reference("alice"),
-            Text::from(
-                r#""}}) {
+fn group_by_fk_with_fk_filter_text(directive: &str) -> Text {
+    Text::concat([
+        Text::from(format!(
+            r#"query {directive} {{
+                Bar(groupBy: [_fooID], filter: {{_fooID: {{_eq: ""#
+        )),
+        Text::reference("alice"),
+        Text::from(
+            r#""}}) {
                     _fooID
                     SUM(GROUP: {field: points})
                     COUNT(GROUP: {})
                 }
             }"#,
-            ),
-        ]),
+        ),
+    ])
+}
+
+fn group_by_indexed_fk_with_fk_filter() -> Request {
+    Request {
+        request: group_by_fk_with_fk_filter_text(""),
         expected_data: json!({
             "Bar": [{ "_fooID": m::r("alice"), "SUM": 30, "COUNT": 2 }],
         }),
@@ -100,12 +104,23 @@ fn group_by_indexed_fk_with_fk_filter() -> Request {
 #[test]
 #[mantra_macros::req_test("defra.index.relation.aggregate")]
 fn group_by_indexed_fk_with_fk_filter_sums_the_group() {
-    scenario(
+    let mut test = scenario(
         integration_test::scenario_id!(),
         INDEXED_SDL,
         group_by_indexed_fk_with_fk_filter(),
-    )
-    .execute();
+    );
+    test.actions.push(
+        Request {
+            request: group_by_fk_with_fk_filter_text("@explain(type: execute)"),
+            expected_data: json!(m::explain_scan_at(
+                json!({ "indexFetches": 2, "filterMatches": 2 }),
+                json!(["root"])
+            )),
+            ..Default::default()
+        }
+        .into(),
+    );
+    test.execute();
 }
 
 #[test]

@@ -117,7 +117,9 @@ fn composite_index_with_none_on_second_field_uses_first_field() {
             first_and_none(),
             Request {
                 request: FIRST_AND_NONE_EXPLAIN.into(),
-                expected_data: json!(m::explain_scan(json!({ "indexFetches": 6 }))),
+                expected_data: json!(m::explain_scan(
+                    json!({ "indexFetches": 6, "filterMatches": 1 })
+                )),
                 ..Default::default()
             },
         ],
@@ -146,7 +148,9 @@ fn composite_index_with_only_none_on_second_field_scans() {
             only_none(),
             Request {
                 request: ONLY_NONE_EXPLAIN.into(),
-                expected_data: json!(m::explain_scan(json!({ "indexFetches": 0 }))),
+                expected_data: json!(m::explain_scan(
+                    json!({ "indexFetches": 0, "filterMatches": 2 })
+                )),
                 ..Default::default()
             },
         ],

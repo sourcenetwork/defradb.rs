@@ -362,6 +362,24 @@ fn explain_scan_reads_the_requested_counters() {
 }
 
 #[test]
+fn explain_scan_looks_through_aggregate_and_group_nodes() {
+    let select = json!({"filterMatches": 2, "typeIndexJoin": {"typeJoinOne": {"root": {"scanNode": {"indexFetches": 2}}}}});
+    let actual = json!({"explain": {
+        "executionSuccess": true,
+        "operationNode": [{"selectTopNode": {"sumNode": {"countNode": {"groupNode": {"selectNode": select}}}}}]
+    }});
+    let metrics = json!({"indexFetches": 2, "filterMatches": 2});
+    assert!(matches(
+        m::explain_scan_at(metrics, json!(["root"])),
+        actual.clone()
+    ));
+    assert!(!matches(
+        m::explain_scan_at(json!({"indexFetches": 0}), json!(["root"])),
+        actual
+    ));
+}
+
+#[test]
 fn explain_pattern_compares_the_plan_node_skeleton() {
     let actual = json!({"explain": {
         "executionSuccess": true,
