@@ -78,12 +78,14 @@ impl PendingDagLease {
     /// A root with a durable record that has had
     /// `PENDING_ROTATE_AFTER_DISPATCHES` dispatches without merging instead
     /// gives its in-memory entry up when it holds a contended place (the map
-    /// is full, or its source peer is at its quota) while a durable root has
-    /// no entry. Its record stays, and the resync sweep, which resumes after
-    /// the place it admitted at last and gives a peer's places to that peer's
-    /// roots in turn, brings it back once the others had a turn: durable
-    /// roots past the cap take turns instead of the first ones in key order
-    /// holding the map for good.
+    /// is full, or its source peer is at its quota) and another durable root
+    /// could take the freed place. The resync sweep, which resumes after the
+    /// place it admitted at last and gives a peer's places to that peer's
+    /// roots in turn, admits that root: durable roots past the cap take turns
+    /// instead of the first ones in key order holding the map for good. The
+    /// rotating root keeps its entry when every other waiter is still held
+    /// out, so it keeps making progress and does not wake a sweep that could
+    /// only re-admit it.
     ///
     /// `sample` feeds the root's estimates and nothing else: the re-arm is the
     /// same whatever it says.
@@ -93,16 +95,20 @@ impl PendingDagLease {
         let rotates = durable
             && self.pending.read(|pending| {
                 pending.get(&self.root_cid).is_some_and(|dag| {
-                    dag.dispatches >= PENDING_ROTATE_AFTER_DISPATCHES
+                    let contended = dag.dispatches >= PENDING_ROTATE_AFTER_DISPATCHES
                         && (pending.len() >= self.max_pending_dags
                             || dag.source_peer.as_deref().is_some_and(|peer| {
                                 pending.source_count(peer) >= self.max_per_peer
-                            }))
-                }) && self.persisted.len()
-                    > pending
-                        .keys()
-                        .filter(|root| self.persisted.contains(root))
-                        .count()
+                            }));
+                    contended
+                        && waiting_durable_root_fits_after_removing(
+                            pending,
+                            &self.persisted,
+                            self.max_pending_dags,
+                            self.max_per_peer,
+                            &self.root_cid,
+                        )
+                })
             });
         self.pending.update(|pending| {
             if rotates {
@@ -241,6 +247,37 @@ fn waiting_durable_root_fits(
             persisted.source(&root).is_some_and(|peer| {
                 peer.as_deref()
                     .is_none_or(|peer| pending.source_count(peer) < max_per_peer)
+            })
+        })
+}
+
+/// Whether a durable root other than `removed` could take its place after it
+/// leaves the map: both the map and that root's peer have room.
+fn waiting_durable_root_fits_after_removing(
+    pending: &PendingDagRegistry,
+    persisted: &PersistedView,
+    max_pending_dags: usize,
+    max_per_peer: usize,
+    removed: &Cid,
+) -> bool {
+    let removed_source = pending
+        .get(removed)
+        .and_then(|dag| dag.source_peer.as_deref());
+    let len_after = pending
+        .len()
+        .saturating_sub(usize::from(pending.contains_key(removed)));
+    len_after < max_pending_dags
+        && persisted.roots().into_iter().any(|root| {
+            if root == *removed || pending.contains_key(&root) {
+                return false;
+            }
+            persisted.source(&root).is_some_and(|peer| {
+                peer.as_deref().is_none_or(|peer| {
+                    let held_after = pending.source_count(peer).saturating_sub(usize::from(
+                        removed_source.is_some_and(|removed| removed == peer),
+                    ));
+                    held_after < max_per_peer
+                })
             })
         })
 }

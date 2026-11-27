@@ -395,9 +395,10 @@ pub(super) const PROPERTIES: &[Property] = &[
         // #2307: the resync sweep sleeps between its 60-second ticks. Every
         // in-memory entry removal with a waiting durable root that has map and
         // peer room wakes it: rotation, an ending continuation, TTL eviction,
-        // quarantine, merged cleanup, and persisted-record removal. A waiter
-        // held out by its peer quota does not start a sweep that cannot admit
-        // it.
+        // quarantine, merged cleanup, and persisted-record removal. A rotating
+        // root keeps its entry unless another waiter can take the place, so a
+        // waiter held out by its peer quota does not start a sweep that could
+        // only re-admit the same root.
         family: "Sync ownership transfer (head hint / receiver pull)",
         name: "INV_FreedPlaceArmed: a freed in-memory place wakes the resync sweep",
         axis: Tla,

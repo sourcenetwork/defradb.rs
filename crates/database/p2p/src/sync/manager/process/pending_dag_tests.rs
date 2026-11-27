@@ -224,6 +224,100 @@ async fn a_freed_place_wakes_only_when_the_waiting_peer_has_room() {
     );
 }
 
+async fn manager_with_rotation_waiters(
+    waiting_peer: &str,
+) -> (SyncManager<DefraBlockstore<RegolithStore>>, Cid, Cid) {
+    use crate::sync::pending_store::{PendingDagStorage, PendingDagStore, PersistedPendingDag};
+
+    let manager = test_manager_with_config(SyncConfig {
+        max_pending_dags: 4,
+        ..SyncConfig::default()
+    });
+    let rotating = test_cid(904);
+    let anchors = [test_cid(905), test_cid(906), test_cid(907)];
+    let waiter = test_cid(908);
+    for (index, root) in std::iter::once(rotating).chain(anchors).enumerate() {
+        let peer = format!("peer{index}");
+        manager.insert_pending_dag(
+            root,
+            pending_dag_from("held", Some(peer.as_str()), Instant::now()),
+        );
+    }
+
+    let store = Arc::new(PendingDagStore::new(Arc::new(
+        RegolithStore::in_memory().unwrap(),
+    )));
+    for (root, doc_id, peer) in [
+        (rotating, "rotating", "peer0"),
+        (anchors[0], "anchor0", "peer1"),
+        (anchors[1], "anchor1", "peer2"),
+        (anchors[2], "anchor2", "peer3"),
+        (waiter, "waiter", waiting_peer),
+    ] {
+        store
+            .put(
+                &root,
+                &PersistedPendingDag {
+                    doc_id: doc_id.to_string(),
+                    collection_id: "collection".to_string(),
+                    head_priority: None,
+                    creator: "creator".to_string(),
+                    source_peer: Some(peer.to_string()),
+                    alternate_providers: Vec::new(),
+                    is_explicit_replicator: false,
+                    explicit_replay_authorization: None,
+                },
+            )
+            .await
+            .unwrap();
+    }
+    manager.install_pending_dag_store(store).await;
+    manager.pending_dags.update(|pending| {
+        pending.get_mut(&rotating).unwrap().dispatches = PENDING_ROTATE_AFTER_DISPATCHES;
+    });
+    (manager, rotating, waiter)
+}
+
+#[nuclei::test]
+async fn rotation_keeps_its_place_when_no_other_root_fits() {
+    use futures::FutureExt;
+
+    let (manager, rotating, _) = manager_with_rotation_waiters("peer1").await;
+    let lease = manager.pending_dag_lease(rotating);
+    lease.finish_attempt(false, crate::sync::arbitration::AttemptSample::Skipped);
+
+    assert!(
+        manager
+            .pending_dags
+            .read(|pending| pending.contains_key(&rotating)),
+        "the rotating root left a place no other durable root could take"
+    );
+    assert!(
+        manager.durable_only_ready().now_or_never().is_none(),
+        "a rotation that cannot admit another root started a sweep"
+    );
+}
+
+#[nuclei::test]
+async fn rotation_hands_the_place_to_another_fitting_root() {
+    use futures::FutureExt;
+
+    let (manager, rotating, _) = manager_with_rotation_waiters("peer0").await;
+    let lease = manager.pending_dag_lease(rotating);
+    lease.finish_attempt(false, crate::sync::arbitration::AttemptSample::Skipped);
+
+    assert!(
+        !manager
+            .pending_dags
+            .read(|pending| pending.contains_key(&rotating)),
+        "the rotating root kept a place another durable root could take"
+    );
+    assert!(
+        manager.durable_only_ready().now_or_never().is_some(),
+        "a handoff to another fitting root did not wake the sweep"
+    );
+}
+
 #[nuclei::test]
 async fn key_arrival_promotes_pending_retries() {
     use futures::FutureExt;

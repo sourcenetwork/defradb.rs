@@ -18,7 +18,6 @@ mod p2p_admission;
 mod p2p_admission_fairness;
 mod p2p_admission_restart;
 mod p2p_backlog;
-mod p2p_burst_convergence;
 mod p2p_deep_catchup;
 mod p2p_interop_bench;
 mod p2p_iroh;

@@ -23,8 +23,8 @@
 \* restart.
 \*
 \* The sweep sleeps between runs. It runs at its tick, or at once when it is
-\* woken: a durable record left, or an entry gave its place up while a
-\* durable root that fits waits for one (#2307). Waking is what keeps a freed
+\* woken: a durable record left, or an entry gave its place up to another
+\* durable root that fits (#2307). Waking is what keeps a freed
 \* place from standing empty for a whole tick while roots wait behind it:
 \* after a write burst, roots that wait on another document (a chunk whose
 \* parent has not merged) give their places up one after another, nothing
@@ -109,8 +109,8 @@
 \*     (admit durable roots: the places in key order after the place admitted last, and a
 \*     peer's places to its roots in turn after the one admitted last),
 \*     PendingDagLease::finish_attempt (a root that spent its dispatches gives its entry
-\*     up while a durable root waits and it holds a contended place, and wakes the sweep
-\*     when the waiter fits), evict_expired, clear_pending_dag, quarantine_pending_dag,
+\*     up only when another durable root fits the freed place, and wakes the sweep),
+\*     evict_expired, clear_pending_dag, quarantine_pending_dag,
 \*     notify_if_durable_root_fits (every entry removal uses the same fit check),
 \*     continue_merge (a local continuation), consume_pending_merge_continuation and
 \*     MergeTurn (the continuation ends when a turn does not yield again, and wakes the
@@ -219,6 +219,18 @@ PeerHeld(r) == {q \in Held : PeerOf(q[1]) = PeerOf(r[1])}
 PeerQuota == IF ~crashed THEN Cap ELSE IF MemCap \div 4 > 1 THEN MemCap \div 4 ELSE 1
 \* A root the map and its peer's quota have room for.
 Fits(r) == Cardinality(Held) < MemBound /\ Cardinality(PeerHeld(r)) < PeerQuota
+\* The entries left after r gives its place up.
+HeldAfterGivingUp(r) == Held \ {r}
+\* The in-memory entries of q's peer after r gives its place up.
+PeerHeldAfterGivingUp(r, q) ==
+  {p \in HeldAfterGivingUp(r) : PeerOf(p[1]) = PeerOf(q[1])}
+\* A waiting root other than r has room for the place r would free.
+FitsAfterGivingUp(r, q) ==
+  /\ q \in Waiting \ {r}
+  /\ Cardinality(HeldAfterGivingUp(r)) < MemBound
+  /\ Cardinality(PeerHeldAfterGivingUp(r, q)) < PeerQuota
+\* Some other waiting root can take the place r would free.
+AnotherWaiterFitsAfterGivingUp(r) == \E q \in Waiting \ {r} : FitsAfterGivingUp(r, q)
 \* The scope's current head, which the head links, holds an entry the head
 \* would take over.
 ReplacesInMemory(s, v) == Supersedes(s, v) \cap mem # {}
@@ -370,10 +382,11 @@ MClaim(s, v) ==
 
 \* The end of a root's attempt (PendingDagLease::finish_attempt). A root that
 \* had RotateAfter dispatches gives its entry up, keeping its durable record,
-\* when a durable root has no entry and the map is full or the root's peer is at
-\* its quota; any other root waits out its backoff. An attempt whose result was
-\* lost has not ended. Giving the entry up wakes the sweep, since a durable
-\* root waits for the place; NoRotateWake, the bug, leaves it asleep.
+\* when another durable root can take the freed place and the map is full or
+\* the root's peer is at its quota; any other root waits out its backoff and
+\* keeps its entry. An attempt whose result was lost has not ended. Giving the
+\* entry up wakes the sweep, since another durable root waits for the place;
+\* NoRotateWake, the bug, leaves it asleep.
 EndAttempt(r) ==
   IF \* Retained, the rule before, never gives an acknowledged entry up.
      /\ OverflowMode # "Retained"
@@ -381,9 +394,9 @@ EndAttempt(r) ==
      /\ r \in mem
      /\ dispatches[r] >= RotateAfter
      /\ flights'[r] = 0
-     \* Another durable root waits for an entry, and the map or the root's peer
-     \* is full.
-     /\ Waiting # {}
+     \* Another durable root can take the place this one frees, and the map or
+     \* the root's peer is full.
+     /\ AnotherWaiterFitsAfterGivingUp(r)
      /\ Cardinality(Held) >= MemBound \/ Cardinality(PeerHeld(r)) >= PeerQuota
   \* The entry goes; the durable record (pending) stays.
   THEN /\ mem' = mem \ {r}
