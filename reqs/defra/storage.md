@@ -381,6 +381,13 @@ A transaction that reads document alice and updates her `age` to 10 commits succ
 
 A transaction runs `update_Snap(input: {status: "claimed"}) { content }` and gets `content: "init"`; another writer sets `content` to `"changed"` and commits first. The transaction still commits, and the document reads `status: "claimed"`, `content: "changed"`. What an update returns is read, not decided on, so it is not validated at commit. Go conflicts here.
 
+# `defra.txn.relation_join_read`: A query's one-to-one join does not fail its transaction's commit
+
+- **Parents:** ["defra.txn"]
+- **Scenarios:** ["txn::relation_join_read::a_one_to_one_join_read_does_not_fail_the_commit", "txn::relation_join_read::a_writer_of_the_same_link_still_loses_the_commit", "mutation::add::field_kinds::one_to_one_to_one::with_txn::transactional_creation_and_linking_of_relational_documents_backward"]
+
+With `Book { name: String publisher: Publisher @primary }` and `Publisher { name: String published: Book }` and publishers Website and Online, an explicit transaction adds `{name: "Mine", _publisherID: <Website>}` and runs `Book { name publisher { name } }`, which returns only its own book. An autocommit `add_Book` of `{name: "Theirs", _publisherID: <Online>}` then succeeds, and committing the transaction succeeds too: the join's read of the books decides nothing, so it is not checked at commit. `Book { name publisher { name } }` then returns both books. If the autocommit book links Website instead, committing the transaction fails with `transaction conflict. Please retry` and only the autocommit book is stored: the transaction's own check that Website was free is still validated. The same holds for two explicit transactions that each add a book for a different publisher and then query books: both commit. Go fails the second of those commits with `transaction conflict. Please retry`; that is a deliberate divergence.
+
 # `defra.document`: Documents
 
 - **Parents:** ["defra"]
