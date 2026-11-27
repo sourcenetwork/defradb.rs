@@ -1,6 +1,6 @@
 //! End-to-end ACP round-trip with a secp256k1-keyed identity over P2P.
 //!
-//! `crates/database/db/src/merge/peer_identity.rs` ships unit tests that prove a
+//! `crates/database/db/tests/merge/peer_identity.rs` ships unit tests that prove a
 //! secp256k1 libp2p key recovers the same `did:key:z7r8...` DID Go
 //! produces for the same private bytes. Those tests cover the conversion
 //! pipeline in isolation; this test exercises the full flow:

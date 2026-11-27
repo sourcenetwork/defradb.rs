@@ -69,7 +69,8 @@ pub fn mentions(text: &str) -> Vec<(usize, Named)> {
     found
 }
 
-/// The source files `text` names inside backticks, each span exactly one name.
+/// The source files `text` names inside backticks, each span exactly one name,
+/// optionally followed by a line or line range.
 pub fn backticked(text: &str) -> Vec<(usize, Named)> {
     let mut found = Vec::new();
     let mut offset = 0;
@@ -89,10 +90,24 @@ pub fn backticked(text: &str) -> Vec<(usize, Named)> {
 }
 
 fn whole(span: &str, named: &Named) -> bool {
-    match &named.repo {
-        Some(repo) => span == format!("{repo}:{}", named.path),
-        None => span == named.path,
-    }
+    let expected = match &named.repo {
+        Some(repo) => format!("{repo}:{}", named.path),
+        None => named.path.clone(),
+    };
+    span.strip_prefix(&expected)
+        .is_some_and(|suffix| suffix.is_empty() || line_suffix(suffix))
+}
+
+fn line_suffix(suffix: &str) -> bool {
+    let Some(lines) = suffix.strip_prefix(':') else {
+        return false;
+    };
+    let mut lines = lines.split('-');
+    let Some(start) = lines.next() else {
+        return false;
+    };
+    let number = |text: &str| !text.is_empty() && text.bytes().all(|byte| byte.is_ascii_digit());
+    number(start) && lines.next().is_none_or(number) && lines.next().is_none()
 }
 
 /// The byte index just past the last char of `text` that `stop` matches.
@@ -259,13 +274,15 @@ mod tests {
 
     #[test]
     fn backticks_count_only_a_whole_name() {
-        let text = "one `a.rs`, then\n`regolith:src/b.rs` and `see c.rs` and `d.rs::f`";
+        let text = "one `a.rs`, then\n`regolith:src/b.rs:78` and `see c.rs`\n\
+                    `d.rs:526-530` and `e.rs:` and `f.rs::1`";
         let names: Vec<(usize, Named)> = backticked(text);
         assert_eq!(
             names,
             vec![
                 (1, named(None, "a.rs")),
-                (2, named(Some("regolith"), "src/b.rs"))
+                (2, named(Some("regolith"), "src/b.rs")),
+                (3, named(None, "d.rs"))
             ]
         );
     }

@@ -15,10 +15,6 @@ local commits (`broadcast_mutator`) and pushes existing docs to replicators
   bounded by `MAX_MERGE_DEPTH`, with `merged_composites`/`merged_collections` dedup
   sets and a blockstore merged-set for CRDT idempotency. Heads advanced in
   `composite_heads.rs` (delete parent heads, set new head + priority index).
-- **Per-doc merge serialization** (the merge handler's `MergeQueue`, since
-  removed, and `batch.rs`): `MergeQueue` keyed an async mutex per
-  doc/collection; concurrent same-doc merges serialized, different docs ran in
-  parallel; on txn conflict, retry up to 5x.
 - **Signature gate** (`signature.rs`): verify-before-merge; `Err` ⇒ reject block.
 - **ACP register-on-merge** (`acp_merge_handler.rs`): post-commit replicated-doc
   registration + strict replicated-doc-access gate.
@@ -29,7 +25,6 @@ local commits (`broadcast_mutator`) and pushes existing docs to replicators
 
 | name | kind | property | already-modeled | priority |
 |------|------|----------|-----------------|----------|
-| merge-queue-serialization | TLA+ | per-doc mutex serializes concurrent same-doc merges; different docs parallel; bounded txn-conflict retry never drops or double-applies a block | no | medium |
 | composite-dag-completeness | TLA+ | no composite merged without its merged parents; dedup set makes re-delivery idempotent | yes (Convergence INV_DagComplete) | low |
 | sig-verify-before-merge | TLA+ | invalid signature ⇒ block rejected before any state change | yes (Integrity) | low |
 | acp-register-on-merge | TLA+ | replicated doc gated/registered; strict access enforced both paths | yes (Acp, Commits) | low |
@@ -37,11 +32,8 @@ local commits (`broadcast_mutator`) and pushes existing docs to replicators
 | se-artifact-roundtrip | either | artifact gen/serve/receive consistency | yes (db-search survey, KMS) | low |
 
 ## Verdict
-**Model-worthy: yes, narrowly.** Most of this crate is the *implementation* of
-behaviors already abstracted by existing slices (Convergence, Integrity, Acp,
-Commits, db-blocks/db-search) — re-modeling them adds nothing. The one genuinely
-uncovered concurrency invariant is `MergeQueue` per-doc serialization plus the
-bounded txn-conflict retry loop: a small TLA+ check that interleaved same-doc merges
-never lose or double-apply a block, and that retry-exhaustion fails closed.
-Everything else (broadcast, push_docs, replication wiring) is plumbing covered by
-integration tests.
+**Model-worthy: no new slice.** This crate implements behaviors already abstracted
+by existing slices (Convergence, Integrity, Acp, Commits, db-blocks/db-search). The
+former per-document `MergeQueue` is gone, so its proposed concurrency model no
+longer describes the code. Broadcast, push_docs and replication wiring remain
+plumbing covered by integration tests.
