@@ -160,7 +160,7 @@
 \*                                          crates/engine/acp/src/outbox/ops.rs
 \*                                          reauthorize and settle, behind the
 \*                                          node calls in
-\*                                          crates/entry-points/defra-node/src/owed.rs;
+\*                                          crates/entry-points/defra-node/src/node_core/owed.rs;
 \*   the drainer task, woken by commits     crates/entry-points/defra-node/src/
 \*   and backing off while the provider     owed_drainer.rs drain, started by
 \*   is away                                gate_external_acp;

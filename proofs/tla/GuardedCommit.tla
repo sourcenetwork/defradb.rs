@@ -9,7 +9,7 @@
 \* cancellation semantics.
 \*
 \* State correspondence:
-\*   owner   the live TransactionGuard's handle, in NodeTransaction::commit
+\*   owner   the live OwnedTransaction's handle, in TxnNode::commit
 \*           or in its admitted commit task (crates/entry-points/defra-node/src/transaction.rs);
 \*   waiter  the caller's pending commit future (edge::Task completion);
 \*   txn     the transaction's state in the registry: present, committed, or

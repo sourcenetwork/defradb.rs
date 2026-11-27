@@ -29,7 +29,7 @@ backup import and the store-upgrade re-key of legacy documents (below). Requirem
 |------|-----------------------------|------------|------|
 | Node-signed, autocommit | the mutation response | stored under the ID it returned | `txn::signed_doc_id::an_autocommit_node_signed_create_stores_the_id_it_returned` |
 | Node-signed, explicit transaction | the mutation response, before commit | the commit keeps it | `txn::signed_doc_id::a_node_signed_create_in_a_txn_commits_the_id_it_returned_{ed25519,secp256k1}` |
-| Client-signed, embedded | `graph.doc_id()`, before sending | `execute_verified_graph_in_txn` commits `graph.doc_id()` or discards the transaction | `signature::client_signed::*` (in-process) |
+| Client-signed, embedded | `graph.doc_id()`, before sending | `TxnNode::execute_verified_create` commits `graph.doc_id()` or discards the transaction | `signature::client_signed::*` (in-process) |
 | Client-signed, rust-http | `graph.doc_id()`, before sending | the Rust client refuses an out-of-graph wave and a different `_docID` | `signature::client_signed::*` (rust-http) |
 | P2P merge | the creator's response | the peer keeps a block only when it hashes to the CID it arrived under (`verify_block_cid` on a replicator push, gossip, block sync and CAR fetch; `verify_hash` on a bitswap fetch) and derives the ID from that CID | `signature::doc_id_determinism::a_peer_shows_the_creators_doc_id`, `signature::peer::*` |
 | Lens migration | unchanged | a migration rewrites field values, never the genesis, so the document is read under its ID | `collection_version::migrations::query::with_doc_id::collection_migration_query_by_doc_id` (unsigned) |
@@ -73,7 +73,7 @@ What counts as breaking the guarantee: changing the DocID version or its derivat
 leaving a field signature or the composite signature out of the CID (or adding one in);
 leaving the collection version ID out of the genesis; any path that re-signs a genesis or
 commits a document under an ID other than its precomputed one; removing the committed-ID
-check of `execute_verified_graph_in_txn` or of the Rust client's signing conversation.
+check of `TxnNode::execute_verified_create` or of the Rust client's signing conversation.
 
 There are two documented exceptions. Backup import is a stopgap: it creates each
 document again on the importing node, so the document gets its new genesis's ID, and

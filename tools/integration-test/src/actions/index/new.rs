@@ -51,23 +51,22 @@ impl Op for NewIndex {
             })
             .collect();
         let node = state.node_on(self.common.node())?;
-        let context = state.context_as(self.txn, self.common.identity_seed);
+        let scope = state.scope_as(self.txn, self.common.identity_seed);
         // Go's NewIndex always returns before the build; its harness waits
         // for the build unless the scenario sets `async`.
         let created = match self.r#async {
-            true => state.block_on(node.start_index_as(
-                &context,
+            true => state.block_on(scope.on(&node).start_index(
                 &self.collection,
                 self.index_name(),
                 fields,
                 self.unique(),
             )),
-            false => state.block_on(node.create_index_as(
-                &context,
+            false => state.block_on(scope.on(&node).create_index(
                 &self.collection,
                 self.index_name(),
                 fields,
                 self.unique(),
+                None,
             )),
         };
         created

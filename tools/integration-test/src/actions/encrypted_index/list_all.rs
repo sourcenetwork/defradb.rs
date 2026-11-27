@@ -56,8 +56,9 @@ impl Op for ListAllEncryptedIndexes {
         let all = state
             .block_on(
                 state
-                    .node_on(self.common.node())?
-                    .list_all_encrypted_indexes_as(&state.context_as(self.txn, identity)),
+                    .scope_as(self.txn, identity)
+                    .on(&*state.node_on(self.common.node())?)
+                    .list_all_encrypted_indexes(),
             )
             .map_err(|e| Failure::operation(e.to_string()))?;
         let by_collection: serde_json::Map<String, Value> = all

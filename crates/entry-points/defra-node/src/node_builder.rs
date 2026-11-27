@@ -509,7 +509,7 @@ impl NodeBuilder {
     /// with `EnableSigning` off.
     ///
     /// The node's own calls ([`Node::execute`], [`Node::add_collection`],
-    /// [`Node::begin_transaction`] and the rest that take no identity) then act
+    /// [`Node::new_txn`] and the rest of the unscoped node) then act
     /// as no one. With node access control enabled they are checked as
     /// anonymous, as Go checks a call that names no identity; a request that
     /// names the node's DID keeps the node's full access. The transactions the

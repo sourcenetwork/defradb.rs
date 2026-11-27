@@ -9,7 +9,7 @@
 //!
 //! Who may call. Every call takes the context of an authenticated caller.
 //! An actor's entries are read by that actor and by the node's own
-//! principal ([`Node::node_context`]), and by no one else; to anyone else
+//! principal ([`crate::Node::node_context`]), and by no one else; to anyone else
 //! an entry does not exist. A fresh credential is taken from the entry's
 //! actor or the node's principal, and counts only if it is that actor's own:
 //! it is checked as the credential of the write was. Only the actor that
@@ -17,10 +17,11 @@
 
 use std::time::Duration;
 
-use defra_core::RequestContext;
+use defra_core::{RequestContext, TxnId};
 use identity::Did;
 
-use crate::{Error, Node, Result, SignerCredential, TransactionHandle};
+use super::NodeCore;
+use crate::{Error, Result, SignerCredential};
 
 /// Whose entries a caller may see.
 enum Reader {
@@ -43,7 +44,7 @@ fn denied(reason: &str) -> Error {
     query::QueryError::permission_denied(reason).into()
 }
 
-impl Node {
+impl NodeCore<'_> {
     /// The caller `context` authenticates, as a reader of owed entries.
     fn owed_reader(&self, context: &RequestContext) -> Result<Reader> {
         if !context.authorization_valid_now() {
@@ -52,7 +53,7 @@ impl Node {
         let identity = context
             .identity()
             .ok_or_else(|| denied("an authenticated caller is required"))?;
-        if self.node_principal().as_deref() == Some(identity) {
+        if self.node.node_principal().as_deref() == Some(identity) {
             return Ok(Reader::Node);
         }
         let caller = Did::new(identity).map_err(Error::InvalidIdentityDid)?;
@@ -71,27 +72,28 @@ impl Node {
     ///
     /// Only `actor` itself and the node's principal may ask; anyone else is
     /// refused. Nothing is owed on a provider that joins the transaction.
-    pub async fn owed_acp_as(
+    pub(crate) async fn owed_acp(
         &self,
         context: &RequestContext,
         actor: &str,
     ) -> Result<Vec<acp::OwedEntry>> {
         let reader = self.owed_reader(context)?;
         let actor = Did::new(actor).map_err(Error::InvalidIdentityDid)?;
-        let acp = self.ops().document_acp;
+        let acp = self.node.ops().document_acp;
         if !reader.reads(acp.as_ref(), &actor) {
             return Err(denied(
                 "only an actor and the node read what the actor owes",
             ));
         }
-        self.on_acp(
-            move || async move { Ok(acp.owed_entries(acp::OwedFilter::Actor(&actor)).await?) },
-        )
-        .await
+        self.node
+            .on_acp(
+                move || async move { Ok(acp.owed_entries(acp::OwedFilter::Actor(&actor)).await?) },
+            )
+            .await
     }
 
     /// Wait, for at most `deadline`, until what the committed transaction
-    /// `handle` owes the provider is settled or has come to rest, and say
+    /// `txn` owes the provider is settled or has come to rest, and say
     /// which: [`acp::OwedWait::Settled`] when the provider holds all of it,
     /// [`acp::OwedWait::Parked`] when what is left waits for a credential or
     /// was refused, [`acp::OwedWait::Pending`] when the deadline passed or
@@ -101,55 +103,52 @@ impl Node {
     /// sleeps until a record changes. The node's principal sees every entry
     /// of the transaction, an actor its own, and the answer is about the
     /// entries the caller sees.
-    pub async fn await_owed_acp_as(
+    pub(crate) async fn await_owed_acp(
         &self,
         context: &RequestContext,
-        handle: &TransactionHandle,
+        txn: TxnId,
         deadline: Duration,
     ) -> Result<acp::OwedWait> {
         let reader = self.owed_reader(context)?;
-        let txn: defra_core::TxnId = handle
-            .as_str()
-            .parse()
-            .map_err(|_| query::QueryError::execution("invalid transaction ID"))?;
-        let acp = self.ops().document_acp;
-        self.on_acp(move || async move {
-            // An actor's wait is for its own entries: another's neither
-            // show in it nor keep it.
-            let only = match &reader {
-                Reader::Node => None,
-                Reader::Actor(actor) => Some(actor),
-            };
-            let wait = match workers::timeout(deadline, acp.await_owed(txn.route, only)).await {
-                Ok(wait) => wait?,
-                // The wait is dropped with whatever it was submitting still
-                // in flight, as a commit that stops waiting leaves it.
-                Err(workers::Error::TimedOut) => {
-                    let mut left = acp
-                        .owed_entries(acp::OwedFilter::Transaction(txn.route))
-                        .await?;
-                    left.retain(|entry| reader.reads(acp.as_ref(), &entry.actor));
-                    match left.is_empty() {
-                        true => acp::OwedWait::Settled,
-                        false if left.iter().any(|entry| entry.sendable) => {
-                            acp::OwedWait::Pending {
-                                entries: left,
-                                provider_unavailable: false,
+        let acp = self.node.ops().document_acp;
+        self.node
+            .on_acp(move || async move {
+                // An actor's wait is for its own entries: another's neither
+                // show in it nor keep it.
+                let only = match &reader {
+                    Reader::Node => None,
+                    Reader::Actor(actor) => Some(actor),
+                };
+                let wait = match workers::timeout(deadline, acp.await_owed(txn.route, only)).await {
+                    Ok(wait) => wait?,
+                    // The wait is dropped with whatever it was submitting still
+                    // in flight, as a commit that stops waiting leaves it.
+                    Err(workers::Error::TimedOut) => {
+                        let mut left = acp
+                            .owed_entries(acp::OwedFilter::Transaction(txn.route))
+                            .await?;
+                        left.retain(|entry| reader.reads(acp.as_ref(), &entry.actor));
+                        match left.is_empty() {
+                            true => acp::OwedWait::Settled,
+                            false if left.iter().any(|entry| entry.sendable) => {
+                                acp::OwedWait::Pending {
+                                    entries: left,
+                                    provider_unavailable: false,
+                                }
                             }
+                            false => acp::OwedWait::Parked(left),
                         }
-                        false => acp::OwedWait::Parked(left),
                     }
-                }
-                Err(error) => {
-                    return Err(query::QueryError::execution(format!(
-                        "could not wait for owed ACP changes: {error}"
-                    ))
-                    .into())
-                }
-            };
-            Ok(wait)
-        })
-        .await
+                    Err(error) => {
+                        return Err(query::QueryError::execution(format!(
+                            "could not wait for owed ACP changes: {error}"
+                        ))
+                        .into())
+                    }
+                };
+                Ok(wait)
+            })
+            .await
     }
 
     /// Hand the node a fresh credential for one owed registration or one
@@ -183,7 +182,7 @@ impl Node {
     ///
     /// Only the entry's actor and the node's principal may call; to anyone
     /// else the entry is `acp::Error::OwedEntryNotFound`.
-    pub async fn reauthorize_owed_acp_as(
+    pub(crate) async fn reauthorize_owed_acp(
         &self,
         context: &RequestContext,
         entry: &acp::OwedRef,
@@ -191,33 +190,34 @@ impl Node {
     ) -> Result<acp::OwedOutcome> {
         let reader = self.owed_reader(context)?;
         let caller = context.identity().unwrap_or_default().to_owned();
-        let acp = self.ops().document_acp;
+        let acp = self.node.ops().document_acp;
         let entry = entry.clone();
-        self.on_acp(move || async move {
-            let unknown = || acp::Error::OwedEntryNotFound {
-                entry: entry.to_string(),
-                actor: caller.clone(),
-            };
-            let owed = acp
-                .owed_entries(acp::OwedFilter::Entry(&entry))
-                .await?
-                .pop()
-                .filter(|owed| reader.reads(acp.as_ref(), &owed.actor))
-                .ok_or_else(unknown)?;
-            // The credential is carried for the entry's actor and no one
-            // else, under the spelling the entry keeps it in. It is to be
-            // recorded and used when no request is there to vouch for it,
-            // so it counts only where the provider gives the node something
-            // to check it against: the requirement a verified write makes.
-            let carried = credential.carried_by(
-                RequestContext::default().with_transactional_authority_required(),
-                owed.actor.as_str(),
-            );
-            Ok(acp::bound_to_request(&acp, &carried)
-                .reauthorize_owed(&owed.actor, &entry)
-                .await?)
-        })
-        .await
+        self.node
+            .on_acp(move || async move {
+                let unknown = || acp::Error::OwedEntryNotFound {
+                    entry: entry.to_string(),
+                    actor: caller.clone(),
+                };
+                let owed = acp
+                    .owed_entries(acp::OwedFilter::Entry(&entry))
+                    .await?
+                    .pop()
+                    .filter(|owed| reader.reads(acp.as_ref(), &owed.actor))
+                    .ok_or_else(unknown)?;
+                // The credential is carried for the entry's actor and no one
+                // else, under the spelling the entry keeps it in. It is to be
+                // recorded and used when no request is there to vouch for it,
+                // so it counts only where the provider gives the node something
+                // to check it against: the requirement a verified write makes.
+                let carried = credential.carried_by(
+                    RequestContext::default().with_transactional_authority_required(),
+                    owed.actor.as_str(),
+                );
+                Ok(acp::bound_to_request(&acp, &carried)
+                    .reauthorize_owed(&owed.actor, &entry)
+                    .await?)
+            })
+            .await
     }
 
     /// Give up the relationship change at place `seq` of the node's queue,
@@ -236,8 +236,8 @@ impl Node {
     /// and may be made again. A change that is staged or waits for
     /// authority is `acp::Error::OwedChangeNotRefused`: a request sent for it
     /// earlier may still land, so it is given a fresh credential instead
-    /// ([`Self::reauthorize_owed_acp_as`]).
-    pub async fn abandon_owed_acp_change_as(
+    /// ([`Self::reauthorize_owed_acp`]).
+    pub(crate) async fn abandon_owed_acp_change(
         &self,
         context: &RequestContext,
         seq: u64,
@@ -246,12 +246,13 @@ impl Node {
             Reader::Actor(actor) => actor,
             // The node abandons what it staged itself, like any actor.
             Reader::Node => {
-                let own = self.node_principal().unwrap_or_default();
+                let own = self.node.node_principal().unwrap_or_default();
                 Did::new(own).map_err(Error::InvalidIdentityDid)?
             }
         };
-        let acp = self.ops().document_acp;
-        self.on_acp(move || async move { Ok(acp.abandon_owed_change(&actor, seq).await?) })
+        let acp = self.node.ops().document_acp;
+        self.node
+            .on_acp(move || async move { Ok(acp.abandon_owed_change(&actor, seq).await?) })
             .await
     }
 }

@@ -70,17 +70,17 @@ impl Op for AddDocClientSigned {
         let request = self.request().with_identity(Some(signer.did()?));
         let response = state.block_on(async {
             let txn = node
-                .begin_transaction(false)
+                .new_txn(false)
                 .await
                 .map_err(|e| Failure::operation(e.to_string()))?;
-            let response = node
-                .execute_verified_create_in_txn(request, &txn, &verified, SignerCredential::None)
+            let response = txn
+                .execute_verified_create(request, &verified, SignerCredential::None)
                 .await;
             if response.has_errors() {
-                let _ = node.discard_transaction(&txn).await;
+                let _ = txn.discard().await;
                 return Ok(response);
             }
-            node.commit_transaction(&txn)
+            txn.commit()
                 .await
                 .map_err(|e| Failure::operation(e.to_string()))?;
             Ok::<_, Failure>(response)
