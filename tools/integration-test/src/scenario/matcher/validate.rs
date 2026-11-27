@@ -76,6 +76,7 @@ fn validate_matcher(kind: &Value, map: &Map<String, Value>) -> Result<(), Scenar
                     .is_some_and(|v| expected_length(v).is_some())
         }
         "substring" => len == 2 && has_str(map, "value"),
+        "atLeast" => len == 2 && map.get("value").is_some_and(|v| v.as_u64().is_some()),
         "sortedStrings" => len == 2 && has_str(map, "field"),
         "sameSchema" => len == 2 && map.get("value").is_some_and(Value::is_object),
         "nonempty" | "positive" | "cid" | "docID" | "introspectionTypes" | "nonemptyString"

@@ -73,3 +73,11 @@ testo query::relation_order_with_filter::selected_relation_id_unfiltered_with_li
 testo query::relation_order_with_filter::selected_relation_id_with_limit::indexed
 # An execute explain whose plan fails while it runs: Go reports the error as two `executionErrors` entries; Rust reports it once.
 testo explain::simple::with_invalid_request::execute_explain_reports_a_run_time_failure_in_execution_errors
+# Rust counts the vector-index entries read; Go reports one fetch for the whole vector search
+# until https://github.com/sourcenetwork/defradb/issues/5080 lands.
+testo explain::execute::vector_index_fetches::hnsw_search_counts_its_reads
+testo explain::execute::vector_index_fetches::flat_search_counts_its_reads
+testo explain::execute::vector_index_fetches::ivfflat_search_counts_its_reads
+testo explain::execute::vector_index_fetches::ivfpq_search_counts_its_reads
+testo explain::execute::vector_index_fetches::ssg_search_counts_its_reads
+testo explain::execute::vector_index_fetches::diskann_search_counts_its_reads
