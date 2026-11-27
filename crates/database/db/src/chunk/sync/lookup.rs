@@ -112,12 +112,7 @@ impl ChunkCollection {
     }
 
     async fn has(&self, parent: &str, hash: &str) -> Result<bool> {
-        let mut entries = self
-            .scan(&[
-                NormalValue::String(parent.to_string()),
-                NormalValue::String(hash.to_string()),
-            ])
-            .await?;
+        let mut entries = self.scan_of_hash(parent, hash).await?;
         let found = entries
             .next()
             .await
@@ -132,17 +127,20 @@ impl ChunkCollection {
     /// The short IDs of `parent`'s chunks with `hash`. Peers that sign or
     /// encrypt their chunks can each hold one under its own ID.
     pub(crate) async fn chunks_with(&self, parent: &str, hash: &str) -> Result<Vec<u64>> {
-        let entries = self
-            .scan(&[
-                NormalValue::String(parent.to_string()),
-                NormalValue::String(hash.to_string()),
-            ])
-            .await?;
+        let entries = self.scan_of_hash(parent, hash).await?;
         short_ids(entries).await
     }
 
     async fn scan_of(&self, parent: &str) -> Result<RangeIterator> {
         self.scan(&[NormalValue::String(parent.to_string())]).await
+    }
+
+    async fn scan_of_hash(&self, parent: &str, hash: &str) -> Result<RangeIterator> {
+        self.scan(&[
+            NormalValue::String(parent.to_string()),
+            NormalValue::String(hash.to_string()),
+        ])
+        .await
     }
 
     async fn scan(&self, prefix: &[NormalValue]) -> Result<RangeIterator> {
