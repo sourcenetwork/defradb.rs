@@ -347,6 +347,26 @@ The bound is `commit_timeout_ms`, in milliseconds, on the HTTP server, and it is
 
 The CLI's `client tx commit` sends a commit once and never retries it, so it reports the bound's answer, `commit outcome unknown after <bound> milliseconds`, rather than a later attempt's "not found".
 
+# `defra.txn.crash_recovery`: A node killed during a commit recovers whole transactions
+
+- **Parents:** ["defra.txn"]
+
+A node whose process is killed with SIGKILL during or right after a commit, then started again on the same data directory, recovers every transaction whole.
+
+# `defra.txn.crash_recovery.all_or_nothing`: A commit cut by a crash leaves all its writes or none
+
+- **Parents:** ["defra.txn.crash_recovery"]
+- **Scenarios:** ["txn::crash::a_commit_killed_before_its_log_write_leaves_nothing", "txn::crash::a_commit_killed_mid_log_write_leaves_nothing", "txn::crash::a_commit_killed_after_its_log_sync_keeps_everything"]
+
+An explicit transaction that creates two documents in a collection with an index, whose node's process is killed with SIGKILL during its commit, has after the restart either both documents, through the collection and through the index, or neither. If the commit has not become durable when the process is killed, it leaves neither, and the restarted node takes a new write and keeps it across a second kill. If the commit has become durable but its answer has not been sent when the process is killed, it leaves both. This covers process termination with the operating system's page cache retained; it does not claim power-loss durability beyond the configured durability mode.
+
+# `defra.txn.crash_recovery.committed`: A commit answered success survives a crash
+
+- **Parents:** ["defra.txn.crash_recovery"]
+- **Scenarios:** ["txn::crash::a_commit_answered_success_survives_a_kill"]
+
+An explicit transaction whose commit answered success has all its writes after its node is killed with SIGKILL straight after the answer and started again on the same directory. A Go node keeps them too.
+
 # `defra.txn.no_neighbour_conflict`: Updating one document does not conflict with its neighbour
 
 - **Parents:** ["defra.txn"]
@@ -380,6 +400,13 @@ A `[String]` field given a string list (`["bafyA", "bafyB", "bafyC"]`) and a `[D
 - **Scenarios:** ["collection::deterministic_ids::a_collection_beside_a_longer_namesake_gets_one_id"]
 
 Adding `type Foo { name: String } type FooBar { name: String }` to a fresh node gives `Foo` the same version ID on every run, `bafyreigj37qgcjknekn3jqcmpai5ut6gqsfvjgczmu5iopkeeznjojbqri`, even though `Foo` is a name prefix of `FooBar`.
+
+# `defra.collection.id_added_alone`: A collection added on its own has the ID it has in a batch
+
+- **Parents:** ["defra.collection"]
+- **Scenarios:** ["collection::id_added_alone::a_collection_added_after_its_target_has_the_id_of_one_call", "collection::id_added_alone::a_chain_added_one_collection_per_call_relates_by_collection_id", "collection::id_added_alone::an_indexed_relation_to_a_stored_collection_indexes_its_id_field"]
+
+`AddCollection` with `type Book { title: String author: Author }`, sent after `type Author { name: String }` was added by an earlier call, gives `Book` the definition it has when both types are sent in one call: collection and version ID `bafyreieifr5ciohlbzxlrqy4laqdz7nsmnuxzqya44i2d22isyr7nyomja`, and an `author` field whose kind is the relation to `Author`'s collection ID, `bafyreibvcavbxqwimz5vdxe5q5href63g3skc6ytg45hm4fqh6wsx57wmq`. Either way `BookMutationInputArg.author` is the scalar `ID`, introspection answers, and a `Book` created with an `Author`'s docID is read back with its author. In a chain added one collection per call (`Country`, then `City { country: Country }`, then `Street { city: City }`), each relation's kind carries the collection ID `GetCollections` reports for its target. An `@index` on the relation is the index it is in one call as well: `type Book { title: String author: Author @index }` added after `Author` gives `Book`'s definition one index, named `Book__authorID_ASC`, over the field `_authorID` ascending.
 
 # `defra.replication_filter.receive_gate`: A refused push is not fetched or stored
 

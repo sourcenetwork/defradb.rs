@@ -1,3 +1,5 @@
+use std::time::{Duration, Instant};
+
 use crate::clients::{CliRun, HttpRun};
 use crate::scenario::{Common, Failure, Op, Text};
 use crate::test_case::State;
@@ -17,6 +19,10 @@ pub struct SyncDocs {
     pub expected_data: Value,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expected_error: Option<String>,
+    /// The call fails unless it returns within this many milliseconds, so a
+    /// sync that waits out its timeouts is caught.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub within_millis: Option<u64>,
     #[serde(flatten)]
     pub common: Common,
 }
@@ -36,6 +42,7 @@ impl Op for SyncDocs {
 
     fn run(&self, state: &State) -> Result<Value, Failure> {
         let identity = self.common.client_identity(Self::name())?;
+        let started = Instant::now();
         state
             .block_on(
                 state
@@ -43,8 +50,8 @@ impl Op for SyncDocs {
                     .scoped(&*state.node_on(self.common.node())?)
                     .sync_documents(&self.collection, &self.ids()),
             )
-            .map(|()| json!({}))
-            .map_err(|e| Failure::operation(e.to_string()))
+            .map_err(|e| Failure::operation(e.to_string()))?;
+        self.returned_in_time(started)
     }
 }
 
@@ -63,6 +70,16 @@ impl SyncDocs {
             .map(|id| id.as_str().to_owned())
             .collect()
     }
+
+    fn returned_in_time(&self, started: Instant) -> Result<Value, Failure> {
+        let elapsed = started.elapsed();
+        match self.within_millis.map(Duration::from_millis) {
+            Some(limit) if elapsed > limit => Err(Failure::operation(format!(
+                "document sync took {elapsed:?}, more than {limit:?}"
+            ))),
+            _ => Ok(json!({})),
+        }
+    }
 }
 
 impl HttpRun for SyncDocs {
@@ -70,12 +87,13 @@ impl HttpRun for SyncDocs {
         crate::scenario::execute_with(self, state, |action, state| {
             let identity = action.common.client_identity(Self::name())?;
             let (collection, ids) = (action.collection.clone(), action.ids());
+            let started = Instant::now();
             state
                 .http_as(action.common.node(), identity, |client| async move {
                     client.p2p_document_sync(&collection, &ids).await
                 })?
-                .map(|()| json!({}))
-                .map_err(|e| Failure::operation(e.to_string()))
+                .map_err(|e| Failure::operation(e.to_string()))?;
+            action.returned_in_time(started)
         });
     }
 }
@@ -87,10 +105,11 @@ impl CliRun for SyncDocs {
             let ids = action.ids();
             let mut args = vec!["p2p", "document", "sync", action.collection.as_str()];
             args.extend(ids.iter().map(String::as_str));
+            let started = Instant::now();
             state
                 .defra_client_as(action.common.node(), None, identity, &args)
-                .map(|_| json!({}))
-                .map_err(Failure::operation)
+                .map_err(Failure::operation)?;
+            action.returned_in_time(started)
         });
     }
 }

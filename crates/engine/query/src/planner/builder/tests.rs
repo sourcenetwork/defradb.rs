@@ -712,8 +712,11 @@ fn test_plan_relation_unknown_field() {
             .with_field(Field::new("title"))
             .with_select(nested);
 
-        let result = planner.plan(&select);
-        assert!(result.is_err());
+        let err = planner.plan(&select).err().expect("unknown relation field");
+        assert_eq!(
+            err.to_string(),
+            "Cannot query field \"nonexistent\" on type \"posts\"."
+        );
     })
     .unwrap()
 }
