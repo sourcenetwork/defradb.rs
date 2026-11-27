@@ -31,8 +31,10 @@
 \* spawn_pending_dag_fetch): it reads the flag, spawns its task, prunes the
 \* set (takes each handle out, drops the finished ones, puts the live ones
 \* back), puts the new handle in the set, then reads the flag again and
-\* aborts its own task when shutdown has begun. Every registration prunes,
-\* so the set holds the live tasks, not one handle per task ever spawned.
+\* aborts its own task when shutdown has begun. The model checks that pruning
+\* beside this handshake cannot leak live work during shutdown. It does not
+\* prove that registration retires finished handles; that #3469 behaviour is
+\* covered by the coordinator test pending_dag_fetches_retire_finished_handles.
 \*
 \* A tiny example. The edge has closed when shutdown is called. The winner's
 \* try_spawn hands the drain back, so the winner runs it itself: it takes the
@@ -143,6 +145,11 @@
 \*     abort timeout ends the drain all the same.
 \*   * A late task is spawned by one late spawn; a pruner holds one handle
 \*     at a time, as the code does.
+\*   * Retirement of finished handles is not modeled. The Rust code prunes
+\*     on registration, but none of this model's invariants says a finished
+\*     handle leaves the set. The test
+\*     pending_dag_fetches_retire_finished_handles checks that behaviour,
+\*     and this model covers only the shutdown handshake around the prune.
 
 EXTENDS Naturals, FiniteSets
 \* Naturals gives numbers; FiniteSets counts the handles in the set.

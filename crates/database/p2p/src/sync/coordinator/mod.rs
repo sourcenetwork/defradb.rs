@@ -2054,6 +2054,10 @@ mod shutdown_tests {
                 assert!(crate::rt::time::Instant::now() < deadline);
                 crate::rt::yield_now().await;
             }
+            while shutdown.retained_task_count() != 0 {
+                assert!(crate::rt::time::Instant::now() < deadline);
+                crate::rt::yield_now().await;
+            }
         }
 
         let root = Cid::new_v1(0x55, Code::Sha2_256.digest(b"last-root"));
