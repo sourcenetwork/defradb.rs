@@ -149,4 +149,36 @@ pub(super) const PROPERTIES: &[Property] = &[
         tiers: &[Contract],
         bound_by: "crates/engine/acp/src/outbox/keys.rs the_live_keys_of_a_tuple_sort_by_sequence_and_name_only_it; crates/database/db/tests/access/external_outbox.rs settling_a_change_leaves_the_later_ones_of_its_tuple_owed, settling_out_of_order_keeps_the_oldest_the_latest_and_the_deletes_true",
     },
+    Property {
+        // A document's owner gives it to another actor through the outbox:
+        // the transfer is owed in the caller's transaction, sent only once
+        // the registration has settled and every earlier change on its
+        // object is decided, and every later change on the object waits for
+        // it. It is not atomic with the create: from its commit the old
+        // owner is denied on the object, before an owed registration could
+        // let it in, and the new owner gets nothing until the provider names
+        // it. A refusal is kept and told, a repeat refused because the new
+        // owner is already named is settled as applied, and an answer that
+        // never decides is refused after a bounded number of tries. Of a
+        // transfer and another change staged on one object at once, the one
+        // that commits second is aborted, so the queue follows commit order.
+        family: "ACP outbox and owed registrations",
+        name: "INV_NoWidening / INV_EarlierUnderOwner / INV_LaterAfterTransfer / INV_QueueFollowsCommits / INV_RegistrationFirst / INV_TransferOnce / INV_RefusedTookNoEffect / INV_FailureReported / LIVE_Decided: an owed transfer widens nothing for its old or its new owner, the creator's changes committed before the transfer land while it still owns the object and those committed after it after the transfer, the queue orders changes around a transfer as their transactions committed, nothing goes before the registration, the transfer takes effect once and is never reported refused after it took effect, a removal is told, and every committed change is decided",
+        axis: Tla,
+        anchor: "crates/engine/acp/src/outbox/staging/transfer.rs TransactionOutbox::stage_transfer; crates/engine/acp/src/outbox/ops.rs account, stage; crates/engine/acp/src/outbox/keys.rs transfer_key; crates/engine/acp/src/outbox/deny.rs owed_denial; crates/engine/acp/src/outbox/staging.rs advise; crates/engine/query/src/txn/context.rs decided_by_owed_archive; crates/engine/acp/src/external.rs ExternalDocumentAcp::check_doc_access, denied_outright; crates/engine/acp/src/external/transfer_order.rs held_by_transfer, earlier_on_object; crates/engine/acp/src/external/settle.rs submittable, register_first, conclude, confirmed_transfer, MAX_FAILED_SUBMISSIONS; crates/engine/acp/src/external/drain.rs joins_request, send_request, recover_marked; crates/entry-points/defra-node/src/acp_ops/transfer.rs transfer_in_txn",
+        model_ref: "MC_OwnerTransfer_{Green,Green_Live,Green_Poisoned,Green_NoMarker,Red_TransferFirst,Red_CommitOrder,Red_CommitOrderReverse,Red_LaterFirst,Red_CreatorReadsUntilApplied,Red_NewOwnerEarly,Red_BeforeRegistration,Red_RefusedAfterEffect,Red_SilentDrop,Red_RetryForever}.cfg",
+        tiers: &[Boundary, Contract],
+        bound_by: "crates/engine/acp/src/external/transfer_tests.rs a_transfer_waits_for_its_objects_earlier_changes_and_later_ones_wait_for_it, an_owed_transfer_denies_its_old_owner_and_grants_its_new_owner_nothing, a_refused_transfer_is_kept_and_told_and_denies_until_its_actor_abandons_it, a_transfer_whose_answer_was_lost_is_settled_and_not_reported_refused, a_transfer_staged_beside_a_grant_that_commits_first_is_aborted, a_grant_staged_beside_a_transfer_that_commits_first_is_aborted, concurrent_grants_on_one_object_do_not_conflict; crates/entry-points/defra-node/tests/unit/transfer_owner.rs a_transfer_lands_once_after_the_creators_grant_and_hands_the_document_over, an_owed_registration_holds_the_transfer_which_lands_once_after_a_restart, a_refused_transfer_is_reported_and_leaves_the_document_its_creators; crates/entry-points/defra-node/tests/embedded_vera/transfer.rs a_transferred_document_is_its_new_owners_on_the_chain_after_its_creators_grant, a_transferred_gated_document_keeps_its_derived_relationship",
+    },
+    Property {
+        // The order around a transfer and the denial it puts on its old
+        // owner, as pure decisions.
+        family: "ACP outbox and owed registrations",
+        name: "heldByTransfer / abortedBy / around_a_transfer_one_of_two_commits / ordinary_changes_do_not_conflict / a_transfer_waits_for_any_earlier_change / a_change_waits_for_an_earlier_transfer / only_a_transfer_holds_an_ordinary_change / not_held_means_ordered / a_transfer_denies_its_old_owner: a transfer waits for every earlier live change on its object outside its request, a later change for an earlier live transfer and nothing else, a refused change holds nothing, an owed transfer denies its old owner outright, and of a transfer and another change staged on one object at once the second to commit is aborted while two ordinary changes never abort each other",
+        axis: Lean,
+        anchor: "crates/engine/acp/src/external/transfer_order.rs held_by_transfer; crates/engine/acp/src/outbox/deny.rs denial; crates/engine/acp/src/outbox/ops.rs account, stage",
+        model_ref: "OwnerTransferOrder (lake build)",
+        tiers: &[Boundary, Contract],
+        bound_by: "crates/engine/acp/src/external/transfer_order.rs a_transfer_waits_for_every_earlier_live_change_and_a_change_for_an_earlier_transfer, a_refused_change_and_a_change_of_the_same_request_hold_nothing",
+    },
 ];

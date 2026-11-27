@@ -779,6 +779,39 @@ impl DocumentACP for VeraDocumentACP {
         Ok(())
     }
 
+    async fn transfer_doc_object(
+        &self,
+        actor: &Did,
+        policy_id: &str,
+        resource_name: &str,
+        doc_id: &str,
+        new_owner: &Did,
+    ) -> Result<()> {
+        let bearer_token = self.create_bearer_token(actor.as_str()).await?;
+        let new_owner = self.canonical_actor(new_owner).to_string();
+        self.admit_for(
+            actor.as_str(),
+            &bearer_token,
+            &PolicyCommand {
+                policy_id,
+                resource: resource_name,
+                object_id: doc_id,
+                action: PolicyAction::TransferObject {
+                    new_owner: &new_owner,
+                },
+            },
+        )?;
+        let [policy, resource, doc] = owned([policy_id, resource_name, doc_id]);
+        self.remote(move |provider| async move {
+            provider
+                .transfer_object(&bearer_token, &policy, &resource, &doc, &new_owner)
+                .await
+        })
+        .await
+        .map_err(provider_err)?;
+        Ok(())
+    }
+
     async fn delete_actor_relationship(
         &self,
         requestor: &Did,

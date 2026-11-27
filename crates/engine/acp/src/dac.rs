@@ -227,6 +227,25 @@ pub trait DocumentACP: MaybeSendSync {
         Err(Error::UnsupportedArchive)
     }
 
+    /// Give one object to `new_owner` as `actor`, its owner: the provider
+    /// names `new_owner` as the owner, and `actor` keeps nothing by
+    /// ownership; every other relationship on the object stays. A provider
+    /// that joins the transaction makes the change in it; an external one
+    /// is sent it for an owed transfer ([`crate::OwedOp::Transfer`]). An
+    /// actor that does not own the object is refused with
+    /// [`Error::NotOwner`]. The default takes none.
+    async fn transfer_doc_object(
+        &self,
+        actor: &Did,
+        policy_id: &str,
+        resource_name: &str,
+        doc_id: &str,
+        new_owner: &Did,
+    ) -> Result<()> {
+        let _ = (actor, policy_id, resource_name, doc_id, new_owner);
+        Err(Error::UnsupportedTransfer)
+    }
+
     /// What lets the node submit a relationship change as `actor` after the
     /// request that made it is gone: the node's own key for `actor`, or the
     /// delegation the request this provider serves carries for it. With

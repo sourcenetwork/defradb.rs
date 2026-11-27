@@ -650,6 +650,25 @@ impl<S: ZanzibarStore + ?Sized + 'static> DocumentACP for ZanzibarDocumentACP<S>
         Ok(deleted)
     }
 
+    async fn transfer_doc_object(
+        &self,
+        actor: &Did,
+        policy_id: &str,
+        resource_name: &str,
+        doc_id: &str,
+        new_owner: &Did,
+    ) -> Result<()> {
+        if let Some(scope) = self.store.begin_scope(false).await? {
+            self.scoped(scope.store())
+                .transfer_owner(actor, policy_id, resource_name, doc_id, new_owner)
+                .await?;
+            scope.commit().await?;
+            return Ok(());
+        }
+        self.transfer_owner(actor, policy_id, resource_name, doc_id, new_owner)
+            .await
+    }
+
     async fn unregister_doc_object(
         &self,
         policy_id: &str,
