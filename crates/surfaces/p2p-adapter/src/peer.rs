@@ -94,15 +94,24 @@ pub async fn peer_info<P>(p2p: &P) -> Result<Vec<String>>
 where
     P: P2POperations + ?Sized,
 {
+    peer_info_with_id(p2p).await.map(|(_, addresses)| addresses)
+}
+
+/// The local peer ID and every listen address with `/p2p/<peer ID>` appended.
+pub async fn peer_info_with_id<P>(p2p: &P) -> Result<(String, Vec<String>)>
+where
+    P: P2POperations + ?Sized,
+{
     let peer_id = p2p.local_peer_id().await.map_err(refused)?;
     let addresses = p2p.listen_addresses().await.map_err(refused)?;
-    Ok(addresses
+    let addresses = addresses
         .into_iter()
         .map(|address| match address.starts_with('/') {
             true => format!("{address}/p2p/{peer_id}"),
             false => address,
         })
-        .collect())
+        .collect();
+    Ok((peer_id, addresses))
 }
 
 /// Go's `ActivePeers`.

@@ -40,8 +40,8 @@ fn map_p2p_internal(error: P2PError) -> HttpError {
     }
 }
 
-/// A refused sync: an adapter refusal answers with the status its category
-/// names, a transport failure as Go's server error.
+/// A refused sync: an adapter refusal, or a refusal before the adapter, by
+/// the status its message names.
 fn sync_refused(error: peer::Error) -> HttpError {
     match error {
         peer::Error::Refused(error) => map_p2p_internal(error),

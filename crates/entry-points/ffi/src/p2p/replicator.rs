@@ -97,9 +97,9 @@ pub unsafe fn defra_p2p_replicator_delete(
 ) -> DefraResult {
     ffi_entry! {
         let collections = split_comma_separated(&go_string(collections));
-        let id = non_empty(id);
+        let id = go_string(id);
         ok(run(node_ptr, identity_ptr, NodePermission::P2pReplicatorDelete, None, |ops| async move {
-            peer::delete_replicator(&*ops, id.as_deref().unwrap_or_default(), &collections).await
+            peer::delete_replicator(&*ops, &id, &collections).await
         }))
     }
 }
