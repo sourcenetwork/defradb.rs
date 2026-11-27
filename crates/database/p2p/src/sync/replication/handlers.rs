@@ -1160,11 +1160,10 @@ fn sourceless_complete_dispatch(event: &SyncEvent) -> Option<Cid> {
 }
 
 /// Whether the root block and every block it links are stored.
-async fn dag_is_local<B: Blockstore>(
-    blockstore: &B,
-    root_cid: &Cid,
-    diagnostics: &SyncDiagnostics,
-) -> bool {
+async fn dag_is_local<B>(blockstore: &B, root_cid: &Cid, diagnostics: &SyncDiagnostics) -> bool
+where
+    B: Blockstore,
+{
     match blockstore.get(root_cid).await {
         Ok(Some(root_data)) => find_all_missing_links(blockstore, &root_data, diagnostics)
             .await

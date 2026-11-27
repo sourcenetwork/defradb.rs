@@ -179,9 +179,6 @@ pub struct SyncDiagnosticsSnapshot {
     pub provider_demotions: u64,
     pub provider_cooldown_skips: u64,
     pub missing_link_retries: u64,
-    /// DAG walks that failed on a local read or parse, leaving the root's
-    /// frontier unknown (`links::frontier_or_unknown`).
-    pub missing_link_walk_errors: u64,
     /// Length, pages and time of local missing-link walks.
     pub missing_link_walks: MissingLinkWalkSnapshot,
     pub pending_dag_resolved: u64,
@@ -233,7 +230,6 @@ impl SyncDiagnostics {
             provider_demotions: self.provider_demotions.load(Ordering::Relaxed),
             provider_cooldown_skips: self.provider_cooldown_skips.load(Ordering::Relaxed),
             missing_link_retries: self.missing_link_retries.load(Ordering::Relaxed),
-            missing_link_walk_errors: missing_link_walks.errors,
             missing_link_walks,
             pending_dag_resolved: self.pending_dag_resolved.load(Ordering::Relaxed),
             pending_dag_registered: self.pending_dag_registered.load(Ordering::Relaxed),

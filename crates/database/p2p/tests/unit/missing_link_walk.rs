@@ -108,6 +108,7 @@ fn a_walk_past_its_deadline_stops_at_a_page_boundary() {
             walks.blocks, MISSING_LINK_WALK_PAGE,
             "the walk stopped off its first page boundary"
         );
+        assert_eq!(walks.pages, 0, "a preempted walk did not yield");
     })
     .unwrap();
 }

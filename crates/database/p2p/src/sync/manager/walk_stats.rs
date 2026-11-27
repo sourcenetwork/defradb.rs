@@ -18,14 +18,17 @@ pub(crate) struct MissingLinkWalkStats {
 }
 
 /// A point-in-time view of the node's missing-link walk counters, carried by
-/// `SyncStatus` as `missing_link_walks`.
+/// `SyncStatus` as `missing_link_walks`. A failed walk adds to `blocks`, `pages`
+/// and the timings; its caller counts the error only when it acts on it, so the
+/// counters cannot be combined into a per-walk mean.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize)]
 pub struct MissingLinkWalkSnapshot {
     /// Walks that read every reachable unmerged block.
     pub completed: u64,
     /// Walks a fetch stopped at a page boundary past its quantum.
     pub preempted: u64,
-    /// Walks that failed on a local read or parse.
+    /// Walks whose caller acted on a local read or parse failure. Some callers
+    /// do not record the failure, so this is not always the total failed walks.
     pub errors: u64,
     /// Children looked at, summed over finished walks.
     pub blocks: u64,

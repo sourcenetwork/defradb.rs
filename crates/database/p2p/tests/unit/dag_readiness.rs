@@ -298,9 +298,9 @@ fn an_unknown_frontier_is_the_root_and_is_counted() {
     let frontier = frontier_or_unknown(root, Err(Error::BlockstoreTxnConflict), &diagnostics);
 
     assert_eq!(frontier, vec![root]);
-    assert_eq!(diagnostics.snapshot().missing_link_walk_errors, 1);
+    assert_eq!(diagnostics.snapshot().missing_link_walks.errors, 1);
     assert!(frontier_or_unknown(root, Ok(Vec::new()), &diagnostics).is_empty());
-    assert_eq!(diagnostics.snapshot().missing_link_walk_errors, 1);
+    assert_eq!(diagnostics.snapshot().missing_link_walks.errors, 1);
 }
 
 // ----- The fetcher -----
@@ -362,7 +362,7 @@ fn a_read_fault_at_final_verification_is_not_complete() {
             "final verification fault reported {outcome:?}"
         );
         assert_eq!(transport.sync_batches(), vec![vec![child]]);
-        assert_eq!(diagnostics.snapshot().missing_link_walk_errors, 1);
+        assert_eq!(diagnostics.snapshot().missing_link_walks.errors, 1);
     })
     .unwrap();
 }
@@ -392,7 +392,7 @@ fn a_read_fault_after_rooted_car_ingest_is_not_complete() {
             matches!(outcome, FetchAttemptOutcome::Incomplete(..)),
             "a fault after the CAR reported {outcome:?}"
         );
-        assert!(diagnostics.snapshot().missing_link_walk_errors >= 1);
+        assert!(diagnostics.snapshot().missing_link_walks.errors >= 1);
     })
     .unwrap();
 }
@@ -423,7 +423,7 @@ fn a_read_fault_under_cancellable_rooted_sync_counts_each_failed_walk() {
             "a read fault reported {outcome:?}"
         );
         assert_eq!(
-            diagnostics.snapshot().missing_link_walk_errors,
+            diagnostics.snapshot().missing_link_walks.errors,
             2,
             "the opening walk and the selective walk both failed"
         );
@@ -611,7 +611,7 @@ fn a_conflicting_read_is_incomplete_and_releases_its_permit() {
             "no DagReady for an unread DAG: {events:?}"
         );
         assert_eq!(
-            diagnostics.snapshot().missing_link_walk_errors,
+            diagnostics.snapshot().missing_link_walks.errors,
             3 * u64::from(MAX_FETCH_ATTEMPTS),
             "each attempt's opening, post-CAR and selective walks fail and are counted"
         );
@@ -729,7 +729,7 @@ fn a_push_over_an_unreadable_child_is_acked_and_owned() {
         push(&manager, "doc1", root, &root_bytes).await;
 
         assert_eq!(manager.pending_dag_missing(&root), vec![root]);
-        assert!(manager.diagnostics().snapshot().missing_link_walk_errors >= 1);
+        assert!(manager.diagnostics().snapshot().missing_link_walks.errors >= 1);
         assert!(dag_ready(&mut events).is_empty());
 
         blockstore.heal();
@@ -764,7 +764,7 @@ fn a_pending_retry_over_an_unread_child_is_not_ready() {
             };
             assert_eq!(manager.pending_dag_missing(&root), frontier, "{fault:?}");
             assert_eq!(
-                manager.diagnostics().snapshot().missing_link_walk_errors,
+                manager.diagnostics().snapshot().missing_link_walks.errors,
                 errors,
                 "{fault:?}"
             );
@@ -855,7 +855,7 @@ fn a_restore_walk_over_an_unreadable_child_is_counted() {
         assert_eq!(after.pending_dag_missing(&root), vec![root]);
         assert!(dag_ready(&mut events).is_empty());
         assert_eq!(
-            after.diagnostics().snapshot().missing_link_walk_errors,
+            after.diagnostics().snapshot().missing_link_walks.errors,
             1,
             "the failed restore walk is counted"
         );
@@ -921,7 +921,8 @@ fn doc_sync_remerge_over_an_unreadable_child_fetches_instead() {
                 .manager()
                 .diagnostics()
                 .snapshot()
-                .missing_link_walk_errors,
+                .missing_link_walks
+                .errors,
             1
         );
     })
@@ -997,7 +998,7 @@ fn a_root_read_fault_does_not_stop_the_waiter_sweep() {
                     vec![roots[which]],
                     "{case}"
                 );
-                let walk_errors = manager.diagnostics().snapshot().missing_link_walk_errors;
+                let walk_errors = manager.diagnostics().snapshot().missing_link_walks.errors;
                 match fault {
                     Fault::Gone => assert_eq!(walk_errors, 0, "{case}"),
                     _ => assert!(walk_errors >= 1, "{case}"),
@@ -1054,7 +1055,8 @@ fn a_local_read_fault_in_the_car_size_check_is_not_the_providers_failure() {
                     .manager()
                     .diagnostics()
                     .snapshot()
-                    .missing_link_walk_errors
+                    .missing_link_walks
+                    .errors
                     >= 1,
                 "{fault:?}"
             );

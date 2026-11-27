@@ -113,18 +113,14 @@ where
 {
     let started = Instant::now();
     let mut visits = 0u64;
-    let walk = walk_pages(blockstore, block_data, deadline, &mut visits).await;
+    let mut pages = 0u64;
+    let walk = walk_pages(blockstore, block_data, deadline, &mut visits, &mut pages).await;
     let ending = match &walk {
         Ok(WalkEnd::Frontier(_)) => WalkEnding::Completed,
         Ok(WalkEnd::Preempted) => WalkEnding::Preempted,
         Err(_) => WalkEnding::Failed,
     };
-    diagnostics.record_missing_link_walk(
-        ending,
-        visits,
-        visits / MISSING_LINK_WALK_PAGE,
-        started.elapsed(),
-    );
+    diagnostics.record_missing_link_walk(ending, visits, pages, started.elapsed());
     walk
 }
 
@@ -133,6 +129,7 @@ async fn walk_pages<B>(
     block_data: &[u8],
     deadline: Option<Instant>,
     visits: &mut u64,
+    pages: &mut u64,
 ) -> Result<WalkEnd>
 where
     B: Blockstore,
@@ -155,6 +152,7 @@ where
                     return Ok(WalkEnd::Preempted);
                 }
                 crate::rt::yield_now().await;
+                *pages += 1;
             }
 
             // Early-exit: merged subtrees are complete, skip traversal
