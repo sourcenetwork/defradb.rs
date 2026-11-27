@@ -1,37 +1,23 @@
-//! The exact score: the best of the chunks a parent's current text lists.
+//! The exact score: the best of the chunks a parent's current text lists,
+//! for a page of parents at a time.
 
 use document::{Document, NormalValue};
-use rapidhash::{HashMapExt, RapidHashMap, RapidHashSet};
-use schema::CHUNK_SOURCE_ID_FIELD;
+use rapidhash::{HashMapExt, HashSetExt, RapidHashMap, RapidHashSet};
 
 use super::target::{ChunkTarget, Reads};
 use crate::doc_stream::DocStream;
-use crate::error::Result;
-use crate::fetcher::DocFetcher;
+use crate::error::{QueryError, Result};
+use crate::fetcher::{DocFetcher, IndexEntryValues};
 use crate::plan::chunk_parent::{chunk_parent_id, verified_hash};
-use crate::planner::index_selection::{IndexScanParams, IndexScanType};
 
-/// The best score among the chunks `parent`'s current text lists, or `None`
-/// when it lists none with a vector or isn't live.
-pub(crate) async fn best_listed_score(
-    fetcher: &dyn DocFetcher,
-    target: &ChunkTarget,
-    parent: &Document,
-    reads: &mut Reads,
-) -> Result<Option<f64>> {
-    let (Some(parent_id), Some(listed)) = (parent.id(), target.listed(parent)) else {
-        return Ok(None);
-    };
-    let none = RapidHashMap::new();
-    best_score_of(
-        fetcher,
-        target,
-        &parent_id.to_string(),
-        &listed,
-        &none,
-        reads,
-    )
-    .await
+/// The most parents one page scores.
+const PAGE_PARENTS: usize = 128;
+/// The listed chunks past which a page takes no more parents.
+const PAGE_CHUNKS: usize = 4096;
+
+/// Whether a page of `parents` parents that list `chunks` chunks is full.
+pub(crate) fn page_full(parents: usize, chunks: usize) -> bool {
+    parents >= PAGE_PARENTS || chunks >= PAGE_CHUNKS
 }
 
 /// The copies of one listed hash a search already scored.
@@ -55,111 +41,136 @@ impl Held {
     }
 }
 
-/// The best score among `parent_id`'s chunks whose hashes are in `listed`;
-/// a hash whose stored copies `held` scored already isn't read again.
-pub(crate) async fn best_score_of(
+/// One parent of a page: the hashes its text lists and the copies already scored.
+pub(crate) struct Wanted<'a> {
+    pub parent_id: &'a str,
+    pub listed: &'a RapidHashSet<String>,
+    pub held: &'a RapidHashMap<String, Held>,
+}
+
+impl Wanted<'_> {
+    fn held_best(&self) -> Option<f64> {
+        self.held
+            .iter()
+            .filter(|(hash, _)| self.listed.contains(*hash))
+            .map(|(_, held)| held.best)
+            .reduce(f64::max)
+    }
+}
+
+/// Each wanted parent's best score among its chunks with a listed hash, or
+/// `None` when none has a vector. The page costs one index read and one chunk read.
+pub(crate) async fn best_scores(
     fetcher: &dyn DocFetcher,
     target: &ChunkTarget,
-    parent_id: &str,
-    listed: &RapidHashSet<String>,
-    held: &RapidHashMap<String, Held>,
+    wanted: &[Wanted<'_>],
     reads: &mut Reads,
-) -> Result<Option<f64>> {
-    let mut best = held
-        .iter()
-        .filter(|(hash, _)| listed.contains(*hash))
-        .map(|(_, held)| held.best)
-        .reduce(f64::max);
-    if listed.is_empty() {
+) -> Result<Vec<Option<f64>>> {
+    let mut best: Vec<Option<f64>> = wanted.iter().map(Wanted::held_best).collect();
+    let mut slots: RapidHashMap<&str, Vec<usize>> = RapidHashMap::new();
+    for (slot, parent) in wanted.iter().enumerate() {
+        if !parent.listed.is_empty() {
+            slots.entry(parent.parent_id).or_default().push(slot);
+        }
+    }
+    if slots.is_empty() {
         return Ok(best);
     }
-    for chunk in listed_chunks(fetcher, target, parent_id, listed, held, reads).await? {
-        reads.count(&chunk);
+    for chunk in page_chunks(fetcher, target, wanted, reads).await? {
         // Superseded and forged chunks stay stored; only the current list counts.
-        let is_listed = verified_hash(&chunk).is_some_and(|hash| listed.contains(hash));
-        if !is_listed || chunk_parent_id(&chunk) != Some(parent_id) {
+        let (Some(parent), Some(hash)) = (chunk_parent_id(&chunk), verified_hash(&chunk)) else {
+            continue;
+        };
+        let Some(slots) = slots.get(parent) else {
+            continue;
+        };
+        if !slots.iter().any(|&slot| wanted[slot].listed.contains(hash)) {
             continue;
         }
         if !target.readable(&chunk).await? {
             continue;
         }
-        if let Some(score) = target.score(&chunk)? {
-            best = Some(best.map_or(score, |best| best.max(score)));
+        let Some(score) = target.score(&chunk)? else {
+            continue;
+        };
+        for &slot in slots {
+            if wanted[slot].listed.contains(hash) {
+                best[slot] = Some(best[slot].map_or(score, |best| best.max(score)));
+            }
         }
     }
     Ok(best)
 }
 
-/// The stored chunks of one parent with a hash in `listed`, less the hashes
-/// `held` has every copy of.
-async fn listed_chunks(
+/// The stored chunks of the page's listed hashes, less the hashes a parent
+/// holds every copy of.
+async fn page_chunks(
     fetcher: &dyn DocFetcher,
     target: &ChunkTarget,
-    parent_id: &str,
-    listed: &RapidHashSet<String>,
-    held: &RapidHashMap<String, Held>,
+    wanted: &[Wanted<'_>],
     reads: &mut Reads,
 ) -> Result<Vec<Document>> {
-    let Some(index) = target
+    let index = target
         .source_index
         .as_ref()
-        .filter(|_| fetcher.supports_index_queries())
-    else {
-        return fetcher
-            .get_by_field_value(&target.chunks, CHUNK_SOURCE_ID_FIELD, parent_id)
-            .await;
-    };
-    let parent = NormalValue::String(parent_id.to_string());
-    if let Some(entries) = fetcher
-        .index_prefix_entries(&target.chunks, index, std::slice::from_ref(&parent))
-        .await?
-    {
-        reads.index_lookups += 1;
-        let mut by_hash: RapidHashMap<&str, Vec<u64>> = RapidHashMap::new();
-        for entry in &entries {
-            if let Some(hash) = entry_hash(&entry.values).filter(|hash| listed.contains(*hash)) {
-                by_hash.entry(hash).or_default().push(entry.doc_short_id);
-            }
-        }
-        let ids: Vec<u64> = by_hash
-            .into_iter()
-            .filter(|(hash, ids)| !all_held(held, hash, ids.len()))
-            .flat_map(|(_, ids)| ids)
+        .filter(|_| fetcher.supports_index_queries());
+    if let Some(index) = index {
+        let mut parents: Vec<&str> = wanted.iter().map(|parent| parent.parent_id).collect();
+        parents.sort_unstable();
+        parents.dedup();
+        // One prefix per parent: a seek per listed hash costs more than the
+        // superseded entries it skips.
+        let prefixes: Vec<Vec<NormalValue>> = parents
+            .iter()
+            .map(|parent| vec![NormalValue::String(parent.to_string())])
             .collect();
-        return read_short_ids(fetcher, &target.chunks, &ids).await;
-    }
-    let mut ids = Vec::with_capacity(listed.len());
-    for hash in listed {
-        reads.index_lookups += 1;
-        let found = fetcher
-            .get_by_index_scan(
-                &target.chunks,
-                &IndexScanParams {
-                    index_name: index.clone(),
-                    scan_type: IndexScanType::ExactMatch {
-                        values: vec![parent.clone(), NormalValue::String(hash.to_string())],
-                    },
-                    limit: None,
-                    offset: 0,
-                    value_filter: None,
-                    cursor_seek: None,
-                },
-            )
-            .await?;
-        let found = found.into_doc_ids();
-        if !all_held(held, hash, found.len()) {
-            ids.extend(found);
+        if let Some(found) = fetcher
+            .index_prefix_entries(&target.chunks, index, &prefixes)
+            .await?
+        {
+            reads.index_lookups += 1;
+            if found.len() != prefixes.len() {
+                return Err(QueryError::internal(format!(
+                    "{} answered {} of {} index prefixes",
+                    target.chunks,
+                    found.len(),
+                    prefixes.len()
+                )));
+            }
+            let entries: RapidHashMap<&str, &[IndexEntryValues]> = parents
+                .iter()
+                .copied()
+                .zip(found.iter().map(Vec::as_slice))
+                .collect();
+            let mut seen = RapidHashSet::new();
+            let mut ids = Vec::new();
+            for parent in wanted {
+                let Some(stored) = entries.get(parent.parent_id) else {
+                    continue;
+                };
+                let mut by_hash: RapidHashMap<&str, Vec<u64>> = RapidHashMap::new();
+                for entry in stored.iter() {
+                    if let Some(hash) =
+                        entry_hash(&entry.values).filter(|hash| parent.listed.contains(*hash))
+                    {
+                        by_hash.entry(hash).or_default().push(entry.doc_short_id);
+                    }
+                }
+                for (hash, stored) in by_hash {
+                    if !all_held(parent.held, hash, stored.len()) {
+                        ids.extend(stored.into_iter().filter(|id| seen.insert(*id)));
+                    }
+                }
+            }
+            let chunks = read_short_ids(fetcher, &target.chunks, &ids).await?;
+            chunks.iter().for_each(|chunk| reads.count(chunk));
+            return Ok(chunks);
         }
     }
-    if ids.is_empty() {
-        return Ok(Vec::new());
-    }
-    Ok(fetcher.get_by_ids(&target.chunks, &ids).await?.into_docs())
-}
-
-/// Whether a search already scored every stored copy of `hash`.
-fn all_held(held: &RapidHashMap<String, Held>, hash: &str, stored: usize) -> bool {
-    held.get(hash).is_some_and(|held| held.copies >= stored)
+    // Without index entries one read of the chunk collection serves the whole page.
+    let chunks = fetcher.get_all(&target.chunks).await?;
+    chunks.iter().for_each(|chunk| reads.count(chunk));
+    Ok(chunks)
 }
 
 /// The hash an entry of the `[_sourceID, hash]` index holds.
@@ -170,6 +181,11 @@ fn entry_hash(values: &[NormalValue]) -> Option<&str> {
         NormalValue::Bytes(hash) => std::str::from_utf8(hash).ok(),
         _ => None,
     }
+}
+
+/// Whether a search already scored every stored copy of `hash`.
+fn all_held(held: &RapidHashMap<String, Held>, hash: &str, stored: usize) -> bool {
+    held.get(hash).is_some_and(|held| held.copies >= stored)
 }
 
 async fn read_short_ids(

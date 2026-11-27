@@ -34,8 +34,8 @@ fn a_query_without_a_limit_scores_every_article_from_all_its_chunks() {
         add_article_about("half", &["rivers and engines"], None),
         add_article_about("music", &["music"], None),
         everything.into(),
-        // The articles come from the scan; scoring reads each one's listed chunks
-        // with one index lookup each, and never the article again.
+        // The articles come from the scan; scoring reads their listed chunks with
+        // one index lookup for the whole page, and never an article again.
         Request {
             request: r#"query @explain(type: execute) { Article(order: {_alias: {sim: DESC}}) {
                 title sim: SIMILARITY(body_v: {vector: [1, 0, 0]})
@@ -49,7 +49,7 @@ fn a_query_without_a_limit_scores_every_article_from_all_its_chunks() {
                     "iterations": 4,
                     "docFetches": 4,
                     "fieldFetches": 4 * CHUNK_FIELDS,
-                    "indexFetches": 3,
+                    "indexFetches": 1,
                 }),
             ),
             ..Default::default()

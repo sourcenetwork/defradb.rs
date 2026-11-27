@@ -378,7 +378,7 @@ fn a_prefix_read_with_an_owed_reindex_answers_none() {
         .unwrap();
 
         let fetcher = LensedAutoCommitFetcher::new(db.clone());
-        let prefix = [NormalValue::String("Ada".to_string())];
+        let prefix = [vec![NormalValue::String("Ada".to_string())]];
         merge_at_v1(&db, &store, "Ada").await;
         assert!(!db.owed_reindexes().await.unwrap().is_empty());
         let owed = fetcher
@@ -388,12 +388,12 @@ fn a_prefix_read_with_an_owed_reindex_answers_none() {
         assert!(owed.is_none());
 
         db.settle_owed_reindexes().await.unwrap();
-        let lensed = [NormalValue::String(LENSED.to_string())];
+        let lensed = [vec![NormalValue::String(LENSED.to_string())]];
         let settled = fetcher
             .index_prefix_entries("Users", "idx_name", &lensed)
             .await
             .unwrap();
-        assert_eq!(settled.map(|entries| entries.len()), Some(1));
+        assert_eq!(settled.map(|pages| pages[0].len()), Some(1));
     })
     .unwrap()
 }

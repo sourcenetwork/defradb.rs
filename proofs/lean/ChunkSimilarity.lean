@@ -21,9 +21,15 @@ nearest ones (every chunk read scores at least as high as every chunk not read).
 Only an exact index (flat) promises that. An approximate one, like HNSW, can
 skip a near chunk, and then the set of articles on the page may differ from the
 slow way's. The code scores each article it returns again from its listed
-chunks; that step is not part of these theorems (ChunkRead.tla models it).
+chunks; that read is not part of these theorems (ChunkRead.tla models it).
 The promises are `prefix_best_exact`, `unread_ranks_no_higher` and
 `prefix_top_is_top`.
+
+Reading every found article again costs a read per article, and after a wide
+search far more articles are found than the page needs. So the code reads
+again only the articles that score at least the `k`-th best among the chunks
+read, ties included, and drops the rest. `rescore_never_lowers`,
+`cut_stays_below` and `top_of_kept_is_top` say why that gives the same page.
 
 Scores are natural numbers here: only their order matters, and larger is nearer.
 Two chunks of one article may hold the same text, so the same hash, with
@@ -33,6 +39,8 @@ own entry in the list, so an article's best is the highest over every copy.
 Code it models:
   crates/engine/query/src/plan/chunk_similarity/best.rs   best_per_parent
   crates/engine/query/src/plan/chunk_similarity/search.rs ChunkSearch::run (stops at k accepted articles)
+  crates/engine/query/src/plan/chunk_similarity/best.rs   top_with_ties (the articles read again)
+  crates/engine/query/src/plan/chunk_similarity/search.rs ChunkSearch::rescore (reads only those again)
 -/
 
 namespace ChunkSimilarity
@@ -224,5 +232,68 @@ theorem prefix_top_is_top (pre rest : List Chunk) (top : List Nat)
       exact hbeat p hp q hq hqt
     -- Not seen: it scores no higher than any seen article.
     · exact unread_ranks_no_higher pre rest p q near (hfound p hp) hq
+
+-- Promise (rescore_never_lowers): reading more chunks never lowers an article's
+-- best. So the score read again is at least the one the search found.
+theorem rescore_never_lowers (p : Nat) (pre rest : List Chunk) :
+    -- The best over more chunks is at least the best over fewer.
+    best p pre ≤ best p (pre ++ rest) := by
+  -- The best over both lists is the larger of the two bests.
+  rw [best_append]
+  -- And the larger of two is at least the first.
+  exact Nat.le_max_left _ _
+
+-- Promise (cut_stays_below): with the nearest chunks read first, an article
+-- whose best read chunk falls below the cut `f` still scores below every
+-- article at or above the cut once every chunk counts. So dropping it unread
+-- can't change which articles make the page.
+theorem cut_stays_below (pre rest : List Chunk) (p q f : Nat)
+    (near : NearestFirst pre rest) (hp : found pre p) (hq : found pre q)
+    (hkept : f ≤ best p pre) (hcut : best q pre < f) :
+    -- The dropped article stays strictly below the kept one.
+    best q (pre ++ rest) < best p (pre ++ rest) := by
+  -- Both were found, so neither score changes when every chunk counts.
+  rw [prefix_best_exact pre rest p near hp, prefix_best_exact pre rest q near hq]
+  -- Below the cut is below anything at or above it.
+  omega
+
+-- `top` is a top-k of the articles `cands` by `score`: each chosen one is a
+-- candidate, and no candidate left out beats one chosen.
+def TopAmong (score : Nat → Nat) (cands top : List Nat) : Prop :=
+  -- Every chosen article is a candidate,
+  (∀ p ∈ top, p ∈ cands) ∧
+  -- and none left out scores above one chosen.
+  (∀ p ∈ top, ∀ q ∈ cands, q ∉ top → score q ≤ score p)
+
+-- Promise (top_of_kept_is_top): read again only the `kept` articles, those at
+-- or above the cut `f`, and pick a top-k of them by their full scores. It is a
+-- top-k of every found article, the dropped ones (`cut`) included.
+theorem top_of_kept_is_top (pre rest : List Chunk) (kept cut top : List Nat) (f : Nat)
+    (near : NearestFirst pre rest)
+    (hkept : ∀ p ∈ kept, found pre p ∧ f ≤ best p pre)
+    (hcut : ∀ q ∈ cut, found pre q ∧ best q pre < f)
+    (h : TopAmong (fun p => best p (pre ++ rest)) kept top) :
+    -- The same pick is a top-k of the kept and the dropped together.
+    TopAmong (fun p => best p (pre ++ rest)) (kept ++ cut) top := by
+  -- Name the two halves of the hypothesis.
+  obtain ⟨hin, hbeat⟩ := h
+  -- A chosen article is kept, so it is among all the candidates.
+  refine ⟨fun p hp => List.mem_append_left cut (hin p hp), ?_⟩
+  -- Take a chosen article `p` and a candidate `q` left out.
+  intro p hp q hq hqt
+  -- The candidate was either kept or dropped.
+  cases List.mem_append.mp hq with
+  -- Kept: the pick among the kept already put it no higher.
+  | inl hk => exact hbeat p hp q hk hqt
+  -- Dropped: it falls below every kept article.
+  | inr hc =>
+    -- The chosen article is kept, so found and at or above the cut.
+    obtain ⟨hpf, hpk⟩ := hkept p (hin p hp)
+    -- The dropped one is found and below the cut.
+    obtain ⟨hqf, hqc⟩ := hcut q hc
+    -- So it scores strictly lower once every chunk counts.
+    have := cut_stays_below pre rest p q f near hpf hqf hpk hqc
+    -- Strictly lower is no higher.
+    exact Nat.le_of_lt this
 
 end ChunkSimilarity

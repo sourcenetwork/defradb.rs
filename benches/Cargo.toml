@@ -247,5 +247,9 @@ harness = false
 name = "child_page"
 harness = false
 
+[[bench]]
+name = "chunk_rank"
+harness = false
+
 [lints]
 workspace = true
