@@ -49,6 +49,7 @@ The model proves:
 | `Arbitration.roll_le_bound` / `troll_le_bound` / `record_first` / `troll_full` / `iter_monotone_up` / `iter_stays_below` / `decay_geometric` / `troll_decay_up` / `troll_decay_down` / `dither_mean` / `expected_useful_le` | The arbitration estimators stay within what they were fed (no overflow), take their first sample as is, approach a steady input without overshoot, decay geometrically (per sample, or by `2^(-Δt/H)` per unit of time), move by their exact share on average under the dither (so a sub-unit share never freezes them), and the expected time to a useful fetch is at most 64 fetches' cost. | `crates/database/p2p/src/sync/arbitration/` |
 | `Arbitration.bucket_order_any_score` / `bucket_apart_keeps_order` / `inversion_within_bucket` / `same_score_keeps_due_order` / `rearmed_root_goes_behind` | Ordering due roots by (1 s bucket, score, due time) keeps bucket order for any score: a root is passed only by roots due less than one bucket after it (`ACT_AttemptsStartInDueOrder` at bucket resolution), and a root re-armed a backoff of at least a bucket still queues behind (`ACT_EndedAttemptQueuesBehind`). | `crates/database/p2p/src/sync/arbitration/due_order.rs` |
 | `Arbitration.table_is_floor` / `table_decreasing` / `table_wraps` / `weight_le_one` / `weight_full_after_silence` / `weight_zero_gap` / `weight_first_ms` and the side conditions on the constants | The Q16 weight table is exactly `⌊65536 · 2^(-i/64)⌋` and falls step by step, the interpolated Q32 weight never exceeds one, a long silence starts the estimate over, a zero gap (a clock gone backwards) moves nothing and a 1 ms gap already moves something; the side conditions hold on the values `Conformance.lean` binds to the Rust constants. | `crates/database/p2p/src/sync/arbitration/{mod,ewma}.rs` |
+| `CollectionCacheLayers.add_view` / `remove_view` / `fold_view` / `populate_view` / `add_recent_bounded` / `add_recent_names_nodup` / `remove_recent_names_nodup` / `names_nodup` / `len_eq_names_length` | The transaction collection cache's folded and recent layers answer exactly like one map; every name is reported once, the reported length is the size of the view's domain, and the recent layer a load copies stays within its bound. | `crates/database/db/src/collection/cache.rs` |
 
 `#print axioms` status checked with Lean 4.18:
 
@@ -75,6 +76,12 @@ DAG fetch arbitration (`Arbitration`, 48 theorems):
 - `div_mono`, `record_first`, `expected_useful_le`: `[propext]`
 - `keep_mono`, `div_add_le`, `share_le`, `share_ge`, `troll_full`, `sum_shift`, `dither_mean`, `decay_step`, `decay_geometric`, `weight_full_after_silence`, `weight_zero_gap`, `bucket_keeps_order`, `inversion_within_quantum`, `rearmed_root_goes_behind`, `bucket_apart_keeps_order`, `inversion_within_bucket`: `[propext, Quot.sound]`
 - `roll_between_up`, `roll_between_down`, `roll_le_bound`, `troll_between_up`, `troll_between_down`, `troll_le_bound`, `troll_decay_up`, `troll_decay_down`, `iter_stays_below`, `iter_monotone_up`, `decay_step_up`, `decay_step_down`: `[propext, Classical.choice, Quot.sound]`
+
+Collection cache (`CollectionCacheLayers`):
+
+- `add_view`, `remove_view`, `fold_view`, `populate_view`, `add_recent_bounded`, `add_recent_names_nodup`: `[propext, Quot.sound]`
+- `remove_recent_names_nodup`, `names_nodup`: `[propext]`
+- `len_eq_names_length`: *(no axioms)*
 
 Transaction admission (`TxnAdmission.Key`): every theorem depends on no axioms.
 
