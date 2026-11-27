@@ -464,13 +464,7 @@ impl<S: Store> crate::database::DB<S> {
         }
         let cache = std::sync::Arc::clone(&self.collections);
         txn.on_commit(OnCommit::OrderedAndWait(Box::new(move || {
-            cache.rcu(|old| {
-                let mut cache = old.clone();
-                for collection in &collections {
-                    cache.put(collection.clone());
-                }
-                cache
-            });
+            cache.publish_many(collections);
         })))?;
         Ok(finalized_schemas)
     }

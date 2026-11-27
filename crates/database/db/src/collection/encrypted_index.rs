@@ -186,11 +186,7 @@ where
         txn.uncache_collection(collection);
         let cache = Arc::clone(&self.collections);
         txn.on_commit(OnCommit::OrderedAndWait(Box::new(move || {
-            cache.rcu(|old| {
-                let mut cache = old.clone();
-                cache.put(cached.clone());
-                cache
-            });
+            cache.publish(cached, &[]);
         })))?;
         Ok(())
     }

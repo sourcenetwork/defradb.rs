@@ -1,15 +1,14 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use testo::action::ActionInstance;
 use testo::prelude::*;
 
 use super::Actions;
 use crate::scenario::{Common, Failure, Op};
 use crate::test_case::State;
 
-/// Runs its actions at the same time. Each child expects its outcome as
-/// `{"result": .., "error": ..}`, and a child that fails does not fail the
-/// test. A group the corpus keeps as raw `children` is not run yet.
+/// Runs its actions at the same time. Each child's failure fails the group,
+/// after every child has finished. A group the corpus keeps as raw `children`
+/// is not run yet.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Parallel {
@@ -54,12 +53,19 @@ impl Action for Parallel {
             crate::scenario::execute(self, state);
             return;
         }
-        let children: Vec<ActionInstance<Actions>> = self
-            .actions
-            .iter()
-            .cloned()
-            .map(ActionInstance::Async)
-            .collect();
-        drop(testo::action::execute(state.clone(), &children));
+        std::thread::scope(|scope| {
+            let children: Vec<_> = self
+                .actions
+                .iter()
+                .cloned()
+                .map(|action| {
+                    let mut child_state = state.clone();
+                    scope.spawn(move || action.execute(&mut child_state))
+                })
+                .collect();
+            for child in children {
+                child.join().unwrap();
+            }
+        });
     }
 }

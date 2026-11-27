@@ -14,7 +14,7 @@ pub(super) const PROPERTIES: &[Property] = &[
         family: "Index drop during backfill",
         name: "INV_NoRecordForGoneIndex / INV_NoOrphanEntries / INV_NewIndexIntact / LIVE_DropFinishes",
         axis: Tla,
-        anchor: "crates/database/db/src/index/drop.rs DB::drop_index, DropIndexAttempt, DropPage, DB::remove_dropped_entries, DB::resume_index_drops; crates/database/db/src/index/manager/mod.rs index_id_floor; crates/database/db/src/index/backfill.rs BackfillPage::index, DB::backfill_index, FailBackfillAttempt, DB::resume_index_backfills",
+        anchor: "crates/database/db/src/index/drop.rs DB::drop_index, DropIndexAttempt, DropPage, DB::remove_dropped_entries, DB::resume_index_drops; crates/database/db/src/index/manager/mod.rs index_id_floor; crates/database/db/src/index/backfill.rs BackfillPage::index, DB::backfill_index, DB::resume_index_backfills; crates/database/db/src/index/settle.rs FailBackfillAttempt",
         model_ref: "MC_IndexDropBackfill_{Green,Red_KeepRecord,Red_BlindFail,Red_SameTxn,Red_Forget,Red_ReuseId}.cfg",
         tiers: &[Boundary],
         bound_by: "",
