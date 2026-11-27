@@ -101,10 +101,10 @@ it exactly or check a scaled-down instance of it.
 `constants::every_constant_agrees` fails when the code, a restating model or the
 table disagree.
 
-### Realized status — all 21 families bound
+### Realized status — all 22 families bound
 
 **19 behavioral tests** (driven against fresh `target/debug/defradb`, each break-tested
-for non-vacuity), **2 Lean-axis contract bindings**, **7 honest Boundaries** (one,
+for non-vacuity), **2 Lean-axis contract bindings**, **8 honest Boundaries** (one,
 Transaction & merge-queue concurrency, is now both — a Behavioral no-loss/no-double-apply
 storm leg plus a Boundary internal-serialization leg). One
 of these (`partition::convergence_concurrent_same_doc_writes_merge`) found a real
@@ -121,6 +121,7 @@ headstore); go↔go vs rust↔rust parity (`parity.rs`) localized it to Rust.
 | Sync ownership transfer | Boundary + external integration | deterministic full-DAG/head-hint A/B fence; `p2p_admission_restart`; `p2p_backlog` (outbound push backlog with a SIGSTOPped replicator); marker migration/storage tests; mixed Go/Rust PushLog fixture. These run in repository CI, not this conformance binary's `tests/behavioral/` harness. |
 | ACP soundness + revocation + commits | Behavioral + Contract | `acp.rs`; `RelationExpression` vocab |
 | Storage transaction validation | Behavioral | `ssi.rs` (real `409 Conflict` on write-skew) |
+| Transaction collection cache | Boundary | `CollectionCacheLayers.lean`; `crates/database/db/tests/collection/cache.rs` |
 | Management-channel auth (NAC gate) | Behavioral | `nac.rs` |
 | NAC lifecycle priv-escalation | Behavioral | `nac_lifecycle.rs` |
 | Transaction & merge-queue concurrency | Behavioral + Boundary | `partition::{convergence_concurrent_pncounter_signed_deltas_sum,convergence_restart_pncounter_signed_deltas_sum,convergence_concurrent_pncounter_same_doc_merge_storm}` (PNCounter exact signed sum across live, restart, and storm); `partition::convergence_concurrent_same_doc_merge_storm` (no-loss/no-double-apply exact-sum oracle); `partition::{convergence_concurrent_mixed_lww_and_counter_fields_merge,convergence_restart_mixed_lww_and_counter_fields_merge,convergence_mixed_lww_and_counter_3node_full_mesh}` (mixed Counter×LWW exact-state); `MC_MixedFieldMaterialization_{Red_WholeDoc,Green}`; engine OCC and the txn-registry sweep stay Boundary |
