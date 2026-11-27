@@ -108,6 +108,9 @@ pub struct NodeInitOptions {
 
     /// Document ACP: "local" (default). Go's "remote" is not supported, and
     /// neither are the `remote_dac_` and `vera_` fields that configure it.
+    /// Those fields stay because fields are only ever appended: callers
+    /// built against this layout, Go's rustffi test client among them, name
+    /// them, and setting one fails `defra_node_new`.
     pub document_acp_type: *const c_char,
     /// Separate document ACP store path. Not supported: document ACP lives
     /// in the node's store.

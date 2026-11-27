@@ -37,8 +37,9 @@ impl Op for SyncCollectionVersions {
         state
             .block_on(
                 state
-                    .node_on(self.common.node())?
-                    .sync_collection_versions_as(&state.context_as(None, identity), &self.ids()),
+                    .scope_as(None, identity)
+                    .scoped(&*state.node_on(self.common.node())?)
+                    .sync_collection_versions(&self.ids()),
             )
             .map(|()| json!({}))
             .map_err(|e| Failure::operation(e.to_string()))

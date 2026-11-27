@@ -13,12 +13,14 @@ pub mod hostile;
 pub mod index_gate;
 pub mod introspection_sdl;
 pub mod multiplier;
+pub mod node_scope;
 pub mod nodes;
 mod purge;
 mod reserved_port;
 pub mod scenario;
 mod stub_embedder;
 pub mod test_case;
+pub mod transport_choice;
 pub mod wasm_lens;
 
 pub use cli_command::cli_command;

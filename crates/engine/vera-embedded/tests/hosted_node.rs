@@ -74,7 +74,7 @@ async fn once_the_node_stops_the_provider_verifies_no_new_decision() {
         .await
         .expect("delegation");
     provider
-        .register_object(&delegation, &policy, "document", "first")
+        .register_object(&delegation, &policy, "document", "first", &[])
         .await
         .expect("registration");
     assert!(provider

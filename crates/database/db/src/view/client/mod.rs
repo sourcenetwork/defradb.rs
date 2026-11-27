@@ -72,7 +72,7 @@ where
             .filter_map(|c| c.policy.as_ref())
             .filter(|_| db.dac_policies().is_some());
         for policy in policies {
-            db.validate_collection_policy(policy)
+            db.validate_resource_interface(&policy.id, &policy.resource_name)
                 .await
                 .map_err(ViewError::policy)?;
         }

@@ -44,8 +44,7 @@ impl Op for SaveDocs {
             ));
         };
         state
-            .block_on(node.save_docs(
-                &state.context(self.txn),
+            .block_on(state.scope_as(self.txn, None).on(&node).save_docs(
                 &self.collection,
                 &self.docs,
                 &AddOptions::default(),

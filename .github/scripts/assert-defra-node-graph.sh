@@ -99,6 +99,13 @@ LEAN_IROH=(--no-default-features --features native,p2p)
 assert_no_libp2p defra-node "${LEAN_IROH[@]}"
 assert_present defra-node iroh "${LEAN_IROH[@]}"
 
+# pinc is opt-in: absent from the default node, the iroh node and the CLI,
+# present only with the pinc feature.
+assert_absent defra-node pinc
+assert_absent defra-node pinc "${LEAN_IROH[@]}"
+assert_absent cli pinc
+assert_present defra-node pinc --no-default-features --features native,pinc
+
 # p2p crate feature line (the ^p2p v package, not p2p-*). Default cargo tree
 # omits features; --format '{p} {f}' prints them so this can fail.
 assert_p2p_crate_iroh_only() {
@@ -144,8 +151,9 @@ assert_absent ffi iroh "${NO_TRANSPORT_FFI[@]}"
 # Default ffi keeps libp2p.
 assert_present ffi libp2p
 
-# Default ffi still carries the full Go-interop capability set.
-assert_present ffi vera
+# Default ffi carries Lens migrations, and no Vera client: no FFI option
+# configures one.
+assert_absent ffi vera
 assert_present ffi wasmtime
 
 # Delegation minting (#3038) builds wherever a client runs: no vera.rs client

@@ -127,11 +127,6 @@ impl Run {
                 && collection.downsample_source.is_none()
                 && field(collection, name).is_some_and(|field| {
                     !field.immutable
-                        && collection
-                            .policy
-                            .as_ref()
-                            .and_then(|policy| policy.parent_field.as_deref())
-                            != Some(name)
                         && crdts
                             .field(field.crdt_type)
                             .is_none_or(|crdt| crdt.causal().is_none())

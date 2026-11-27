@@ -21,6 +21,7 @@
 pub mod access_hooks;
 pub mod chunk_writes;
 pub(crate) mod collection_provider;
+pub mod derived_relationships;
 pub(crate) mod doc;
 pub mod document;
 pub mod documents;

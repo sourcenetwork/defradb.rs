@@ -276,6 +276,43 @@ impl State {
         RequestContext::ambient().with_txn(id)
     }
 
+    /// The scope an in-process node call runs in: inside transaction number
+    /// `txn` when the action names one, as client identity `identity` when it
+    /// names one.
+    pub fn scope_as(
+        &self,
+        txn: Option<usize>,
+        identity: Option<u64>,
+    ) -> crate::node_scope::NodeScope {
+        crate::node_scope::NodeScope {
+            did: identity.map(|seed| {
+                ::identity::Did::new(crate::scenario::identity::did(seed))
+                    .expect("a client identity has a valid DID")
+            }),
+            signing: None,
+            txn: self.context(txn).txn(),
+        }
+    }
+
+    /// [`State::scope_as`] for an in-process write to node `node`, signing
+    /// with the acting client identity's own key where
+    /// [`State::context_on`] attaches it.
+    pub fn scope_on(
+        &self,
+        node: &str,
+        txn: Option<usize>,
+        identity: Option<u64>,
+        enable_signing: Option<bool>,
+    ) -> crate::node_scope::NodeScope {
+        crate::node_scope::NodeScope {
+            signing: self
+                .context_on(node, txn, identity, enable_signing)
+                .signing()
+                .cloned(),
+            ..self.scope_as(txn, identity)
+        }
+    }
+
     /// [`State::context`] with client identity `identity` acting in it when
     /// the action names one.
     pub fn context_as(&self, txn: Option<usize>, identity: Option<u64>) -> RequestContext {

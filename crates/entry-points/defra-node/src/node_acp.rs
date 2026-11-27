@@ -144,8 +144,7 @@ where
     S: storage::corekv::Store + 'static,
 {
     let vera_acp = Arc::new(
-        vera::VeraDocumentACP::without_access_cache(Arc::clone(&provider))
-            .on_network(edge, request_timeout),
+        vera::VeraDocumentACP::new(Arc::clone(&provider)).on_network(edge, request_timeout),
     );
     let dac_policies = vera_policies(&vera_acp, &store);
     let (gate, redrive) = gate_external_acp(vera_acp.clone(), store);
@@ -364,7 +363,7 @@ resources:
             let viewer = did("did:key:z6MkfXG2FkNy3u7Eg3jm8e2YQpGz7Z1JqWgHDAP1hLk9r2bR");
 
             document_acp
-                .register_doc_object(&owner, &policy.id, "users", "doc1")
+                .register_doc_object(&owner, &policy.id, "users", "doc1", &[])
                 .await
                 .unwrap();
             document_acp

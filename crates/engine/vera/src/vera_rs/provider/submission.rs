@@ -36,12 +36,17 @@ fn successful(result: ConfirmedSubmission) -> Result<ConfirmedSubmission, Provid
     }
 }
 
-/// The error a refused submission is reported with.
+/// The error a refused submission is reported with, with the refusal the
+/// receipt commits to when it carries one.
 pub(super) fn rejected(result: &ConfirmedSubmission) -> ProviderError {
-    ProviderError::Transaction(format!(
+    let rejected = format!(
         "submission {:#x} was rejected at revision {}",
         result.receipt.tx_hash, result.revision,
-    ))
+    );
+    ProviderError::Transaction(match &result.receipt.refusal {
+        Some(refusal) => format!("{rejected}: {refusal}"),
+        None => rejected,
+    })
 }
 
 impl VeraRsProvider {

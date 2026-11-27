@@ -112,12 +112,8 @@ fn merge_validator_accepts_rejects_and_defers_replicated_notes() -> Result<()> {
                 )
                 .build()
                 .await?;
-            author
-                .add_collection(&defra_core::RequestContext::ambient(), SDL)
-                .await?;
-            receiver
-                .add_collection(&defra_core::RequestContext::ambient(), SDL)
-                .await?;
+            author.add_collection(SDL).await?;
+            receiver.add_collection(SDL).await?;
             let writer = author
                 .node_identity_did()
                 .expect("author has a signing identity");
@@ -187,8 +183,7 @@ fn read_and_write_validators_narrow_local_clients() -> Result<()> {
                 )
                 .build()
                 .await?;
-            node.add_collection(&defra_core::RequestContext::ambient(), SDL)
-                .await?;
+            node.add_collection(SDL).await?;
 
             let refused = node
                 .execute(r#"mutation { add_Note(input: {body: ""}) { _docID } }"#)

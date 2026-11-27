@@ -53,6 +53,16 @@ testo mutation::add::field_kinds::one_to_one_to_one::with_txn::transactional_cre
 testo txn::unique_filter_read::a_nil_writers_unique_filter_read_does_not_fail_the_commit
 testo txn::unique_filter_read::a_unique_eq_filter_read_does_not_fail_the_commit
 testo txn::unique_filter_read::a_unique_in_filter_read_does_not_fail_the_commit
+# Rust refuses a second unnamed index on the same field (#3320); Go creates it as `User_name_ASC_2`.
+testo index::new_duplicate::index_new_same_generated_index_twice_is_refused
+# Rust refuses an index that repeats a listed one under another name (#3320); Go creates the copy.
+testo index::new_duplicate::index_new_named_copy_of_existing_index_is_refused
+# Rust refuses an index that repeats one declared by `@index` (#3320); Go creates it as `User_name_ASC_2`.
+testo index::new_duplicate::index_new_copy_of_sdl_index_is_refused
+# Rust refuses a second unique index on the same field (#3320); Go creates the copy.
+testo index::new_duplicate::index_new_same_unique_index_twice_is_refused
+# Rust refuses a vector index the collection already has, even with its HNSW defaults spelled out (#3320); Go creates the copy.
+testo index::new_duplicate::index_new_same_vector_index_twice_is_refused
 # Ordered by an indexed field of the publisher, which holds the relation, Go returns a null `_publisherID`; Rust returns the ID.
 testo query::relation_order_with_filter::selected_relation_id::indexed
 testo query::relation_order_with_filter::selected_relation_id_unfiltered::indexed

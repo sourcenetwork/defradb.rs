@@ -47,9 +47,9 @@ pub enum Error {
     /// caller. Go's text for all three.
     #[error("transaction not found")]
     TransactionNotFound,
-    /// The commit lost a write conflict. Go's text.
+    /// The commit lost a write conflict, which `.0` details. Go's text.
     #[error("transaction conflict. Please retry")]
-    TransactionConflict,
+    TransactionConflict(#[source] query::TransactionError),
     /// An HTTP server cannot expose transactions keyed only by embedder.
     #[error("HTTP requires identity-owned transactions; embedder-only ownership is local")]
     HttpEmbedderTransactionOwnership,
@@ -184,6 +184,10 @@ pub enum Error {
     #[cfg(feature = "p2p")]
     #[error("iroh peer failed to start: {0}")]
     IrohStart(#[source] p2p::Error),
+    /// The pinc peer did not start.
+    #[cfg(feature = "pinc")]
+    #[error("pinc peer failed to start: {0}")]
+    PincStart(#[source] p2p::Error),
     /// The HTTP server was configured on a node with no network runtime.
     #[error("the HTTP server needs the network runtime")]
     HttpNeedsNetwork,
@@ -519,10 +523,33 @@ impl Error {
         }
     }
 
-    /// The stable code a client classifies this failure by, when it has one.
+    /// Whether running the same work again may succeed: a lost write
+    /// conflict, or a transaction failure the engine marks retryable.
+    pub fn is_retryable(&self) -> bool {
+        match self {
+            Self::TransactionConflict(_) => true,
+            Self::Transaction(error) => error.is_retryable(),
+            _ => false,
+        }
+    }
+
+    /// This failure as a query response's error, keeping its [`Self::code`].
+    pub(crate) fn into_response(self) -> query::QueryResponse {
+        let error = query::QueryResponseError::new(self.to_string());
+        query::QueryResponse::error(match self.code() {
+            Some(code) => error.with_code(code),
+            None => error,
+        })
+    }
+
+    /// The stable code a client classifies this failure by, when it has one:
+    /// an added collection's refusal, or a document refusal as the HTTP API
+    /// reports it (`extensions.code`, the REST body's `code`).
     pub fn code(&self) -> Option<&'static str> {
         match self {
             Self::AddCollection(refused) => refused.code(),
+            Self::Documents(error) => error.code(),
+            Self::Query(error) => error.code(),
             _ => None,
         }
     }

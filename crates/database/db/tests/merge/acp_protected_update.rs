@@ -100,6 +100,7 @@ impl Fixture {
             "policy-1",
             "users",
             &genesis.doc_id,
+            &[],
         )
         .await
         .unwrap();

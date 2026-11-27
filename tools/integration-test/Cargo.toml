@@ -21,7 +21,7 @@ path = "tests/vera/main.rs"
 [dependencies]
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 commonware-codec = "=2026.10.0"
-defra-harness = { git = "https://github.com/sourcenetwork/backbone.git", rev = "25da44c835b810e854caa938d5c55052da8525e7" }
+defra-harness = { git = "https://github.com/sourcenetwork/backbone.git", rev = "3421379115d69fd8bed8536943d5397ac6eb5ace" }
 crypto = { path = "../../crates/foundation/crypto" }
 document = { path = "../../crates/building-blocks/document" }
 blockstore = { path = "../../crates/engine/blockstore" }
@@ -51,6 +51,9 @@ query = { path = "../../crates/engine/query" }
 schema = { path = "../../crates/foundation/schema" }
 defra-core = { path = "../../crates/foundation/defra-core" }
 defra-version = { path = "../../crates/foundation/defra-version" }
+# The client-signed create action builds its graph and runs its conversation.
+crdt = { path = "../../crates/building-blocks/crdt" }
+db = { path = "../../crates/database/db", default-features = false }
 serde.workspace = true
 tempfile = "3.17"
 thiserror.workspace = true
@@ -69,6 +72,8 @@ identity = { path = "../../crates/building-blocks/identity" }
 
 [features]
 generator = ["serde_json/preserve_order"]
+# Run the network scenarios over pinc with DEFRA_TRANSPORT=pinc.
+pinc = ["defra-node/pinc"]
 
 [[bin]]
 name = "gen_scenarios"
@@ -77,7 +82,7 @@ required-features = ["generator"]
 
 [dev-dependencies]
 query = { path = "../../crates/engine/query", features = ["testing"] }
-vera-harness = { git = "https://github.com/sourcenetwork/vera.rs", rev = "fc0bd8e47019a5f3175239884ab4ae935f3b973f" }
+vera-harness = { git = "https://github.com/sourcenetwork/vera.rs", rev = "faf4a4f094c1b4f5786bce0cbeb6567966e27999" }
 mantra-macros = "0.9"
 keyring = { path = "../../crates/foundation/keyring" }
 vera-client = "0.2.0"
