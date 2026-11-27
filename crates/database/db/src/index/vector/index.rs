@@ -24,6 +24,7 @@ use super::store::{NodeId, VectorNodeStore};
 use crate::index::error::{Error, Result};
 use defra_core::vector::Element;
 use defra_core::vector::Metric;
+use std::sync::atomic::AtomicU64;
 use std::sync::Arc;
 
 /// The only epoch until something triggers a rebuild. The key layout carries
@@ -166,6 +167,26 @@ impl VectorIndex {
         self.engine(txn)?.search(query, k, effort).await
     }
 
+    /// [`search`](Self::search), also answering how many index entries it
+    /// read from the transaction, which an execute explain reports as
+    /// `indexFetches`.
+    pub async fn search_counted<T, E>(
+        &self,
+        txn: &mut T,
+        query: &[E],
+        k: usize,
+        effort: Option<usize>,
+    ) -> Result<(Vec<Neighbor>, u64)>
+    where
+        T: Reader + Writer + MaybeSend,
+        E: Element,
+    {
+        let reads = AtomicU64::new(0);
+        let store = self.store(txn).counting_reads(&reads);
+        let hits = self.engine_over(store)?.search(query, k, effort).await?;
+        Ok((hits, reads.into_inner()))
+    }
+
     /// [`search`](Self::search) restricted to the documents `admit` accepts.
     pub async fn search_where<T: Reader + Writer + MaybeSend, E: Element, A: Admit>(
         &self,
@@ -187,7 +208,20 @@ impl VectorIndex {
         &self,
         txn: &'txn mut T,
     ) -> Result<impl VectorIndexEngine + 'txn> {
-        let store = KvNodeStore::new(txn, self.collection_short_id, self.desc.id, LIVE_EPOCH);
+        self.engine_over(self.store(txn))
+    }
+
+    fn store<'txn, T>(&self, txn: &'txn mut T) -> KvNodeStore<'txn, T> {
+        KvNodeStore::new(txn, self.collection_short_id, self.desc.id, LIVE_EPOCH)
+    }
+
+    fn engine_over<'txn, T>(
+        &self,
+        store: KvNodeStore<'txn, T>,
+    ) -> Result<impl VectorIndexEngine + 'txn>
+    where
+        T: Reader + Writer + MaybeSend,
+    {
         Ok(match self.vector.algorithm {
             VectorAlgorithm::Hnsw => {
                 Engine::Hnsw(Hnsw::new(store, self.metric, self.params, self.seed))

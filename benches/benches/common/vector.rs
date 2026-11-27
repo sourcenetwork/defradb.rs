@@ -313,3 +313,52 @@ pub async fn trained_ivfpq(
     txn.commit().await.expect("commit");
     (store, index)
 }
+
+/// An HNSW index behind `VectorIndex` on a regolith store, filled with
+/// `count` clustered vectors: the path a routed similarity query takes.
+pub async fn filled_hnsw(
+    dimensions: usize,
+    count: usize,
+) -> (
+    storage::RegolithStore,
+    db::index::vector::index::VectorIndex,
+) {
+    use storage::corekv::Store;
+    use storage::index::CollectionIndex;
+
+    let description = schema::IndexDescription {
+        name: "by_embedding".to_string(),
+        id: 1,
+        fields: vec![schema::IndexedFieldDescription {
+            name: "embedding".to_string(),
+            descending: false,
+        }],
+        unique: false,
+        kind: None,
+        auto_generated: false,
+    }
+    .as_vector(schema::VectorIndexDescription {
+        algorithm: schema::VectorAlgorithm::Hnsw,
+        metric: schema::DistanceMetric::Cosine,
+        dimensions: dimensions as u32,
+        hnsw: None,
+        ivfpq: None,
+        ivfflat: None,
+        ssg: None,
+        diskann: None,
+    });
+    let store = storage::RegolithStore::in_memory().expect("an in-memory store");
+    let index =
+        db::index::vector::index::VectorIndex::try_new(42, description).expect("a vector index");
+    let vectors = Corpus::new(SEED ^ 0x2A1).clustered(count, dimensions, 20, 0.25);
+    let mut txn = store.new_txn(false).await.expect("a transaction");
+    for (id, vector) in vectors.into_iter().enumerate() {
+        let value = vec![document::NormalValue::Float32Array(vector)];
+        index
+            .save(&mut txn, id as u64 + 1, &value)
+            .await
+            .expect("save");
+    }
+    txn.commit().await.expect("commit");
+    (store, index)
+}

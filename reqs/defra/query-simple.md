@@ -493,7 +493,7 @@ Within `_version`, `links` and `heads` can be selected several times under diffe
 - **Parents:** ["go.query.simple.similarity"]
 - **Scenarios:** ["query.simple.query-simple-with-similarity-on-vector-index-excludes-deleted-doc", "query.simple.query-simple-with-similarity-on-vector-index-is-magnitude-invariant", "query.simple.query-simple-with-similarity-on-vector-index-reflects-updated-vector", "query.simple.query-simple-with-similarity-on-vector-index-respects-offset", "query.simple.query-simple-with-similarity-on-vector-index-returns-k-nearest"]
 
-On a field with `@index(vector: {dimensions: 3, hnsw: {metric: COSINE}})`, `User(order: {_alias: {sim: DESC}}, limit: k, offset: m)` with `sim: SIMILARITY(vector: {...})` returns the k nearest documents after skipping m, reading only those through the index (`@explain(type: execute)` shows 1 index fetch and k doc fetches). Updated vectors are re-ranked, deleted documents are excluded, and similarity ignores magnitude (`[10,0,0]` and `[1,0,0]` both score 1).
+On a field with `@index(vector: {dimensions: 3, hnsw: {metric: COSINE}})`, `User(order: {_alias: {sim: DESC}}, limit: k, offset: m)` with `sim: SIMILARITY(vector: {...})` returns the k nearest documents after skipping m, reading only those through the index (`@explain(type: execute)` shows a positive index-fetch count and k doc fetches; Go reports 1, defradb.rs the index entries the search read, see `defra.explain.execute.vector_index_fetches`). Updated vectors are re-ranked, deleted documents are excluded, and similarity ignores magnitude (`[10,0,0]` and `[1,0,0]` both score 1).
 
 # `defra.query.simple.similarity.filtered_vector_warning`: A non-empty filter exhausts a vector query
 
