@@ -235,7 +235,12 @@ fn decode_identity_hex(identity_hex: &str) -> Result<Vec<u8>> {
     hex::decode(identity_hex).map_err(|e| Error::InvalidIdentity(format!("invalid hex: {}", e)))
 }
 
-fn key_type_from_identity_bytes(name: &str, key_bytes: &[u8]) -> Result<crypto::KeyType> {
+pub(crate) const AUTH_TOKEN_LIFETIME: std::time::Duration = std::time::Duration::from_secs(15 * 60);
+
+pub(crate) fn key_type_from_identity_bytes(
+    name: &str,
+    key_bytes: &[u8],
+) -> Result<crypto::KeyType> {
     match key_bytes.len() {
         32 => Ok(crypto::KeyType::Secp256k1),
         64 => Ok(crypto::KeyType::Ed25519),
@@ -269,7 +274,7 @@ pub(crate) fn generate_auth_token_from_key_bytes(
 
     let token_bytes = new_token(
         &identity,
-        std::time::Duration::from_secs(15 * 60),
+        AUTH_TOKEN_LIFETIME,
         Some(audience_host.to_string()),
         authorized_account.map(str::to_string),
     )

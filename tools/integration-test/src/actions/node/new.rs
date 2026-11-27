@@ -246,7 +246,10 @@ impl NewNode {
             common: self.common.clone(),
             ..Self::default()
         };
-        if *self != alone {
+        let mut probe = self.clone();
+        probe.expected_data = Value::Null;
+        probe.expected_error = None;
+        if probe != alone {
             let options = serde_json::to_string(self).unwrap_or_default();
             return Err(Failure::unsupported(format!("{} {options}", Self::name())));
         }
