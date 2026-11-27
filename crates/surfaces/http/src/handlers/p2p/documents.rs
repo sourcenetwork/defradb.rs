@@ -2,7 +2,7 @@
 
 use axum::{extract::State, Json};
 
-use super::map_p2p_internal;
+use super::sync_refused;
 use crate::error::{peer_refused, HttpError};
 use crate::identity_extractor::ExtractIdentity;
 use crate::nac_guard::require_permission;
@@ -73,9 +73,9 @@ pub async fn sync_documents(
 
     let timeout = crate::validation::parse_timeout(body.timeout.as_deref())?;
 
-    p2p.sync_documents(&body.collection_name, body.doc_ids, timeout)
+    peer::sync_documents(&*p2p, &body.collection_name, &body.doc_ids, timeout)
         .await
-        .map_err(map_p2p_internal)?;
+        .map_err(sync_refused)?;
 
     Ok(Json(()))
 }

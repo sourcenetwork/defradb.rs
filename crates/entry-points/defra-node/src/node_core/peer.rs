@@ -180,7 +180,7 @@ impl NodeCore<'_> {
             .await?;
         let p2p = self.peer(context)?;
         let (collection, doc_ids) = (collection.to_owned(), doc_ids.to_vec());
-        self.at_edge(async move { peer::sync_documents(&*p2p, &collection, &doc_ids).await })
+        self.at_edge(async move { peer::sync_documents(&*p2p, &collection, &doc_ids, None).await })
             .await
     }
 
