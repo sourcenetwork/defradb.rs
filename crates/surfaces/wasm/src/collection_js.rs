@@ -1,4 +1,4 @@
-//! Collection objects as Go's JS client returns them.
+//! Collection version objects with Go's JavaScript wire shape.
 //!
 //! Go hands a `client.CollectionVersion` to JavaScript through
 //! `goji.MarshalJS` (`js/client_store.go`), which is `json.Marshal` followed
@@ -8,8 +8,10 @@
 //! `client/index.go`). `Kind` and `Typ` keep their numeric wire encodings:
 //! only Go's `collection describe` display renders them as strings.
 //!
-//! These views borrow a stored [`CollectionVersion`] and emit exactly Go's
-//! keys, with Go's value for an absent option (`null`).
+//! These views borrow a stored [`CollectionVersion`] and emit Go's keys, with
+//! Go's value for an absent option (`null`). The wasm client is deliberately
+//! data-only: its `getCollections` returns these version objects instead of
+//! Go's collection handles, which carry the collection methods.
 
 use serde::Serialize;
 use wasm_bindgen::JsValue;
@@ -125,8 +127,6 @@ enum IndexKindJs<'a> {
     Ordered {
         #[serde(rename = "Unique")]
         unique: bool,
-        #[serde(rename = "Fields")]
-        fields: &'a [IndexedFieldDescription],
     },
     Vector {
         #[serde(rename = "Fields")]
@@ -137,8 +137,16 @@ enum IndexKindJs<'a> {
         metric: schema::DistanceMetric,
         #[serde(rename = "Dimensions")]
         dimensions: u32,
-        #[serde(rename = "HNSW")]
+        #[serde(rename = "HNSW", skip_serializing_if = "Option::is_none")]
         hnsw: Option<HnswParams>,
+        #[serde(rename = "IVFPQ", skip_serializing_if = "Option::is_none")]
+        ivfpq: Option<schema::IvfPqParams>,
+        #[serde(rename = "IVFFLAT", skip_serializing_if = "Option::is_none")]
+        ivfflat: Option<schema::IvfFlatParams>,
+        #[serde(rename = "SSG", skip_serializing_if = "Option::is_none")]
+        ssg: Option<schema::SsgParams>,
+        #[serde(rename = "DISKANN", skip_serializing_if = "Option::is_none")]
+        diskann: Option<schema::DiskAnnParams>,
     },
 }
 
@@ -206,7 +214,6 @@ impl<'a> From<&'a IndexDescription> for IndexJs<'a> {
                 0,
                 IndexKindJs::Ordered {
                     unique: index.unique,
-                    fields,
                 },
                 index.unique,
             ),
@@ -214,7 +221,6 @@ impl<'a> From<&'a IndexDescription> for IndexJs<'a> {
                 0,
                 IndexKindJs::Ordered {
                     unique: ordered.unique,
-                    fields,
                 },
                 ordered.unique,
             ),
@@ -226,6 +232,10 @@ impl<'a> From<&'a IndexDescription> for IndexJs<'a> {
                     metric: vector.metric,
                     dimensions: vector.dimensions,
                     hnsw: vector.hnsw,
+                    ivfpq: vector.ivfpq,
+                    ivfflat: vector.ivfflat,
+                    ssg: vector.ssg,
+                    diskann: vector.diskann,
                 },
                 false,
             ),
@@ -241,7 +251,8 @@ impl<'a> From<&'a IndexDescription> for IndexJs<'a> {
     }
 }
 
-/// Convert collections to the JavaScript array Go's `getCollections` returns.
+/// Convert collections to the data-only array this client's `getCollections`
+/// returns.
 ///
 /// Serialized as JSON is: options become `null` and relation kinds plain
 /// objects, never `undefined` or a `Map`.

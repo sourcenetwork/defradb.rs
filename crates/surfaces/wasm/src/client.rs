@@ -224,9 +224,11 @@ impl DefraClient {
             .auth_token(audience)?)
     }
 
-    /// Get information about all registered collections.
+    /// Get the version object for every registered collection.
     ///
-    /// Returns an array of collection info objects.
+    /// This data-only client returns snapshots with Go's
+    /// `CollectionVersion` JavaScript shape. Go's `getCollections` instead
+    /// returns collection handles with methods.
     #[wasm_bindgen(js_name = getCollections)]
     pub fn get_collections(&self) -> std::result::Result<JsValue, JsValue> {
         self.get_collections_impl().map_err(|e| e.into())

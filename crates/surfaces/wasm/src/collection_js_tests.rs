@@ -1,6 +1,7 @@
-//! The collection objects `getCollections` returns, pinned against what Go's
-//! JS client returns for the same definitions: `json.Marshal` of
-//! `client.CollectionVersion` (`js/client_store.go`), keys in Go's field order.
+//! The collection version objects `getCollections` returns, pinned against
+//! Go's `json.Marshal` of `client.CollectionVersion`: Go's keys and encodings,
+//! in Go's field order. This client returns these data-only objects instead
+//! of Go's collection handles.
 //!
 //! These run natively against the same `Serialize` the wasm client feeds to
 //! `serde_wasm_bindgen`; the browser test in `client.rs` checks the JS object.
@@ -94,7 +95,7 @@ fn a_plain_collection_is_gos_js_object() {
             r#""DefaultValue":null,"Size":0}],"#,
             r#""Indexes":[{"Name":"User_name_ASC","ID":1,"#,
             r#""Fields":[{"Name":"name","Descending":false}],"Kind":0,"#,
-            r#""KindDescription":{"Unique":false,"Fields":[{"Name":"name","Descending":false}]},"#,
+            r#""KindDescription":{"Unique":false},"#,
             r#""Unique":false}],"#,
             r#""EncryptedIndexes":[],"Policy":null,"IsActive":true,"IsMaterialized":true,"#,
             r#""IsBranchable":false,"IsEmbeddedOnly":false,"IsPlaceholder":false,"#,
@@ -228,11 +229,52 @@ fn index_kinds_are_gos_kind_descriptions() {
     ];
     assert!(js_json(&user).contains(concat!(
         r#""Indexes":[{"Name":"unique_name","ID":1,"Fields":[{"Name":"name","Descending":false}],"#,
-        r#""Kind":0,"KindDescription":{"Unique":true,"#,
-        r#""Fields":[{"Name":"name","Descending":false}]},"Unique":true},"#,
+        r#""Kind":0,"KindDescription":{"Unique":true},"Unique":true},"#,
         r#"{"Name":"embedding","ID":2,"Fields":[{"Name":"embedding","Descending":false}],"#,
         r#""Kind":1,"KindDescription":{"Fields":["embedding"],"Algorithm":"HNSW","#,
         r#""Metric":"COSINE","Dimensions":3,"#,
         r#""HNSW":{"M":16,"EfConstruction":128,"EfSearch":64}},"Unique":false}],"#,
     )));
+}
+
+#[test]
+#[mantra_macros::req_test("defra.wasm.collection_objects")]
+fn every_vector_algorithm_keeps_its_parameters() {
+    for algorithm in VectorAlgorithm::ALL {
+        let mut user = user();
+        user.indexes = vec![IndexDescription {
+            name: "embedding".to_string(),
+            id: 1,
+            fields: vec![IndexedFieldDescription {
+                name: "embedding".to_string(),
+                descending: false,
+            }],
+            unique: false,
+            kind: Some(IndexKind::Vector(VectorIndexDescription::with_defaults(
+                *algorithm,
+                schema::DistanceMetric::Cosine,
+                3,
+            ))),
+            auto_generated: false,
+        }];
+        let json: serde_json::Value = serde_json::from_str(&js_json(&user)).unwrap();
+        let kind = &json["Indexes"][0]["KindDescription"];
+        assert_eq!(kind["Algorithm"], algorithm.as_str());
+
+        let expected = match algorithm {
+            VectorAlgorithm::Hnsw => Some("HNSW"),
+            VectorAlgorithm::Flat => None,
+            VectorAlgorithm::IvfPq => Some("IVFPQ"),
+            VectorAlgorithm::IvfFlat => Some("IVFFLAT"),
+            VectorAlgorithm::Ssg => Some("SSG"),
+            VectorAlgorithm::DiskAnn => Some("DISKANN"),
+        };
+        for block in ["HNSW", "IVFPQ", "IVFFLAT", "SSG", "DISKANN"] {
+            assert_eq!(
+                kind.get(block).is_some(),
+                expected == Some(block),
+                "{algorithm:?} emitted the wrong {block} parameter block: {kind:?}"
+            );
+        }
+    }
 }
