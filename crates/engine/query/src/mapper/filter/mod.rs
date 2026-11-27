@@ -26,6 +26,8 @@ mod relation;
 mod secondary_id;
 mod source;
 mod split;
+#[cfg(test)]
+mod split_tests;
 
 // Re-export FilterOp from op module
 pub use op::FilterOp;

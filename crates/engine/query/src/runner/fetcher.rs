@@ -258,6 +258,17 @@ impl DocFetcher for FetcherWrapper {
         self.indexes && self.get_fetcher().supports_index_queries()
     }
 
+    async fn index_prefix_entries(
+        &self,
+        collection_name: &str,
+        index_name: &str,
+        prefixes: &[Vec<document::NormalValue>],
+    ) -> Result<Option<Vec<Vec<crate::fetcher::IndexEntryValues>>>> {
+        self.get_fetcher()
+            .index_prefix_entries(collection_name, index_name, prefixes)
+            .await
+    }
+
     async fn get_document_arrivals(
         &self,
         options: &crate::fetcher::DocumentArrivalOptions,

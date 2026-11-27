@@ -16,6 +16,10 @@ use crate::mapper::Filter;
 use crate::planner::vector_routing::VectorRoute;
 use crate::planner::{Doc, ExecInfo, PlanNode};
 
+/// The most candidates a routed similarity query asks a vector index for
+/// before it falls back to scoring the whole collection.
+pub(crate) const MAX_VECTOR_CANDIDATES: usize = 4096;
+
 /// ScanNode scans documents from a collection.
 ///
 /// This is the primary data source node in query plans.
@@ -200,7 +204,6 @@ impl ScanNode {
             self.vector_k.saturating_mul(2)
         };
 
-        const MAX_VECTOR_CANDIDATES: usize = 4096;
         if next_k > MAX_VECTOR_CANDIDATES {
             self.vector_exhausted = true;
             return Ok(false);

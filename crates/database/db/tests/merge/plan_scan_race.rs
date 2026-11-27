@@ -340,3 +340,60 @@ fn a_merge_between_plan_and_scan_does_not_hide_the_document() {
     })
     .unwrap()
 }
+
+/// A prefix read answers from the index only while it holds what reads see,
+/// so with a reindex owed it says "no answer" and the caller reads documents.
+#[test]
+fn a_prefix_read_with_an_owed_reindex_answers_none() {
+    workers::block_on(async {
+        let store = Arc::new(RegolithStore::in_memory().unwrap());
+        let mut raw = DB::from_arc(store.clone()).unwrap();
+        raw.set_lens_store(Arc::new(RenamingStore::default()));
+        let db = Arc::new(raw);
+        db.add_collection(&defra_core::RequestContext::ambient(), USERS_SDL)
+            .await
+            .unwrap();
+        db.patch_collection(
+            &defra_core::RequestContext::default(),
+            r#"[{"op":"add","path":"/Users/Fields/-","value":{"Name":"level","Kind":"Int"}}]"#,
+            None,
+        )
+        .await
+        .unwrap();
+        let v2 = db
+            .get_collection("Users")
+            .unwrap()
+            .unwrap()
+            .version_id()
+            .to_string();
+        db.set_migration(
+            LensConfig::new(
+                version_id(),
+                &v2,
+                LensModule::from_bytes(b"\0asm\x01\0\0\0".to_vec()),
+            ),
+            None,
+        )
+        .await
+        .unwrap();
+
+        let fetcher = LensedAutoCommitFetcher::new(db.clone());
+        let prefix = [vec![NormalValue::String("Ada".to_string())]];
+        merge_at_v1(&db, &store, "Ada").await;
+        assert!(!db.owed_reindexes().await.unwrap().is_empty());
+        let owed = fetcher
+            .index_prefix_entries("Users", "idx_name", &prefix)
+            .await
+            .unwrap();
+        assert!(owed.is_none());
+
+        db.settle_owed_reindexes().await.unwrap();
+        let lensed = [vec![NormalValue::String(LENSED.to_string())]];
+        let settled = fetcher
+            .index_prefix_entries("Users", "idx_name", &lensed)
+            .await
+            .unwrap();
+        assert_eq!(settled.map(|pages| pages[0].len()), Some(1));
+    })
+    .unwrap()
+}

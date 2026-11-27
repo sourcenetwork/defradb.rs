@@ -13,6 +13,7 @@ mod kms_release;
 mod lookup;
 mod parent_collection;
 mod race;
+mod rank;
 mod read;
 mod schema;
 mod signed;

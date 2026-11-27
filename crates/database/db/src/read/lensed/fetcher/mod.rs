@@ -630,6 +630,16 @@ impl<S: Store + 'static> DocFetcher for LensedDocFetcher<S> {
         true
     }
 
+    async fn index_prefix_entries(
+        &self,
+        collection_name: &str,
+        index_name: &str,
+        prefixes: &[Vec<document::NormalValue>],
+    ) -> query::error::Result<Option<Vec<Vec<query::fetcher::IndexEntryValues>>>> {
+        self.index_prefix_entries_impl(collection_name, index_name, prefixes)
+            .await
+    }
+
     async fn estimate_index_scan(
         &self,
         collection_name: &str,

@@ -66,6 +66,13 @@ impl FetchByIdsResult {
     }
 }
 
+/// One index entry: the document it points to and the values it indexes, in field order.
+#[derive(Debug, Clone, PartialEq)]
+pub struct IndexEntryValues {
+    pub doc_short_id: u64,
+    pub values: Vec<document::NormalValue>,
+}
+
 /// Result of an index scan, including raw fetch count and deduplicated document IDs.
 ///
 /// For array-indexed fields, the same document can appear multiple times in the index
@@ -497,6 +504,19 @@ pub trait DocFetcher: MaybeSendSync {
         Err(crate::error::QueryError::execution(
             "Index-based queries are not supported by this fetcher".to_string(),
         ))
+    }
+
+    /// For each prefix, the entries of `index_name` whose leading values equal
+    /// it, read from the index alone in one call; `None` when this fetcher
+    /// can't read entries.
+    async fn index_prefix_entries(
+        &self,
+        collection_name: &str,
+        index_name: &str,
+        prefixes: &[Vec<document::NormalValue>],
+    ) -> Result<Option<Vec<Vec<IndexEntryValues>>>> {
+        let _ = (collection_name, index_name, prefixes);
+        Ok(None)
     }
 
     /// Check if this fetcher supports index-based queries.
