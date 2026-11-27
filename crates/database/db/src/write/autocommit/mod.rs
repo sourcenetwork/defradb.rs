@@ -165,7 +165,7 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
         let Some(acp) = self.db.document_acp().cloned() else {
             return Ok(());
         };
-        if acp.supports_transactions() {
+        if acp.supports_transactions() || acp.unregistered_documents_are_public() {
             return Ok(());
         }
 
