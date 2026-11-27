@@ -159,6 +159,7 @@ impl Node {
 
         if config.acp.document_type != AcpDocumentType::None {
             database.set_dac_policies(acp_setup.dac_policies.clone());
+            database.set_document_acp(acp_setup.document_acp.clone());
         }
 
         let mut p2p_setup = Self::setup_p2p(
