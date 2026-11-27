@@ -101,7 +101,7 @@ use regolith::sync::{Event, OwnedSemaphorePermit, Semaphore};
 
 use crate::bitswap::{AccessMode, ReplicatorRegistry};
 use crate::replicator::ReplicationFilterMatcher;
-use crate::tracked_task::TrackedTask;
+use crate::tracked_task::{TrackedAbort, TrackedTask};
 use crate::transport::{P2PTransport, PeerId};
 use edge::EdgeError;
 
@@ -635,16 +635,17 @@ impl SyncShutdownHandle {
     where
         F: std::future::Future<Output = ()> + MaybeSend + 'static,
     {
-        // Retire completed handles on every registration so retained handles
-        // track live tasks instead of total spawn count (#1099).
-        self.prune_finished_tasks();
         self.register_task(TrackedTask::spawn(self.network().edge(), future))
     }
 
-    /// Publish the handle, then re-read the shutdown flag behind a full fence.
-    /// The drain sets the flag, fences, then takes the queue, so either it
-    /// sees this handle or this sees the flag and cancels the task itself.
+    /// Retire finished handles, publish this one, then re-read the shutdown
+    /// flag behind a full fence. Pruning here, on every registration path,
+    /// keeps the retained handles at the live tasks instead of every task
+    /// ever spawned (#1099, #3469). The drain sets the flag, fences, then
+    /// takes the queue, so either it sees this handle or this sees the flag
+    /// and cancels the task itself.
     fn register_task(&self, task: TrackedTask) -> bool {
+        self.prune_finished_tasks();
         let abort = task.abort_handle();
         self.inner.background_tasks.push(task);
         fence(Ordering::SeqCst);
@@ -844,7 +845,7 @@ impl SyncShutdownHandle {
         count
     }
 
-    fn spawn_pending_dag_fetch<F>(&self, root_cid: Cid, future: F) -> bool
+    fn spawn_pending_dag_fetch<F>(&self, root_cid: Cid, future: F) -> Option<TrackedAbort>
     where
         F: std::future::Future<Output = ()> + MaybeSend + 'static,
     {
@@ -867,7 +868,7 @@ impl SyncShutdownHandle {
             next
         });
         if !claimed {
-            return false;
+            return None;
         }
 
         let shutdown = self.clone();
@@ -879,6 +880,7 @@ impl SyncShutdownHandle {
                 _ = future.fuse() => {}
             }
         });
+        let abort = task.abort_handle();
         self.inner.pending_dag_fetch_tasks.rcu(|current| {
             let mut next = current.clone();
             if matches!(next.get(&root_cid), Some(PendingDagFetchTask::Claimed(generation))
@@ -895,7 +897,7 @@ impl SyncShutdownHandle {
         // future completes before this thread finishes its registration.
         let accepted = self.register_task(task);
         drop(owner);
-        accepted
+        accepted.then_some(abort)
     }
 
     /// Number of live retained background task handles. Prunes finished
@@ -1617,6 +1619,7 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
             .runtime
             .shutdown
             .spawn_pending_dag_fetch(root_cid, future)
+            .is_some()
         {
             true
         } else {
@@ -2022,11 +2025,13 @@ mod shutdown_tests {
         let first_release = Arc::new(crate::rt::Notify::new());
         let first_release_for_task = Arc::clone(&first_release);
 
-        assert!(shutdown.spawn_pending_dag_fetch(root, async move {
-            first_release_for_task.notified().await;
-        }));
+        assert!(shutdown
+            .spawn_pending_dag_fetch(root, async move {
+                first_release_for_task.notified().await;
+            })
+            .is_some());
         assert!(
-            !shutdown.spawn_pending_dag_fetch(root, async {}),
+            shutdown.spawn_pending_dag_fetch(root, async {}).is_none(),
             "a live fetch must suppress a second task for the same root"
         );
         assert_eq!(shutdown.retained_task_count(), 1);
@@ -2039,8 +2044,43 @@ mod shutdown_tests {
         }
 
         assert!(
-            shutdown.spawn_pending_dag_fetch(root, async {}),
+            shutdown.spawn_pending_dag_fetch(root, async {}).is_some(),
             "the root must become eligible after its prior fetch finishes"
+        );
+        shutdown.shutdown().await;
+    }
+
+    /// #3469: a pending-DAG fetch registers its handle too, so it must retire
+    /// finished ones, or a receiving node keeps one handle per fetch.
+    #[nuclei::test(threads = 0)]
+    async fn pending_dag_fetches_retire_finished_handles() {
+        let shutdown = SyncShutdownHandle::new(4, test_network());
+        let completed = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        for index in 0..50u32 {
+            let root = Cid::new_v1(0x55, Code::Sha2_256.digest(&index.to_be_bytes()));
+            let completed_by_task = Arc::clone(&completed);
+            let abort = shutdown
+                .spawn_pending_dag_fetch(root, async move {
+                    completed_by_task.fetch_add(1, Ordering::SeqCst);
+                })
+                .expect("the fetch is admitted");
+            let deadline = crate::rt::time::Instant::now() + Duration::from_secs(2);
+            while !abort.is_finished() {
+                assert!(crate::rt::time::Instant::now() < deadline);
+                crate::rt::yield_now().await;
+            }
+        }
+
+        assert_eq!(completed.load(Ordering::SeqCst), 50);
+        let root = Cid::new_v1(0x55, Code::Sha2_256.digest(b"last-root"));
+        assert!(shutdown
+            .spawn_pending_dag_fetch(root, std::future::pending())
+            .is_some());
+
+        let held = shutdown.inner.background_tasks.len();
+        assert!(
+            held <= 2,
+            "finished fetch handles must be retired on registration, held {held}"
         );
         shutdown.shutdown().await;
     }
@@ -2055,9 +2095,11 @@ mod shutdown_tests {
         let task_release = Arc::clone(&release);
 
         assert!(shutdown.reserve_pending_dag_fetch(first));
-        assert!(shutdown.spawn_pending_dag_fetch(first, async move {
-            task_release.notified().await;
-        }));
+        assert!(shutdown
+            .spawn_pending_dag_fetch(first, async move {
+                task_release.notified().await;
+            })
+            .is_some());
         assert!(shutdown.reserve_pending_dag_fetch(second));
         assert_eq!(shutdown.available_pending_dag_fetch_slots(), 0);
         assert!(
@@ -2076,7 +2118,9 @@ mod shutdown_tests {
     async fn shutdown_signals_pending_fetches_before_the_drain_timeout() {
         let shutdown = SyncShutdownHandle::new(1, test_network());
         let root = Cid::new_v1(0x55, Code::Sha2_256.digest(b"pending-root"));
-        assert!(shutdown.spawn_pending_dag_fetch(root, std::future::pending()));
+        assert!(shutdown
+            .spawn_pending_dag_fetch(root, std::future::pending())
+            .is_some());
         crate::rt::yield_now().await;
 
         let started = crate::rt::time::Instant::now();
