@@ -40,6 +40,8 @@ mod replicator_install_store;
 #[cfg(any(feature = "iroh", feature = "libp2p", feature = "pinc"))]
 mod replicator_installs;
 #[cfg(any(feature = "iroh", feature = "libp2p", feature = "pinc"))]
+mod replicator_persist;
+#[cfg(any(feature = "iroh", feature = "libp2p", feature = "pinc"))]
 mod replicator_replay;
 mod replicator_status;
 #[cfg(any(feature = "iroh", all(feature = "pinc", not(target_arch = "wasm32"))))]
@@ -127,7 +129,11 @@ where
 
 /// `names` plus their `@chunk` collections, which replicate and subscribe with
 /// their parent. A filtered parent's filter decides its chunks too.
-#[cfg(any(feature = "iroh", feature = "libp2p"))]
+#[cfg(any(
+    feature = "iroh",
+    feature = "libp2p",
+    all(feature = "pinc", not(target_arch = "wasm32"))
+))]
 pub fn with_chunk_collections(
     pusher: Option<&Arc<dyn TransportDocPusher>>,
     names: Vec<String>,
@@ -147,7 +153,11 @@ pub fn with_chunk_collections(
 }
 
 /// Collection names or IDs to remove, each with its `@chunk` collections, as IDs.
-#[cfg(any(feature = "iroh", feature = "libp2p"))]
+#[cfg(any(
+    feature = "iroh",
+    feature = "libp2p",
+    all(feature = "pinc", not(target_arch = "wasm32"))
+))]
 pub fn collections_to_remove(
     pusher: Option<&Arc<dyn TransportDocPusher>>,
     collections: Vec<String>,
@@ -168,10 +178,8 @@ pub fn collections_to_remove(
     })
 }
 
+/// Pairs each `@chunk` collection of a filtered parent in `info` with that parent.
 #[cfg(any(feature = "iroh", feature = "libp2p", feature = "pinc"))]
-/// Pairs each `@chunk` collection of a filtered parent in `info` with that
-/// parent, from the schema as it is now. A record written before the pairs
-/// were kept gets them here.
 pub fn set_chunk_sources(
     pusher: Option<&Arc<dyn TransportDocPusher>>,
     info: &mut p2p::ReplicatorInfo,
@@ -181,12 +189,12 @@ pub fn set_chunk_sources(
     };
     pair_chunk_sources(info, |parent_id| {
         let Ok(Some(name)) = pusher.get_collection_name(parent_id) else {
-            return Vec::new();
+            return None;
         };
         pusher
             .chunk_collections(&name)
             .iter()
-            .filter_map(|chunks| pusher.get_collection_id(chunks))
+            .map(|chunks| pusher.get_collection_id(chunks))
             .collect()
     });
 }
@@ -194,17 +202,32 @@ pub fn set_chunk_sources(
 #[cfg(any(feature = "iroh", feature = "libp2p", feature = "pinc"))]
 fn pair_chunk_sources<F>(info: &mut p2p::ReplicatorInfo, chunk_ids_of: F)
 where
-    F: Fn(&str) -> Vec<String>,
+    F: Fn(&str) -> Option<Vec<String>>,
 {
-    let pairs: Vec<(String, String)> = info
-        .filters
-        .keys()
-        .flat_map(|parent| {
-            chunk_ids_of(parent)
-                .into_iter()
-                .map(move |chunks| (chunks, parent.clone()))
-        })
-        .collect();
+    let mut pairs: Vec<(String, String)> = Vec::new();
+    for parent in info.filters.keys() {
+        match chunk_ids_of(parent) {
+            Some(chunk_ids) => {
+                pairs.extend(chunk_ids.into_iter().map(|chunks| (chunks, parent.clone())));
+            }
+            None => {
+                // Dropping the stored pair would let every chunk of this parent through.
+                let stored: Vec<(String, String)> = info
+                    .chunk_sources
+                    .iter()
+                    .filter(|(_, source)| *source == parent)
+                    .map(|(chunks, source)| (chunks.clone(), source.clone()))
+                    .collect();
+                tracing::warn!(
+                    peer_id = %info.peer_id_str(),
+                    collection_id = %parent,
+                    kept = stored.len(),
+                    "could not look up the chunk collections of a filtered collection; keeping its stored chunk pairs"
+                );
+                pairs.extend(stored);
+            }
+        }
+    }
     info.set_chunk_sources(pairs);
 }
 
@@ -231,8 +254,7 @@ pub fn collections_requiring_replay(
         })
         .map(|(_, cid)| *cid)
         .collect();
-    // A filtered peer gets a chunk only with its parent, so a replayed chunk
-    // collection replays its parent too.
+    // A chunk goes to a filtered peer only with its parent, so the parent replays too.
     let parents: RapidHashSet<&String> = changed
         .iter()
         .filter_map(|cid| requested.chunk_sources.get(*cid))
@@ -368,7 +390,14 @@ pub fn merge_live_replicators_with_persisted_metadata(
         .collect()
 }
 
-#[cfg(all(test, any(feature = "iroh", feature = "libp2p")))]
+#[cfg(all(
+    test,
+    any(
+        feature = "iroh",
+        feature = "libp2p",
+        all(feature = "pinc", not(target_arch = "wasm32"))
+    )
+))]
 #[path = "../tests/unit/chunk_sources.rs"]
 mod chunk_sources_tests;
 
@@ -546,32 +575,23 @@ mod resolve_remove_collections_tests {
 
     #[cfg(any(feature = "iroh", feature = "libp2p", feature = "pinc"))]
     #[test]
-    fn a_record_written_without_chunk_sources_gets_them_back() {
-        let old_record = br#"{"ID":"peer","Addresses":[],"CollectionIDs":["cid-article","cid-chunks"],"Status":0,"LastStatusChange":"0001-01-01T00:00:00Z","Filters":{"cid-article":{"predicate":{"kind":{"_eq":"public"}}}}}"#;
-        let mut info = p2p::ReplicatorInfo::from_bytes(old_record).unwrap();
-        assert!(!info.is_filtered_for_collection("cid-chunks"));
+    fn a_failed_chunk_lookup_keeps_the_stored_pair() {
+        let ids = vec!["cid-article".to_string(), "cid-chunks".to_string()];
+        let mut info = replicator(
+            &ids,
+            p2p::ReplicationFilters::from([(
+                "cid-article".to_string(),
+                p2p::ReplicationFilter::new("kind".to_string(), serde_json::json!("public")),
+            )]),
+        )
+        .with_chunk_sources([("cid-chunks".to_string(), "cid-article".to_string())]);
 
-        super::pair_chunk_sources(&mut info, |parent| match parent {
-            "cid-article" => vec!["cid-chunks".to_string()],
-            _ => Vec::new(),
-        });
+        super::pair_chunk_sources(&mut info, |_| None);
 
         assert_eq!(
             info.chunk_sources.get("cid-chunks").map(String::as_str),
             Some("cid-article")
         );
-        assert!(info.is_filtered_for_collection("cid-chunks"));
-    }
-
-    #[cfg(any(feature = "iroh", feature = "libp2p", feature = "pinc"))]
-    #[test]
-    fn an_unfiltered_parent_pairs_no_chunks() {
-        let ids = vec!["cid-article".to_string(), "cid-chunks".to_string()];
-        let mut info = replicator(&ids, p2p::ReplicationFilters::new());
-
-        super::pair_chunk_sources(&mut info, |_| vec!["cid-chunks".to_string()]);
-
-        assert!(info.chunk_sources.is_empty());
     }
 
     fn replicator(collections: &[String], filters: p2p::ReplicationFilters) -> p2p::ReplicatorInfo {

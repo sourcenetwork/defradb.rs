@@ -144,6 +144,7 @@ pub trait TransportDocPusher: defra_core::thread_bounds::MaybeSendSync {
         ))
     }
 
+    /// Narrows `peer_id`'s stored record to `collections`, never adding a collection or a record.
     async fn persist_replicator(&self, peer_id: &str, collections: &[String]) -> P2PResult<()>;
 
     async fn persist_replicator_info(&self, info: &p2p::ReplicatorInfo) -> P2PResult<()> {
@@ -381,13 +382,42 @@ impl<S: storage::corekv::Store + 'static, T: P2PTransport> TransportDocPusher
     ) -> P2PResult<()> {
         let peer_id_str = peer_id.to_string();
         let peerstore = self.db.peerstore();
-        let info = match peerstore.get_replicator(&peer_id_str).await {
-            Ok(Some(bytes)) => p2p::ReplicatorInfo::from_bytes(&bytes).ok(),
-            _ => None,
+        let stored = peerstore
+            .get_replicator(&peer_id_str)
+            .await
+            .map_err(|error| {
+                P2PError::persistence(format!("failed to load persisted replicator: {error}"))
+            })?;
+        let info = match stored.map(|bytes| p2p::ReplicatorInfo::from_bytes(&bytes)) {
+            Some(Ok(info)) => info,
+            None => p2p::ReplicatorInfo::from_raw(peer_id_str.clone(), Vec::new(), Vec::new()),
+            Some(Err(error)) => {
+                // Its filters are unknown, so pushing would send what they refuse.
+                tracing::warn!(
+                    peer_id = %peer_id_str,
+                    doc_id,
+                    collection_id,
+                    error = %error,
+                    "retry marker cleared: the stored replicator can't be read"
+                );
+                return peerstore
+                    .complete_retry_scope(
+                        &peer_id_str,
+                        doc_id,
+                        collection_id,
+                        false,
+                        generation,
+                        &[],
+                    )
+                    .await
+                    .map(drop)
+                    .map_err(|error| {
+                        P2PError::persistence(format!(
+                            "failed to clear retry marker of {doc_id}: {error}"
+                        ))
+                    });
+            }
         };
-        let info = info.unwrap_or_else(|| {
-            p2p::ReplicatorInfo::from_raw(peer_id_str.clone(), Vec::new(), Vec::new())
-        });
         db::merge::retry_doc(
             &self.transport,
             &self.db,
@@ -467,7 +497,15 @@ impl<S: storage::corekv::Store + 'static, T: P2PTransport> TransportDocPusher
                 .iter()
                 .map(|chunked| chunked.collection(name))
                 .collect(),
-            _ => Vec::new(),
+            Ok(None) => Vec::new(),
+            Err(error) => {
+                tracing::warn!(
+                    collection_name = %name,
+                    error = %error,
+                    "error looking up the chunk collections of a collection for P2P"
+                );
+                Vec::new()
+            }
         }
     }
 
@@ -537,39 +575,13 @@ impl<S: storage::corekv::Store + 'static, T: P2PTransport> TransportDocPusher
     }
 
     async fn persist_replicator(&self, peer_id: &str, collections: &[String]) -> P2PResult<()> {
-        let peerstore = self.db.peerstore();
-        let mut info = match peerstore.get_replicator(peer_id).await.map_err(|error| {
-            P2PError::persistence(format!("failed to load persisted replicator: {error}"))
-        })? {
-            Some(bytes) => p2p::ReplicatorInfo::from_bytes(&bytes).unwrap_or_else(|_| {
-                p2p::ReplicatorInfo::from_raw(peer_id.to_string(), collections.to_vec(), Vec::new())
-            }),
-            None => {
-                p2p::ReplicatorInfo::from_raw(peer_id.to_string(), collections.to_vec(), Vec::new())
-            }
-        };
-        info.id = peer_id.to_string();
-        // A removed collection takes its filter and chunk pairs with it, so a
-        // restart does not bring them back.
-        let removed: Vec<String> = info
-            .collections
-            .iter()
-            .filter(|id| !collections.contains(id))
-            .cloned()
-            .collect();
-        for collection_id in &removed {
-            info.remove_collection(collection_id);
-        }
-        info.collections = collections.to_vec();
-        let bytes = info.to_bytes().map_err(|error| {
-            P2PError::internal(format!("failed to serialize replicator info: {error}"))
-        })?;
-        peerstore
-            .create_replicator(peer_id, &bytes)
-            .await
-            .map_err(|error| {
-                P2PError::persistence(format!("failed to persist replicator: {error}"))
-            })
+        crate::replicator_persist::narrow(
+            &self.db.peerstore(),
+            self.db.options().retry_options(),
+            peer_id,
+            collections,
+        )
+        .await
     }
 
     async fn persist_replicator_info(&self, info: &p2p::ReplicatorInfo) -> P2PResult<()> {

@@ -83,8 +83,7 @@ impl Deciding {
     }
 }
 
-/// Filter checks for one replicator by [`ReplicatorInfo::admission`], the rule
-/// the live push decides by. Each parent is read once, however many chunks it has.
+/// [`ReplicatorInfo::admission`] for one replicator, reading each parent once for all its chunks.
 pub(super) struct ReplicaFilter<'a, R>
 where
     R: Reader + ?Sized,

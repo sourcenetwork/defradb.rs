@@ -286,6 +286,20 @@ A chunk has none of its parent's fields, so with the filter `{kind: {_ne: "secre
 
 Adding a replicator for `Article__body_chunk` with a filter fails with `a replicator filter can't name chunk collection 'Article__body_chunk': filter its parent 'Article', whose filter decides its chunks`. The parent's filter is the only one that decides a chunk.
 
+# `defra.chunk.replicate.filtered.relay`: A filtered peer gets no relayed chunks
+
+- **Parents:** ["defra.chunk.replicate.filtered"]
+- **Scenarios:** ["chunk::replicate_filtered::relay::a_filtered_peer_gets_no_relayed_chunks", "chunk::replicate_filtered::relay::a_restarted_relay_still_forwards_no_chunks"]
+
+`db0` replicates `Article` to `db1` with no filter, and `db1` replicates it to `db2` with the filter `{kind: {_eq: "public"}}`. A secret article written on `db0` reaches `db1` with its chunks, and `db2` gets neither the article nor its chunks: `db1` forwards what it merged without the article's document at hand, so the filter can't decide it and nothing goes. A public article written on `db1` afterwards reaches `db2` with exactly its chunks. The same holds after `db1` restarts and loads its replicators from disk. It holds on every transport, pinc included.
+
+# `defra.chunk.replicate.filtered.remove`: Removing a filtered parent from a replicator removes its chunks
+
+- **Parents:** ["defra.chunk.replicate.filtered"]
+- **Scenarios:** ["chunk::replicate_filtered::remove::removing_the_parent_by_name_removes_its_chunks", "chunk::replicate_filtered::remove::removing_the_parent_by_id_removes_its_chunks"]
+
+`db0` replicates `Article` and `type Note { kind: String @immutable text: String }` to `db1` with the filter `{kind: {_eq: "public"}}`. Removing `Article` from that replicator, by name or by its collection ID, removes `Article__body_chunk` from it too. A public article written afterwards sends neither the article nor its chunks to `db1`, while a public note still arrives. After `db0` restarts, its stored replicator still has no `Article` and no `Article__body_chunk`, so a public article written then sends nothing either. It holds on every transport, pinc included.
+
 # `defra.chunk.backup`: Backups and chunks
 
 - **Parents:** ["defra.chunk"]

@@ -507,6 +507,7 @@ mod tests {
         assert!(!registry.is_replicator("chunks", &peer));
         let info = registry.get_replicator_info(&peer).unwrap();
         assert_eq!(info.collections, vec!["users".to_string()]);
+        assert!(info.filters.is_empty());
         assert!(info.chunk_sources.is_empty());
     }
 

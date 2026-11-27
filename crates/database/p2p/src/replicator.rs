@@ -205,8 +205,7 @@ pub(crate) fn no_replication_filters(filters: &ReplicationFilters) -> bool {
     filters.is_empty()
 }
 
-/// Chunk collection ID to the ID of its parent collection, for each `@chunk`
-/// collection of a filtered parent.
+/// Each chunk collection of a filtered parent, mapped to that parent, as IDs.
 pub type ChunkSources = BTreeMap<String, String>;
 
 fn no_chunk_sources(sources: &ChunkSources) -> bool {
@@ -425,8 +424,7 @@ impl ReplicatorInfo {
         }
     }
 
-    /// Records the chunk collections of filtered parents, as `(chunk, parent)`
-    /// IDs. A pair counts only while both collections are replicated.
+    /// Pairs chunk collections with their filtered parents, as `(chunk, parent)` IDs.
     pub fn with_chunk_sources<I>(mut self, pairs: I) -> Self
     where
         I: IntoIterator<Item = (String, String)>,
@@ -454,8 +452,7 @@ impl ReplicatorInfo {
         });
     }
 
-    /// Drops `collection_id` with its filter. A filtered parent takes its chunk
-    /// collections with it: a chunk goes to a filtered peer only with its parent.
+    /// Drops `collection_id` and its filter; a filtered parent takes its chunk collections too.
     pub fn remove_collection(&mut self, collection_id: &str) {
         let mut removed: Vec<String> = self
             .chunk_sources
@@ -498,9 +495,7 @@ impl ReplicatorInfo {
         self.filters.get(deciding)
     }
 
-    /// Whether a head of `collection_id` goes to this replicator. `document` is
-    /// the document of `decided_in`: the head's own collection, or for a
-    /// `@chunk` chunk its parent's. Every push path decides by this.
+    /// Whether a head of `collection_id` goes here, judged by `decided_in`'s `document`.
     pub fn admission(
         &self,
         matcher: &dyn ReplicationFilterMatcher,
@@ -515,8 +510,7 @@ impl ReplicatorInfo {
         let Some(filter) = self.filters.get(deciding) else {
             return Admission::Admit;
         };
-        // A chunk carries none of its parent's fields, so only the parent's
-        // document can decide it.
+        // A chunk has none of its parent's fields, so only the parent's document decides it.
         if deciding != decided_in {
             return Admission::NoDocument;
         }
