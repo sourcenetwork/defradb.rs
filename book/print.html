@@ -37,7 +37,7 @@
             const path_to_root = "";
             const default_light_theme = "ayu";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-771176c0.js";
+            window.path_to_searchindex_js = "searchindex-c8faf4f7.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-8198d451.js"></script>
@@ -2324,7 +2324,8 @@ is younger than the light client’s freshness limit
 (<code>acp_light_client::FreshnessPolicy::default().max_age</code>, 30 seconds, with 15 seconds
 of allowed clock skew; set in <code>VeraRsProvider::connect</code>). It is never a local guess:
 the read path, the replicated-merge path and this one ask the same
-<code>VeraDocumentACP::check_doc_access</code>, and the node’s access cache is off for vera.rs
+<code>VeraDocumentACP::check_doc_access</code>, which keeps no decision cache of its own: only
+a decision read at a verified state is reused, keyed by that state
 (<code>DocumentACP::proves_decisions</code>). A provider that cannot be reached, or whose newest
 verified revision is older than that limit, gives no decision and the write is
 refused: it fails closed.</li>
@@ -2333,7 +2334,7 @@ refused: it fails closed.</li>
 writer are refused, and nothing is written; the refusal is the one an ordinary update or
 delete gets (the document is not found, or not authorized), or the provider’s
 unavailability, not <code>WRITE_AUTHORITY_UNAVAILABLE</code>. On a provider that proves no
-decisions, or behind an access cache, <code>None</code> still needs a key the node holds.</p>
+decisions, <code>None</code> still needs a key the node holds.</p>
 <p><strong>Freshness and revocations.</strong> The guarantee is the permission at the proof’s revision,
 not at the moment of admission. A decision is read at the light client’s newest verified
 revision and kept, for the same request and for later ones, under that revision’s state
