@@ -197,6 +197,9 @@ pub struct SyncStatus {
     pub non_authoritative_broadcast_high_water: usize,
     pub non_authoritative_broadcast_rejected_total: u64,
     pub missing_link_retries: u64,
+    /// Length, pages, time, preemptions and failures of local missing-link
+    /// walks (#2599).
+    pub missing_link_walks: crate::sync::MissingLinkWalkSnapshot,
     pub car_requested_cids: u64,
     pub car_present_cids: u64,
     pub car_served_cids: u64,
@@ -1186,6 +1189,7 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
             non_authoritative_broadcast_high_water,
             non_authoritative_broadcast_rejected_total,
             missing_link_retries: diagnostics.missing_link_retries,
+            missing_link_walks: diagnostics.missing_link_walks,
             car_requested_cids: diagnostics.car_requested_cids,
             car_present_cids: diagnostics.car_present_cids,
             car_served_cids: diagnostics.car_served_cids,

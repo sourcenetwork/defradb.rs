@@ -977,7 +977,8 @@ impl<B: Blockstore + 'static> SyncManager<B> {
         // it after its backoff, and a sweep over other roots goes on.
         let walk = match self.blockstore.get(root_cid).await {
             Ok(Some(block_data)) => {
-                find_all_missing_links(self.blockstore.as_ref(), &block_data).await
+                find_all_missing_links(self.blockstore.as_ref(), &block_data, &self.diagnostics)
+                    .await
             }
             Ok(None) => {
                 tracing::warn!(
@@ -1226,7 +1227,7 @@ impl<B: Blockstore + 'static> SyncManager<B> {
             let missing = match &data {
                 Some(data) => frontier_or_unknown(
                     root_cid,
-                    find_all_missing_links(self.blockstore.as_ref(), data).await,
+                    find_all_missing_links(self.blockstore.as_ref(), data, &self.diagnostics).await,
                     &self.diagnostics,
                 ),
                 None => vec![root_cid],
