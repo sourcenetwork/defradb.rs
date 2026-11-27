@@ -34,8 +34,8 @@
 \*
 \* Rust owners:
 \*   crates/database/db/src/definition/migration/committed_lenses.rs
-\*     (DB::owe_lens_on_commit; CommittedLensStore::hold, let_go, holder,
-\*      owe; register)
+\*     (DB::owe_lens_on_commit; CommittedLensStore::hold, let_go, held,
+\*      owe, run, transform_doc; register)
 \*   crates/database/db/src/definition/patch/store.rs (DB::store_new_version)
 \*   crates/database/db/src/txn/registry/schemas.rs
 \*     (DbTransactionRegistry::set_migration_in_txn_as)

@@ -582,6 +582,18 @@ mod tests {
             self.inner.inverse(id, docs)
         }
 
+        async fn transform_doc(
+            &self,
+            id: &TransformId,
+            doc: LensDoc,
+            _inverse: bool,
+        ) -> lens::Result<LensDoc> {
+            if !self.has_transform(id) {
+                return Err(lens::Error::TransformNotFound(id.to_string()));
+            }
+            Ok(doc)
+        }
+
         fn has_transform(&self, id: &TransformId) -> bool {
             if !self.gated.swap(true, Ordering::SeqCst) {
                 self.entered.set();
@@ -632,5 +644,36 @@ mod tests {
         reader.thread().unpark();
 
         assert_eq!(reader.join().unwrap().unwrap().unwrap().len(), 1);
+
+        let base = GatedStore::new();
+        let lenses = CommittedLensStore::wrap(base.clone());
+        let id = TransformId::new("lens-b");
+        let config = LensConfig::new("v1", "v2", LensModule::from_bytes(b"\0asm".to_vec()));
+        let holder = Arc::new(MemoryTransformStore::new());
+        workers::block_on(holder.add_with_id(id.clone(), config.clone()))
+            .unwrap()
+            .unwrap();
+        lenses.hold(1, id.clone(), holder);
+
+        let reader = {
+            let lenses = Arc::clone(&lenses);
+            let id = id.clone();
+            std::thread::spawn(move || {
+                workers::block_on(async move {
+                    let mut doc = LensDoc::new();
+                    doc.insert("name".to_owned(), serde_json::json!("Ada"));
+                    lenses.transform_doc(&id, doc, false).await
+                })
+            })
+        };
+
+        workers::block_on(base.entered.wait()).unwrap();
+        lenses.owe(id, Arc::new(config));
+        lenses.let_go(1);
+        base.released.store(true, Ordering::SeqCst);
+        reader.thread().unpark();
+
+        let transformed = reader.join().unwrap().unwrap().unwrap();
+        assert_eq!(transformed.get("name"), Some(&serde_json::json!("Ada")));
     }
 }
