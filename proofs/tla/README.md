@@ -388,7 +388,7 @@ with a policy, claimed but rootless, none of these). One GREEN run and eight
 RED, one for each arm and guard of the rule:
 
 ```bash
-# GREEN: a validating node judges every rooted or claimed collection; a node with no validator is as before.
+# GREEN: a validating node judges every claimed collection and every rooted one that carries no policy; a node with no validator is as before.
 ./tools/tlc -metadir states/gbr_g -config MC_GovernedByRoot_Green.cfg                       GovernedByRoot.tla
 # RED: the rule before this model — only claimed names are governed, so a collection defined after start merges unjudged.
 ./tools/tlc -metadir states/gbr_r -config MC_GovernedByRoot_Red_DropRootArm.cfg             GovernedByRoot.tla
