@@ -192,7 +192,7 @@ fn core_error(error: peer::Error) -> WasmError {
 }
 
 fn replicators_to_js(replicators: &[peer::Replicator]) -> Result<JsValue> {
-    Ok(to_js(replicators)?)
+    to_js(&replicators)
 }
 
 #[cfg(test)]

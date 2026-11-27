@@ -66,6 +66,15 @@ fn go_version() -> Value {
         "text": m::all(json!([m::substring("defradb "), m::substring(") built with Go")])),
         "full": m::all(json!(go_full_lines())),
         "json": m::object(go_json(m::any_of(json!([m::nonempty_string(), ""])))),
+        "jsonKeys": [
+            "release",
+            "commit",
+            "commitDate",
+            "go",
+            "httpAPI",
+            "docIDVersions",
+            "netProtocol",
+        ],
     })
 }
 

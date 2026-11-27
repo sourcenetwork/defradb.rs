@@ -86,7 +86,7 @@ fn a_large_whole_key_record_is_not_taken_for_values() {
     let prefix = IndexDataStoreKey::index_prefix(3, 1);
     let frame = Frame::new(&prefix, 9);
     let key = vec![0; 16 * 1024 * 1024];
-    let bytes = encode_keys(&[key.clone()]);
+    let bytes = encode_keys(std::slice::from_ref(&key));
     assert_eq!(
         bytes[..4],
         [1, 0, 0, 0],
