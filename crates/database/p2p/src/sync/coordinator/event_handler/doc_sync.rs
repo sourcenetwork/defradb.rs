@@ -146,14 +146,15 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
         .await
         {
             Ok(doc_ids) => doc_ids,
-            Err(error) => {
+            Err(refusal) => {
                 tracing::warn!(
                     peer_id = %peer_id,
-                    doc_ids_count = request.doc_ids.len(),
+                    doc_ids_count = refusal.count(),
                     max = max_doc_ids,
+                    error = %refusal,
                     "DocSyncRequest exceeds configured doc ID limit, rejecting"
                 );
-                return Err(error);
+                return Err(refusal.into());
             }
         };
 

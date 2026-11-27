@@ -144,6 +144,25 @@ impl SimpleIndex {
         .await
     }
 
+    /// [`Self::scan_prefix`] for a decision on the entries it finds: a write
+    /// inside the range that commits first aborts the reader.
+    pub async fn scan_prefix_validated<R: Reader + MaybeSend>(
+        &self,
+        txn: &R,
+        prefix_values: &[NormalValue],
+    ) -> Result<RangeIterator> {
+        RangeIterator::new_prefix_with(
+            txn,
+            self.collection_short_id,
+            &self.desc,
+            false,
+            prefix_values,
+            false,
+            true,
+        )
+        .await
+    }
+
     /// Scan entries within a range on a field.
     ///
     /// Optionally match first `prefix_values.len()` fields exactly,

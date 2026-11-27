@@ -23,14 +23,7 @@ fn chunk_collection_has_source_text_and_hash() {
     let names: Vec<&str> = chunk.fields.iter().map(|f| f.name.as_str()).collect();
     assert_eq!(
         names,
-        vec![
-            "_docID",
-            "_sourceID",
-            "generation",
-            "hash",
-            "source",
-            "text"
-        ]
+        vec!["_docID", "_sourceID", "hash", "source", "sourceCID", "text"]
     );
     assert_eq!(
         chunk.field_by_name("text").unwrap().kind,
@@ -48,7 +41,7 @@ fn chunk_collection_has_source_text_and_hash() {
         .iter()
         .map(|f| f.name.as_str())
         .collect();
-    assert_eq!(indexed, vec![CHUNK_SOURCE_ID_FIELD, "hash"]);
+    assert_eq!(indexed, vec![CHUNK_SOURCE_ID_FIELD, "hash", "sourceCID"]);
     let source_of = chunk.chunk_of.as_ref().unwrap();
     assert_eq!(source_of.collection, "Article");
     assert_eq!(source_of.field_name, "body");
@@ -235,7 +228,7 @@ fn chunk_refuses_a_repeated_argument() {
 }
 
 /// The splitter version leaves the IDs as they were. The chunk collection's
-/// pin is the one with its `generation` field.
+/// pin is the one with its `sourceCID` field.
 #[test]
 fn chunk_ids_match_the_ones_made_before_the_splitter_version() {
     let ids: Vec<(String, String)> = parse_sdl(SDL)
@@ -248,7 +241,7 @@ fn chunk_ids_match_the_ones_made_before_the_splitter_version() {
         ids,
         vec![
             pinned("bafyreibhwcm7e5z3dnkm4bdln3brw2yzepkcuedo2gm5tndai37xxshypu"),
-            pinned("bafyreih2mausuzqv4ban6iqadbmwpureszuq5twitdqvsygncx7nyiktyq"),
+            pinned("bafyreig7cuac77bgjpez7tkhkpaurzie2fwb2elss3n2rt43ubf7kruhka"),
         ]
     );
 }
@@ -385,15 +378,15 @@ fn an_embedding_field_named_like_a_chunk_field_is_refused() {
 }
 
 #[test]
-fn an_embedding_field_named_generation_is_refused() {
+fn an_embedding_field_named_source_cid_is_refused() {
     let sdl = r#"type Article {
         body: String @chunk
-        generation: [Float32!] @embedding(fields: ["body"])
+        sourceCID: [Float32!] @embedding(fields: ["body"])
     }"#;
     let err = parse_sdl(sdl).unwrap_err().to_string();
     assert!(
         err.contains(
-            "@chunk needs the field name Article__body_chunk.generation, which is already taken"
+            "@chunk needs the field name Article__body_chunk.sourceCID, which is already taken"
         ),
         "{err}"
     );

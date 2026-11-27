@@ -1,15 +1,14 @@
 //! `@chunk`: adds the generated chunk collection.
 //!
 //! For `body: String @chunk` on `Article`, it adds a type `Article__body_chunk`
-//! with `source`, `text`, `hash` and `generation`. An `@embedding` of `body`
+//! with `source`, `text`, `hash` and `sourceCID`. An `@embedding` of `body`
 //! moves to the chunk type, embedding each chunk's text. This runs before
 //! relations are resolved, so it is built like any other type.
 
 use graphql_parser::schema::Directive;
 use schema::{
-    chunk_collection_name, template_reads, CType, ChunkSource, ChunkedField,
-    CHUNK_GENERATION_FIELD, CHUNK_HASH_FIELD, CHUNK_SOURCE_FIELD, CHUNK_SOURCE_ID_FIELD,
-    CHUNK_TEXT_FIELD,
+    chunk_collection_name, template_reads, CType, ChunkSource, ChunkedField, CHUNK_HASH_FIELD,
+    CHUNK_SOURCE_CID_FIELD, CHUNK_SOURCE_FIELD, CHUNK_SOURCE_ID_FIELD, CHUNK_TEXT_FIELD,
 };
 
 use crate::error::{QueryError, Result};
@@ -173,12 +172,15 @@ impl SdlParser<'_> {
                 splitter_version: chunk_split::split::SplitterVersion::CURRENT.number(),
             });
 
-            // One index on `_sourceID` and `hash` lists a parent's chunks with
-            // their hashes, which is all writes need.
+            // One index on `_sourceID`, `hash` and `sourceCID` lists a parent's
+            // chunks with all a write decides on, so it reads no chunk.
             let mut source = field(CHUNK_SOURCE_FIELD, scalar(&spec.parent, false));
             source.directives.is_primary = true;
             source.directives.index.push(IndexConfig {
-                includes: vec![(CHUNK_HASH_FIELD.to_string(), false)],
+                includes: vec![
+                    (CHUNK_HASH_FIELD.to_string(), false),
+                    (CHUNK_SOURCE_CID_FIELD.to_string(), false),
+                ],
                 ..IndexConfig::default()
             });
             let position = self
@@ -191,7 +193,7 @@ impl SdlParser<'_> {
                 source,
                 field(CHUNK_TEXT_FIELD, scalar("String", false)),
                 field(CHUNK_HASH_FIELD, scalar("String", false)),
-                field(CHUNK_GENERATION_FIELD, scalar("Int", false)),
+                field(CHUNK_SOURCE_CID_FIELD, scalar("String", false)),
             ];
             for moved in embedded {
                 if [
@@ -199,7 +201,7 @@ impl SdlParser<'_> {
                     CHUNK_SOURCE_FIELD,
                     CHUNK_TEXT_FIELD,
                     CHUNK_HASH_FIELD,
-                    CHUNK_GENERATION_FIELD,
+                    CHUNK_SOURCE_CID_FIELD,
                 ]
                 .contains(&moved.name.as_str())
                 {

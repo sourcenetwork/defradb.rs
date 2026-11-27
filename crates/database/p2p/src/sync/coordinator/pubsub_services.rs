@@ -189,7 +189,16 @@ impl MessageHandler for DocSyncHandler {
             self.ctx.max_doc_sync_request_doc_ids,
         )
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|refusal| {
+            warn!(
+                peer_id = %from,
+                doc_ids_count = refusal.count(),
+                max = self.ctx.max_doc_sync_request_doc_ids,
+                error = %refusal,
+                "doc-sync: request exceeds the doc ID limit, rejecting"
+            );
+            crate::error::Error::from(refusal).to_string()
+        })?;
 
         let mut results = Vec::new();
         for doc_id in &doc_ids {
@@ -675,8 +684,7 @@ mod tests {
         }
     }
 
-    /// A parent's chunks count against the limit, so a request at the limit
-    /// cannot fan out past it.
+    /// A parent's chunks count against the limit, so a request cannot fan out past it.
     #[nuclei::test]
     async fn doc_sync_handler_counts_chunks_against_the_doc_id_limit() {
         let peer = a_libp2p_peer();

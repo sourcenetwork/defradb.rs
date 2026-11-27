@@ -387,6 +387,19 @@ pub async fn set_block_doc_id_mapping(
         .map_err(Error::Storage)
 }
 
+/// Whether `doc_id` owns `block_cid` here: its write or merge has committed.
+pub async fn owns_block(
+    systemstore: &NamespaceView,
+    block_cid: &str,
+    doc_id: &str,
+) -> Result<bool> {
+    Ok(systemstore
+        .get(&BlockCIDToDocIDKey::bytes_for(block_cid, doc_id))
+        .await
+        .map_err(Error::Storage)?
+        .is_some())
+}
+
 /// Return every DocID that owns `block_cid`.
 pub async fn get_doc_ids_for_block(
     systemstore: &NamespaceView,

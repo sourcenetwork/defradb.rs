@@ -1,4 +1,5 @@
-//! Who may fetch a signed chunk block: whoever may read the parent.
+//! Who may fetch a signed chunk block: whoever may read the parent. Honest
+//! nodes sign none, so only a forged one is ever asked for.
 
 use std::sync::Arc;
 
@@ -100,24 +101,102 @@ fn a_chunk_block_is_unsigned_so_its_id_is_the_same_on_every_node() {
     .unwrap()
 }
 
+/// A signed chunk of `parent`, stored on `db`. Honest nodes sign no chunk
+/// block, so this is what a peer that ignores that would send.
+async fn signed_chunk(db: &Arc<DB<RegolithStore>>, parent: &str) -> (Cid, String) {
+    let chunks = db.get_collection("Article__body_chunk").unwrap().unwrap();
+    let mut chunk = Document::new(chunks.schema_arc());
+    let text = "First paragraph.\n\n";
+    chunk
+        .set("_sourceID", NormalValue::String(parent.into()))
+        .unwrap();
+    chunk.set("text", NormalValue::String(text.into())).unwrap();
+    chunk
+        .set(
+            "hash",
+            NormalValue::String(db::chunk::hash::text_hash(text)),
+        )
+        .unwrap();
+    let key = crypto::generate_ed25519().unwrap();
+    let public_key = key.public_key();
+    let signing = SigningConfig {
+        key_type: SigningKeyType::Ed25519,
+        private_key_bytes: key.raw_owned(),
+        public_key_bytes: public_key.raw_owned(),
+        public_key_hex: hex::encode(public_key.raw()),
+        remote_signer: None,
+        signing_authorization: None,
+    };
+    let txn = db.new_txn(false).await.unwrap();
+    let systemstore = txn.systemstore().unwrap();
+    let short_id = db.next_doc_short_id().await.unwrap();
+    let created = db::block::builder::write_document_blocks(
+        &txn.blockstore().unwrap(),
+        &txn.headstore().unwrap(),
+        &chunk,
+        chunks.schema(),
+        db::block::builder::DocRef::new(chunks.resolved_root_id(), short_id),
+        None,
+        None,
+        Some(&signing),
+        None,
+    )
+    .await
+    .unwrap();
+    db::docid::map::set_doc_id_mapping(
+        &systemstore,
+        chunks.resolved_root_id(),
+        short_id,
+        &created.doc_id,
+    )
+    .await
+    .unwrap();
+    for cid in std::iter::once(&created.cid).chain(&created.field_cids) {
+        db::docid::map::set_block_doc_id_mapping(&systemstore, &cid.to_string(), &created.doc_id)
+            .await
+            .unwrap();
+    }
+    chunk.set_id(document::DocID::from_string(&created.doc_id).unwrap());
+    chunks
+        .save_with_datastore(&txn.datastore().unwrap(), &chunk, short_id)
+        .await
+        .unwrap();
+    drop(systemstore);
+    txn.force_commit().await.unwrap();
+    (created.cid, created.doc_id)
+}
+
 #[test]
-fn only_a_reader_of_the_parent_gets_a_signed_chunk_delete_block() {
+fn a_chunk_delete_block_is_unsigned_too() {
     workers::block_on(async {
-        let (db, created, acp) = author().await;
+        let (db, created, _) = author().await;
         sign_writes();
         let deleted = AutoCommitMutator::new(Arc::clone(&db))
             .delete("Article", &created.doc_id)
             .await
             .unwrap();
         set_signing_config(None);
+        let blocks = DefraBlockstore::new(db.store().clone(), false);
         assert!(!deleted.derived.is_empty());
         for chunk in &deleted.derived {
-            let cid = &chunk.commit_cid;
-            verify(&db, &acp, cid, &identity(OWNER)).await.unwrap();
-            for denied in [identity(STRANGER), Identity::Anonymous] {
-                let error = verify(&db, &acp, cid, &denied).await.unwrap_err();
-                assert!(error.contains("missing permission"), "{error}");
-            }
+            let bytes = blocks.get(&chunk.commit_cid).await.unwrap().unwrap();
+            let block = defra_core::Block::from_dag_cbor(&bytes).unwrap();
+            assert!(block.signature.is_none());
+        }
+    })
+    .unwrap()
+}
+
+#[test]
+fn only_a_reader_of_the_parent_gets_a_signed_chunk_block() {
+    workers::block_on(async {
+        let (db, created, acp) = author().await;
+        let (cid, _) = signed_chunk(&db, &created.doc_id.to_string()).await;
+
+        verify(&db, &acp, &cid, &identity(OWNER)).await.unwrap();
+        for denied in [identity(STRANGER), Identity::Anonymous] {
+            let error = verify(&db, &acp, &cid, &denied).await.unwrap_err();
+            assert!(error.contains("missing permission"), "{error}");
         }
     })
     .unwrap()
@@ -135,62 +214,35 @@ fn a_chunk_block_whose_parent_has_not_merged_is_refused_to_everyone() {
         let blockstore = Arc::new(DefraBlockstore::new(store, false));
         let handler = DbMergeHandler::new(peer.clone(), blockstore.clone());
         let source_blocks = DefraBlockstore::new(source.store().clone(), false);
+        let (cid, doc_id) = signed_chunk(&source, &created.doc_id.to_string()).await;
 
         let chunks = peer.get_collection("Article__body_chunk").unwrap().unwrap();
-        let chunk = &created.derived[0];
-        let bytes = source_blocks.get(&chunk.commit_cid).await.unwrap().unwrap();
+        let bytes = source_blocks.get(&cid).await.unwrap().unwrap();
         let block = defra_core::Block::from_dag_cbor(&bytes).unwrap();
+        let mut copies: Vec<Cid> = block.signature.into_iter().collect();
         for link in block.links.iter().flatten() {
             let data = source_blocks.get(&link.link).await.unwrap().unwrap();
+            copies.extend(defra_core::Block::from_dag_cbor(&data).unwrap().signature);
             blockstore.put(&link.link, &data).await.unwrap();
         }
-        blockstore.put(&chunk.commit_cid, &bytes).await.unwrap();
+        for signature in copies {
+            let data = source_blocks.get(&signature).await.unwrap().unwrap();
+            blockstore.put(&signature, &data).await.unwrap();
+        }
+        blockstore.put(&cid, &bytes).await.unwrap();
         let outcome = handler
             .handle_block(
-                &chunk.commit_cid,
+                &cid,
                 &bytes,
-                BlockMetadata::normal(
-                    &chunk.doc_id.to_string(),
-                    chunks.collection_id(),
-                    OWNER,
-                    Some("peer"),
-                    false,
-                ),
+                BlockMetadata::normal(&doc_id, chunks.collection_id(), OWNER, Some("peer"), false),
             )
             .await
             .unwrap();
         assert!(outcome.is_merged(), "{outcome:?}");
 
-        // The chunk's own blocks are unsigned, so its signed delete is what a caller fetches.
-        sign_writes();
-        let deleted = AutoCommitMutator::new(Arc::clone(&source))
-            .delete("Article", &created.doc_id)
-            .await
-            .unwrap();
-        set_signing_config(None);
-        let delete = deleted
-            .derived
-            .iter()
-            .find(|write| write.doc_id == chunk.doc_id)
-            .unwrap();
-        let bytes = source_blocks
-            .get(&delete.commit_cid)
-            .await
-            .unwrap()
-            .unwrap();
-        let signature = defra_core::Block::from_dag_cbor(&bytes)
-            .unwrap()
-            .signature
-            .unwrap();
-        let data = source_blocks.get(&signature).await.unwrap().unwrap();
-        blockstore.put(&signature, &data).await.unwrap();
-        blockstore.put(&delete.commit_cid, &bytes).await.unwrap();
-
         let acp = Arc::new(LocalDocumentACP::new(Arc::new(MemoryAcpStore::new())));
         for caller in [identity(OWNER), Identity::Anonymous] {
-            let error = verify(&peer, &acp, &delete.commit_cid, &caller)
-                .await
-                .unwrap_err();
+            let error = verify(&peer, &acp, &cid, &caller).await.unwrap_err();
             assert!(error.contains("parent is not known here"), "{error}");
         }
     })

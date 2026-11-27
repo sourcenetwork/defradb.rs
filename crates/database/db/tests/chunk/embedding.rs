@@ -314,7 +314,7 @@ fn an_edit_does_not_ask_for_its_unchanged_chunks() {
 }
 
 /// The edit deleted the chunk the revert brings back, so the revert makes it
-/// again under its next generation and asks for its vector in one wave.
+/// again under its own commit and asks for its vector in one wave.
 #[test]
 fn a_revert_embeds_only_the_chunk_it_makes_again() {
     workers::block_on(async {

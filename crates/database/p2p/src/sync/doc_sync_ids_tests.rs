@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use cid::Cid;
 
 use super::*;
-use crate::error::Error;
+use crate::error::{Error, Result};
 
 /// "book" has five chunks, "broken" fails its lookup, and the rest have none.
 /// Counts the follower lookups it answers.
@@ -37,9 +37,9 @@ fn ids(names: &[&str]) -> Vec<String> {
     names.iter().map(|name| name.to_string()).collect()
 }
 
-fn refusal(result: Result<Vec<String>>) -> String {
+fn refusal(result: std::result::Result<Vec<String>, TooMany>) -> String {
     match result {
-        Err(Error::InvalidConfig(message)) => message,
+        Err(refusal) => refusal.to_string(),
         other => panic!("the request must be refused, got {other:?}"),
     }
 }
@@ -101,4 +101,24 @@ async fn chunks_that_fit_the_limit_are_served() {
         .await
         .unwrap();
     assert_eq!(all.len(), 6);
+}
+
+#[nuclei::test]
+async fn an_id_listed_twice_or_among_the_chunks_counts_once() {
+    let requested = ids(&["book", "book", "chunk1", "chunk3"]);
+    let all = with_followers(&Followers::default(), &requested, 6)
+        .await
+        .unwrap();
+    let mut expected = ids(&["book", "chunk1", "chunk3"]);
+    expected.extend(["chunk0", "chunk2", "chunk4"].map(str::to_string));
+    assert_eq!(all, expected);
+}
+
+#[nuclei::test]
+async fn the_refusal_reports_the_count_that_went_over() {
+    let refused = with_followers(&Followers::default(), &ids(&["book"]), 3)
+        .await
+        .unwrap_err();
+    assert_eq!(refused, TooMany::WithChunks { count: 6, max: 3 });
+    assert_eq!(refused.count(), 6);
 }

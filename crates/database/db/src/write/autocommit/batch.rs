@@ -558,11 +558,12 @@ impl<S: Store + 'static> DocMutator for BatchMutator<S> {
         )
         .await?;
         let parent_id = created.doc_id.to_string();
+        let commit = created.block.clone();
         let mut result = created.into_result();
         result.derived = {
             let txn = self.shared_txn()?;
             self.chunk_writes(&txn, context)
-                .sync_chunks(&parent_id, chunk_plans)
+                .sync_chunks(&parent_id, &commit, chunk_plans)
                 .await?
         };
         Ok(result)
@@ -726,7 +727,7 @@ impl<S: Store + 'static> DocMutator for BatchMutator<S> {
         let derived = {
             let txn = self.shared_txn()?;
             self.chunk_writes(&txn, context)
-                .sync_chunks(&canonical_doc_id.to_string(), chunk_plans)
+                .sync_chunks(&canonical_doc_id.to_string(), &doc_block, chunk_plans)
                 .await?
         };
 

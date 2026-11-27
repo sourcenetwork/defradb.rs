@@ -92,6 +92,29 @@ impl RangeIterator {
         prefix_values: &[NormalValue],
         reverse: bool,
     ) -> Result<Self> {
+        Self::new_prefix_with(
+            txn,
+            collection_short_id,
+            desc,
+            is_unique,
+            prefix_values,
+            reverse,
+            false,
+        )
+        .await
+    }
+
+    /// A prefix scan whose range is validated at commit when `validated`, for
+    /// a decision on the set of entries it reads.
+    pub async fn new_prefix_with<R: Reader + MaybeSend + ?Sized>(
+        txn: &R,
+        collection_short_id: u32,
+        desc: &IndexDescription,
+        is_unique: bool,
+        prefix_values: &[NormalValue],
+        reverse: bool,
+        validated: bool,
+    ) -> Result<Self> {
         // Build key prefix with the exact field values
         let mut key_prefix = IndexDataStoreKey::index_prefix(collection_short_id, desc.id);
         let index_prefix_len = key_prefix.len();
@@ -104,7 +127,8 @@ impl RangeIterator {
 
         let opts = IterOptions::default()
             .with_prefix(key_prefix.clone())
-            .with_reverse(reverse);
+            .with_reverse(reverse)
+            .with_validation(validated);
         let inner = txn.iterator(opts).await?;
 
         Ok(Self {

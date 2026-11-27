@@ -92,7 +92,7 @@ fn assert_waits(outcome: &MergeOutcome, why: &str) {
     else {
         panic!("expected the delete to wait, got {outcome:?}");
     };
-    assert!(reason.contains(why), "{reason}");
+    assert_eq!(reason, why);
 }
 
 #[test]
@@ -108,7 +108,7 @@ fn a_peer_cannot_delete_a_chunk_its_live_parent_uses() {
             .await
             .unwrap();
 
-        assert_waits(&outcome, "parent is live and uses it");
+        assert_waits(&outcome, "the chunk's parent is live and uses it");
         assert!(chunk_is_stored(&peer, &chunk_id).await);
     })
     .unwrap()
@@ -148,7 +148,7 @@ fn a_held_back_delete_merges_once_the_parent_stops_using_the_chunk() {
         let early = merge_outcome(&author, &peer, &delete, &chunk_id)
             .await
             .unwrap();
-        assert_waits(&early, "parent is live and uses it");
+        assert_waits(&early, "the chunk's parent is live and uses it");
 
         peer.run(
             &format!(
@@ -162,12 +162,11 @@ fn a_held_back_delete_merges_once_the_parent_stops_using_the_chunk() {
             .await
             .unwrap();
 
-        // The edit deleted the chunk already, so the delete has nothing left to wait for.
-        let settled = match &retried {
-            MergeOutcome::Skipped { reason, .. } => MergeOutcome::skip_reason_is_applied(reason),
-            other => other.is_merged(),
-        };
-        assert!(settled, "{retried:?}");
+        // The edit wrote the same unsigned delete, so this one is already applied.
+        assert!(
+            matches!(&retried, MergeOutcome::Skipped { reason, .. } if MergeOutcome::skip_reason_is_applied(reason)),
+            "{retried:?}"
+        );
         assert!(!chunk_is_stored(&peer, &chunk_id).await);
     })
     .unwrap()
@@ -184,7 +183,7 @@ fn a_chunk_delete_that_arrives_before_its_parents_merges_after_it() {
         let early = merge_outcome(&author, &peer, &delete, &chunk_id)
             .await
             .unwrap();
-        assert_waits(&early, "parent is live");
+        assert_waits(&early, "the chunk's parent is live and uses it");
         assert_eq!(shown(&peer).await, std::slice::from_ref(&chunk_id));
 
         peer.run(
@@ -219,7 +218,7 @@ fn a_chunk_delete_waits_for_a_parent_that_has_not_arrived() {
             .await
             .unwrap();
 
-        assert_waits(&outcome, "has not arrived");
+        assert_waits(&outcome, "the chunk's parent has not arrived");
         assert!(chunk_is_stored(&peer, &chunk_id).await);
     })
     .unwrap()
@@ -249,7 +248,7 @@ fn a_chunk_delete_cannot_merge_before_its_chunk() {
         let retried = merge_outcome(&author, &peer, &delete, &created.doc_id)
             .await
             .unwrap();
-        assert_waits(&retried, "has not arrived");
+        assert_waits(&retried, "the chunk's parent has not arrived");
     })
     .unwrap()
 }
@@ -283,7 +282,7 @@ fn a_chunk_delete_waits_for_a_parent_merged_without_a_value() {
             .await
             .unwrap();
 
-        assert_waits(&outcome, "parent has not arrived");
+        assert_waits(&outcome, "the chunk's parent has not arrived");
         assert!(chunk_is_stored(&peer, &chunk_id).await);
     })
     .unwrap()
@@ -332,7 +331,7 @@ fn a_parent_delete_and_its_chunk_deletes_merge_on_a_peer() {
             let early = merge_outcome(&author, &peer, &chunk.commit_cid, &chunk.doc_id.to_string())
                 .await
                 .unwrap();
-            assert_waits(&early, "parent is live");
+            assert_waits(&early, "the chunk's parent is live and uses it");
         }
         let parent_deleted = merge_outcome_in(
             &author,

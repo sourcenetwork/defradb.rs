@@ -1,5 +1,5 @@
-//! Writes and merges delete the chunks their text no longer uses, and make a
-//! deleted chunk again under its next generation.
+//! Merges delete the chunks their text no longer uses, drop chunk creates
+//! nothing here needs, and make the writer's chunks under its IDs.
 
 use std::sync::Arc;
 
@@ -8,7 +8,7 @@ use document::{DocID, Document, NormalValue};
 use query::mutator::{DerivedWrite, DocMutator};
 
 use super::chunk_update_journal::{
-    create_chunk, merge_outcome, merge_outcome_in, node_with_policy, Node, BODY,
+    create_chunk, merge_batch_in, merge_outcome, merge_outcome_in, node_with_policy, Node, BODY,
 };
 
 const OTHER: &str = "Other text.";
@@ -17,13 +17,6 @@ fn created(derived: &[DerivedWrite]) -> Vec<&DerivedWrite> {
     derived
         .iter()
         .filter(|write| write.document.is_some())
-        .collect()
-}
-
-fn deleted(derived: &[DerivedWrite]) -> Vec<&DerivedWrite> {
-    derived
-        .iter()
-        .filter(|write| write.document.is_none())
         .collect()
 }
 
@@ -100,47 +93,7 @@ impl Writer {
 }
 
 #[test]
-fn an_update_deletes_the_chunks_its_text_no_longer_uses() {
-    workers::block_on(async {
-        let writer = Writer::new().await;
-        let made = writer.create(BODY).await;
-        let old = created(&made.derived)[0].doc_id.clone();
-
-        let updated = writer.update(&made.doc_id, OTHER).await;
-
-        let gone: Vec<_> = deleted(&updated.derived)
-            .iter()
-            .map(|w| w.doc_id.clone())
-            .collect();
-        assert_eq!(gone, std::slice::from_ref(&old));
-        assert!(stored(&writer.node, &old).await.is_none());
-        let new = created(&updated.derived)[0].doc_id.clone();
-        assert!(stored(&writer.node, &new).await.is_some());
-    })
-    .unwrap()
-}
-
-#[test]
-fn a_revert_makes_a_deleted_chunk_again_under_the_next_generation() {
-    workers::block_on(async {
-        let writer = Writer::new().await;
-        let made = writer.create(BODY).await;
-        let first = created(&made.derived)[0].doc_id.clone();
-        writer.update(&made.doc_id, OTHER).await;
-
-        let reverted = writer.update(&made.doc_id, BODY).await;
-
-        let again = created(&reverted.derived)[0];
-        assert_ne!(again.doc_id, first);
-        let chunk = stored(&writer.node, &again.doc_id).await.unwrap();
-        assert_eq!(chunk.get("generation"), Some(&NormalValue::Int(1)));
-        assert!(stored(&writer.node, &first).await.is_none());
-    })
-    .unwrap()
-}
-
-#[test]
-fn a_merged_edit_deletes_the_peers_unused_chunks_and_a_revert_makes_the_writers_generation() {
+fn a_merged_edit_deletes_the_peers_unused_chunks_and_a_revert_makes_the_writers_chunks() {
     workers::block_on(async {
         let writer = Writer::new().await;
         let peer = node_with_policy(false).await;
@@ -163,10 +116,13 @@ fn a_merged_edit_deletes_the_peers_unused_chunks_and_a_revert_makes_the_writers_
         writer
             .merge_parent(&peer, &reverted.commit_cid.unwrap(), &made.doc_id)
             .await;
-        // Both nodes deleted the first generation, so both pick the second.
+        // The revert is a commit of its own, so both nodes make the chunk under it.
         let again = created(&reverted.derived)[0].doc_id.clone();
-        let built = stored(&peer, &again).await.unwrap();
-        assert_eq!(built.get("generation"), Some(&NormalValue::Int(1)));
+        assert_ne!(again, first);
+        assert_eq!(
+            stored(&peer, &again).await.unwrap().get("sourceCID"),
+            stored(&writer.node, &again).await.unwrap().get("sourceCID")
+        );
         assert!(stored(&peer, &other).await.is_none());
 
         // The writer's own copy arrives later and is the same document.
@@ -177,34 +133,6 @@ fn a_merged_edit_deletes_the_peers_unused_chunks_and_a_revert_makes_the_writers_
             matches!(&copy, MergeOutcome::Skipped { reason, .. } if MergeOutcome::skip_reason_is_applied(reason)),
             "{copy:?}"
         );
-    })
-    .unwrap()
-}
-
-#[test]
-fn a_merged_parent_delete_deletes_the_peers_chunks() {
-    workers::block_on(async {
-        let writer = Writer::new().await;
-        let peer = node_with_policy(false).await;
-        let made = writer.create(BODY).await;
-        writer
-            .merge_parent(&peer, &made.commit_cid.unwrap(), &made.doc_id)
-            .await;
-        let chunk = created(&made.derived)[0].doc_id.clone();
-        assert!(stored(&peer, &chunk).await.is_some());
-
-        let deleted = writer
-            .mutator
-            .delete("Article", &made.doc_id)
-            .await
-            .unwrap();
-        // Only the parent's delete reaches the peer: the peer may have built a
-        // chunk under an ID no delete from the writer names.
-        writer
-            .merge_parent(&peer, &deleted.commit_cid.unwrap(), &made.doc_id)
-            .await;
-
-        assert!(stored(&peer, &chunk).await.is_none());
     })
     .unwrap()
 }
@@ -248,7 +176,7 @@ fn a_peer_drops_a_second_copy_of_a_chunk_it_holds() {
         writer
             .merge_parent(&peer, &made.commit_cid.unwrap(), &made.doc_id)
             .await;
-        // A later generation of a chunk the peer already holds live.
+        // A copy of a chunk the peer holds live, naming a commit the peer merged.
         let chunks = writer.node.chunks();
         let held = stored(&peer, &created(&made.derived)[0].doc_id)
             .await
@@ -257,7 +185,6 @@ fn a_peer_drops_a_second_copy_of_a_chunk_it_holds() {
         for field in ["_sourceID", "text", "hash"] {
             copy.set(field, held.get(field).unwrap().clone()).unwrap();
         }
-        copy.set("generation", NormalValue::Int(1)).unwrap();
         let txn = writer.node.db.new_txn(false).await.unwrap();
         let short_id = writer.node.db.next_doc_short_id().await.unwrap();
         let second = db::block::builder::write_document_blocks(
@@ -279,10 +206,133 @@ fn a_peer_drops_a_second_copy_of_a_chunk_it_holds() {
             .await
             .unwrap();
 
-        let MergeOutcome::Skipped { reason, .. } = &outcome else {
+        let MergeOutcome::Skipped {
+            reason,
+            terminal: true,
+        } = &outcome
+        else {
             panic!("expected the copy to be dropped, got {outcome:?}");
         };
         assert!(reason.contains("already holds it"), "{reason}");
+        assert!(stored(&peer, &DocID::from_string(&second.doc_id).unwrap())
+            .await
+            .is_none());
+    })
+    .unwrap()
+}
+
+/// The skip a dropped chunk create gets: terminal, so it is never retried.
+fn dropped(outcome: &MergeOutcome) -> &str {
+    match outcome {
+        MergeOutcome::Skipped {
+            reason,
+            terminal: true,
+        } => reason,
+        other => panic!("expected the chunk to be dropped, got {other:?}"),
+    }
+}
+
+#[test]
+fn a_chunk_create_after_its_parents_delete_is_dropped() {
+    workers::block_on(async {
+        let writer = Writer::new().await;
+        let peer = node_with_policy(false).await;
+        let made = writer.create(BODY).await;
+        writer
+            .merge_parent(&peer, &made.commit_cid.unwrap(), &made.doc_id)
+            .await;
+        let (_, _, late) = create_chunk(&writer.node, &made.doc_id.to_string(), OTHER, None).await;
+        let deleted = writer
+            .mutator
+            .delete("Article", &made.doc_id)
+            .await
+            .unwrap();
+        writer
+            .merge_parent(&peer, &deleted.commit_cid.unwrap(), &made.doc_id)
+            .await;
+
+        let outcome = merge_outcome(&writer.node, &peer, &late.cid, &late.doc_id)
+            .await
+            .unwrap();
+
+        assert_eq!(dropped(&outcome), "the chunk's parent is deleted");
+        assert!(stored(&peer, &DocID::from_string(&late.doc_id).unwrap())
+            .await
+            .is_none());
+    })
+    .unwrap()
+}
+
+#[test]
+fn copies_of_one_chunk_that_arrive_before_the_parent_keep_the_smallest_doc_id() {
+    workers::block_on(async {
+        let writer = Writer::new().await;
+        let peer = node_with_policy(false).await;
+        let made = writer.create(BODY).await;
+        let parent = made.doc_id.to_string();
+        // The writer's chunk, and a copy of it that names no commit.
+        let own = created(&made.derived)[0];
+        let (_, _, copy) = create_chunk(&writer.node, &parent, BODY, None).await;
+        let own_id = own.doc_id.to_string();
+        assert_ne!(copy.doc_id, own_id);
+        for (cid, doc_id) in [(&own.commit_cid, &own_id), (&copy.cid, &copy.doc_id)] {
+            let outcome = merge_outcome(&writer.node, &peer, cid, doc_id)
+                .await
+                .unwrap();
+            assert!(outcome.is_merged(), "{outcome:?}");
+        }
+
+        writer
+            .merge_parent(&peer, &made.commit_cid.unwrap(), &made.doc_id)
+            .await;
+
+        let (kept, gone) = match own_id < copy.doc_id {
+            true => (&own_id, &copy.doc_id),
+            false => (&copy.doc_id, &own_id),
+        };
+        assert!(stored(&peer, &DocID::from_string(kept).unwrap())
+            .await
+            .is_some());
+        assert!(stored(&peer, &DocID::from_string(gone).unwrap())
+            .await
+            .is_none());
+    })
+    .unwrap()
+}
+
+#[test]
+fn a_dropped_chunk_in_a_batch_merge_leaves_the_rest_merged() {
+    workers::block_on(async {
+        let writer = Writer::new().await;
+        let peer = node_with_policy(false).await;
+        let made = writer.create(BODY).await;
+        writer
+            .merge_parent(&peer, &made.commit_cid.unwrap(), &made.doc_id)
+            .await;
+        let parent = made.doc_id.to_string();
+        let (_, _, stale) = create_chunk(&writer.node, &parent, "Never used.", None).await;
+        let edited = writer.update(&made.doc_id, OTHER).await;
+        let articles = writer.node.db.get_collection("Article").unwrap().unwrap();
+        let edit = edited.commit_cid.unwrap();
+        let blocks = [
+            (
+                stale.cid,
+                stale.doc_id.clone(),
+                writer.node.chunks().collection_id().to_string(),
+            ),
+            (edit, parent.clone(), articles.collection_id().to_string()),
+        ];
+
+        let results = merge_batch_in(&writer.node, &peer, &blocks).await;
+
+        let outcomes: Vec<MergeOutcome> = results.into_iter().map(Result::unwrap).collect();
+        assert_eq!(dropped(&outcomes[0]), "the chunk's parent does not use it");
+        assert!(outcomes[1].is_merged(), "{:?}", outcomes[1]);
+        assert!(stored(&peer, &DocID::from_string(&stale.doc_id).unwrap())
+            .await
+            .is_none());
+        let other = created(&edited.derived)[0].doc_id.clone();
+        assert!(stored(&peer, &other).await.is_some());
     })
     .unwrap()
 }

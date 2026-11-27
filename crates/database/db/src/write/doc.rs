@@ -409,7 +409,7 @@ impl<S: Store + 'static> DocMutator for DbDocMutator<S> {
             collection.collection_id().to_string(),
             created.doc_id.to_string(),
             created.cid,
-            created.block,
+            created.block.clone(),
             document_json,
             created.collection_block,
             context.creator().map(str::to_owned),
@@ -419,7 +419,7 @@ impl<S: Store + 'static> DocMutator for DbDocMutator<S> {
             let txn = self.shared_txn()?;
             self.chunk_writes(&txn, context)
                 .following(parent)
-                .sync_chunks(&created.doc_id.to_string(), chunk_plans)
+                .sync_chunks(&created.doc_id.to_string(), &created.block, chunk_plans)
                 .await?
         };
 
@@ -579,7 +579,7 @@ impl<S: Store + 'static> DocMutator for DbDocMutator<S> {
                 collection.collection_id().to_string(),
                 doc_id.to_string(),
                 doc_cid,
-                doc_block,
+                doc_block.clone(),
                 document_json,
                 col_block_data,
                 context.creator().map(str::to_owned),
@@ -591,7 +591,7 @@ impl<S: Store + 'static> DocMutator for DbDocMutator<S> {
             let txn = self.shared_txn()?;
             self.chunk_writes(&txn, context)
                 .following(parent)
-                .sync_chunks(&canonical_doc_id.to_string(), chunk_plans)
+                .sync_chunks(&canonical_doc_id.to_string(), &doc_block, chunk_plans)
                 .await?;
         }
 

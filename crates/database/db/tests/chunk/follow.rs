@@ -1,4 +1,5 @@
-//! A document sync of a parent sends only the chunks of its current text.
+//! A document sync of a parent sends only the chunks of its current text that
+//! a peer can't make itself.
 
 use db::chunk::split::split;
 use db::merge::head_provider::DbHeadProvider;
@@ -8,6 +9,20 @@ use query::mutator::{DerivedWrite, DocMutator};
 use rapidhash::RapidHashSet;
 
 use super::sync::{article, book, setup, text_of, update_body, CHUNKS, CONFIG};
+
+/// Creates an article whose body is encrypted, so a peer can't make its chunks.
+async fn create_encrypted(
+    mutator: &db::AutoCommitMutator<storage::RegolithStore>,
+    text: &str,
+) -> query::mutator::CreateResult {
+    defra_core::encryption::set_encryption_config(Some(defra_core::encryption::EncryptionConfig {
+        encrypt_doc: false,
+        encrypt_fields: vec!["body".to_string()],
+    }));
+    let created = mutator.create("Article", article("t", text)).await;
+    defra_core::encryption::set_encryption_config(None);
+    created.unwrap()
+}
 
 fn hash_of(write: &DerivedWrite) -> String {
     write
@@ -24,10 +39,7 @@ fn an_edited_parent_follows_only_its_current_chunks() {
     workers::block_on(async {
         let (mutator, db, _keep) = setup().await;
         let mut paras = book();
-        let created = mutator
-            .create("Article", article("t", &text_of(&paras)))
-            .await
-            .unwrap();
+        let created = create_encrypted(&mutator, &text_of(&paras)).await;
         let mut written = created.derived;
         for edit in 0..4 {
             paras[edit * 3] = format!("Edit {edit} rewrites this paragraph.");
@@ -49,10 +61,8 @@ fn an_edited_parent_follows_only_its_current_chunks() {
             .map(|write| write.doc_id.to_string())
             .collect();
         expected.sort();
-        assert!(
-            written.len() > expected.len(),
-            "the edits replaced some chunks"
-        );
+        let made = written.iter().filter(|w| w.document.is_some()).count();
+        assert!(made > expected.len(), "the edits replaced some chunks");
 
         let provider = DbHeadProvider::new(db);
         let mut followers = provider
@@ -69,10 +79,7 @@ fn an_edited_parent_follows_only_its_current_chunks() {
 fn a_deleted_parent_follows_nothing() {
     workers::block_on(async {
         let (mutator, db, _keep) = setup().await;
-        let created = mutator
-            .create("Article", article("t", &text_of(&book())))
-            .await
-            .unwrap();
+        let created = create_encrypted(&mutator, &text_of(&book())).await;
         let provider = DbHeadProvider::new(db);
         let parent = created.doc_id.to_string();
         assert_eq!(
@@ -95,6 +102,26 @@ fn a_deleted_parent_follows_nothing() {
             .await
             .unwrap()
             .is_empty());
+    })
+    .unwrap()
+}
+
+#[test]
+fn a_plain_parent_follows_nothing_since_a_peer_makes_its_chunks() {
+    workers::block_on(async {
+        let (mutator, db, _keep) = setup().await;
+        let created = mutator
+            .create("Article", article("t", &text_of(&book())))
+            .await
+            .unwrap();
+        assert!(!created.derived.is_empty());
+
+        let followers = DbHeadProvider::new(db)
+            .following_doc_ids(&created.doc_id.to_string())
+            .await
+            .unwrap();
+
+        assert!(followers.is_empty(), "{followers:?}");
     })
     .unwrap()
 }

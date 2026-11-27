@@ -22,7 +22,7 @@ Adding `type Article { title: String body: String @chunk(maxChars: 64) }` create
 - **Parents:** ["defra.chunk.declare"]
 - **Scenarios:** ["chunk::declare_definition::the_chunk_collection_is_listed_with_its_source"]
 
-Listing the collections named `Article__body_chunk` returns one active, materialized collection whose `ChunkOf` is `{"Collection": "Article", "Field": "body"}`, with the fields `_docID`, `_sourceID`, `generation`, `hash`, `source` and `text` and an index on `_sourceID` and `hash`. The CLI cannot list by name, so this is not checked there.
+Listing the collections named `Article__body_chunk` returns one active, materialized collection whose `ChunkOf` is `{"Collection": "Article", "Field": "body"}`, with the fields `_docID`, `_sourceID`, `hash`, `source`, `sourceCID` and `text` and an index on `_sourceID` and `hash`. The CLI cannot list by name, so this is not checked there.
 
 # `defra.chunk.declare.string_only`: `@chunk` is refused off a String field
 
@@ -120,6 +120,8 @@ For a chunk document of an existing article, updating it or deleting it fails wi
 
 Every write to an `Article` writes, replaces or removes its chunks in the same transaction, and `Article__body_chunk` shows exactly the chunks of the current text: a chunk the new text no longer uses is deleted, so storage follows the size of the text, not the number of edits.
 
+A chunk's `sourceCID` is the CID of the `body` commit that set the text it was first cut from, and it is part of the chunk's `_docID`. A chunk the next text still uses keeps its document, so it keeps that `sourceCID`. While the `body` history has one head, a new chunk names that head. When edits made apart leave several heads, every chunk moves to the winning one: the head with the highest priority, then the winning text, then the largest CID. So every node that holds the same `body` history holds the same chunk documents, and a text written again is a new commit, so its chunks never take the `_docID` of a deleted one. Chunks with vectors and chunks of an encrypted text don't move, since a merge can't make them.
+
 # `defra.chunk.write.graphql`: GraphQL create, update and delete keep the chunks exact
 
 - **Parents:** ["defra.chunk.write"]
@@ -172,16 +174,16 @@ A GraphQL subscription on `Article__body_chunk { text }` gets one event for each
 # `defra.chunk.write.cleanup`: An edit deletes the chunks its text no longer uses
 
 - **Parents:** ["defra.chunk.write"]
-- **Scenarios:** ["chunk::write_cleanup::an_edit_deletes_the_chunks_it_no_longer_uses"]
+- **Scenarios:** ["chunk::write_cleanup::an_edit_deletes_the_chunks_it_no_longer_uses", "chunk::write_cleanup::a_null_text_deletes_every_chunk"]
 
-An article with a three-paragraph body about `rivers` has three chunk documents, each with a null `generation`. Updating the body to its first paragraph followed by two paragraphs about `mountains` keeps the first paragraph's chunk with its `_docID` and deletes the other two. Updating it back to the `rivers` body keeps the first chunk again, and makes the two deleted ones again with new `_docID`s and `generation` 1.
+An article with a three-paragraph body about `rivers` has three chunk documents with one `sourceCID`. Updating the body to its first paragraph followed by two paragraphs about `mountains` keeps the first paragraph's chunk with its `_docID` and `sourceCID`, deletes the other two, and makes two `mountains` chunks whose `sourceCID` is another one, shared by both. Updating the body to null then leaves no chunk document.
 
 # `defra.chunk.write.revert`: Changing a text back makes its deleted chunks again
 
 - **Parents:** ["defra.chunk.write"]
-- **Scenarios:** ["chunk::write_revert::reverting_the_text_makes_its_chunks_again_under_a_new_generation"]
+- **Scenarios:** ["chunk::write_revert::reverting_the_text_makes_its_chunks_again_under_a_new_source"]
 
-A deleted document's ID can never be used again, so a chunk made again takes the next `generation`, which gives it a new `_docID`. An article with a five-paragraph body has five chunk documents with a null `generation`. Updating the body to three other paragraphs leaves those three chunk documents, with `_docID`s none of the first five had. Updating it back to the first body shows five chunk documents with the original `hash` and `text`, new `_docID`s and `generation` 1. Changing it away and back once more gives `generation` 2 and new `_docID`s again.
+A deleted document's ID can never be used again, and a revert is a new commit, so the chunks it makes again take that commit as their `sourceCID` and get new `_docID`s. An article with a five-paragraph body has five chunk documents. Updating the body to three other paragraphs leaves those three chunk documents, with `_docID`s and a `sourceCID` none of the first five had. Updating it back to the first body shows five chunk documents with the original `hash` and `text`, new `_docID`s and a new `sourceCID`. Changing it away and back once more gives new `_docID`s and a new `sourceCID` again.
 
 # `defra.chunk.write.locality`: Editing one paragraph changes one chunk
 
@@ -195,7 +197,7 @@ With `@chunk(maxChars: 160)` and a 40-paragraph body, changing one word in parag
 - **Parents:** ["defra.chunk.write"]
 - **Scenarios:** ["chunk::write_signed::a_signing_node_keeps_the_chunks_of_the_first_update", "chunk::write_signed::a_signing_node_keeps_the_chunks_of_an_array_create", "chunk::write_signed::a_signing_node_keeps_the_chunks_of_an_upsert_create"]
 
-On a node that signs its blocks, creating an `Article` with a six-paragraph body gives a signed `body` block. Updating the body to four paragraphs then leaves exactly the four chunks of the new text, and the `text` block of a chunk is not signed, so every node gives the chunk of one text the same `_docID`. The same update leaves exactly the new chunks for each article of a two-article `add_Article` and for an article an `upsert_Article` created.
+On a node that signs its blocks, creating an `Article` with a six-paragraph body gives a signed `body` block. Updating the body to four paragraphs then leaves exactly the four chunks of the new text, and the `text` block of a chunk is not signed, so every node that holds the same `body` history gives each chunk the same `_docID`. The same update leaves exactly the new chunks for each article of a two-article `add_Article` and for an article an `upsert_Article` created.
 
 # `defra.chunk.write.concurrent`: Concurrent writes leave the chunks of the winning text
 
@@ -240,9 +242,9 @@ With `Article` and `Article__body_chunk` replicated from one node to another, an
 # `defra.chunk.replicate.delete`: A parent delete replicates with its chunks
 
 - **Parents:** ["defra.chunk.replicate"]
-- **Scenarios:** ["chunk::replicate_delete::a_parent_delete_replicates_with_its_chunks"]
+- **Scenarios:** ["chunk::replicate_delete::a_parent_delete_replicates_with_its_chunks", "chunk::replicate_delete::a_merged_delete_removes_the_chunks_a_peer_made_itself"]
 
-After an article and its chunks reach the second node, deleting the article on the first leaves the second with no `Article` and an empty `Article__body_chunk`.
+After an article and its chunks reach the second node, deleting the article on the first leaves the second with no `Article` and an empty `Article__body_chunk`. When two unconnected nodes add the same article and the first deletes it, the second, once connected, syncs the article and is left with no chunk documents, though no chunk delete reached it. A peer drops a chunk create that arrives after its article's delete, so no chunk outlives its article there.
 
 # `defra.chunk.replicate.parent_only`: A replicator of the parent ships its chunks
 
@@ -258,14 +260,25 @@ A replicator set up for `Article` alone gives the second node exactly the same c
 
 Two unconnected nodes add the same article. One updates its body to three paragraphs about `north`, the other to three about `south`. After they connect and each syncs the article from the other, both show the `south` body and exactly its chunks. A node that syncs a newer body it has no chunks for shows that body and exactly its chunks.
 
+A merge makes the chunks it lacks only when they carry no vector and the text is not encrypted: only the writer's model gives a vector, and an encrypted chunk takes a key of its own on each node, so those come from the writer with the article. A merge deletes the chunks the merged text no longer uses, vectors or not. It leaves the chunks of an encrypted text as they are, since it can't read that text: they go when the writer's own deletes arrive or the article is deleted.
+
 # `defra.chunk.replicate.cleanup`: A peer deletes and makes again the chunks the writer does
 
 - **Parents:** ["defra.chunk.replicate"]
-- **Scenarios:** ["chunk::replicate_cleanup::a_replicated_peer_follows_an_edit_and_its_revert", "chunk::replicate_cleanup::peers_that_edit_apart_and_revert_hold_the_same_chunks"]
+- **Scenarios:** ["chunk::replicate_cleanup::a_replicated_peer_follows_an_edit_and_its_revert", "chunk::replicate_cleanup::peers_that_edit_apart_and_revert_hold_the_same_chunks", "chunk::replicate_cleanup::a_null_text_deletes_a_peers_chunks"]
 
-With `Article` replicated from one node to another, an article with a three-paragraph body about `rivers` shows the same chunk documents on both. After an update to two paragraphs about `mountains` on the first node, both show exactly the `mountains` chunks under the same `_docID`s. After an update back to `rivers`, both show the `rivers` chunks at `generation` 1 under the same new `_docID`s. A peer's delete of a chunk merges once its parent's text here no longer uses it, and waits while it does.
+With `Article` replicated from one node to another, an article with a three-paragraph body about `rivers` shows the same chunk documents on both. After an update to two paragraphs about `mountains` on the first node, both show exactly the `mountains` chunks under the same `_docID`s. After an update back to `rivers`, both show the `rivers` chunks under the same new `_docID`s. A peer's delete of a chunk merges once its parent's text here no longer uses it, and waits while it does.
 
-Two unconnected nodes add the same two-paragraph article. One updates it to three paragraphs about `north`, the other to three about `south`. After each syncs the article from the other, both show the `south` chunks under the same `_docID`s. When the first node then changes the body back to the starting text and the second syncs it, both show the starting chunks at `generation` 1 under the same `_docID`s, since both had deleted the first ones.
+Two unconnected nodes add the same two-paragraph article. One updates it to three paragraphs about `north`, the other to three about `south`. After each syncs the article from the other, both show the `south` chunks under the same `_docID`s. When the first node then changes the body back to the starting text and the second syncs it, both show the starting chunks under the same new `_docID`s.
+
+When the first of two unconnected nodes sets the body of an article both hold to null, the second, once connected, syncs the article and is left with no chunk documents.
+
+# `defra.chunk.replicate.same_ids`: Peers hold the same chunk documents
+
+- **Parents:** ["defra.chunk.replicate"]
+- **Scenarios:** ["chunk::replicate_same_ids::chunks_that_arrive_before_their_article_get_the_writers_ids", "chunk::replicate_same_ids::peers_that_edit_at_once_hold_the_same_chunk_ids"]
+
+With only `Article__body_chunk` replicated from one node to another, the second node gets the chunks of a three-paragraph article and of an edit of it before the article itself. Once it syncs the article, it lists the same chunk `_docID`s as the first node, and still does after the first node changes the body back and the second syncs it again. Two unconnected nodes add the same article and each updates its body to a text of its own, one keeping the first paragraph. After they connect and each syncs the article from the other, both show the winning body and list the same chunk `_docID`s.
 
 # `defra.chunk.replicate.signed`: Signing peers that write the same text show each chunk once
 
@@ -277,9 +290,9 @@ Two nodes that sign their blocks share an article. While disconnected, both upda
 # `defra.chunk.replicate.doc_sync`: A document sync brings the parent's chunks
 
 - **Parents:** ["defra.chunk.replicate"]
-- **Scenarios:** ["chunk::replicate_doc_sync::a_document_sync_brings_the_parents_chunks"]
+- **Scenarios:** ["chunk::replicate_doc_sync::a_document_sync_brings_the_parents_chunks", "chunk::replicate_doc_sync::an_article_with_more_chunks_than_the_request_limit_syncs"]
 
-A second node that syncs one article by its docID from the first gets the article and exactly its chunks in `Article__body_chunk`.
+A second node that syncs one article by its docID from the first gets the article and exactly its chunks in `Article__body_chunk`. The reply names the chunks only when they carry vectors or the text is encrypted, since the second node's merge makes the others itself. So an article of twelve chunks syncs from a node whose doc sync request limit is ten. Chunks with vectors or of an encrypted text count against that limit with the documents asked for, each once, and a request past it is refused with `DocSyncRequest with its documents' chunks exceeds the limit of <limit> doc IDs`.
 
 # `defra.chunk.replicate.filtered`: A filtered replicator ships a matching parent's chunks
 
@@ -299,7 +312,7 @@ A backup holds the parent's text. It holds the chunks only when they carry vecto
 - **Parents:** ["defra.chunk.backup"]
 - **Scenarios:** ["chunk::backup_round_trip::a_backup_round_trip_rebuilds_the_chunks"]
 
-Exporting a database with one article gives exactly `{"Article":[{"_docID":"<id>","_docIDNew":"<id>","body":"<text>","title":"t"}]}`: no chunk collection. Importing that content into an empty node with the same schema gives exactly the same chunks.
+Exporting a database with one article gives exactly `{"Article":[{"_docID":"<id>","_docIDNew":"<id>","body":"<text>","title":"t"}]}`: no chunk collection. Importing that content into an empty node with the same schema gives exactly the same chunks. Their `sourceCID` is the new node's own `body` commit, since the backup holds no chunk.
 
 # `defra.chunk.access`: Access to chunks follows the parent
 
@@ -376,6 +389,13 @@ Creating an article inside an explicit transaction and committing it asks the mo
 
 With `Article` and `Article__body_chunk` replicated from one node to another, an article created on the first gives the second the same chunks with the same vectors. The model is asked only by the first node, once per chunk. The second node builds none of these chunks itself when it merges the article, so it holds each chunk once.
 
+# `defra.chunk.embed.replicate_cleanup`: A peer's merge deletes the chunks with vectors its text no longer uses
+
+- **Parents:** ["defra.chunk.embed"]
+- **Scenarios:** ["chunk::embed_replicate::a_peers_merge_deletes_the_chunks_its_text_no_longer_uses"]
+
+A second node that syncs a three-paragraph article from the first gets its three chunks with their vectors. After the first node cuts the body to its first two paragraphs and the second syncs the article again, the second holds exactly the two chunks of the new body, each with its vector, though no chunk delete reached it, and it never asks the model.
+
 # `defra.chunk.embed.search`: Passage search ranks chunks across articles
 
 - **Parents:** ["defra.chunk.embed"]
@@ -400,9 +420,9 @@ While the model answers every request with 500, adding an article fails with `em
 # `defra.chunk.embed.backup`: A backup keeps the chunk vectors
 
 - **Parents:** ["defra.chunk.embed"]
-- **Scenarios:** ["chunk::embed_backup::importing_a_backup_keeps_the_chunk_vectors"]
+- **Scenarios:** ["chunk::embed_backup::importing_a_backup_keeps_the_chunk_vectors", "chunk::embed_backup::importing_an_edited_articles_backup_keeps_its_chunk_ids"]
 
-A backup of `Article` also holds `Article__body_chunk`: each current chunk's `text` once, with its `body_v`. Importing it into a second node while that node's model answers every request with 500 succeeds and asks the model for nothing. Every chunk there holds the vector from the backup, under the same `_docID` it has on the first node.
+A backup of `Article` also holds `Article__body_chunk`: each current chunk's `_sourceID`, `sourceCID` and `text` once, with its `body_v`. Importing it into a second node while that node's model answers every request with 500 succeeds and asks the model for nothing. Every chunk there holds the vector and `sourceCID` from the backup, under the same `_docID` it has on the first node, also when the body was changed away and back before the export, so its chunks name the commit that changed it back.
 
 # `defra.chunk.embed.backup_reembeds`: A backup without chunk vectors embeds the chunks again
 

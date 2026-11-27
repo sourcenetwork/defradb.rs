@@ -8,9 +8,8 @@ use rapidhash::{HashSetExt, RapidHashSet};
 use thiserror::Error;
 
 use crate::{
-    chunk_collection_name, CType, ChunkedField, CollectionVersion, FieldKind,
-    CHUNK_GENERATION_FIELD, CHUNK_HASH_FIELD, CHUNK_SOURCE_FIELD, CHUNK_SOURCE_ID_FIELD,
-    CHUNK_TEXT_FIELD,
+    chunk_collection_name, CType, ChunkedField, CollectionVersion, FieldKind, CHUNK_HASH_FIELD,
+    CHUNK_SOURCE_CID_FIELD, CHUNK_SOURCE_FIELD, CHUNK_SOURCE_ID_FIELD, CHUNK_TEXT_FIELD,
 };
 
 /// Smaller chunks carry too little text to embed or rank well.
@@ -22,7 +21,7 @@ const GENERATED_CHUNK_FIELDS: [&str; 5] = [
     CHUNK_SOURCE_ID_FIELD,
     CHUNK_TEXT_FIELD,
     CHUNK_HASH_FIELD,
-    CHUNK_GENERATION_FIELD,
+    CHUNK_SOURCE_CID_FIELD,
 ];
 
 /// A `@chunk` setting no schema could have declared, or one a later version changed.

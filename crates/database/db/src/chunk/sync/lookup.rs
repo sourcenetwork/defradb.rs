@@ -2,7 +2,7 @@
 
 use document::NormalValue;
 use query::error::{QueryError, Result};
-use rapidhash::RapidHashMap;
+use rapidhash::{RapidHashMap, RapidHashSet};
 use schema::CHUNK_SOURCE_ID_FIELD;
 use storage::corekv::Store;
 use storage::index::{IndexIterator, RangeIterator};
@@ -15,6 +15,21 @@ use crate::index::IndexManager;
 use crate::txn::DbTxn;
 
 use super::{ChunkCollection, ChunkWrites};
+
+/// A stored chunk of a parent: its short ID and the commit it names.
+pub(crate) struct Stored {
+    pub(crate) short_id: u64,
+    pub(crate) source: Option<String>,
+}
+
+/// What [`ChunkCollection::settle`] decides.
+#[derive(Default)]
+pub(crate) struct Settled {
+    /// The chunks to delete.
+    pub(crate) delete: Vec<u64>,
+    /// The hashes that keep a chunk, so need none made.
+    pub(crate) held: RapidHashSet<String>,
+}
 
 impl<S> ChunkWrites<'_, S>
 where
@@ -91,73 +106,106 @@ impl ChunkCollection {
         })
     }
 
-    /// The live chunk documents of `parent`, by hash. A hash names more than
-    /// one only when copies from peers raced in before the parent.
-    pub(crate) async fn stored_of(&self, parent: &str) -> Result<RapidHashMap<String, Vec<u64>>> {
-        let mut entries = self.scan_of(parent).await?;
-        let mut stored: RapidHashMap<String, Vec<u64>> = RapidHashMap::default();
+    /// The live chunk documents of `parent`, by hash. Validated: what it finds decides writes.
+    pub(crate) async fn stored_of(
+        &self,
+        parent: &str,
+    ) -> Result<RapidHashMap<String, Vec<Stored>>> {
+        let index = self.index()?;
+        let mut entries = index
+            .scan_prefix_validated(&self.datastore, &[NormalValue::String(parent.to_string())])
+            .await
+            .map_err(|e| QueryError::execution(format!("chunk scan failed: {e}")))?;
+        let mut stored: RapidHashMap<String, Vec<Stored>> = RapidHashMap::default();
         while let Some(entry) = entries
             .next()
             .await
             .map_err(|e| QueryError::execution(format!("chunk scan failed: {e}")))?
         {
-            // An index key does not record that the hash was a string.
-            let hash = match entry.values.into_iter().nth(1) {
-                Some(NormalValue::Bytes(hash)) => String::from_utf8(hash).ok(),
-                Some(NormalValue::String(hash)) => Some(hash),
-                _ => None,
-            };
-            if let Some(hash) = hash {
-                stored.entry(hash).or_default().push(entry.doc_short_id);
+            let mut values = entry.values.into_iter().skip(1);
+            if let Some(hash) = values.next().and_then(text) {
+                stored.entry(hash).or_default().push(Stored {
+                    short_id: entry.doc_short_id,
+                    source: values.next().and_then(text),
+                });
             }
         }
         Ok(stored)
     }
 
-    /// The chunk documents of one hash a parent no longer needs: all of them
-    /// when its text does not use the hash, otherwise all but the highest
-    /// generation, which every peer keeps alike.
-    pub(crate) async fn unneeded(&self, used: bool, short_ids: &[u64]) -> Result<Vec<u64>> {
-        if !used {
-            return Ok(short_ids.to_vec());
-        }
-        if short_ids.len() < 2 {
-            return Ok(Vec::new());
-        }
-        let mut ranked = Vec::with_capacity(short_ids.len());
-        for &short_id in short_ids {
-            ranked.push((self.generation(short_id).await?, short_id));
-        }
-        ranked.sort_unstable();
-        ranked.pop();
-        Ok(ranked.into_iter().map(|(_, short_id)| short_id).collect())
-    }
-
-    async fn generation(&self, doc_short_id: u64) -> Result<i64> {
-        let Some(doc_id) = crate::docid::map::get_doc_id(&self.systemstore, doc_short_id)
-            .await
-            .map_err(|e| QueryError::execution(e.to_string()))?
-        else {
-            return Ok(0);
+    /// Whether a chunk naming `source` waits for that commit, so nothing here may delete it.
+    pub(crate) async fn waits(
+        &self,
+        parent: &str,
+        source: Option<&str>,
+        merging: Option<&cid::Cid>,
+    ) -> Result<bool> {
+        let Some(source) = source else {
+            return Ok(false);
         };
-        let doc_id = document::DocID::from_string(&doc_id)
-            .map_err(|e| QueryError::execution(format!("invalid chunk DocID: {e}")))?;
-        let doc = self
-            .collection
-            .get_with_datastore(&self.datastore, doc_short_id, &doc_id)
-            .await
-            .map_err(|e| QueryError::execution(format!("chunk read failed: {e}")))?;
-        Ok(doc
-            .as_ref()
-            .map_or(0, crate::chunk::generation::generation_of))
+        Ok(
+            !crate::chunk::source::is_merged(&self.systemstore, parent, source, merging)
+                .await
+                .map_err(|e| QueryError::execution(e.to_string()))?,
+        )
     }
 
+    /// The chunks to delete, and the hashes still held, when the parent's field has one head.
+    pub(crate) async fn settle(
+        &self,
+        parent: &str,
+        used: &RapidHashSet<&str>,
+        stored: &RapidHashMap<String, Vec<Stored>>,
+        merging: Option<&cid::Cid>,
+    ) -> Result<Settled> {
+        let mut settled = Settled::default();
+        for (hash, docs) in stored {
+            let used = used.contains(hash.as_str());
+            // A merge leaves every used hash a chunk, so a lone one is that one.
+            if used && docs.len() == 1 {
+                settled.held.insert(hash.clone());
+                continue;
+            }
+            let mut ready = Vec::new();
+            for doc in docs {
+                if !self.waits(parent, doc.source.as_deref(), merging).await? {
+                    ready.push((self.doc_id(doc.short_id).await?, doc.short_id));
+                }
+            }
+            // Keep the smallest DocID, which every node compares the same way.
+            if used && !ready.is_empty() {
+                ready.sort_unstable();
+                ready.remove(0);
+                settled.held.insert(hash.clone());
+            }
+            settled
+                .delete
+                .extend(ready.into_iter().map(|(_, short_id)| short_id));
+        }
+        Ok(settled)
+    }
+
+    /// The DocID of the chunk `doc_short_id`, empty when it has none.
+    pub(crate) async fn doc_id(&self, doc_short_id: u64) -> Result<String> {
+        Ok(
+            crate::docid::map::get_doc_id(&self.systemstore, doc_short_id)
+                .await
+                .map_err(|e| QueryError::execution(e.to_string()))?
+                .unwrap_or_default(),
+        )
+    }
+
+    // Validated, since a parent's delete deletes what it finds.
     pub(super) async fn chunks_of(&self, parent: &str) -> Result<Vec<u64>> {
-        short_ids(self.scan_of(parent).await?).await
+        let entries = self
+            .index()?
+            .scan_prefix_validated(&self.datastore, &[NormalValue::String(parent.to_string())])
+            .await
+            .map_err(|e| QueryError::execution(format!("chunk scan failed: {e}")))?;
+        short_ids(entries).await
     }
 
-    /// The short IDs of `parent`'s chunks with `hash`. Peers that sign or
-    /// encrypt their chunks can each hold one under its own ID.
+    /// The short IDs of `parent`'s chunks with `hash`; an encrypted one can have a copy per node.
     pub(crate) async fn chunks_with(&self, parent: &str, hash: &str) -> Result<Vec<u64>> {
         let entries = self
             .scan(&[
@@ -168,19 +216,26 @@ impl ChunkCollection {
         short_ids(entries).await
     }
 
-    async fn scan_of(&self, parent: &str) -> Result<RangeIterator> {
-        self.scan(&[NormalValue::String(parent.to_string())]).await
+    fn index(&self) -> Result<&crate::index::manager::IndexType> {
+        self.index_manager
+            .get_index(&self.index_name)
+            .ok_or_else(|| QueryError::execution("chunk source index is not loaded"))
     }
 
     async fn scan(&self, prefix: &[NormalValue]) -> Result<RangeIterator> {
-        let index = self
-            .index_manager
-            .get_index(&self.index_name)
-            .ok_or_else(|| QueryError::execution("chunk source index is not loaded"))?;
-        index
+        self.index()?
             .scan_prefix(&self.datastore, prefix, false)
             .await
             .map_err(|e| QueryError::execution(format!("chunk scan failed: {e}")))
+    }
+}
+
+// An index key does not record that a value was a string.
+fn text(value: NormalValue) -> Option<String> {
+    match value {
+        NormalValue::Bytes(bytes) => String::from_utf8(bytes).ok(),
+        NormalValue::String(text) => Some(text),
+        _ => None,
     }
 }
 

@@ -1,18 +1,13 @@
-//! Keeps a parent's chunk documents in step with its text, inside the parent's
-//! own transaction.
-//!
-//! [`plan_chunks`] splits the text a write sets. [`ChunkWrites`] then creates
-//! the missing chunks and deletes the unused ones, or deletes them all when
-//! the parent is deleted. `proofs/tla/ParentChunks.tla` and
-//! `proofs/tla/ChunkCleanup.tla` check that this keeps them consistent.
+//! Keeps a parent's chunk documents in step with its text, in the parent's transaction.
 
 mod lookup;
 mod prefetch;
 mod remove;
 mod write;
 
+pub(crate) use lookup::Stored;
 pub(crate) use prefetch::embedding_requests;
-pub(crate) use remove::{remove, RemoveInputs};
+pub(crate) use remove::remove;
 pub(crate) use write::chunk_document;
 
 use std::sync::Arc;
@@ -121,38 +116,56 @@ where
         self
     }
 
-    /// Makes the parent's chunk documents match `plans`: deletes the ones the
-    /// new text does not use and creates the ones it lacks, with their vectors
-    /// from the memo. A kept chunk is never rewritten, since the same hash
-    /// means the same content. A new parent can have some already: they may
-    /// arrive by P2P before it. On any miss nothing is written and every miss
-    /// is noted for one wave.
+    /// Makes the chunk documents match `plans`; each new one names its field's link in `commit`.
     pub(crate) async fn sync_chunks(
         &self,
         parent_doc_id: &str,
+        commit: &[u8],
         plans: Vec<FieldChunks>,
     ) -> Result<Vec<DerivedWrite>> {
+        let links = defra_core::block::Block::from_dag_cbor(commit)
+            .map_err(|e| QueryError::execution(format!("parent block: {e}")))?
+            .links
+            .unwrap_or_default();
         let mut missing = Vec::new();
         let mut first_miss = None;
         for plan in plans {
+            let source = links
+                .iter()
+                .find(|link| link.name == plan.field)
+                .map(|link| link.link);
             let target = self.open(&plan.chunk_collection).await?;
-            // One scan per field: a lookup per chunk would cost a pass over the
-            // transaction's writes each time.
             let planned: RapidHashSet<&str> =
                 plan.chunks.iter().map(|(_, hash)| hash.as_str()).collect();
             // TODO(https://github.com/sourcenetwork/defradb.rs/issues/3381): reuse trusts the vector of a chunk any peer sent.
             let stored = target.stored_of(parent_doc_id).await?;
-            let mut unneeded = Vec::new();
-            for (hash, short_ids) in &stored {
-                let used = planned.contains(hash.as_str());
-                unneeded.extend(target.unneeded(used, short_ids).await?);
-            }
+            let settled = target
+                .settle(parent_doc_id, &planned, &stored, source.as_ref())
+                .await?;
             let mut docs = Vec::new();
             for (text, hash) in plan.chunks {
-                if stored.contains_key(&hash) {
+                if settled.held.contains(&hash) {
                     continue;
                 }
                 let mut doc = Self::chunk_document(&target, parent_doc_id, text, hash.clone())?;
+                let named = match self.imported_source(&target, parent_doc_id, &hash)? {
+                    // The commit is the backup's, so the chunk must not wait for it to merge here.
+                    Some(named) => {
+                        crate::docid::map::set_block_doc_id_mapping(
+                            &target.systemstore,
+                            &named.to_string(),
+                            parent_doc_id,
+                        )
+                        .await
+                        .map_err(|e| QueryError::execution(e.to_string()))?;
+                        named
+                    }
+                    None => source.ok_or_else(|| {
+                        QueryError::execution(format!("parent block has no {} link", plan.field))
+                    })?,
+                };
+                crate::chunk::source::set_source(&mut doc, &named)
+                    .map_err(|e| QueryError::execution(e.to_string()))?;
                 if let Some(miss) = self.embed(&target, &mut doc)? {
                     first_miss.get_or_insert(miss);
                 }
@@ -162,9 +175,10 @@ where
             // without the flag, so its chunks must be too.
             let encrypt = !docs.is_empty()
                 && (plan.encrypt || self.parent_encrypts(parent_doc_id, &plan.field).await?);
-            missing.push((target, unneeded, encrypt, docs));
+            missing.push((target, settled.delete, encrypt, docs));
         }
         // TODO(https://github.com/sourcenetwork/defradb.rs/issues/3380): one deadline bounds the whole wave.
+        // On a miss nothing is written; every miss is noted for one wave.
         if let Some(miss) = first_miss {
             return Err(QueryError::NeedsInput(miss));
         }

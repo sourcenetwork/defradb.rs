@@ -127,7 +127,7 @@ fn generated_chunk() -> CollectionVersion {
         ("3", "_sourceID", FieldKind::string()),
         ("4", "hash", FieldKind::string()),
         ("5", "source", FieldKind::string()),
-        ("6", "generation", FieldKind::int()),
+        ("6", "sourceCID", FieldKind::string()),
     ] {
         chunk
             .fields

@@ -29,7 +29,7 @@ mod vector_index_defaults;
 pub mod definition_validation;
 
 pub use chunk::{
-    chunk_collection_name, ChunkSource, ChunkedField, CHUNK_GENERATION_FIELD, CHUNK_HASH_FIELD,
+    chunk_collection_name, ChunkSource, ChunkedField, CHUNK_HASH_FIELD, CHUNK_SOURCE_CID_FIELD,
     CHUNK_SOURCE_FIELD, CHUNK_SOURCE_ID_FIELD, CHUNK_TEXT_FIELD,
 };
 pub use chunk_rules::{

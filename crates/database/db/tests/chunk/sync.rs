@@ -194,23 +194,38 @@ fn reverting_the_text_deletes_the_added_chunk_and_keeps_the_rest() {
         let a = text_of(&book());
         let b = format!("{a}\n\nA closing paragraph added later.");
         let created = mutator.create("Article", article("t", &a)).await.unwrap();
+        let source_of = |doc: &Document| doc.get("sourceCID").cloned();
+        let first = source_of(created.derived[0].document.as_ref().unwrap());
 
-        assert!(!update_body(&mutator, &created.doc_id, &b)
-            .await
-            .derived
-            .is_empty());
+        let edit = update_body(&mutator, &created.doc_id, &b).await;
         let back = update_body(&mutator, &created.doc_id, &a).await;
 
-        // Only chunks the edit deleted come back, at their next generation;
-        // the untouched ones were never deleted.
-        let made: Vec<_> = back
+        // Only the chunks the edit deleted come back, under the revert's
+        // commit; the untouched ones were never deleted.
+        let (made, gone): (Vec<_>, Vec<_>) = back
             .derived
             .iter()
-            .filter_map(|write| write.document.as_ref())
+            .partition(|write| write.document.is_some());
+        let edit_gone = edit
+            .derived
+            .iter()
+            .filter(|write| write.document.is_none())
+            .count();
+        assert_eq!((made.len(), gone.len()), (edit_gone, 2));
+        let mut added: Vec<String> = edit
+            .derived
+            .iter()
+            .filter(|write| write.document.is_some())
+            .map(|write| write.doc_id.to_string())
             .collect();
-        assert!(made.len() < back.derived.len());
-        for doc in made {
-            assert_eq!(doc.get("generation"), Some(&NormalValue::Int(1)));
+        let mut gone_ids: Vec<String> = gone.iter().map(|write| write.doc_id.to_string()).collect();
+        gone_ids.sort();
+        added.sort();
+        assert_eq!(gone_ids, added);
+        let again = source_of(made[0].document.as_ref().unwrap());
+        assert!(again.is_some() && again != first, "{again:?}");
+        for old in &created.derived {
+            assert_ne!(made[0].doc_id, old.doc_id);
         }
         assert_eq!(
             body_of(&mutator, &created.doc_id).await.unwrap(),
@@ -236,25 +251,42 @@ fn a_null_text_has_no_chunks() {
 }
 
 #[test]
-fn deleting_the_parent_deletes_every_chunk() {
+fn deleting_the_parent_deletes_every_chunk_of_its_text() {
     workers::block_on(async {
         let (mutator, _db, _keep) = setup().await;
-        let a = text_of(&book());
-        let created = mutator.create("Article", article("t", &a)).await.unwrap();
-        let b = format!("Something new at the start.\n\n{a}");
-        let updated = update_body(&mutator, &created.doc_id, &b).await;
-        let all: Vec<DocID> = created
+        let mut paras = book();
+        let created = mutator
+            .create("Article", article("t", &text_of(&paras)))
+            .await
+            .unwrap();
+        paras[3] = "Paragraph 3 was rewritten before the delete.".into();
+        let updated = update_body(&mutator, &created.doc_id, &text_of(&paras)).await;
+        let mut live: Vec<String> = created
             .derived
             .iter()
             .chain(&updated.derived)
-            .map(|w| w.doc_id.clone())
+            .filter(|write| write.document.is_some())
+            .filter(|write| {
+                !updated
+                    .derived
+                    .iter()
+                    .any(|gone| gone.document.is_none() && gone.doc_id == write.doc_id)
+            })
+            .map(|write| write.doc_id.to_string())
             .collect();
+        live.sort();
 
         let deleted = mutator.delete("Article", &created.doc_id).await.unwrap();
 
-        assert_eq!(deleted.derived.len(), all.len());
-        for doc_id in &all {
-            assert!(!mutator.exists(CHUNKS, doc_id).await.unwrap());
+        let mut gone: Vec<String> = deleted
+            .derived
+            .iter()
+            .map(|w| w.doc_id.to_string())
+            .collect();
+        gone.sort();
+        assert_eq!(gone, live);
+        for write in &deleted.derived {
+            assert!(!mutator.exists(CHUNKS, &write.doc_id).await.unwrap());
         }
     })
     .unwrap()

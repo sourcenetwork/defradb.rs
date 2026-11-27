@@ -53,8 +53,8 @@ pub enum MergeError {
     #[error("chunk rejected: {0}")]
     ChunkRejected(String),
 
-    /// A peer's new chunk this node drops. The attempt is discarded so the ID
-    /// it mapped stays free for a later build, and the merge reports a skip.
+    /// A peer's chunk create or delete this node drops. The attempt is
+    /// discarded so nothing it mapped stays, and the merge reports a skip.
     #[error("{0}")]
     DroppedChunk(String),
 
