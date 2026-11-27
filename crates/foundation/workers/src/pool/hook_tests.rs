@@ -227,6 +227,31 @@ fn a_held_up_monitor_does_not_report_an_older_hook_poll_again() {
 }
 
 #[test]
+fn a_held_up_monitor_does_not_report_an_older_task_poll_again() {
+    let clock = Arc::new(ManualClock::default());
+    let pool = bare(2, clock);
+    let worker = &pool.workers[0];
+    let (first, second) = (task_word(0), task_word(1));
+    assert!(
+        worker.claim_task_report(first),
+        "the first task poll reports, including word zero"
+    );
+    assert!(
+        !worker.claim_task_report(first),
+        "the other monitor does not"
+    );
+    assert!(
+        worker.claim_task_report(second),
+        "a newer task poll reports"
+    );
+    assert!(
+        !worker.claim_task_report(first),
+        "a monitor held up since it read the first poll does not report it again"
+    );
+    assert!(!worker.claim_task_report(second));
+}
+
+#[test]
 fn the_monitor_reports_a_hook_poll_once_and_routes_around_it() {
     let clock = Arc::new(ManualClock::default());
     let pool = bare(2, clock.clone());

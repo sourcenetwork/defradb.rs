@@ -46,7 +46,8 @@
 \*      routed around for nothing - INV_NotLeftStuck;
 \*   4. a poll that was marked while shown loses its mark while it is still
 \*      shown, so new work is routed to a stuck worker - INV_KeepsMark;
-\*   5. one hook poll is reported twice - INV_HookOnce.
+\*   5. one task poll is reported twice - INV_TaskOnce;
+\*   6. one hook poll is reported twice - INV_HookOnce.
 \*
 \* What the model leaves out: the worker's look for its mark is a plain load
 \* in the code, so on a weakly ordered machine it can miss a mark raised in
@@ -77,10 +78,10 @@
 \*                   (pool/monitor.rs scan);
 \*   MarkKeepsLive   a monitor's mark never replaces a mark naming the poll
 \*                   shown now (worker/shared.rs WorkerShared::mark_stuck);
-\*   ClaimMax        a hook poll's report is claimed by raising the last
-\*                   claimed hook poll's word to its own, and only a raise
+\*   ClaimMax        a task or hook poll's report is claimed by raising the
+\*                   last claimed poll's word to its own, and only a raise
 \*                   reports (pool/monitor.rs scan, the fetch_max on
-\*                   WorkerShared::hook_reported).
+\*                   WorkerShared::reported and WorkerShared::hook_reported).
 \* The monitor's sighting of a hook poll is WorkerShared::hook_elapsed, and
 \* its sweep WorkerShared::sweep_mark.
 
@@ -118,23 +119,28 @@ CONSTANTS Limit, MaxTime, MaxPolls, Watchers, HookBeat, MarkNamesPoll,
 \* hookRep:     the hook poll whose report was last claimed, 0 for none
 \*              (poll 0 is a task, so no hook poll is 0).
 \* hookDone:    every hook poll reported so far.
+\* taskRep:     the task poll whose report was last claimed, None for none.
+\* taskDone:    every task poll reported so far.
 \* held:        the poll a mark last landed on while that poll was shown,
 \*              or None: bookkeeping for INV_KeepsMark, not in the code.
 \* badReport:   a monitor reported something that was not true.
 \* badMark:     a short task poll was remembered as reported.
+\* badTaskTwice: a task poll was reported a second time.
 \* badTwice:    a hook poll was reported a second time.
 VARIABLES time, done, wpc, runStart, ranFor, closing, openHook, beatOn,
           beatPoll, beatStart, beatSince, mark, mpc, mPoll, sightPoll,
-          sightAt, hookRep, hookDone, held, badReport, badMark, badTwice
+          sightAt, hookRep, hookDone, taskRep, taskDone, held, badReport,
+          badMark, badTaskTwice, badTwice
 
 vars == <<time, done, wpc, runStart, ranFor, closing, openHook, beatOn,
           beatPoll, beatStart, beatSince, mark, mpc, mPoll, sightPoll,
-          sightAt, hookRep, hookDone, held, badReport, badMark, badTwice>>
+          sightAt, hookRep, hookDone, taskRep, taskDone, held, badReport,
+          badMark, badTaskTwice, badTwice>>
 
 \* The monitors' variables, which the worker's and the clock's steps leave
 \* alone.
-monVars == <<mpc, mPoll, sightPoll, sightAt, hookRep, hookDone, held,
-             badReport, badTwice>>
+monVars == <<mpc, mPoll, sightPoll, sightAt, hookRep, hookDone, taskRep,
+             taskDone, held, badReport, badTaskTwice, badTwice>>
 
 \* The monitors.
 Mon == Watchers
@@ -151,6 +157,9 @@ Kind(n) == IF n % 2 = 0 THEN "task" ELSE "hook"
 
 \* Every hook poll number.
 HookPolls == {n \in 0..MaxPolls : Kind(n) = "hook"}
+
+\* Every task poll number.
+TaskPolls == {n \in 0..MaxPolls : Kind(n) = "task"}
 
 \* The larger of a and b.
 Max(a, b) == IF a >= b THEN a ELSE b
@@ -175,9 +184,12 @@ TypeOK ==
     /\ sightAt \in 0..MaxTime                        \* a time
     /\ hookRep \in 0..MaxPolls                       \* a hook poll, or 0
     /\ hookDone \subseteq HookPolls                  \* hook polls reported
+    /\ taskRep \in 0..None                           \* a task poll, or None
+    /\ taskDone \subseteq TaskPolls                  \* task polls reported
     /\ held \in 0..None                              \* a poll or None
     /\ badReport \in BOOLEAN                         \* a false report seen
     /\ badMark \in BOOLEAN                           \* a false mark taken
+    /\ badTaskTwice \in BOOLEAN                      \* a task double report seen
     /\ badTwice \in BOOLEAN                          \* a double report seen
 
 \* At first nothing runs, nothing is shown, and nothing is marked.
@@ -200,9 +212,12 @@ Init ==
     /\ sightAt = 0              \* an unused default
     /\ hookRep = 0              \* no hook poll claimed
     /\ hookDone = {}            \* no hook poll reported
+    /\ taskRep = None           \* no task poll claimed
+    /\ taskDone = {}            \* no task poll reported
     /\ held = None              \* no mark landed yet
     /\ badReport = FALSE        \* nothing reported yet
     /\ badMark = FALSE          \* nothing marked yet
+    /\ badTaskTwice = FALSE     \* nothing task-reported twice yet
     /\ badTwice = FALSE         \* nothing reported twice yet
 
 \* Whether a look for poll n's mark finds one to take: with MarkNamesPoll
@@ -334,7 +349,8 @@ Sweep(m) ==
     /\ ~MarkLive                                        \* its poll is not shown
     /\ mark' = None                                     \* it comes down
     /\ UNCHANGED <<workerVars, mpc, mPoll, sightPoll, sightAt, hookRep,
-                   hookDone, held, badReport, badTwice>>  \* nothing else moves
+                   hookDone, taskRep, taskDone, held, badReport,
+                   badTaskTwice, badTwice>>  \* nothing else moves
 
 \* Monitor m first sees a hook poll: it notes when, and reports nothing. In
 \* the code this is one compare-and-swap on the shared sighting, so both
@@ -345,7 +361,8 @@ Sight(m) ==
     /\ sightPoll' = beatPoll                            \* seen now
     /\ sightAt' = time                                  \* at this time
     /\ UNCHANGED <<workerVars, mark, mpc, mPoll, hookRep, hookDone, held,
-                   badReport, badTwice>>                  \* nothing else moves
+                   taskRep, taskDone, badReport, badTaskTwice,
+                   badTwice>>                             \* nothing else moves
 
 \* How long the monitors have seen the shown poll run: a task poll from its
 \* start, a hook poll from its first sighting (0 when not yet seen).
@@ -369,7 +386,8 @@ Read(m) ==
     /\ badReport' = (badReport \/ ~(Live(beatPoll)      \* false unless it is live
                                     /\ time - beatSince > Limit)) \* and long
     /\ UNCHANGED <<workerVars, mark, sightPoll, sightAt, hookRep, hookDone,
-                   held, badTwice>>                       \* nothing else moves
+                   taskRep, taskDone, held, badTaskTwice,
+                   badTwice>>                             \* nothing else moves
 
 \* Whether m's mark lands: with MarkKeepsLive it never replaces a mark that
 \* names the poll shown now (another monitor's mark for a newer poll than
@@ -390,7 +408,8 @@ Mark(m) ==
                        ELSE held                        \* bookkeeping unchanged
        ELSE UNCHANGED <<mark, held>>                    \* a newer poll's mark stays
     /\ UNCHANGED <<workerVars, mPoll, sightPoll, sightAt, hookRep, hookDone,
-                   badReport, badTwice>>                  \* nothing else moves
+                   taskRep, taskDone, badReport, badTaskTwice,
+                   badTwice>>                             \* nothing else moves
 
 \* Monitor m looks again: if the poll it marked is no longer shown, it
 \* takes its mark back (with MarkNamesPoll only that poll's mark).
@@ -402,27 +421,44 @@ RecheckStep(m) ==
                     THEN None                           \* comes down
                     ELSE mark                           \* another poll's stays
     /\ UNCHANGED <<workerVars, mPoll, sightPoll, sightAt, hookRep, hookDone,
-                   held, badReport, badTwice>>            \* nothing else moves
+                   taskRep, taskDone, held, badReport, badTaskTwice,
+                   badTwice>>                             \* nothing else moves
 
 \* Whether m may claim the report of hook poll n: with ClaimMax only when no
 \* hook poll as late as n was claimed (a fetch_max that raised the word);
 \* without it whenever the last claim was for another poll (a swap).
 Claims(n) == IF ClaimMax THEN hookRep < n ELSE hookRep # n
 
+\* Whether m may claim the report of task poll n: with ClaimMax only when no
+\* task poll as late as n was claimed (a fetch_max that raised the word);
+\* without it only when the last claim was for another poll (a swap).
+TaskClaims(n) == IF ClaimMax THEN taskRep = None \/ taskRep < n ELSE taskRep # n
+
 \* Monitor m claims its report and goes back to rest. A task poll's report
 \* is checked for truth at Read; a hook poll is reported only if m claims
-\* it, and reporting one already reported is the double report. A failed
-\* claim writes nothing new: a fetch_max keeps the larger word, and a swap
-\* that fails put back the same word.
+\* it, and reporting one already reported is the double report. A task or
+\* hook report is claimed the same way. A failed claim writes nothing new:
+\* a fetch_max keeps the larger word, and a swap that fails put back the
+\* same word.
 Report(m) ==
     /\ Step(m, "checked", "rest")                       \* m is about to report
-    /\ IF Kind(mPoll[m]) = "hook" /\ Claims(mPoll[m])   \* m claims a hook poll
-       THEN /\ badTwice' = (badTwice \/ mPoll[m] \in hookDone) \* reported before?
-            /\ hookDone' = hookDone \cup {mPoll[m]}     \* reported now
-            /\ hookRep' = IF ClaimMax                   \* the claim's word
-                          THEN Max(hookRep, mPoll[m])   \* raised to m's poll
-                          ELSE mPoll[m]                 \* swapped to m's poll
-       ELSE UNCHANGED <<badTwice, hookDone, hookRep>>   \* nothing claimed
+    /\ IF Kind(mPoll[m]) = "task"                       \* m has a task poll
+       THEN IF TaskClaims(mPoll[m])                     \* m claims it
+            THEN /\ badTaskTwice' = (badTaskTwice \/ mPoll[m] \in taskDone)
+                 /\ taskDone' = taskDone \cup {mPoll[m]} \* reported now
+                 /\ taskRep' = mPoll[m]                    \* the claim's word
+                 /\ UNCHANGED <<hookDone, hookRep, badTwice>> \* no hook claim
+            ELSE /\ UNCHANGED <<badTaskTwice, taskDone, taskRep,
+                                 hookDone, hookRep, badTwice>> \* nothing claimed
+       ELSE IF Claims(mPoll[m])                         \* m claims a hook poll
+            THEN /\ badTwice' = (badTwice \/ mPoll[m] \in hookDone)
+                 /\ hookDone' = hookDone \cup {mPoll[m]}
+                 /\ hookRep' = IF ClaimMax
+                               THEN Max(hookRep, mPoll[m])
+                               ELSE mPoll[m]
+                 /\ UNCHANGED <<badTaskTwice, taskDone, taskRep>>
+            ELSE /\ UNCHANGED <<badTwice, hookDone, hookRep, badTaskTwice,
+                                 taskDone, taskRep>>
     /\ UNCHANGED <<workerVars, mark, mPoll, sightPoll, sightAt, held,
                    badReport>>                            \* nothing else moves
 
@@ -463,6 +499,9 @@ INV_NotLeftStuck ==
 \* as it is shown, so routing goes around the worker the whole time.
 INV_KeepsMark ==
     (held # None /\ beatOn /\ beatPoll = held) => mark = held
+
+\* No task poll is reported twice.
+INV_TaskOnce == ~badTaskTwice
 
 \* No hook poll is reported twice.
 INV_HookOnce == ~badTwice

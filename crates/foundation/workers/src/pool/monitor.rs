@@ -106,8 +106,7 @@ pub(crate) fn scan(pool: &PoolShared, now: u64) -> usize {
                 report_long_hook(worker.id.index, elapsed, pool.stuck_after);
             }
         } else {
-            let task = beat.task & !REPORTED;
-            if beat.task & REPORTED == 0 && worker.reported.swap(task, Ordering::AcqRel) != task {
+            if beat.task & REPORTED == 0 && worker.claim_task_report(beat.word) {
                 worker.counters.long_polls.fetch_add(1, Ordering::Relaxed);
                 report_long_poll(worker.id.index, beat.name, elapsed, pool.stuck_after);
             }

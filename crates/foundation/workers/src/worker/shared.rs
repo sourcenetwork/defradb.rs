@@ -197,8 +197,9 @@ pub(crate) struct WorkerShared {
     /// already ended is never charged to the poll after it, and the
     /// monitor's next scan sweeps it.
     stuck: AtomicU64,
-    /// The task last reported stuck, so two monitors report it once.
-    pub reported: AtomicU64,
+    /// The latest task poll claimed for a stuck report, stored as its word
+    /// plus one so the zero word still has a smaller unclaimed sentinel.
+    reported: AtomicU64,
     /// The word of the latest hook poll reported stuck, or [`NO_HOOK`];
     /// see [`claim_hook_report`](Self::claim_hook_report).
     hook_reported: AtomicU64,
@@ -237,7 +238,7 @@ impl WorkerShared {
             bytes_cap: bytes,
             heartbeat: Heartbeat::new(),
             stuck: AtomicU64::new(NOT_STUCK),
-            reported: AtomicU64::new(u64::MAX),
+            reported: AtomicU64::new(0),
             hook_reported: AtomicU64::new(NO_HOOK),
             hook_seen: AtomicU64::new(u64::MAX),
             abandon: AtomicBool::new(false),
@@ -301,6 +302,15 @@ impl WorkerShared {
     /// polls) and none is [`NO_HOOK`].
     pub(crate) fn claim_hook_report(&self, word: u64) -> bool {
         self.hook_reported.fetch_max(word, Ordering::AcqRel) < word
+    }
+
+    /// Claims the report of the task poll whose word is `word`: true at most
+    /// once per task poll, and never for a poll older than one already
+    /// claimed. Task words grow with the poll's start time, so a monitor held
+    /// up since it read an older poll does not report it after a newer one.
+    pub(crate) fn claim_task_report(&self, word: u64) -> bool {
+        let claim = word.saturating_add(1);
+        self.reported.fetch_max(claim, Ordering::AcqRel) < claim
     }
 
     /// How long the monitors have seen the hook poll numbered `number`,
