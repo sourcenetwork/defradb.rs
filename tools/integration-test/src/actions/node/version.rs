@@ -1,6 +1,7 @@
 use std::path::Path;
 
 use defra_version::VersionInfo;
+use serde::de::{Deserializer, IgnoredAny, MapAccess, Visitor};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use testo::prelude::*;
@@ -36,51 +37,95 @@ impl NodeVersion {
             ClientType::InProcess => {
                 let info = VersionInfo::new();
                 let json =
-                    serde_json::to_value(&info).map_err(|e| Failure::operation(e.to_string()))?;
-                Ok(answer("rust", info.short(), info.full(), json))
+                    serde_json::to_string(&info).map_err(|e| Failure::operation(e.to_string()))?;
+                answer("rust", info.short(), info.full(), &json)
             }
             ClientType::Cli => {
                 let binary = crate::rust_binary();
-                let json = parse(&rust_version(&binary, &["--format", "json"])?)?;
-                Ok(answer(
+                let json = rust_version(&binary, &["--format", "json"])?;
+                answer(
                     "rust",
                     rust_version(&binary, &[])?,
                     rust_version(&binary, &["--full"])?,
-                    json,
-                ))
+                    &json,
+                )
             }
             ClientType::RustHttp => {
                 let binary = crate::rust_binary();
                 let url = format!("{}/api/v1/version", state.url_on(self.common.node())?);
-                Ok(answer(
+                answer(
                     "rust",
                     rust_version(&binary, &[])?,
                     rust_version(&binary, &["--full"])?,
-                    fetch(state, url)?,
-                ))
+                    &fetch(state, url)?,
+                )
             }
             // Go prints its text through cobra's `cmd.Println`, which writes
             // to stderr, and its JSON to stdout.
             ClientType::GoHttp => {
                 let binary = go_binary().map_err(|e| Failure::operation(e.to_string()))?;
-                Ok(answer(
+                answer(
                     "go",
                     run_version(&binary, &[])?.stderr,
                     run_version(&binary, &["--full"])?.stderr,
-                    parse(&run_version(&binary, &["--format", "json"])?.stdout)?,
-                ))
+                    &run_version(&binary, &["--format", "json"])?.stdout,
+                )
             }
         }
     }
 }
 
-fn answer(runtime: &str, text: String, full: String, json: Value) -> Value {
-    json!({ "runtime": runtime, "text": text, "full": full, "json": json })
+fn answer(runtime: &str, text: String, full: String, json_text: &str) -> Result<Value, Failure> {
+    let (json, json_keys) = parse(json_text)?;
+    Ok(json!({
+        "runtime": runtime,
+        "text": text,
+        "full": full,
+        "json": json,
+        "jsonKeys": json_keys,
+    }))
 }
 
-fn parse(text: &str) -> Result<Value, Failure> {
-    serde_json::from_str(text)
-        .map_err(|e| Failure::operation(format!("`version` printed no JSON ({e}): {text}")))
+struct ObjectKeys(Vec<String>);
+
+impl<'de> Deserialize<'de> for ObjectKeys {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct KeysVisitor;
+
+        impl<'de> Visitor<'de> for KeysVisitor {
+            type Value = Vec<String>;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("a JSON object")
+            }
+
+            fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
+            where
+                A: MapAccess<'de>,
+            {
+                let mut keys = Vec::new();
+                while let Some(key) = map.next_key::<String>()? {
+                    keys.push(key);
+                    map.next_value::<IgnoredAny>()?;
+                }
+                Ok(keys)
+            }
+        }
+
+        deserializer.deserialize_map(KeysVisitor).map(ObjectKeys)
+    }
+}
+
+fn parse(text: &str) -> Result<(Value, Vec<String>), Failure> {
+    let json = serde_json::from_str(text)
+        .map_err(|e| Failure::operation(format!("`version` printed no JSON ({e}): {text}")))?;
+    let keys = serde_json::from_str::<ObjectKeys>(text)
+        .map_err(|e| Failure::operation(format!("`version` printed no JSON object ({e}): {text}")))?
+        .0;
+    Ok((json, keys))
 }
 
 /// What one `defradb version <args>` run printed to each stream, trimmed.
@@ -91,6 +136,7 @@ struct Printed {
 
 fn run_version(binary: &Path, args: &[&str]) -> Result<Printed, Failure> {
     let output = crate::cli_command(binary)
+        .env_remove("RUST_LOG")
         .arg("version")
         .args(args)
         .output()
@@ -123,7 +169,7 @@ fn rust_version(binary: &Path, args: &[&str]) -> Result<String, Failure> {
     }
 }
 
-fn fetch(state: &State, url: String) -> Result<Value, Failure> {
+fn fetch(state: &State, url: String) -> Result<String, Failure> {
     let edge = network_edge();
     let body = state
         .block_on(edge.clone().spawn(async move {
@@ -136,7 +182,7 @@ fn fetch(state: &State, url: String) -> Result<Value, Failure> {
         }))
         .expect("run on the network edge")
         .map_err(Failure::operation)?;
-    parse(&String::from_utf8_lossy(&body))
+    Ok(String::from_utf8_lossy(&body).into_owned())
 }
 
 impl Op for NodeVersion {

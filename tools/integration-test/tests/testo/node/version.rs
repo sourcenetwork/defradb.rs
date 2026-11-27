@@ -1,6 +1,7 @@
 //! `defradb version` names the build in Go DefraDB's shape: the plain line,
 //! the `--full` lines and the `--format json` keys Go prints.
 
+use defra_version::{VersionInfo, GO_COMPAT_BRANCH, GO_COMPAT_COMMIT, GO_COMPAT_TAG};
 use integration_test::actions::NodeVersion;
 use integration_test::m;
 use integration_test::test_case::TestCase;
@@ -30,26 +31,30 @@ fn go_json(build: Value) -> Value {
 
 /// A Rust build names its release, commit and Rust toolchain everywhere.
 fn rust_version() -> Value {
-    let mut full = go_full_lines();
-    full.extend([
-        m::substring("\n* Rust: "),
-        m::substring("\n* Commit: "),
-        m::substring("\n* Go compat: "),
-    ]);
-    let mut json = go_json(m::nonempty_string());
-    json["version"] = m::nonempty_string();
-    json["docIdVersions"] = json!("1");
-    json["rust"] = m::nonempty_string();
-    json["goCompat"] = m::object(json!({ "commit": m::nonempty_string() }));
+    let info = VersionInfo::new();
+    let mut json = serde_json::to_value(&info).unwrap();
+    json["goCompat"] = json!({
+        "commit": GO_COMPAT_COMMIT,
+        "branch": GO_COMPAT_BRANCH,
+        "tag": GO_COMPAT_TAG,
+    });
     json!({
         "runtime": "rust",
-        "text": m::all(json!([
-            m::substring("defradb "),
-            m::substring(" ("),
-            m::substring(") built with Rust "),
-        ])),
-        "full": m::all(json!(full)),
-        "json": m::object(json),
+        "text": info.short(),
+        "full": info.full(),
+        "json": json,
+        "jsonKeys": [
+            "release",
+            "commit",
+            "commitDate",
+            "httpAPI",
+            "docIDVersions",
+            "netProtocol",
+            "version",
+            "docIdVersions",
+            "rust",
+            "goCompat",
+        ],
     })
 }
 

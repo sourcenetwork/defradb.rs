@@ -37,7 +37,7 @@ The in-process node and the Rust HTTP client report the same code on the same er
 - **Parents:** ["go.node"]
 - **Scenarios:** ["node::version::version_names_the_build_in_go_shape"]
 
-`defradb version` prints one line on stdout, Go DefraDB's line with Rust in place of Go: `defradb <release> (<commit> <commit date>) built with Rust <rustc version> <os>/<arch>`, for example `defradb 0.5.0 (e152b5ca 2026-10-31) built with Rust 1.100.0 macos/aarch64`. `<commit>` is the first 8 characters of the commit the binary was built from, as Go truncates it, and `<commit date>` that commit's date as `YYYY-MM-DD`; a build outside a git checkout prints `unknown` for both. The command prints nothing on stderr, no log line included. Go prints the same line on stderr.
+`defradb version` prints one line on stdout, Go DefraDB's line with Rust in place of Go: `defradb <release> (<commit> <commit date>) built with Rust <rustc version> <os>/<arch>`, for example `defradb 0.5.0 (e152b5ca 2026-10-31) built with Rust 1.100.0 macos/aarch64`. `<commit>` is the first 8 characters of the commit the binary was built from, as Go truncates it, and `<commit date>` that commit's date as `YYYY-MM-DD`; a build outside a git checkout prints `unknown` for both. The command prints no log line on stderr; a Go-written config with ignored keys still prints one warning per such key. Go prints the same line on stderr.
 
 `defradb version --full` prints Go's lines, then defradb.rs's own:
 
