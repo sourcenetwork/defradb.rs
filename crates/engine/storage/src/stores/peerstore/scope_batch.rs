@@ -5,7 +5,9 @@
 //! transaction, so the run costs one commit, and one device sync, instead of
 //! one each (#3471). Each record is the attempt its single call runs, applied
 //! in order on the same transaction, so it sees what the records before it
-//! wrote, as it would have seen their commits.
+//! wrote, as it would have seen their commits. If that transaction fails,
+//! nothing of it is written and each record runs as its own single call, in
+//! order, so an error costs only the record whose own call fails.
 
 use super::{
     decode_retry_marker_generation, Peerstore, PeerstoreRetryAttempt, RegisterScopeMarkerAttempt,
@@ -45,6 +47,17 @@ pub enum ScopeOutcome {
     Observed(Option<u64>),
     /// Whether the completion applied.
     Completed(bool),
+}
+
+/// What [`Peerstore::record_scopes`] did with a run.
+#[derive(Debug)]
+pub struct ScopeRun {
+    /// Each record's outcome, in the order given: what its single call
+    /// returns.
+    pub outcomes: Vec<Result<ScopeOutcome>>,
+    /// Why the shared transaction failed, when it did; every record then ran
+    /// as its own single call.
+    pub shared_error: Option<Error>,
 }
 
 /// Where a record's outcome comes from: decided before the transaction, or
@@ -103,8 +116,61 @@ where
 impl<S: Store> Peerstore<S> {
     /// Apply `records` of `peer_id`, in order, in one transaction, and return
     /// each one's outcome in the same order. Each record does what its single
-    /// call does; only the commit is shared.
-    pub async fn record_scopes(
+    /// call does; only the commit is shared. When the shared transaction
+    /// fails (a storage error, or its conflict retries run out) it writes
+    /// nothing, and each record then runs as its own single call, in order:
+    /// every outcome is the one its single call would have returned.
+    pub async fn record_scopes(&self, peer_id: &str, records: &[ScopeRecord]) -> ScopeRun {
+        match self.record_scopes_together(peer_id, records).await {
+            Ok(outcomes) => ScopeRun {
+                outcomes: outcomes.into_iter().map(Ok).collect(),
+                shared_error: None,
+            },
+            Err(error) => {
+                let mut outcomes = Vec::with_capacity(records.len());
+                for record in records {
+                    outcomes.push(self.record_scope(peer_id, record).await);
+                }
+                ScopeRun {
+                    outcomes,
+                    shared_error: Some(error),
+                }
+            }
+        }
+    }
+
+    /// One record as its single call, in a transaction of its own.
+    async fn record_scope(&self, peer_id: &str, record: &ScopeRecord) -> Result<ScopeOutcome> {
+        match record {
+            ScopeRecord::Observe {
+                doc_id,
+                collection_id,
+            } => self
+                .observe_push_head_with_generation(peer_id, doc_id, collection_id)
+                .await
+                .map(ScopeOutcome::Observed),
+            ScopeRecord::Complete {
+                doc_id,
+                collection_id,
+                is_collection,
+                expected_generation,
+                acked_heads,
+            } => self
+                .complete_scope(
+                    peer_id,
+                    doc_id,
+                    collection_id,
+                    *is_collection,
+                    *expected_generation,
+                    acked_heads,
+                )
+                .await
+                .map(ScopeOutcome::Completed),
+        }
+    }
+
+    /// Every record of a run on one transaction.
+    async fn record_scopes_together(
         &self,
         peer_id: &str,
         records: &[ScopeRecord],

@@ -51,10 +51,10 @@ pub(super) const PROPERTIES: &[Property] = &[
     },
     Property {
         family: "Retry input and marker fencing",
-        name: "INV_OnePeerAtATime / INV_PeerOrder / INV_AnsweredOnlyWhenDurable / LIVE_EveryRecordAnswered — the failure recorder runs a peer's records in its peer's lane, one transaction per peer per round and in the order sent, answers a sender only once its record is durable, and answers every record",
+        name: "INV_OnePeerAtATime / INV_PeerOrder / INV_AnsweredOnlyWhenDurable / INV_FailureCostsOnlyItsRecord / LIVE_EveryRecordAnswered — the failure recorder runs a peer's records in its peer's lane, one transaction per peer per round and in the order sent, answers a sender with a marker only once its record is durable, runs a failed transaction's records as single calls so a failure refuses only the record whose own call fails, and answers every record",
         axis: Tla,
-        anchor: "crates/surfaces/p2p-adapter/src/retry.rs spawn_failure_recorder, lane_of, run_lane, record_peer; crates/engine/storage/src/stores/peerstore/scope_batch.rs Peerstore::record_scopes",
-        model_ref: "MC_RetryRecorderLanes_{Green,Red_ScopeLanes,Red_RecordPerTxn,Red_AnswerEarly}.cfg",
+        anchor: "crates/surfaces/p2p-adapter/src/retry.rs spawn_failure_recorder, lane_of, run_lane, record_peer, record_run; crates/engine/storage/src/stores/peerstore/scope_batch.rs Peerstore::record_scopes; peerstore_scope_batch_tests.rs an_error_costs_only_its_own_record",
+        model_ref: "MC_RetryRecorderLanes_{Green,Red_ScopeLanes,Red_RecordPerTxn,Red_AnswerEarly,Red_FailWholeRun}.cfg",
         tiers: &[Boundary],
         bound_by: "",
     },

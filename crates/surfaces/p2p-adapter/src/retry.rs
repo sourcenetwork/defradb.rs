@@ -3,6 +3,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use p2p::sync::{FAILURE_RECORDER_LANES, FAILURE_RECORDER_LANE_CAPACITY};
 use p2p::transport::{P2PTransport, PeerAddr, PeerId};
 use rapidhash::{HashMapExt, RapidHashMap, RapidHashSet};
 
@@ -60,43 +61,54 @@ pub type FailureRecorder = workers::Background;
 #[cfg(target_arch = "wasm32")]
 pub type FailureRecorder = n0_future::task::JoinHandle<()>;
 
-/// Lanes the recorder runs at once. A peer's records all go to one lane
-/// ([`lane_of`]), so they stay in the order they were sent and never run beside
-/// each other; different peers' transactions commit together and share their
-/// device syncs (#3471, `RetryRecorderLanes.tla`).
-const RECORDER_LANES: usize = 16;
-
-/// Records a lane holds waiting, and takes in one round.
-const LANE_CAPACITY: usize = 256;
-
 /// Record head announcements and compare-delete only the exact durable marker
 /// generation returned to the sender before its PushLog attempt. Every write
 /// it makes is storage work: it runs as background work of the pool the
 /// peerstore is placed on (the fallback pool without one), until its
 /// channel closes or it is aborted.
+///
+/// Records run in [`FAILURE_RECORDER_LANES`] lanes. A peer's records all go to
+/// one lane ([`lane_of`]), so they stay in the order they were sent and never
+/// run beside each other; different peers' transactions commit together and
+/// share their device syncs (#3471, `RetryRecorderLanes.tla`). `stats` counts
+/// what the lanes hold and do.
 pub fn spawn_failure_recorder<S: storage::corekv::Store + 'static>(
     peerstore: storage::stores::Peerstore<S>,
     mut failures: p2p::sync::PushFailureReceiver,
+    stats: Arc<p2p::sync::FailureRecorderStats>,
 ) -> FailureRecorder {
     #[cfg(not(target_arch = "wasm32"))]
     let pool = peerstore.pool().cloned();
     let record = async move {
-        let (lanes, inboxes): (Vec<_>, Vec<_>) = (0..RECORDER_LANES)
-            .map(|_| regolith::sync::bounded(LANE_CAPACITY))
+        let (lanes, inboxes): (Vec<_>, Vec<_>) = (0..FAILURE_RECORDER_LANES)
+            .map(|_| regolith::sync::bounded(FAILURE_RECORDER_LANE_CAPACITY))
             .unzip();
         let hasher = rapidhash::fast::RandomState::new();
+        let stats = &stats;
+        // A full lane makes the dispatcher wait, which holds every other
+        // lane's next record too: each record is a sender waiting for its
+        // marker, so dropping one would lose a marker, and the failure channel
+        // behind the dispatcher is the bounded backpressure every sender
+        // already waits on (one queue for every peer before #3471).
         // Dropping the lanes once the channel closes ends every lane after
         // it has recorded what it holds.
         let dispatch = async move {
             while let Some(failure) = failures.recv().await {
-                lanes[lane_of(&hasher, &failure.peer_id)]
-                    .send_async(failure)
-                    .await;
+                let lane = lane_of(&hasher, &failure.peer_id);
+                stats.queued(lane);
+                if let Err(failure) = lanes[lane].try_send(failure) {
+                    stats.dispatcher_waited();
+                    lanes[lane].send_async(failure).await;
+                }
             }
         };
         let peerstore = &peerstore;
-        let run =
-            futures::future::join_all(inboxes.into_iter().map(|inbox| run_lane(peerstore, inbox)));
+        let run = futures::future::join_all(
+            inboxes
+                .into_iter()
+                .enumerate()
+                .map(|(lane, inbox)| run_lane(peerstore, stats, lane, inbox)),
+        );
         futures::future::join(dispatch, run).await;
     };
     #[cfg(not(target_arch = "wasm32"))]
@@ -111,7 +123,7 @@ pub fn spawn_failure_recorder<S: storage::corekv::Store + 'static>(
 /// peer while this recorder runs.
 fn lane_of(hasher: &rapidhash::fast::RandomState, peer_id: &str) -> usize {
     use std::hash::BuildHasher;
-    (hasher.hash_one(peer_id) % RECORDER_LANES as u64) as usize
+    (hasher.hash_one(peer_id) % FAILURE_RECORDER_LANES as u64) as usize
 }
 
 /// One lane: take every record waiting, split them by peer in the order they
@@ -119,6 +131,8 @@ fn lane_of(hasher: &rapidhash::fast::RandomState, peer_id: &str) -> usize {
 /// done.
 async fn run_lane<S>(
     peerstore: &storage::stores::Peerstore<S>,
+    stats: &p2p::sync::FailureRecorderStats,
+    lane: usize,
     inbox: regolith::sync::BoundedReceiver<p2p::sync::PushFailure>,
 ) where
     S: storage::corekv::Store,
@@ -136,12 +150,15 @@ async fn run_lane<S>(
                 None => peers.push(vec![failure]),
             }
             taken += 1;
-            next = (taken < LANE_CAPACITY).then(|| inbox.try_recv()).flatten();
+            next = (taken < FAILURE_RECORDER_LANE_CAPACITY)
+                .then(|| inbox.try_recv())
+                .flatten();
         }
+        stats.taken(lane, taken);
         futures::future::join_all(
             peers
                 .into_iter()
-                .map(|records| record_peer(peerstore, records)),
+                .map(|records| record_peer(peerstore, stats, records)),
         )
         .await;
     }
@@ -151,6 +168,7 @@ async fn run_lane<S>(
 /// acknowledgements as one transaction, any other record on its own.
 async fn record_peer<S>(
     peerstore: &storage::stores::Peerstore<S>,
+    stats: &p2p::sync::FailureRecorderStats,
     records: Vec<p2p::sync::PushFailure>,
 ) where
     S: storage::corekv::Store,
@@ -161,10 +179,10 @@ async fn record_peer<S>(
             run.push(failure);
             continue;
         }
-        record_run(peerstore, std::mem::take(&mut run)).await;
-        record_failure(peerstore, failure).await;
+        record_run(peerstore, stats, std::mem::take(&mut run)).await;
+        record_failure(peerstore, stats, failure).await;
     }
-    record_run(peerstore, run).await;
+    record_run(peerstore, stats, run).await;
 }
 
 /// The batchable form of a live head's registration or a scope's
@@ -189,35 +207,40 @@ fn scope_record(failure: &p2p::sync::PushFailure) -> Option<storage::stores::Sco
 }
 
 /// Records a run of one peer's batchable records in one transaction and
-/// answers each sender once it commits, as [`record_failure`] answers one.
+/// answers each sender once it commits, as [`record_failure`] answers one. A
+/// failed shared transaction writes nothing and each record runs as its own
+/// single call ([`storage::stores::Peerstore::record_scopes`]), so an error
+/// costs only the record it belongs to.
 async fn record_run<S>(
     peerstore: &storage::stores::Peerstore<S>,
+    stats: &p2p::sync::FailureRecorderStats,
     mut run: Vec<p2p::sync::PushFailure>,
 ) where
     S: storage::corekv::Store,
 {
     if run.len() <= 1 {
         if let Some(failure) = run.pop() {
-            record_failure(peerstore, failure).await;
+            record_failure(peerstore, stats, failure).await;
         }
         return;
     }
     let records: Vec<_> = run.iter().filter_map(scope_record).collect();
-    let outcomes = match peerstore.record_scopes(&run[0].peer_id, &records).await {
-        Ok(outcomes) => outcomes,
-        Err(error) => {
-            tracing::warn!(%error, records = run.len(), "failed to record push failures");
-            for mut failure in run {
-                let _ = failure.durable_tx.take().map(|tx| tx.send(None));
-            }
-            return;
-        }
-    };
-    for (mut failure, outcome) in run.into_iter().zip(outcomes) {
+    let recorded = peerstore.record_scopes(&run[0].peer_id, &records).await;
+    stats.ran(run.len(), recorded.shared_error.is_some());
+    if let Some(error) = &recorded.shared_error {
+        tracing::warn!(%error, records = run.len(),
+            "a run of push records failed together; recorded each on its own");
+    }
+    for (mut failure, outcome) in run.into_iter().zip(recorded.outcomes) {
         let generation = match outcome {
-            storage::stores::ScopeOutcome::Observed(generation) => generation,
-            storage::stores::ScopeOutcome::Completed(cleared) => {
+            Ok(storage::stores::ScopeOutcome::Observed(generation)) => generation,
+            Ok(storage::stores::ScopeOutcome::Completed(cleared)) => {
                 failure.marker_generation.filter(|_| cleared)
+            }
+            Err(error) => {
+                stats.record_failed();
+                tracing::warn!(%error, "failed to record push failure");
+                None
             }
         };
         let _ = failure.durable_tx.take().map(|tx| tx.send(generation));
@@ -228,6 +251,7 @@ async fn record_run<S>(
 /// sender waits for, and the replicator's status.
 async fn record_failure<S: storage::corekv::Store>(
     peerstore: &storage::stores::Peerstore<S>,
+    stats: &p2p::sync::FailureRecorderStats,
     mut failure: p2p::sync::PushFailure,
 ) {
     let durable_tx = failure.durable_tx.take();
@@ -341,6 +365,7 @@ async fn record_failure<S: storage::corekv::Store>(
     let marker_generation = match result {
         Ok(generation) => generation,
         Err(error) => {
+            stats.record_failed();
             tracing::warn!(%error, "failed to record push failure");
             let _ = durable_tx.map(|tx| tx.send(None));
             return;
@@ -1631,7 +1656,11 @@ pub(crate) mod tests {
                 .unwrap();
         }
         let (tx, rx) = nuclei::sync::mpsc::channel(PEERS.len() * DOCS.len());
-        let recorder = spawn_failure_recorder(storage::stores::Peerstore::new(store.clone()), rx);
+        let recorder = spawn_failure_recorder(
+            storage::stores::Peerstore::new(store.clone()),
+            rx,
+            Arc::default(),
+        );
         let scope = |peer: &str, doc: &str, acknowledged: bool| {
             let mut record = failure(acknowledged);
             record.peer_id = peer.to_owned();
@@ -1686,6 +1715,133 @@ pub(crate) mod tests {
         recorder.await.unwrap();
     }
 
+    /// A run whose shared transaction fails answers each record as its
+    /// single call would (#3494 review): an ack whose schedule row cannot be
+    /// read fails alone, and the registration in the same run still writes
+    /// its marker and gets its generation.
+    #[nuclei::test]
+    async fn a_failed_run_costs_only_the_failing_record() {
+        let store = Arc::new(storage::backends::RegolithStore::in_memory().unwrap());
+        let peerstore = storage::stores::Peerstore::new(Arc::clone(&store));
+        let replicator =
+            p2p::ReplicatorInfo::from_raw("peer-a".into(), vec!["collection-a".into()], Vec::new());
+        peerstore
+            .create_replicator("peer-a", &replicator.to_bytes().unwrap())
+            .await
+            .unwrap();
+        let old = peerstore
+            .observe_push_head_with_generation("peer-a", "doc-a", "collection-a")
+            .await
+            .unwrap()
+            .unwrap();
+        let raw = storage::namespace::NamespacedStore::new(
+            Arc::clone(&store),
+            storage::namespace::Namespace::Peerstore,
+        );
+        use storage::corekv::{Key as _, Store as _, Writer as _};
+        let mut txn = raw.new_txn(false).await.unwrap();
+        txn.set(
+            &storage::keys::peerstore::ReplicatorRetryIDKey::new("peer-a").bytes(),
+            b"not a retry schedule",
+        )
+        .await
+        .unwrap();
+        txn.commit().await.unwrap();
+
+        let stats = p2p::sync::FailureRecorderStats::default();
+        let (observed_tx, observed) = nuclei::sync::oneshot::channel();
+        let mut register = failure(false);
+        register.doc_id = "doc-c".to_owned();
+        register.durable_tx = Some(observed_tx);
+        let (acked_tx, acked) = nuclei::sync::oneshot::channel();
+        let mut ack = failure(true);
+        ack.marker_generation = Some(old);
+        ack.durable_tx = Some(acked_tx);
+        record_run(&peerstore, &stats, vec![register, ack]).await;
+
+        let generation = observed.await.unwrap().expect("doc-c's generation");
+        assert!(generation > old);
+        assert_eq!(acked.await.unwrap(), None, "the ack fails alone");
+        let mut docs: Vec<String> = peerstore
+            .get_retry_documents("peer-a")
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|marker| marker.doc_id)
+            .collect();
+        docs.sort();
+        assert_eq!(docs, ["doc-a", "doc-c"]);
+        let snapshot = stats.snapshot();
+        assert_eq!(
+            (
+                snapshot.runs_total,
+                snapshot.failed_runs_total,
+                snapshot.failed_records_total
+            ),
+            (1, 1, 1)
+        );
+    }
+
+    /// More records for one peer than its lane holds, sent before the
+    /// recorder starts so the dispatcher finds that lane full: it waits
+    /// rather than drop one, another peer's records still land, every sender
+    /// gets its own generation, and the lanes end empty.
+    #[nuclei::test]
+    async fn a_full_lane_waits_and_loses_no_record() {
+        const RECORDS: usize = 2 * FAILURE_RECORDER_LANE_CAPACITY + 1;
+        let store = Arc::new(storage::backends::RegolithStore::in_memory().unwrap());
+        let peerstore = storage::stores::Peerstore::new(Arc::clone(&store));
+        for peer in ["peer-a", "peer-b"] {
+            let replicator =
+                p2p::ReplicatorInfo::from_raw(peer.into(), vec!["collection-a".into()], Vec::new());
+            peerstore
+                .create_replicator(peer, &replicator.to_bytes().unwrap())
+                .await
+                .unwrap();
+        }
+        let (tx, rx) = nuclei::sync::mpsc::channel(RECORDS + 1);
+        let mut answers = Vec::with_capacity(RECORDS + 1);
+        for index in 0..RECORDS {
+            let mut record = failure(false);
+            record.doc_id = format!("doc-{index}");
+            answers.push(send_record(&tx, record).await);
+        }
+        let mut other = failure(false);
+        other.peer_id = "peer-b".to_owned();
+        answers.push(send_record(&tx, other).await);
+        let stats = Arc::new(p2p::sync::FailureRecorderStats::default());
+        let recorder = spawn_failure_recorder(
+            storage::stores::Peerstore::new(Arc::clone(&store)),
+            rx,
+            Arc::clone(&stats),
+        );
+
+        let mut generations = Vec::with_capacity(answers.len());
+        for answer in answers {
+            generations.push(answer.await.unwrap().expect("every record's generation"));
+        }
+        generations.sort_unstable();
+        generations.dedup();
+        assert_eq!(generations.len(), RECORDS + 1);
+        assert_eq!(
+            peerstore.get_retry_documents("peer-a").await.unwrap().len(),
+            RECORDS
+        );
+        assert_eq!(
+            peerstore.get_retry_documents("peer-b").await.unwrap().len(),
+            1
+        );
+        drop(tx);
+        recorder.await.unwrap();
+
+        let snapshot = stats.snapshot();
+        assert!(snapshot.dispatcher_waits_total >= 1, "{snapshot:?}");
+        assert!(snapshot.lane_depth_high_water >= FAILURE_RECORDER_LANE_CAPACITY as u64);
+        assert!(snapshot.lane_depth.iter().all(|depth| *depth == 0));
+        assert!(snapshot.largest_run <= FAILURE_RECORDER_LANE_CAPACITY as u64);
+        assert_eq!(snapshot.failed_runs_total, 0);
+    }
+
     #[nuclei::test]
     async fn shared_failure_recorder_registers_then_clears_current_scope() {
         let store = Arc::new(storage::backends::RegolithStore::in_memory().unwrap());
@@ -1701,7 +1857,11 @@ pub(crate) mod tests {
             .unwrap();
 
         let (tx, rx) = nuclei::sync::mpsc::channel(2);
-        let task = spawn_failure_recorder(storage::stores::Peerstore::new(Arc::clone(&store)), rx);
+        let task = spawn_failure_recorder(
+            storage::stores::Peerstore::new(Arc::clone(&store)),
+            rx,
+            Arc::default(),
+        );
 
         let (registered_tx, registered_rx) = nuclei::sync::oneshot::channel();
         let mut announced = failure(false);
@@ -1749,8 +1909,11 @@ pub(crate) mod tests {
             .unwrap();
         for _ in 0..2 {
             let (tx, rx) = nuclei::sync::mpsc::channel(2);
-            let recorder =
-                spawn_failure_recorder(storage::stores::Peerstore::new(store.clone()), rx);
+            let recorder = spawn_failure_recorder(
+                storage::stores::Peerstore::new(store.clone()),
+                rx,
+                Arc::default(),
+            );
             let (response, allowed) = nuclei::sync::oneshot::channel();
             let mut check = failure(false);
             check.admission_only = true;
@@ -1783,7 +1946,11 @@ pub(crate) mod tests {
             .unwrap();
 
         let (tx, rx) = nuclei::sync::mpsc::channel(8);
-        let recorder = spawn_failure_recorder(storage::stores::Peerstore::new(store.clone()), rx);
+        let recorder = spawn_failure_recorder(
+            storage::stores::Peerstore::new(store.clone()),
+            rx,
+            Arc::default(),
+        );
 
         // A normal first push is admitted only while its exact marker is live.
         assert_eq!(
@@ -1842,7 +2009,11 @@ pub(crate) mod tests {
             .unwrap();
 
         let (tx, rx) = nuclei::sync::mpsc::channel(8);
-        let recorder = spawn_failure_recorder(storage::stores::Peerstore::new(store.clone()), rx);
+        let recorder = spawn_failure_recorder(
+            storage::stores::Peerstore::new(store.clone()),
+            rx,
+            Arc::default(),
+        );
 
         // A failure for the admitted generation refreshes the retry obligation
         // and rotates its token, retiring duplicate queued jobs from that run.
@@ -1901,7 +2072,11 @@ pub(crate) mod tests {
             .unwrap();
 
         let (tx, rx) = nuclei::sync::mpsc::channel(4);
-        let recorder = spawn_failure_recorder(storage::stores::Peerstore::new(store.clone()), rx);
+        let recorder = spawn_failure_recorder(
+            storage::stores::Peerstore::new(store.clone()),
+            rx,
+            Arc::default(),
+        );
 
         // A terminal worker failure with a missing source token is dropped;
         // absence never silently switches into initial registration mode.

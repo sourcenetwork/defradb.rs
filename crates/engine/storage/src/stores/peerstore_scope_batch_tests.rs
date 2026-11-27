@@ -33,6 +33,21 @@ fn complete(doc: &str, generation: u64) -> ScopeRecord {
     }
 }
 
+impl ScopeRun {
+    /// The outcomes of a run its shared transaction recorded.
+    fn together(self) -> Vec<ScopeOutcome> {
+        assert!(
+            self.shared_error.is_none(),
+            "the shared transaction failed: {:?}",
+            self.shared_error
+        );
+        self.outcomes
+            .into_iter()
+            .map(|outcome| outcome.expect("a recorded outcome"))
+            .collect()
+    }
+}
+
 fn commits(peerstore: &Peerstore<RegolithStore>) -> u64 {
     peerstore
         .transaction_stats_handle()
@@ -64,7 +79,7 @@ fn a_run_of_registrations_commits_once_with_rising_generations() {
                 &[observe("doc-a"), observe("doc-b"), observe("doc-c")],
             )
             .await
-            .unwrap();
+            .together();
 
         assert_eq!(commits(&peerstore) - before, 1, "one commit for the run");
         let generations: Vec<u64> = outcomes
@@ -97,7 +112,7 @@ fn a_record_sees_what_the_records_before_it_wrote() {
         let ScopeOutcome::Observed(Some(old)) = peerstore
             .record_scopes(PEER, &[observe("doc-a")])
             .await
-            .unwrap()[0]
+            .together()[0]
         else {
             panic!("the registration writes a marker");
         };
@@ -112,7 +127,7 @@ fn a_record_sees_what_the_records_before_it_wrote() {
                 ],
             )
             .await
-            .unwrap();
+            .together();
 
         assert_eq!(outcomes[0], ScopeOutcome::Completed(true));
         let ScopeOutcome::Observed(Some(new)) = outcomes[1] else {
@@ -145,7 +160,7 @@ fn a_run_for_an_unknown_peer_registers_nothing() {
         let outcomes = peerstore
             .record_scopes("gone", &[observe("doc-a"), complete("doc-a", 1)])
             .await
-            .unwrap();
+            .together();
 
         assert_eq!(
             outcomes,
@@ -174,10 +189,59 @@ fn an_empty_scope_is_decided_without_a_commit() {
                 }],
             )
             .await
-            .unwrap();
+            .together();
 
         assert_eq!(outcomes, [ScopeOutcome::Observed(None)]);
         assert_eq!(commits(&peerstore), before);
+    })
+    .unwrap()
+}
+
+/// One record's error costs only that record, as its single call would: a
+/// schedule row an ack cannot read fails the ack, and the registration beside
+/// it still writes its marker (#3494 review).
+#[test]
+fn an_error_costs_only_its_own_record() {
+    workers::block_on(async {
+        let peerstore = peerstore().await;
+        let ScopeOutcome::Observed(Some(old)) = peerstore
+            .record_scopes(PEER, &[observe("doc-a")])
+            .await
+            .together()[0]
+        else {
+            panic!("the registration writes a marker");
+        };
+        let mut txn = peerstore.store.new_txn(false).await.unwrap();
+        txn.set(
+            &ReplicatorRetryIDKey::new(PEER).bytes(),
+            b"not a retry schedule",
+        )
+        .await
+        .unwrap();
+        txn.commit().await.unwrap();
+        assert!(
+            peerstore
+                .complete_retry_scope(PEER, "doc-a", COLLECTION, false, old, &["head".to_owned()])
+                .await
+                .is_err(),
+            "the ack's single call fails on the unreadable schedule row"
+        );
+
+        let run = peerstore
+            .record_scopes(PEER, &[observe("doc-c"), complete("doc-a", old)])
+            .await;
+
+        assert!(run.shared_error.is_some(), "the shared transaction fails");
+        let [observed, completed] = <[_; 2]>::try_from(run.outcomes).unwrap();
+        assert!(
+            matches!(observed, Ok(ScopeOutcome::Observed(Some(generation))) if generation > old),
+            "doc-c registers as its single call does: {observed:?}"
+        );
+        assert!(
+            completed.is_err(),
+            "doc-a's ack fails as its single call does"
+        );
+        assert_eq!(marker_docs(&peerstore).await, ["doc-a", "doc-c"]);
     })
     .unwrap()
 }

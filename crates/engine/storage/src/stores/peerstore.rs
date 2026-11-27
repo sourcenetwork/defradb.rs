@@ -19,7 +19,7 @@ use tracing;
 mod scope_batch;
 mod selected_car;
 
-pub use scope_batch::{ScopeOutcome, ScopeRecord};
+pub use scope_batch::{ScopeOutcome, ScopeRecord, ScopeRun};
 
 const RETRY_MARKER_GENERATION_MAGIC: &[u8] = b"DFRGMARKER1";
 
