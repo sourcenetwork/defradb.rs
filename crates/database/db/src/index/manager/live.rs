@@ -8,7 +8,7 @@ use lens::{TargetedHistoryLink, TransformStore};
 use rapidhash::RapidHashMap;
 
 use crate::collection::Collection;
-use crate::definition::lens::build_collection_history;
+use crate::definition::lens::{build_collection_history, versions_have_migrations};
 use crate::definition::loader::{
     get_collections_by_collection_id, get_collections_by_collection_id_known,
 };
@@ -81,12 +81,7 @@ impl<'a> LiveDocs<'a> {
                 )
                 .await
                 .map_err(|e| Error::Other(e.to_string()))?;
-                let as_stored = versions.iter().all(|version| {
-                    version
-                        .previous_version
-                        .as_ref()
-                        .is_none_or(|source| source.transform.is_none())
-                });
+                let as_stored = !versions_have_migrations(&versions);
                 if !as_stored {
                     self.history =
                         build_collection_history(&versions, self.collection.version_id());
