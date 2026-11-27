@@ -16,8 +16,15 @@ use crate::DB;
 /// version 3 gives each deferred index entry its position record, which the
 /// check at every open does for the deferred indexes alone; version 4 tags the
 /// index keyspace so collection short IDs cannot collide with another family;
-/// version 5 moves descending JSON paths back into ascending order.
-pub const CURRENT_INDEX_FORMAT: u32 = 5;
+/// version 5 moves descending JSON paths back into ascending order; version 6
+/// keeps only field values in deferred position records. Version 5's keys are
+/// already in version 6's encoding, so moving its stamp alone makes an older
+/// binary refuse the store before it reads a new record with the old decoder.
+pub const CURRENT_INDEX_FORMAT: u32 = 6;
+
+/// The format whose indexes already use the current key encoding, so moving
+/// its stamp needs no rebuild.
+const STAMP_ONLY_INDEX_FORMAT: u32 = 5;
 
 /// Systemstore key holding the format the indexes on disk were written with.
 pub use storage::keys::systemstore::INDEX_FORMAT_KEY;
@@ -90,7 +97,7 @@ impl<S: Store> DB<S> {
     {
         let stored = self.stored_index_format().await?;
         self.check_index_format().await?;
-        if stored == Some(CURRENT_INDEX_FORMAT) {
+        if stored == Some(CURRENT_INDEX_FORMAT) || stored == Some(STAMP_ONLY_INDEX_FORMAT) {
             self.rebuild_indexes_kept_the_other_way().await?;
         } else {
             self.rebuild_every_index(stored).await?;

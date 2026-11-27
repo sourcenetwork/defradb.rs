@@ -12,7 +12,8 @@ use crate::index::{Error, Result};
 
 /// The first byte of a record that keeps field values. A record of whole keys
 /// is empty or starts with a zero byte, the top byte of its first key's
-/// four-byte length, because regolith refuses keys of 16 MiB and over.
+/// four-byte length, because regolith refuses keys over its
+/// `DEFAULT_MAX_KEY_SIZE` of 8 MiB and every store open caps the limit there.
 const VALUES: u8 = 1;
 
 /// A length byte that says the length follows in four big-endian bytes.
@@ -20,32 +21,32 @@ const LONG: u8 = u8::MAX;
 
 /// What every entry key of one document in one index starts and ends with.
 #[derive(Debug)]
-pub(crate) struct Frame {
-    prefix: Vec<u8>,
+pub(crate) struct Frame<'a> {
+    prefix: &'a [u8],
     suffix: Vec<u8>,
 }
 
-impl Frame {
-    pub(crate) fn new(collection_short_id: u32, index_id: u32, doc_short_id: u64) -> Self {
+impl<'a> Frame<'a> {
+    pub(crate) fn new(prefix: &'a [u8], doc_short_id: u64) -> Self {
         Self {
-            prefix: IndexDataStoreKey::index_prefix(collection_short_id, index_id),
+            prefix,
             suffix: IndexDataStoreKey::doc_suffix(doc_short_id),
         }
     }
 
     fn values<'k>(&self, key: &'k [u8]) -> Option<&'k [u8]> {
-        key.strip_prefix(self.prefix.as_slice())?
+        key.strip_prefix(self.prefix)?
             .strip_suffix(self.suffix.as_slice())
     }
 
     fn key(&self, values: &[u8]) -> Vec<u8> {
-        [self.prefix.as_slice(), values, self.suffix.as_slice()].concat()
+        [self.prefix, values, self.suffix.as_slice()].concat()
     }
 }
 
 /// [`VALUES`], then each key's field values behind their length: one byte
 /// below [`LONG`], else [`LONG`] and four big-endian bytes.
-pub(crate) fn encode_record(frame: &Frame, keys: &[Vec<u8>]) -> Result<Vec<u8>> {
+pub(crate) fn encode_record(frame: &Frame<'_>, keys: &[Vec<u8>]) -> Result<Vec<u8>> {
     let framing = frame.prefix.len() + frame.suffix.len();
     let mut out = Vec::with_capacity(
         1 + keys
@@ -65,7 +66,7 @@ pub(crate) fn encode_record(frame: &Frame, keys: &[Vec<u8>]) -> Result<Vec<u8>> 
 }
 
 /// The entry keys a record names, in either form.
-pub(crate) fn decode_record(frame: &Frame, bytes: &[u8]) -> Result<Vec<Vec<u8>>> {
+pub(crate) fn decode_record(frame: &Frame<'_>, bytes: &[u8]) -> Result<Vec<Vec<u8>>> {
     let Some((&VALUES, mut rest)) = bytes.split_first() else {
         return decode_keys(bytes);
     };

@@ -9,6 +9,10 @@
 \* prefix. A crash or rebuild failure leaves the stamp old and retry safe.
 \* Each attempt uses a fresh reindex token. A pre-upgrade walk cursor is
 \* never resumed, and a retry starts rebuilding each collection again.
+\* Format 5 already wrote the index key encoding format 6 reads; moving its
+\* stamp to 6 needs no format rebuild. The separate mode check still runs.
+\* The stamp move makes an older binary refuse the store instead of decoding
+\* a new position record with the old reader.
 \* A future format is refused before any migration writes.
 \*
 \* Rust: crates/database/db/src/definition/migration/format.rs
@@ -20,10 +24,10 @@ CONSTANTS Collections, Rebuild, StampLast, RefuseFuture, RetainLegacy, GuardReco
 ASSUME /\ Rebuild \in BOOLEAN /\ StampLast \in BOOLEAN /\ RefuseFuture \in BOOLEAN /\ RetainLegacy \in BOOLEAN /\ GuardRecordedKeys \in BOOLEAN /\ FreshToken \in BOOLEAN
 VARIABLES stamp, initialStamp, rebuilt, phase, legacyIntact, wrote, oldRecords, staleProgress, attemptDone
 vars == <<stamp, initialStamp, rebuilt, phase, legacyIntact, wrote, oldRecords, staleProgress, attemptDone>>
-TypeOK == /\ stamp \in {"Old", "None", "Current", "Future"}
-          /\ initialStamp \in {"Old", "None", "Current", "Future"}
+TypeOK == /\ stamp \in {"Old", "None", "Direct", "Current", "Future"}
+          /\ initialStamp \in {"Old", "None", "Direct", "Current", "Future"}
           /\ rebuilt \subseteq Collections
-          /\ phase \in {"Check", "Rebuild", "Open", "Failed", "Refused"}
+          /\ phase \in {"Check", "Rebuild", "StampOnly", "Open", "Failed", "Refused"}
           /\ legacyIntact \in BOOLEAN /\ wrote \in BOOLEAN
           /\ oldRecords \subseteq Collections /\ staleProgress \subseteq Collections
           /\ attemptDone \subseteq Collections
@@ -39,10 +43,16 @@ Check == /\ phase = "Check"
                THEN /\ phase' = "Refused" /\ rebuilt' = rebuilt
                ELSE IF stamp = "Current" \/ stamp = "Future"
                     THEN /\ phase' = "Open" /\ rebuilt' = rebuilt
+                    ELSE IF stamp = "Direct"
+                         THEN /\ phase' = "StampOnly" /\ rebuilt' = rebuilt
                     ELSE /\ phase' = "Rebuild"
                          /\ rebuilt' = IF FreshToken THEN {} ELSE staleProgress
          /\ attemptDone' = IF phase' = "Rebuild" THEN {} ELSE attemptDone
          /\ UNCHANGED <<stamp, initialStamp, legacyIntact, wrote, oldRecords, staleProgress>>
+StampOnly == /\ phase = "StampOnly"
+             /\ stamp' = "Current" /\ phase' = "Open" /\ rebuilt' = Collections
+             /\ UNCHANGED <<initialStamp, legacyIntact, wrote, oldRecords,
+                            staleProgress, attemptDone>>
 RebuildOne == /\ phase = "Rebuild" /\ Rebuild /\ rebuilt # Collections
               /\ \E c \in Collections \ rebuilt: /\ rebuilt' = rebuilt \cup {c}
                                                 /\ attemptDone' = attemptDone \cup {c}
@@ -63,7 +73,7 @@ ConsumeOldRecord == /\ phase \in {"Rebuild", "Open"} /\ oldRecords # {}
                     /\ legacyIntact' = (legacyIntact /\ GuardRecordedKeys)
                     /\ wrote' = TRUE
                     /\ UNCHANGED <<stamp, initialStamp, rebuilt, phase, staleProgress, attemptDone>>
-Next == Check \/ RebuildOne \/ Finish \/ Fail \/ Retry \/ ConsumeOldRecord
+Next == Check \/ StampOnly \/ RebuildOne \/ Finish \/ Fail \/ Retry \/ ConsumeOldRecord
 Spec == Init /\ [][Next]_vars
 INV_TypeOK == TypeOK
 INV_OpenCompatible == phase = "Open" => stamp = "Current" /\ rebuilt = Collections
@@ -71,5 +81,6 @@ INV_OpenCompatible == phase = "Open" => stamp = "Current" /\ rebuilt = Collectio
 INV_FreshAttempt == phase = "Rebuild" => rebuilt \subseteq attemptDone
 INV_FailureKeepsStamp == phase = "Failed" => stamp = initialStamp
 INV_FutureRefusedUntouched == initialStamp = "Future" => phase = "Check" \/ (phase = "Refused" /\ ~wrote)
+INV_StampOnlyNoWrites == initialStamp = "Direct" /\ phase \in {"Check", "StampOnly"} => ~wrote
 INV_LegacyIntact == legacyIntact
 ====

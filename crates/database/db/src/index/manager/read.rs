@@ -55,13 +55,14 @@ impl IndexManager {
             }));
         }
         let (mut hidden, mut added) = (Vec::new(), Vec::new());
+        let prefix = IndexDataStoreKey::index_prefix(self.collection_short_id, desc.id);
         let mut live_docs = LiveDocs::new(collection, datastore, systemstore, lens_store);
         for doc in owed {
             let record = index_position_key(self.collection_short_id, desc.id, doc);
             // It only says which stored keys to hide at this snapshot, so a
             // drain that moves it later is no conflict.
             hidden.extend(Self::recorded(
-                &Frame::new(self.collection_short_id, desc.id, doc),
+                &Frame::new(&prefix, doc),
                 datastore
                     .get_parts(&record, &[])
                     .await
@@ -73,7 +74,6 @@ impl IndexManager {
                 added.extend(Self::entry_keys(index, doc, &values)?);
             }
         }
-        let prefix = IndexDataStoreKey::index_prefix(self.collection_short_id, desc.id);
         Ok(Some(IndexRead {
             index,
             overlay: Some(IndexOverlay::new(prefix, hidden, added)),

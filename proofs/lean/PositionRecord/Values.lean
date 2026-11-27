@@ -14,8 +14,9 @@ the prefix and the suffix back around each value.
 
 Records written before kept whole keys, each behind a four-byte length (the
 `encode` of `PositionRecord.Codec`). Such a record is still read: it is empty
-or starts with the byte 0, because no key reaches 16 MiB, so it can never be
-taken for a record of values.
+or starts with the byte 0, because regolith refuses every key longer than its
+`DEFAULT_MAX_KEY_SIZE` of 8 MiB and the store caps every open at that limit,
+so it can never be taken for a record of values.
 
 What must never happen: a record of values reads back as different keys
 (`decodeRecord_encodeValues`); a record of whole keys is read as a record of
@@ -193,21 +194,22 @@ theorem decodeRecord_encodeValues (p s : List Nat) (ks : List (List Nat))
   simp only [encodeValues, decodeRecord, if_true]
   exact decodeBody_body p s ks hframed hfit _ (length_le_body p s ks)
 
--- Promise: a record of whole keys, each shorter than 16 MiB, starts with the
--- byte 0 unless it is empty, so it is never taken for a record of values.
+-- Promise: a record of whole keys, each at most regolith's 8 MiB limit, starts
+-- with the byte 0 unless it is empty, so it is never taken for values.
 theorem encode_starts_with_zero (k : List Nat) (ks : List (List Nat))
-    (hk : k.length < 16777216) :
+    (hk : k.length ≤ 8388608) :
     ∃ rest, encode (k :: ks) = 0 :: rest := by
   -- The first byte is the top byte of the first key's length, which is 0.
   refine ⟨[k.length / 65536 % 256, k.length / 256 % 256, k.length % 256] ++ k ++ encode ks, ?_⟩
-  have htop : k.length / 16777216 % 256 = 0 := by rw [Nat.div_eq_of_lt hk]
+  have htop : k.length / 16777216 % 256 = 0 := by
+    rw [Nat.div_eq_of_lt (by omega)]
   simp only [encode, be32, htop, List.cons_append, List.nil_append, List.append_assoc]
 
--- Promise: a record of whole keys, each shorter than 16 MiB, still reads back
--- as exactly its keys.
+-- Promise: a record of whole keys, each at most regolith's 8 MiB limit, still
+-- reads back as exactly its keys.
 theorem decodeRecord_encode (p s : List Nat) (ks : List (List Nat))
-    -- Given every key is shorter than 16 MiB, as regolith's key limit makes it,
-    (hsmall : ∀ k ∈ ks, k.length < 16777216) :
+    -- Given every key is at most 8 MiB, as the store's open enforces,
+    (hsmall : ∀ k ∈ ks, k.length ≤ 8388608) :
     decodeRecord p s (encode ks) = some ks := by
   cases ks with
   -- No keys: an empty record, read as no keys.
@@ -216,7 +218,9 @@ theorem decodeRecord_encode (p s : List Nat) (ks : List (List Nat))
   | cons k ks =>
     obtain ⟨rest, hzero⟩ := encode_starts_with_zero k ks (hsmall k (by simp))
     have hfit : ∀ q ∈ k :: ks, q.length < 4294967296 :=
-      fun q hq => Nat.lt_trans (hsmall q hq) (by decide)
+      fun q hq => by
+        have hq := hsmall q hq
+        omega
     rw [hzero]
     simp only [decodeRecord, valuesTag, Nat.zero_ne_one, if_false]
     rw [← hzero]

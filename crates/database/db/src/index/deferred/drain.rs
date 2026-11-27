@@ -244,6 +244,7 @@ async fn apply(
     let mut live_docs = LiveDocs::new(&collection, &datastore, &systemstore, Some(lens_store));
     let mut drained = Drained::default();
     let mut carry = Vec::new();
+    let prefix = storage::keys::IndexDataStoreKey::index_prefix(short_id, index_id);
     let mut budget = workers::Budget::new(YIELD_EVERY);
     for &doc in &plan.docs {
         budget.spend(1).await;
@@ -266,13 +267,13 @@ async fn apply(
                 .get(&index_position_key(short_id, index_id, doc))
                 .await
                 .map_err(Error::Storage)?;
-            let frame = super::Frame::new(short_id, index_id, doc);
+            let frame = super::Frame::new(&prefix, doc);
             Ok::<_, Error>((IndexManager::recorded(&frame, record.as_deref())?, new))
         };
         match entries.await {
             Ok((old, new)) => {
                 if let Err(source) =
-                    move_entries(&datastore, index, short_id, doc, &old, &new).await
+                    move_entries(&datastore, index, short_id, doc, &prefix, &old, &new).await
                 {
                     return Err(named(&systemstore, doc, source).await);
                 }
@@ -315,16 +316,16 @@ async fn move_entries(
     index: &IndexType,
     short_id: u32,
     doc: u64,
+    prefix: &[u8],
     old: &[Vec<u8>],
     new: &[Vec<u8>],
 ) -> Result<()> {
     if old == new {
         return Ok(());
     }
-    let prefix = storage::keys::IndexDataStoreKey::index_prefix(short_id, index.description().id);
     for key in old
         .iter()
-        .filter(|key| key.starts_with(&prefix) && !new.contains(key))
+        .filter(|key| key.starts_with(prefix) && !new.contains(key))
     {
         datastore.delete(key).await.map_err(Error::Storage)?;
     }
@@ -336,7 +337,7 @@ async fn move_entries(
     if new.is_empty() {
         datastore.delete(&record).await.map_err(Error::Storage)
     } else {
-        let frame = super::Frame::new(short_id, index_id, doc);
+        let frame = super::Frame::new(prefix, doc);
         datastore
             .set(&record, &super::encode_record(&frame, new)?)
             .await
@@ -501,7 +502,8 @@ pub(super) mod tests {
             let txn = db.new_txn(false).await.unwrap();
             let data = txn.datastore().unwrap();
             let record = index_position_key(short_id, index_id, doc);
-            let frame = Frame::new(short_id, index_id, doc);
+            let prefix = storage::keys::IndexDataStoreKey::index_prefix(short_id, index_id);
+            let frame = Frame::new(&prefix, doc);
             for operation in 0..2 {
                 data.set(&foreign, b"preserve").await.unwrap();
                 data.set(&old_key, b"").await.unwrap();
@@ -509,7 +511,7 @@ pub(super) mod tests {
                 if operation == 0 {
                     let recorded = data.get(&record).await.unwrap().unwrap();
                     let recorded = IndexManager::recorded(&frame, Some(&recorded)).unwrap();
-                    move_entries(&data, index, short_id, doc, &recorded, &new_keys)
+                    move_entries(&data, index, short_id, doc, &prefix, &recorded, &new_keys)
                         .await
                         .unwrap();
                 } else {

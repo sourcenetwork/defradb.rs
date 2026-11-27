@@ -82,6 +82,22 @@ impl IndexManager {
         doc_short_id: u64,
         value_sets: &[Vec<NormalValue>],
     ) -> Result<()> {
+        let prefix = storage::keys::IndexDataStoreKey::index_prefix(
+            self.collection_short_id,
+            index.description().id,
+        );
+        self.place_with_prefix(datastore, index, doc_short_id, value_sets, &prefix)
+            .await
+    }
+
+    async fn place_with_prefix(
+        &self,
+        datastore: &NamespaceView,
+        index: &IndexType,
+        doc_short_id: u64,
+        value_sets: &[Vec<NormalValue>],
+        prefix: &[u8],
+    ) -> Result<()> {
         let keys = Self::entry_keys(index, doc_short_id, value_sets)?;
         for key in &keys {
             datastore.set(key, &[]).await.map_err(Error::Storage)?;
@@ -90,10 +106,7 @@ impl IndexManager {
         datastore
             .set(
                 &index_position_key(self.collection_short_id, id, doc_short_id),
-                &encode_record(
-                    &Frame::new(self.collection_short_id, id, doc_short_id),
-                    &keys,
-                )?,
+                &encode_record(&Frame::new(prefix, doc_short_id), &keys)?,
             )
             .await
             .map_err(Error::Storage)
@@ -115,12 +128,12 @@ impl IndexManager {
             index.description().id,
             doc_short_id,
         );
+        let prefix = storage::keys::IndexDataStoreKey::index_prefix(
+            self.collection_short_id,
+            index.description().id,
+        );
         let old = Self::recorded(
-            &Frame::new(
-                self.collection_short_id,
-                index.description().id,
-                doc_short_id,
-            ),
+            &Frame::new(&prefix, doc_short_id),
             datastore
                 .get_parts(&record, &[])
                 .await
@@ -128,17 +141,14 @@ impl IndexManager {
                 .as_deref(),
         )?;
         let new = Self::entry_keys(index, doc_short_id, value_sets)?;
-        let prefix = storage::keys::IndexDataStoreKey::index_prefix(
-            self.collection_short_id,
-            index.description().id,
-        );
         for key in old
             .iter()
             .filter(|key| key.starts_with(&prefix) && !new.contains(key))
         {
             datastore.delete(key).await.map_err(Error::Storage)?;
         }
-        self.place(datastore, index, doc_short_id, value_sets).await
+        self.place_with_prefix(datastore, index, doc_short_id, value_sets, &prefix)
+            .await
     }
 
     /// A backfill of one document: placed unless a drain or a create got
@@ -168,7 +178,7 @@ impl IndexManager {
     }
 
     /// The entry keys a position record of the document `frame` frames names.
-    pub(crate) fn recorded(frame: &Frame, bytes: Option<&[u8]>) -> Result<Vec<Vec<u8>>> {
+    pub(crate) fn recorded(frame: &Frame<'_>, bytes: Option<&[u8]>) -> Result<Vec<Vec<u8>>> {
         bytes.map_or(Ok(Vec::new()), |bytes| decode_record(frame, bytes))
     }
 }
