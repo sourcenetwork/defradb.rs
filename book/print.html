@@ -37,7 +37,7 @@
             const path_to_root = "";
             const default_light_theme = "ayu";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-0e97064d.js";
+            window.path_to_searchindex_js = "searchindex-6b3400d0.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-8198d451.js"></script>
@@ -1265,6 +1265,92 @@ composite block’s CID (<a href="https://github.com/sourcenetwork/defradb.rs/bl
 any node that has the same genesis block computes the same DocID, which is what makes
 replication, dedup and the once-keys of the arrival journal possible.</p>
 <p>The CID itself is not recoverable from the DocID string; it lives in the DAG.</p>
+<h3 id="a-signed-creates-docid-is-known-before-it-commits"><a class="header" href="#a-signed-creates-docid-is-known-before-it-commits">A signed create’s DocID is known before it commits</a></h3>
+<p>The guarantee: a document’s ID is <code>derive_doc_id</code> of its genesis composite block’s CID
+(<code>DocID::new_v0</code>, <a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/database/db/src/block/builder/mod.rs"><code>crates/database/db/src/block/builder/mod.rs</code></a>).
+When the create is signed, <code>compute_document_blocks</code> signs each field block before
+taking its CID, links those CIDs from the composite, and signs the composite before
+taking its CID. Every field signature, the composite signature and the collection
+version ID are therefore part of the ID, and whoever builds or verifies the blocks knows
+the ID before anything commits. No path gives a committed document another ID, except
+backup import and the store-upgrade re-key of legacy documents (below). Requirements:
+<code>reqs/defra/document-id.md</code>; proof: <code>proofs/lean/Cid/SignedGenesis.lean</code>
+(<code>node_commits_precomputed</code>, <code>client_signed_commits_precomputed</code>,
+<code>peer_commits_creators_id</code>, each beside a RED theorem that drops its check, and
+<code>rekey_moves_a_legacy_id</code>).</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Path</th><th>Where the ID is first known</th><th>What holds</th><th>Test</th></tr>
+</thead>
+<tbody>
+<tr><td>Node-signed, autocommit</td><td>the mutation response</td><td>stored under the ID it returned</td><td><code>txn::signed_doc_id::an_autocommit_node_signed_create_stores_the_id_it_returned</code></td></tr>
+<tr><td>Node-signed, explicit transaction</td><td>the mutation response, before commit</td><td>the commit keeps it</td><td><code>txn::signed_doc_id::a_node_signed_create_in_a_txn_commits_the_id_it_returned_{ed25519,secp256k1}</code></td></tr>
+<tr><td>Client-signed, embedded</td><td><code>graph.doc_id()</code>, before sending</td><td><code>execute_verified_graph_in_txn</code> commits <code>graph.doc_id()</code> or discards the transaction</td><td><code>signature::client_signed::*</code> (in-process)</td></tr>
+<tr><td>Client-signed, rust-http</td><td><code>graph.doc_id()</code>, before sending</td><td>the Rust client refuses an out-of-graph wave and a different <code>_docID</code></td><td><code>signature::client_signed::*</code> (rust-http)</td></tr>
+<tr><td>P2P merge</td><td>the creator’s response</td><td>the peer keeps a block only when it hashes to the CID it arrived under (<code>verify_block_cid</code> on a replicator push, gossip, block sync and CAR fetch; <code>verify_hash</code> on a bitswap fetch) and derives the ID from that CID</td><td><code>signature::doc_id_determinism::a_peer_shows_the_creators_doc_id</code>, <code>signature::peer::*</code></td></tr>
+<tr><td>Lens migration</td><td>unchanged</td><td>a migration rewrites field values, never the genesis, so the document is read under its ID</td><td><code>collection_version::migrations::query::with_doc_id::collection_migration_query_by_doc_id</code> (unsigned)</td></tr>
+<tr><td>Store-upgrade re-key</td><td>not kept for a legacy ID</td><td><code>resolve_legacy_identities</code> maps a legacy document to its genesis’s ID; a stored ID that differs becomes an alias</td><td>none: no legacy-store fixture</td></tr>
+<tr><td>Backup import</td><td>kept only when the same genesis is rebuilt</td><td>a new create under its genesis’s ID; a file ID that differs becomes an alias</td><td><code>backup::simple::import_alias::*</code></td></tr>
+</tbody>
+</table>
+</div>
+<p>The HTTP guarantee is the client’s. The server’s websocket signer (<code>SessionSigner</code>)
+checks each signature against the session key and compares no ID, so a websocket
+client that signs whatever it is sent gets no guarantee beyond the <code>_docID</code> in the
+response. go-http and cli have no client-signed create.</p>
+<p>Encrypted creates are not client-signable. Their ciphertext is memoized per request, so
+a retried attempt keeps the ID, but two separate creates of the same content differ.</p>
+<p>Signature determinism by key type:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Key type</th><th>Same key and content, same ID?</th><th>Test</th></tr>
+</thead>
+<tbody>
+<tr><td>Ed25519</td><td>yes</td><td><code>signature::doc_id_determinism::the_same_key_and_content_give_the_same_doc_id_ed25519</code></td></tr>
+<tr><td>Secp256k1 (RFC 6979)</td><td>yes</td><td><code>signature::doc_id_determinism::the_same_key_and_content_give_the_same_doc_id_secp256k1</code></td></tr>
+<tr><td>Secp256r1 (remote or Secure Enclave, randomized ECDSA)</td><td>no</td><td>not run</td></tr>
+<tr><td>BLS through Orbis</td><td>yes by BLS uniqueness</td><td>not run</td></tr>
+<tr><td>Any other remote signer</td><td>no guarantee</td><td>—</td></tr>
+</tbody>
+</table>
+</div>
+<p>A different key always gives a different ID, because the signature block names its
+public key (<code>signature::doc_id_determinism::a_different_key_gives_a_different_doc_id</code>).</p>
+<p>A create whose ID is already stored is refused, and nothing is written:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Stored state</th><th>Text (all clients)</th><th>Code (in-process, rust-http)</th><th>REST status</th></tr>
+</thead>
+<tbody>
+<tr><td>live</td><td><code>a document with the given ID already exists. DocID: &lt;id&gt;</code></td><td><code>DOCUMENT_ALREADY_EXISTS</code></td><td>409</td></tr>
+<tr><td>deleted</td><td><code>a document with the given ID has been deleted. DocID: &lt;id&gt;</code></td><td><code>DOCUMENT_DELETED</code></td><td>400</td></tr>
+</tbody>
+</table>
+</div>
+<p>The code travels in a GraphQL error’s <code>extensions.code</code> and in the REST error body’s
+<code>code</code> field, which defradb.rs adds beside Go’s <code>error</code> (as it does for <code>STORAGE_FULL</code>).
+cli prints the text alone, as Go’s CLI does, and a Go node sends no code. Tests:
+<code>mutation::add::signed_duplicate::*</code>.</p>
+<p>What counts as breaking the guarantee: changing the DocID version or its derivation;
+leaving a field signature or the composite signature out of the CID (or adding one in);
+leaving the collection version ID out of the genesis; any path that re-signs a genesis or
+commits a document under an ID other than its precomputed one; removing the committed-ID
+check of <code>execute_verified_graph_in_txn</code> or of the Rust client’s signing conversation.</p>
+<p>There are two documented exceptions. Backup import is a stopgap: it creates each
+document again on the importing node, so the document gets its new genesis’s ID, and
+the ID the file names is kept as an alias of it (<code>set_doc_id_alias</code>). The ID is the
+file’s again only when the importing node rebuilds the same genesis: the same signing
+key with a signer that ignores its nonce (or no signing), the same collection version
+and the same field values; then there is no alias to keep. An ID-preserving
+migration built on collection configuration and the document DAG is meant to replace
+it. The store-upgrade re-key (<code>resolve_legacy_identities</code> in
+<code>crates/database/db/src/definition/migration/shortid.rs</code>, run on every open) maps each
+legacy document to the ID of its genesis, and keeps a stored ID that differs as an
+alias. A document created under the current derivation already has its genesis’s ID,
+so the re-key leaves it alone; no test covers a legacy store.</p>
 <h2 id="short-ids"><a class="header" href="#short-ids">Short IDs</a></h2>
 <p>Locally, every document also gets a compact <strong>short ID</strong>: a u64 allocated from
 <code>/seq/doc</code> in ranges of 1024 by a lock-free CAS allocator (<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/database/db/src/docid/map.rs"><code>crates/database/db/src/docid/map.rs</code></a>).
