@@ -52,6 +52,26 @@ fn every_read_counts_once_and_writes_do_not() {
             6 + 3 + 2,
             "one per entry a scan yields"
         );
+
+        let written = kv
+            .write_aux_from_nodes(b'x', |node| {
+                Ok((node.id.0.to_be_bytes().to_vec(), Vec::new()))
+            })
+            .await
+            .unwrap();
+        assert_eq!(written, 3);
+        assert_eq!(
+            reads.load(Ordering::Relaxed),
+            6 + 3 + 2 + 3,
+            "a rebuild scan counts every node it yields"
+        );
+
+        kv.clear().await.unwrap();
+        assert_eq!(
+            reads.load(Ordering::Relaxed),
+            6 + 3 + 2 + 3 + 1 + 2 + 3 + 3,
+            "clear counts every entry in the epoch it scans"
+        );
     })
     .unwrap()
 }

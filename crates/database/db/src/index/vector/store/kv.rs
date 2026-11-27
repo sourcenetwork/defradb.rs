@@ -222,6 +222,7 @@ impl<T: Reader + Writer + MaybeSend> VectorNodeStore for KvNodeStore<'_, T> {
                     .iterator(IterOptions::default().with_prefix(self.epoch_prefix()))
                     .await?;
                 while let Some(pair) = iter.next().await? {
+                    self.read();
                     batch.push(pair.key);
                     if batch.len() >= CLEAR_BATCH {
                         break;
@@ -271,6 +272,7 @@ impl<T: Reader + Writer + MaybeSend> VectorNodeStore for KvNodeStore<'_, T> {
             .await?;
         let mut count = 0;
         while let Some(pair) = iter.next().await? {
+            self.read();
             let node = decode_node(&pair.value)?;
             if node.deleted {
                 continue;

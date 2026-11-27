@@ -4,7 +4,6 @@
 use integration_test::actions::{AddCollection, AddDoc, Request};
 use integration_test::m;
 use integration_test::test_case::TestCase;
-use integration_test::ClientType;
 use serde_json::json;
 
 const VECTORS: [[f64; 4]; 8] = [
@@ -60,7 +59,6 @@ fn routed_search_counts_its_reads(id: &'static str, algorithm: &str) {
     );
     TestCase {
         id,
-        client_types: Some(&[ClientType::InProcess, ClientType::RustHttp, ClientType::Cli]),
         actions,
         ..Default::default()
     }

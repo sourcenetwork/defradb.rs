@@ -263,8 +263,14 @@ fn metrics_at<'a>(
         .find_map(|key| object(object(object(current, key)?, "root")?, "scanNode"))
 }
 
-fn as_int(value: Option<&Value>) -> i64 {
-    value.and_then(Value::as_i64).unwrap_or_default()
+fn count_matches(value: Option<&Value>, expected: &Value) -> bool {
+    let Some(count) = value.and_then(Value::as_u64) else {
+        return false;
+    };
+    match metric_floor(expected) {
+        Some(floor) => count >= floor,
+        None => expected.as_u64() == Some(count),
+    }
 }
 
 pub fn match_explain_scan(want: &Map<String, Value>, actual: &Value) -> bool {
@@ -311,13 +317,35 @@ pub fn match_explain_scan(want: &Map<String, Value>, actual: &Value) -> bool {
             },
             _ => scan.get(key),
         };
-        let matches = match metric_floor(expected) {
-            Some(floor) => as_int(value) as u64 >= floor,
-            None => as_int(value) as u64 == as_int(Some(expected)) as u64,
-        };
-        if !matches {
+        if !count_matches(value, expected) {
             return false;
         }
     }
     true
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::count_matches;
+
+    #[test]
+    fn count_matcher_requires_an_unsigned_count() {
+        assert!(count_matches(Some(&json!(0)), &json!(0)));
+        assert!(count_matches(
+            Some(&json!(2)),
+            &json!({"$match": "atLeast", "value": 2})
+        ));
+        assert!(count_matches(
+            Some(&json!(1)),
+            &json!({"$match": "positive"})
+        ));
+        assert!(!count_matches(None, &json!(0)));
+        assert!(!count_matches(Some(&json!(-1)), &json!(0)));
+        assert!(!count_matches(
+            Some(&json!(-1)),
+            &json!({"$match": "positive"})
+        ));
+    }
 }
