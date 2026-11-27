@@ -6,10 +6,11 @@
 \* behind a cache with a byte budget (`Cached` in
 \* crates/foundation/prolly/src/cache.rs).
 \*
-\* What can happen: the worker puts a node, which waits in memory (pending). A
-\* flush writes every pending node in one regolith transaction, which commits
-\* or fails. The worker publishes a root, reads any node it put, and the
-\* process can crash, losing everything in memory. A read that misses the
+\* What can happen: the worker puts a node, which waits in memory (pending).
+\* Publishing a root writes every pending node and the root in one regolith
+\* transaction (`ProllyNodes::publish`), which commits or fails; nothing else
+\* writes a node. The worker reads any node it put, and the process can
+\* crash, losing everything in memory. A read that misses the
 \* cache fills it, and the cache evicts nodes once it is over budget.
 \*
 \* What must never happen: a read misses a node that was put and not lost in
@@ -21,7 +22,7 @@
 \* What this model trusts. A node is named by the hash of its bytes, so the
 \* node under a name never changes: a cached or pending copy is never stale,
 \* and the model does not track node contents at all. The worker owns the
-\* store (`&mut self` in Rust), so a flush and a read never overlap.
+\* store (`&mut self` in Rust), so a publish and a read never overlap.
 EXTENDS Naturals, FiniteSets
 
 \* The guards. Each RED configuration turns one off.
@@ -30,7 +31,7 @@ CONSTANTS
   Evict,            \* the cache evicts once over budget
   SkipHuge,         \* a node larger than the budget is never cached
   KeepOnFail,       \* a failed write leaves the nodes pending
-  FlushFirst,       \* a root is published only once nothing is pending
+  NodesWithRoot,    \* the transaction that publishes a root writes every pending node
   RefuseAfterFail   \* a build whose put failed refuses to finish
 
 \* The nodes: a, b and c are one byte each, h is three bytes; the budget is two.
@@ -85,33 +86,35 @@ Put(n) ==
   /\ UNCHANGED <<stored, cache, published, found, dropped, lastRead>>
   /\ UNCHANGED buildVars
 
-\* A flush's transaction commits: every pending node is stored, and only now
-\* is the pending set cleared (`ProllyNodes::flush`).
-FlushCommits ==
-  /\ pending # {}
-  /\ stored' = stored \cup pending
-  /\ pending' = {}
-  /\ UNCHANGED <<put, cache, published, found, dropped, lastRead>>
+\* The transaction that publishes node n as a root commits
+\* (`ProllyNodes::publish`): with NodesWithRoot it stores every pending node
+\* in the same commit, and only now is the pending set cleared. Without the
+\* guard the root goes out alone and its nodes stay in memory.
+Publish(n) ==
+  \* The root is a node the worker put.
+  /\ n \in put
+  \* The root key now names it.
+  /\ published' = published \cup {n}
+  \* The pending nodes land in the same commit, or, without the guard, wait on.
+  /\ stored' = IF NodesWithRoot THEN stored \cup pending ELSE stored
+  \* Committed nodes are no longer pending.
+  /\ pending' = IF NodesWithRoot THEN {} ELSE pending
+  \* Nothing else changes.
+  /\ UNCHANGED <<put, cache, found, dropped, lastRead>>
   /\ UNCHANGED buildVars
 
-\* A flush's transaction fails, or the flush is dropped before it commits:
-\* nothing is stored. The nodes stay pending, so they can still be read and the
-\* next flush writes them. The attempt shares the pending set instead of taking
-\* it, so a dropped flush has nothing to put back.
-FlushFails ==
+\* The publishing transaction fails, or the publish is dropped before it
+\* commits: nothing is stored and no root goes out. The nodes stay pending, so
+\* they can still be read and the next publish writes them. The attempt shares
+\* the pending set instead of taking it, so a dropped publish has nothing to
+\* put back.
+PublishFails ==
+  \* There is something it would have written.
   /\ pending # {}
   \* Without KeepOnFail the nodes taken for the write are dropped.
   /\ pending' = IF KeepOnFail THEN pending ELSE {}
+  \* Nothing else changes.
   /\ UNCHANGED <<put, stored, cache, published, found, dropped, lastRead>>
-  /\ UNCHANGED buildVars
-
-\* The worker publishes node n as a root (`collapse` flushes first).
-Publish(n) ==
-  /\ n \in put
-  \* With FlushFirst nothing may be pending when a root goes out.
-  /\ FlushFirst => pending = {}
-  /\ published' = published \cup {n}
-  /\ UNCHANGED <<put, pending, stored, cache, found, dropped, lastRead>>
   /\ UNCHANGED buildVars
 
 \* Where a read finds node n: the cache, the pending nodes, or regolith.
@@ -150,8 +153,8 @@ Crash ==
   /\ lostRef' = FALSE /\ buildFailed' = FALSE /\ finished' = "no"
   /\ UNCHANGED <<stored, published>>
 
-\* A put inside the running build returns an error (in `ProllyNodes`, a put
-\* whose budget flush fails), or the push is dropped while the put waits. The
+\* A put inside the running build returns an error (a store whose put
+\* fails), or the push is dropped while the put waits. The
 \* node may still be pending, but the reference `child` was to hand the level
 \* above is gone.
 BuildPutFails ==
@@ -175,7 +178,7 @@ FinishBuild ==
 \* Any of the steps above, in any order.
 Next ==
   \/ \E n \in Nodes : Put(n) \/ Publish(n) \/ Read(n)
-  \/ FlushCommits \/ FlushFails \/ Crash \/ BuildPutFails \/ FinishBuild
+  \/ PublishFails \/ Crash \/ BuildPutFails \/ FinishBuild
 
 Spec == Init /\ [][Next]_vars
 
