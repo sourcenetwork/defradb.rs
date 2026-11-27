@@ -35,8 +35,6 @@ paste = "1.0"
 ctor = "1.0"
 chrono = { version = "0.4" }
 defra-node = { path = "../../crates/entry-points/defra-node", features = ["http", "libp2p", "p2p"] }
-# The merge validator a testo node embeds (`merge_validator::RejectValue`).
-db = { path = "../../crates/database/db" }
 # Embedder stream protocols: the testo actions register and open them on iroh nodes.
 p2p = { path = "../../crates/database/p2p", features = ["iroh-transport"] }
 async-trait = { workspace = true }
@@ -55,6 +53,7 @@ defra-core = { path = "../../crates/foundation/defra-core" }
 defra-version = { path = "../../crates/foundation/defra-version" }
 # The client-signed create action builds its graph and runs its conversation.
 crdt = { path = "../../crates/building-blocks/crdt" }
+# Also the merge validator a testo node embeds (`merge_validator::RejectValue`).
 db = { path = "../../crates/database/db", default-features = false }
 serde.workspace = true
 tempfile = "3.17"
