@@ -87,31 +87,25 @@ fn an_explicit_transaction_reuses_an_old_chunk_after_many_edits() {
             .unwrap();
         let txn = db::DbDocMutator::new(Arc::clone(&db), db.new_txn(false).await.unwrap());
         let staged = "The first text staged in the transaction.";
-        assert_eq!(
-            update_body(&txn, &created.doc_id, staged)
-                .await
-                .derived
-                .len(),
-            1
-        );
+        update_body(&txn, &created.doc_id, staged).await;
         for edit in 0..20 {
             let text = format!("Edit {edit} of the article.");
-            assert_eq!(
-                update_body(&txn, &created.doc_id, &text)
-                    .await
-                    .derived
-                    .len(),
-                1
-            );
+            update_body(&txn, &created.doc_id, &text).await;
         }
-
-        let back = update_body(&txn, &created.doc_id, staged).await;
-        assert!(back.derived.is_empty());
+        update_body(&txn, &created.doc_id, staged).await;
         txn.take_txn().await.unwrap().commit().await.unwrap();
         assert_eq!(
             body_of(&mutator, &created.doc_id).await.as_deref(),
             Some(staged)
         );
+
+        let read = db.new_txn(true).await.unwrap();
+        let chunks = db.get_collection(CHUNKS).unwrap().unwrap();
+        let stored = chunks
+            .get_all_with_datastore(&read.datastore().unwrap(), &read.systemstore().unwrap())
+            .await
+            .unwrap();
+        assert_eq!(stored.len(), 22);
     })
     .unwrap()
 }
