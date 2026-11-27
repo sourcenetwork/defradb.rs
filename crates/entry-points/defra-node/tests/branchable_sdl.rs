@@ -15,12 +15,9 @@ use storage::corekv::{IterOptions, Store};
 fn branchable_directive_survives_sdl_parsing() {
     workers::block_on(async {
         let node = Node::builder().build().await.expect("build node");
-        node.add_collection(
-            &defra_core::RequestContext::ambient(),
-            "type Note @branchable { title: String }",
-        )
-        .await
-        .expect("add schema");
+        node.add_collection("type Note @branchable { title: String }")
+            .await
+            .expect("add schema");
 
         let collection = node
             .get_collection("Note")
@@ -46,12 +43,9 @@ fn graphql_write_records_collection_head_under_persisted_id() {
             .build()
             .await
             .expect("build node");
-        node.add_collection(
-            &defra_core::RequestContext::ambient(),
-            "type Note @branchable { title: String }",
-        )
-        .await
-        .expect("add schema");
+        node.add_collection("type Note @branchable { title: String }")
+            .await
+            .expect("add schema");
         let response = node
             .execute(r#"mutation { create_Note(input: {title: "first"}) { _docID } }"#)
             .await;
@@ -142,12 +136,9 @@ fn signed_graphql_write_records_collection_head_under_persisted_id() {
             .build()
             .await
             .expect("build signed node");
-        node.add_collection(
-            &defra_core::RequestContext::ambient(),
-            "type Note @branchable { title: String }",
-        )
-        .await
-        .expect("add schema");
+        node.add_collection("type Note @branchable { title: String }")
+            .await
+            .expect("add schema");
         let response = node
             .execute(r#"mutation { create_Note(input: {title: "first"}) { _docID } }"#)
             .await;

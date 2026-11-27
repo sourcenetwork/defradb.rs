@@ -139,22 +139,18 @@ fn related_projection_grants_only_what_the_requester_could_grant_directly() {
             .await
             .unwrap();
         let node_did = node.node_identity_did().unwrap().to_owned();
-        let admin_context =
-            defra_core::RequestContext::default().with_identity(Some(admin.clone()));
         for permission in [
             NodePermission::DocumentUpdate,
             NodePermission::DocumentRead,
             NodePermission::CollectionGet,
             NodePermission::DacRelationAdd,
         ] {
-            node.add_nac_actor_relationship_as(&admin_context, permission.as_str(), &node_did)
+            node.with_identity(identity::Did::new(admin.clone()).unwrap()).add_nac_actor_relationship(permission.as_str(), &node_did)
                 .await
                 .unwrap();
         }
-        let policy = node.add_dac_policy_as(&admin_context, "name: Related projection\nresources:\n  - name: records\n    relations:\n      - name: reader\n        types: [actor]\n    permissions:\n      - name: read\n        expr: reader\n      - name: update\n      - name: delete\n").await.unwrap();
-        node.add_collection(
-            &admin_context,
-            &format!("type Related @policy(id: \"{policy}\", resource: \"records\") {{ name: String }}"),
+        let policy = node.with_identity(identity::Did::new(admin.clone()).unwrap()).add_dac_policy("name: Related projection\nresources:\n  - name: records\n    relations:\n      - name: reader\n        types: [actor]\n    permissions:\n      - name: read\n        expr: reader\n      - name: update\n      - name: delete\n", None).await.unwrap();
+        node.with_identity(identity::Did::new(admin.clone()).unwrap()).add_collection(&format!("type Related @policy(id: \"{policy}\", resource: \"records\") {{ name: String }}"),
         )
         .await
         .unwrap();
@@ -188,13 +184,7 @@ fn related_projection_grants_only_what_the_requester_could_grant_directly() {
         );
         assert!(!reads(foreign.clone()).await);
         assert!(node
-            .add_dac_actor_relationship_as(
-                &defra_core::RequestContext::default().with_identity(Some(node_did.clone())),
-                "Related",
-                &foreign,
-                "reader",
-                RELATED,
-            )
+            .with_identity(identity::Did::new(node_did.clone()).unwrap()).add_dac_actor_relationship("Related", &foreign, "reader", RELATED)
             .await
             .is_err());
 

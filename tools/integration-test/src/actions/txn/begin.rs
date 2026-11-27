@@ -35,13 +35,14 @@ impl Op for TxnBegin {
 
     fn run(&self, state: &State) -> Result<Value, Failure> {
         let identity = self.common.client_identity(Self::name())?;
+        let (node, scope) = (
+            state.node_on(self.common.node())?,
+            state.scope_as(None, identity),
+        );
         let id = state
-            .block_on(
-                state
-                    .node_on(self.common.node())?
-                    .txn_begin(&state.context_as(None, identity), self.read_only),
-            )
-            .map_err(|e| Failure::operation(e.to_string()))?;
+            .block_on(scope.scoped(&node).new_txn(self.read_only))
+            .map_err(|e| Failure::operation(e.to_string()))?
+            .detach();
         state.txns.push(id);
         Ok(json!({}))
     }

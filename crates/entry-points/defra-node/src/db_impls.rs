@@ -118,7 +118,7 @@ impl DbSchemaOps {
                 continue;
             };
             self.database
-                .validate_collection_policy(policy)
+                .validate_resource_interface(&policy.id, &policy.resource_name)
                 .await
                 .map_err(|error| match error {
                     db::DacPolicyError::ResourceInterface(message) => {
@@ -184,11 +184,7 @@ impl DbSchemaOps {
             .await
             .map_err(Error::from)?;
 
-        let mut known_types: rapidhash::RapidHashSet<String> =
-            db::DB::list_collections(&self.database)
-                .unwrap_or_default()
-                .into_iter()
-                .collect();
+        let mut known_collections = self.database.known_collections();
         // A type the transaction created is known to the view's SDL too.
         if let Some(txn) = context.txn() {
             let in_txn = self
@@ -196,11 +192,16 @@ impl DbSchemaOps {
                 .get_collections_in_txn_as(context, &txn.to_string())
                 .await
                 .map_err(Error::from)?;
-            known_types.extend(in_txn.into_iter().map(|version| version.name));
+            known_collections.extend(
+                in_txn
+                    .into_iter()
+                    .map(|version| (version.name, version.collection_id)),
+            );
         }
 
-        let mut collections = query::parse_sdl_with_known_types(target_sdl, known_types)
-            .map_err(Error::ViewSchemaParse)?;
+        let mut collections =
+            query::parse_sdl_with_known_collections(target_sdl, known_collections)
+                .map_err(Error::ViewSchemaParse)?;
 
         let wrapped_query = format!("query {{ {} }}", source_query.trim());
         let selects = query::parse_query_with_limits(&wrapped_query, None, self.query_limits)

@@ -177,6 +177,11 @@ pub enum TransportEvent<ResponseToken> {
         peer_id: PeerId,
         topic: String,
     },
+    /// A hub says messages of `topic` may not have reached this node.
+    TopicMissed {
+        topic: String,
+        hub: PeerId,
+    },
     BlockSyncProgress {
         query_id: QueryId,
         missing_count: usize,
@@ -281,6 +286,7 @@ impl<ResponseToken> TransportEvent<ResponseToken> {
             Self::GossipRawMessage { .. } => "gossip_raw_message",
             Self::PeerSubscribed { .. } => "peer_subscribed",
             Self::PeerUnsubscribed { .. } => "peer_unsubscribed",
+            Self::TopicMissed { .. } => "topic_missed",
             Self::BlockSyncProgress { .. } => "block_sync_progress",
             Self::BlockSyncComplete { .. } => "block_sync_complete",
             Self::BlockSyncBlockReceived { .. } => "block_sync_block_received",
@@ -309,7 +315,8 @@ impl<ResponseToken> TransportEvent<ResponseToken> {
             TransportEvent,
             BlockSyncProgress,
             BlockSyncComplete,
-            BlockSyncBlockReceived
+            BlockSyncBlockReceived,
+            Self::TopicMissed { .. }
         )
     }
 }

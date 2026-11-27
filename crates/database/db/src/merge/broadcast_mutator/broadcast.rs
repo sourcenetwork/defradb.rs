@@ -129,7 +129,18 @@ where
             );
             BroadcastStatus::Success
         }
-        Ok(BroadcastResult::PartialDocumentOnly { collection_error }) => {
+        Ok(BroadcastResult::NoSubscribers) => BroadcastStatus::Success,
+        Ok(BroadcastResult::PartialDocumentOnly {
+            collection_error_is_no_topic_peer: true,
+            ..
+        })
+        | Ok(BroadcastResult::PartialCollectionOnly {
+            document_error_is_no_topic_peer: true,
+            ..
+        }) => BroadcastStatus::Success,
+        Ok(BroadcastResult::PartialDocumentOnly {
+            collection_error, ..
+        }) => {
             tracing::warn!(
                 doc_id = %block_result.doc_id,
                 collection = %collection_name,
@@ -141,23 +152,7 @@ where
                 collection_error
             ))
         }
-        Ok(BroadcastResult::PartialCollectionOnly { document_error }) => {
-            // Per-doc topics only have subscribers when a client explicitly
-            // calls subscribe_document. For the common batch-create path
-            // nobody is watching the doc-topic, and gossipsub returns
-            // InsufficientPeers. Go's PublishToTopicAsync silently skips
-            // when the topic has no local subscription, so for parity we
-            // treat this as success: the collection-topic delivered to
-            // subscribed replicators, which is the meaningful path.
-            if document_error.contains("InsufficientPeers") {
-                tracing::debug!(
-                    doc_id = %block_result.doc_id,
-                    cid = %block_result.cid,
-                    collection = %collection_name,
-                    "Doc-topic has no subscribers; broadcast delivered via collection topic"
-                );
-                return BroadcastStatus::Success;
-            }
+        Ok(BroadcastResult::PartialCollectionOnly { document_error, .. }) => {
             tracing::warn!(
                 doc_id = %block_result.doc_id,
                 collection = %collection_name,

@@ -10,10 +10,11 @@ async fn fixture() -> (Node, String, String) {
     let node = Node::builder().build().await.unwrap();
     let owner_context = defra_core::RequestContext::ambient().with_identity(Some(String::from(A)));
     let policy = node
-        .add_dac_policy_as(&owner_context, POLICY)
+        .core()
+        .add_dac_policy(&owner_context, POLICY, None)
         .await
         .unwrap();
-    node.add_collection(&owner_context, &format!("type Users @policy(id: \"{policy}\", resource: \"rows\") {{ name: String }}\ntype Other {{ name: String }}"))
+    node.with_identity(identity::Did::new(String::from(A)).unwrap()).add_collection(&format!("type Users @policy(id: \"{policy}\", resource: \"rows\") {{ name: String }}\ntype Other {{ name: String }}"))
         .await.unwrap();
     let response = node
         .execute_request(
@@ -42,8 +43,8 @@ fn owner_observation_preserves_actor_document_and_collection_boundaries() {
         let context = RequestContext::default();
         let handle = node.runner().begin_txn_as(&context, true).await.unwrap();
         let result = node
-            .observe_document_owners_in_txn(
-                &handle,
+            .with_transaction(handle.parse::<defra_core::TxnId>().unwrap())
+            .observe_document_owners(
                 "Users",
                 std::slice::from_ref(&doc),
                 Some(Did::new(A).unwrap()),
@@ -54,8 +55,8 @@ fn owner_observation_preserves_actor_document_and_collection_boundaries() {
         assert!(result[0].visible);
         assert_eq!(result[0].owner.as_ref().map(Did::as_str), Some(A));
         let denied = node
-            .observe_document_owners_in_txn(
-                &handle,
+            .with_transaction(handle.parse::<defra_core::TxnId>().unwrap())
+            .observe_document_owners(
                 "Users",
                 std::slice::from_ref(&doc),
                 Some(Did::new(B).unwrap()),
@@ -71,13 +72,13 @@ fn owner_observation_preserves_actor_document_and_collection_boundaries() {
                 &handle,
                 "Users",
                 std::slice::from_ref(&doc),
-                Some(Did::new(A).unwrap()),
+                Some(Did::new(A).unwrap())
             )
             .await
             .is_err());
         let wrong = node
-            .observe_document_owners_in_txn(
-                &handle,
+            .with_transaction(handle.parse::<defra_core::TxnId>().unwrap())
+            .observe_document_owners(
                 "Other",
                 std::slice::from_ref(&doc),
                 Some(Did::new(A).unwrap()),
@@ -97,7 +98,8 @@ fn owner_observation_preserves_actor_document_and_collection_boundaries() {
             .await
             .unwrap();
         let result = node
-            .observe_document_owners_in_txn(&hidden, "Users", &[doc], Some(Did::new(B).unwrap()))
+            .with_transaction(hidden.parse::<defra_core::TxnId>().unwrap())
+            .observe_document_owners("Users", &[doc], Some(Did::new(B).unwrap()))
             .await
             .unwrap();
         assert!(result[0].owner.is_none());
@@ -118,8 +120,8 @@ fn owner_observation_keeps_the_row_snapshot_after_external_registration_changes(
         let context = RequestContext::default();
         let handle = node.runner().begin_txn_as(&context, true).await.unwrap();
         let before = node
-            .observe_document_owners_in_txn(
-                &handle,
+            .with_transaction(handle.parse::<defra_core::TxnId>().unwrap())
+            .observe_document_owners(
                 "Users",
                 std::slice::from_ref(&doc),
                 Some(Did::new(A).unwrap()),
@@ -130,15 +132,15 @@ fn owner_observation_keeps_the_row_snapshot_after_external_registration_changes(
         let moved = doc.clone();
         node.on_acp(move || async move {
             acp.unregister_doc_object(&policy, "rows", &moved).await?;
-            acp.register_doc_object(&Did::new(B).unwrap(), &policy, "rows", &moved)
+            acp.register_doc_object(&Did::new(B).unwrap(), &policy, "rows", &moved, &[])
                 .await?;
             Ok(())
         })
         .await
         .unwrap();
         let after = node
-            .observe_document_owners_in_txn(
-                &handle,
+            .with_transaction(handle.parse::<defra_core::TxnId>().unwrap())
+            .observe_document_owners(
                 "Users",
                 std::slice::from_ref(&doc),
                 Some(Did::new(A).unwrap()),
@@ -158,14 +160,15 @@ fn owner_observation_keeps_the_row_snapshot_after_external_registration_changes(
             .await
             .unwrap();
         let current = node
-            .observe_document_owners_in_txn(&next, "Users", &[doc], Some(Did::new(B).unwrap()))
+            .with_transaction(next.parse::<defra_core::TxnId>().unwrap())
+            .observe_document_owners("Users", &[doc], Some(Did::new(B).unwrap()))
             .await
             .unwrap();
         assert_eq!(current[0].owner.as_ref().map(Did::as_str), Some(B));
         assert!(current[0].visible);
         let denied = node
-            .observe_document_owners_in_txn(
-                &next,
+            .with_transaction(next.parse::<defra_core::TxnId>().unwrap())
+            .observe_document_owners(
                 "Users",
                 std::slice::from_ref(&current[0].doc_id),
                 Some(Did::new(A).unwrap()),
@@ -198,12 +201,8 @@ fn owner_observation_bounds_requests_and_keeps_unregistered_ownership_unknown() 
             ("Users) { Other", vec![doc.clone()]),
         ] {
             assert!(node
-                .observe_document_owners_in_txn(
-                    &handle,
-                    collection,
-                    &ids,
-                    Some(Did::new(A).unwrap())
-                )
+                .with_transaction(handle.parse::<defra_core::TxnId>().unwrap())
+                .observe_document_owners(collection, &ids, Some(Did::new(A).unwrap()))
                 .await
                 .is_err());
         }
@@ -221,7 +220,8 @@ fn owner_observation_bounds_requests_and_keeps_unregistered_ownership_unknown() 
         .unwrap();
         let handle = node.runner().begin_txn_as(&context, true).await.unwrap();
         let result = node
-            .observe_document_owners_in_txn(&handle, "Users", &[doc], Some(Did::new(A).unwrap()))
+            .with_transaction(handle.parse::<defra_core::TxnId>().unwrap())
+            .observe_document_owners("Users", &[doc], Some(Did::new(A).unwrap()))
             .await
             .unwrap();
         assert!(result[0].owner.is_none());
@@ -251,7 +251,7 @@ fn owner_observation_does_not_treat_a_deleted_document_as_a_live_member() {
         let acp = node.document_acp();
         let stale = doc.clone();
         node.on_acp(move || async move {
-            acp.register_doc_object(&Did::new(A).unwrap(), &policy, "rows", &stale)
+            acp.register_doc_object(&Did::new(A).unwrap(), &policy, "rows", &stale, &[])
                 .await?;
             Ok(())
         })
@@ -260,7 +260,8 @@ fn owner_observation_does_not_treat_a_deleted_document_as_a_live_member() {
         let context = RequestContext::default();
         let handle = node.runner().begin_txn_as(&context, true).await.unwrap();
         let result = node
-            .observe_document_owners_in_txn(&handle, "Users", &[doc], Some(Did::new(A).unwrap()))
+            .with_transaction(handle.parse::<defra_core::TxnId>().unwrap())
+            .observe_document_owners("Users", &[doc], Some(Did::new(A).unwrap()))
             .await
             .unwrap();
         assert!(result[0].owner.is_none());
@@ -293,8 +294,8 @@ fn owner_observation_reports_the_registrant_to_a_different_authorized_reader() {
         let context = RequestContext::default();
         let handle = node.runner().begin_txn_as(&context, true).await.unwrap();
         let observations = node
-            .observe_document_owners_in_txn(
-                &handle,
+            .with_transaction(handle.parse::<defra_core::TxnId>().unwrap())
+            .observe_document_owners(
                 "Users",
                 std::slice::from_ref(&doc),
                 Some(Did::new(B).unwrap()),
@@ -333,8 +334,8 @@ fn owner_visibility_distinguishes_public_rows_from_denied_and_missing_rows() {
         let context = RequestContext::default();
         let handle = node.runner().begin_txn_as(&context, true).await.unwrap();
         let rows = node
-            .observe_document_owners_in_txn(
-                &handle,
+            .with_transaction(handle.parse::<defra_core::TxnId>().unwrap())
+            .observe_document_owners(
                 "Other",
                 &[public.clone(), private.clone()],
                 Some(Did::new(B).unwrap()),
@@ -349,12 +350,8 @@ fn owner_visibility_distinguishes_public_rows_from_denied_and_missing_rows() {
         assert!(!rows[1].visible);
         assert!(rows[1].owner.is_none());
         let hidden = node
-            .observe_document_owners_in_txn(
-                &handle,
-                "Users",
-                &[private],
-                Some(Did::new(B).unwrap()),
-            )
+            .with_transaction(handle.parse::<defra_core::TxnId>().unwrap())
+            .observe_document_owners("Users", &[private], Some(Did::new(B).unwrap()))
             .await
             .unwrap();
         assert!(!hidden[0].visible);
@@ -478,30 +475,30 @@ fn unified_access_matches_lean_and_validates_authority_at_commit() {
         }).expect("the store takes the identity");
         let node = Node::builder().with_node_identity_did(&owner).with_node_acp_enabled().build().await.unwrap();
         let owner_context = actor(&owner);
-        let policy = node.add_dac_policy_as(&owner_context, POLICY).await.unwrap();
-        node.add_collection(&owner_context, &format!("type Users @policy(id: \"{policy}\", resource: \"rows\") {{ name: String }}\ntype Other {{ name: String }}")).await.unwrap();
+        let policy = node.core().add_dac_policy(&owner_context, POLICY, None).await.unwrap();
+        node.with_identity(identity::Did::new(&owner).unwrap()).add_collection(&format!("type Users @policy(id: \"{policy}\", resource: \"rows\") {{ name: String }}\ntype Other {{ name: String }}")).await.unwrap();
         let response = node.execute("mutation { add_Users(input: {name: \"private\"}) { _docID } }").await;
         assert!(!response.has_errors(), "{:?}", response.errors);
         let doc = response.data.unwrap()["add_Users"][0]["_docID"].as_str().unwrap().to_owned();
         let subject = Did::new(B).unwrap();
         let ids = vec![doc.clone(), "missing".into()];
         let named = || DocumentAccessMode::Named { permission: "read".into(), node_permission: NodePermission::DocumentRead };
-        let txn = node.begin_transaction(false).await.unwrap();
+        let txn = node.new_txn(false).await.map(|txn| txn.detach()).unwrap();
         defra_core::dac_bypass::set_dac_bypass(true);
-        assert_eq!(node.observe_document_access_in_txn(&txn, "Users", &ids, subject.clone(), DocumentAccessMode::DelegatedRead).await.unwrap(), [hidden, hidden]);
+        assert_eq!(node.with_transaction(txn).observe_document_access("Users", &ids, subject.clone(), DocumentAccessMode::DelegatedRead).await.unwrap(), [hidden, hidden]);
         defra_core::dac_bypass::set_dac_bypass(false);
-        assert!(node.runner().observe_document_access_in_txn(actor(B), &txn, "Users", &ids, subject.clone(), DocumentAccessMode::DelegatedRead).await.is_err());
-        node.discard_transaction(&txn).await.unwrap();
+        assert!(node.runner().observe_document_access_in_txn(actor(B), &query::TransactionHandle::new(txn.to_string()), "Users", &ids, subject.clone(), DocumentAccessMode::DelegatedRead).await.is_err());
+        node.with_transaction(txn).discard().await.unwrap();
         let denied_context = actor(B);
         let denied_handle = node.runner().begin_txn_as(&denied_context, true).await.unwrap();
         let denied = node.runner().observe_document_access_in_txn(denied_context.clone(), &denied_handle, "Users", &ids, subject.clone(), DocumentAccessMode::DelegatedRead).await;
         assert!(denied.is_err(), "the transaction principal must pass the node read gate");
         node.runner().discard_txn_as(&denied_context, &denied_handle).await.unwrap();
-        node.add_dac_actor_relationship(&owner, "Users", &doc, "reader", B).await.unwrap();
-        let txn = node.begin_transaction(false).await.unwrap();
-        assert_eq!(node.observe_document_access_in_txn(&txn, "Users", &ids, subject.clone(), DocumentAccessMode::DelegatedRead).await.unwrap(), [visible, hidden]);
-        assert_eq!(node.observe_document_access_in_txn(&txn, "Users", &ids, subject.clone(), named()).await.unwrap(), [denied_node, missing]);
-        node.discard_transaction(&txn).await.unwrap();
+        node.with_identity(identity::Did::new(&owner).unwrap()).add_dac_actor_relationship("Users", &doc, "reader", B).await.unwrap();
+        let txn = node.new_txn(false).await.map(|txn| txn.detach()).unwrap();
+        assert_eq!(node.with_transaction(txn).observe_document_access("Users", &ids, subject.clone(), DocumentAccessMode::DelegatedRead).await.unwrap(), [visible, hidden]);
+        assert_eq!(node.with_transaction(txn).observe_document_access("Users", &ids, subject.clone(), named()).await.unwrap(), [denied_node, missing]);
+        node.with_transaction(txn).discard().await.unwrap();
         let nac = node.nac_manager().clone();
         let owner_did = Did::new(&owner).unwrap();
         let actor_did = subject.clone();
@@ -527,41 +524,41 @@ fn unified_access_matches_lean_and_validates_authority_at_commit() {
         let owner_did = Did::new(&owner).unwrap();
         let actor_did = subject.clone();
         node.on_acp(move || async move { nac.add_permission_grant(&owner_did, &actor_did, NodePermission::DocumentRead).await.map_err(crate::Error::NacInit)?; Ok(()) }).await.unwrap();
-        let txn = node.begin_transaction(false).await.unwrap();
-        assert_eq!(node.observe_document_access_in_txn(&txn, "Users", &ids, subject.clone(), named()).await.unwrap(), [allowed, missing]);
-        let response = node.execute_request_in_txn(query::QueryRequest::new("mutation { add_Other(input: {name: \"guarded\"}) { _docID } }"), &txn).await;
+        let txn = node.new_txn(false).await.map(|txn| txn.detach()).unwrap();
+        assert_eq!(node.with_transaction(txn).observe_document_access("Users", &ids, subject.clone(), named()).await.unwrap(), [allowed, missing]);
+        let response = node.with_transaction(txn).execute_request(query::QueryRequest::new("mutation { add_Other(input: {name: \"guarded\"}) { _docID } }")).await;
         assert!(!response.has_errors(), "{:?}", response.errors);
         let nac = node.nac_manager().clone();
         let owner_did = Did::new(&owner).unwrap();
         let actor_did = subject.clone();
         node.on_acp(move || async move { nac.remove_permission_grant(&owner_did, &actor_did, NodePermission::DocumentRead).await.map_err(crate::Error::NacInit)?; Ok(()) }).await.unwrap();
-        assert!(node.commit_transaction(&txn).await.is_err(), "actor NAC revocation must conflict with guarded commit");
+        assert!(node.with_transaction(txn).commit().await.is_err(), "actor NAC revocation must conflict with guarded commit");
         let nac = node.nac_manager().clone();
         let owner_did = Did::new(&owner).unwrap();
         let actor_did = subject.clone();
         node.on_acp(move || async move { nac.add_permission_grant(&owner_did, &actor_did, NodePermission::DocumentRead).await.map_err(crate::Error::NacInit)?; Ok(()) }).await.unwrap();
-        let txn = node.begin_transaction(false).await.unwrap();
-        assert_eq!(node.observe_document_access_in_txn(&txn, "Users", &ids, subject.clone(), named()).await.unwrap(), [allowed, missing]);
-        let response = node.execute_request_in_txn(query::QueryRequest::new("mutation { add_Other(input: {name: \"guarded\"}) { _docID } }"), &txn).await;
+        let txn = node.new_txn(false).await.map(|txn| txn.detach()).unwrap();
+        assert_eq!(node.with_transaction(txn).observe_document_access("Users", &ids, subject.clone(), named()).await.unwrap(), [allowed, missing]);
+        let response = node.with_transaction(txn).execute_request(query::QueryRequest::new("mutation { add_Other(input: {name: \"guarded\"}) { _docID } }")).await;
         assert!(!response.has_errors(), "{:?}", response.errors);
-        node.delete_dac_actor_relationship(&owner, "Users", &doc, "reader", B).await.unwrap();
-        assert!(node.commit_transaction(&txn).await.is_err(), "named DAC revocation must conflict with guarded commit");
-        let txn = node.begin_transaction(false).await.unwrap();
-        assert_eq!(node.observe_document_access_in_txn(&txn, "Users", &ids, subject.clone(), named()).await.unwrap(), [denied_dac, missing]);
-        node.discard_transaction(&txn).await.unwrap();
-        node.add_dac_actor_relationship(&owner, "Users", &doc, "reader", B).await.unwrap();
-        let txn = node.begin_transaction(false).await.unwrap();
-        assert_eq!(node.observe_document_access_in_txn(&txn, "Users", &ids, subject.clone(), named()).await.unwrap(), [allowed, missing]);
-        let response = node.execute_request_in_txn(query::QueryRequest::new("mutation { add_Other(input: {name: \"guarded\"}) { _docID } }"), &txn).await;
+        node.with_identity(identity::Did::new(&owner).unwrap()).delete_dac_actor_relationship("Users", &doc, "reader", B).await.unwrap();
+        assert!(node.with_transaction(txn).commit().await.is_err(), "named DAC revocation must conflict with guarded commit");
+        let txn = node.new_txn(false).await.map(|txn| txn.detach()).unwrap();
+        assert_eq!(node.with_transaction(txn).observe_document_access("Users", &ids, subject.clone(), named()).await.unwrap(), [denied_dac, missing]);
+        node.with_transaction(txn).discard().await.unwrap();
+        node.with_identity(identity::Did::new(&owner).unwrap()).add_dac_actor_relationship("Users", &doc, "reader", B).await.unwrap();
+        let txn = node.new_txn(false).await.map(|txn| txn.detach()).unwrap();
+        assert_eq!(node.with_transaction(txn).observe_document_access("Users", &ids, subject.clone(), named()).await.unwrap(), [allowed, missing]);
+        let response = node.with_transaction(txn).execute_request(query::QueryRequest::new("mutation { add_Other(input: {name: \"guarded\"}) { _docID } }")).await;
         assert!(!response.has_errors(), "{:?}", response.errors);
         let nac = node.nac_manager().clone();
         let caller = db::NacCaller { identity: Some(Did::new(&owner).unwrap()), node: Some(Did::new(&owner).unwrap()) };
         node.on_acp(move || async move { nac.disable_as(&caller).await.map_err(crate::Error::NacInit)?; Ok(()) }).await.unwrap();
-        assert!(node.commit_transaction(&txn).await.is_err(), "disabling NAC must conflict with guarded commit");
-        let txn = node.begin_transaction(false).await.unwrap();
-        assert_eq!(node.observe_document_access_in_txn(&txn, "Users", &ids, subject.clone(), named()).await.unwrap(), [inactive, missing]);
-        assert_eq!(node.observe_document_access_in_txn(&txn, "Users", &ids, subject.clone(), DocumentAccessMode::DelegatedRead).await.unwrap(), [visible, hidden]);
-        node.discard_transaction(&txn).await.unwrap();
+        assert!(node.with_transaction(txn).commit().await.is_err(), "disabling NAC must conflict with guarded commit");
+        let txn = node.new_txn(false).await.map(|txn| txn.detach()).unwrap();
+        assert_eq!(node.with_transaction(txn).observe_document_access("Users", &ids, subject.clone(), named()).await.unwrap(), [inactive, missing]);
+        assert_eq!(node.with_transaction(txn).observe_document_access("Users", &ids, subject.clone(), DocumentAccessMode::DelegatedRead).await.unwrap(), [visible, hidden]);
+        node.with_transaction(txn).discard().await.unwrap();
         let nac = node.nac_manager().clone();
         let caller = db::NacCaller { identity: Some(Did::new(&owner).unwrap()), node: Some(Did::new(&owner).unwrap()) };
         node.on_acp(move || async move { nac.re_enable_as(&caller).await.map_err(crate::Error::NacInit)?; Ok(()) }).await.unwrap();
@@ -569,23 +566,23 @@ fn unified_access_matches_lean_and_validates_authority_at_commit() {
         let policy_to_clear = policy.clone();
         let id_to_clear = doc.clone();
         node.on_acp(move || async move { acp.unregister_doc_object(&policy_to_clear, "rows", &id_to_clear).await?; Ok(()) }).await.unwrap();
-        let txn = node.begin_transaction(false).await.unwrap();
-        assert_eq!(node.observe_document_access_in_txn(&txn, "Users", &ids, subject.clone(), named()).await.unwrap(), [unregistered, missing]);
-        node.discard_transaction(&txn).await.unwrap();
+        let txn = node.new_txn(false).await.map(|txn| txn.detach()).unwrap();
+        assert_eq!(node.with_transaction(txn).observe_document_access("Users", &ids, subject.clone(), named()).await.unwrap(), [unregistered, missing]);
+        node.with_transaction(txn).discard().await.unwrap();
         let acp = node.document_acp();
         let policy_to_restore = policy.clone();
         let id_to_restore = doc.clone();
         let owner_to_restore = owner.clone();
-        node.on_acp(move || async move { acp.register_doc_object(&Did::new(&owner_to_restore).unwrap(), &policy_to_restore, "rows", &id_to_restore).await?; Ok(()) }).await.unwrap();
+        node.on_acp(move || async move { acp.register_doc_object(&Did::new(&owner_to_restore).unwrap(), &policy_to_restore, "rows", &id_to_restore, &[]).await?; Ok(()) }).await.unwrap();
         let response = node.execute_request(query::QueryRequest::new(format!("mutation {{ delete_Users(docID: \"{doc}\") {{ _docID }} }}"))).await;
         assert!(!response.has_errors(), "{:?}", response.errors);
         let acp = node.document_acp();
         let id_to_restore = doc.clone();
         let owner_to_restore = owner.clone();
-        node.on_acp(move || async move { acp.register_doc_object(&Did::new(&owner_to_restore).unwrap(), &policy, "rows", &id_to_restore).await?; Ok(()) }).await.unwrap();
-        let txn = node.begin_transaction(false).await.unwrap();
-        assert_eq!(node.observe_document_access_in_txn(&txn, "Users", &ids, subject, named()).await.unwrap(), [missing, missing]);
-        node.discard_transaction(&txn).await.unwrap();
+        node.on_acp(move || async move { acp.register_doc_object(&Did::new(&owner_to_restore).unwrap(), &policy, "rows", &id_to_restore, &[]).await?; Ok(()) }).await.unwrap();
+        let txn = node.new_txn(false).await.map(|txn| txn.detach()).unwrap();
+        assert_eq!(node.with_transaction(txn).observe_document_access("Users", &ids, subject, named()).await.unwrap(), [missing, missing]);
+        node.with_transaction(txn).discard().await.unwrap();
         node.shutdown().await.unwrap();
         defra_core::signing::clear_identity_store();
     }).unwrap();
@@ -606,7 +603,7 @@ fn unified_named_access_follows_parent_and_conflicts_on_parent_revoke() {
     workers::block_on(async {
         let node = Node::builder().build().await.unwrap();
         let owner_context = actor(A);
-        let policy = node.add_dac_policy_as(&owner_context, r#"
+        let policy = node.core().add_dac_policy(&owner_context, r#"
 name: filesystem
 resources:
 - name: directory
@@ -627,16 +624,16 @@ resources:
     expr: parent->read
   - name: update
   - name: delete
-"#).await.unwrap();
-        node.add_collection(&owner_context, &format!("type Directory @policy(id: \"{policy}\", resource: \"directory\") {{ name: String }}\ntype File @policy(id: \"{policy}\", resource: \"file\") {{ name: String }}\ntype Other {{ name: String }}")).await.unwrap();
+"#, None).await.unwrap();
+        node.with_identity(identity::Did::new(A).unwrap()).add_collection(&format!("type Directory @policy(id: \"{policy}\", resource: \"directory\") {{ name: String }}\ntype File @policy(id: \"{policy}\", resource: \"file\") {{ name: String }}\ntype Other {{ name: String }}")).await.unwrap();
         let mut ids = Vec::new();
         for collection in ["Directory", "File"] {
             let response = node.execute_request(query::QueryRequest::new(format!("mutation {{ add_{collection}(input: {{name: \"x\"}}) {{ _docID }} }}")).with_identity(Some(Did::new(A).unwrap()))).await;
             assert!(!response.has_errors(), "{:?}", response.errors);
             ids.push(response.data.unwrap()[format!("add_{collection}")][0]["_docID"].as_str().unwrap().to_owned());
         }
-        node.add_dac_actor_relationship(A, "Directory", &ids[0], "reader", B).await.unwrap();
-        node.add_dac_actor_relationship(A, "File", &ids[1], "parent", &format!("directory:{}", ids[0])).await.unwrap();
+        node.with_identity(identity::Did::new(A).unwrap()).add_dac_actor_relationship("Directory", &ids[0], "reader", B).await.unwrap();
+        node.with_identity(identity::Did::new(A).unwrap()).add_dac_actor_relationship("File", &ids[1], "parent", &format!("directory:{}", ids[0])).await.unwrap();
         let nac = node.nac_manager().clone();
         node.on_acp(move || async move {
             let owner = Did::new(A).unwrap();
@@ -645,13 +642,13 @@ resources:
             nac.add_permission_grant(&owner, &subject, NodePermission::DocumentRead).await.map_err(crate::Error::NacInit)?;
             Ok(())
         }).await.unwrap();
-        let txn = node.begin_transaction(false).await.unwrap();
+        let txn = node.new_txn(false).await.map(|txn| txn.detach()).unwrap();
         let mode = DocumentAccessMode::Named { permission: "read".into(), node_permission: NodePermission::DocumentRead };
-        assert_eq!(node.observe_document_access_in_txn(&txn, "File", &[ids[1].clone()], Did::new(B).unwrap(), mode).await.unwrap(), [allowed]);
-        let response = node.execute_request_in_txn(query::QueryRequest::new("mutation { add_Other(input: {name: \"guarded\"}) { _docID } }").with_identity(Some(Did::new(A).unwrap())), &txn).await;
+        assert_eq!(node.with_transaction(txn).observe_document_access("File", &[ids[1].clone()], Did::new(B).unwrap(), mode).await.unwrap(), [allowed]);
+        let response = node.with_transaction(txn).execute_request(query::QueryRequest::new("mutation { add_Other(input: {name: \"guarded\"}) { _docID } }").with_identity(Some(Did::new(A).unwrap()))).await;
         assert!(!response.has_errors(), "{:?}", response.errors);
-        assert!(node.delete_dac_actor_relationship(A, "Directory", &ids[0], "reader", B).await.unwrap());
-        assert!(node.commit_transaction(&txn).await.is_err(), "revoking an inherited grant must conflict with the guarded commit");
+        assert!(node.with_identity(identity::Did::new(A).unwrap()).delete_dac_actor_relationship("Directory", &ids[0], "reader", B).await.unwrap());
+        assert!(node.with_transaction(txn).commit().await.is_err(), "revoking an inherited grant must conflict with the guarded commit");
         node.shutdown().await.unwrap();
     }).unwrap();
 }
