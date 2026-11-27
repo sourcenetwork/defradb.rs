@@ -287,3 +287,66 @@ fn a_failed_migration_commit_leaves_its_lens_unknown() {
     })
     .unwrap()
 }
+
+/// Two open transactions carry the same lens; one commits and the other
+/// fails while the winner's ordered publication is held. The loser drops only
+/// its own hold, so a read still finds the winner's compiled copy.
+#[test]
+#[mantra_macros::req_test("defra.collection_version.migrations.transform_with_version")]
+fn a_failed_commit_of_one_lens_keeps_the_other_commits_hold() {
+    workers::block_on(async {
+        let (db, store) = node().await;
+        let v1 = db
+            .require_collection("Users")
+            .unwrap()
+            .version_id()
+            .to_string();
+        let registry = DbTransactionRegistry::new(db.clone());
+        let winner = registry.begin(false).await.unwrap();
+        let loser = registry.begin(false).await.unwrap();
+        let won = registry
+            .set_migration_in_txn(&winner, config(&v1, "users-v2"), None)
+            .await
+            .unwrap();
+        let lost = registry
+            .set_migration_in_txn(&loser, config(&v1, "users-v2"), None)
+            .await
+            .unwrap();
+        assert_eq!(won, lost);
+
+        let (entered, release) = (Arc::new(Event::new()), Arc::new(Event::new()));
+        let earlier = earlier_commit(&db, &entered, &release).await;
+        let commits = async {
+            entered.wait().await;
+            futures::join!(registry.commit(&winner), registry.commit(&loser))
+        };
+        let reader = async {
+            entered.wait().await;
+            while stored_transform(&db, "users-v2").await.as_ref() != Some(&won) {
+                workers::yield_now().await;
+            }
+            assert!(
+                !db.has_migration(&won),
+                "the winning commit's ordered publication is still held"
+            );
+            let docs = run(&db, &won)
+                .await
+                .expect("the failed commit must not drop the winner's hold");
+            release.set();
+            store.release();
+            docs.len()
+        };
+
+        let (earlier, commits, docs) = futures::join!(earlier.commit(), commits, reader);
+        earlier.unwrap();
+        let outcomes = [commits.0.is_ok(), commits.1.is_ok()];
+        assert_eq!(
+            outcomes.into_iter().filter(|ok| *ok).count(),
+            1,
+            "{commits:?}"
+        );
+        assert_eq!(docs, 1);
+        assert!(store.inner.has_transform(&won));
+    })
+    .unwrap()
+}

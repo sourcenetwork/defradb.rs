@@ -73,19 +73,16 @@ impl CommittedLensStore {
         self.in_flight.remove(&ticket);
     }
 
-    /// The store that runs `id`: the database's, unless only a commit still in
-    /// flight holds it, whose version a reader of storage may already see.
-    fn holder(&self, id: &TransformId) -> Arc<dyn TransformStore> {
+    /// The store of a commit still in flight that holds `id`, whose version a
+    /// reader of storage may already see.
+    fn held(&self, id: &TransformId) -> Option<Arc<dyn TransformStore>> {
         if !self.in_flight.is_empty() && !self.base.has_transform(id) {
-            let held = self
+            return self
                 .in_flight
                 .iter()
-                .find_map(|(_, (lens, holder))| (&lens == id).then_some(holder));
-            if let Some(holder) = held {
-                return holder;
-            }
+                .find_map(|(_, (lens, holder))| (lens == *id).then_some(holder));
         }
-        Arc::clone(&self.base)
+        None
     }
 
     /// Owes the committed lens `id` unless it is registered already, so its
@@ -102,10 +99,17 @@ impl CommittedLensStore {
         docs: LensDocStream,
         inverse: bool,
     ) -> lens::Result<LensDocResultStream> {
+        if let Some(holder) = self.held(id) {
+            return if inverse {
+                holder.inverse(id, docs)
+            } else {
+                holder.transform(id, docs)
+            };
+        }
         match self.owed.get(id) {
             Some(config) => Ok(self.run_after_registration(id.clone(), config, docs, inverse)),
-            None if inverse => self.holder(id).inverse(id, docs),
-            None => self.holder(id).transform(id, docs),
+            None if inverse => self.base.inverse(id, docs),
+            None => self.base.transform(id, docs),
         }
     }
 
@@ -214,12 +218,15 @@ impl TransformStore for CommittedLensStore {
         doc: LensDoc,
         inverse: bool,
     ) -> lens::Result<LensDoc> {
+        if let Some(holder) = self.held(id) {
+            return holder.transform_doc(id, doc, inverse).await;
+        }
         match self.owed.get(id) {
             Some(config) => {
                 register_owed(self.base.as_ref(), &self.owed, id, &config).await?;
                 self.base.transform_doc(id, doc, inverse).await
             }
-            None => self.holder(id).transform_doc(id, doc, inverse).await,
+            None => self.base.transform_doc(id, doc, inverse).await,
         }
     }
 
@@ -509,5 +516,121 @@ where
                 "A committed lens could not be registered yet; it is registered when next used"
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    use lens::{LensDoc, LensModule, MemoryTransformStore};
+    use regolith::sync::Event;
+
+    use super::*;
+
+    /// An empty base store that parks the first `has_transform` call, opening
+    /// the gap between a use's hold and owed reads.
+    struct GatedStore {
+        inner: MemoryTransformStore,
+        gated: AtomicBool,
+        entered: Event,
+        released: AtomicBool,
+    }
+
+    impl GatedStore {
+        fn new() -> Arc<Self> {
+            Arc::new(Self {
+                inner: MemoryTransformStore::new(),
+                gated: AtomicBool::new(false),
+                entered: Event::new(),
+                released: AtomicBool::new(false),
+            })
+        }
+    }
+
+    #[async_trait]
+    impl TransformStore for GatedStore {
+        fn new_isolated_store(&self) -> Arc<dyn TransformStore> {
+            self.inner.new_isolated_store()
+        }
+
+        async fn add(&self, config: LensConfig) -> lens::Result<TransformId> {
+            self.inner.add(config).await
+        }
+
+        async fn add_with_id(&self, id: TransformId, config: LensConfig) -> lens::Result<()> {
+            self.inner.add_with_id(id, config).await
+        }
+
+        async fn list(&self) -> lens::Result<RapidHashMap<String, Vec<lens::LensModule>>> {
+            self.inner.list().await
+        }
+
+        fn transform(
+            &self,
+            id: &TransformId,
+            docs: LensDocStream,
+        ) -> lens::Result<LensDocResultStream> {
+            self.inner.transform(id, docs)
+        }
+
+        fn inverse(
+            &self,
+            id: &TransformId,
+            docs: LensDocStream,
+        ) -> lens::Result<LensDocResultStream> {
+            self.inner.inverse(id, docs)
+        }
+
+        fn has_transform(&self, id: &TransformId) -> bool {
+            if !self.gated.swap(true, Ordering::SeqCst) {
+                self.entered.set();
+                while !self.released.load(Ordering::SeqCst) {
+                    std::thread::park();
+                }
+            }
+            self.inner.has_transform(id)
+        }
+
+        async fn remove(&self, id: &TransformId) -> lens::Result<()> {
+            self.inner.remove(id).await
+        }
+    }
+
+    /// A use reads the in-flight hold before the owed lens. If the ordered
+    /// publication owes and lets go while the use waits on the base store, it
+    /// still finds the lens owed instead of falling through to an empty store.
+    #[test]
+    fn a_use_racing_the_ordered_owe_and_let_go_finds_the_transform() {
+        let base = GatedStore::new();
+        let lenses = CommittedLensStore::wrap(base.clone());
+        let id = TransformId::new("lens-a");
+        let config = LensConfig::new("v1", "v2", LensModule::from_bytes(b"\0asm".to_vec()));
+        let holder = Arc::new(MemoryTransformStore::new());
+        workers::block_on(holder.add_with_id(id.clone(), config.clone()))
+            .unwrap()
+            .unwrap();
+        lenses.hold(0, id.clone(), holder);
+
+        let reader = {
+            let lenses = Arc::clone(&lenses);
+            let id = id.clone();
+            std::thread::spawn(move || {
+                workers::block_on(async move {
+                    let mut doc = LensDoc::new();
+                    doc.insert("name".to_owned(), serde_json::json!("Ada"));
+                    let docs: LensDocStream = Box::pin(futures::stream::iter([doc]));
+                    lenses.run(&id, docs, false)?.try_collect::<Vec<_>>().await
+                })
+            })
+        };
+
+        workers::block_on(base.entered.wait()).unwrap();
+        lenses.owe(id, Arc::new(config));
+        lenses.let_go(0);
+        base.released.store(true, Ordering::SeqCst);
+        reader.thread().unpark();
+
+        assert_eq!(reader.join().unwrap().unwrap().unwrap().len(), 1);
     }
 }
