@@ -9,16 +9,24 @@
 \*
 \* The filter names the article's own fields. A chunk has none of them, so
 \* the push of a chunk must be decided by its article, and a document sync of
-\* an article must bring the article's chunks with it. Only the chunks of the
-\* article's current text come with a sync, so one reply never grows with the
-\* article's history.
+\* an article must bring the chunks the peer can't make itself: those of an
+\* encrypted text. Only the chunks of the article's current text come with a
+\* sync, so one reply never grows with the article's history. The chunks of
+\* a plain text don't come at all: the peer's merge of the article makes them,
+\* under the IDs the source gave them, so a sync of an article with any number
+\* of them fits one reply.
 \*
 \* An edit's chunk delete is pushed the way the chunk's create was, decided by
 \* its article. A document sync never brings it, since it answers only with the
 \* chunks the article still uses. So the peer's merge of an article also
 \* deletes the chunks its text no longer uses, and builds the ones it lacks.
 \* An encrypted text's merge does neither: there only the pushes and syncs
-\* bring its chunks, and only the pushed delete cleans up.
+\* bring its chunks, and only the pushed delete cleans up. Chunks with vectors
+\* sit between: only the writer's model makes a vector, so the merge makes
+\* none of them and the syncs bring them, but the merge still deletes the
+\* ones the text no longer uses. A chunk can arrive before the version that
+\* first used it: no merge deletes it before that version merges, or the
+\* version would find it gone.
 \*
 \* What must never happen:
 \*   - the peer ends up with a live article but not all of the chunks of the
@@ -32,11 +40,11 @@
 \*   - once quiet, a live article on the peer has a chunk live that the text
 \*     it holds does not use (INV_DroppedChunksGo).
 \*
-\* The peer's merge can build a chunk under an ID the source never used: a
-\* chunk of the edit can reach the peer while it holds the first text, which
-\* does not use it, so the peer deletes it, and the merge of the edit builds it
-\* again under its next generation. No delete from the source names that ID, so the merge of
-\* the article's delete deletes every chunk the peer holds for it.
+\* The peer's merge can build a chunk under an ID no delete from the source
+\* names: after edits made apart on two nodes, every chunk moves to the
+\* winning commit (ChunkCleanup.tla), and a peer that synced only the article
+\* made its chunks itself. So the merge of the article's delete deletes every
+\* chunk the peer holds for it.
 \*
 \* Code it models:
 \*   crates/database/p2p/src/sync/coordinator/broadcast.rs  SyncCoordinator::push_jobs
@@ -47,6 +55,8 @@
 \*     (each chunk head, create or delete, carries its parent)
 \*   crates/database/db/src/chunk/sync/mod.rs  ChunkWrites::sync_chunks (an edit deletes
 \*     the chunks its text no longer uses)
+\*   crates/database/db/src/chunk/sync/lookup.rs  ChunkCollection::waits (a chunk of a version
+\*     not merged here yet is not deleted)
 \*   crates/database/db/src/chunk/rebuild.rs  reconcile (a merge of the article deletes
 \*     them too and builds the ones it lacks, unless its text is encrypted),
 \*     remove_all (the merge of the article's delete deletes its chunks)
@@ -58,7 +68,7 @@
 \*     (the pubsub doc sync)
 \*   crates/database/db/src/merge/head_provider.rs  DbHeadProvider::following_doc_ids
 \*   crates/database/db/src/chunk/follow.rs  current_chunk_ids (cut the current text, look up
-\*     each chunk by parent and hash; a deleted parent has none)
+\*     each chunk the peer can't make by parent and hash; a deleted parent has none)
 EXTENDS Naturals, FiniteSets
 
 CONSTANTS
@@ -68,7 +78,9 @@ CONSTANTS
   SyncRule,     \* what a document sync sends with an article: "current" (the fix), "history" or "none"
   DeletesFollow, \* TRUE: an edit's chunk delete is pushed like the chunk's create (the fix)
   Reconcile,    \* TRUE: the peer's merge of an edit deletes the chunks its text stopped using (the fix)
-  Cascade       \* TRUE: the peer's merge of the article's delete deletes the chunks it holds (the fix)
+  Cascade,      \* TRUE: the peer's merge of the article's delete deletes the chunks it holds (the fix)
+  Embedded,     \* TRUE: the chunks carry vectors, so the peer's merge deletes them but makes none
+  KeepWaiting   \* TRUE: a merge leaves a chunk of a version it has not merged yet (the fix)
 
 \* The filter matches only some of the articles.
 ASSUME Matching \subseteq Articles
@@ -78,6 +90,8 @@ ASSUME ChunkRule \in {"parent", "own", "all"}
 ASSUME SyncRule \in {"current", "history", "none"}
 \* The two cleanup switches are yes-or-no.
 ASSUME DeletesFollow \in BOOLEAN /\ Reconcile \in BOOLEAN /\ Cascade \in BOOLEAN
+\* Whether the chunks carry vectors is yes-or-no too, and so is leaving waiting chunks alone.
+ASSUME Embedded \in BOOLEAN /\ KeepWaiting \in BOOLEAN
 
 \* An article's text has two versions: the one it is created with, and the
 \* one a single edit writes.
@@ -93,6 +107,8 @@ Chunks(a, v) == {<<a, n>> : n \in ChunkNums(v)}
 AllChunks == Articles \X {1, 2, 3}
 \* The article a chunk belongs to.
 Owner(c) == c[1]
+\* The version whose text first used a chunk: the commit its sourceCID names.
+FirstVersion(c) == IF c[2] = 3 THEN 2 ELSE 1
 
 \* A document is missing, live or deleted, in that order.
 States == {"none", "live", "deleted"}
@@ -173,8 +189,10 @@ Reconciled(a, s, v, chunks) ==
      ELSE IF s = "deleted" THEN                                      \* the article's delete merged
        IF Cascade /\ chunks[c] = "live" THEN "deleted" ELSE chunks[c] \* deletes its live chunks with the cascade
      ELSE IF ~Reconcile \/ s # "live" THEN chunks[c]                 \* only a live article's merge cleans up
+     ELSE IF c \in Chunks(a, v) /\ Embedded THEN chunks[c]           \* with vectors, a used chunk is never built here
      ELSE IF c \in Chunks(a, v) THEN "live"                          \* a chunk the text uses is live, built if missing
-     ELSE IF chunks[c] = "live" THEN "deleted"                       \* a live one it does not use is deleted
+     ELSE IF chunks[c] = "live" /\ (FirstVersion(c) <= v \/ ~KeepWaiting) THEN "deleted"  \* a live one it does not use goes,
+                                                                     \* unless it waits for a later version
      ELSE chunks[c]]                                                 \* and the rest stay as they are
 
 \* The source creates article a with its chunks in one transaction.
@@ -229,11 +247,12 @@ Deliver(m) ==
   /\ UNCHANGED <<src, srcText, written, asked, replies>>  \* the source does not move
 
 \* The chunks a document sync of article a sends with it. The fix cuts the
-\* current text and sends the chunks it uses, and a deleted article sends
-\* none. One bug sends every chunk ever stored, another sends none.
+\* current text and sends the chunks it uses that the peer's merge can't make
+\* (an encrypted text's, or ones with vectors), and a deleted article sends none. One bug sends
+\* every chunk ever stored, another sends none.
 SyncChunks(a) ==
   CASE SyncRule = "current" ->
-         IF src[a] = "live" THEN Chunks(a, srcText[a]) ELSE {}  \* the fix
+         IF src[a] = "live" /\ (~Reconcile \/ Embedded) THEN Chunks(a, srcText[a]) ELSE {}  \* the fix
     [] SyncRule = "history" ->
          IF src[a] = "live" THEN written[a] ELSE {}             \* bug: the whole history
     [] SyncRule = "none" -> {}                                  \* bug: the article alone

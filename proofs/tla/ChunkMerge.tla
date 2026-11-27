@@ -40,7 +40,8 @@
 \* waits while the article here has not arrived, or is live and its text uses
 \* the chunk, and merges otherwise. A later edit or merge whose text uses a
 \* deleted chunk again makes a new document for it (ChunkCleanup.tla models
-\* its generation), so a delete of an unused chunk is safe to take.
+\* its ID, which names the commit of the text), so a delete of an unused
+\* chunk is safe to take.
 \*
 \* What must never happen:
 \*   - once every edit and chunk has reached both peers, they show different
@@ -61,12 +62,12 @@
 \*   crates/building-blocks/crdt/src/field/lww.rs            merge (the text's tie break)
 \*   crates/database/db/src/chunk/guard.rs            check_chunk_merge
 \*   crates/database/db/src/merge/merge_handler/composite_persist.rs  the guard's call on a chunk merge
-\*   crates/database/db/src/chunk/peer_delete.rs      delete_must_wait (a chunk delete waits for its article)
+\*   crates/database/db/src/chunk/peer_delete.rs      delete_verdict (a chunk delete waits for its article)
 \*   crates/database/db/src/merge/merge_handler/doc_identity.rs  resolve_composite_doc_id_in_txn (a delete needs its chunk's first block)
 \*   crates/database/db/src/merge/merge_handler/composite.rs     process_composite_delta_locked (older blocks merge first)
 \*   crates/database/db/src/chunk/rebuild.rs          reconcile (a merge builds the chunks it lacks,
 \*                                                     but not those of an encrypted text)
-\*   crates/database/db/src/chunk/generation.rs       next_generation (a deleted chunk is made again)
+\*   crates/database/db/src/chunk/source.rs           set_source (a chunk made again names its new commit)
 \*   crates/database/db/src/chunk/rebuild.rs          remove_all (the merge of the article's delete
 \*                                                     deletes the chunks it stores)
 \*   crates/database/db/src/chunk/follow.rs           current_chunk_ids (a document sync sends the

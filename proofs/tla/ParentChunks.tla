@@ -11,7 +11,7 @@
 \* that don't exist yet, and deletes the ones the new text no longer uses; a
 \* delete deletes the article and all its chunks. A deleted document ID can
 \* never be made again, so a later edit back to an old text makes its chunks
-\* again under a new generation, a new ID (ChunkCleanup.tla models that). Here
+\* again under its new commit, a new ID (ChunkCleanup.tla models that). Here
 \* a chunk is named by its hash alone.
 \*
 \* Who acts: a local user, who creates the article once; a peer, whose copy of
@@ -31,7 +31,7 @@
 \* Code it models (crates/database/db/src/chunk/sync):
 \*   mod.rs      plan_chunks (the chunks a write's text needs), ChunkWrites::sync_chunks,
 \*               ChunkWrites::delete_all (missing and unused chunks, and the cascade on delete)
-\*   lookup.rs   ChunkCollection::stored_of, ChunkCollection::unneeded (the parent's chunks, in one scan)
+\*   lookup.rs   ChunkCollection::stored_of, ChunkCollection::settle (the parent's chunks, in one scan)
 \*   crates/database/db/src/write/autocommit/one_op.rs AutoCommitMutator::in_batch (a single write runs as one batch)
 \*   crates/database/db/src/write/autocommit/batch.rs  BatchMutator::update_as, delete_as (call the hook)
 \*   crates/database/db/src/write/doc.rs               DbDocMutator update and delete (call the hook)
