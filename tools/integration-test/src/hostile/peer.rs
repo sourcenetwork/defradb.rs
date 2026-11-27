@@ -25,14 +25,14 @@ pub struct HostilePeer {
 impl HostilePeer {
     pub async fn dial(p2p_addrs: &[String]) -> Self {
         let secret_key = generate_secret_key();
+        // Bound on every interface, as a node is. The node advertises only
+        // non-loopback addresses, and a socket bound to loopback that dials
+        // one hears back from 127.0.0.1, so its handshake never completes on
+        // the node's side and no PushLog it sends is ever read.
         let config = IrohEndpointConfig {
             secret_key: secret_key.clone(),
             relay_mode: IrohRelayModeConfig::Disabled,
             discovery: IrohDiscoveryConfig::Disabled,
-            // Bound like a node, on every interface. The node advertises its
-            // LAN address, not loopback; dialed from a socket bound to
-            // 127.0.0.1, the node never completes the QUIC handshake and no
-            // push is answered.
             ..Default::default()
         };
         let edge = edge::testing::edge();
