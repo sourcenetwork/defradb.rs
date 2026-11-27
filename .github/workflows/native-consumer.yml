@@ -51,7 +51,7 @@ jobs:
               (file.startsWith('.github/') && !own.includes(file)) ||
               file.endsWith('.md') ||
               /^(docs|reqs|proofs|benches|audit|licenses|crates\/entry-points\/ffi|crates\/surfaces\/wasm)\//.test(file) ||
-              (file.startsWith('tools/') && !file.startsWith('tools/integration-test/')) ||
+              (file.startsWith('tools/') && !/^tools\/(integration-test|defra-harness)\//.test(file)) ||
               /^(\.config\/.*|flake\.(nix|lock)|Dockerfile.*|\.dockerignore|justfile|deny\.toml|mantra\.json5|\.envrc|\.gitignore|rustfmt\.toml)$/.test(file);
             const files = await github.paginate(github.rest.pulls.listFiles, {
               ...context.repo, pull_number: context.payload.pull_request.number, per_page: 100,

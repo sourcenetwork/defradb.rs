@@ -598,13 +598,13 @@ build-apple:
 # Test
 # ---------------------------------------------------------------------------
 
-# Workspace unit tests. Mirrors CI's unit-tests jobs, which exclude the two suites that
+# Workspace unit tests. Mirrors CI's unit-tests jobs, which exclude the suites that
 # need a built binary or an external runtime.
 [doc("Workspace unit tests (mirrors CI's unit-tests jobs).")]
 [group('test')]
 test:
-    cargo nextest run --workspace --cargo-profile {{ profile }} --exclude integration-test --exclude conformance
-    cargo test --doc --workspace --profile {{ profile }} --exclude integration-test --exclude conformance
+    cargo nextest run --workspace --cargo-profile {{ profile }} --exclude integration-test --exclude defra-harness --exclude conformance
+    cargo test --doc --workspace --profile {{ profile }} --exclude integration-test --exclude defra-harness --exclude conformance
 
 # The only place the wasm SIMD kernels execute; they are compiled out of every
 # host build. Their target-feature flag lives in .cargo/config.toml.

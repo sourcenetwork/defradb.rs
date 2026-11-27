@@ -140,7 +140,7 @@ async fn on_connect_join_event_doc_sync_topic() {
 
         // Wait for at least 1 JOINED event
         let collected = wait_for_peer_events_with_type(
-            || events.lock().expect("events lock").clone(),
+            || events.snapshot().to_vec(),
             "JOINED",
             1,
             EVENT_TIMEOUT,
@@ -186,14 +186,14 @@ async fn on_connect_bidirectional_join_events() {
 
         // Both nodes should see JOINED events
         let collected0 = wait_for_peer_events_with_type(
-            || events0.lock().expect("events lock").clone(),
+            || events0.snapshot().to_vec(),
             "JOINED",
             1,
             EVENT_TIMEOUT,
         )
         .await;
         let collected1 = wait_for_peer_events_with_type(
-            || events1.lock().expect("events lock").clone(),
+            || events1.snapshot().to_vec(),
             "JOINED",
             1,
             EVENT_TIMEOUT,
@@ -253,7 +253,7 @@ async fn on_connect_multiple_peers_all_join_events() {
 
         // Wait for at least 2 JOINED events (one per peer)
         let collected = wait_for_peer_events_with_type(
-            || events.lock().expect("events lock").clone(),
+            || events.snapshot().to_vec(),
             "JOINED",
             2,
             EVENT_TIMEOUT,
@@ -299,7 +299,7 @@ async fn subscribe_collection_join_event() {
 
         // Wait for JOINED event on collection topic
         let collected = wait_for_peer_events_with_type(
-            || events.lock().expect("events lock").clone(),
+            || events.snapshot().to_vec(),
             "JOINED",
             1,
             EVENT_TIMEOUT,
@@ -358,7 +358,7 @@ async fn subscribe_multiple_collections_join_events() {
 
         // Wait for at least 2 JOINED events (one per collection)
         let collected = wait_for_peer_events_with_type(
-            || events.lock().expect("events lock").clone(),
+            || events.snapshot().to_vec(),
             "JOINED",
             2,
             EVENT_TIMEOUT,
@@ -410,7 +410,7 @@ async fn multiple_nodes_subscribed_collection_join_events() {
 
         // Node0 should see JOINED from node1 and node2
         let collected = wait_for_peer_events_with_type(
-            || events.lock().expect("events lock").clone(),
+            || events.snapshot().to_vec(),
             "JOINED",
             2,
             EVENT_TIMEOUT,
@@ -460,13 +460,9 @@ async fn unsubscribe_collection_left_event() {
             .p2p_collection_delete(&["Users"])
             .expect("collection delete node1");
 
-        let collected = wait_for_peer_events_with_type(
-            || events.lock().expect("events lock").clone(),
-            "LEFT",
-            1,
-            EVENT_TIMEOUT,
-        )
-        .await;
+        let collected =
+            wait_for_peer_events_with_type(|| events.snapshot().to_vec(), "LEFT", 1, EVENT_TIMEOUT)
+                .await;
         handle.abort();
 
         let left = events_with_type(&collected, "LEFT");
@@ -525,13 +521,9 @@ async fn unsubscribe_multiple_collections_left_events() {
             .p2p_collection_delete(&["Users", "Books"])
             .expect("collection delete node1");
 
-        let collected = wait_for_peer_events_with_type(
-            || events.lock().expect("events lock").clone(),
-            "LEFT",
-            2,
-            EVENT_TIMEOUT,
-        )
-        .await;
+        let collected =
+            wait_for_peer_events_with_type(|| events.snapshot().to_vec(), "LEFT", 2, EVENT_TIMEOUT)
+                .await;
         handle.abort();
 
         let left = events_with_type(&collected, "LEFT");
@@ -576,7 +568,7 @@ async fn subscribe_document_join_event() {
             .expect("document add node1");
 
         let collected = wait_for_peer_events_with_type(
-            || events.lock().expect("events lock").clone(),
+            || events.snapshot().to_vec(),
             "JOINED",
             1,
             EVENT_TIMEOUT,
@@ -630,7 +622,7 @@ async fn subscribe_multiple_documents_join_events() {
             .expect("document add node1");
 
         let collected = wait_for_peer_events_with_type(
-            || events.lock().expect("events lock").clone(),
+            || events.snapshot().to_vec(),
             "JOINED",
             2,
             EVENT_TIMEOUT,
@@ -685,13 +677,9 @@ async fn unsubscribe_document_left_event() {
             .p2p_document_delete(&[&doc_id])
             .expect("document delete node1");
 
-        let collected = wait_for_peer_events_with_type(
-            || events.lock().expect("events lock").clone(),
-            "LEFT",
-            1,
-            EVENT_TIMEOUT,
-        )
-        .await;
+        let collected =
+            wait_for_peer_events_with_type(|| events.snapshot().to_vec(), "LEFT", 1, EVENT_TIMEOUT)
+                .await;
         handle.abort();
 
         let left = events_with_type(&collected, "LEFT");
@@ -745,13 +733,9 @@ async fn unsubscribe_multiple_documents_left_events() {
             .p2p_document_delete(&[&doc_id1, &doc_id2])
             .expect("document delete node1");
 
-        let collected = wait_for_peer_events_with_type(
-            || events.lock().expect("events lock").clone(),
-            "LEFT",
-            2,
-            EVENT_TIMEOUT,
-        )
-        .await;
+        let collected =
+            wait_for_peer_events_with_type(|| events.snapshot().to_vec(), "LEFT", 2, EVENT_TIMEOUT)
+                .await;
         handle.abort();
 
         let left = events_with_type(&collected, "LEFT");
@@ -810,7 +794,7 @@ async fn all_topic_types_join_events() {
 
         // Wait for events from both topic types (collection + document)
         let collected = wait_for_peer_events_with_type(
-            || events.lock().expect("events lock").clone(),
+            || events.snapshot().to_vec(),
             "JOINED",
             2,
             EVENT_TIMEOUT,

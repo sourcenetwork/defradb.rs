@@ -1,0 +1,31 @@
+[package]
+name = "defra-harness"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "DefraDB node manager, CLI client and test fixtures"
+publish = false
+
+[dependencies]
+futures.workspace = true
+libc = "0.2"
+rand.workspace = true
+rapidhash.workspace = true
+regex = "1"
+regolith.workspace = true
+# 0.12, with vera-client and acp-light-client: the workspace builds 0.13 with
+# `rustls-no-provider`, so `Client::new()` panics in a test binary that
+# installs no provider.
+reqwest = { version = "0.12", features = ["json", "stream"] }
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+# Node processes, log tails and HTTP calls run on the tokio runtime of whoever
+# drives the harness: `edge::compat` in this workspace's tests.
+tokio = { version = "1", default-features = false, features = ["fs", "io-util", "macros", "rt-multi-thread", "sync", "time"] }
+tracing.workspace = true
+
+[lints]
+workspace = true

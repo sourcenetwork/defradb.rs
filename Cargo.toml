@@ -43,6 +43,7 @@ members = [
     "crates/building-blocks/inputs",
     "tools/lens-host",
     "tools/ffi-test",
+    "tools/defra-harness",
     "tools/integration-test",
     "proofs",
     "benches",

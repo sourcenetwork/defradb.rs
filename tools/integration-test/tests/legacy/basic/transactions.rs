@@ -408,7 +408,7 @@ async fn txn_commit_publishes_update_events(cluster: TestCluster) {
 
     // Drain any startup events from schema add
     nuclei::time::sleep(Duration::from_millis(200)).await;
-    let baseline = events.lock().unwrap().len();
+    let baseline = events.snapshot().len();
 
     // Open a transaction and do three writes inside it
     let tx_id = client.tx_create().expect("tx_create failed");
@@ -447,7 +447,7 @@ async fn txn_commit_publishes_update_events(cluster: TestCluster) {
     // Critical assertion: zero events while tx is uncommitted
     nuclei::time::sleep(Duration::from_millis(300)).await;
     {
-        let observed = events.lock().unwrap();
+        let observed = events.snapshot();
         let count_after_writes = observed.len();
         assert_eq!(
             count_after_writes,
@@ -463,7 +463,7 @@ async fn txn_commit_publishes_update_events(cluster: TestCluster) {
     // After commit: exactly three events should arrive, one per doc
     poll_until(
         || {
-            let observed = events.lock().unwrap();
+            let observed = events.snapshot();
             let new_events: Vec<_> = observed.iter().skip(baseline).collect();
             new_events.len() >= 3
         },
@@ -474,7 +474,7 @@ async fn txn_commit_publishes_update_events(cluster: TestCluster) {
     .await;
 
     // Validate doc_ids match
-    let observed = events.lock().unwrap();
+    let observed = events.snapshot();
     let new_events: Vec<_> = observed.iter().skip(baseline).collect();
     assert_eq!(
         new_events.len(),
@@ -564,7 +564,7 @@ async fn txn_discard_publishes_no_events(cluster: TestCluster) {
 
     let (sse_handle, events) = open_events_sse(api_url, "update").await;
     nuclei::time::sleep(Duration::from_millis(200)).await;
-    let baseline = events.lock().unwrap().len();
+    let baseline = events.snapshot().len();
 
     let tx_id = client.tx_create().expect("tx_create failed");
     client
@@ -579,7 +579,7 @@ async fn txn_discard_publishes_no_events(cluster: TestCluster) {
 
     // Wait long enough that an event would have arrived if it were going to
     nuclei::time::sleep(Duration::from_millis(500)).await;
-    let observed = events.lock().unwrap();
+    let observed = events.snapshot();
     assert_eq!(
         observed.len(),
         baseline,

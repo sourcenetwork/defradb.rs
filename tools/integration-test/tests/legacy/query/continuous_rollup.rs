@@ -314,10 +314,7 @@ async fn continuous_rollup_test(cluster: TestCluster) {
 
         let expected_events = event_count + 1;
         poll_until(
-            || {
-                count_update_events_for_doc(&events.lock().expect("events lock"), &source_doc_id)
-                    >= expected_events
-            },
+            || count_update_events_for_doc(&events.snapshot(), &source_doc_id) >= expected_events,
             EVENT_TIMEOUT,
             POLL_INTERVAL,
             "raw metric update event should arrive",

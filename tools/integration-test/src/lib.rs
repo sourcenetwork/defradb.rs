@@ -91,7 +91,6 @@ pub use defra_harness::NodeKind;
 pub use defra_harness::TestCluster;
 pub use defra_harness::TestClusterBuilder;
 
-// Re-export modules moved to backbone
 pub use defra_harness::p2p_helpers;
 pub use defra_harness::sse;
 

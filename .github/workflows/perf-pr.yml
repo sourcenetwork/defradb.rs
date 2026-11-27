@@ -69,7 +69,8 @@ jobs:
               // Changes no benchmark can see; .github only counts for what this job runs.
               const ci = /^\.github\/(workflows\/perf(-pr)?\.yml|scripts\/(install-linux-ci-deps|apt-update-without-nodesource)\.sh)$/;
               const blind = (p) => p.endsWith('.md') || p.startsWith('proofs/')
-                || p.startsWith('tools/integration-test/') || (p.startsWith('.github/') && !ci.test(p));
+                || p.startsWith('tools/integration-test/') || p.startsWith('tools/defra-harness/')
+                || (p.startsWith('.github/') && !ci.test(p));
               const files = data.files;
               // A listing that hit the cap may have dropped the file that matters.
               run = !files || files.length >= 300 || files.some((f) => !blind(f.filename));

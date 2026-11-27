@@ -3382,21 +3382,19 @@ dependencies = [
 [[package]]
 name = "defra-harness"
 version = "0.1.0"
-source = "git+https://github.com/sourcenetwork/backbone.git?rev=3421379115d69fd8bed8536943d5397ac6eb5ace#3421379115d69fd8bed8536943d5397ac6eb5ace"
 dependencies = [
- "eyre",
  "futures",
  "libc",
- "paste",
- "rand 0.8.8",
+ "rand 0.10.3",
+ "rapidhash",
  "regex",
+ "regolith",
  "reqwest 0.12.28",
  "serde",
  "serde_json",
- "test-infra",
+ "thiserror 2.0.21",
  "tokio",
  "tracing",
- "vera-support",
 ]
 
 [[package]]
@@ -11779,22 +11777,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "test-infra"
-version = "0.1.0"
-source = "git+https://github.com/sourcenetwork/backbone.git?rev=3421379115d69fd8bed8536943d5397ac6eb5ace#3421379115d69fd8bed8536943d5397ac6eb5ace"
-dependencies = [
- "eyre",
- "futures",
- "libc",
- "rand 0.8.8",
- "regex",
- "serde",
- "tokio",
- "toml 0.8.23",
- "tracing",
-]
-
-[[package]]
 name = "testo"
 version = "0.0.1"
 source = "git+https://github.com/sourcenetwork/testo.rs?rev=dc53fa515d5c39511845407dcd42a7650c07f66c#dc53fa515d5c39511845407dcd42a7650c07f66c"
@@ -13154,25 +13136,6 @@ dependencies = [
  "thiserror 2.0.21",
  "vera-crypto",
  "vera-domain",
- "vera-modules",
-]
-
-[[package]]
-name = "vera-support"
-version = "0.1.0"
-source = "git+https://github.com/sourcenetwork/backbone.git?rev=3421379115d69fd8bed8536943d5397ac6eb5ace#3421379115d69fd8bed8536943d5397ac6eb5ace"
-dependencies = [
- "alloy-primitives",
- "commonware-codec",
- "eyre",
- "hex",
- "rand 0.8.8",
- "serde_json",
- "tokio",
- "vera-client",
- "vera-crypto",
- "vera-domain",
- "vera-harness",
  "vera-modules",
 ]
 
