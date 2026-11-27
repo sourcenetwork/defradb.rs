@@ -121,13 +121,7 @@ fn main() {
     let server = common::server_edge();
     let edge = server.edge().clone();
     let only = std::env::var("DEFRA_BASELINE_SCENARIOS").ok();
-    for scenario in Scenario::ALL {
-        if only
-            .as_deref()
-            .is_some_and(|only| !only.split(',').any(|name| name == scenario.name()))
-        {
-            continue;
-        }
+    for scenario in workload::selected(only.as_deref()) {
         let mut groups: Vec<Group> = Vec::new();
         for &count in &writers {
             let mut values: Vec<Vec<f64>> = Vec::new();

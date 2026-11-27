@@ -36,7 +36,7 @@ pub fn vector_maintenance() -> Option<String> {
     })
 }
 
-/// A unit vector that differs per write, spread so the graph has real work.
+/// A vector that differs per write, spread so the graph has real work.
 fn vector_literal(writer: usize, operation: usize) -> String {
     let seed = (writer * 7919 + operation * 104_729 + 1) as f64;
     let elements: Vec<String> = (0..VECTOR_DIMENSIONS)
@@ -130,6 +130,24 @@ impl Scenario {
             }
         }
     }
+}
+
+/// The scenarios selected by `DEFRA_BASELINE_SCENARIOS`, or all of them when
+/// it is unset. A misspelled name is an error rather than an empty run.
+pub fn selected(only: Option<&str>) -> Vec<Scenario> {
+    let Some(only) = only else {
+        return Scenario::ALL.to_vec();
+    };
+    for name in only.split(',') {
+        assert!(
+            Scenario::ALL.iter().any(|scenario| scenario.name() == name),
+            "DEFRA_BASELINE_SCENARIOS names unknown scenario {name:?}"
+        );
+    }
+    Scenario::ALL
+        .into_iter()
+        .filter(|scenario| only.split(',').any(|name| name == scenario.name()))
+        .collect()
 }
 
 #[allow(dead_code)] // Some fields are consumed only by the benchmark target.
@@ -269,13 +287,21 @@ pub async fn run(
     // A node drains deferred indexes on a database worker as their commits
     // ask; this harness has none, so a loop on the edge stands in for it.
     let draining = Arc::new(std::sync::atomic::AtomicBool::new(true));
+    let drain_failures = Arc::new(std::sync::atomic::AtomicU64::new(0));
     let drainer = vector_maintenance()
         .filter(|mode| mode == "deferred")
         .map(|_| {
-            let (db, edge_handle, draining) = (fixture.db.clone(), edge.clone(), draining.clone());
+            let (db, edge_handle, draining, drain_failures) = (
+                fixture.db.clone(),
+                edge.clone(),
+                draining.clone(),
+                drain_failures.clone(),
+            );
             edge.spawn(async move {
                 while draining.load(std::sync::atomic::Ordering::Relaxed) {
-                    let _ = db.drain_deferred_indexes().await;
+                    if db.drain_deferred_indexes().await.is_err() {
+                        drain_failures.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    }
                     edge_handle.sleep(Duration::from_millis(1)).await;
                 }
             })
@@ -358,6 +384,11 @@ pub async fn run(
     if let Some(drainer) = drainer {
         drainer.await.unwrap();
     }
+    assert_eq!(
+        drain_failures.load(std::sync::atomic::Ordering::Relaxed),
+        0,
+        "a deferred vector benchmark cannot report with a failing drain"
+    );
     let commits = successes.len() as u64;
     let retries_after = telemetry::conflict_metrics_snapshot();
     let measurement = Measurement {

@@ -11,6 +11,7 @@ use std::sync::Arc;
 
 use storage::corekv::{RetryAttemptError, RetryAttemptValue, Store};
 
+use super::backlog::FirstCountClaim;
 use super::{count_pending, list_pending};
 use crate::collection::loader::load_collection_from_systemstore;
 use crate::database::DB;
@@ -43,13 +44,18 @@ where
     S: Store + 'static,
 {
     let backlog = db.deferred_drains.backlogs().get(target.0, target.1);
-    // The count lives in memory, so a node that opens on a backlog adds it.
-    if backlog.first_count() {
-        if let Snapshot::Count(stored) = snapshot(db, target, None).await? {
-            backlog.add(stored);
-        }
-    }
     let mut turn = VectorTurn::default();
+    // The count lives in memory, so a node that opens on a backlog adds it.
+    match backlog.first_count() {
+        FirstCountClaim::Claimed(first_count) => {
+            if let Snapshot::Count(stored) = snapshot(db, target, None).await? {
+                backlog.add(stored);
+                first_count.complete();
+            }
+        }
+        FirstCountClaim::Initializing => return Ok(turn),
+        FirstCountClaim::Ready => {}
+    }
     for _ in 0..plans {
         // Read before the plan: writes after it may be missing from the plan,
         // so they must stay counted.

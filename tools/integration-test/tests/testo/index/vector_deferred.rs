@@ -8,8 +8,9 @@
 //! (`GO_COMPAT_TAG`, v1.2.0) predates the mode and refuses its SDL.
 //! License: AGPL-3.0-only OR LicenseRef-BSL-tests. Copyright 2026 Democratized Data Foundation.
 
+use integration_test::actions::shared::{IndexField, IndexSpec};
 use integration_test::actions::{
-    AddCollection, AddDoc, ListIndexes, Parallel, Request, Restart, UpdateDoc,
+    AddCollection, AddDoc, ListIndexes, NewIndex, NewNode, Parallel, Request, Restart, UpdateDoc,
 };
 use integration_test::m;
 use integration_test::scenario::{captures, Common, Text};
@@ -24,6 +25,16 @@ fn sdl(maintenance: &str) -> String {
     format!(
         "type User {{ name: String vector: [Float32!] @index(vector: {{dimensions: 3, {maintenance}hnsw: {{metric: COSINE}}}}) }}"
     )
+}
+
+fn vector_config(maintenance: &str) -> Value {
+    json!({
+        "Algorithm": "HNSW",
+        "Metric": "COSINE",
+        "Dimensions": 3,
+        "HNSW": {},
+        "Maintenance": maintenance,
+    })
 }
 
 /// The listed index, whose vector description is exactly `kind`.
@@ -168,6 +179,77 @@ fn vector_index_create_with_unknown_maintenance_in_sdl_is_rejected() {
 }
 
 #[test]
+#[mantra_macros::req_test("go.index.vector.maintenance.mode")]
+fn vector_index_create_with_deferred_maintenance_through_the_index_api() {
+    TestCase {
+        id: integration_test::scenario_id!(),
+        client_types: Some(CLIENTS),
+        actions: vec![
+            AddCollection {
+                sdl: "type User { name: String vector: [Float32!] }".into(),
+                ..Default::default()
+            }
+            .into(),
+            NewIndex {
+                collection: "User".into(),
+                index: IndexSpec {
+                    fields: vec![IndexField {
+                        name: "vector".into(),
+                        descending: false,
+                    }],
+                    vector: Some(vector_config("DEFERRED")),
+                    ..Default::default()
+                },
+                ..Default::default()
+            }
+            .into(),
+            ListIndexes {
+                collection: "User".into(),
+                expected_data: listed(hnsw(Some("DEFERRED"))),
+                ..Default::default()
+            }
+            .into(),
+        ],
+        ..Default::default()
+    }
+    .execute();
+}
+
+#[test]
+#[mantra_macros::req_test("go.index.vector.maintenance.mode")]
+fn vector_index_create_with_unknown_maintenance_through_the_index_api_is_rejected() {
+    TestCase {
+        id: integration_test::scenario_id!(),
+        client_types: Some(CLIENTS),
+        actions: vec![
+            AddCollection {
+                sdl: "type User { name: String vector: [Float32!] }".into(),
+                ..Default::default()
+            }
+            .into(),
+            NewIndex {
+                collection: "User".into(),
+                index: IndexSpec {
+                    fields: vec![IndexField {
+                        name: "vector".into(),
+                        descending: false,
+                    }],
+                    vector: Some(vector_config("LAZY")),
+                    ..Default::default()
+                },
+                expected_error: Some(
+                    "vector index with unknown maintenance. Maintenance: LAZY".into(),
+                ),
+                ..Default::default()
+            }
+            .into(),
+        ],
+        ..Default::default()
+    }
+    .execute();
+}
+
+#[test]
 #[mantra_macros::req_test("go.index.vector.maintenance.deferred")]
 fn vector_index_deferred_add_update_delete_search_is_correct() {
     TestCase {
@@ -220,6 +302,12 @@ fn vector_index_deferred_add_update_delete_search_is_correct() {
                     Text::from(r#""]) { _docID } }"#),
                 ]),
                 expected_data: json!({ "delete_User": [{ "_docID": m::r("doc0") }] }),
+                ..Default::default()
+            }
+            .into(),
+            Request {
+                request: "query @explain(type: execute) { User(order: {_alias: {sim: DESC}}, limit: 3) { name sim: SIMILARITY(vector: {vector: [1, 0, 0]}) } }".into(),
+                expected_data: json!(m::explain_scan(json!({ "indexFetches": 1 }))),
                 ..Default::default()
             }
             .into(),
@@ -280,6 +368,11 @@ fn vector_index_deferred_writes_are_searchable_after_a_restart() {
         id: integration_test::scenario_id!(),
         client_types: Some(CLIENTS),
         actions: vec![
+            NewNode {
+                database_dir: Some("".into()),
+                ..Default::default()
+            }
+            .into(),
             AddCollection {
                 sdl: sdl("maintenance: DEFERRED, ").into(),
                 ..Default::default()

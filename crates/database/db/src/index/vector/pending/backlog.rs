@@ -6,7 +6,7 @@
 //! that replaces a pending entry counts again until the next drain that
 //! empties the set. It starts from the stored count when a node opens.
 
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicU8, Ordering};
 use std::sync::Arc;
 
 use kovan_map::HopscotchMap;
@@ -21,7 +21,42 @@ pub const PENDING_LIMIT: u64 = 1000;
 #[derive(Debug, Default)]
 pub struct Backlog {
     pending: AtomicU64,
-    counted: AtomicBool,
+    count_state: AtomicU8,
+}
+
+const COUNT_UNSTARTED: u8 = 0;
+const COUNTING: u8 = 1;
+const COUNTED: u8 = 2;
+
+/// The exclusive right to add the stored count to a [`Backlog`].
+pub(crate) struct FirstCount<'a> {
+    backlog: &'a Backlog,
+    complete: bool,
+}
+
+/// What a drain found when asking who should add the stored count.
+pub(crate) enum FirstCountClaim<'a> {
+    Claimed(FirstCount<'a>),
+    Initializing,
+    Ready,
+}
+
+impl FirstCount<'_> {
+    /// Keeps the stored count from being added again.
+    pub(crate) fn complete(mut self) {
+        self.complete = true;
+        self.backlog.count_state.store(COUNTED, Ordering::Release);
+    }
+}
+
+impl Drop for FirstCount<'_> {
+    fn drop(&mut self) {
+        if !self.complete {
+            self.backlog
+                .count_state
+                .store(COUNT_UNSTARTED, Ordering::Release);
+        }
+    }
 }
 
 impl Backlog {
@@ -47,9 +82,22 @@ impl Backlog {
             });
     }
 
-    /// True the first time it is asked, so the stored count is added once.
-    pub fn first_count(&self) -> bool {
-        !self.counted.swap(true, Ordering::Relaxed)
+    /// Claims the right to add the stored count once. A failed or cancelled
+    /// scan releases the claim so a later drain can try again.
+    pub(crate) fn first_count(&self) -> FirstCountClaim<'_> {
+        match self.count_state.compare_exchange(
+            COUNT_UNSTARTED,
+            COUNTING,
+            Ordering::Acquire,
+            Ordering::Acquire,
+        ) {
+            Ok(_) => FirstCountClaim::Claimed(FirstCount {
+                backlog: self,
+                complete: false,
+            }),
+            Err(COUNTING) => FirstCountClaim::Initializing,
+            Err(_) => FirstCountClaim::Ready,
+        }
     }
 }
 
@@ -77,5 +125,29 @@ impl Backlogs {
     /// Forgets an index no longer kept deferred, such as a dropped one.
     pub fn forget(&self, collection_short_id: u32, index_id: u32) {
         self.by_index.remove(&(collection_short_id, index_id));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_cancelled_first_count_can_be_claimed_again() {
+        let backlog = Backlog::default();
+        let FirstCountClaim::Claimed(first) = backlog.first_count() else {
+            panic!("the first count is free");
+        };
+        assert!(matches!(
+            backlog.first_count(),
+            FirstCountClaim::Initializing
+        ));
+        drop(first);
+
+        let FirstCountClaim::Claimed(first) = backlog.first_count() else {
+            panic!("the cancelled claim is free again");
+        };
+        first.complete();
+        assert!(matches!(backlog.first_count(), FirstCountClaim::Ready));
     }
 }

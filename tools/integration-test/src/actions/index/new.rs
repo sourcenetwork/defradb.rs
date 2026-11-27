@@ -2,7 +2,7 @@ use crate::actions::shared::IndexSpec;
 use crate::clients::{CliRun, HttpRun};
 use crate::scenario::{Common, Failure, Op};
 use crate::test_case::State;
-use schema::IndexedFieldDescription;
+use schema::{IndexedFieldDescription, VectorIndexDescription};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::time::{Duration, Instant};
@@ -52,6 +52,7 @@ impl Op for NewIndex {
             .collect();
         let node = state.node_on(self.common.node())?;
         let context = state.context_as(self.txn, self.common.identity_seed);
+        let vector = self.vector_description()?;
         // Go's NewIndex always returns before the build; its harness waits
         // for the build unless the scenario sets `async`.
         let created = match self.r#async {
@@ -62,12 +63,13 @@ impl Op for NewIndex {
                 fields,
                 self.unique(),
             )),
-            false => state.block_on(node.create_index_as(
+            false => state.block_on(node.create_index_with_vector_as(
                 &context,
                 &self.collection,
                 self.index_name(),
                 fields,
                 self.unique(),
+                vector,
             )),
         };
         created
@@ -95,7 +97,21 @@ impl NewIndex {
                 .unwrap_or_default()
     }
 
-    /// Fails on the arguments no client supports yet.
+    fn vector_description(&self) -> Result<Option<VectorIndexDescription>, Failure> {
+        let Some(vector) = self.index.vector.as_ref() else {
+            return Ok(None);
+        };
+        if !vector.is_object() {
+            return Err(Failure::operation(
+                "index.vector must be a JSON object".to_owned(),
+            ));
+        }
+        serde_json::from_value(vector.clone())
+            .map(Some)
+            .map_err(|error| Failure::operation(format!("index.vector: {error}")))
+    }
+
+    /// Fails arguments every client refuses before sending a request.
     fn check_arguments(&self) -> Result<(), Failure> {
         self.common.client_identity(Self::name_of())?;
         let ordered_unique = self
@@ -115,8 +131,22 @@ impl NewIndex {
                 "index request has more than one kind config".to_owned(),
             ));
         }
-        let unsupported = [("index.vector", self.index.vector.is_some())];
-        unsupported_argument(&unsupported)
+        if self.index.vector.is_some() && self.r#async {
+            return Err(Failure::unsupported(
+                "NewIndex argument vector with async".to_owned(),
+            ));
+        }
+        if self
+            .index
+            .vector
+            .as_ref()
+            .is_some_and(|vector| !vector.is_object())
+        {
+            return Err(Failure::operation(
+                "index.vector must be a JSON object".to_owned(),
+            ));
+        }
+        Ok(())
     }
 
     /// [`NewIndex::check_arguments`], plus the descending fields the HTTP and
@@ -166,6 +196,7 @@ impl HttpRun for NewIndex {
             let fields = action.field_names();
             let name = action.index_name().map(str::to_owned);
             let unique = action.unique();
+            let vector = action.index.vector.clone();
             let created = collection.clone();
             let txn = state.txn_id(action.txn);
             let in_txn = txn.is_some();
@@ -175,13 +206,13 @@ impl HttpRun for NewIndex {
                     action.common.identity_seed,
                     |client| async move {
                         client
-                            .index_create(
+                            .index_create_vector_value(
                                 txn.as_deref(),
                                 &created,
                                 &fields,
                                 name.as_deref(),
                                 unique,
-                                None,
+                                vector,
                             )
                             .await
                     },
@@ -249,6 +280,13 @@ impl CliRun for NewIndex {
         crate::scenario::execute_with(self, state, |action, state| {
             action.check_remote_arguments()?;
             let fields = action.field_names().join(",");
+            let vector = action
+                .index
+                .vector
+                .as_ref()
+                .map(serde_json::to_string)
+                .transpose()
+                .map_err(|error| Failure::operation(error.to_string()))?;
             let mut args = vec![
                 "index",
                 "new",
@@ -262,6 +300,9 @@ impl CliRun for NewIndex {
             }
             if action.unique() {
                 args.push("--unique");
+            }
+            if let Some(vector) = &vector {
+                args.extend(["--vector", vector.as_str()]);
             }
             state
                 .defra_client_as(

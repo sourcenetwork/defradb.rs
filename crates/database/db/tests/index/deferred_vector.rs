@@ -5,10 +5,14 @@
 
 use std::sync::Arc;
 
+use db::index::vector::engine::ann::Neighbor;
 use db::index::vector::index::{VectorIndex, LIVE_EPOCH};
-use db::index::vector::pending::{count_pending, PENDING_LIMIT};
-use db::index::vector::store::{KvNodeStore, VectorNodeStore};
+use db::index::vector::pending::{
+    count_pending, put_pending, PendingEntry, PendingOp, PENDING, PENDING_LIMIT,
+};
+use db::index::vector::store::{KvNodeStore, NodeId, VectorNodeStore};
 use db::{AutoCommitMutator, LensedAutoCommitFetcher, DB};
+use document::DocID;
 use query::mutator::DocMutator;
 use query::{QueryExecutor, QueryRequest, QueryRunner};
 use storage::corekv::Store;
@@ -127,10 +131,10 @@ impl Node {
         (pending, nodes)
     }
 
-    /// How many of the `k` nearest the index itself returns. A query's
-    /// results stay right even when the index returns too few, so they alone
-    /// cannot show that the index found its pending writes.
-    async fn found_by_index(&self, k: usize) -> usize {
+    /// The `k` nearest the index itself returns. A query's results stay right
+    /// even when the index returns too few, so they alone cannot show that the
+    /// index found its pending writes.
+    async fn found_by_index(&self, k: usize) -> Vec<Neighbor> {
         let collection = self.db.require_collection(COLLECTION).unwrap();
         let index = VectorIndex::try_new(
             collection.resolved_root_id(),
@@ -143,7 +147,18 @@ impl Node {
             .search(&mut view, &[1.0f64, 0.0, 0.0], k, None)
             .await
             .unwrap()
-            .len()
+    }
+
+    async fn short_id(&self, doc_id: &str) -> u64 {
+        let collection = self.db.require_collection(COLLECTION).unwrap();
+        let txn = self.db.new_txn(true).await.unwrap();
+        let systemstore = txn.systemstore().unwrap();
+        let id = DocID::from_string(doc_id).unwrap();
+        collection
+            .resolve_doc_short_id(&systemstore, &id)
+            .await
+            .unwrap()
+            .unwrap()
     }
 
     async fn drain(&self) {
@@ -161,7 +176,7 @@ fn a_deferred_write_is_found_before_the_drain_applies_it() {
 
         assert_eq!(node.stored().await, (3, 0), "the graph is left alone");
         assert_eq!(
-            node.found_by_index(3).await,
+            node.found_by_index(3).await.len(),
             3,
             "the index scores its pending writes"
         );
@@ -189,10 +204,27 @@ fn an_update_and_a_delete_before_the_drain_hide_the_stale_graph() {
         node.update(&moved, [0.95, 0.05, 0.0]).await;
         node.delete(&best).await;
         assert_eq!(node.stored().await.0, 2, "one entry per written node");
+        let found = node.found_by_index(10).await;
+        assert_eq!(found.len(), 4, "the deleted node's graph hit is dropped");
+        let (moved_id, deleted_id) = (node.short_id(&moved).await, node.short_id(&best).await);
         assert_eq!(
-            node.found_by_index(10).await,
-            4,
-            "the deleted node's graph hit is dropped"
+            found
+                .iter()
+                .filter(|neighbour| neighbour.id == NodeId(moved_id))
+                .count(),
+            1,
+            "the updated node appears once"
+        );
+        assert_eq!(
+            found[0].id,
+            NodeId(moved_id),
+            "the updated node ranks by its new vector"
+        );
+        assert!(
+            found
+                .iter()
+                .all(|neighbour| neighbour.id != NodeId(deleted_id)),
+            "the deleted node is absent from the index results"
         );
         assert_eq!(node.nearest(3).await, ["d4", "d1", "d2"]);
 
@@ -267,30 +299,61 @@ fn concurrent_deferred_writers_do_not_conflict() {
 }
 
 #[test]
-fn pending_writes_survive_a_restart_and_drain_after_it() {
+fn a_restart_counts_the_stored_backlog_before_the_next_write() {
     workers::block_on(async {
         let dir = tempfile::tempdir().unwrap();
+        let (short_id, index_id);
         {
             let store = RegolithStore::open(dir.path()).unwrap();
             let node = Node::on(store, Some(&sdl("maintenance: DEFERRED, "))).await;
-            node.create("x", [1.0, 0.0, 0.0]).await;
-            node.create("y", [0.0, 1.0, 0.0]).await;
+            (short_id, index_id) = node.index();
+            let txn = node.db.new_txn(false).await.unwrap();
+            {
+                let mut view = txn.datastore().unwrap();
+                let mut store = KvNodeStore::new(&mut view, short_id, index_id, LIVE_EPOCH);
+                store
+                    .put_aux(
+                        PENDING,
+                        &db::index::vector::pending::entry::node_key(NodeId(1)),
+                        &[],
+                    )
+                    .await
+                    .unwrap();
+                for id in 2..=PENDING_LIMIT + 1 {
+                    put_pending(
+                        &mut store,
+                        &PendingEntry {
+                            id: NodeId(id),
+                            op: PendingOp::Upsert,
+                            vector: vec![1.0, 0.0, 0.0],
+                        },
+                    )
+                    .await
+                    .unwrap();
+                }
+            }
+            txn.commit().await.unwrap();
             node.db.close().await.unwrap();
         }
         let node = Node::on(RegolithStore::open(dir.path()).unwrap(), None).await;
-        assert_eq!(node.stored().await, (2, 0));
-        assert_eq!(node.nearest(1).await, ["x"]);
-
-        node.drain().await;
-        let (short_id, index_id) = node.index();
         let backlog = node.db.deferred_drains().backlogs().get(short_id, index_id);
-        assert_eq!(node.stored().await, (0, 2));
+        assert_eq!(node.stored().await, (PENDING_LIMIT + 1, 0));
+        assert!(
+            node.db.drain_deferred_indexes().await.is_err(),
+            "the malformed first entry fails"
+        );
         assert_eq!(
             backlog.pending(),
-            0,
-            "the stored count was added and drained"
+            PENDING_LIMIT + 1,
+            "the stored count survives a failed first drain"
         );
-        assert_eq!(node.nearest(1).await, ["x"]);
+
+        node.create("after", [1.0, 0.0, 0.0]).await;
+        assert_eq!(
+            node.stored().await,
+            (PENDING_LIMIT, 1),
+            "a write past the stored limit updates the graph itself"
+        );
     })
     .unwrap();
 }
@@ -318,23 +381,36 @@ fn a_rebuild_applies_the_pending_writes_rather_than_clearing_them() {
         node.create("pending", [1.0, 0.0, 0.0]).await;
         assert_eq!(node.stored().await, (1, 10));
 
-        let collection = node.db.require_collection(COLLECTION).unwrap();
-        let index = VectorIndex::try_new(short_id, collection.schema().indexes[0].clone()).unwrap();
-        let txn = node.db.new_txn(false).await.unwrap();
-        {
-            let mut view = txn.datastore().unwrap();
-            assert!(
-                index.rebuild_if_due(&mut view).await.unwrap(),
-                "a rebuild is due"
-            );
-        }
-        txn.commit().await.unwrap();
+        node.db.rebuild_due_vector_indexes().await.unwrap();
         assert_eq!(
             node.stored().await,
             (0, 11),
             "the rebuild kept the pending write"
         );
+        assert_eq!(backlog.pending(), 0, "the rebuild cleared the backlog");
+        node.create("next", [0.0, 1.0, 0.0]).await;
+        assert_eq!(
+            node.stored().await,
+            (1, 11),
+            "the next write defers again after the rebuild"
+        );
         assert_eq!(node.nearest(1).await, ["pending"]);
+    })
+    .unwrap();
+}
+
+#[test]
+fn an_update_counts_one_pending_write() {
+    workers::block_on(async {
+        let node = Node::deferred().await;
+        let id = node.create("x", [1.0, 0.0, 0.0]).await;
+        let (short_id, index_id) = node.index();
+        let backlog = node.db.deferred_drains().backlogs().get(short_id, index_id);
+        assert_eq!(backlog.pending(), 1, "the create counted one write");
+
+        node.update(&id, [0.0, 1.0, 0.0]).await;
+        assert_eq!(node.stored().await.0, 1, "one entry per written node");
+        assert_eq!(backlog.pending(), 2, "the update counted one write");
     })
     .unwrap();
 }

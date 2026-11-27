@@ -130,16 +130,15 @@ impl VectorIndex {
 
     /// Applies every pending write of a deferred index, read as a drain
     /// reads them. Nothing for any other index.
-    pub(super) async fn apply_all_pending<T>(&self, txn: &mut T) -> Result<()>
+    pub(super) async fn apply_all_pending<T>(&self, txn: &mut T) -> Result<usize>
     where
         T: Reader + Writer + MaybeSend,
     {
         if !self.is_deferred() {
-            return Ok(());
+            return Ok(0);
         }
         let pending = pending::list_pending(&self.store(txn), usize::MAX).await?;
         let ids: Vec<NodeId> = pending.iter().map(|entry| entry.id).collect();
-        self.apply_planned(txn, &ids).await?;
-        Ok(())
+        self.apply_planned(txn, &ids).await
     }
 }

@@ -159,6 +159,15 @@ impl IndexManager {
         Error::Storage(storage::corekv::Error::UniqueConstraintViolation)
     }
 
+    /// A deferred vector takes one upsert, or a delete when its new value is
+    /// empty. Its generic update path would write both a delete and an upsert.
+    fn is_deferred_vector(index: &IndexType) -> bool {
+        index
+            .description()
+            .vector()
+            .is_some_and(|vector| vector.maintenance.is_deferred())
+    }
+
     /// Create a new empty IndexManager.
     pub fn new(collection_short_id: u32) -> Self {
         Self {
@@ -666,6 +675,18 @@ impl IndexManager {
             let old_value_sets = self.extract_index_values(old_doc, index.description(), schema)?;
             let new_value_sets = self.extract_index_values(new_doc, index.description(), schema)?;
             if old_value_sets != new_value_sets {
+                if Self::is_deferred_vector(index) {
+                    index
+                        .update(
+                            &mut mutable_datastore,
+                            doc_short_id,
+                            &old_value_sets[0],
+                            &new_value_sets[0],
+                        )
+                        .await
+                        .map_err(Error::Storage)?;
+                    continue;
+                }
                 for old_values in &old_value_sets {
                     index
                         .delete(&mut mutable_datastore, doc_short_id, old_values)
@@ -764,6 +785,18 @@ impl IndexManager {
             let new_value_sets = self.extract_index_values(new_doc, index.description(), schema)?;
 
             if old_value_sets != new_value_sets {
+                if Self::is_deferred_vector(index) {
+                    index
+                        .update(
+                            &mut mutable_datastore,
+                            doc_short_id,
+                            &old_value_sets[0],
+                            &new_value_sets[0],
+                        )
+                        .await
+                        .map_err(Error::Storage)?;
+                    continue;
+                }
                 if let Some(values) = Self::duplicate_value_set(index, &new_value_sets) {
                     return Err(Self::naming_the_updater(
                         Self::unique_violation(),
@@ -830,6 +863,18 @@ impl IndexManager {
             let old_value_sets = self.extract_index_values(old_doc, index.description(), schema)?;
             let new_value_sets = self.extract_index_values(new_doc, index.description(), schema)?;
             if old_value_sets == new_value_sets {
+                continue;
+            }
+            if Self::is_deferred_vector(index) {
+                index
+                    .update(
+                        &mut mutable_datastore,
+                        doc_short_id,
+                        &old_value_sets[0],
+                        &new_value_sets[0],
+                    )
+                    .await
+                    .map_err(Error::Storage)?;
                 continue;
             }
             if let Some(values) = Self::duplicate_value_set(index, &new_value_sets) {

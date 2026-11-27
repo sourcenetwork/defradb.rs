@@ -4,6 +4,7 @@ use std::collections::BTreeMap;
 
 use net::http::Method;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use urlencoding::encode;
 
 use super::HttpClient;
@@ -19,7 +20,7 @@ struct GoIndexCreateRequest {
     #[serde(rename = "Unique", skip_serializing_if = "std::ops::Not::not")]
     unique: bool,
     #[serde(rename = "Vector", skip_serializing_if = "Option::is_none")]
-    vector: Option<schema::VectorIndexDescription>,
+    vector: Option<Value>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -128,6 +129,22 @@ impl HttpClient {
         name: Option<&str>,
         unique: bool,
         vector: Option<schema::VectorIndexDescription>,
+    ) -> Result<IndexInfo> {
+        let vector = vector.map(serde_json::to_value).transpose()?;
+        self.index_create_vector_value(txn, collection, fields, name, unique, vector)
+            .await
+    }
+
+    /// [`Self::index_create`] with the vector configuration left as JSON, so a
+    /// caller can exercise the server's validation of its own wire shape.
+    pub async fn index_create_vector_value(
+        &self,
+        txn: Option<&str>,
+        collection: &str,
+        fields: &[String],
+        name: Option<&str>,
+        unique: bool,
+        vector: Option<Value>,
     ) -> Result<IndexInfo> {
         let request = GoIndexCreateRequest {
             name: name.map(|s| s.to_string()),

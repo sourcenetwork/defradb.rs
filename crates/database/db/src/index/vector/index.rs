@@ -254,12 +254,13 @@ impl VectorIndex {
 
     /// Rebuilds this index if its engine judges a rebuild due, on the caller's
     /// transaction. The background task's entry point for HNSW: it answers
-    /// whether the transaction did anything, so an idle sweep discards rather
-    /// than commits.
+    /// how many pending entries it applied, or `None` when it did nothing so an
+    /// idle sweep discards rather than commits. The caller subtracts the count
+    /// from the backlog only after the transaction commits.
     pub async fn rebuild_if_due<T: Reader + Writer + MaybeSend>(
         &self,
         txn: &mut T,
-    ) -> storage::corekv::Result<bool> {
+    ) -> storage::corekv::Result<Option<usize>> {
         if !self
             .engine(txn)
             .map_err(into_storage)?
@@ -267,16 +268,16 @@ impl VectorIndex {
             .await
             .map_err(into_storage)?
         {
-            return Ok(false);
+            return Ok(None);
         }
         // A rebuild clears the build it reads, pending entries included.
-        self.apply_all_pending(txn).await.map_err(into_storage)?;
+        let applied = self.apply_all_pending(txn).await.map_err(into_storage)?;
         self.engine(txn)
             .map_err(into_storage)?
             .build()
             .await
             .map_err(into_storage)?;
-        Ok(true)
+        Ok(Some(applied))
     }
 
     /// The DiskANN merge this index is due, read on `txn`, or `None` when it
