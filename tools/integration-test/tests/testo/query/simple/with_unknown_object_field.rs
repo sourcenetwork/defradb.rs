@@ -73,3 +73,46 @@ fn query_simple_with_undefined_object_field() {
         r#"Cannot query field "author" on type "Book"."#,
     );
 }
+
+#[test]
+#[mantra_macros::req_test("go.query.simple.select.unknown-field")]
+fn query_simple_with_undefined_nested_scalar_field() {
+    TestCase {
+        id: integration_test::scenario_id!(),
+        actions: vec![
+            AddCollection {
+                sdl: r#"
+                    type Book {
+                        title: String
+                        author: Author
+                    }
+
+                    type Author {
+                        name: String
+                        published: [Book]
+                    }
+                "#
+                .into(),
+                ..Default::default()
+            }
+            .into(),
+            Request {
+                request: r#"
+                    query {
+                        Author {
+                            published {
+                                nonexistent
+                            }
+                        }
+                    }
+                "#
+                .into(),
+                expected_error: Some(r#"Cannot query field "nonexistent" on type "Book"."#.into()),
+                ..Default::default()
+            }
+            .into(),
+        ],
+        ..Default::default()
+    }
+    .execute();
+}
