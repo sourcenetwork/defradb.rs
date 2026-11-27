@@ -107,9 +107,12 @@ fn a_push_to_a_stopped_peer_is_parked_until_it_restarts() {
                 at_most: [("push_backlog/failed_total".to_owned(), 0)]
                     .into_iter()
                     .collect(),
-                at_least: [("push_backlog/parked_total".to_owned(), 1)]
-                    .into_iter()
-                    .collect(),
+                at_least: [
+                    ("push_backlog/parked_total".to_owned(), 1),
+                    ("failure_recorder/runs_total".to_owned(), 1),
+                ]
+                .into_iter()
+                .collect(),
                 expected_data: m::object(json!({
                     "push_backlog": m::object(json!({
                         "failed_total": 0,

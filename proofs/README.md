@@ -318,9 +318,11 @@ Core directly and retains the sibling, pruning, abort and old-snapshot cases.
 It checks that a delayed registration cannot cross forget/re-add or replace a
 newer pending marker. Its negative variants remove the incarnation or ordering
 check. It also models the fan-out caller that registers a committed head with
-each replicator. `INV_FanOutPeerLocal` requires that a gone, re-incarnated,
-covered or failed peer is decided on its own, and that every registered peer
-is queued. `Red_FanOutAbort` aborts the fan-out on the first rejection. This
+every replicator at once and queues once all are decided. `INV_FanOutPeerLocal`
+requires that a gone, re-incarnated, covered or failed peer is decided on its
+own, and that every registered peer is queued. `Red_FanOutAbort` aborts the
+fan-out on the first rejection; `Red_NoJoin` queues before every registration
+is decided. This
 finite model does not verify the Rust implementation.
 
 `RetrySchedule.tla` models the one retry clock a sender keeps per peer. An
