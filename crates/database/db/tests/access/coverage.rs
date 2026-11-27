@@ -52,16 +52,15 @@ const DB_METHOD_GATED: &[NodePermission] = &[
 /// `DB::add_lens` (commit callback from `add_lens_in_txn`), `refresh_views`
 /// (view-refresh scheduler), `gc_downsample_histories` (GC).
 ///
-/// `ViewGc`: gated in the CLI `view_adapter` (`check_node_access(ViewGc)`), but
-/// FFI `gc_downsample_histories` is NOT gated — it has no `identity_did` param
-/// and no Go/cbindings binding, so gating it requires a coordinated Go-side
-/// signature change (follow-up). The CLI path is ViewGc-gated.
+/// `ViewAdd`, `ViewRefresh` and `ViewGc` are gated by the db transaction
+/// registry methods. The raw DB helpers remain ungated for startup and
+/// scheduler callers, and every surface forwards through the gated registry.
 const ADAPTER_GATED: &[NodePermission] = &[
     LensCreate, // add_lens_in_txn gates (registry); raw DB::add_lens ungated (commit caller)
     LensList,
     ViewAdd,
     ViewRefresh, // raw refresh_views ungated (scheduler caller); adapter gates
-    ViewGc,      // CLI adapter gates; FFI gc_downsample_histories ungated — see note above
+    ViewGc,      // registry gc_downsample_views_as gates; every surface forwards
     IndexCreate,
     IndexDelete,
     IndexList,

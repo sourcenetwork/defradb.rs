@@ -12,10 +12,12 @@
 \*   4. cid        a lens CID, when one is given, is not blank;
 \*   5. chunk      no view field is a chunk;
 \*   6. downsample every downsample view's definition is valid;
-\*   7. policy     every @policy names a policy and resource the node holds;
+\*   7. policy     every @policy names a policy and resource the node holds,
+\*                 on a node with document ACP;
 \*   8. identity   the acting identity, when there is one, is a DID.
 \* Only when all pass does it create the view collections, in one
 \* transaction, so every view of the SDL exists afterwards or none does.
+\* CreateMode can instead model the bug where each view is created on its own.
 \* After that commit, and only then, it builds the materialized ones.
 \*
 \* Who acts: the request moving through each way in. Whether each check
@@ -29,9 +31,7 @@
 \*
 \* Code it models:
 \*   crates/database/db/src/view/client/mod.rs DbTransactionRegistry::add_view
-\*     the whole sequence, and view_source (checks one and cid)
-\*   crates/database/db/src/view/client/manage.rs DbTransactionRegistry::refresh_views_as,
-\*     gc_downsample_views_as  the NAC check before the refresh and the GC
+\*     the whole sequence, and view_source (checks one, cid and trim)
 \*   crates/database/db/src/collection/ops/create.rs DB::create_view_collections_as
 \*     the all-or-nothing create; crates/database/db/src/txn/registry/views.rs
 \*     DbTransactionRegistry::add_view_in_txn the same inside a transaction
@@ -44,6 +44,8 @@ CONSTANTS
   Views,        \* the view types the SDL describes
   CoreChecks,   \* which checks the core really runs (a subset of the eight)
   ServerChecks, \* which checks the `defradb start` server runs: the core's when it forwards
+  DocumentAcp,  \* the ways in whose node has document ACP, so the policy check applies
+  CreateMode,   \* "Atomic" for one transaction, or "OneByOne" for the bug the RED checks
   BuildFirst    \* TRUE when materialized views are built before the create is known to have landed
 
 \* The eight checks, in the order they run.
@@ -59,10 +61,18 @@ Edges == {"node", "server"}
 ASSUME Cardinality(Views) >= 2
 ASSUME CoreChecks \subseteq AllChecks
 ASSUME ServerChecks \subseteq AllChecks
+ASSUME DocumentAcp \subseteq Edges
+ASSUME CreateMode \in {"Atomic", "OneByOne"}
 ASSUME BuildFirst \in BOOLEAN
 
 \* The checks the way in `e` runs: the embedded node always calls the core.
-Enforced(e) == IF e = "node" THEN CoreChecks ELSE ServerChecks
+Enforced(e) ==
+  LET configured == IF e = "node" THEN CoreChecks ELSE ServerChecks IN
+  configured \ {c \in AllChecks : c = "policy" /\ e \notin DocumentAcp}
+
+\* The checks that must pass for a correct node at this way in. Policy is
+\* required only where document ACP is configured.
+Required(e) == IF e \in DocumentAcp THEN AllChecks ELSE AllChecks \ {"policy"}
 
 \* Where a request is: 1..8 is the next check, 9 the create, 10 the build, 11 finished.
 CreateStep == Len(Checks) + 1
@@ -110,10 +120,10 @@ RunCheck(e) ==
             /\ UNCHANGED refused
   /\ UNCHANGED <<ok, created, built>>
 
-\* The create: one transaction makes every view or none. With BuildFirst the
-\* views are built here, whether or not the create lands.
-Create(e) ==
-  /\ step[e] = CreateStep
+\* The code's create: one transaction makes every view or none. With BuildFirst
+\* the views are built here, whether or not the create lands.
+CreateAtomic(e) ==
+  /\ step[e] = CreateStep /\ CreateMode = "Atomic"
   /\ IF ok["create"]
        THEN /\ created' = [created EXCEPT ![e] = Views]
             /\ step' = [step EXCEPT ![e] = BuildStep]
@@ -124,6 +134,31 @@ Create(e) ==
   /\ built' = IF BuildFirst THEN [built EXCEPT ![e] = Views] ELSE built
   /\ UNCHANGED ok
 
+\* The bug: each view is its own create, so a request can leave some behind.
+CreateOne(e) ==
+  /\ step[e] = CreateStep /\ CreateMode = "OneByOne"
+  /\ created[e] # Views
+  /\ \E view \in Views \ created[e] :
+       created' = [created EXCEPT ![e] = created[e] \cup {view}]
+  /\ step' = step
+  /\ refused' = refused
+  /\ UNCHANGED <<ok, built>>
+
+\* A later one-by-one create fails, leaving the earlier views committed.
+CreateOneFails(e) ==
+  /\ step[e] = CreateStep /\ CreateMode = "OneByOne"
+  /\ ~ok["create"] /\ created[e] # {} /\ created[e] # Views
+  /\ refused' = [refused EXCEPT ![e] = TRUE]
+  /\ step' = [step EXCEPT ![e] = DoneStep]
+  /\ UNCHANGED <<ok, created, built>>
+
+\* Every one-by-one create landed, so the request is done.
+CreateOneDone(e) ==
+  /\ step[e] = CreateStep /\ CreateMode = "OneByOne"
+  /\ created[e] = Views
+  /\ step' = [step EXCEPT ![e] = DoneStep]
+  /\ UNCHANGED <<ok, created, built, refused>>
+
 \* After the commit: build the materialized views the create made.
 Build(e) ==
   /\ step[e] = BuildStep
@@ -132,16 +167,17 @@ Build(e) ==
   /\ UNCHANGED <<ok, created, refused>>
 
 \* Either way in takes its next step.
-Next == \E e \in Edges : RunCheck(e) \/ Create(e) \/ Build(e)
+Next == \E e \in Edges :
+  RunCheck(e) \/ CreateAtomic(e) \/ CreateOne(e) \/ CreateOneFails(e) \/ CreateOneDone(e) \/ Build(e)
 
 \* Both requests finished stay finished.
 Done == (\A e \in Edges : step[e] = DoneStep) /\ UNCHANGED vars
 
 Spec == Init /\ [][Next \/ Done]_vars
 
-\* No view exists unless every check would have passed.
+\* No view exists unless every check that way in enforces would have passed.
 INV_NoViewUnlessAllChecksPass ==
-  \A e \in Edges : created[e] # {} => \A c \in AllChecks : ok[c]
+  \A e \in Edges : created[e] # {} => \A c \in Required(e) : ok[c]
 
 \* A finished request leaves all of its views or none of them.
 INV_AllOrNone ==
@@ -151,10 +187,11 @@ INV_AllOrNone ==
 INV_BuiltOnlyCreated ==
   \A e \in Edges : built[e] \subseteq created[e]
 
-\* Once both are finished, the two ways in gave the same answer and left the
-\* same views.
+\* Once both are finished on nodes with the same document ACP setting, the two
+\* ways in gave the same answer and left the same views.
 INV_SameAnswer ==
-  (\A e \in Edges : step[e] = DoneStep) =>
+  (\A e \in Edges : step[e] = DoneStep) /\
+  (("node" \in DocumentAcp) = ("server" \in DocumentAcp)) =>
     /\ refused["node"] = refused["server"]
     /\ created["node"] = created["server"]
 ====
