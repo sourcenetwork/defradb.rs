@@ -8,6 +8,7 @@ use integration_test::actions::{
 };
 use integration_test::m;
 use integration_test::test_case::TestCase;
+use integration_test::ClientType;
 use serde_json::json;
 
 const DOCS: usize = 4;
@@ -98,6 +99,10 @@ fn collection_migration_reads_during_a_txn_migration_commit_find_the_transform()
     TestCase {
         id: integration_test::scenario_id!(),
         actions: actions.into_iter().map(Into::into).collect(),
+        // Go answers a read that races the commit with "transaction conflict"
+        // only when the race happens, so its outcome varies from run to run
+        // (#3528).
+        client_types: Some(&[ClientType::InProcess, ClientType::RustHttp, ClientType::Cli]),
         ..Default::default()
     }
     .execute();
