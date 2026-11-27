@@ -44,9 +44,10 @@
 \*                                  PersistentAcpStore::delete_doc_tuples
 \*   crates/engine/storage/src/backends/regolith/iterator.rs  a validated scan is
 \*                                  regolith::ScanCheck::Range
-\* and regolith 0.2.1:
+\* and regolith, at the version Cargo.lock pins:
 \*   ScanCheck::Range               a write inside the scanned range newer than
-\*                                  the snapshot conflicts (commit/range_rule.rs)
+\*                                  the snapshot conflicts
+\*                                  (regolith:src/engine/commit/range_rule.rs)
 \*   IsolationLevel::DefraLevel     an ordinary key's put conflicts with a newer
 \*                                  commit to it, unless the key already holds
 \*                                  what the put would leave
@@ -66,8 +67,9 @@
 \*   Unregister     persistent.rs delete_doc_tuples: one transaction deletes every
 \*                  key under the document's prefix; the sentinel stays
 \*   owners         the keys `/acp/{c}/{d}/owner/{did}` (relation.rs storage_key)
-\*   rangeSeq       the newest commit inside the prefix, what range_rule.rs
-\*                  `written_in_range` compares with the snapshot
+\*   rangeSeq       the newest commit inside the prefix, what
+\*                  regolith:src/engine/commit/range_rule.rs
+\*                  `RegolithEngine::written_in_range` compares with the snapshot
 \*   sentinel,
 \*   sentinelSeq    the `/acp-reg/{c}/{d}` key and its newest commit
 \*   seq, snap      regolith's commit sequence and each transaction's snapshot

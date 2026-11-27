@@ -721,10 +721,10 @@ integration-all:
 proofs: check-anchors
     proofs/verify-all.sh
 
-# Every *.rs filename named in proofs/ or SURVEY.md resolves to a tracked file.
+# Every registry anchor, and every source file the models and docs name, resolves.
 [group('proofs')]
 check-anchors:
-    bash .github/scripts/check-proof-anchors.sh
+    cargo nextest run -p conformance --lib anchor::
 
 # TLC over every model, checked against the expected red/green oracle.
 [group('proofs')]

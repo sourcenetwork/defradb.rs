@@ -60,14 +60,16 @@ const BUSY: i64 = -32002;
 
 /// How the light client's refusal of an overtaken answer starts, both from
 /// `HeaderChain::accept_response` and from
-/// `AcpLightClient::verify_access_decision` (acp-light-client at backbone
-/// 5ca42c8, whose errors carry no type to match). A bump of the light client
-/// rechecks this wording.
+/// `AcpLightClient::verify_access_decision` (`acp-light-client:src/header_sync.rs`
+/// and `acp-light-client:src/lib.rs` at the backbone rev Cargo.lock pins, whose
+/// errors carry no type to match). A bump of the light client rechecks this
+/// wording.
 const OVERTAKEN: &str = "ACP state changed during";
 
 /// The light client's refusal to read while its newest revision is older
-/// than its freshness limit (acp-light-client `freshness.rs` at backbone
-/// 5ca42c8). A bump of the light client rechecks this wording.
+/// than its freshness limit (`acp-light-client:src/freshness.rs` at the
+/// backbone rev Cargo.lock pins). A bump of the light client rechecks this
+/// wording.
 const STALE: &str = "verified revision is stale";
 
 /// One jitter for every read in the process: reads that draw from it
