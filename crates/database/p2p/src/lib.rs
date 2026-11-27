@@ -177,8 +177,8 @@ pub use ack_scope::AckScope;
 
 // Re-export replicator types
 pub use replicator::{
-    EqOnlyFilterMatcher, ReplicationFilter, ReplicationFilterMatcher, ReplicationFilters,
-    ReplicatorInfo, ReplicatorStatus,
+    Admission, ChunkSources, EqOnlyFilterMatcher, ReplicationFilter, ReplicationFilterMatcher,
+    ReplicationFilters, ReplicatorInfo, ReplicatorStatus,
 };
 
 // Re-export management correlators

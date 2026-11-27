@@ -185,8 +185,8 @@ impl<S> AutoCommitMutator<S>
 where
     S: Store + 'static,
 {
-    /// Refuses user writes to chunk collections, and sends writes to collections
-    /// with `@chunk` fields through a batch of one.
+    /// Sends writes to collections with `@chunk` fields through a batch of one.
+    /// `guarded_collection` and the batch mutator refuse user writes to chunks.
     pub(super) fn chunk_route(&self, collection_name: &str) -> Result<Route> {
         let Some(collection) = self
             .db

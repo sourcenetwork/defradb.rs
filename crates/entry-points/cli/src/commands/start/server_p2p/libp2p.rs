@@ -461,7 +461,8 @@ impl Node {
         match restore_peerstore.list_replicators().await {
             Ok(entries) => {
                 for (_peer_id_str, data) in entries {
-                    if let Ok(rep_info) = p2p::ReplicatorInfo::from_bytes(&data) {
+                    if let Ok(mut rep_info) = p2p::ReplicatorInfo::from_bytes(&data) {
+                        defra_p2p_adapter::set_chunk_sources(Some(&doc_pusher), &mut rep_info);
                         if let Some(pid) = rep_info.peer_id() {
                             let _ = handle.create_replicator_info(pid, rep_info.clone()).await;
                             for cid in &rep_info.collections {

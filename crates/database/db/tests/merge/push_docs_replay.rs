@@ -575,7 +575,7 @@ fn a_replay_outlived_by_a_collection_removal_registers_nothing_for_it() {
             None,
             &peer,
             &["Kept".to_owned(), "Removed".to_owned()],
-            &p2p::ReplicationFilters::new(),
+            &p2p::ReplicatorInfo::from_raw(peer.to_string(), Vec::new(), Vec::new()),
             db::merge::PushExistingDocsSeOptions::default(),
             ReplayPushConfig {
                 install_incarnation: Some(install_incarnation),
@@ -778,6 +778,8 @@ pub(super) struct ConnectedPeerTransport {
     arrivals: Arc<kovan::Atom<Vec<Instant>>>,
     publishes: Arc<AtomicUsize>,
     publish_fails: PublishFails,
+    /// Pushes of this document are recorded, then fail as a closed connection.
+    failing_doc: Option<String>,
 }
 
 impl ConnectedPeerTransport {
@@ -795,7 +797,13 @@ impl ConnectedPeerTransport {
             arrivals: Arc::new(kovan::Atom::new(Vec::new())),
             publishes: Arc::new(AtomicUsize::new(0)),
             publish_fails: PublishFails::BothTopics,
+            failing_doc: None,
         }
+    }
+
+    pub(super) fn failing_pushes_of(mut self, doc_id: &str) -> Self {
+        self.failing_doc = Some(doc_id.to_string());
+        self
     }
 
     /// What this transport's gossip publishes do.
@@ -982,6 +990,9 @@ impl p2p::P2PTransport for ConnectedPeerTransport {
             next.push(Instant::now());
             next
         });
+        if self.failing_doc.as_deref() == Some(doc_id.as_str()) {
+            return Err(p2p::Error::ConnectionClosed);
+        }
         if let Some(hook) = &self.before_reply {
             hook(doc_id).await;
         }
@@ -1143,7 +1154,7 @@ fn replay_without_a_replicator_row_is_an_error_not_a_completion() {
             None,
             &peer,
             &["Collection".to_string()],
-            &p2p::ReplicationFilters::new(),
+            &p2p::ReplicatorInfo::from_raw(peer.to_string(), Vec::new(), Vec::new()),
             db::merge::PushExistingDocsSeOptions::default(),
             &p2p::EqOnlyFilterMatcher,
             &p2p::sync::HeadHintCarAuthority::default(),

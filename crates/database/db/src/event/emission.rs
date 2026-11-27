@@ -32,7 +32,8 @@ pub struct TxnBroadcastEvent {
 #[derive(Debug, Clone)]
 pub struct FollowedParent {
     pub collection_id: String,
-    pub document: Option<serde_json::Value>,
+    /// Shared by all of the parent's chunks.
+    pub document: Option<Arc<serde_json::Value>>,
 }
 
 /// Hook for forwarding committed transactional writes to the P2P stack.

@@ -18,6 +18,7 @@ pub async fn restore_p2p_state<S, B, T>(
     store: Arc<S>,
     transport: &T,
     coordinator: &Arc<SyncCoordinator<B, T>>,
+    pusher: Option<&Arc<dyn crate::TransportDocPusher>>,
 ) -> RapidHashSet<String>
 where
     S: storage::corekv::Store + 'static,
@@ -29,7 +30,7 @@ where
     match peerstore.list_replicators().await {
         Ok(entries) => {
             for (peer_id_str, data) in entries {
-                let replicator = match p2p::ReplicatorInfo::from_bytes(&data) {
+                let mut replicator = match p2p::ReplicatorInfo::from_bytes(&data) {
                     Ok(replicator) => replicator,
                     Err(error) => {
                         tracing::warn!(
@@ -40,6 +41,7 @@ where
                         continue;
                     }
                 };
+                crate::set_chunk_sources(pusher, &mut replicator);
                 let peer_id = p2p::transport::PeerId::new(replicator.peer_id_str().to_string());
                 // Restore the complete durable record. Reconstructing it from
                 // collection IDs silently discarded filters and addresses, so

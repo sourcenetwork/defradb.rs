@@ -40,6 +40,8 @@ mod replicator_install_store;
 #[cfg(any(feature = "iroh", feature = "libp2p", feature = "pinc"))]
 mod replicator_installs;
 #[cfg(any(feature = "iroh", feature = "libp2p", feature = "pinc"))]
+mod replicator_persist;
+#[cfg(any(feature = "iroh", feature = "libp2p", feature = "pinc"))]
 mod replicator_replay;
 mod replicator_status;
 #[cfg(any(feature = "iroh", all(feature = "pinc", not(target_arch = "wasm32"))))]
@@ -127,7 +129,11 @@ where
 
 /// `names` plus their `@chunk` collections, which replicate and subscribe with
 /// their parent. A filtered parent's filter decides its chunks too.
-#[cfg(any(feature = "iroh", feature = "libp2p"))]
+#[cfg(any(
+    feature = "iroh",
+    feature = "libp2p",
+    all(feature = "pinc", not(target_arch = "wasm32"))
+))]
 pub fn with_chunk_collections(
     pusher: Option<&Arc<dyn TransportDocPusher>>,
     names: Vec<String>,
@@ -146,6 +152,85 @@ pub fn with_chunk_collections(
     all
 }
 
+/// Collection names or IDs to remove, each with its `@chunk` collections, as IDs.
+#[cfg(any(
+    feature = "iroh",
+    feature = "libp2p",
+    all(feature = "pinc", not(target_arch = "wasm32"))
+))]
+pub fn collections_to_remove(
+    pusher: Option<&Arc<dyn TransportDocPusher>>,
+    collections: Vec<String>,
+) -> Vec<String> {
+    let Some(pusher) = pusher else {
+        return collections;
+    };
+    // A chunk collection is found by its parent's name, which an ID first resolves to.
+    let names = collections
+        .into_iter()
+        .map(|collection| match pusher.get_collection_name(&collection) {
+            Ok(Some(name)) => name,
+            _ => collection,
+        })
+        .collect();
+    resolve_remove_collections(with_chunk_collections(Some(pusher), names), |name| {
+        pusher.get_collection_id(name)
+    })
+}
+
+/// Pairs each `@chunk` collection of a filtered parent in `info` with that parent.
+#[cfg(any(feature = "iroh", feature = "libp2p", feature = "pinc"))]
+pub fn set_chunk_sources(
+    pusher: Option<&Arc<dyn TransportDocPusher>>,
+    info: &mut p2p::ReplicatorInfo,
+) {
+    let Some(pusher) = pusher else {
+        return;
+    };
+    pair_chunk_sources(info, |parent_id| {
+        let Ok(Some(name)) = pusher.get_collection_name(parent_id) else {
+            return None;
+        };
+        pusher
+            .chunk_collections(&name)
+            .iter()
+            .map(|chunks| pusher.get_collection_id(chunks))
+            .collect()
+    });
+}
+
+#[cfg(any(feature = "iroh", feature = "libp2p", feature = "pinc"))]
+fn pair_chunk_sources<F>(info: &mut p2p::ReplicatorInfo, chunk_ids_of: F)
+where
+    F: Fn(&str) -> Option<Vec<String>>,
+{
+    let mut pairs: Vec<(String, String)> = Vec::new();
+    for parent in info.filters.keys() {
+        match chunk_ids_of(parent) {
+            Some(chunk_ids) => {
+                pairs.extend(chunk_ids.into_iter().map(|chunks| (chunks, parent.clone())));
+            }
+            None => {
+                // Dropping the stored pair would let every chunk of this parent through.
+                let stored: Vec<(String, String)> = info
+                    .chunk_sources
+                    .iter()
+                    .filter(|(_, source)| *source == parent)
+                    .map(|(chunks, source)| (chunks.clone(), source.clone()))
+                    .collect();
+                tracing::warn!(
+                    peer_id = %info.peer_id_str(),
+                    collection_id = %parent,
+                    kept = stored.len(),
+                    "could not look up the chunk collections of a filtered collection; keeping its stored chunk pairs"
+                );
+                pairs.extend(stored);
+            }
+        }
+    }
+    info.set_chunk_sources(pairs);
+}
+
 /// Collections that need an initial document replay when adding a replicator.
 ///
 /// Replays collections that are newly authorized, or whose filter or explicit
@@ -153,20 +238,31 @@ pub fn with_chunk_collections(
 pub fn collections_requiring_replay(
     effective_collections: &[String],
     collection_cids: &[String],
-    existing_collection_ids: &RapidHashSet<String>,
-    existing_filters: &p2p::ReplicationFilters,
-    requested_filters: &p2p::ReplicationFilters,
+    existing: Option<&p2p::ReplicatorInfo>,
+    requested: &p2p::ReplicatorInfo,
     collections_with_changed_capabilities: &RapidHashSet<String>,
 ) -> Vec<String> {
-    effective_collections
+    let pairs: Vec<(&String, &String)> =
+        effective_collections.iter().zip(collection_cids).collect();
+    let changed: RapidHashSet<&String> = pairs
         .iter()
-        .zip(collection_cids.iter())
         .filter(|(_, cid)| {
-            !existing_collection_ids.contains(*cid)
-                || existing_filters.get(*cid) != requested_filters.get(*cid)
-                || collections_with_changed_capabilities.contains(*cid)
+            existing.is_none_or(|existing| {
+                !existing.collections.contains(*cid)
+                    || existing.deciding_filter(cid) != requested.deciding_filter(cid)
+            }) || collections_with_changed_capabilities.contains(*cid)
         })
-        .map(|(name, _)| name.clone())
+        .map(|(_, cid)| *cid)
+        .collect();
+    // A chunk goes to a filtered peer only with its parent, so the parent replays too.
+    let parents: RapidHashSet<&String> = changed
+        .iter()
+        .filter_map(|cid| requested.chunk_sources.get(*cid))
+        .collect();
+    pairs
+        .iter()
+        .filter(|(_, cid)| changed.contains(cid) || parents.contains(cid))
+        .map(|(name, _)| (*name).clone())
         .collect()
 }
 
@@ -294,6 +390,17 @@ pub fn merge_live_replicators_with_persisted_metadata(
         .collect()
 }
 
+#[cfg(all(
+    test,
+    any(
+        feature = "iroh",
+        feature = "libp2p",
+        all(feature = "pinc", not(target_arch = "wasm32"))
+    )
+))]
+#[path = "../tests/unit/chunk_sources.rs"]
+mod chunk_sources_tests;
+
 #[cfg(test)]
 mod resolve_remove_collections_tests {
     use super::{
@@ -331,15 +438,14 @@ mod resolve_remove_collections_tests {
     fn collections_requiring_replay_replays_existing_collection_when_capability_changes() {
         let effective_collections = vec!["User".to_string()];
         let collection_cids = vec!["cid-user".to_string()];
-        let existing_collection_ids = RapidHashSet::from_iter(["cid-user".to_string()]);
+        let existing = replicator(&collection_cids, p2p::ReplicationFilters::new());
         let changed_capabilities = RapidHashSet::from_iter(["cid-user".to_string()]);
 
         let replay_collections = collections_requiring_replay(
             &effective_collections,
             &collection_cids,
-            &existing_collection_ids,
-            &p2p::ReplicationFilters::new(),
-            &p2p::ReplicationFilters::new(),
+            Some(&existing),
+            &existing,
             &changed_capabilities,
         );
 
@@ -350,15 +456,14 @@ mod resolve_remove_collections_tests {
     fn collections_requiring_replay_skips_existing_collection_when_capability_matches() {
         let effective_collections = vec!["User".to_string()];
         let collection_cids = vec!["cid-user".to_string()];
-        let existing_collection_ids = RapidHashSet::from_iter(["cid-user".to_string()]);
+        let existing = replicator(&collection_cids, p2p::ReplicationFilters::new());
         let changed_capabilities = RapidHashSet::default();
 
         let replay_collections = collections_requiring_replay(
             &effective_collections,
             &collection_cids,
-            &existing_collection_ids,
-            &p2p::ReplicationFilters::new(),
-            &p2p::ReplicationFilters::new(),
+            Some(&existing),
+            &existing,
             &changed_capabilities,
         );
 
@@ -382,7 +487,6 @@ mod resolve_remove_collections_tests {
     fn collections_requiring_replay_scopes_filter_changes() {
         let effective_collections = vec!["User".to_string(), "Post".to_string()];
         let collection_cids = vec!["cid-user".to_string(), "cid-post".to_string()];
-        let existing_collection_ids = collection_cids.iter().cloned().collect();
         let existing_filters = p2p::ReplicationFilters::from([
             (
                 "cid-user".to_string(),
@@ -407,13 +511,96 @@ mod resolve_remove_collections_tests {
         let replay_collections = collections_requiring_replay(
             &effective_collections,
             &collection_cids,
-            &existing_collection_ids,
-            &existing_filters,
-            &requested_filters,
+            Some(&replicator(&collection_cids, existing_filters)),
+            &replicator(&collection_cids, requested_filters),
             &RapidHashSet::default(),
         );
 
         assert_eq!(replay_collections, vec!["User".to_string()]);
+    }
+
+    #[test]
+    fn a_changed_parent_filter_replays_its_chunk_collection() {
+        let effective_collections = vec!["Article".to_string(), "Article__body_chunk".to_string()];
+        let collection_cids = vec!["cid-article".to_string(), "cid-chunks".to_string()];
+        let filtered_by = |kind: &str| {
+            replicator(
+                &collection_cids,
+                p2p::ReplicationFilters::from([(
+                    "cid-article".to_string(),
+                    p2p::ReplicationFilter::new("kind".to_string(), serde_json::json!(kind)),
+                )]),
+            )
+            .with_chunk_sources([("cid-chunks".to_string(), "cid-article".to_string())])
+        };
+
+        let replay_collections = collections_requiring_replay(
+            &effective_collections,
+            &collection_cids,
+            Some(&filtered_by("old")),
+            &filtered_by("new"),
+            &RapidHashSet::default(),
+        );
+
+        assert_eq!(replay_collections, effective_collections);
+    }
+
+    #[test]
+    fn a_replayed_chunk_collection_replays_its_filtered_parent_too() {
+        let effective_collections = vec!["Article".to_string(), "Article__body_chunk".to_string()];
+        let collection_cids = vec!["cid-article".to_string(), "cid-chunks".to_string()];
+        let info = replicator(
+            &collection_cids,
+            p2p::ReplicationFilters::from([(
+                "cid-article".to_string(),
+                p2p::ReplicationFilter::new("kind".to_string(), serde_json::json!("public")),
+            )]),
+        )
+        .with_chunk_sources([("cid-chunks".to_string(), "cid-article".to_string())]);
+        let only_the_parent = p2p::ReplicatorInfo {
+            collections: vec!["cid-article".to_string()],
+            ..info.clone()
+        };
+
+        let replay_collections = collections_requiring_replay(
+            &effective_collections,
+            &collection_cids,
+            Some(&only_the_parent),
+            &info,
+            &RapidHashSet::default(),
+        );
+
+        assert_eq!(replay_collections, effective_collections);
+    }
+
+    #[cfg(any(feature = "iroh", feature = "libp2p", feature = "pinc"))]
+    #[test]
+    fn a_failed_chunk_lookup_keeps_the_stored_pair() {
+        let ids = vec!["cid-article".to_string(), "cid-chunks".to_string()];
+        let mut info = replicator(
+            &ids,
+            p2p::ReplicationFilters::from([(
+                "cid-article".to_string(),
+                p2p::ReplicationFilter::new("kind".to_string(), serde_json::json!("public")),
+            )]),
+        )
+        .with_chunk_sources([("cid-chunks".to_string(), "cid-article".to_string())]);
+
+        super::pair_chunk_sources(&mut info, |_| None);
+
+        assert_eq!(
+            info.chunk_sources.get("cid-chunks").map(String::as_str),
+            Some("cid-article")
+        );
+    }
+
+    fn replicator(collections: &[String], filters: p2p::ReplicationFilters) -> p2p::ReplicatorInfo {
+        p2p::ReplicatorInfo::from_raw_with_filters(
+            "peer".to_string(),
+            collections.to_vec(),
+            Vec::new(),
+            filters,
+        )
     }
 
     #[test]

@@ -242,12 +242,7 @@ where
 
     /// Resolve collection names to CIDs for removal, mirroring `add_replicator`.
     fn resolve_collections_for_remove(&self, collections: Vec<String>) -> Vec<String> {
-        match self.doc_pusher {
-            Some(ref pusher) => crate::resolve_remove_collections(collections, |name| {
-                pusher.get_collection_id(name)
-            }),
-            None => collections,
-        }
+        crate::collections_to_remove(self.doc_pusher.as_ref(), collections)
     }
 
     /// Drop every trace of a revoked peer's replication, so nothing dials it
@@ -641,6 +636,8 @@ where
         } else {
             collections
         };
+        let effective_collections =
+            crate::with_chunk_collections(self.doc_pusher.as_ref(), effective_collections);
 
         let mut collection_cids = Vec::new();
         if let Some(ref pusher) = self.doc_pusher {
@@ -690,12 +687,13 @@ where
         self.peer_addresses
             .insert(peer_id.to_string(), addr_str.to_string());
 
-        let replicator_info = p2p::ReplicatorInfo::from_raw_with_filters(
+        let mut replicator_info = p2p::ReplicatorInfo::from_raw_with_filters(
             peer_id.to_string(),
             collection_cids.clone(),
             vec![addr_str.to_string()],
             replication_filters.clone(),
         );
+        crate::set_chunk_sources(self.doc_pusher.as_ref(), &mut replicator_info);
         let mut replay = if let Some(pusher) = &self.doc_pusher {
             let request = crate::ReplicatorInstallRequest::new(
                 replicator_info.clone(),
@@ -727,7 +725,7 @@ where
                 .map_err(|error| P2PError::transport(error.to_string()))?;
         } else {
             self.transport
-                .create_replicator_info(&peer_id, replicator_info)
+                .create_replicator_info(&peer_id, replicator_info.clone())
                 .await
                 .map_err(|error| P2PError::transport(error.to_string()))?;
         }
@@ -787,7 +785,7 @@ where
                 let push_options = self.replicator_push_options.load();
                 let push_se_key = push_options.se_encryption_key;
                 let push_identity = push_options.se_identity_pubkey;
-                let push_filters = replication_filters.clone();
+                let push_replicator = replicator_info.clone();
 
                 tracing::info!(
                     peer_id = %push_peer,
@@ -800,7 +798,7 @@ where
                         .push_existing_docs(
                             &push_peer,
                             &collections,
-                            &push_filters,
+                            &push_replicator,
                             push_se_key.as_ref().map(|key| key.as_slice()),
                             push_identity.as_deref(),
                             install_incarnation,

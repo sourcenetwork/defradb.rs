@@ -117,7 +117,6 @@ impl Fixture {
             None,
             &self.peer,
             &self.selected,
-            &p2p::ReplicationFilters::new(),
             Default::default(),
             config,
             &p2p::EqOnlyFilterMatcher,

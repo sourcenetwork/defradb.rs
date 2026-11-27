@@ -130,7 +130,7 @@ impl TransportDocPusher for ScriptedPusher {
         &self,
         _peer_id: &PeerId,
         _collections: &[String],
-        _filters: &p2p::ReplicationFilters,
+        _replicator: &p2p::ReplicatorInfo,
         _se_key: Option<&[u8]>,
         _se_identity_pubkey: Option<&[u8]>,
         _install_incarnation: u64,

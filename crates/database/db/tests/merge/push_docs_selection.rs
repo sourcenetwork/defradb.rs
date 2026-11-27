@@ -132,7 +132,7 @@ async fn exercise(
     if explicit {
         transport = transport.requiring_selected_authority(Arc::new(db.peerstore()));
     }
-    let filters = p2p::ReplicationFilters::new();
+    let replicator = p2p::ReplicatorInfo::from_raw(peer.to_string(), Vec::new(), Vec::new());
     let authority = p2p::sync::HeadHintCarAuthority::default();
     let result = if explicit {
         push_existing_docs_by_id(
@@ -141,7 +141,6 @@ async fn exercise(
             None,
             &peer,
             &[("PushNote".into(), ids[0].clone())],
-            &filters,
             PushExistingDocsSeOptions::default(),
             Default::default(),
             &p2p::EqOnlyFilterMatcher,
@@ -156,7 +155,7 @@ async fn exercise(
             None,
             &peer,
             &["PushNote".into()],
-            &filters,
+            &replicator,
             PushExistingDocsSeOptions::default(),
             &p2p::EqOnlyFilterMatcher,
             &authority,

@@ -205,6 +205,22 @@ pub(crate) fn no_replication_filters(filters: &ReplicationFilters) -> bool {
     filters.is_empty()
 }
 
+/// Each chunk collection of a filtered parent, mapped to that parent, as IDs.
+pub type ChunkSources = BTreeMap<String, String>;
+
+fn no_chunk_sources(sources: &ChunkSources) -> bool {
+    sources.is_empty()
+}
+
+/// Whether a replicator's filter lets a head through.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Admission {
+    Admit,
+    /// The replicator is filtered and the document its filter reads is not at hand.
+    NoDocument,
+    FilterMiss,
+}
+
 impl From<ReplicatorStatus> for u8 {
     fn from(s: ReplicatorStatus) -> u8 {
         s as u8
@@ -325,6 +341,15 @@ pub struct ReplicatorInfo {
         skip_serializing_if = "no_replication_filters"
     )]
     pub filters: ReplicationFilters,
+
+    /// Rust extension: the chunk collections decided by their parent's filter.
+    /// Omitted when empty, like `Filters`.
+    #[serde(
+        rename = "ChunkSources",
+        default,
+        skip_serializing_if = "no_chunk_sources"
+    )]
+    pub chunk_sources: ChunkSources,
 }
 
 impl Eq for ReplicatorInfo {}
@@ -347,6 +372,7 @@ impl ReplicatorInfo {
             status: ReplicatorStatus::Active,
             last_status_change: go_time_zero(),
             filters: ReplicationFilters::new(),
+            chunk_sources: ChunkSources::new(),
         })
     }
 
@@ -376,6 +402,7 @@ impl ReplicatorInfo {
             status: ReplicatorStatus::Active,
             last_status_change: go_time_zero(),
             filters: ReplicationFilters::new(),
+            chunk_sources: ChunkSources::new(),
         }
     }
 
@@ -393,11 +420,60 @@ impl ReplicatorInfo {
             status: ReplicatorStatus::Active,
             last_status_change: go_time_zero(),
             filters,
+            chunk_sources: ChunkSources::new(),
         }
     }
 
+    /// Pairs chunk collections with their filtered parents, as `(chunk, parent)` IDs.
+    pub fn with_chunk_sources<I>(mut self, pairs: I) -> Self
+    where
+        I: IntoIterator<Item = (String, String)>,
+    {
+        self.set_chunk_sources(pairs);
+        self
+    }
+
+    /// [`Self::with_chunk_sources`] in place.
+    pub fn set_chunk_sources<I>(&mut self, pairs: I)
+    where
+        I: IntoIterator<Item = (String, String)>,
+    {
+        self.chunk_sources = pairs.into_iter().collect();
+        self.retain_chunk_sources();
+    }
+
+    // A pair whose parent is unfiltered or no longer replicated decides nothing.
+    fn retain_chunk_sources(&mut self) {
+        let (collections, filters) = (&self.collections, &self.filters);
+        self.chunk_sources.retain(|chunks, parent| {
+            filters.contains_key(parent)
+                && collections.contains(chunks)
+                && collections.contains(parent)
+        });
+    }
+
+    /// Drops `collection_id` and its filter; a filtered parent takes its chunk collections too.
+    pub fn remove_collection(&mut self, collection_id: &str) {
+        let mut removed: Vec<String> = self
+            .chunk_sources
+            .iter()
+            .filter(|(_, parent)| *parent == collection_id)
+            .map(|(chunks, _)| chunks.clone())
+            .collect();
+        removed.push(collection_id.to_string());
+        self.collections.retain(|id| !removed.contains(id));
+        self.filters
+            .retain(|collection, _| !removed.contains(collection));
+        self.retain_chunk_sources();
+    }
+
     pub fn is_filtered_for_collection(&self, collection_id: &str) -> bool {
-        self.filters.contains_key(collection_id)
+        self.filters.contains_key(collection_id) || self.chunk_sources.contains_key(collection_id)
+    }
+
+    /// Whether `collection_id` is a chunk collection decided by its parent's filter.
+    pub fn is_filtered_chunk(&self, collection_id: &str) -> bool {
+        self.chunk_sources.contains_key(collection_id)
     }
 
     /// The scope this replicator is pushed heads at, and so acknowledges
@@ -410,16 +486,48 @@ impl ReplicatorInfo {
         self.filters.get(collection_id)
     }
 
+    /// The filter that decides `collection_id`: a chunk collection's is its parent's.
+    pub fn deciding_filter(&self, collection_id: &str) -> Option<&ReplicationFilter> {
+        let deciding = self
+            .chunk_sources
+            .get(collection_id)
+            .map_or(collection_id, String::as_str);
+        self.filters.get(deciding)
+    }
+
+    /// Whether a head of `collection_id` goes here, judged by `decided_in`'s `document`.
+    pub fn admission(
+        &self,
+        matcher: &dyn ReplicationFilterMatcher,
+        collection_id: &str,
+        decided_in: &str,
+        document: Option<&JsonValue>,
+    ) -> Admission {
+        let deciding = self
+            .chunk_sources
+            .get(collection_id)
+            .map_or(decided_in, String::as_str);
+        let Some(filter) = self.filters.get(deciding) else {
+            return Admission::Admit;
+        };
+        // A chunk has none of its parent's fields, so only the parent's document decides it.
+        if deciding != decided_in {
+            return Admission::NoDocument;
+        }
+        match document {
+            None => Admission::NoDocument,
+            Some(document) if matcher.matches(deciding, filter, document) => Admission::Admit,
+            Some(_) => Admission::FilterMiss,
+        }
+    }
+
     pub fn matches_filter(
         &self,
         matcher: &dyn ReplicationFilterMatcher,
         collection_id: &str,
         document: &JsonValue,
     ) -> bool {
-        match self.filters.get(collection_id) {
-            Some(filter) => matcher.matches(collection_id, filter, document),
-            None => true,
-        }
+        self.admission(matcher, collection_id, collection_id, Some(document)) == Admission::Admit
     }
 
     /// Get the peer ID. Returns `None` if the stored ID is not a valid libp2p PeerId.
@@ -522,3 +630,7 @@ impl ReplicatorInfo {
         serde_json::from_slice(bytes)
     }
 }
+
+#[cfg(test)]
+#[path = "replicator_chunk_tests.rs"]
+pub(crate) mod chunk_tests;

@@ -49,8 +49,8 @@
 \* Code it models:
 \*   crates/database/p2p/src/sync/coordinator/broadcast.rs  SyncCoordinator::push_jobs
 \*     (a chunk's push is decided by its parent's filter)
-\*   crates/database/db/src/merge/push_docs/follow.rs  replica_takes (replay and retry decide a
-\*     chunk by its parent too)
+\*   crates/database/db/src/merge/push_docs/follow.rs  ReplicaFilter::decide (replay and retry
+\*     decide a chunk by its parent too)
 \*   crates/database/db/src/chunk/sync/write.rs  ChunkWrites::publish, ChunkWrites::delete
 \*     (each chunk head, create or delete, carries its parent)
 \*   crates/database/db/src/chunk/sync/mod.rs  ChunkWrites::sync_chunks (an edit deletes

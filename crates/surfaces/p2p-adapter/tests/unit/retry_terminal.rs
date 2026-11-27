@@ -60,7 +60,11 @@ async fn markers_after_sweep(vanish: Vanish) -> Vec<String> {
         coordinator.head_hint_car_authority(),
     );
     pusher
-        .persist_replicator(peer.as_str(), std::slice::from_ref(&collection_id))
+        .persist_replicator_info(&p2p::ReplicatorInfo::from_raw(
+            peer.as_str().to_string(),
+            vec![collection_id.clone()],
+            Vec::new(),
+        ))
         .await
         .unwrap();
     let peerstore = storage::stores::Peerstore::new(db.store().clone());

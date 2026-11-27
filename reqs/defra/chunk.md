@@ -297,9 +297,37 @@ A second node that syncs one article by its docID from the first gets the articl
 # `defra.chunk.replicate.filtered`: A filtered replicator ships a matching parent's chunks
 
 - **Parents:** ["defra.chunk.replicate"]
-- **Scenarios:** ["chunk::replicate_filtered::a_filtered_replicator_ships_the_matching_parents_chunks", "chunk::replicate_filtered::a_filtered_replicator_replays_the_matching_parents_chunks"]
+- **Scenarios:** ["chunk::replicate_filtered::a_filtered_replicator_ships_the_matching_parents_chunks", "chunk::replicate_filtered::a_filtered_replicator_replays_the_matching_parents_chunks", "chunk::replicate_filtered::a_filtered_replicator_ships_the_new_chunks_of_an_edited_matching_parent", "chunk::replicate_filtered::a_matching_parent_delete_removes_its_chunks_on_the_filtered_peer", "chunk::replicate_filtered::an_unmatched_parent_edit_and_delete_send_nothing", "chunk::replicate_filtered::an_explicit_transaction_ships_the_chunks_of_a_matching_parent", "chunk::replicate_filtered::an_explicit_transaction_edit_and_delete_reach_the_filtered_peer"]
 
-A replicator for `Article` with the filter `{kind: {_eq: "public"}}` gives the second node the public article and exactly its chunks, and neither the private article nor its chunks. It holds whether the articles are written after the replicator is added or before, when adding it replays them.
+With `type Article { kind: String @immutable body: String @chunk(maxChars: 64) }` and a replicator for `Article` with the filter `{kind: {_eq: "public"}}`, the second node gets the public article and exactly its chunks, and neither the secret article nor its chunks. It holds whether the articles are written after the replicator is added or before, when adding it replays them, and for writes in an explicit transaction. After an edit the second node shows exactly the new text's chunks, and after a delete it shows no article and no chunks. Editing and deleting a secret article sends nothing: once a later public article arrives, the second node shows only it and its chunks. The CLI sets the filter with `--filter`. Go has no filtered replicators, so a Go node reports these scenarios as unsupported.
+
+# `defra.chunk.replicate.filtered.negative`: A negative filter decides a chunk by its parent
+
+- **Parents:** ["defra.chunk.replicate.filtered"]
+- **Scenarios:** ["chunk::replicate_filtered::a_negative_filter_ships_only_the_chunks_of_the_parents_it_matches", "chunk::replicate_filtered::a_negative_filter_replays_only_the_chunks_of_the_parents_it_matches", "chunk::replicate_filtered::a_negative_filter_retries_only_the_chunks_of_the_parents_it_matches"]
+
+A chunk has none of its parent's fields, so with the filter `{kind: {_ne: "secret"}}` every chunk would pass on its own document. The second node still gets only the public article's chunks and none of the secret article's: when the articles are written after the replicator is added, when adding it replays them, and when the second node was offline and the first retries the pushes once it is back.
+
+# `defra.chunk.replicate.filtered.chunk_filter`: A replicator filter on a chunk collection is refused
+
+- **Parents:** ["defra.chunk.replicate.filtered"]
+- **Scenarios:** ["chunk::replicate_filtered::a_replicator_filter_on_a_chunk_collection_is_refused"]
+
+Adding a replicator for `Article__body_chunk` with a filter fails with `a replicator filter can't name chunk collection 'Article__body_chunk': filter its parent 'Article', whose filter decides its chunks`. The parent's filter is the only one that decides a chunk.
+
+# `defra.chunk.replicate.filtered.relay`: A filtered peer gets no relayed chunks
+
+- **Parents:** ["defra.chunk.replicate.filtered"]
+- **Scenarios:** ["chunk::replicate_filtered::relay::a_filtered_peer_gets_no_relayed_chunks", "chunk::replicate_filtered::relay::a_restarted_relay_still_forwards_no_chunks"]
+
+`db0` replicates `Article` to `db1` with no filter, and `db1` replicates it to `db2` with the filter `{kind: {_eq: "public"}}`. A secret article written on `db0` reaches `db1` with its chunks, and `db2` gets neither the article nor its chunks: `db1` forwards what it merged without the article's document at hand, so the filter can't decide it and nothing goes. A public article written on `db1` afterwards reaches `db2` with exactly its chunks. The same holds after `db1` restarts and loads its replicators from disk. It holds on every transport, pinc included.
+
+# `defra.chunk.replicate.filtered.remove`: Removing a filtered parent from a replicator removes its chunks
+
+- **Parents:** ["defra.chunk.replicate.filtered"]
+- **Scenarios:** ["chunk::replicate_filtered::remove::removing_the_parent_by_name_removes_its_chunks", "chunk::replicate_filtered::remove::removing_the_parent_by_id_removes_its_chunks"]
+
+`db0` replicates `Article` and `type Note { kind: String @immutable text: String }` to `db1` with the filter `{kind: {_eq: "public"}}`. Removing `Article` from that replicator, by name or by its collection ID, removes `Article__body_chunk` from it too. A public article written afterwards sends neither the article nor its chunks to `db1`, while a public note still arrives. After `db0` restarts, its stored replicator still has no `Article` and no `Article__body_chunk`, so a public article written then sends nothing either. It holds on every transport, pinc included.
 
 # `defra.chunk.backup`: Backups and chunks
 

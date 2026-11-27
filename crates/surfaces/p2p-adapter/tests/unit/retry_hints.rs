@@ -58,7 +58,11 @@ async fn assert_hint_prevents_resend(path: PushPath) {
         coordinator.head_hint_car_authority(),
     );
     pusher
-        .persist_replicator(peer.as_str(), std::slice::from_ref(&collection_id))
+        .persist_replicator_info(&p2p::ReplicatorInfo::from_raw(
+            peer.as_str().to_string(),
+            vec![collection_id.clone()],
+            Vec::new(),
+        ))
         .await
         .unwrap();
     let peerstore = storage::stores::Peerstore::new(db.store().clone());
@@ -81,7 +85,7 @@ async fn assert_hint_prevents_resend(path: PushPath) {
                     .push_existing_docs(
                         &peer,
                         &["Users".into()],
-                        &Default::default(),
+                        &p2p::ReplicatorInfo::from_raw(peer.to_string(), Vec::new(), Vec::new()),
                         None,
                         None,
                         incarnation,

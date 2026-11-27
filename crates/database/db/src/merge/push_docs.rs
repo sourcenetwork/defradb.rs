@@ -35,37 +35,6 @@ pub struct PushExistingDocsSeOptions<'a> {
     pub identity_pubkey: Option<&'a [u8]>,
 }
 
-async fn document_matches_filter<R: Reader + ?Sized>(
-    datastore: &R,
-    collection: &crate::collection::Collection,
-    doc_short_id: u64,
-    filter: &p2p::ReplicationFilter,
-    matcher: &dyn p2p::replicator::ReplicationFilterMatcher,
-) -> Result<bool, String> {
-    let mut doc_key = format!("/d/{}/", collection.collection_id()).into_bytes();
-    doc_key.extend_from_slice(&storage::keys::doc_id_index::encode_doc_short_id(
-        doc_short_id,
-    ));
-    let Some(doc_data) = datastore
-        .get(&doc_key)
-        .await
-        .map_err(|e| format!("failed to read document for replication filter: {}", e))?
-    else {
-        return Ok(false);
-    };
-
-    let doc =
-        crdt::stored::document_from_storage(&doc_data, collection.schema_arc(), collection.crdts())
-            .map_err(|e| format!("failed to decode document for replication filter: {}", e))?;
-    let document_json = serde_json::Value::Object(
-        doc.to_map()
-            .map_err(|e| format!("failed to encode document for replication filter: {}", e))?
-            .into_iter()
-            .collect(),
-    );
-    Ok(matcher.matches("", filter, &document_json))
-}
-
 /// Index an optional `(collection_name, doc_id)` allowlist.
 ///
 /// `None` means every document in the scanned collections should be considered.
@@ -115,7 +84,7 @@ pub async fn push_existing_docs<S: Store + 'static, T: P2PTransport>(
     document_acp: Option<&dyn DocumentACP>,
     peer_id: &PeerId,
     collections: &[String],
-    filters: &p2p::ReplicationFilters,
+    replicator: &p2p::ReplicatorInfo,
     se_options: PushExistingDocsSeOptions<'_>,
     matcher: &dyn p2p::replicator::ReplicationFilterMatcher,
     car_authority: &p2p::sync::HeadHintCarAuthority,
@@ -126,7 +95,7 @@ pub async fn push_existing_docs<S: Store + 'static, T: P2PTransport>(
         document_acp,
         peer_id,
         collections,
-        filters,
+        replicator,
         se_options,
         ReplayPushConfig::default(),
         matcher,
@@ -160,7 +129,6 @@ pub async fn push_existing_docs_by_id<S: Store + 'static, T: P2PTransport>(
     document_acp: Option<&dyn DocumentACP>,
     peer_id: &PeerId,
     docs: &[(String, String)],
-    filters: &p2p::ReplicationFilters,
     se_options: PushExistingDocsSeOptions<'_>,
     replay_config: ReplayPushConfig,
     matcher: &dyn p2p::replicator::ReplicationFilterMatcher,
@@ -174,7 +142,7 @@ pub async fn push_existing_docs_by_id<S: Store + 'static, T: P2PTransport>(
         document_acp,
         peer_id,
         &collections,
-        filters,
+        None,
         se_options,
         replay_config,
         matcher,
@@ -193,7 +161,7 @@ pub async fn push_existing_docs_with_config<S: Store + 'static, T: P2PTransport>
     document_acp: Option<&dyn DocumentACP>,
     peer_id: &PeerId,
     collections: &[String],
-    filters: &p2p::ReplicationFilters,
+    replicator: &p2p::ReplicatorInfo,
     se_options: PushExistingDocsSeOptions<'_>,
     replay_config: ReplayPushConfig,
     matcher: &dyn p2p::replicator::ReplicationFilterMatcher,
@@ -205,7 +173,7 @@ pub async fn push_existing_docs_with_config<S: Store + 'static, T: P2PTransport>
         document_acp,
         peer_id,
         collections,
-        filters,
+        Some(replicator),
         se_options,
         replay_config,
         matcher,
@@ -226,7 +194,7 @@ async fn push_existing_docs_with_config_and_allowlist<S: Store + 'static, T: P2P
     document_acp: Option<&dyn DocumentACP>,
     peer_id: &PeerId,
     collections: &[String],
-    filters: &p2p::ReplicationFilters,
+    replicator: Option<&p2p::ReplicatorInfo>,
     se_options: PushExistingDocsSeOptions<'_>,
     replay_config: ReplayPushConfig,
     matcher: &dyn p2p::replicator::ReplicationFilterMatcher,
@@ -244,7 +212,7 @@ async fn push_existing_docs_with_config_and_allowlist<S: Store + 'static, T: P2P
         document_acp,
         peer_id,
         collections,
-        filters,
+        replicator,
         se_options,
         replay_config,
         matcher,
@@ -266,7 +234,7 @@ async fn push_existing_docs_owned<S, T>(
     document_acp: Option<&dyn DocumentACP>,
     peer_id: &PeerId,
     collections: &[String],
-    filters: &p2p::ReplicationFilters,
+    replicator: Option<&p2p::ReplicatorInfo>,
     se_options: PushExistingDocsSeOptions<'_>,
     replay_config: ReplayPushConfig,
     matcher: &dyn p2p::replicator::ReplicationFilterMatcher,
@@ -333,8 +301,21 @@ where
     let replay_gate = Arc::new(ReplayPushGate::new(replay_config, network.clone()));
     let allowlist_by_collection = allowlist_index(allowlist);
 
+    let mut replica_filter = replicator.map(|replicator| {
+        follow::ReplicaFilter::new(&datastore, &systemstore, matcher, replicator)
+    });
+    // A chunk goes to a filtered peer only with its parent, so parents are queued first.
+    let mut queued_parents = RapidHashSet::new();
+    let mut deferred_chunks = Vec::new();
+    let mut ordered: Vec<&String> = collections.iter().collect();
+    ordered.sort_by_key(|name| {
+        db.get_collection(name)
+            .ok()
+            .flatten()
+            .is_some_and(|collection| collection.schema().chunk_of.is_some())
+    });
     let preparation: Result<(), String> = async {
-        'collections: for col_name in collections {
+        'collections: for col_name in ordered {
             if let Some(ref allowed) = allowlist_by_collection {
                 if !allowed.contains_key(col_name.as_str()) {
                     continue;
@@ -366,6 +347,12 @@ where
                 allowlist_by_collection.as_ref().and_then(|ids| ids.get(col_name.as_str())),
             )
             .await?;
+            let deciding = follow::Deciding::of(db, &collection).map_err(|e| e.to_string())?;
+            // Only a filtered parent's chunks wait for it.
+            let tracks_parents = !collection.schema().chunked_fields.is_empty()
+                && replicator.is_some_and(|replicator| {
+                    replicator.is_filtered_for_collection(collection.collection_id())
+                });
 
             'documents: for (doc_short_id, doc_id) in &doc_ids {
                 if selected && stop.is_stopped() {
@@ -375,19 +362,31 @@ where
                     continue;
                 }
 
-                if !selected
-                    && !follow::replica_takes(
-                        db,
-                        &datastore,
-                        &systemstore,
-                        &collection,
-                        *doc_short_id,
-                        filters,
-                        matcher,
-                    )
-                    .await?
-                {
-                    continue;
+                if let Some(filter) = replica_filter.as_mut() {
+                    match filter
+                        .decide(&collection, &deciding, *doc_short_id)
+                        .await
+                        .map_err(|e| e.to_string())?
+                    {
+                        follow::Decision::Take => {}
+                        follow::Decision::Refuse => continue,
+                        follow::Decision::TakeWithParent(parent) => {
+                            if !queued_parents.contains(&parent.doc_id) {
+                                // The parent's push did not build. The chunk's retry sends both.
+                                tracing::info!(
+                                    peer = %peer_id,
+                                    chunk = %doc_id,
+                                    parent = %parent.doc_id,
+                                    "filtered replicator: chunk left to its retry, its parent was not queued"
+                                );
+                                deferred_chunks.push(ReplayDocumentFailure {
+                                    doc_id: doc_id.clone(),
+                                    collection_id: collection.collection_id().to_string(),
+                                });
+                                continue;
+                            }
+                        }
+                    }
                 }
 
                 let creator =
@@ -483,6 +482,10 @@ where
                         continue 'documents;
                     }
                     requests.push((grant, request));
+                }
+
+                if tracks_parents && !requests.is_empty() {
+                    queued_parents.insert(doc_id.clone());
                 }
 
                 if !requests.is_empty() {
@@ -596,8 +599,19 @@ where
     }
     .await;
 
+    if let Some(filter) = replica_filter
+        .as_ref()
+        .filter(|filter| filter.without_parent > 0)
+    {
+        tracing::info!(
+            peer = %peer_id,
+            chunks = filter.without_parent,
+            "filtered replicator: chunks whose parent is not on this node were not replayed"
+        );
+    }
+
     tracing::debug!(task_count = push_handles.len(), "awaiting push tasks");
-    let mut replay_failures = Vec::new();
+    let mut replay_failures = deferred_chunks;
     let mut completion_error = None;
     for (
         collection_name,
@@ -778,6 +792,7 @@ where
 
             tracing::debug!(collection = %col_name, index_count = encrypted_indexes.len(), "generating SE artifacts");
 
+            let deciding = follow::Deciding::of(db, &collection).map_err(|e| format!("SE: {e}"))?;
             let se_doc_ids = selection::document_ids(
                 &collection,
                 &datastore,
@@ -795,19 +810,12 @@ where
                     continue;
                 }
 
-                if let Some(filter) = filters
-                    .get(collection.collection_id())
-                    .filter(|_| !selected)
-                {
-                    if !document_matches_filter(
-                        &datastore,
-                        &collection,
-                        *doc_short_id,
-                        filter,
-                        matcher,
-                    )
-                    .await?
-                    {
+                if let Some(filter) = replica_filter.as_mut() {
+                    let decision = filter
+                        .decide(&collection, &deciding, *doc_short_id)
+                        .await
+                        .map_err(|e| format!("SE: {e}"))?;
+                    if decision != follow::Decision::Take {
                         continue;
                     }
                 }
@@ -895,12 +903,37 @@ pub async fn retry_doc<S: Store + 'static, T: P2PTransport>(
     doc_id: &str,
     collection_id: &str,
     marker_generation: u64,
-    filters: &p2p::ReplicationFilters,
+    replicator: &p2p::ReplicatorInfo,
     matcher: &dyn p2p::replicator::ReplicationFilterMatcher,
     car_authority: &p2p::sync::HeadHintCarAuthority,
 ) -> Result<(), String> {
     let network = db.network().map_err(|error| error.to_string())?;
     let local_peer_id = transport.local_peer_id().to_string();
+    // A collection removed from the replicator owes it nothing any more.
+    if !collection_id.is_empty()
+        && !replicator.collections.is_empty()
+        && !replicator.collections.iter().any(|id| id == collection_id)
+    {
+        tracing::info!(
+            peer = %peer_id,
+            doc_id,
+            collection_id,
+            "retry marker cleared: collection no longer replicated"
+        );
+        return db
+            .peerstore()
+            .complete_retry_scope(
+                peer_id.as_str(),
+                doc_id,
+                collection_id,
+                false,
+                marker_generation,
+                &[],
+            )
+            .await
+            .map(drop)
+            .map_err(|error| format!("failed to clear retry marker of {doc_id}: {error}"));
+    }
     let doc_short_id = {
         let txn = db
             .new_txn(true)
@@ -940,8 +973,8 @@ pub async fn retry_doc<S: Store + 'static, T: P2PTransport>(
         .find_collection_by_id(collection_id)
         .map_err(|e| format!("failed to get collection: {}", e))?
         .ok_or_else(|| format!("collection '{}' not found", collection_id))?;
-    if !filters.is_empty() {
-        let peerstore = db.peerstore();
+    let deciding = follow::Deciding::of(db, &collection).map_err(|e| e.to_string())?;
+    let decision = {
         let txn = db
             .new_txn(true)
             .await
@@ -952,18 +985,30 @@ pub async fn retry_doc<S: Store + 'static, T: P2PTransport>(
         let systemstore = txn
             .systemstore()
             .map_err(|e| format!("failed to get systemstore: {}", e))?;
-        if !follow::replica_takes(
-            db,
-            &datastore,
-            &systemstore,
-            &collection,
-            doc_short_id,
-            filters,
-            matcher,
-        )
-        .await?
-        {
-            peerstore
+        follow::ReplicaFilter::new(&datastore, &systemstore, matcher, replicator)
+            .decide(&collection, &deciding, doc_short_id)
+            .await
+            .map_err(|e| e.to_string())?
+    };
+    let heads = RetryHeads {
+        transport,
+        db,
+        network: &network,
+        peer_id,
+        car_authority,
+    };
+    match decision {
+        follow::Decision::Take => {}
+        follow::Decision::Refuse => {
+            if deciding.parent.is_some() {
+                tracing::info!(
+                    peer = %peer_id,
+                    chunk = doc_id,
+                    "filtered replicator: chunk retry cleared, its parent is not sent"
+                );
+            }
+            return db
+                .peerstore()
                 .complete_retry_scope(
                     peer_id.as_str(),
                     doc_id,
@@ -973,52 +1018,188 @@ pub async fn retry_doc<S: Store + 'static, T: P2PTransport>(
                     &[],
                 )
                 .await
-                .map_err(|error| format!("failed to clear filtered retry marker: {error}"))?;
-            return Ok(());
+                .map(drop)
+                .map_err(|error| format!("failed to clear filtered retry marker: {error}"));
+        }
+        follow::Decision::TakeWithParent(parent) => {
+            let parent_collection = deciding
+                .parent
+                .as_ref()
+                .ok_or_else(|| format!("chunk {doc_id} has a parent but no parent collection"))?;
+            let sent = send_parent_first(
+                &heads,
+                document_acp,
+                &local_peer_id,
+                parent_collection,
+                &parent,
+            )
+            .await
+            .map_err(|error| format!("{error} (parent {} of chunk {doc_id})", parent.doc_id))?;
+            if !sent {
+                // Its parent has no head to send, so the chunk would arrive alone.
+                tracing::warn!(
+                    peer = %peer_id,
+                    chunk = doc_id,
+                    parent = %parent.doc_id,
+                    "filtered replicator: chunk retry cleared, its parent has no readable head"
+                );
+                return db
+                    .peerstore()
+                    .complete_retry_scope(
+                        peer_id.as_str(),
+                        doc_id,
+                        collection_id,
+                        false,
+                        marker_generation,
+                        &[],
+                    )
+                    .await
+                    .map(drop)
+                    .map_err(|error| format!("failed to clear chunk retry marker: {error}"));
+            }
         }
     }
     let creator = resolve_push_creator(document_acp, &collection, doc_id, &local_peer_id).await;
+    let attempted_heads = heads
+        .send(doc_id, doc_short_id, collection_id, &creator)
+        .await?
+        .attempted;
+    crate::merge::push_docs_common::complete_document_retry_if_current(
+        db,
+        peer_id.as_str(),
+        doc_id,
+        collection_id,
+        doc_short_id,
+        &attempted_heads,
+        marker_generation,
+    )
+    .await
+}
 
-    let headstore = storage::stores::Headstore::new(db.store().clone());
-    let head_txn = headstore
-        .new_txn(true)
+/// Sends the parent's heads unless the peer already acknowledged them.
+/// Returns whether the parent is on the peer.
+async fn send_parent_first<S, T>(
+    heads: &RetryHeads<'_, S, T>,
+    document_acp: Option<&dyn DocumentACP>,
+    local_peer_id: &str,
+    parent_collection: &crate::collection::Collection,
+    parent: &follow::ParentRef,
+) -> Result<bool, String>
+where
+    S: Store + 'static,
+    T: P2PTransport,
+{
+    let (db, peer_id) = (heads.db, heads.peer_id);
+    let parent_ids = std::slice::from_ref(&parent.doc_id);
+    let delivered = crate::merge::replication_ack::document_heads_acknowledged(
+        db,
+        peer_id.as_str(),
+        parent_collection.name(),
+        parent_ids,
+    )
+    .await?;
+    if delivered.first() == Some(&true) {
+        return Ok(true);
+    }
+    let creator = resolve_push_creator(
+        document_acp,
+        parent_collection,
+        &parent.doc_id,
+        local_peer_id,
+    )
+    .await;
+    // The context goes last, so a transport failure keeps its prefix.
+    let sent = heads
+        .send(
+            &parent.doc_id,
+            parent.doc_short_id,
+            parent_collection.collection_id(),
+            &creator,
+        )
+        .await?;
+    if sent.sent == 0 {
+        return Ok(false);
+    }
+    let sent: Vec<String> = sent.attempted.iter().map(ToString::to_string).collect();
+    db.peerstore()
+        .record_acknowledged_heads(
+            peer_id.as_str(),
+            &parent.doc_id,
+            parent_collection.collection_id(),
+            false,
+            &sent,
+        )
         .await
-        .map_err(|e| format!("headstore txn: {}", e))?;
+        .map_err(|error| format!("failed to record parent {}: {error}", parent.doc_id))?;
+    Ok(true)
+}
 
-    let blockstore_view = storage::stores::Blockstore::new(db.store().clone(), true);
-    let block_txn = blockstore_view
-        .new_txn(true)
-        .await
-        .map_err(|e| format!("blockstore txn: {}", e))?;
-    let mut attempted_heads =
-        load_latest_composite_head_cids(&*head_txn, &*block_txn, doc_short_id).await;
-    attempted_heads.sort_unstable();
-    let mut successful_blocks = 0usize;
-    for head_cid in attempted_heads.iter().copied() {
-        let block_data = match block_txn.get(&head_cid.to_bytes()).await {
-            Ok(Some(data)) => data,
-            _ => continue,
-        };
+/// The heads one retry read, and how many of their blocks it sent.
+struct SentHeads {
+    attempted: Vec<cid::Cid>,
+    sent: usize,
+}
 
-        {
-            let block_cid = head_cid;
-            let _car_grant = car_authority
+struct RetryHeads<'a, S, T>
+where
+    S: Store + 'static,
+    T: P2PTransport,
+{
+    transport: &'a T,
+    db: &'a DB<S>,
+    network: &'a p2p::network::Network,
+    peer_id: &'a PeerId,
+    car_authority: &'a p2p::sync::HeadHintCarAuthority,
+}
+
+impl<S, T> RetryHeads<'_, S, T>
+where
+    S: Store + 'static,
+    T: P2PTransport,
+{
+    async fn send(
+        &self,
+        doc_id: &str,
+        doc_short_id: u64,
+        collection_id: &str,
+        creator: &str,
+    ) -> Result<SentHeads, String> {
+        let (transport, db, peer_id) = (self.transport, self.db, self.peer_id);
+        let headstore = storage::stores::Headstore::new(db.store().clone());
+        let head_txn = headstore
+            .new_txn(true)
+            .await
+            .map_err(|e| format!("headstore txn: {}", e))?;
+        let blockstore_view = storage::stores::Blockstore::new(db.store().clone(), true);
+        let block_txn = blockstore_view
+            .new_txn(true)
+            .await
+            .map_err(|e| format!("blockstore txn: {}", e))?;
+        let mut attempted_heads =
+            load_latest_composite_head_cids(&*head_txn, &*block_txn, doc_short_id).await;
+        attempted_heads.sort_unstable();
+        let mut successful_blocks = 0usize;
+        for head_cid in attempted_heads.iter().copied() {
+            let block_data = match block_txn.get(&head_cid.to_bytes()).await {
+                Ok(Some(data)) => data,
+                _ => continue,
+            };
+            let _car_grant = self
+                .car_authority
                 .register(peer_id.clone(), head_cid)
                 .ok_or_else(|| format!("selective CAR authority full for retry head {head_cid}"))?;
             let mut request = PushLogRequest::new(
                 doc_id.to_string(),
-                Bytes::from(block_cid.to_bytes()),
+                Bytes::from(head_cid.to_bytes()),
                 collection_id.to_string(),
-                creator.clone(),
+                creator.to_string(),
                 block_data,
             );
-
             if p2p::signing::sign_with_transport(transport, &mut request).is_err() {
                 return Err(format!(
                     "failed to sign replay block after {successful_blocks} successful block(s)"
                 ));
             }
-
             if super::push_docs_replay::remaining_retry_after(&db.peerstore(), peer_id)
                 .await?
                 .is_some()
@@ -1026,7 +1207,7 @@ pub async fn retry_doc<S: Store + 'static, T: P2PTransport>(
                 return Err(p2p::error::RATE_LIMITED_MESSAGE.to_string());
             }
             let sent =
-                super::push_docs_network::send_pushlog(&network, transport, peer_id, request);
+                super::push_docs_network::send_pushlog(self.network, transport, peer_id, request);
             match sent.await {
                 Ok(reply) if reply.err_message.is_some() => {
                     super::push_docs_replay::persist_retry_after(&db.peerstore(), peer_id, &reply)
@@ -1059,19 +1240,11 @@ pub async fn retry_doc<S: Store + 'static, T: P2PTransport>(
                 }
             }
         }
+        Ok(SentHeads {
+            attempted: attempted_heads,
+            sent: successful_blocks,
+        })
     }
-    drop(block_txn);
-    drop(head_txn);
-    crate::merge::push_docs_common::complete_document_retry_if_current(
-        db,
-        peer_id.as_str(),
-        doc_id,
-        collection_id,
-        doc_short_id,
-        &attempted_heads,
-        marker_generation,
-    )
-    .await
 }
 
 /// Rederive and announce every current collection head for a dirty collection

@@ -320,7 +320,7 @@ fn multi_head_doc_reads_acknowledged_after_ladder() {
             &doc_id,
             push_note_collection_id(),
             generation,
-            &p2p::ReplicationFilters::new(),
+            &p2p::ReplicatorInfo::from_raw(String::new(), Vec::new(), Vec::new()),
             &p2p::EqOnlyFilterMatcher,
             &p2p::sync::HeadHintCarAuthority::default(),
         )

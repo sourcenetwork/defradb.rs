@@ -120,9 +120,7 @@ impl ReplicatorRegistry {
                 None => true,
                 Some(info) => {
                     for collection_id in collections {
-                        info.collections.retain(|id| id != collection_id);
-                        info.filters
-                            .retain(|collection, _| collection != collection_id);
+                        info.remove_collection(collection_id);
                     }
                     info.collections.is_empty()
                 }
@@ -479,6 +477,51 @@ mod tests {
         let info = registry.get_replicator_info(&peer).unwrap();
         assert!(info.filters.is_empty());
         assert!(registry.is_replicator("posts", &peer));
+    }
+
+    // A peer that takes filtered articles and their chunks.
+    fn articles_with_chunks(peer: &str) -> ReplicatorInfo {
+        let filters = ReplicationFilters::from([(
+            "articles".to_string(),
+            ReplicationFilter::eq("kind", serde_json::json!("public")),
+        )]);
+        ReplicatorInfo::from_raw_with_filters(
+            peer.to_string(),
+            vec!["articles".to_string(), "chunks".to_string()],
+            vec![],
+            filters,
+        )
+        .with_chunk_sources([("chunks".to_string(), "articles".to_string())])
+    }
+
+    #[test]
+    fn removing_a_filtered_parent_removes_its_chunks_too() {
+        let registry = ReplicatorRegistry::new();
+        let peer = random_peer_id();
+        let mut info = articles_with_chunks(&peer);
+        info.collections.push("users".to_string());
+        registry.set_replicator_info(info);
+
+        registry.remove_replicator("articles", &peer);
+
+        assert!(!registry.is_replicator("chunks", &peer));
+        let info = registry.get_replicator_info(&peer).unwrap();
+        assert_eq!(info.collections, vec!["users".to_string()]);
+        assert!(info.filters.is_empty());
+        assert!(info.chunk_sources.is_empty());
+    }
+
+    #[test]
+    fn removing_a_chunk_collection_drops_its_source() {
+        let registry = ReplicatorRegistry::new();
+        let peer = random_peer_id();
+        registry.set_replicator_info(articles_with_chunks(&peer));
+
+        registry.remove_replicator("chunks", &peer);
+
+        let info = registry.get_replicator_info(&peer).unwrap();
+        assert!(info.chunk_sources.is_empty());
+        assert!(registry.is_filtered_replicator("articles", &peer));
     }
 
     #[test]

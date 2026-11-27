@@ -176,7 +176,7 @@ impl<S: Store + 'static, B: Blockstore + 'static, T: P2PTransport + 'static>
     ) -> query::error::Result<FollowedParent> {
         Ok(FollowedParent {
             collection_id: self.get_collection_id(collection_name)?,
-            document,
+            document: document.map(Arc::new),
         })
     }
 

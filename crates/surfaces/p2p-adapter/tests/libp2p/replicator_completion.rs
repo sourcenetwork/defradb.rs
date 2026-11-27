@@ -44,7 +44,7 @@ impl TransportDocPusher for ReplayPusher {
         &self,
         _: &PeerId,
         collections: &[String],
-        _: &p2p::ReplicationFilters,
+        _: &p2p::ReplicatorInfo,
         _: Option<&[u8]>,
         _: Option<&[u8]>,
         _: u64,

@@ -5,6 +5,7 @@ use p2p::topics::DefraTopic;
 pub(crate) async fn restore_libp2p_replicators<S>(
     handle: &p2p::P2PHostHandle,
     peerstore: &storage::stores::Peerstore<S>,
+    pusher: &std::sync::Arc<dyn defra_p2p_adapter::TransportDocPusher>,
 ) where
     S: storage::corekv::Store + 'static,
 {
@@ -19,7 +20,8 @@ pub(crate) async fn restore_libp2p_replicators<S>(
                     continue;
                 }
                 match p2p::ReplicatorInfo::from_bytes(&data) {
-                    Ok(info) => {
+                    Ok(mut info) => {
+                        defra_p2p_adapter::set_chunk_sources(Some(pusher), &mut info);
                         if let Some(peer_id) = info.peer_id() {
                             if let Err(error) =
                                 handle.create_replicator_info(peer_id, info.clone()).await

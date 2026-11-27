@@ -69,14 +69,24 @@ fn gossip_roots(
     .collect()
 }
 
-// The parent's fields as a filtered replicator matches them.
+// The parent's fields as a filtered replicator matches them, one copy for all its chunks.
 fn followed(collection_id: &str, document: &Document) -> FollowedParent {
     FollowedParent {
         collection_id: collection_id.to_string(),
-        document: document
-            .to_map()
-            .ok()
-            .map(|map| serde_json::Value::Object(map.into_iter().collect())),
+        document: document_json_of(document).map(Arc::new),
+    }
+}
+
+// A document that does not encode gets no JSON, so filtered peers get nothing
+// rather than matching `{}`.
+fn document_json_of(document: &Document) -> Option<serde_json::Value> {
+    match document.to_map() {
+        Ok(map) => Some(serde_json::Value::Object(map.into_iter().collect())),
+        Err(error) => {
+            let doc_id = document.id().map(ToString::to_string).unwrap_or_default();
+            tracing::warn!(doc_id, %error, "document does not encode; filtered peers get nothing");
+            None
+        }
     }
 }
 
@@ -280,8 +290,7 @@ impl<S: Store + 'static, B: Blockstore + 'static, T: P2PTransport> SeArtifactRep
         if artifacts.is_empty() {
             return;
         }
-        let document_json =
-            serde_json::Value::Object(document.to_map().unwrap_or_default().into_iter().collect());
+        let document_json = document_json_of(&document);
         // The merge path calls this while holding the document's merge guard,
         // and the retry sweep while walking a peer's markers. The fan-out is
         // per-replicator network I/O, so it runs detached, as the live
@@ -291,10 +300,10 @@ impl<S: Store + 'static, B: Blockstore + 'static, T: P2PTransport> SeArtifactRep
         let collection_id = collection_id.to_string();
         self.sync
             .spawn_or_run_non_authoritative_broadcast("se_artifact_repush", async move {
-                sync.push_se_artifacts_to_replicators_for_document(
+                sync.push_se_artifacts_with_found_document(
                     &collection_id,
                     artifacts,
-                    &document_json,
+                    document_json.as_ref(),
                 )
                 .await;
             })
@@ -483,14 +492,7 @@ impl<S: Store + 'static, B: Blockstore + 'static, T: P2PTransport> BroadcastMuta
             &result.document,
             &se_fields,
         );
-        let document_json = serde_json::Value::Object(
-            result
-                .document
-                .to_map()
-                .unwrap_or_default()
-                .into_iter()
-                .collect(),
-        );
+        let document_json = document_json_of(&result.document);
         let sync = self.sync.clone();
         let bus = self.db.event_bus().cloned();
         let collection_name_owned = collection_name.to_string();
@@ -504,7 +506,7 @@ impl<S: Store + 'static, B: Blockstore + 'static, T: P2PTransport> BroadcastMuta
                 branchable_data.as_ref(),
                 &collection_id,
                 creator_did.as_deref(),
-                DecidedBy::Own(Some(document_json.clone())),
+                DecidedBy::Own(document_json.clone()),
                 derived_heads,
             )
             .await;
@@ -519,10 +521,10 @@ impl<S: Store + 'static, B: Blockstore + 'static, T: P2PTransport> BroadcastMuta
             roots,
             async move {
                 let creator_ref = creator_did.as_deref();
-                sync.push_se_artifacts_to_replicators_for_document(
+                sync.push_se_artifacts_with_found_document(
                     &collection_id,
                     se_artifacts,
-                    &document_json,
+                    document_json.as_ref(),
                 )
                 .await;
                 log_broadcast_failure(
@@ -825,14 +827,7 @@ impl<S: Store + 'static, B: Blockstore + 'static, T: P2PTransport> DocMutator
             &result.document,
             &[],
         );
-        let document_json = serde_json::Value::Object(
-            result
-                .document
-                .to_map()
-                .unwrap_or_default()
-                .into_iter()
-                .collect(),
-        );
+        let document_json = document_json_of(&result.document);
 
         // Capture everything for the spawned task by value.
         let sync = self.sync.clone();
@@ -849,7 +844,7 @@ impl<S: Store + 'static, B: Blockstore + 'static, T: P2PTransport> DocMutator
                 branchable_data.as_ref(),
                 &collection_id,
                 creator_did.as_deref(),
-                DecidedBy::Own(Some(document_json.clone())),
+                DecidedBy::Own(document_json.clone()),
                 derived_heads,
             )
             .await;
@@ -866,10 +861,10 @@ impl<S: Store + 'static, B: Blockstore + 'static, T: P2PTransport> DocMutator
             roots,
             async move {
                 let creator_ref = creator_did.as_deref();
-                sync.push_se_artifacts_to_replicators_for_document(
+                sync.push_se_artifacts_with_found_document(
                     &collection_id,
                     se_artifacts,
-                    &document_json,
+                    document_json.as_ref(),
                 )
                 .await;
 
@@ -959,7 +954,7 @@ impl<S: Store + 'static, B: Blockstore + 'static, T: P2PTransport> DocMutator
             BlockResult,
             Option<BlockResult>,
             Vec<SEArtifact>,
-            serde_json::Value,
+            Option<serde_json::Value>,
         )> = Vec::with_capacity(results.len());
 
         for result in results {
@@ -1022,14 +1017,7 @@ impl<S: Store + 'static, B: Blockstore + 'static, T: P2PTransport> DocMutator
                 &result.document,
                 &[],
             );
-            let document_json = serde_json::Value::Object(
-                result
-                    .document
-                    .to_map()
-                    .unwrap_or_default()
-                    .into_iter()
-                    .collect(),
-            );
+            let document_json = document_json_of(&result.document);
 
             broadcast_results.push(CreateResult::with_commit_and_broadcast(
                 result.doc_id,
@@ -1066,7 +1054,7 @@ impl<S: Store + 'static, B: Blockstore + 'static, T: P2PTransport> DocMutator
                     block_result,
                     &collection_id,
                     creator_ref,
-                    DecidedBy::Own(Some(document_json.clone())),
+                    DecidedBy::Own(document_json.clone()),
                 ));
                 if let Some(col_block_result) = branchable_data {
                     owners.push(Some(*result_index));
@@ -1125,10 +1113,10 @@ impl<S: Store + 'static, B: Blockstore + 'static, T: P2PTransport> DocMutator
                             let (sync, bus, collection_id, collection_name_owned) =
                                 (&sync, &bus, &collection_id, &collection_name_owned);
                             async move {
-                                sync.push_se_artifacts_to_replicators_for_document(
+                                sync.push_se_artifacts_with_found_document(
                                     collection_id,
                                     se_artifacts.clone(),
-                                    document_json,
+                                    document_json.as_ref(),
                                 )
                                 .await;
 
@@ -1266,9 +1254,7 @@ impl<S: Store + 'static, B: Blockstore + 'static, T: P2PTransport> DocMutator
         )
         .await
         {
-            Ok(Some(document)) => Some(serde_json::Value::Object(
-                document.to_map().unwrap_or_default().into_iter().collect(),
-            )),
+            Ok(Some(document)) => document_json_of(&document),
             _ => None,
         };
 
@@ -1279,7 +1265,7 @@ impl<S: Store + 'static, B: Blockstore + 'static, T: P2PTransport> DocMutator
             .await?;
         let derived_heads = Self::derived_heads(context, &result.derived, || FollowedParent {
             collection_id: collection_id.clone(),
-            document: pre_delete_document_json.clone(),
+            document: pre_delete_document_json.clone().map(Arc::new),
         });
 
         // No-op delete (missing doc): the inner mutator wrote nothing, so

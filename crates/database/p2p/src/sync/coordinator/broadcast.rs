@@ -9,11 +9,13 @@ use blockstore::Blockstore;
 use bytes::Bytes;
 use cid::Cid;
 use serde_json::Value as JsonValue;
+use std::sync::Arc;
 
 use super::push_worker::{report_observed_head, report_push_failure};
 use super::SyncCoordinator;
 use crate::error::Result;
 use crate::message::{PushSEArtifactsRequest, SEArtifact};
+use crate::replicator::Admission;
 use crate::sync::broadcaster::Broadcaster;
 use crate::sync::push_backlog::{EnqueueOutcome, PushJobSpec};
 use crate::sync::BroadcastResult;
@@ -25,7 +27,7 @@ struct PendingPush {
     doc_id: String,
     collection_id: String,
     creator: String,
-    document: Option<JsonValue>,
+    document: Option<Arc<JsonValue>>,
     // The collection whose filter decides this head. For a chunk, its parent's.
     decided_in: String,
 }
@@ -235,7 +237,7 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
             doc_id: doc_id.to_string(),
             collection_id: collection_id.to_string(),
             creator: creator.to_string(),
-            document: Some(document.clone()),
+            document: Some(Arc::new(document.clone())),
             decided_in: collection_id.to_string(),
         })
         .await
@@ -251,7 +253,7 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
         doc_id: &str,
         collection_id: &str,
         parent_collection_id: &str,
-        parent_document: Option<&JsonValue>,
+        parent_document: Option<&Arc<JsonValue>>,
         creator_override: Option<&str>,
     ) -> Result<()> {
         let creator = creator_override.unwrap_or(&self.access.local_peer_id);
@@ -348,16 +350,33 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
                 missing_documents += 1;
                 continue;
             }
-            if rep.is_filtered_for_collection(&push.decided_in) {
-                let Some(document) = push.document.as_ref() else {
+            let admission = rep.admission(
+                self.runtime.filter_matcher.as_ref(),
+                &push.collection_id,
+                &push.decided_in,
+                push.document.as_deref(),
+            );
+            if admission != Admission::Admit
+                && (push.decided_in != push.collection_id
+                    || rep.is_filtered_chunk(&push.collection_id))
+            {
+                tracing::debug!(
+                    target: "p2p::sync::delivery_admission",
+                    peer_id = %peer_id,
+                    chunks = %push.collection_id,
+                    parent = %push.decided_in,
+                    doc_id = %push.doc_id,
+                    outcome = ?admission,
+                    "Followed head not pushed to a filtered replicator"
+                );
+            }
+            match admission {
+                Admission::Admit => {}
+                Admission::NoDocument => {
                     missing_documents += 1;
                     continue;
-                };
-                if !rep.matches_filter(
-                    self.runtime.filter_matcher.as_ref(),
-                    &push.decided_in,
-                    document,
-                ) {
+                }
+                Admission::FilterMiss => {
                     filter_misses += 1;
                     continue;
                 }
@@ -448,6 +467,30 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
                     )
                     .await;
                 }
+            }
+        }
+    }
+
+    /// SE artifacts for a document that may not have encoded: without it only
+    /// unfiltered peers get them.
+    pub async fn push_se_artifacts_with_found_document(
+        &self,
+        collection_id: &str,
+        artifacts: Vec<SEArtifact>,
+        document: Option<&JsonValue>,
+    ) {
+        match document {
+            Some(document) => {
+                self.push_se_artifacts_to_replicators_for_document(
+                    collection_id,
+                    artifacts,
+                    document,
+                )
+                .await
+            }
+            None => {
+                self.push_se_artifacts_to_replicators(collection_id, artifacts)
+                    .await
             }
         }
     }

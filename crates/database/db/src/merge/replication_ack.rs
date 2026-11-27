@@ -132,7 +132,8 @@ async fn acknowledged_heads<S: Store + 'static>(
         )
         .await
         .map_err(|error| error.to_string())?;
-        acknowledged.push(acked == Some(current));
+        // A document always has a head. None readable means none was delivered.
+        acknowledged.push(!current.is_empty() && acked == Some(current));
     }
     Ok(acknowledged)
 }

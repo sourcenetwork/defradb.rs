@@ -150,13 +150,13 @@ impl TransportDocPusher for PooledDocPusher {
         &self,
         peer_id: &PeerId,
         collections: &[String],
-        filters: &p2p::ReplicationFilters,
+        replicator: &p2p::ReplicatorInfo,
         se_key: Option<&[u8]>,
         se_identity_pubkey: Option<&[u8]>,
         install_incarnation: u64,
     ) -> P2PResult<()> {
-        let (peer_id, collections, filters) =
-            (peer_id.clone(), collections.to_vec(), filters.clone());
+        let (peer_id, collections, replicator) =
+            (peer_id.clone(), collections.to_vec(), replicator.clone());
         let (se_key, se_identity_pubkey) = (
             se_key.map(<[u8]>::to_vec),
             se_identity_pubkey.map(<[u8]>::to_vec),
@@ -166,7 +166,7 @@ impl TransportDocPusher for PooledDocPusher {
                 .push_existing_docs(
                     &peer_id,
                     &collections,
-                    &filters,
+                    &replicator,
                     se_key.as_deref(),
                     se_identity_pubkey.as_deref(),
                     install_incarnation,
@@ -342,7 +342,7 @@ mod tests {
             &self,
             _: &PeerId,
             _: &[String],
-            _: &p2p::ReplicationFilters,
+            _: &p2p::ReplicatorInfo,
             _: Option<&[u8]>,
             _: Option<&[u8]>,
             _: u64,

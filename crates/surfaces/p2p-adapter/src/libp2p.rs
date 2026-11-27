@@ -228,13 +228,7 @@ impl<B: Blockstore + 'static> P2PAdapter<B> {
 
     /// Resolve collection names to CIDs for removal, mirroring `add_replicator`.
     fn resolve_collections_for_remove(&self, collections: Vec<String>) -> Vec<String> {
-        let collections = crate::with_chunk_collections(self.doc_pusher.as_ref(), collections);
-        match self.doc_pusher {
-            Some(ref pusher) => crate::resolve_remove_collections(collections, |name| {
-                pusher.get_collection_id(name)
-            }),
-            None => collections,
-        }
+        crate::collections_to_remove(self.doc_pusher.as_ref(), collections)
     }
 }
 
@@ -513,6 +507,7 @@ impl<B: Blockstore + 'static> P2POperations for P2PAdapter<B> {
             vec![addr_str.to_string()],
             replication_filters.clone(),
         );
+        crate::set_chunk_sources(self.doc_pusher.as_ref(), &mut replicator_info);
         replicator_info.last_status_change = chrono::Utc::now();
         let mut replay = if let Some(pusher) = &self.doc_pusher {
             let request = crate::ReplicatorInstallRequest::new(
@@ -548,7 +543,7 @@ impl<B: Blockstore + 'static> P2POperations for P2PAdapter<B> {
                 .map_err(|error| P2PError::transport(error.to_string()))?;
         } else {
             self.handle
-                .create_replicator_info(peer_id, replicator_info)
+                .create_replicator_info(peer_id, replicator_info.clone())
                 .await
                 .map_err(|error| P2PError::transport(error.to_string()))?;
         }
@@ -565,7 +560,7 @@ impl<B: Blockstore + 'static> P2POperations for P2PAdapter<B> {
                 let push_options = self.replicator_push_options.load();
                 let push_se_key = push_options.se_encryption_key;
                 let push_identity = push_options.se_identity_pubkey;
-                let push_filters = replication_filters.clone();
+                let push_replicator = replicator_info.clone();
 
                 tracing::info!(
                     peer_id = %peer_id,
@@ -578,7 +573,7 @@ impl<B: Blockstore + 'static> P2POperations for P2PAdapter<B> {
                         .push_existing_docs(
                             &p2p::transport::PeerId::from(peer_id),
                             &collections,
-                            &push_filters,
+                            &push_replicator,
                             push_se_key.as_ref().map(|key| key.as_slice()),
                             push_identity.as_deref(),
                             install_incarnation,

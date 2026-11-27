@@ -1,7 +1,7 @@
 use super::{Axis::*, Property, Tier::*};
 
 /// The crates this family's models cover.
-pub(super) const CRATES: &str = "chunk-split, schema, db, query";
+pub(super) const CRATES: &str = "chunk-split, schema, db, query, p2p, p2p-adapter";
 
 pub(super) const PROPERTIES: &[Property] = &[
     Property {
@@ -17,7 +17,7 @@ pub(super) const PROPERTIES: &[Property] = &[
         family: "Text chunking",
         name: "INV_ChunksFollowParent / INV_NoForeignChunks / INV_DeletesFollowParent / INV_SyncSendsCurrentChunks / INV_DroppedChunksGo",
         axis: Tla,
-        anchor: "crates/database/p2p/src/sync/coordinator/broadcast.rs SyncCoordinator::push_jobs, SyncCoordinator::push_followed_document_to_replicators_with_creator; crates/database/db/src/merge/push_docs/follow.rs replica_takes; crates/database/db/src/chunk/sync/write.rs ChunkWrites::publish, ChunkWrites::delete; crates/database/db/src/chunk/sync/mod.rs ChunkWrites::sync_chunks; crates/database/db/src/chunk/rebuild.rs reconcile, remove_all; crates/database/db/src/merge/broadcast_mutator/mod.rs BroadcastMutator::derived_heads; crates/database/p2p/src/sync/doc_sync_ids.rs with_followers; crates/database/p2p/src/sync/coordinator/event_handler/doc_sync.rs SyncCoordinator::handle_doc_sync_request; crates/database/p2p/src/sync/coordinator/pubsub_services.rs DocSyncHandler::handle; crates/database/db/src/merge/head_provider.rs DbHeadProvider::following_doc_ids; crates/database/db/src/chunk/follow.rs current_chunk_ids; crates/database/db/src/chunk/sync/lookup.rs ChunkCollection::chunks_with",
+        anchor: "crates/database/p2p/src/sync/coordinator/broadcast.rs SyncCoordinator::push_jobs, SyncCoordinator::push_followed_document_to_replicators_with_creator; crates/database/db/src/merge/push_docs/follow.rs ReplicaFilter::decide; crates/database/db/src/chunk/sync/write.rs ChunkWrites::publish, ChunkWrites::delete; crates/database/db/src/chunk/sync/mod.rs ChunkWrites::sync_chunks; crates/database/db/src/chunk/rebuild.rs reconcile, remove_all; crates/database/db/src/merge/broadcast_mutator/mod.rs BroadcastMutator::derived_heads; crates/database/p2p/src/sync/doc_sync_ids.rs with_followers; crates/database/p2p/src/sync/coordinator/event_handler/doc_sync.rs SyncCoordinator::handle_doc_sync_request; crates/database/p2p/src/sync/coordinator/pubsub_services.rs DocSyncHandler::handle; crates/database/db/src/merge/head_provider.rs DbHeadProvider::following_doc_ids; crates/database/db/src/chunk/follow.rs current_chunk_ids; crates/database/db/src/chunk/sync/lookup.rs ChunkCollection::chunks_with",
         model_ref: "MC_ChunkFollow_Green.cfg / MC_ChunkFollow_Green_Pushed.cfg / MC_ChunkFollow_Green_Embedded.cfg / MC_ChunkFollow_Red_EmbeddedNotSent.cfg / MC_ChunkFollow_Red_DropWaiting.cfg / MC_ChunkFollow_Red_OwnFilter.cfg / MC_ChunkFollow_Red_AllChunks.cfg / MC_ChunkFollow_Red_SyncParentOnly.cfg / MC_ChunkFollow_Red_SyncHistory.cfg / MC_ChunkFollow_Red_DeletesStay.cfg / MC_ChunkFollow_Red_NoReconcile.cfg / MC_ChunkFollow_Red_NoCascade.cfg",
         tiers: &[Boundary],
         bound_by: "tools/integration-test/tests/testo/chunk/replicate_filtered.rs a_filtered_replicator_ships_the_matching_parents_chunks; tools/integration-test/tests/testo/chunk/replicate_doc_sync.rs a_document_sync_brings_the_parents_chunks, an_article_with_more_chunks_than_the_request_limit_syncs; tools/integration-test/tests/testo/chunk/embed_replicate.rs a_peers_merge_deletes_the_chunks_its_text_no_longer_uses",
@@ -30,6 +30,24 @@ pub(super) const PROPERTIES: &[Property] = &[
         model_ref: "MC_ChunkCleanup_Green.cfg / MC_ChunkCleanup_Red_NoWriteClean.cfg / MC_ChunkCleanup_Red_NoMergeClean.cfg / MC_ChunkCleanup_Red_KeepStale.cfg / MC_ChunkCleanup_Red_NoDeleteGuard.cfg / MC_ChunkCleanup_Red_SameGen.cfg / MC_ChunkCleanup_Red_LocalGen.cfg / MC_ChunkCleanup_Red_NoReanchor.cfg / MC_ChunkCleanup_Red_DropWaiting.cfg",
         tiers: &[Boundary],
         bound_by: "tools/integration-test/tests/testo/chunk/write_cleanup.rs an_edit_deletes_the_chunks_it_no_longer_uses; tools/integration-test/tests/testo/chunk/write_revert.rs reverting_the_text_makes_its_chunks_again_under_a_new_source; tools/integration-test/tests/testo/chunk/replicate_cleanup.rs a_replicated_peer_follows_an_edit_and_its_revert, peers_that_edit_apart_and_revert_hold_the_same_chunks; tools/integration-test/tests/testo/chunk/replicate_same_ids.rs chunks_that_arrive_before_their_article_get_the_writers_ids, peers_that_edit_at_once_hold_the_same_chunk_ids",
+    },
+    Property {
+        family: "Text chunking",
+        name: "INV_NothingUnmatched / INV_ChunkOnlyWithItsArticle / LIVE_RetriesEnd / LIVE_ChunkFollowsItsArticle / LIVE_ReplayShipsChunks",
+        axis: Tla,
+        anchor: "crates/database/p2p/src/replicator.rs ReplicatorInfo::admission, is_filtered_for_collection, remove_collection; crates/database/p2p/src/sync/coordinator/broadcast.rs SyncCoordinator::push_jobs, push_followed_document_to_replicators_with_creator; crates/surfaces/p2p-adapter/src/lib.rs set_chunk_sources, collections_requiring_replay; crates/database/db/src/merge/broadcast_mutator/mod.rs BroadcastMutator::derived_heads; crates/database/db/src/merge/broadcast_mutator/batch.rs BroadcastBatchMutator::capture_derived; crates/database/db/src/write/doc.rs DbDocMutator; crates/database/db/src/merge/txn_broadcaster.rs broadcast; crates/database/db/src/merge/push_docs/follow.rs ReplicaFilter::decide; crates/database/db/src/merge/push_docs.rs push_existing_docs_owned, retry_doc, send_parent_first; crates/database/db/src/merge/replication_ack.rs acknowledged_heads",
+        model_ref: "MC_FilteredChunkPush_Green.cfg / MC_FilteredChunkPush_Green_Unreadable.cfg / MC_FilteredChunkPush_Green_Refilter.cfg / MC_FilteredChunkPush_Red_DropChunks.cfg / MC_FilteredChunkPush_Red_ChunkUnfiltered.cfg / MC_FilteredChunkPush_Red_MatchOwnDoc.cfg / MC_FilteredChunkPush_Red_ForwardWithoutSource.cfg / MC_FilteredChunkPush_Red_TxnNoSource.cfg / MC_FilteredChunkPush_Red_RetryWithoutArticle.cfg / MC_FilteredChunkPush_Red_RetryNeverEnds.cfg / MC_FilteredChunkPush_Red_RetryUnreadableArticle.cfg / MC_FilteredChunkPush_Red_ReplayChunkAlone.cfg / MC_FilteredChunkPush_Red_NoDeferral.cfg / MC_FilteredChunkPush_Red_RefilterSkipsChunks.cfg",
+        tiers: &[Boundary],
+        bound_by: "tools/integration-test/tests/testo/chunk/replicate_filtered.rs a_negative_filter_retries_only_the_chunks_of_the_parents_it_matches",
+    },
+    Property {
+        family: "Text chunking",
+        name: "INV_NothingUnmatched: a replicator record in memory, on disk or loaded after a restart never lets a document of an unmatched article or its chunks through",
+        axis: Tla,
+        anchor: "crates/surfaces/p2p-adapter/src/pinc.rs add_replicator, resolve_collections_for_remove; crates/surfaces/p2p-adapter/src/lib.rs set_chunk_sources, pair_chunk_sources, collections_to_remove; crates/surfaces/p2p-adapter/src/replicator_persist.rs narrow, narrowed; crates/surfaces/p2p-adapter/src/transport_doc_pusher.rs retry_doc; crates/surfaces/p2p-adapter/src/restore.rs restore_p2p_state; crates/database/p2p/src/replicator.rs ReplicatorInfo::admission, remove_collection",
+        model_ref: "MC_FilteredChunkPushRecord_Green.cfg / MC_FilteredChunkPushRecord_{Red_AddWithoutPairs,Red_RemoveKeepsChunks,Red_DropPairOnFailedLookup,Red_PersistTwoTxns,Red_PersistAddsCollections,Red_BadRecordUnfiltered}.cfg",
+        tiers: &[Boundary],
+        bound_by: "tools/integration-test/tests/testo/chunk/replicate_filtered/relay.rs a_restarted_relay_still_forwards_no_chunks; tools/integration-test/tests/testo/chunk/replicate_filtered/remove.rs removing_the_parent_by_name_removes_its_chunks, removing_the_parent_by_id_removes_its_chunks",
     },
     Property {
         family: "Text chunking",

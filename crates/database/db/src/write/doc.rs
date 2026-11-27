@@ -402,7 +402,7 @@ impl<S: Store + 'static> DocMutator for DbDocMutator<S> {
         let document_json = document_json_value(&doc);
         let parent = FollowedParent {
             collection_id: collection.collection_id().to_string(),
-            document: document_json.clone(),
+            document: document_json.clone().map(Arc::new),
         };
         self.register_update_callback(
             collection_name.to_string(),
@@ -571,7 +571,7 @@ impl<S: Store + 'static> DocMutator for DbDocMutator<S> {
         let document_json = document_json_value(&doc);
         let parent = FollowedParent {
             collection_id: collection.collection_id().to_string(),
-            document: document_json.clone(),
+            document: document_json.clone().map(Arc::new),
         };
         if let Some(doc_id) = doc.id().cloned() {
             self.register_update_callback(
@@ -752,7 +752,7 @@ impl<S: Store + 'static> DocMutator for DbDocMutator<S> {
             self.chunk_writes(&txn, context)
                 .following(FollowedParent {
                     collection_id: collection.collection_id().to_string(),
-                    document: pre_delete_document_json,
+                    document: pre_delete_document_json.map(Arc::new),
                 })
                 .delete_all(collection.schema(), &canonical_doc_id.to_string())
                 .await?;

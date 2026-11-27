@@ -53,7 +53,6 @@ async fn select<S>(
     transport: &ConnectedPeerTransport,
     peer: &PeerId,
     docs: &[(String, String)],
-    filters: &p2p::ReplicationFilters,
 ) -> Result<(), String>
 where
     S: Store + 'static,
@@ -64,7 +63,6 @@ where
         None,
         peer,
         docs,
-        filters,
         PushExistingDocsSeOptions::default(),
         Default::default(),
         &p2p::EqOnlyFilterMatcher,
@@ -104,7 +102,7 @@ fn selected_push_does_not_scan_unselected_documents() {
         let (sent, received) = regolith::sync::bounded(8);
         let transport =
             ConnectedPeerTransport::new("sender", peer.as_str()).with_replies(true, sent);
-        select(&db, &transport, &peer, &docs[..1], &Default::default())
+        select(&db, &transport, &peer, &docs[..1])
             .await
             .unwrap();
         assert!(received.try_recv().is_some());
@@ -128,18 +126,11 @@ fn exact_selection_ignores_subscription_filter_and_backoff() {
             .await
             .unwrap();
         let before = db.peerstore().get_retry_info(peer.as_str()).await.unwrap();
-        let mut filters = p2p::ReplicationFilters::new();
-        filters.insert(
-            note_collection_id(),
-            p2p::ReplicationFilter::eq("body", serde_json::json!("excluded")),
-        );
         let (sent, received) = regolith::sync::bounded(8);
         let transport = ConnectedPeerTransport::new("sender", peer.as_str())
             .with_replies(true, sent)
             .requiring_selected_authority(Arc::new(db.peerstore()));
-        select(&db, &transport, &peer, &docs, &filters)
-            .await
-            .unwrap();
+        select(&db, &transport, &peer, &docs).await.unwrap();
         assert!(received.try_recv().is_some());
         assert_eq!(
             before,
@@ -166,7 +157,7 @@ fn selected_receiver_hint_does_not_change_replication_schedule() {
         let transport = ConnectedPeerTransport::new("sender", peer.as_str())
             .with_replies(false, sent)
             .with_retry_after(45_000);
-        let error = select(&db, &transport, &peer, &docs[..1], &Default::default())
+        let error = select(&db, &transport, &peer, &docs[..1])
             .await
             .unwrap_err();
         assert!(error.contains(&docs[0].1), "{error}");
@@ -201,7 +192,6 @@ fn unavailable_selection_identifies_document_and_collection() {
                 &transport,
                 &peer,
                 &[(collection.into(), "missing-id".into())],
-                &Default::default(),
             )
             .await
             .unwrap_err();
@@ -228,9 +218,7 @@ fn authority_write_failure_prevents_any_head_hint() {
         let (sent, received) = regolith::sync::bounded(8);
         let transport =
             ConnectedPeerTransport::new("sender", peer.as_str()).with_replies(true, sent);
-        let error = select(&db, &transport, &peer, &docs, &Default::default())
-            .await
-            .unwrap_err();
+        let error = select(&db, &transport, &peer, &docs).await.unwrap_err();
         assert!(error.contains("authority unavailable"), "{error}");
         assert!(received.try_recv().is_none());
     })
@@ -271,7 +259,7 @@ fn acknowledgement_failure_still_joins_and_records_other_started_send() {
                     }
                 })
             }));
-        let result = select(&db, &transport, &peer, &docs, &Default::default()).await;
+        let result = select(&db, &transport, &peer, &docs).await;
         assert!(result.unwrap_err().contains("first acknowledgement failed"));
         assert_eq!(writes.load(Ordering::SeqCst), 2);
         let ids: Vec<_> = docs.iter().map(|(_, id)| id.clone()).collect();
