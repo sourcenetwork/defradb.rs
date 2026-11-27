@@ -47,6 +47,9 @@ testo index::range_filter::an_empty_range_limits_index_fetches
 # the loser with "transaction conflict. Please retry".
 testo txn::new_encrypted_index_concurrent::a_concurrent_encrypted_index_delete_and_adds_all_land
 testo txn::new_encrypted_index_concurrent::concurrent_encrypted_index_adds_all_land
+# A query's one-to-one join reads the related documents as a query read, which decides nothing, so Rust does not check it at
+# commit and both transactions commit; Go answers the second "transaction conflict. Please retry".
+testo mutation::add::field_kinds::one_to_one_to_one::with_txn::transactional_creation_and_linking_of_relational_documents_backward
 # A query's read of a unique index entry (an equality filter, or a one-to-one relation's inverse side) decides nothing, so Rust
 # does not check it at commit; Go does and answers "transaction conflict. Please retry" when another writer adds that entry.
 testo mutation::add::field_kinds::one_to_one_to_one::with_txn::transactional_creation_and_linking_of_relational_documents_forward
