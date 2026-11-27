@@ -347,6 +347,26 @@ The bound is `commit_timeout_ms`, in milliseconds, on the HTTP server, and it is
 
 The CLI's `client tx commit` sends a commit once and never retries it, so it reports the bound's answer, `commit outcome unknown after <bound> milliseconds`, rather than a later attempt's "not found".
 
+# `defra.txn.crash_recovery`: A node killed during a commit recovers whole transactions
+
+- **Parents:** ["defra.txn"]
+
+A node whose process is killed with SIGKILL during or right after a commit, then started again on the same data directory, recovers every transaction whole.
+
+# `defra.txn.crash_recovery.all_or_nothing`: A commit cut by a crash leaves all its writes or none
+
+- **Parents:** ["defra.txn.crash_recovery"]
+- **Scenarios:** ["txn::crash::a_commit_killed_before_its_log_write_leaves_nothing", "txn::crash::a_commit_killed_mid_log_write_leaves_nothing", "txn::crash::a_commit_killed_after_its_log_sync_keeps_everything"]
+
+An explicit transaction that creates two documents in a collection with an index, whose node's process is killed with SIGKILL during its commit, has after the restart either both documents, through the collection and through the index, or neither. If the commit has not become durable when the process is killed, it leaves neither, and the restarted node takes a new write and keeps it across a second kill. If the commit has become durable but its answer has not been sent when the process is killed, it leaves both. This covers process termination with the operating system's page cache retained; it does not claim power-loss durability beyond the configured durability mode.
+
+# `defra.txn.crash_recovery.committed`: A commit answered success survives a crash
+
+- **Parents:** ["defra.txn.crash_recovery"]
+- **Scenarios:** ["txn::crash::a_commit_answered_success_survives_a_kill"]
+
+An explicit transaction whose commit answered success has all its writes after its node is killed with SIGKILL straight after the answer and started again on the same directory. A Go node keeps them too.
+
 # `defra.txn.no_neighbour_conflict`: Updating one document does not conflict with its neighbour
 
 - **Parents:** ["defra.txn"]
