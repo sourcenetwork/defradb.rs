@@ -47,7 +47,7 @@ async fn deployment(listed: bool) -> (Deployment, String, Composite) {
     let (doc, genesis) = source.create(&owner, "Alice").await;
     chain
         .as_node(&owner.did)
-        .register_doc_object(&owner.did, POLICY, RESOURCE, &doc)
+        .register_doc_object(&owner.did, POLICY, RESOURCE, &doc, &[])
         .await
         .unwrap();
     chain.grant(&doc, "reader", &peer_actor);
