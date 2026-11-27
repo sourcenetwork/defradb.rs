@@ -254,7 +254,7 @@ where
     // shutdown; the network task here only follows it for the node's teardown.
     let governance_sweep = db::merge::governance::start_governance_sweep(
         replication.merge_handler_inner.clone(),
-        db::merge::governance::SWEEP_INTERVAL,
+        config.sync.governance_sweep_interval,
         coordinator.shutdown_handle(),
     );
     let governance_sweep_task = spawn_node_task(edge, async move {

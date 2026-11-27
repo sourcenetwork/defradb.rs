@@ -42,6 +42,18 @@ where
     let (Some(described), Some(provider)) = (schema.policy.as_ref(), db.document_acp()) else {
         return Ok(CreateGate::default());
     };
+    // A document under a policy another deployment owns is created on its
+    // owner's home, which registers it: here the create is refused before
+    // its policy is read or `create` is decided anywhere, so nothing is
+    // asked of the node's own deployment and nothing is written.
+    if provider.is_foreign_policy(&described.id) {
+        return Err(query::error::QueryError::from_acp(
+            acp::Error::ForeignPolicy {
+                policy: described.id.clone(),
+                operation: "creating a document".into(),
+            },
+        ));
+    }
     // Only a governed collection binds fields to policy relations, and only
     // its creates are gated.
     if schema.governance_root.is_none() {

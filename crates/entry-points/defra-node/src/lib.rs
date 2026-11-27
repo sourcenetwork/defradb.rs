@@ -62,6 +62,8 @@ mod embedded_vera;
 #[cfg(feature = "embedded-vera")]
 mod embedded_vera_config;
 mod error;
+#[cfg(all(feature = "vera", not(target_arch = "wasm32")))]
+mod foreign_policies;
 #[cfg(feature = "libp2p")]
 mod libp2p_recovery;
 #[cfg(feature = "libp2p")]
@@ -176,6 +178,8 @@ pub use start_peer_key::StartPeerKey;
 pub use telemetry::{ConflictMetricsSnapshot, RetryLayerSnapshot};
 #[cfg(feature = "otel")]
 pub use telemetry::{TelemetryConfig, TelemetryHandle};
+#[cfg(feature = "vera")]
+pub use vera::ForeignHome;
 #[cfg(feature = "vera")]
 pub use vera_config::{VeraActor, VeraConfig};
 pub use zeroize::Zeroizing;

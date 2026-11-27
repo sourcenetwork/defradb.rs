@@ -115,6 +115,16 @@ pub enum Error {
         window: crate::DelegationWindow,
     },
 
+    /// A write under a policy another deployment owns, made through this
+    /// node: its owner's home decides that policy, and the node submits
+    /// nothing to it. The registration of a guest's own document on the
+    /// owner's home is planned in gents-ai/gents#4249 (the step after the
+    /// live path); until then the change is made on the owner's home.
+    #[error(
+        "policy {policy} is owned by another deployment: {operation} is made on its owner's home"
+    )]
+    ForeignPolicy { policy: String, operation: String },
+
     /// An external provider could not be reached or did not answer in time.
     /// Nothing is known about what was asked; the same call may be made
     /// again.

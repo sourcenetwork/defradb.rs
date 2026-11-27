@@ -506,8 +506,15 @@ where
         self.provider.own_actor()
     }
 
+    /// The provider hears of it too: it tells of the changes to the
+    /// policies other deployments own, which this gate never makes.
     fn watch_object_changes(&self, listener: Arc<dyn crate::ObjectChangeListener>) {
+        self.provider.watch_object_changes(Arc::clone(&listener));
         let _ = self.watcher.set(listener);
+    }
+
+    fn is_foreign_policy(&self, policy_id: &str) -> bool {
+        self.provider.is_foreign_policy(policy_id)
     }
 
     fn owed_journal(&self) -> Option<Arc<dyn crate::outbox::OwedJournal>> {

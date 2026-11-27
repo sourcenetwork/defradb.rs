@@ -2,7 +2,9 @@
 //! deployments, over iroh on localhost: the receiving node registers a
 //! foreign creator's document, parks the changes its provider refuses, and
 //! applies each of them once when a grant lets it; a revocation on one node
-//! of a shared deployment stops the revoked writer on another.
+//! of a shared deployment stops the revoked writer on another; a node of
+//! another account decides the owner's policy against the owner's
+//! deployment.
 
 #[path = "embedded_vera_replication/actor.rs"]
 mod actor;
@@ -36,3 +38,9 @@ mod revocation;
 
 #[path = "embedded_vera_replication/addressed.rs"]
 mod addressed;
+
+#[path = "embedded_vera_replication/foreign.rs"]
+mod foreign;
+
+#[path = "embedded_vera_replication/foreign_reads.rs"]
+mod foreign_reads;

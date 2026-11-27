@@ -106,6 +106,7 @@ pub async fn prepare_relationship(
     let provider = outbox_provider.outbox_authority_provider().ok_or_else(|| {
         Error::ProviderUnavailable("document ACP does not provide an outbox".into())
     })?;
+    owned_here(&*provider, request.policy_id, "a relationship change")?;
     if !provider.submits_subject(&request.subject) {
         return Err(Error::UnsupportedSubject(request.subject.to_string()));
     }
@@ -129,6 +130,18 @@ pub async fn prepare_relationship(
         owner,
         checked,
     })
+}
+
+/// Refuses `operation` under a policy another deployment owns: nothing is
+/// owed to this node's provider for it, since its owner's home decides it.
+fn owned_here(provider: &dyn DocumentACP, policy_id: &str, operation: &str) -> Result<()> {
+    if provider.is_foreign_policy(policy_id) {
+        return Err(Error::ForeignPolicy {
+            policy: policy_id.to_owned(),
+            operation: operation.to_owned(),
+        });
+    }
+    Ok(())
 }
 
 /// Whether `actor` owns the object, and whether the provider could be asked:
@@ -376,6 +389,7 @@ impl TransactionOutbox {
     /// DID that is not the owed registration's creator, or an object with no
     /// owed registration.
     pub async fn stage_with_registration(&self, request: StageRelationship<'_>) -> Result<Staged> {
+        owned_here(&*self.provider, request.policy_id, "a relationship change")?;
         if !self.provider.submits_subject(&request.subject) {
             return Err(Error::UnsupportedSubject(request.subject.to_string()));
         }
@@ -427,6 +441,7 @@ impl TransactionOutbox {
     /// [`Error::UnsupportedSubject`] before anything is recorded: such a
     /// change could never be submitted.
     pub async fn stage(&self, request: StageRelationship<'_>) -> Result<Staged> {
+        owned_here(&*self.provider, request.policy_id, "a relationship change")?;
         if !self.provider.submits_subject(&request.subject) {
             return Err(Error::UnsupportedSubject(request.subject.to_string()));
         }
@@ -491,6 +506,7 @@ impl TransactionOutbox {
     /// would have done. A change already in flight is sent before the
     /// archive, and the provider refuses any change to an archived object.
     pub async fn stage_archive(&self, request: StageArchive<'_>) -> Result<Staged> {
+        owned_here(&*self.provider, request.policy_id, "an archive")?;
         let deleter = self.provider.canonical_actor(request.actor);
         let (policy_id, resource, object) = (request.policy_id, request.resource, request.object);
         let owner = match self.pending.get(policy_id, resource, object).await? {

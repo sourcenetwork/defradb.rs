@@ -34,6 +34,9 @@ pub struct IrohPeerConfig {
     pub replicator_push_options: Option<ReplicatorPushOptionsState>,
     /// The embedder's stream protocols, each with its handler.
     pub stream_protocols: Vec<StreamRegistration>,
+    /// How often the governance sweep judges again what nothing else
+    /// released.
+    pub governance_sweep_interval: std::time::Duration,
 }
 
 impl IrohPeerConfig {
@@ -55,6 +58,7 @@ impl IrohPeerConfig {
             load_persisted_collections: true,
             replicator_push_options: None,
             stream_protocols: Vec::new(),
+            governance_sweep_interval: db::merge::governance::SWEEP_INTERVAL,
         }
     }
 }

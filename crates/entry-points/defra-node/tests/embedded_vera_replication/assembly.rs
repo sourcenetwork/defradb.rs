@@ -8,7 +8,7 @@ use std::time::Duration;
 use defra_node::{
     EmbeddedVeraActor, EmbeddedVeraConfig, EmbeddedVeraDeployment, EmbeddedVeraPolicy,
     EmbeddedVeraTrust, Node, P2PConfig, PeerKeySource, ReplicaGrant, ReplicaOwnership,
-    ReplicaRegistration, SigningKey, VeraActor, VeraConfig,
+    ReplicaRegistration, SigningKey, SyncTuning, VeraActor, VeraConfig,
 };
 use identity::Did;
 use vera::vera_rs::{DelegationSigner, Ed25519Signer};
@@ -116,6 +116,12 @@ fn builder(spec: &PeerSpec) -> defra_node::NodeBuilder {
             port: spec.port,
             relay_mode: p2p::iroh::IrohRelayModeConfig::Disabled,
             discovery: p2p::iroh::IrohDiscoveryConfig::Disabled,
+            sync: SyncTuning {
+                governance_sweep_interval: spec
+                    .governance_sweep
+                    .unwrap_or(db::merge::governance::SWEEP_INTERVAL),
+                ..Default::default()
+            },
             ..Default::default()
         });
     match spec.blocks {
@@ -145,7 +151,7 @@ pub(crate) async fn own(
                 threshold: 1,
                 operator_keys: vec![ACCOUNT_KEY.to_string()],
                 created: now(),
-                policies: vec![seed()],
+                policies: vec![seed_of(spec)],
             },
             listen: "127.0.0.1:0".parse().expect("address"),
             start_deadline: Duration::from_secs(60),
@@ -167,10 +173,22 @@ const POLICY_CREATOR: &str = "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEG
 
 /// [`POLICY`] as every deployment is seeded with it.
 pub(crate) fn seed() -> EmbeddedVeraPolicy {
+    seeded_by(POLICY_CREATOR)
+}
+
+/// [`POLICY`] as `spec`'s deployment is seeded with it: by its own
+/// creator when it names one, so its ID is the deployment's own.
+pub(crate) fn seed_of(spec: &PeerSpec) -> EmbeddedVeraPolicy {
+    spec.seed_creator
+        .as_ref()
+        .map_or_else(seed, |creator| seeded_by(creator.as_str()))
+}
+
+fn seeded_by(creator: &str) -> EmbeddedVeraPolicy {
     EmbeddedVeraPolicy {
         definition: POLICY.to_string(),
         nonce: defra_node::PolicyNonce::default(),
-        creator: POLICY_CREATOR.to_string(),
+        creator: creator.to_string(),
     }
 }
 

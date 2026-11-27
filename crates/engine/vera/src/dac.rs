@@ -14,6 +14,7 @@ use identity::Did;
 use acp::{DocumentACP, DocumentPermission, Identity, Result, Subject};
 
 use crate::decisions::{DecisionKey, RemoteDecisions};
+use crate::foreign::{route_key, ForeignPolicies};
 use crate::provider::{
     AcpLightClientStatus, ActorRelationshipQuery, ProviderError, SubjectRef, VeraProvider,
 };
@@ -32,6 +33,8 @@ pub struct VeraDocumentACP {
     /// The request this ACP serves, for one bound to it: the bearer tokens
     /// its callers write with.
     context: Option<defra_core::RequestContext>,
+    /// The policies other deployments own, decided there.
+    foreign: Arc<ForeignPolicies>,
 }
 
 /// How long a remote decision may take when the caller sets nothing else.
@@ -43,6 +46,7 @@ impl VeraDocumentACP {
             decisions: Self::decisions(&provider, inputs::Runtime::on_demand(), DECISION_TIMEOUT),
             provider,
             context: None,
+            foreign: Arc::new(ForeignPolicies::default()),
         }
     }
 
@@ -73,6 +77,30 @@ impl VeraDocumentACP {
         self
     }
 
+    /// The policies other deployments own, which this ACP decides against
+    /// their homes rather than its own provider.
+    pub fn foreign_policies(&self) -> &Arc<ForeignPolicies> {
+        &self.foreign
+    }
+
+    /// The document ACP of the home that owns `policy_id`, when another
+    /// deployment does.
+    fn home(&self, policy_id: &str) -> Option<Arc<VeraDocumentACP>> {
+        self.foreign.route(policy_id)
+    }
+
+    /// Refuses `operation` under `policy_id` when another deployment owns
+    /// it: this node submits nothing to that home.
+    fn owned_here(&self, policy_id: &str, operation: &str) -> Result<()> {
+        if self.foreign.owns_elsewhere(policy_id) {
+            return Err(acp::Error::ForeignPolicy {
+                policy: policy_id.to_owned(),
+                operation: operation.to_owned(),
+            });
+        }
+        Ok(())
+    }
+
     /// The metrics of remote decisions.
     pub fn decision_stats(&self) -> &inputs::Stats {
         self.decisions.stats()
@@ -84,7 +112,13 @@ impl VeraDocumentACP {
     }
 
     /// Create a policy on Vera, its ID derived from `nonce` where the
-    /// provider derives one. Returns the policy ID.
+    /// provider derives one. Returns the policy ID. A policy routed to
+    /// another deployment's home, or being routed, is refused before
+    /// anything is sent ([`ProviderError::PolicyRoutedElsewhere`]). So the
+    /// ID is known before the create, a nonce is drawn here when none is
+    /// given; a create whose ID cannot be known beforehand is refused while
+    /// any policy is routed (`ForeignPolicies::begin_create`). While the
+    /// create is in flight no route to its policy is taken.
     ///
     /// The provider creates as its own actor, which owns the policy. A
     /// nonce names the policy that actor gets, so one supplied by another
@@ -105,12 +139,57 @@ impl VeraDocumentACP {
                 )));
             }
         }
+        let (nonce, predicted) = self.named_create(policy_yaml, nonce)?;
+        let _create = self.foreign.begin_create(predicted.as_deref())?;
         let yaml = policy_yaml.to_owned();
-        self.remote(move |provider| async move { provider.create_policy(&yaml, nonce).await })
-            .await
+        let id = self
+            .remote(move |provider| async move { provider.create_policy(&yaml, nonce).await })
+            .await?;
+        if let Some(predicted) = predicted {
+            if route_key(&predicted)? != route_key(&id)? {
+                return Err(ProviderError::Query(format!(
+                    "the provider created policy {id}, not {predicted}, which its nonce names"
+                )));
+            }
+        }
+        Ok(id)
     }
 
+    /// The nonce a create is sent with, drawn when none is given and the
+    /// provider derives IDs as its actor, and the ID it names. The ID is
+    /// unknown for a provider with no actor, and for a definition that does
+    /// not compile, which the provider refuses too; while any policy is
+    /// routed elsewhere, such a definition is refused here.
+    fn named_create(
+        &self,
+        policy_yaml: &str,
+        nonce: Option<acp::PolicyNonce>,
+    ) -> std::result::Result<(Option<acp::PolicyNonce>, Option<String>), ProviderError> {
+        let Some(actor) = self.provider.self_did() else {
+            return Ok((nonce, None));
+        };
+        let nonce = nonce.unwrap_or_else(|| acp::PolicyNonce(vera_client::random_policy_nonce().0));
+        match crate::vera_rs::predict_policy_id(policy_yaml, nonce, &actor) {
+            Ok(id) => Ok((Some(nonce), Some(id))),
+            Err(error) if !self.foreign.policies().is_empty() => Err(error),
+            Err(_) => Ok((Some(nonce), None)),
+        }
+    }
+
+    /// The policy `policy_id`, read from the home of the deployment that
+    /// owns it.
     pub async fn get_policy(
+        &self,
+        policy_id: &str,
+    ) -> std::result::Result<Option<acp::Policy>, ProviderError> {
+        match self.home(policy_id) {
+            Some(home) => home.read_policy(policy_id).await,
+            None => self.read_policy(policy_id).await,
+        }
+    }
+
+    /// The policy `policy_id` as this ACP's own provider holds it.
+    async fn read_policy(
         &self,
         policy_id: &str,
     ) -> std::result::Result<Option<acp::Policy>, ProviderError> {
@@ -338,6 +417,9 @@ impl acp::RemotePolicies for VeraDocumentACP {
         &self,
         query: &acp::TransportSentinelQuery,
     ) -> std::result::Result<bool, acp::AssignmentReadError> {
+        if let Some(home) = self.home(&query.policy) {
+            return acp::RemotePolicies::verify_transport_sentinel(&*home, query).await;
+        }
         self.provider
             .verify_transport_sentinel(query)
             .await
@@ -353,6 +435,9 @@ impl acp::RemotePolicies for VeraDocumentACP {
         &self,
         query: &acp::AssignmentQuery,
     ) -> std::result::Result<acp::CertifiedAssignments, acp::AssignmentReadError> {
+        if let Some(home) = self.home(&query.policy) {
+            return home.certified_assignments(query).await;
+        }
         let floor = query
             .not_before
             .as_ref()
@@ -427,7 +512,18 @@ impl acp::RemotePolicies for VeraDocumentACP {
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl DocumentACP for VeraDocumentACP {
+    fn is_foreign_policy(&self, policy_id: &str) -> bool {
+        self.foreign.owns_elsewhere(policy_id)
+    }
+
+    fn watch_object_changes(&self, listener: Arc<dyn acp::ObjectChangeListener>) {
+        self.foreign.watch(listener);
+    }
+
     async fn verify_transport_sentinel(&self, query: &acp::TransportSentinelQuery) -> Result<bool> {
+        if let Some(home) = self.home(&query.policy) {
+            return home.verify_transport_sentinel(query).await;
+        }
         self.provider
             .verify_transport_sentinel(query)
             .await
@@ -449,6 +545,7 @@ impl DocumentACP for VeraDocumentACP {
             provider: Arc::clone(&self.provider),
             decisions: self.decisions.clone(),
             context: Some(context.clone()),
+            foreign: Arc::clone(&self.foreign),
         }))
     }
 
@@ -494,6 +591,9 @@ impl DocumentACP for VeraDocumentACP {
         &self,
         observation: acp::ActorRelationshipObservation<'_>,
     ) -> Result<bool> {
+        if let Some(home) = self.home(observation.policy) {
+            return home.observe_actor_relationship(observation).await;
+        }
         if observation.requester.is_wildcard() || observation.target.is_wildcard() {
             return Err(acp::Error::PermissionDenied(
                 "an explicit actor DID is required".into(),
@@ -534,11 +634,15 @@ impl DocumentACP for VeraDocumentACP {
             provider: Arc::clone(&self.provider),
             decisions: self.decisions.clone(),
             context: None,
+            foreign: Arc::clone(&self.foreign),
         });
         Some(Arc::new(owed_journal::VeraOwedJournal { acp }))
     }
 
     async fn replica_group_member(&self, group: &acp::ReplicaGroup, signer: &Did) -> Result<bool> {
+        if let Some(home) = self.home(&group.policy) {
+            return home.replica_group_member(group, signer).await;
+        }
         let (group, signer) = (group.clone(), signer.clone());
         self.remote(
             move |provider| async move { provider.replica_group_member(&group, &signer).await },
@@ -555,6 +659,11 @@ impl DocumentACP for VeraDocumentACP {
         resource_name: &str,
         doc_id: &str,
     ) -> Result<bool> {
+        if let Some(home) = self.home(policy_id) {
+            return home
+                .check_named_permission(subject, permission, policy_id, resource_name, doc_id)
+                .await;
+        }
         let [policy, resource, object, permission, actor] = owned([
             policy_id,
             resource_name,
@@ -587,6 +696,7 @@ impl DocumentACP for VeraDocumentACP {
         doc_id: &str,
         relationships: &[acp::DerivedRelationship],
     ) -> Result<()> {
+        self.owned_here(policy_id, "a registration")?;
         let bearer_token = self.create_bearer_token(identity.as_str()).await?;
         self.admit_for(
             identity.as_str(),
@@ -615,6 +725,10 @@ impl DocumentACP for VeraDocumentACP {
         identity: &Did,
         objects: &[acp::AcpObject<'_>],
     ) -> std::result::Result<(), acp::RegistrationFailure> {
+        for (index, object) in objects.iter().enumerate() {
+            self.owned_here(object.policy_id, "a registration")
+                .map_err(|error| acp::RegistrationFailure::new(index, error))?;
+        }
         self.register_listed(identity, objects).await
     }
 
@@ -624,6 +738,11 @@ impl DocumentACP for VeraDocumentACP {
         resource_name: &str,
         doc_id: &str,
     ) -> Result<bool> {
+        if let Some(home) = self.home(policy_id) {
+            return home
+                .is_doc_registered(policy_id, resource_name, doc_id)
+                .await;
+        }
         let (is_registered, _owner) = self.object_owner(policy_id, resource_name, doc_id).await?;
         Ok(is_registered)
     }
@@ -634,6 +753,9 @@ impl DocumentACP for VeraDocumentACP {
         resource_name: &str,
         doc_id: &str,
     ) -> Result<Option<Did>> {
+        if let Some(home) = self.home(policy_id) {
+            return home.get_doc_owner(policy_id, resource_name, doc_id).await;
+        }
         let (is_registered, owner) = self.object_owner(policy_id, resource_name, doc_id).await?;
 
         if !is_registered {
@@ -653,6 +775,11 @@ impl DocumentACP for VeraDocumentACP {
         resource_name: &str,
         doc_id: &str,
     ) -> Result<bool> {
+        if let Some(home) = self.home(policy_id) {
+            return home
+                .check_doc_access(identity, permission, policy_id, resource_name, doc_id)
+                .await;
+        }
         if self.provider.unregistered_documents_are_public()
             && !self.is_registered(policy_id, resource_name, doc_id).await?
         {
@@ -688,6 +815,7 @@ impl DocumentACP for VeraDocumentACP {
         object_id: &str,
         permission: &str,
     ) -> Result<Option<String>> {
+        self.owned_here(policy_id, "an access decision")?;
         let Some(actor_did) = identity.did() else {
             return Ok(None);
         };
@@ -718,6 +846,7 @@ impl DocumentACP for VeraDocumentACP {
         relation: &str,
         _managing_relations: &[String],
     ) -> Result<bool> {
+        self.owned_here(policy_id, "a relationship change")?;
         let bearer_token = self.create_bearer_token(requestor.as_str()).await?;
         let subject = did_to_subject(target);
         self.admit_for(
@@ -757,6 +886,7 @@ impl DocumentACP for VeraDocumentACP {
         resource_name: &str,
         doc_id: &str,
     ) -> Result<()> {
+        self.owned_here(policy_id, "an archive")?;
         let bearer_token = self.create_bearer_token(actor.as_str()).await?;
         self.admit_for(
             actor.as_str(),
@@ -789,6 +919,7 @@ impl DocumentACP for VeraDocumentACP {
         relation: &str,
         _managing_relations: &[String],
     ) -> Result<bool> {
+        self.owned_here(policy_id, "a relationship change")?;
         let bearer_token = self.create_bearer_token(requestor.as_str()).await?;
         let subject = did_to_subject(target);
         self.admit_for(
@@ -834,6 +965,7 @@ impl DocumentACP for VeraDocumentACP {
         relation: &str,
         managing_relations: &[String],
     ) -> Result<bool> {
+        self.owned_here(policy_id, "a relationship change")?;
         match target {
             Subject::Entity(_) | Subject::Wildcard => {
                 let actor = subject_to_actor_did(&target);
@@ -908,6 +1040,7 @@ impl DocumentACP for VeraDocumentACP {
         relation: &str,
         managing_relations: &[String],
     ) -> Result<bool> {
+        self.owned_here(policy_id, "a relationship change")?;
         match target {
             Subject::Entity(_) | Subject::Wildcard => {
                 let actor = subject_to_actor_did(&target);
@@ -982,7 +1115,11 @@ impl DocumentACP for VeraDocumentACP {
         // replicated delete can still be rejected elsewhere, so do not revoke
         // shared grants as a side effect of this local document operation.
         // Operators can still archive explicitly through the provider API.
-        if !self.provider.archive_object_on_document_delete() {
+        // A policy another deployment owns is archived on its home, if at
+        // all.
+        if !self.provider.archive_object_on_document_delete()
+            || self.foreign.owns_elsewhere(policy_id)
+        {
             return Ok(());
         }
 
@@ -1013,6 +1150,7 @@ impl DocumentACP for VeraDocumentACP {
     }
 }
 
+mod foreign_routes;
 mod owed;
 mod owed_journal;
 mod registration_batch;

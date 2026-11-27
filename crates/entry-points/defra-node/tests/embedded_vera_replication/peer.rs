@@ -3,11 +3,14 @@
 
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
-use defra_node::{EmbeddedVeraTrust, Node};
+use defra_node::{EmbeddedVeraTrust, ForeignHome, Node};
 
 use super::actor::Actor;
-use super::assembly::{own, own_serving, seed, shared};
+use super::assembly::{own, own_serving, seed_of, shared};
+use super::documents::transient;
+use super::wait::eventually;
 
 /// How a peer writes its blocks.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -43,6 +46,25 @@ pub struct PeerSpec {
     pub provider: Provider,
     pub owner: Actor,
     pub blocks: Blocks,
+    /// Who its deployment's `Users` policy is seeded by: the shared creator
+    /// of every deployment when `None`, so the policy has one ID on all of
+    /// them.
+    pub seed_creator: Option<String>,
+    /// The policy of another deployment its `Users` collection is under,
+    /// decided against that deployment's home: routed before the
+    /// collection is made, and again on every start.
+    pub foreign: Option<ForeignRoute>,
+    /// How often its governance sweep runs; `None` keeps the node's
+    /// default.
+    pub governance_sweep: Option<Duration>,
+}
+
+/// A policy another deployment owns, as a peer routes it: `spelled` as it
+/// is added, which need not be how the collection names it.
+#[derive(Clone)]
+pub struct ForeignRoute {
+    pub spelled: String,
+    pub home: ForeignHome,
 }
 
 /// A DefraDB node whose Vera actor and node identity are `owner`. On a
@@ -68,6 +90,9 @@ impl Peer {
             },
             owner: owner.clone(),
             blocks,
+            seed_creator: None,
+            foreign: None,
+            governance_sweep: None,
         })
         .await
     }
@@ -83,6 +108,9 @@ impl Peer {
             },
             owner: owner.clone(),
             blocks: Blocks::Signed,
+            seed_creator: None,
+            foreign: None,
+            governance_sweep: None,
         })
         .await
     }
@@ -102,6 +130,9 @@ impl Peer {
             },
             owner: owner.clone(),
             blocks: Blocks::Signed,
+            seed_creator: None,
+            foreign: None,
+            governance_sweep: None,
         })
         .await
     }
@@ -120,19 +151,23 @@ impl Peer {
             }
             Provider::Shared { rpc, trust } => (shared(&spec, *rpc, trust).await, None),
         };
-        let policy = seed().id().expect("policy ID");
-        node.anonymous()
-            .get_dac_policy(&policy)
-            .await
-            .expect("policy read")
-            .expect("seeded policy");
+        let policy = match &spec.foreign {
+            Some(route) => {
+                route_foreign(&node, route).await;
+                route.spelled.trim_start_matches("0x").to_lowercase()
+            }
+            None => {
+                let policy = seed_of(&spec).id().expect("policy ID");
+                node.anonymous()
+                    .get_dac_policy(&policy)
+                    .await
+                    .expect("policy read")
+                    .expect("seeded policy");
+                policy
+            }
+        };
         if node.get_collection("Users").expect("collections").is_none() {
-            node.add_collection(&format!(
-                "type Users @policy(id: \"{policy}\", resource: \"users\") {{ \
-                 name: String points: Int @crdt(type: pcounter) }}"
-            ))
-            .await
-            .expect("collection");
+            add_users(&node, &policy).await;
         }
         let mut peer = Self {
             node,
@@ -164,4 +199,39 @@ impl Peer {
     pub async fn stop(self) {
         self.node.shutdown().await.expect("shutdown");
     }
+}
+
+/// Route `route`'s policy to its home, asked again while the node's own
+/// deployment, which must be shown not to hold it, is unavailable.
+async fn route_foreign(node: &Node, route: &ForeignRoute) {
+    eventually("the foreign policy is routed", || async {
+        match node.add_foreign_policy(&route.spelled, &route.home).await {
+            Ok(()) => true,
+            Err(error) if unavailable(&error.to_string()) => false,
+            Err(error) => panic!("foreign policy: {error}"),
+        }
+    })
+    .await;
+}
+
+/// Make the `Users` collection under `policy`, asked again while the
+/// deployment that decides the policy is unavailable.
+async fn add_users(node: &Node, policy: &str) {
+    let sdl = format!(
+        "type Users @policy(id: \"{policy}\", resource: \"users\") {{ \
+         name: String points: Int @crdt(type: pcounter) }}"
+    );
+    eventually("the Users collection is made", || async {
+        match node.add_collection(&sdl).await {
+            Ok(_) => true,
+            Err(error) if unavailable(&error.to_string()) => false,
+            Err(error) => panic!("collection: {error}"),
+        }
+    })
+    .await;
+}
+
+/// Whether `message` says the deployment it asked could not answer yet.
+fn unavailable(message: &str) -> bool {
+    transient(message) || message.contains("Vera unavailable")
 }

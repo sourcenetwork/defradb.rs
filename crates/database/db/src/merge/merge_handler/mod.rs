@@ -30,6 +30,7 @@ pub mod hook;
 mod merge_keys;
 mod parked;
 mod parked_acp;
+mod policy_redrives;
 mod protected_update;
 mod recovery;
 mod replica_plan;

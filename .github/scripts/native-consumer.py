@@ -103,6 +103,7 @@ UNIT_NAMES = (
     "provider::exact_relationship::tests::an_observation_overtaken_at_every_ask_ends_in_the_refusal",
     "provider::exact_relationship::tests::an_overtaken_observation_is_asked_again_at_one_root",
     "provider::exact_relationship::tests::only_a_verified_record_of_the_grant_answers",
+    "provider::foreign::tests::a_home_is_read_only_once_its_genesis_is_proven",
     "provider::genesis::tests::a_genesis_identity_is_taken_only_from_a_proven_first_block",
     "provider::owed_request::tests::a_recorded_hash_names_the_request_and_bytes_alone_do_not",
     "provider::owed_request::tests::without_a_hash_the_bytes_name_the_request",

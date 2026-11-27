@@ -228,6 +228,54 @@ impl DeferredMerges {
         released
     }
 
+    /// Release every composite parked under an object of `policy`, as a
+    /// change of each object's relationships would: the home that owns the
+    /// policy has a new state, and any of its objects may have changed.
+    /// The policy matches however its hex identifier is spelled. Returns
+    /// how many objects were released.
+    pub(crate) fn release_policy(&self, policy: &str) -> usize {
+        let keys = self.parked_under(policy);
+        let released = keys.len();
+        self.release(keys);
+        released
+    }
+
+    /// Forget every composite parked under an object of `policy`, which no
+    /// longer has a home whose state could let it in. It stays unmerged, so
+    /// the replication layer tries it again on its own retry clock, as it
+    /// does every change this index does not hold. Returns how many
+    /// composites were forgotten.
+    pub(crate) fn forget_policy(&self, policy: &str) -> usize {
+        let mut forgotten = 0;
+        for key in self.parked_under(policy) {
+            let Some(waiters) = self.waiters.get(&key) else {
+                continue;
+            };
+            for (waiter, ()) in waiters.iter() {
+                if self.take_entry(&waiter).is_some() {
+                    forgotten += 1;
+                }
+            }
+            self.waiters.remove(&key);
+        }
+        forgotten
+    }
+
+    /// How many objects of `policy` hold a parked composite.
+    pub(crate) fn objects_parked_under(&self, policy: &str) -> usize {
+        self.parked_under(policy).len()
+    }
+
+    /// The ACP objects of `policy` something is parked under.
+    fn parked_under(&self, policy: &str) -> Vec<WaitKey> {
+        self.waiters
+            .keys()
+            .filter(|key| {
+                matches!(key, WaitKey::AcpObject { policy: parked, .. } if same_policy(parked, policy))
+            })
+            .collect()
+    }
+
     pub(crate) fn take_ready(&self) -> Option<MergeBlock> {
         let block = self.ready.pop()?;
         self.queued.remove(&block.cid);
@@ -284,6 +332,17 @@ impl DeferredMerges {
             }
         }
     }
+}
+
+/// Whether two spellings name one policy: policy identifiers are hex, which
+/// a caller may write with a `0x` prefix and in either case.
+fn same_policy(a: &str, b: &str) -> bool {
+    fn bare(id: &str) -> &str {
+        id.strip_prefix("0x")
+            .or_else(|| id.strip_prefix("0X"))
+            .unwrap_or(id)
+    }
+    bare(a).eq_ignore_ascii_case(bare(b))
 }
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
@@ -346,6 +405,60 @@ mod tests {
             assert!(seen.insert(block.cid), "{} was queued twice", block.cid);
         }
         assert_eq!(index.held.load(Ordering::Acquire), index.len());
+    }
+
+    /// A new state of a policy's home releases what is parked under that
+    /// policy's objects, and nothing parked under another policy or
+    /// deferred by governance.
+    #[test]
+    fn a_policys_new_state_releases_only_what_is_parked_under_it() {
+        let index = DeferredMerges::default();
+        index.park(block(1), WaitKey::acp_object("p", "r", "doc-1"), cid(1));
+        index.park(block(2), WaitKey::acp_object("p", "r", "doc-2"), cid(2));
+        index.park(block(3), WaitKey::acp_object("q", "r", "doc-3"), cid(3));
+        index.defer(block(4), vec![key(4)]);
+        assert_eq!(index.release_policy("p"), 2);
+        assert_eq!(index.release_policy("p"), 0);
+        let mut ready = Vec::new();
+        while let Some(block) = index.take_ready() {
+            ready.push(block.cid);
+        }
+        ready.sort();
+        let mut expected = vec![cid(1), cid(2)];
+        expected.sort();
+        assert_eq!(ready, expected);
+        assert_eq!(index.len(), 2);
+    }
+
+    /// A policy's new state releases what is parked under it however
+    /// either side spells its identifier.
+    #[test]
+    fn a_policys_new_state_releases_it_under_any_spelling() {
+        let index = DeferredMerges::default();
+        index.park(
+            block(1),
+            WaitKey::acp_object("0xABCD", "r", "doc-1"),
+            cid(1),
+        );
+        index.park(block(2), WaitKey::acp_object("abcd", "r", "doc-2"), cid(2));
+        assert_eq!(index.objects_parked_under("abcd"), 2);
+        assert_eq!(index.release_policy("0Xabcd"), 2);
+        assert_eq!(index.objects_parked_under("ABCD"), 0);
+    }
+
+    /// Forgetting a policy drops what is parked under it, frees its slots
+    /// and releases nothing; what waits under another policy stays.
+    #[test]
+    fn forgetting_a_policy_drops_only_what_is_parked_under_it() {
+        let index = DeferredMerges::default();
+        index.park(block(1), WaitKey::acp_object("p", "r", "doc-1"), cid(1));
+        index.park(block(2), WaitKey::acp_object("P", "r", "doc-2"), cid(2));
+        index.park(block(3), WaitKey::acp_object("q", "r", "doc-3"), cid(3));
+        assert_eq!(index.forget_policy("p"), 2);
+        assert_eq!(index.len(), 1);
+        assert!(!index.has_ready());
+        assert_eq!(index.objects_parked_under("p"), 0);
+        assert_eq!(index.release_policy("q"), 1);
     }
 
     /// The sweep releases what is parked under ACP objects, and nothing

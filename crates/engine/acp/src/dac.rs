@@ -19,6 +19,26 @@ use crate::DerivedRelationship;
 /// task that made it, which it must not hold up.
 pub trait ObjectChangeListener: MaybeSendSync {
     fn changed(&self, policy_id: &str, resource_name: &str, object_id: &str);
+
+    /// The state of a policy another deployment owns may have changed: its
+    /// home's verified state moved ([`DocumentACP::is_foreign_policy`]).
+    /// Any object of the policy may have changed.
+    fn policy_changed(&self, _policy_id: &str) {}
+
+    /// The policy is no longer decided by another deployment's home: what
+    /// waits on that home's state is no longer asked again because of it.
+    fn policy_removed(&self, _policy_id: &str) {}
+
+    /// How many parked objects of the policy new states of its home have
+    /// released so far.
+    fn released_under(&self, _policy_id: &str) -> usize {
+        0
+    }
+
+    /// How many objects of the policy something waits under.
+    fn waiting_under(&self, _policy_id: &str) -> usize {
+        0
+    }
 }
 
 /// Told when the provider refuses an owed relationship change for good
@@ -80,6 +100,14 @@ pub trait DocumentACP: MaybeSendSync {
         _delete: bool,
     ) -> Result<bool> {
         Err(Error::UnsupportedAdministrativeRelationship)
+    }
+
+    /// Whether `policy_id` is owned by another deployment, whose home
+    /// decides it: every decision, owner and registration read for it is
+    /// that home's, and this node registers, archives and changes nothing
+    /// under it ([`Error::ForeignPolicy`]).
+    fn is_foreign_policy(&self, _policy_id: &str) -> bool {
+        false
     }
 
     /// Whether local reads and writes must share the authorized transaction.

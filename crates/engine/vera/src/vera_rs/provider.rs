@@ -40,6 +40,7 @@ mod assignments;
 mod audience_tests;
 mod create_policy;
 mod exact_relationship;
+mod foreign;
 mod genesis;
 mod owed_request;
 mod reach;
@@ -55,6 +56,7 @@ mod terms;
 mod transport_tests;
 mod verified;
 
+pub use foreign::{ForeignProvider, HomeStateListener};
 pub use genesis::GenesisSource;
 use terms::Follower;
 use verified::verified;

@@ -86,6 +86,7 @@ impl<S: Store + 'static> IrohPeer<S> {
             load_persisted_collections,
             replicator_push_options,
             stream_protocols,
+            governance_sweep_interval,
         } = config;
 
         let secret_key = endpoint.secret_key.clone();
@@ -288,7 +289,7 @@ impl<S: Store + 'static> IrohPeer<S> {
         #[cfg(not(target_arch = "wasm32"))]
         drop(db::merge::governance::start_governance_sweep(
             Arc::clone(&replication.merge_handler_inner),
-            db::merge::governance::SWEEP_INTERVAL,
+            governance_sweep_interval,
             coordinator.shutdown_handle(),
         ));
         #[cfg(target_arch = "wasm32")]
@@ -298,7 +299,7 @@ impl<S: Store + 'static> IrohPeer<S> {
             coordinator.spawn_background_task("governance_sweep", async move {
                 db::merge::governance::run_governance_sweep(
                     sweep_handler,
-                    db::merge::governance::SWEEP_INTERVAL,
+                    governance_sweep_interval,
                     sweep_shutdown,
                 )
                 .await;

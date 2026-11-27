@@ -103,6 +103,10 @@ pub(super) struct RemoteAcp {
     pub(super) refuse_held: AtomicBool,
     /// A deleted document's object is archived, as vera.rs does.
     pub(super) archives: AtomicBool,
+    /// Whether every policy is routed to another deployment's home.
+    pub(super) foreign: AtomicBool,
+    /// How many named permission checks it was asked.
+    pub(super) named_checks: AtomicUsize,
     /// Objects archived by their owner: registered still, with no owner and
     /// no relationship, and readable by nobody.
     archived: Set<String>,
@@ -147,6 +151,8 @@ impl RemoteAcp {
             raced: SegQueue::new(),
             refuse_held: AtomicBool::new(false),
             archives: AtomicBool::new(false),
+            foreign: AtomicBool::new(false),
+            named_checks: AtomicUsize::new(0),
             archived: set(),
         })
     }
@@ -507,6 +513,7 @@ impl DocumentACP for RemoteAcp {
         _resource_name: &str,
         doc_id: &str,
     ) -> acp::Result<bool> {
+        self.named_checks.fetch_add(1, Ordering::SeqCst);
         self.reachable()?;
         Ok(permission == MANAGER
             && self
@@ -539,6 +546,10 @@ impl DocumentACP for RemoteAcp {
             hook().await;
         }
         Ok(held)
+    }
+
+    fn is_foreign_policy(&self, _policy_id: &str) -> bool {
+        self.foreign.load(Ordering::SeqCst)
     }
 
     fn canonical_actor(&self, did: &Did) -> Did {

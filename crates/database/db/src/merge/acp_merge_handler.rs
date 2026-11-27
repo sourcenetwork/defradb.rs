@@ -100,7 +100,12 @@ impl AcpCompositeMergeHook {
     /// provider under strict access, if any.
     fn replicas_for(&self, collection: &CollectionVersion) -> Option<&Arc<ReplicaRegistration>> {
         let acp = self.document_acp()?;
-        if !self.strict() || acp.supports_transactions() || collection.policy.is_none() {
+        if !self.strict() || acp.supports_transactions() {
+            return None;
+        }
+        // A policy another deployment owns is registered on its owner's
+        // home only: this node registers nothing under it.
+        if acp.is_foreign_policy(&collection.policy.as_ref()?.id) {
             return None;
         }
         self.replicas
@@ -549,6 +554,9 @@ impl CompositeMergeHook for AcpCompositeMergeHook {
         }
         let acp = self.document_acp()?.clone();
         let policy = collection.policy.as_ref()?;
+        if acp.is_foreign_policy(&policy.id) {
+            return None;
+        }
         if self.replicas_for(collection).is_some() {
             return Some(Box::new(SettleReplicaAction {
                 acp,

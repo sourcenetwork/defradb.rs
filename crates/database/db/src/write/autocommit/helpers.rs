@@ -208,6 +208,16 @@ pub(crate) async fn register_created_doc(
     {
         let creator = identity::Did::new(creator)
             .map_err(|e| query::error::QueryError::execution(e.to_string()))?;
+        // Under a policy another deployment owns, the owner's home is the
+        // only one that registers: nothing is owed to this node's provider.
+        if provider.is_foreign_policy(&policy.id) {
+            return Err(query::error::QueryError::from_acp(
+                acp::Error::ForeignPolicy {
+                    policy: policy.id.clone(),
+                    operation: "creating a document".into(),
+                },
+            ));
+        }
         let acpstore = systemstore.sibling(storage::namespace::Namespace::Acpstore);
         match provider.bind_transaction(acpstore.clone()) {
             Some(scoped) => {
@@ -638,7 +648,9 @@ pub(crate) async fn unregister_deleted_doc(
             .await
             .map_err(|error| query::error::QueryError::execution(error.to_string()));
     }
-    if !provider.stages_archive_on_delete() {
+    // A policy another deployment owns keeps its object on its owner's
+    // home, as a replica that merges a delete archives nothing.
+    if !provider.stages_archive_on_delete() || provider.is_foreign_policy(&policy.id) {
         return Ok(());
     }
     let refused =

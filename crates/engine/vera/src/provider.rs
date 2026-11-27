@@ -95,6 +95,34 @@ pub enum ProviderError {
     /// that time is taken.
     #[error("delegation refused: {0}")]
     DelegationOutsideWindow(acp::DelegationWindow),
+    /// A route to another deployment's home for a policy the node's own
+    /// deployment holds: the home would decide the node's own documents
+    /// under it.
+    #[error(
+        "policy {policy} is held by this node's own deployment: it cannot be decided by another deployment's home"
+    )]
+    OwnPolicyRouted { policy: String },
+    /// A create or adoption, on the node's own deployment, of a policy
+    /// routed to another deployment's home: the home decides that policy
+    /// here, so the node's own deployment never holds it.
+    #[error(
+        "policy {policy} is decided by another deployment's home: this node's own deployment does not create or adopt it"
+    )]
+    PolicyRoutedElsewhere { policy: String },
+    /// A route to another deployment's home for a policy a create on the
+    /// node's own deployment may be making now. Once the create ends, the
+    /// route is refused as held, or taken if the create made nothing.
+    #[error(
+        "policy {policy} may be being created on this node's own deployment: route it once that create ends"
+    )]
+    PolicyBeingCreated { policy: String },
+    /// A create whose policy ID is known only once it is made, while
+    /// another deployment's home decides a policy here: it could make that
+    /// policy on the node's own deployment.
+    #[error(
+        "a policy whose ID is known only once it is created is not created while another deployment's home decides a policy on this node"
+    )]
+    UnnamedPolicyCreate,
 }
 
 /// A command that cannot be typed, encoded or digested, with the text the
@@ -269,7 +297,9 @@ pub trait VeraProvider: MaybeSendSync {
     /// vera.rs derives the ID from the definition, the actor and `nonce`,
     /// drawing a random nonce when none is given; sent again with the same
     /// nonce it returns the policy already made and makes no second one.
-    /// A provider whose ACP assigns its own IDs refuses a nonce.
+    /// A provider whose ACP assigns its own IDs refuses a nonce. It returns
+    /// only once this provider's own reads see the policy, so a
+    /// [`Self::query_policy`] asked after it finds it.
     async fn create_policy(
         &self,
         policy_yaml: &str,
