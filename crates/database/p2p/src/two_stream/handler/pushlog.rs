@@ -5,7 +5,8 @@ use libp2p::PeerId;
 
 use crate::codec::write_message;
 use crate::error::{Error, Result};
-use crate::message::{PushLogReply, PushLogRequest};
+use crate::message::PushLogReply;
+use crate::two_stream::PushLogOffer;
 
 use super::{PendingResponseKey, TwoStreamHandler};
 
@@ -19,9 +20,9 @@ impl TwoStreamHandler {
     pub async fn start_request(
         &mut self,
         peer_id: PeerId,
-        request: PushLogRequest,
+        offer: PushLogOffer,
     ) -> Result<(String, oneshot::Receiver<PushLogReply>)> {
-        let message_id = request.message_id.clone();
+        let message_id = offer.message_id().to_owned();
         let pending_key = PendingResponseKey::new(peer_id, message_id.clone());
 
         // Create response channel
@@ -37,14 +38,16 @@ impl TwoStreamHandler {
             .await;
         // No payload has been sent when negotiation fails. I/O failures
         // belong to the durable retry owner, not protocol fallback.
-        let stream = match stream {
-            Err(libp2p_stream::OpenStreamError::UnsupportedProtocol(_)) => {
+        let (stream, rust_protocol) = match stream {
+            Err(libp2p_stream::OpenStreamError::UnsupportedProtocol(_)) => (
                 self.control
                     .open_stream(peer_id, Self::request_protocol())
-                    .await
-            }
-            result => result,
+                    .await,
+                false,
+            ),
+            result => (result, true),
         };
+        let request = offer.for_protocol(rust_protocol);
         let mut stream = stream.map_err(|e| {
             // Clean up pending on failure
             drop(self.pending.take_pushlog(&pending_key));
@@ -104,11 +107,13 @@ impl TwoStreamHandler {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::message::PushLogRequest;
     use futures::StreamExt;
     use libp2p::{swarm::SwarmEvent, Swarm};
     use std::time::Duration;
 
     #[nuclei::test]
+    #[mantra_macros::req_test("defra.p2p.replicator.go_wire")]
     async fn retry_after_protocol_negotiates_and_falls_back_to_legacy() {
         crate::rt::time::timeout(Duration::from_secs(15), edge::compat(async {
             for negotiated in [true, false] {
@@ -150,14 +155,17 @@ mod tests {
                     let crate::two_stream::event::TwoStreamEvent::InboundRequest { request, .. } = event else { panic!("expected PushLog") };
                     assert!(!request.supports_retry_after);
                     assert!(!request.supports_same_stream_reply);
+                    assert_eq!(request.explicit_replay_capability.is_some(), negotiated, "only Rust's protocol carries the capability");
+                    crate::signing::verify_message(&request).expect("the request verifies over the fields it carries");
                     let mut reply = PushLogReply::error(&request.message_id, crate::error::RATE_LIMITED_MESSAGE)
                         .with_retry_after(negotiated, Duration::from_millis(1234));
                     crate::signing::sign_message(&receiver_key, &mut reply).unwrap();
                     receiver_handler.send_response(peer, reply).await.unwrap();
                 });
                 let mut request = PushLogRequest::new("doc".into(), bytes::Bytes::new(), "collection".into(), "creator".into(), bytes::Bytes::new());
-                crate::signing::sign_message(&sender_key, &mut request).unwrap();
-                let (_, reply) = sender_handler.start_request(receiver_id, request).await.unwrap();
+                request.explicit_replay_capability = Some("capability".into());
+                let offer = PushLogOffer::sign(&sender_key, request).unwrap();
+                let (_, reply) = sender_handler.start_request(receiver_id, offer).await.unwrap();
                 let reply = reply.await.unwrap();
                 assert_eq!(reply.retry_after_ms, negotiated.then_some(1234));
                 assert_eq!(reply.err_message.as_deref(), Some(crate::error::RATE_LIMITED_MESSAGE));

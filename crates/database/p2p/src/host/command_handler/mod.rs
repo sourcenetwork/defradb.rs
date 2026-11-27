@@ -115,10 +115,10 @@ impl<S: Store> P2PHost<S> {
             }
             HostCommand::SendTwoStreamRequest {
                 peer_id,
-                request,
+                offer,
                 response,
             } => {
-                self.handle_send_two_stream_request(peer_id, request, response);
+                self.handle_send_two_stream_request(peer_id, offer, response);
             }
             HostCommand::SendDocSyncResponse {
                 peer_id,

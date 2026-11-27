@@ -10,8 +10,10 @@
 mod event;
 mod handler;
 mod peer_streams;
+mod push_offer;
 mod runner;
 
 pub use event::TwoStreamEvent;
 pub use handler::TwoStreamHandler;
+pub use push_offer::PushLogOffer;
 pub use runner::TwoStreamRunner;

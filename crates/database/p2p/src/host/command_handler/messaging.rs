@@ -65,12 +65,12 @@ impl<S: Store> P2PHost<S> {
     pub(super) fn handle_send_two_stream_request(
         &mut self,
         peer_id: PeerId,
-        request: PushLogRequest,
+        offer: Box<crate::two_stream::PushLogOffer>,
         response: crate::rt::oneshot::Sender<Result<PushLogReply>>,
     ) {
         let mut handler = self.two_stream_handler.clone();
         self.spawned_tasks.spawn(async move {
-            let (message_id, rx) = match handler.start_request(peer_id, request).await {
+            let (message_id, rx) = match handler.start_request(peer_id, *offer).await {
                 Ok(pair) => pair,
                 Err(e) => {
                     if response.send(Err(e)).is_err() {
