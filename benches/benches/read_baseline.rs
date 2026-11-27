@@ -5,7 +5,7 @@
 //!
 //! `cargo bench -p benches --bench read_baseline --profile release-fast`
 //! runs 1, 4, 16 and 64 readers, 1024 requests each, three times, for a read
-//! of one document by its ID and a page of ten. Override with
+//! of one document by its ID, a page of ten, and a 300-chunk listing. Override with
 //! DEFRA_BASELINE_READERS (comma-separated), DEFRA_BASELINE_OPERATIONS and
 //! DEFRA_BASELINE_REPETITIONS. Raw samples and provenance go to stdout as JSON
 //! lines; dashboard families use DEFRA_BENCH_OUT through the existing emitter.
@@ -18,6 +18,7 @@ use axum::http::{Request, StatusCode};
 use axum::Router;
 use defra_perf::emit::{Family, Group, Row, Trust};
 use defra_perf::measure::{median, min_max, percentile_ms};
+use document::{Document, NormalValue};
 use query::mutator::DocMutator;
 use query::QueryRequest;
 use storage::corekv::Store;
@@ -31,20 +32,46 @@ const COLLECTION: &str = "User";
 const COLLECTION_SDL: &str = "type User { name: String age: Int }";
 const DOCUMENTS: usize = 1024;
 const PAGE: usize = 10;
+const CHUNK_COLLECTION: &str = "Article__body_chunk";
+const CHUNK_DOCUMENTS: usize = 300;
+const CHUNK_SDL: &str = r#"
+    type Article {
+        title: String
+        body: String @chunk(maxChars: 64)
+    }
+"#;
 
 #[derive(Clone, Copy)]
 enum Shape {
     Point,
     Page,
+    Chunks,
 }
 
 impl Shape {
-    const ALL: [Self; 2] = [Self::Point, Self::Page];
+    const ALL: [Self; 3] = [Self::Point, Self::Page, Self::Chunks];
+
+    fn selected() -> Vec<Self> {
+        let Some(names) = std::env::var_os("DEFRA_BASELINE_SHAPES") else {
+            return Self::ALL.to_vec();
+        };
+        names
+            .to_string_lossy()
+            .split(',')
+            .filter_map(|name| match name.trim() {
+                "point" => Some(Self::Point),
+                "page" => Some(Self::Page),
+                "chunks" => Some(Self::Chunks),
+                _ => None,
+            })
+            .collect()
+    }
 
     fn name(self) -> &'static str {
         match self {
             Self::Point => "point",
             Self::Page => "page",
+            Self::Chunks => "chunks",
         }
     }
 
@@ -55,6 +82,16 @@ impl Shape {
                 format!(r#"query {{ User(docID: "{id}") {{ name age }} }}"#)
             }
             Self::Page => format!("query {{ User(limit: {PAGE}) {{ name age }} }}"),
+            Self::Chunks => {
+                format!("query {{ {CHUNK_COLLECTION} {{ hash }} }}")
+            }
+        }
+    }
+
+    fn collection(self) -> &'static str {
+        match self {
+            Self::Point | Self::Page => COLLECTION,
+            Self::Chunks => CHUNK_COLLECTION,
         }
     }
 
@@ -62,6 +99,21 @@ impl Shape {
         match self {
             Self::Point => 1,
             Self::Page => PAGE,
+            Self::Chunks => CHUNK_DOCUMENTS,
+        }
+    }
+
+    fn warmup_requests(self) -> usize {
+        match self {
+            Self::Chunks => 1,
+            Self::Point | Self::Page => DOCUMENTS,
+        }
+    }
+
+    fn operations(self, configured: usize) -> usize {
+        match self {
+            Self::Chunks => configured.min(8),
+            Self::Point | Self::Page => configured,
         }
     }
 }
@@ -102,16 +154,30 @@ impl Fixture {
         db.add_collection(&defra_core::RequestContext::ambient(), COLLECTION_SDL)
             .await
             .unwrap();
-        let collection = db.get_collection(COLLECTION).unwrap().unwrap();
+        db.add_collection(&defra_core::RequestContext::ambient(), CHUNK_SDL)
+            .await
+            .unwrap();
+        let mutator = Arc::new(db::write::autocommit::AutoCommitMutator::new(db.clone()));
+        let body = (0..CHUNK_DOCUMENTS)
+            .map(|index| format!("Paragraph {index:03} is about a numbered topic."))
+            .collect::<Vec<_>>()
+            .join("\n\n");
+        let mut article = Document::new((*db.query_schema("Article").unwrap()).clone());
+        article
+            .set("title", NormalValue::String("chunks".into()))
+            .unwrap();
+        article.set("body", NormalValue::String(body)).unwrap();
+        mutator.create("Article", article).await.unwrap();
+        let schemas = [COLLECTION, "Article", CHUNK_COLLECTION]
+            .iter()
+            .map(|name| (*db.query_schema(name).unwrap()).clone())
+            .collect();
         let runner = query::QueryRunner::with_registry(
             db::LensedAutoCommitFetcher::new(db.clone()),
-            vec![collection.schema().clone()],
+            schemas,
             db::DbTransactionRegistry::new(db.clone()),
         )
-        .with_mutator(
-            Arc::new(db::write::autocommit::AutoCommitMutator::new(db.clone()))
-                as Arc<dyn DocMutator>,
-        );
+        .with_mutator(mutator.clone() as Arc<dyn DocMutator>);
         let executor = query::pooled::PooledExecutor::wrap(Arc::new(runner), db.pool());
         let mut ids = Vec::with_capacity(DOCUMENTS);
         for index in 0..DOCUMENTS {
@@ -129,6 +195,20 @@ impl Fixture {
                     .to_owned(),
             );
         }
+        let response = executor
+            .execute(QueryRequest::new(Shape::Chunks.query(0, 0, &[])))
+            .await;
+        assert!(
+            response.errors.is_empty(),
+            "chunk seed: {:?}",
+            response.errors
+        );
+        assert_eq!(
+            response.data.unwrap()[CHUNK_COLLECTION]
+                .as_array()
+                .map(Vec::len),
+            Some(CHUNK_DOCUMENTS)
+        );
         let router = defra_http::Server::from_arc(executor, edge)
             .with_pool(Some(pool.clone()))
             .router()
@@ -161,9 +241,9 @@ fn request(query: &str) -> Request<Body> {
         .unwrap()
 }
 
-/// Sends `query` and checks the answer holds `rows` users, returning how long
+/// Sends `query` and checks the answer holds `rows` documents, returning how long
 /// the router took to answer.
-async fn read(router: Router, query: &str, rows: usize) -> Duration {
+async fn read(router: Router, query: &str, collection: &str, rows: usize) -> Duration {
     let start = Instant::now();
     let response = router.oneshot(request(query)).await.unwrap();
     let status = response.status();
@@ -173,7 +253,7 @@ async fn read(router: Router, query: &str, rows: usize) -> Duration {
     let answer: serde_json::Value = serde_json::from_slice(&body).unwrap();
     assert!(answer.get("errors").is_none(), "{answer}");
     assert_eq!(
-        answer["data"][COLLECTION].as_array().map(Vec::len),
+        answer["data"][collection].as_array().map(Vec::len),
         Some(rows),
         "{answer}"
     );
@@ -187,6 +267,7 @@ async fn run(
     readers: usize,
     operations: usize,
 ) -> Measurement {
+    let operations = shape.operations(operations);
     let stats = fixture.store.transaction_stats_handle().unwrap();
     let off_pool = stats.snapshot().off_pool_calls;
     let tasks = fixture.pool_tasks();
@@ -198,7 +279,8 @@ async fn run(
                 let mut latencies = Vec::with_capacity(operations);
                 for operation in 0..operations {
                     let query = shape.query(reader, operation, &ids);
-                    latencies.push(read(router.clone(), &query, shape.rows()).await);
+                    latencies
+                        .push(read(router.clone(), &query, shape.collection(), shape.rows()).await);
                 }
                 latencies
             })
@@ -274,8 +356,8 @@ fn main() {
     let server = common::server_edge();
     let edge = server.edge().clone();
     let fixture = edge.block_on(Fixture::new(edge.clone())).unwrap();
-    for shape in Shape::ALL {
-        edge.block_on(run(&fixture, &edge, shape, 1, DOCUMENTS))
+    for shape in Shape::selected() {
+        edge.block_on(run(&fixture, &edge, shape, 1, shape.warmup_requests()))
             .unwrap();
         let mut groups: Vec<Group> = Vec::new();
         for &count in &readers {
@@ -325,7 +407,7 @@ fn main() {
         }
         let mut family = Family::new(
             format!("Concurrent reads: {}", shape.name()),
-            format!("On-disk store on the worker pool, {DOCUMENTS} documents, warmed; {operations} requests per reader; {repetitions} repetitions. Requests go through the HTTP router as a server builds it, without sockets, signing or ACP. Pool tasks count every task the pool started per read."),
+            format!("On-disk store on the worker pool, {DOCUMENTS} user documents and {CHUNK_DOCUMENTS} chunk documents, warmed; up to {operations} requests per reader; {repetitions} repetitions. Requests go through the HTTP router as a server builds it, without sockets, signing or ACP. Pool tasks count every task the pool started per read."),
         )
         .trust(if guard.passed { Trust::Clean } else { Trust::Contaminated });
         for group in groups {

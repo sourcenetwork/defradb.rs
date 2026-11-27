@@ -5,7 +5,7 @@
 
 use async_trait::async_trait;
 use bytes::Bytes;
-use document::{CommitRow, Document};
+use document::{CommitRow, Document, NormalValue};
 use identity::Did;
 use rapidhash::{HashMapExt, RapidHashMap};
 use storage::corekv::MaybeSendSync;
@@ -79,6 +79,13 @@ pub struct IndexScanResult {
     /// Raw number of index entries fetched (before deduplication)
     raw_fetches: u64,
     doc_short_ids: Option<Vec<u64>>,
+}
+
+/// One document named by an index entry, with the indexed values that named it.
+#[derive(Debug, Clone)]
+pub struct IndexScanEntry {
+    pub doc_id: String,
+    pub values: Vec<NormalValue>,
 }
 
 impl IndexScanResult {
@@ -497,6 +504,18 @@ pub trait DocFetcher: MaybeSendSync {
         Err(crate::error::QueryError::execution(
             "Index-based queries are not supported by this fetcher".to_string(),
         ))
+    }
+
+    /// Read the documents under an index prefix together with their indexed
+    /// values. Callers that need one field from many entries can then avoid a
+    /// separate index seek for every document.
+    async fn get_by_index_prefix_with_values(
+        &self,
+        _collection_name: &str,
+        _index_name: &str,
+        _prefix_values: &[NormalValue],
+    ) -> Result<Option<Vec<IndexScanEntry>>> {
+        Ok(None)
     }
 
     /// Check if this fetcher supports index-based queries.
