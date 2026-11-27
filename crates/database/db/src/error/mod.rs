@@ -87,6 +87,12 @@ pub enum Error {
     #[error("{0}")]
     UniqueViolation(String),
 
+    /// A reindex that stopped because a migration gave a value of the unique
+    /// index `index_id` to two documents
+    /// ([`crate::index::Error::RebuildUniqueViolation`]).
+    #[error("{message}")]
+    ReindexUniqueViolation { index_id: u32, message: String },
+
     #[error("invalid collection name: {0}")]
     InvalidCollectionName(String),
 
@@ -227,6 +233,12 @@ impl From<crate::index::Error> for Error {
             crate::index::Error::Other(msg) => Error::Other(msg),
             other @ (crate::index::Error::UniqueViolation { .. }
             | crate::index::Error::UpdateIndex { .. }) => Error::UniqueViolation(other.to_string()),
+            other @ crate::index::Error::RebuildUniqueViolation { index_id, .. } => {
+                Error::ReindexUniqueViolation {
+                    index_id,
+                    message: other.to_string(),
+                }
+            }
         }
     }
 }
@@ -261,6 +273,7 @@ impl Error {
     pub fn is_unique_constraint_violation(&self) -> bool {
         matches!(self, Error::Storage(source) if source.is_unique_constraint_violation())
             || matches!(self, Error::UniqueViolation(_))
+            || matches!(self, Error::ReindexUniqueViolation { .. })
     }
 
     pub fn is_storage_full(&self) -> bool {
