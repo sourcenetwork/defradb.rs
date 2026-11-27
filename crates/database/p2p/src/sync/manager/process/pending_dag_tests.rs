@@ -173,6 +173,58 @@ async fn pending_dag_wakeup_requires_registration_and_preserves_backoff() {
 }
 
 #[nuclei::test]
+async fn a_freed_place_wakes_only_when_the_waiting_peer_has_room() {
+    use crate::sync::pending_store::{PendingDagStorage, PendingDagStore, PersistedPendingDag};
+    use futures::FutureExt;
+
+    let manager = test_manager_with_config(SyncConfig {
+        max_pending_dags: 4,
+        ..SyncConfig::default()
+    });
+    let held = test_cid(901);
+    let other = test_cid(902);
+    let waiting = test_cid(903);
+    manager.insert_pending_dag(held, pending_dag_from("held", Some("busy"), Instant::now()));
+    manager.insert_pending_dag(
+        other,
+        pending_dag_from("other", Some("free"), Instant::now()),
+    );
+
+    let store = Arc::new(PendingDagStore::new(Arc::new(
+        RegolithStore::in_memory().unwrap(),
+    )));
+    store
+        .put(
+            &waiting,
+            &PersistedPendingDag {
+                doc_id: "waiting".to_string(),
+                collection_id: "collection".to_string(),
+                head_priority: None,
+                creator: "creator".to_string(),
+                source_peer: Some("busy".to_string()),
+                alternate_providers: Vec::new(),
+                is_explicit_replicator: false,
+                explicit_replay_authorization: None,
+            },
+        )
+        .await
+        .unwrap();
+    manager.install_pending_dag_store(store).await;
+
+    assert!(manager.clear_pending_dag(&other));
+    assert!(
+        manager.durable_only_ready().now_or_never().is_none(),
+        "a waiter whose peer is still at quota started a sweep"
+    );
+
+    assert!(manager.clear_pending_dag(&held));
+    assert!(
+        manager.durable_only_ready().now_or_never().is_some(),
+        "the waiter did not wake the sweep after its peer's place freed"
+    );
+}
+
+#[nuclei::test]
 async fn key_arrival_promotes_pending_retries() {
     use futures::FutureExt;
 

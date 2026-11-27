@@ -1,8 +1,10 @@
 //! A parent delete reaches a peer whose pending-DAG map is full
 //! (`defra.chunk.replicate.saturated`, #2307).
 
-use integration_test::actions::{Actions, AdmissionSpec, DeleteDoc, Request};
-use integration_test::scenario::{Common, Eventually, Text};
+use std::collections::BTreeMap;
+
+use integration_test::actions::{Actions, AdmissionSpec, DeleteDoc, Request, SyncCounters};
+use integration_test::scenario::{captures, Common, Eventually, Text};
 use serde_json::json;
 
 use super::support::{
@@ -20,6 +22,10 @@ fn within(seconds: u64, mut action: Actions) -> Actions {
         });
     }
     action
+}
+
+fn capacity_shed_since(capture: &str) -> BTreeMap<String, String> {
+    BTreeMap::from([("pending_dag_capacity_shed".into(), capture.into())])
 }
 
 #[test]
@@ -40,12 +46,35 @@ fn a_parent_delete_reaches_a_peer_whose_pending_map_is_full() {
         add_article_on(&body(CHUNK_COUNT, "glaciers"), "article", Some("db0")),
         read_chunks("created", CHUNK_COUNT, Some("db0")),
         within(150, chunks_are_listed("created", CHUNK_COUNT, Some("db1"))),
+        SyncCounters {
+            common: Common {
+                node: Some("db1".into()),
+                capture: captures([("capacityShedBeforeDelete", "/pending_dag_capacity_shed")]),
+                ..Default::default()
+            },
+            ..Default::default()
+        }
+        .into(),
         DeleteDoc {
             collection: "Article".into(),
             doc_id: Text::reference("article"),
             common: Common {
                 node: Some("db0".into()),
                 retry: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        }
+        .into(),
+        SyncCounters {
+            at_least: BTreeMap::from([("pending_dag_capacity_shed".into(), 1)]),
+            since: capacity_shed_since("capacityShedBeforeDelete"),
+            common: Common {
+                node: Some("db1".into()),
+                eventually: Some(Eventually {
+                    timeout_millis: Some(30_000),
+                    interval_millis: Some(500),
+                }),
                 ..Default::default()
             },
             ..Default::default()

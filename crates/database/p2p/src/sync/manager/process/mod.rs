@@ -454,8 +454,8 @@ impl<B: Blockstore + 'static> SyncManager<B> {
         };
         match store.remove(root_cid, &self.persisted).await {
             Ok(removed) => {
-                if removed && self.persisted.len() > self.pending_dag_count() {
-                    self.durable_only_ready.notify_one();
+                if removed {
+                    self.notify_if_durable_root_fits();
                 }
                 removed
             }

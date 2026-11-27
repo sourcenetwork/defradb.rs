@@ -508,14 +508,15 @@ the shared peer's after the others: the worst case for a key-order sweep.
 - The second tier ends the nacks; it bounds no wait. A root without an entry
   gets one only from the resync sweep (every 60 s, or on a peer connect),
   which walks the waiting records in key order after the cursor and gives a
-  fresh head no precedence. `finish_attempt` gives an entry up only while the
-  map is full or the root's peer is at its in-memory quota, so after one
-  rotation per saturated class the freed entries wait for the next sweep. A
-  head acknowledged behind K waiting roots therefore waits on the order of K
-  divided by the entries freed per sweep: minutes to hours for a full store.
-  The wait a nack used to leave with the sender is now the receiver's, and
-  the sender sees only the acknowledgement. The models promise such a head
-  an eventual merge (`LIVE_WrittenHeadMerged`), not a bound.
+  fresh head no precedence. The sweep usually runs at once after an entry is
+  removed: a rotation, an ending continuation, a TTL eviction, a quarantine,
+  a merged cleanup, or any other removal with a durable record waiting calls
+  `notify_if_durable_root_fits`. The check requires both a map place and room
+  under the waiting root's peer quota, so a saturated class does not launch a
+  full sweep that admits nothing. A head acknowledged behind K waiting roots
+  therefore takes each place as it frees; it does not wait for the next
+  minute tick. The models promise such a head an eventual merge
+  (`LIVE_WrittenHeadMerged`), not a bound.
 - `OverflowMode = "Rotate"`: a root whose `dispatches` reached `RotateAfter`
   (`PENDING_ROTATE_AFTER_DISPATCHES`; 1 in the configurations) gives its entry
   up as its attempt ends, while a durable root waits and the map is full or
@@ -662,6 +663,8 @@ place gives it up when its attempt ends.
   more entries than it may, and an acknowledged entry always has its record.
 - `INV_ContinuationsNeverAcked` (memory): a local continuation is never an
   acknowledged obligation.
+- `INV_FreedPlaceArmed` (memory): an entry removal leaves the sweep awake
+  whenever a waiting durable root fits the place it freed.
 - `LIVE_DurableRootMerged` (memory): every acknowledged durable head whose
   provider serves is merged, however many never-serving roots were restored
   ahead of it into a map too small for all of them.
@@ -732,6 +735,9 @@ fetch owner is deliberately not expressible.
 | `MC_SyncOwnership_Red_RetainedOverflow.cfg` | RED | an acknowledged root never gives its entry up: the never-serving root restored first holds the only entry for good (`LIVE_DurableRootMerged`) |
 | `MC_SyncOwnership_Red_KeyOrderResync.cfg` | RED | the root gives its entry up but the sweep restarts at the first key and re-admits it ahead of the other (`LIVE_DurableRootMerged`) |
 | `MC_SyncOwnership_Red_ImmortalContinuation.cfg` | RED | a local continuation whose turn skips keeps its entry and is re-driven for ever (`LIVE_ContinuationEnds`) |
+| `MC_SyncOwnership_Red_RecordLeavingNoWake.cfg` | RED | a merged durable record leaves and frees the only in-memory place while another durable root waits, but the record-leaving path does not wake the sweep (`INV_FreedPlaceArmed`) |
+| `MC_SyncOwnership_Red_RotateNoWake.cfg` | RED | a root gives its entry up after its dispatches while a durable root waits, but the rotation does not wake the sweep (`INV_FreedPlaceArmed`) |
+| `MC_SyncOwnership_Red_ContinuationNoWake.cfg` | RED | a local continuation ends and frees the only in-memory place while a durable root waits, but the ending continuation does not wake the sweep (`INV_FreedPlaceArmed`) |
 | `MC_SyncOwnership_Red_UndrainedMarker.cfg` | RED | P2P stops with a transactional write's marker registration pending; the dropped task returns the commit, which is acknowledged with no marker owing its head |
 | `MC_SyncOwnership_Green_TwoTierQuota.cfg` | GREEN | one peer's two never-serving scopes and another peer's serving scope: the first peer is held at its quota of one durable root, and the other's head is acknowledged in either tier and merges |
 | `MC_SyncOwnership_Red_MemoryOnlyAdmission.cfg` | RED | a full map nacks `d2`'s head while the store has room; `d1` never gives its entry up because no durable root waits, so the head is nacked and offered again for ever and its marker stays with the sender (`LIVE_WrittenHeadMerged`) |

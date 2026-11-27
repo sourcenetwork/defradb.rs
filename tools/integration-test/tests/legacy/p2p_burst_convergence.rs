@@ -263,6 +263,7 @@ fn connect_mesh(cluster: &TestCluster, addrs: &[String]) {
 }
 
 #[nuclei::test]
+#[ignore = "manual burst-convergence harness; runs a multi-minute burst across three nodes"]
 async fn full_mesh_replicas_converge_after_a_saturating_burst() {
     edge::compat(async {
         std::env::set_var(
@@ -380,6 +381,22 @@ async fn full_mesh_replicas_converge_after_a_saturating_burst() {
                 .client(node)
                 .p2p_replicator_list()
                 .expect("replicator list");
+            let entries = replicators.as_array().unwrap_or_else(|| {
+                panic!("node{node} replicators are not an array: {replicators}")
+            });
+            for (peer, address) in addrs.iter().enumerate() {
+                if peer == node {
+                    continue;
+                }
+                assert!(
+                    entries.iter().any(|replicator| {
+                        replicator["Addresses"]
+                            .as_array()
+                            .is_some_and(|addresses| addresses.iter().any(|value| value == address))
+                    }),
+                    "node{node} lost its replicator for {address} across restart: {replicators}"
+                );
+            }
             eprintln!("BURST_CONVERGENCE node{node} replicators after restart: {replicators}");
         }
         let mut rng = Lcg(2);

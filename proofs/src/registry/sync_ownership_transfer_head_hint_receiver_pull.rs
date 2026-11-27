@@ -392,18 +392,17 @@ pub(super) const PROPERTIES: &[Property] = &[
         bound_by: "",
     },
     Property {
-        // #2307: the resync sweep sleeps between its 60-second ticks. Whatever
-        // frees an in-memory place while a durable root waits for one wakes
-        // it: a record leaving, a root giving its entry up after its
-        // dispatches, and a local continuation ending. Without the wake a
-        // freed place stood empty for a whole tick, and after a write burst,
-        // with every place held in turn by roots waiting on another document,
-        // the replicas drained a few roots a minute.
+        // #2307: the resync sweep sleeps between its 60-second ticks. Every
+        // in-memory entry removal with a waiting durable root that has map and
+        // peer room wakes it: rotation, an ending continuation, TTL eviction,
+        // quarantine, merged cleanup, and persisted-record removal. A waiter
+        // held out by its peer quota does not start a sweep that cannot admit
+        // it.
         family: "Sync ownership transfer (head hint / receiver pull)",
         name: "INV_FreedPlaceArmed: a freed in-memory place wakes the resync sweep",
         axis: Tla,
-        anchor: "crates/database/p2p/src/sync/manager/process/pending_dag.rs PendingDagLease::finish_attempt, MergeTurn; crates/database/p2p/src/sync/manager/process/mod.rs remove_persisted_pending; crates/database/p2p/src/sync/coordinator/mod.rs run_pending_dag_resync",
-        model_ref: "MC_SyncOwnership_{Green_Memory,Green_Memory_Quota,Green_TwoTierQuota,Red_RotateNoWake,Red_ContinuationNoWake}.cfg",
+        anchor: "crates/database/p2p/src/sync/manager/process/pending_dag.rs PendingDagLease::finish_attempt, MergeTurn, evict_expired, clear_pending_dag, quarantine_pending_dag, notify_if_durable_root_fits; crates/database/p2p/src/sync/manager/process/mod.rs remove_persisted_pending; crates/database/p2p/src/sync/pending_store/view.rs source; crates/database/p2p/src/sync/coordinator/mod.rs run_pending_dag_resync",
+        model_ref: "MC_SyncOwnership_{Green_Memory,Green_Memory_Quota,Green_TwoTierQuota,Red_RotateNoWake,Red_ContinuationNoWake,Red_RecordLeavingNoWake}.cfg",
         tiers: &[Boundary],
         bound_by: "",
     },

@@ -242,7 +242,7 @@ After an article and its chunks reach the second node, deleting the article on t
 - **Parents:** ["defra.chunk.replicate"]
 - **Scenarios:** ["chunk::replicate_saturated::a_parent_delete_reaches_a_peer_whose_pending_map_is_full"]
 
-The second node admits what it is sent with a pending-DAG map of 4 entries, one per sending peer. After an article with eight chunks reaches it, the article is deleted on the first node. A chunk's delete that arrives before its parent's waits for it and holds the sender's one entry while it waits, so the parent's delete and the other chunks' deletes wait on their durable records. Each waiting chunk gives the entry up after its retries, and the next record takes it at once: within 150 seconds of the delete the second node shows no `Article` and an empty `Article__body_chunk`. Before #2307 each entry given up stood empty until the next minute-long sweep.
+The second node admits what it is sent with a pending-DAG map of 4 entries, one per sending peer. After an article with eight chunks reaches it, the article is deleted on the first node. A chunk's delete that arrives before its parent's waits for it and holds the sender's one entry while it waits, so the parent's delete and the other chunks' deletes wait on their durable records. Each waiting chunk gives the entry up after its retries, and the next record takes it at once: within 150 seconds of the delete the second node shows no `Article` and an empty `Article__body_chunk`.
 
 # `defra.chunk.replicate.parent_only`: A replicator of the parent ships its chunks
 

@@ -24,11 +24,13 @@
 \*
 \* The sweep sleeps between runs. It runs at its tick, or at once when it is
 \* woken: a durable record left, or an entry gave its place up while a
-\* durable root waits for one (#2307). Waking is what keeps a freed place
-\* from standing empty for a whole tick while roots wait behind it: after a
-\* write burst, roots that wait on another document (a chunk whose parent has
-\* not merged) give their places up one after another, nothing merges, and
-\* without the wake each freed place stood empty until the next tick.
+\* durable root that fits waits for one (#2307). Waking is what keeps a freed
+\* place from standing empty for a whole tick while roots wait behind it:
+\* after a write burst, roots that wait on another document (a chunk whose
+\* parent has not merged) give their places up one after another, nothing
+\* merges, and without the wake each freed place stood empty until the next
+\* tick. A waiter held out by its peer's quota does not wake a sweep that
+\* could not admit it.
 \*
 \* What must never happen:
 \*   - the map holds more than it may (INV_MemoryBounded), or an acknowledged
@@ -38,8 +40,9 @@
 \*     (INV_ContinuationsNeverAcked): ending one must drop nothing a sender
 \*     relies on;
 \*   - a place the sweep could fill stands empty with the sweep asleep
-\*     (INV_FreedPlaceArmed): whatever frees a place a waiting durable root
-\*     fits wakes the sweep;
+\*     (INV_FreedPlaceArmed): every entry removal that leaves a waiting
+\*     durable root fitting wakes the sweep, including a TTL eviction, a
+\*     quarantine, a merged cleanup, a rotation, and an ending continuation;
 \* and what must eventually happen:
 \*   - every acknowledged durable head whose provider serves is merged, even
 \*     when roots whose providers never serve were restored first and fill
@@ -106,7 +109,9 @@
 \*     (admit durable roots: the places in key order after the place admitted last, and a
 \*     peer's places to its roots in turn after the one admitted last),
 \*     PendingDagLease::finish_attempt (a root that spent its dispatches gives its entry
-\*     up while a durable root waits and it holds a contended place, and wakes the sweep),
+\*     up while a durable root waits and it holds a contended place, and wakes the sweep
+\*     when the waiter fits), evict_expired, clear_pending_dag, quarantine_pending_dag,
+\*     notify_if_durable_root_fits (every entry removal uses the same fit check),
 \*     continue_merge (a local continuation), consume_pending_merge_continuation and
 \*     MergeTurn (the continuation ends when a turn does not yield again, and wakes the
 \*     sweep when a durable root waits), remove_persisted_pending (a record leaving
@@ -131,7 +136,7 @@ CONSTANTS
   AdmissionMode,   \* "TwoTier": a full map admits on the durable record alone | "MemoryOnly": the bug, a full map nacks
   PeerScopes,      \* the sending peers, each the set of scopes it pushes (PersistedPendingDag::source_peer)
   DurableQuota,    \* durable roots one peer may hold (max_persisted_pending_per_peer); Cap removes the quota
-  WakeMode         \* "Wake": a freed place wakes the sweep | "NoRotateWake": the bug, a root giving its entry up leaves the sweep asleep until its tick | "NoContinuationWake": the bug, an ending continuation does
+  WakeMode         \* "Wake": a freed place wakes the sweep | "NoRotateWake": the bug, a root giving its entry up leaves the sweep asleep until its tick | "NoContinuationWake": the bug, an ending continuation does not wake the sweep | "NoRecordWake": the bug, a durable record leaving does not
 
 \* The map holds at least one entry and no more than the durable cap.
 ASSUME MemCap \in Nat /\ MemCap >= 1 /\ MemCap <= Cap
@@ -150,7 +155,7 @@ ASSUME RegisterMode = "Durable"
 \* The admission knob takes one of its named values.
 ASSUME AdmissionMode \in {"TwoTier", "MemoryOnly"}
 \* The wake knob takes one of its named values.
-ASSUME WakeMode \in {"Wake", "NoRotateWake", "NoContinuationWake"}
+ASSUME WakeMode \in {"Wake", "NoRotateWake", "NoContinuationWake", "NoRecordWake"}
 \* Every scope is pushed by exactly one peer.
 ASSUME /\ UNION PeerScopes = Scopes
        /\ \A P, Q \in PeerScopes : P # Q => P \cap Q = {}
@@ -264,7 +269,8 @@ Reset(S) == [r \in Roots |-> IF r \in S THEN 0 ELSE dispatches[r]]
 \* A SyncOwnership step that does not admit anything: memory forgets what the
 \* step retired.
 \* A durable record that leaves while a durable root still has no entry
-\* wakes the sweep (remove_persisted_pending).
+\* wakes the sweep (remove_persisted_pending); NoRecordWake, the bug, does
+\* not.
 M(A) ==
   /\ A
   /\ mem' = mem \cap pending'
@@ -272,7 +278,7 @@ M(A) ==
   /\ backoff' = backoff \cap pending'
   /\ dispatches' = Reset(mem \ pending')
   /\ UNCHANGED <<conts, cursor, peerCursor>>
-  /\ Rearm((pending \ pending') # {} /\ (pending' \ mem') # {})
+  /\ Rearm(WakeMode # "NoRecordWake" /\ (pending \ pending') # {} /\ (pending' \ mem') # {})
 
 \* The first tier: the head takes an in-memory entry and its durable record
 \* (try_insert_pending_dag). A new root takes an entry, due at once, within
