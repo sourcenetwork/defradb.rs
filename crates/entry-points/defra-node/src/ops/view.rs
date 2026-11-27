@@ -7,7 +7,7 @@ use super::handle::NodeOps;
 use crate::Result;
 
 impl NodeOps {
-    /// [`crate::Node::add_view_as`].
+    /// [`crate::Node::add_view`].
     pub(crate) async fn add_view(
         &self,
         context: &RequestContext,
@@ -25,7 +25,7 @@ impl NodeOps {
         .await
     }
 
-    /// [`crate::Node::refresh_views_as`].
+    /// [`crate::Node::refresh_views`].
     pub(crate) async fn refresh_views(
         &self,
         context: &RequestContext,

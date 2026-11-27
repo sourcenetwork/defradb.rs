@@ -20,6 +20,7 @@ pub(crate) mod links;
 pub(crate) mod log_throttle;
 pub(crate) mod pending;
 mod process;
+pub(crate) mod walk_stats;
 
 pub use config::{
     default_rate_limit_backoff, SyncConfig, DEFAULT_BROADCAST_PENDING_BYTES,
@@ -36,6 +37,7 @@ pub use diagnostics::{
 };
 pub use event_lanes::SyncEventReceiver;
 pub use events::{DagFetchPeerPermit, SyncEvent};
+pub use walk_stats::MissingLinkWalkSnapshot;
 // Coordinator dispatch helper (#1116 stage 2) needs to name this type in its
 // signature; the `pending` module itself stays private.
 pub(crate) use pending::PendingDag;

@@ -344,6 +344,13 @@ fn robust_prune_keeps_the_edges_one_at_a_time_checking_keeps() {
             .enumerate()
             .map(|(i, v)| candidate(i as u64 + 1, v, &base))
             .collect();
+        let ranked: Vec<Candidate> = candidates
+            .iter()
+            .map(|c| Candidate {
+                distance: squared_euclidean(&base, &c.vector),
+                ..c.clone()
+            })
+            .collect();
         for alpha in [1.0, 1.2, 2.0] {
             for max in [1, 5, 6, 7, 32, 64, 400] {
                 let blocked: Vec<NodeId> = RobustPrune::new(alpha)
@@ -351,10 +358,19 @@ fn robust_prune_keeps_the_edges_one_at_a_time_checking_keeps() {
                     .into_iter()
                     .map(|c| c.id)
                     .collect();
+                let expected = robust_prune_one_at_a_time(alpha, &base, &candidates, max);
                 assert_eq!(
-                    blocked,
-                    robust_prune_one_at_a_time(alpha, &base, &candidates, max),
+                    blocked, expected,
                     "count={count} dims={dims} alpha={alpha} max={max}"
+                );
+                let from_ranked: Vec<NodeId> = RobustPrune::new(alpha)
+                    .select_ranked(&ranked, max)
+                    .into_iter()
+                    .map(|c| c.id)
+                    .collect();
+                assert_eq!(
+                    from_ranked, expected,
+                    "select_ranked count={count} dims={dims} alpha={alpha} max={max}"
                 );
             }
         }

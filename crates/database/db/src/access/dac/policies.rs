@@ -60,6 +60,18 @@ impl DacPolicies {
             .map_err(|e| e.to_string())
     }
 
+    /// The policy `policy_id` as the node holds it, without asking the remote
+    /// ACP: what a transaction may read.
+    pub async fn get_local(&self, policy_id: &str) -> Result<Option<Policy>, DacPolicyError> {
+        self.store
+            .get_policy(policy_id)
+            .await
+            .map_err(|e| DacPolicyError::Lookup {
+                message: e.to_string(),
+                policy_id: policy_id.to_owned(),
+            })
+    }
+
     /// The policy `policy_id`: the local copy, or the remote ACP's, which is
     /// then kept locally. `Ok(None)` when neither has it.
     pub async fn get(&self, policy_id: &str) -> Result<Option<Policy>, DacPolicyError> {

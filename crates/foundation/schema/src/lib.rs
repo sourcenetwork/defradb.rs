@@ -19,6 +19,7 @@ mod field;
 mod field_kind;
 mod index;
 mod policy;
+mod policy_binding;
 mod relation;
 mod selector;
 mod source;
@@ -49,7 +50,7 @@ pub use collection::{
 };
 pub use crdt_name::CrdtName;
 pub use ctype::CType;
-pub use embedding::VectorEmbeddingDescription;
+pub use embedding::{template_reads, VectorEmbeddingDescription};
 pub use error::{Result, SchemaError};
 pub use field::FieldDescription;
 pub use field_kind::{FieldKind, ScalarArrayKind, ScalarKind};
@@ -60,6 +61,10 @@ pub use index::{
     VectorIndexDescription,
 };
 pub use policy::PolicyDescription;
+pub use policy_binding::{
+    check_policy_bindings, check_synced_policy_bindings, related_collection, BoundRelation,
+    PolicyBinding,
+};
 pub use selector::CollectionSelector;
 pub use source::{
     query_select_json_bytes, CollectionSetDescription, CollectionSource, QuerySource,

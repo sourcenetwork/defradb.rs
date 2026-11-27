@@ -476,7 +476,7 @@ impl<B: Blockstore + 'static> SyncManager<B> {
         }
         let missing = frontier_or_unknown(
             *cid,
-            find_all_missing_links(self.blockstore.as_ref(), &msg.block).await,
+            find_all_missing_links(self.blockstore.as_ref(), &msg.block, &self.diagnostics).await,
             &self.diagnostics,
         );
 

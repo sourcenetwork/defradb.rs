@@ -112,6 +112,7 @@ impl DocumentACP for LocalDocumentACP {
         policy_id: &str,
         resource_name: &str,
         doc_id: &str,
+        _relationships: &[crate::DerivedRelationship],
     ) -> Result<()> {
         let ns_collection = Self::namespaced_collection(policy_id, resource_name);
         // Use atomic registration to prevent TOCTOU race conditions

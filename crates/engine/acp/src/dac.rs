@@ -12,6 +12,7 @@ use crate::error::{Error, Result};
 use crate::identity::Identity;
 use crate::object_registration::{AcpObject, RegistrationFailure};
 use crate::permission::DocumentPermission;
+use crate::DerivedRelationship;
 
 /// Told when this node changes an object's relationships on its provider
 /// ([`DocumentACP::watch_object_changes`]). Called after the change, on the
@@ -420,12 +421,17 @@ pub trait DocumentACP: MaybeSendSync {
     /// * `policy_id` - The policy ID from the collection
     /// * `resource_name` - The resource name from the policy
     /// * `doc_id` - The document ID being registered
+    /// * `relationships` - What the document carries through its
+    ///   `@policy(relation:)` fields ([`DerivedRelationship`]): an external
+    ///   provider checks the collection's `create` over them and stores them
+    ///   with the owner; the local engine ignores them
     async fn register_doc_object(
         &self,
         identity: &Did,
         policy_id: &str,
         resource_name: &str,
         doc_id: &str,
+        relationships: &[DerivedRelationship],
     ) -> Result<()>;
 
     /// Whether this provider reads and settles the registrations creates owe
@@ -475,14 +481,25 @@ pub trait DocumentACP: MaybeSendSync {
         objects: &[AcpObject<'_>],
     ) -> std::result::Result<(), RegistrationFailure> {
         for (index, object) in objects.iter().enumerate() {
-            self.register_object(
-                identity,
-                object.policy_id,
-                object.resource,
-                object.object_id,
-            )
-            .await
-            .map_err(|error| RegistrationFailure::new(index, error))?;
+            let registered = if object.relationships.is_empty() {
+                self.register_object(
+                    identity,
+                    object.policy_id,
+                    object.resource,
+                    object.object_id,
+                )
+                .await
+            } else {
+                self.register_doc_object(
+                    identity,
+                    object.policy_id,
+                    object.resource,
+                    object.object_id,
+                    object.relationships,
+                )
+                .await
+            };
+            registered.map_err(|error| RegistrationFailure::new(index, error))?;
         }
         Ok(())
     }
@@ -498,66 +515,8 @@ pub trait DocumentACP: MaybeSendSync {
         resource_name: &str,
         object_id: &str,
     ) -> Result<()> {
-        self.register_doc_object(identity, policy_id, resource_name, object_id)
+        self.register_doc_object(identity, policy_id, resource_name, object_id, &[])
             .await
-    }
-
-    /// Resolve the resource type of the parent referenced by the document.
-    async fn registration_parent(
-        &self,
-        _policy_id: &str,
-        _child: &str,
-        _id: &str,
-    ) -> Result<crate::RegistrationParent> {
-        Err(Error::UnsupportedParentRegistration)
-    }
-
-    /// Resolve the parent and the permission a remote registration will require.
-    async fn registration_parent_rule(
-        &self,
-        _policy_id: &str,
-        _child: &str,
-        _id: &str,
-    ) -> Result<(crate::RegistrationParent, String)> {
-        Err(Error::UnsupportedParentRegistration)
-    }
-
-    /// Authorize a create before queuing its registration with a remote provider.
-    async fn authorized_registration_parent(
-        &self,
-        actor: &Did,
-        policy_id: &str,
-        child: &str,
-        id: &str,
-    ) -> Result<crate::RegistrationParent> {
-        let (parent, permission) = self.registration_parent_rule(policy_id, child, id).await?;
-        if !self
-            .check_named_permission(
-                actor,
-                &permission,
-                policy_id,
-                &parent.resource,
-                &parent.object_id,
-            )
-            .await?
-        {
-            return Err(Error::PermissionDenied(format!(
-                "parent requires '{permission}'"
-            )));
-        }
-        Ok(parent)
-    }
-
-    /// Atomically register a child and its parent link as the supplied identity.
-    async fn register_under_parent(
-        &self,
-        _identity: &Did,
-        _policy_id: &str,
-        _resource: &str,
-        _object_id: &str,
-        _parent: &crate::RegistrationParent,
-    ) -> Result<()> {
-        Err(Error::UnsupportedParentRegistration)
     }
 
     /// Check if document/object is registered with ACP.

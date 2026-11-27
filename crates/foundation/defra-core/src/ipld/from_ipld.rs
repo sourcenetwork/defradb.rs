@@ -414,6 +414,7 @@ impl TryFrom<&Ipld> for FieldDefinitionDeltaPayload {
             collection_id: parse_optional_string(map, "collectionID")?,
             relative_id: parse_optional_i32(map, "relativeID")?,
             immutable: parse_flag(map, "immutable")?,
+            policy_relation: parse_optional_string(map, "policyRelation")?,
         })
     }
 }

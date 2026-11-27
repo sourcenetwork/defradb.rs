@@ -156,7 +156,7 @@ where
             .await
         {
             Ok(_) => self.sent = true,
-            Err(error) if is_no_topic_peer(&error) => {
+            Err(error) if error.is_no_topic_peer() => {
                 if !self.sent {
                     self.refused = Some(error);
                 }
@@ -171,8 +171,4 @@ where
         }
         Ok(())
     }
-}
-
-fn is_no_topic_peer(error: &Error) -> bool {
-    matches!(error, Error::GossipSubPublish(message) if message == "InsufficientPeers")
 }

@@ -247,15 +247,15 @@ fn an_unfixed_dimension_accepts_any_length() {
     }
 }
 
-/// A filter does not appear in the decision at all. Go refuses a filtered
-/// query because its graph cannot filter during the walk; this one can, and
-/// the hybrid retrieval path folds `exclude_doc_ids` into a filter on
-/// essentially every call.
+/// A filter does not appear in this decision at all. The planner keeps a
+/// top-level select whose filter has conditions away from the vector index
+/// before it calls `route`; a one-to-many child select routes with its scalar
+/// filter applied at the scan. Either way `route` never refuses for a filter.
 #[test]
 fn a_filter_is_not_a_reason_to_refuse() {
     let indexes = [vector_index(7, "embedding", DIMENSIONS)];
-    // There is no filter field on the query shape: routing is decided without
-    // reference to one, which is the divergence from Go stated in the module.
+    // There is no filter field on the query shape: the filter check lives in
+    // the planner, not here.
     assert!(route(&routable(), &indexes).is_ok());
 }
 

@@ -38,7 +38,7 @@ use crate::sync::collection_store::P2PCollectionStorage;
 use crate::transport::P2PTransport;
 
 const MAX_CONCURRENT_COLLECTION_SUBSCRIPTIONS: usize = 16;
-const COLLECTION_SUBSCRIPTION_TIMEOUT: Duration = Duration::from_secs(5);
+const COLLECTION_SUBSCRIPTION_TIMEOUT: Duration = Duration::from_secs(15);
 
 /// A set of collection IDs.
 type CollectionSet = HopscotchMap<String, (), RandomState>;

@@ -277,6 +277,18 @@ pub struct FieldDefinitionDeltaPayload {
     /// serialises to the bytes it did before this field existed.
     #[serde(rename = "immutable", default, skip_serializing_if = "is_false")]
     pub immutable: bool,
+
+    /// The policy relation the field's value is bound to.
+    ///
+    /// Like `immutable`, a commitment to writers: it decides which documents
+    /// may be created. Skipped when absent, so an unbound field's delta
+    /// serialises to the bytes it did before this field existed.
+    #[serde(
+        rename = "policyRelation",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub policy_relation: Option<String>,
 }
 
 /// `skip_serializing_if` for a flag whose absence means false.
@@ -296,6 +308,7 @@ impl FieldDefinitionDeltaPayload {
             collection_id: None,
             relative_id: None,
             immutable: false,
+            policy_relation: None,
         }
     }
 
@@ -338,6 +351,12 @@ impl FieldDefinitionDeltaPayload {
     /// Mark the field as set once and never changed.
     pub fn with_immutable(mut self, immutable: bool) -> Self {
         self.immutable = immutable;
+        self
+    }
+
+    /// Bind the field's value to a policy relation, or leave it unbound.
+    pub fn with_policy_relation(mut self, relation: Option<String>) -> Self {
+        self.policy_relation = relation;
         self
     }
 }

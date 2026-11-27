@@ -40,12 +40,13 @@ impl Op for ConfigureMigration {
 
     fn run(&self, state: &State) -> Result<Value, Failure> {
         let identity = self.common.client_identity(Self::name())?;
+        let (node, scope) = (
+            state.node_on(self.common.node())?,
+            state.scope_as(self.txn, identity),
+        );
+        let config = self.config();
         state
-            .block_on(
-                state
-                    .node_on(self.common.node())?
-                    .set_migration_as(&state.context_as(self.txn, identity), &self.config()),
-            )
+            .block_on(async { scope.on(&node).set_migration(&config).await })
             .map(|id| json!({ "lensID": id }))
             .map_err(|e| Failure::operation(e.to_string()))
     }

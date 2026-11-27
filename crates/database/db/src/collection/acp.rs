@@ -127,7 +127,7 @@ pub async fn register_doc_if_needed(
         _ => return Ok(()), // No policy or no identity = public document
     };
 
-    acp.register_doc_object(did, &policy.id, &policy.resource_name, doc_id)
+    acp.register_doc_object(did, &policy.id, &policy.resource_name, doc_id, &[])
         .await
 }
 
@@ -205,11 +205,11 @@ pub async fn collection_to_register<'a>(
         )));
     }
 
-    Ok(Some(acp::AcpObject {
-        policy_id: &policy.id,
-        resource: &policy.resource_name,
-        object_id: &collection.collection_id,
-    }))
+    Ok(Some(acp::AcpObject::new(
+        &policy.id,
+        &policy.resource_name,
+        &collection.collection_id,
+    )))
 }
 
 /// Remove a document's ACP relations (owner, reader, updater, deleter) once

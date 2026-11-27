@@ -169,7 +169,7 @@ async fn exercise_policy_generations(replicated: bool) {
     assert_eq!(policy.metadata.tx_signer, admin.did());
     assert_eq!(policy.raw_policy, USER_ACP_POLICY);
     let original_reader = policy.relations.generation("users", "reader").unwrap();
-    let policy_id = &policy.policy.id;
+    let policy_id = policy.policy.id.as_str();
     let policy_hash = parse_policy_id(policy_id).unwrap();
 
     let alice = helpers::funded_identity();

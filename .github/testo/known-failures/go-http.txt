@@ -58,9 +58,6 @@ testo query::cyclic_fragments::a_cycle_no_field_spreads_still_fails_validation #
 testo net::info::connect_peers::net_info_connect_multiple_peers #2726
 testo index::query_with_relation_filter_unindexed_fk::relation_filter_keeps_another_selected_relation #3153
 
-testo index::range_filter::a_closed_range_limits_index_fetches #2527
-testo index::range_filter::an_open_descending_range_limits_index_fetches #2527
-testo index::range_filter::an_empty_range_limits_index_fetches #2527
 testo query::one_to_many::with_relation_filter_indexed_fk::relation_filter_through_an_indexed_fk_keeps_a_joined_list_relation #3153
 testo query::one_to_many::with_relation_filter_indexed_fk::relation_filter_through_an_indexed_fk_keeps_a_nested_joined_relation #3153
 testo query::one_to_many::with_relation_filter_indexed_fk::relation_filter_through_an_indexed_fk_keeps_another_joined_relation #3153

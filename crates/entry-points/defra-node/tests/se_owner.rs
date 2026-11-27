@@ -49,12 +49,8 @@ fn embedded_libp2p_se_owner_queries_replicator() -> Result<()> {
                 .await?;
 
             // Same schema + encrypted index on `name` on both nodes.
-            owner
-                .add_collection(&defra_core::RequestContext::ambient(), USER_SCHEMA)
-                .await?;
-            replicator
-                .add_collection(&defra_core::RequestContext::ambient(), USER_SCHEMA)
-                .await?;
+            owner.add_collection(USER_SCHEMA).await?;
+            replicator.add_collection(USER_SCHEMA).await?;
             owner.add_encrypted_index("User", "name").await?;
             replicator.add_encrypted_index("User", "name").await?;
 
@@ -159,12 +155,8 @@ fn embedded_iroh_se_owner_queries_replicator() -> Result<()> {
                 .build()
                 .await?;
 
-            owner
-                .add_collection(&defra_core::RequestContext::ambient(), USER_SCHEMA)
-                .await?;
-            replicator
-                .add_collection(&defra_core::RequestContext::ambient(), USER_SCHEMA)
-                .await?;
+            owner.add_collection(USER_SCHEMA).await?;
+            replicator.add_collection(USER_SCHEMA).await?;
             owner.add_encrypted_index("User", "name").await?;
             replicator.add_encrypted_index("User", "name").await?;
 

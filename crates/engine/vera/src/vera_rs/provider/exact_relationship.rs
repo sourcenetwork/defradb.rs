@@ -5,7 +5,8 @@ use alloy_primitives::B256;
 use vera_modules::acp::{
     keys, object_state,
     relation_generations::RelationPair,
-    types::{PolicyRecord, RelationshipRecord},
+    relationship_values,
+    types::{PolicyRecord, Relationship, RelationshipRecord, Subject},
 };
 
 use crate::provider::{ActorRelationshipQuery, ProviderError};
@@ -23,7 +24,7 @@ pub(super) async fn query(
 async fn query_subject(
     client: &Arc<AcpLightClient>,
     query: ActorRelationshipQuery<'_>,
-    subject: vera_acp::Subject,
+    subject: Subject,
     require_owner: bool,
 ) -> Result<(bool, B256), ProviderError> {
     async {
@@ -40,19 +41,14 @@ async fn query_subject(
                 .ok_or_else(|| fail("policy is unavailable".into()))?,
         )
         .map_err(|e| fail(e.to_string()))?;
-        if record.policy.id != policy_id {
+        if record.policy.id.as_str() != policy_id {
             return Err(fail("policy identity does not match its proof".into()));
         }
         record
             .relations
             .validate(&record.policy)
             .map_err(|e| fail(e.to_string()))?;
-        let object_id = if record
-            .policy
-            .actor
-            .as_ref()
-            .is_some_and(|actor| actor.name == query.resource)
-        {
+        let object_id = if query.resource == ACTOR_RESOURCE {
             vera_modules::actor::canonical_str(query.object).into_owned()
         } else {
             query.object.to_owned()
@@ -85,10 +81,7 @@ async fn query_subject(
                 return Err(ProviderError::RelationshipObservationDenied);
             }
             let mut authorized = false;
-            for manager in record
-                .policy
-                .get_managers_for_relation(query.resource, query.relation)
-            {
+            for manager in managers(&record, query.resource, query.relation) {
                 let request =
                     super::access_request(query.resource, &object_id, manager, query.requester)?;
                 let (revision, allowed) = client
@@ -137,8 +130,12 @@ async fn query_subject(
         } else {
             current_incarnation
         };
-        let relationship =
-            vera_acp::Relationship::new(query.resource, object_id, query.relation, subject);
+        let relationship = relationship_values::relationship(
+            query.resource,
+            object_id.as_str(),
+            query.relation,
+            subject,
+        );
         let generations = record
             .relations
             .pair(&relationship)
@@ -213,7 +210,7 @@ pub(super) async fn sentinel(
     let (parented, root) = query_subject(
         client,
         query(resource, child, "parent", account),
-        vera_acp::Subject::entity_set("nodes", parent, ""),
+        relationship_values::object_subject("nodes", parent),
         true,
     )
     .await?;
@@ -244,13 +241,34 @@ pub(super) async fn sentinel(
     Ok(parented && parent_owned && admitted && member)
 }
 
-fn entity_subject(actor: &str) -> Result<vera_acp::Subject, ProviderError> {
-    serde_json::from_value(serde_json::json!({"Entity": vera_modules::actor::canonical_str(actor)}))
+fn entity_subject(actor: &str) -> Result<Subject, ProviderError> {
+    serde_json::from_value(serde_json::json!({"actor": vera_modules::actor::canonical_str(actor)}))
         .map_err(|error| ProviderError::Query(error.to_string()))
 }
 
 fn issued_by(issuer: &str, account: &str) -> bool {
     vera_modules::actor::canonical_str(issuer) == vera_modules::actor::canonical_str(account)
+}
+
+/// The resource whose objects are actors in every acp policy.
+const ACTOR_RESOURCE: &str = "actor";
+
+/// The relations of `resource` whose holders manage `relation`.
+fn managers<'a>(record: &'a PolicyRecord, resource: &str, relation: &str) -> Vec<&'a str> {
+    record
+        .policy
+        .resources
+        .iter()
+        .filter(|candidate| candidate.name.as_str() == resource)
+        .flat_map(|candidate| &candidate.relations)
+        .filter(|candidate| {
+            candidate
+                .manages
+                .iter()
+                .any(|managed| managed.as_str() == relation)
+        })
+        .map(|candidate| candidate.name.as_str())
+        .collect()
 }
 
 /// Whether the proven owner is the requester. A proven absence of an owner
@@ -281,7 +299,7 @@ fn at_policy_root(policy: B256, found: B256, what: &'static str) -> Result<(), P
 fn granted(
     value: Option<&[u8]>,
     policy_id: &str,
-    relationship: &vera_acp::Relationship,
+    relationship: &Relationship,
     incarnation: u64,
     generations: RelationPair,
 ) -> Result<bool, ProviderError> {
@@ -312,12 +330,11 @@ mod tests {
         assert!(!issued_by("did:key:first", "did:key:second"));
     }
 
-    fn relationship() -> vera_acp::Relationship {
+    fn relationship() -> Relationship {
         serde_json::from_value(serde_json::json!({
-            "resource": "users",
-            "object_id": "doc",
+            "object": { "resource": "users", "id": "doc" },
             "relation": "reader",
-            "subject": { "Entity": "did:key:z6Mkreader" },
+            "subject": { "actor": "did:key:z6Mkreader" },
         }))
         .unwrap()
     }
