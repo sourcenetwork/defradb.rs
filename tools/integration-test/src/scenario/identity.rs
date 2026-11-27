@@ -15,9 +15,16 @@ use ::identity::{Identity as _, KeyType, RawIdentity};
 /// argument asks.
 pub const NODE_IDENTITY_BASE: u64 = 1 << 48;
 
+/// Seeds from here to `NODE_IDENTITY_BASE` name Ed25519 client identities.
+pub const ED25519_IDENTITY_BASE: u64 = 1 << 47;
+
 /// The secp256k1 private key of client identity `seed`. Any 32 bytes below
 /// the curve order are a key, and these are.
 pub(crate) fn private_key(seed: u64) -> [u8; 32] {
+    assert!(
+        ed25519_private_key(seed).is_none(),
+        "an Ed25519 client identity has 64 bytes"
+    );
     if let Some(node) = seed.checked_sub(NODE_IDENTITY_BASE) {
         return node_private_key(node);
     }
@@ -28,7 +35,11 @@ pub(crate) fn private_key(seed: u64) -> [u8; 32] {
 
 /// Client identity `seed`.
 pub fn identity(seed: u64) -> RawIdentity {
-    RawIdentity::from_bytes(KeyType::Secp256k1, &private_key(seed)).expect("a valid secp256k1 key")
+    match ed25519_private_key(seed) {
+        Some(key) => RawIdentity::from_bytes(KeyType::Ed25519, &key).expect("a valid Ed25519 key"),
+        None => RawIdentity::from_bytes(KeyType::Secp256k1, &private_key(seed))
+            .expect("a valid secp256k1 key"),
+    }
 }
 
 /// The DID of client identity `seed`.
@@ -39,12 +50,26 @@ pub fn did(seed: u64) -> String {
 /// The private key of client identity `seed` as `defra client --identity`
 /// reads it.
 pub fn private_key_hex(seed: u64) -> String {
-    hex::encode(private_key(seed))
+    match ed25519_private_key(seed) {
+        Some(key) => hex::encode(key),
+        None => hex::encode(private_key(seed)),
+    }
 }
 
-/// The local secp256k1 signing key of client identity `seed`, as an
-/// in-process caller attaches it to a write: Go's `FullIdentity`.
+/// The local signing key of client identity `seed`, as an in-process caller
+/// attaches it to a write: Go's `FullIdentity`.
 pub fn signing_config(seed: u64) -> defra_core::signing::SigningConfig {
+    if let Some(private_key) = ed25519_private_key(seed) {
+        let public = identity(seed).public_key_bytes();
+        return defra_core::signing::SigningConfig {
+            key_type: defra_core::signing::SigningKeyType::Ed25519,
+            private_key_bytes: private_key,
+            public_key_hex: hex::encode(&public),
+            public_key_bytes: public,
+            remote_signer: None,
+            signing_authorization: None,
+        };
+    }
     let public = identity(seed).public_key_bytes();
     defra_core::signing::SigningConfig {
         key_type: defra_core::signing::SigningKeyType::Secp256k1,
@@ -54,6 +79,13 @@ pub fn signing_config(seed: u64) -> defra_core::signing::SigningConfig {
         remote_signer: None,
         signing_authorization: None,
     }
+}
+
+fn ed25519_private_key(seed: u64) -> Option<Vec<u8>> {
+    let local = seed.checked_sub(ED25519_IDENTITY_BASE)?;
+    let mut bytes = [0x33; 32];
+    bytes[24..].copy_from_slice(&local.to_be_bytes());
+    Some(crypto::ed25519_key_from_seed(&bytes).expect("any 32 bytes are an Ed25519 seed"))
 }
 
 /// The keys Go's harness makes for its first identities (`generateIdentity`,
