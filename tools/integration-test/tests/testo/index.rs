@@ -47,6 +47,7 @@ mod new_unique_composite_one_to_one;
 mod order_limit_after_scan;
 mod order_limit_offset;
 mod order_query;
+mod owed_reindex;
 mod patch;
 mod patch_relation;
 mod query_performance;
