@@ -15,3 +15,4 @@ mod manager;
 mod manager_value_extraction;
 mod merged_crdt;
 mod patch;
+mod reindex_resume;

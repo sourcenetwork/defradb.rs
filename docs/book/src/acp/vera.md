@@ -1,8 +1,8 @@
 # Vera: external policy decisions
 
-Vera moves authorization off-node: an external chain (CometBFT or a native
-commonware-based chain) holds the policies and tuples, evaluates checks, and proofs
-flow back to the database.
+Vera moves authorization off-node: a Vera deployment (the native vera.rs chain, on
+commonware consensus) holds the policies and tuples, evaluates checks, and proofs flow
+back to the database.
 
 ## What it is
 
@@ -35,7 +35,7 @@ policy's ID, so deployments that replicate one collection to each other seed the
 under one creator and one nonce. Modeled by
 `proofs/tla/VeraPolicyCreate.tla` and `DacPolicyAdd.tla`.
 
-Both are wrapped as a `DocumentACP` and installed as the node's document ACP. Because
+The provider is wrapped as a `DocumentACP` and installed as the node's document ACP. Because
 the provider cannot join local transactions, the node wraps it in the external-ACP
 adapter: owed registrations, gated reads until confirmation, fail-closed
 `Unavailable` (the previous chapter's shape).

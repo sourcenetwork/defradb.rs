@@ -243,6 +243,13 @@ Filters on a path inside an indexed JSON field (`custom: {height: {_eq: 168}}`) 
 
 Elements of JSON arrays are indexed: `_any: {_eq|_gt: ...}` matches top-level elements only (not elements of nested arrays or a scalar in place of the array); `_all` with `_eq`/`_gt` uses the index; `_none` returns correct results without the index; elements of mixed types are matched correctly.
 
+# `defra.index.json.all-empty`: `_all` on an indexed JSON path finds empty arrays
+
+- **Parents:** ["go.index.json.array"]
+- **Scenarios:** ["index::json_all_empty_array::all_on_an_indexed_json_path_finds_an_empty_array", "index::json_all_empty_array::the_empty_array_entry_matches_no_other_filter", "index::json_all_empty_array::all_on_a_descending_json_index_finds_an_empty_array", "index::json_all_empty_array::all_on_a_composite_json_index_finds_an_empty_array", "index::json_all_empty_array::all_on_two_paths_finds_an_empty_array_at_either_path", "index::json_all_empty_array::all_on_a_top_level_empty_array_finds_it", "index::json_all_empty_array::empty_arrays_never_collide_in_a_unique_json_index", "index::json_all_empty_array::an_update_moves_the_empty_array_entry"]
+
+`_all` over an empty array is true, so `_all` (with `_eq`, `_in` or a range) on a path inside an indexed JSON field (`custom: {a: {_all: {_eq: 1}}}`) returns the documents whose array at that path is empty, exactly as the same query on an unindexed field does, while still using the index; a null, missing or scalar value at the path is not returned. When one filter has `_all` conditions on several paths, the index scan includes the empty-array marker for each path that the narrowed scan does not already reach. A JSON index keeps one entry under each empty array for this, which `_eq`, `_any` and `_none` on the path never return, which a unique JSON index never counts (any number of documents may hold an empty array at the same path), and which an update adds or removes as the array becomes empty or not. A store whose JSON indexes were written before these entries existed rebuilds those indexes, and only those, when it opens. This holds for descending and composite JSON indexes. Go misses these documents (its index writes no entry for an empty array), so these scenarios do not run against Go.
+
 # `go.index.maintenance.delete-with-filter`: Filter deletes clean up index entries
 
 - **Parents:** ["go.index.maintenance"]
@@ -362,3 +369,10 @@ The wire ID is Go-compatible numeric `u64`. For compatibility, a bare numeric ro
 - **Scenarios:** ["index::vector_deferred::vector_index_deferred_add_update_delete_search_is_correct", "index::vector_deferred::vector_index_deferred_concurrent_writers_all_searchable", "index::vector_deferred::vector_index_deferred_writes_are_searchable_after_a_restart"]
 
 On a deferred vector index a created, updated or deleted document is reflected by the next similarity query (`order: {_alias: {sim: DESC}}, limit: k`): a new vector is ranked, an updated one ranks by its new value, and a deleted document is gone, before the graph has caught up. Concurrent writers do not conflict with each other on the index, and their documents are all found. Writes not yet applied when the node stops are found after it restarts, and are applied then.
+
+# `defra.index.owed_reindex.resume`: A migration's reindex that stops part way resumes
+
+- **Parents:** ["go.index.backfill"]
+- **Scenarios:** ["index::owed_reindex::a_stopped_rebuild_stays_owed_and_the_next_open_settles_it", "index::owed_reindex::a_stopped_rebuild_stays_owed_and_the_next_schema_change_settles_it", "db::index::reindex_resume::the_open_resumes_a_stopped_walk_after_its_last_committed_page"]
+
+A patch with a migration commits even when the rebuild of the collection's indexes over the migrated documents stops part way. With `Users { name: String age: Int @index }` holding 300 users `u000` to `u299` aged 0 to 299, then a user `ageless` with no `age`, a patch adding `level` with the `increment` lens adding 5 to `age` succeeds, although the lens fails on `ageless` (`The requested property was not found. Requested: age`) once the rebuild has committed its first pages. Until the rebuild finishes, the collection's indexes answer no query: once `ageless` is purged, `Users(filter: {age: {_eq: 25}})` scans (0 index fetches) and returns `u020` at age 25. The next time the node opens, the rebuild resumes after the last page it committed: the documents those pages indexed are not walked again, and their entries stand as those pages wrote them. The next schema change (a patch adding `rank` with no lens) rebuilds the indexes again instead. After either, the same filter is answered from the index (1 index fetch) and returns `u020` at age 25, and every user is indexed at its migrated age: `Users(filter: {age: {_ge: 5}})`, answered from the index, returns the ages 5 to 304. Go's parity pin has no document purge, so the scenarios run on the Rust clients only.

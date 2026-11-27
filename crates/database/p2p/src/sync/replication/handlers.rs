@@ -13,6 +13,7 @@ use crate::sync::merge::{
     BlockMetadata, MergeBlock, MergeErrorDisposition, MergeHandler, MergeOutcome,
     RecoveredBlockMetadata,
 };
+use crate::sync::SyncDiagnostics;
 use crate::transport::P2PTransport;
 use rapidhash::HashSetExt;
 
@@ -1109,6 +1110,11 @@ where
             .await
         }
         SyncEvent::SyncError { cid, error } => ReplicationResult::Failed { cid, error },
+        SyncEvent::HeadsAlreadyMerged {
+            cid,
+            doc_id,
+            collection_id,
+        } => already_merged_result(cid, &doc_id, &collection_id),
         SyncEvent::GossipHeadDropped {
             root_cid,
             doc_id,
@@ -1197,9 +1203,12 @@ fn sourceless_complete_dispatch(event: &SyncEvent) -> Option<Cid> {
 }
 
 /// Whether the root block and every block it links are stored.
-async fn dag_is_local<B: Blockstore>(blockstore: &B, root_cid: &Cid) -> bool {
+async fn dag_is_local<B>(blockstore: &B, root_cid: &Cid, diagnostics: &SyncDiagnostics) -> bool
+where
+    B: Blockstore,
+{
     match blockstore.get(root_cid).await {
-        Ok(Some(root_data)) => find_all_missing_links(blockstore, &root_data)
+        Ok(Some(root_data)) => find_all_missing_links(blockstore, &root_data, diagnostics)
             .await
             .is_ok_and(|missing| missing.is_empty()),
         _ => false,
@@ -1254,7 +1263,13 @@ where
     let (event, _pending_owner) = match sourceless_complete_dispatch(&event) {
         Some(root_cid) => {
             let owner = coordinator.pending_dag_merge_guard(root_cid);
-            if dag_is_local(coordinator.blockstore().as_ref(), &root_cid).await {
+            if dag_is_local(
+                coordinator.blockstore().as_ref(),
+                &root_cid,
+                &coordinator.manager().diagnostics(),
+            )
+            .await
+            {
                 (into_dag_ready(event), owner)
             } else {
                 (event, None)

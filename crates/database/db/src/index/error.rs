@@ -58,6 +58,16 @@ pub enum Error {
     #[error("can not index a doc's field(s) that violates unique index. DocID: {doc_id}{fields}")]
     UniqueViolation { doc_id: String, fields: String },
 
+    /// A rebuild that would give the unique index `index_id` one value for
+    /// two documents because a migration gave it to one of them. It names
+    /// the document the rebuild was indexing and its values.
+    #[error("can not index a doc's field(s) that violates unique index. DocID: {doc_id}{fields}")]
+    RebuildUniqueViolation {
+        index_id: u32,
+        doc_id: String,
+        fields: String,
+    },
+
     /// A unique violation by an update, wrapped as Go's `NewErrUpdateIndex` wraps it.
     #[error("failed to update index: {source}. IndexName: {index}")]
     UpdateIndex { index: String, source: Box<Error> },
@@ -69,6 +79,7 @@ impl Error {
     pub fn is_unique_constraint_violation(&self) -> bool {
         matches!(self, Error::Storage(source) if source.is_unique_constraint_violation())
             || matches!(self, Error::UniqueViolation { .. })
+            || matches!(self, Error::RebuildUniqueViolation { .. })
             || matches!(self, Error::UpdateIndex { source, .. } if source.is_unique_constraint_violation())
     }
 }
