@@ -31,4 +31,16 @@ pub(super) const PROPERTIES: &[Property] = &[
         tiers: &[Boundary],
         bound_by: "",
     },
+    Property {
+        // #2802: a materialized view's cache selects every plain field the
+        // view declares, fields only its lens produces included, and nothing
+        // the view does not declare.
+        family: "Add view with a lens transform",
+        name: "ViewCacheSelection.plain_field_selected / selected_is_declared",
+        axis: Lean,
+        anchor: "crates/database/db/src/view/selection.rs cache_selection; crates/database/db/src/view/ops.rs DB::build_view_cache",
+        model_ref: "ViewCacheSelection (lake build)",
+        tiers: &[Boundary],
+        bound_by: "tools/integration-test/tests/testo/view/simple/with_unique_index.rs view_materialized_transform_giving_two_items_one_unique_value",
+    },
 ];

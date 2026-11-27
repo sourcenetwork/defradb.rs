@@ -3,5 +3,6 @@
 
 mod client;
 pub(crate) mod ops;
+mod selection;
 
 pub use client::ViewError;

@@ -11,8 +11,15 @@
 //! Every actor DID the vera.rs provider keeps or returns is therefore DefraDB's
 //! spelling ([`defra`]), including its own, and a DID read from vera.rs is
 //! compared with [`same_actor`]. A DID sent to vera.rs is written as vera.rs
-//! takes it ([`wire`]). Ed25519 keys have a single spelling and pass through
-//! unchanged.
+//! takes it ([`wire`]).
+//!
+//! Any of these keys may also be written in base64url (`did:key:u…`) rather
+//! than base58btc (`did:key:z…`). vera.rs takes a secp256k1 key in either and
+//! the other types in base58btc only, and DefraDB derives base58btc, so both
+//! [`defra`] and [`wire`] write base58btc, an Ed25519 key's one encoding
+//! included. [`spellings`] lists the base58btc form of a base64url Ed25519
+//! name as well, so key lookups find a registration under either name, and
+//! every DID the provider reports is the base58btc form.
 
 use std::borrow::Cow;
 
@@ -30,7 +37,8 @@ pub fn wire(did: &str) -> Cow<'_, str> {
     respelled(did, false, true)
 }
 
-/// `did` with its secp256k1 or P-256 point written compressed or not.
+/// `did` in base58btc, with its secp256k1 or P-256 point written compressed
+/// or not.
 fn respelled(did: &str, compress_secp256k1: bool, compress_p256: bool) -> Cow<'_, str> {
     let point =
         match parse_did_key(did) {
@@ -46,6 +54,7 @@ fn respelled(did: &str, compress_secp256k1: bool, compress_p256: bool) -> Cow<'_
                     let point = key.to_sec1_point(compress_p256);
                     (KeyType::Secp256r1, point.as_bytes().to_vec())
                 }),
+            Ok((KeyType::Ed25519, key)) if key.len() == 32 => Some((KeyType::Ed25519, key)),
             _ => None,
         };
     match point.map(|(kind, bytes)| create_did_key(kind, &bytes)) {
@@ -75,6 +84,18 @@ pub fn same_actor(a: &str, b: &str) -> bool {
 mod tests {
     use super::*;
 
+    fn base64url(did: &str) -> String {
+        use base64::Engine as _;
+
+        let bytes = bs58::decode(&did["did:key:z".len()..])
+            .into_vec()
+            .expect("base58btc");
+        format!(
+            "did:key:u{}",
+            base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes)
+        )
+    }
+
     fn spellings() -> (String, String) {
         let key = k256::ecdsa::SigningKey::from_slice(&[42; 32]).expect("valid key");
         (
@@ -90,6 +111,23 @@ mod tests {
         assert_eq!(defra(&compressed), uncompressed);
         assert_eq!(defra(&uncompressed), uncompressed);
         assert!(matches!(defra(&uncompressed), Cow::Borrowed(_)));
+    }
+
+    #[test]
+    fn a_base64url_spelling_meets_the_base58btc_ones() {
+        let (compressed, uncompressed) = spellings();
+        for did in [&compressed, &uncompressed] {
+            let base64url = base64url(did);
+            assert_eq!(defra(&base64url), uncompressed);
+            assert_eq!(wire(&base64url), uncompressed);
+            assert!(same_actor(&base64url, &compressed));
+        }
+
+        let ed25519 = "did:key:z6MkiTBz1ymuepAQ4HEHYSF1H8quG5GLVVQR3djdX3mDooWp";
+        let base64url = base64url(ed25519);
+        assert_eq!(defra(&base64url), ed25519);
+        assert_eq!(wire(&base64url), ed25519);
+        assert!(same_actor(&base64url, ed25519));
     }
 
     #[test]
@@ -141,6 +179,8 @@ mod tests {
         );
         let ed25519 = "did:key:z6MkiTBz1ymuepAQ4HEHYSF1H8quG5GLVVQR3djdX3mDooWp";
         assert_eq!(super::spellings(ed25519), [ed25519]);
+        let base64url = base64url(ed25519);
+        assert_eq!(super::spellings(&base64url), [base64url.as_str(), ed25519]);
     }
 
     #[test]

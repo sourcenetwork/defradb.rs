@@ -52,6 +52,14 @@ A `defradb start` server whose document ACP is Vera (`--document-acp-type vera` 
 
 A token that declares itself a Vera delegation and fails a check is refused with 403 `Token verification failed: …` before the request runs, and is never read as an identity token: a signature that does not verify against its issuer, a malformed token, one over 16 KiB, a validity interval that does not hold at the server's time, a scope other than `acp:policy`, a request-bound delegation, or another worker or deployment.
 
+# `defra.acp.vera_issuer_spelling`: A Vera delegation is issued under any issuer spelling vera.rs takes
+
+- **Parents:** ["defra.acp"]
+- **Scenarios:** ["bearer::issuer_spellings::a_secp256k1_signer_issues_under_every_spelling_vera_rs_takes_and_keeps_it", "bearer::issuer_spellings::an_ed25519_or_p256_signer_named_in_base64url_issues_under_its_canonical_did_only", "bearer::issuer_spellings::no_spelling_of_another_key_is_a_signers_issuer", "request_bound::the_chain_executes_a_request_bound_delegation_for_its_command_only"]
+- **Scope:** "crate tests and the `vera` integration binary's request-bound delegation test, not testo: only a host embedding DefraDB supplies a `DelegationSigner` of its own, and no testo client takes one or starts a node on a Vera deployment"
+
+A host may name its delegation signer by any `did:key` spelling of the signer's key that `crypto::parse_did_key` decodes. A delegation it issues for a secp256k1 key may name as its issuer any of the four spellings vera.rs takes for that key: the compressed or the uncompressed point, in base58btc (`did:key:z…`) or base64url (`did:key:u…`), whichever spelling names the signer itself. The token carries the issuer exactly as given, and vera.rs verifies it as that key's actor. An Ed25519 or P-256 key is taken by vera.rs only under its one base58btc DID (for P-256, of the compressed point); a signer named by any other spelling of such a key issues under that DID. An issuer that is not a spelling vera.rs takes for the signer's key, including the base64url spelling of an Ed25519 or P-256 key and any spelling of another key, is refused before anything is signed with `issuer DID is not a spelling vera.rs takes for the signing key`.
+
 # `go.acp.nac.gates.signature`: Block signature verification is gated
 
 - **Parents:** ["go.acp.nac.gates"]

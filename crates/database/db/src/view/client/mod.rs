@@ -37,17 +37,18 @@ where
             .await?;
         let txn = context.txn().map(|txn| txn.to_string());
 
-        let mut known_types: rapidhash::RapidHashSet<String> = db
-            .list_collections()
-            .unwrap_or_default()
-            .into_iter()
-            .collect();
+        let mut known_collections = db.known_collections();
         if let Some(txn) = &txn {
             let in_txn = self.get_collections_in_txn_as(context, txn).await?;
-            known_types.extend(in_txn.into_iter().map(|version| version.name));
+            known_collections.extend(
+                in_txn
+                    .into_iter()
+                    .map(|version| (version.name, version.collection_id)),
+            );
         }
-        let mut collections = query::parse_sdl_with_known_types(target_sdl, known_types)
-            .map_err(ViewError::SchemaParse)?;
+        let mut collections =
+            query::parse_sdl_with_known_collections(target_sdl, known_collections)
+                .map_err(ViewError::SchemaParse)?;
 
         let source = view_source(source_query, transform, limits)?;
         for collection in &mut collections {

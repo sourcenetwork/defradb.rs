@@ -33,5 +33,5 @@ pub use directives::ParsedDirectives;
 pub use field_type_refusal::{
     FieldTypeRefusal, FieldTypeRefusals, UNSUPPORTED_FIELD_TYPE_ERROR_CODE,
 };
-pub use parser::{parse_sdl, parse_sdl_with_known_types, parse_sdl_with_warnings, SdlParser};
+pub use parser::{parse_sdl, parse_sdl_with_known_collections, parse_sdl_with_warnings, SdlParser};
 pub use warnings::{DirectiveLocation, ParseOutput, ParseWarning};
