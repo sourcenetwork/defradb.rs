@@ -8,7 +8,7 @@ use storage::RegolithStore;
 use super::access_tests::NoopTransport;
 use super::{SyncCoordinator, NON_AUTHORITATIVE_BROADCAST_TASK_LIMIT};
 use crate::network::Network;
-use crate::sync::SyncConfig;
+use crate::sync::{BroadcastResult, SyncConfig};
 
 type Coordinator = Arc<SyncCoordinator<DefraBlockstore<RegolithStore>, NoopTransport>>;
 
@@ -300,9 +300,7 @@ async fn a_write_with_no_peer_connected_is_not_held_for_a_peer_that_joins() {
     );
 
     assert!(
-        announced
-            .as_ref()
-            .is_err_and(|error| error.to_string().contains("InsufficientPeers")),
+        matches!(announced, Ok(BroadcastResult::NoSubscribers)),
         "the write was announced to the peer that joined after it: {announced:?}"
     );
     assert!(transport.published().is_empty());
@@ -343,9 +341,7 @@ async fn a_write_with_no_peer_subscribed_is_not_held_for_a_peer_that_subscribes(
     );
 
     assert!(
-        announced
-            .as_ref()
-            .is_err_and(|error| error.to_string().contains("InsufficientPeers")),
+        matches!(announced, Ok(BroadcastResult::NoSubscribers)),
         "the write was announced to the peer that subscribed after it: {announced:?}"
     );
     assert!(transport.published().is_empty());

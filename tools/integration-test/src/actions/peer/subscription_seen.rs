@@ -10,7 +10,6 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use defra_core::RequestContext;
 use defra_node::Node;
 use events::{EventName, Message};
 use rapidhash::{HashSetExt, RapidHashSet};
@@ -44,16 +43,20 @@ pub fn subscribed_everywhere<F>(state: &State, name: &str, subscribe: F) -> Resu
 where
     F: FnOnce() -> Result<Value, Failure>,
 {
+    // A pinc subscribe answers once a hub holds the join, and a hub hands a
+    // message to every member it holds: no peer has to see it.
+    if crate::transport_choice::TransportChoice::from_env().is_pinc() {
+        return subscribe();
+    }
     let Some(subscriber) = state.node(name)?.core() else {
         return subscribe();
     };
-    let context = RequestContext::ambient();
-    // ponytail: a node whose subscriptions the harness cannot list (NAC
-    // refusing the ambient caller) is not waited on.
-    let Ok(before) = subscribed(state, &subscriber, &context) else {
+    // A node whose subscriptions the harness cannot list (NAC refusing an
+    // anonymous caller) is not waited on.
+    let Ok(before) = subscribed(state, &subscriber) else {
         return subscribe();
     };
-    let watchers = in_reach(state, name, &context)?
+    let watchers = in_reach(state, name)?
         .into_iter()
         .map(|(name, node)| Watcher {
             name,
@@ -64,14 +67,14 @@ where
         })
         .collect::<Vec<_>>();
     let done = subscribe()?;
-    let names: Vec<String> = subscribed(state, &subscriber, &context)?
+    let names: Vec<String> = subscribed(state, &subscriber)?
         .difference(&before)
         .cloned()
         .collect();
     if names.is_empty() {
         return Ok(done);
     }
-    let added = topics(state, &subscriber, &context, names)?;
+    let added = topics(state, &subscriber, names)?;
     let subscriber_id = own_peer_id(state, name)?;
     let end = Instant::now() + SUBSCRIPTION_SEEN;
     let mut unseen = Vec::new();
@@ -103,30 +106,21 @@ where
 }
 
 /// The names of the collections node `node` subscribes to.
-fn subscribed(
-    state: &State,
-    node: &Arc<Node>,
-    context: &RequestContext,
-) -> Result<RapidHashSet<String>, Failure> {
+fn subscribed(state: &State, node: &Arc<Node>) -> Result<RapidHashSet<String>, Failure> {
     let names = state
-        .block_on(node.list_p2p_collections_as(context))
+        .block_on(node.anonymous().list_p2p_collections())
         .map_err(|error| Failure::operation(error.to_string()))?;
     Ok(names.into_iter().collect())
 }
 
 /// The gossip topics of collections `names`: their collection IDs.
-fn topics(
-    state: &State,
-    node: &Arc<Node>,
-    context: &RequestContext,
-    names: Vec<String>,
-) -> Result<Vec<String>, Failure> {
+fn topics(state: &State, node: &Arc<Node>, names: Vec<String>) -> Result<Vec<String>, Failure> {
     let selector = CollectionSelector {
         names: Some(names),
         ..Default::default()
     };
     let versions = state
-        .block_on(node.get_collections_as(context, &selector))
+        .block_on(node.anonymous().get_collections(&selector))
         .map_err(|error| Failure::operation(error.to_string()))?;
     let ids: RapidHashSet<String> = versions.into_iter().map(|v| v.collection_id).collect();
     Ok(ids.into_iter().collect())
@@ -143,11 +137,7 @@ fn own_peer_id(state: &State, name: &str) -> Result<String, Failure> {
 
 /// The other Rust nodes in node `name`'s connected component, walked
 /// through each node's connected peers.
-fn in_reach(
-    state: &State,
-    name: &str,
-    context: &RequestContext,
-) -> Result<Vec<(String, Arc<Node>)>, Failure> {
+fn in_reach(state: &State, name: &str) -> Result<Vec<(String, Arc<Node>)>, Failure> {
     let mut nodes = Vec::new();
     for (other, node) in state.running() {
         let Some(core) = node.core() else { continue };
@@ -158,7 +148,7 @@ fn in_reach(
             continue;
         };
         let peers: RapidHashSet<String> = state
-            .block_on(core.active_peers_as(context))
+            .block_on(core.anonymous().active_peers())
             .unwrap_or_default()
             .iter()
             .map(|peer| peer_id(peer).to_owned())

@@ -20,6 +20,9 @@
 \* ClosureDepth::widen (the first cut and its doubling);
 \* crates/database/p2p/src/sync/coordinator/dag_fetcher.rs fetch_dag_attempt (one
 \* round per missing frontier, widening after each round that still left one).
+\* On a rooted transport a document's fetch first asks once, uncut, naming the
+\* root (RootNamedFetch.tla); this chain is a branchable collection's blocks,
+\* or what is left after a response the cap truncated.
 \* The model is one attempt: each retry attempt restarts at InitCut, so
 \* INV_RoundsLogarithmic bounds rounds per attempt, not per fetch.
 EXTENDS Naturals, FiniteSets

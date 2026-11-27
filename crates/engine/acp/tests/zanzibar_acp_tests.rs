@@ -48,7 +48,7 @@ fn test_register_document() {
 
         let owner = test_did();
 
-        acp.register_doc_object(&owner, "policy1", "documents", "doc1")
+        acp.register_doc_object(&owner, "policy1", "documents", "doc1", &[])
             .await
             .unwrap();
 
@@ -59,11 +59,11 @@ fn test_register_document() {
         assert!(registered);
 
         let result = acp
-            .register_doc_object(&owner, "policy1", "documents", "doc1")
+            .register_doc_object(&owner, "policy1", "documents", "doc1", &[])
             .await;
         result.unwrap();
         let result = acp
-            .register_doc_object(&test_did2(), "policy1", "documents", "doc1")
+            .register_doc_object(&test_did2(), "policy1", "documents", "doc1", &[])
             .await;
         assert!(matches!(result, Err(Error::DocumentAlreadyRegistered(_))));
     })
@@ -78,7 +78,7 @@ fn test_owner_has_all_permissions() {
 
         let owner = test_did();
 
-        acp.register_doc_object(&owner, "policy1", "documents", "doc1")
+        acp.register_doc_object(&owner, "policy1", "documents", "doc1", &[])
             .await
             .unwrap();
 
@@ -152,7 +152,7 @@ fn test_anonymous_cannot_access_registered() {
 
         let owner = test_did();
 
-        acp.register_doc_object(&owner, "policy1", "documents", "doc1")
+        acp.register_doc_object(&owner, "policy1", "documents", "doc1", &[])
             .await
             .unwrap();
 
@@ -180,7 +180,7 @@ fn test_add_reader_relationship() {
         let owner = test_did();
         let reader = test_did2();
 
-        acp.register_doc_object(&owner, "collection1", "collection1", "doc1")
+        acp.register_doc_object(&owner, "collection1", "collection1", "doc1", &[])
             .await
             .unwrap();
 
@@ -235,7 +235,7 @@ fn test_wildcard_reader_relationship_allows_authenticated_and_anonymous_read() {
         let reader = test_did2();
         let wildcard = Did::wildcard();
 
-        acp.register_doc_object(&owner, "collection1", "collection1", "doc1")
+        acp.register_doc_object(&owner, "collection1", "collection1", "doc1", &[])
             .await
             .unwrap();
 
@@ -327,7 +327,7 @@ fn test_updater_implies_read() {
         let owner = test_did();
         let updater = test_did2();
 
-        acp.register_doc_object(&owner, "collection1", "collection1", "doc1")
+        acp.register_doc_object(&owner, "collection1", "collection1", "doc1", &[])
             .await
             .unwrap();
 
@@ -379,7 +379,7 @@ fn test_non_owner_cannot_add_relationship() {
         let owner = test_did();
         let non_owner = test_did2();
 
-        acp.register_doc_object(&owner, "collection1", "collection1", "doc1")
+        acp.register_doc_object(&owner, "collection1", "collection1", "doc1", &[])
             .await
             .unwrap();
 
@@ -409,7 +409,7 @@ fn test_delete_relationship() {
         let owner = test_did();
         let reader = test_did2();
 
-        acp.register_doc_object(&owner, "collection1", "collection1", "doc1")
+        acp.register_doc_object(&owner, "collection1", "collection1", "doc1", &[])
             .await
             .unwrap();
 
@@ -462,7 +462,7 @@ fn test_unregister_document() {
 
         let owner = test_did();
 
-        acp.register_doc_object(&owner, "policy1", "documents", "doc1")
+        acp.register_doc_object(&owner, "policy1", "documents", "doc1", &[])
             .await
             .unwrap();
 
@@ -488,7 +488,7 @@ fn test_cannot_add_owner_relation() {
         let owner = test_did();
         let target = test_did2();
 
-        acp.register_doc_object(&owner, "collection1", "collection1", "doc1")
+        acp.register_doc_object(&owner, "collection1", "collection1", "doc1", &[])
             .await
             .unwrap();
 
@@ -520,7 +520,7 @@ fn test_invalid_relation() {
         let owner = test_did();
         let target = test_did2();
 
-        acp.register_doc_object(&owner, "collection1", "collection1", "doc1")
+        acp.register_doc_object(&owner, "collection1", "collection1", "doc1", &[])
             .await
             .unwrap();
 
@@ -567,7 +567,7 @@ fn test_admin_can_add_reader_relationship() {
         let admin = test_did2();
         let reader = test_did3();
 
-        acp.register_doc_object(&owner, "collection1", "collection1", "doc1")
+        acp.register_doc_object(&owner, "collection1", "collection1", "doc1", &[])
             .await
             .unwrap();
 
@@ -622,7 +622,7 @@ fn test_admin_can_delete_reader_relationship() {
         let admin = test_did2();
         let reader = test_did3();
 
-        acp.register_doc_object(&owner, "collection1", "collection1", "doc1")
+        acp.register_doc_object(&owner, "collection1", "collection1", "doc1", &[])
             .await
             .unwrap();
 
@@ -689,7 +689,7 @@ fn test_admin_cannot_add_admin_relationship() {
         let admin = test_did2();
         let other = test_did3();
 
-        acp.register_doc_object(&owner, "collection1", "collection1", "doc1")
+        acp.register_doc_object(&owner, "collection1", "collection1", "doc1", &[])
             .await
             .unwrap();
 
@@ -731,7 +731,7 @@ fn test_reader_cannot_add_relationships() {
         let reader = test_did2();
         let other = test_did3();
 
-        acp.register_doc_object(&owner, "collection1", "collection1", "doc1")
+        acp.register_doc_object(&owner, "collection1", "collection1", "doc1", &[])
             .await
             .unwrap();
 
@@ -772,7 +772,7 @@ fn test_admin_has_read_update_delete_permissions() {
         let owner = test_did();
         let admin = test_did2();
 
-        acp.register_doc_object(&owner, "collection1", "collection1", "doc1")
+        acp.register_doc_object(&owner, "collection1", "collection1", "doc1", &[])
             .await
             .unwrap();
 
@@ -839,7 +839,7 @@ fn test_revoking_admin_removes_management_capability() {
         let admin = test_did2();
         let reader = test_did3();
 
-        acp.register_doc_object(&owner, "collection1", "collection1", "doc1")
+        acp.register_doc_object(&owner, "collection1", "collection1", "doc1", &[])
             .await
             .unwrap();
 
@@ -917,7 +917,7 @@ resources:
         let mallory = test_did3();
         let stranger = test_did4();
 
-        acp.register_doc_object(&owner, &policy_id, "document", "employee_handbook")
+        acp.register_doc_object(&owner, &policy_id, "document", "employee_handbook", &[])
             .await
             .unwrap();
 
@@ -1067,7 +1067,7 @@ resources:
         let writer = test_did3();
         let blocked_writer = test_did4();
 
-        acp.register_doc_object(&owner, &policy_id, "document", "doc1")
+        acp.register_doc_object(&owner, &policy_id, "document", "doc1", &[])
             .await
             .unwrap();
 
@@ -1172,7 +1172,7 @@ resources:
         let acp = ZanzibarDocumentACP::new(Arc::clone(&store));
         let owner = test_did();
         let candidate = test_did2();
-        acp.register_doc_object(&owner, &policy_id, "rows", "row")
+        acp.register_doc_object(&owner, &policy_id, "rows", "row", &[])
             .await
             .unwrap();
         // A corrupt store can contain an edge the policy would have rejected.

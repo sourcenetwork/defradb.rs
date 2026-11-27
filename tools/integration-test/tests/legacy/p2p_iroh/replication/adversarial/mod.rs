@@ -4,11 +4,8 @@
 //! honest payload and waits for it to read back, so an absent hostile document
 //! means refused rather than never delivered.
 
-mod blocks;
-mod cid_mismatch;
 mod doc_id_mismatch;
 mod forged_signature;
-mod peer;
 mod permitted_update;
 mod protected;
 mod protected_ancestor;

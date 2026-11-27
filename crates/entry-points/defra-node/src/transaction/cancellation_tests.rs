@@ -63,14 +63,14 @@ impl QueryExecutor for HeldCommit {
 fn cancelling_a_commit_waiter_does_not_abandon_the_running_commit() {
     let edge = edge::testing::edge();
     edge.block_on(async {
-        let mut node = super::Node::builder()
+        let mut node = crate::Node::builder()
             .with_edge(edge.clone())
             .build()
             .await
             .unwrap();
         let executor = Arc::new(HeldCommit::default());
         node.runner = executor.clone();
-        let txn = node.begin_transaction_guard(false).await.unwrap();
+        let txn = node.new_txn(false).await.unwrap();
         {
             let commit = txn.commit();
             let mut commit = std::pin::pin!(commit);
@@ -104,7 +104,7 @@ fn cancelling_a_commit_waiter_does_not_abandon_the_running_commit() {
 fn cancelling_a_begin_waiter_abandons_the_unreturned_transaction() {
     let edge = edge::testing::edge();
     edge.block_on(async {
-        let mut node = super::Node::builder()
+        let mut node = crate::Node::builder()
             .with_edge(edge.clone())
             .build()
             .await
@@ -115,7 +115,7 @@ fn cancelling_a_begin_waiter_abandons_the_unreturned_transaction() {
         });
         node.runner = executor.clone();
         {
-            let begin = node.begin_transaction_guard(false);
+            let begin = node.new_txn(false);
             let mut begin = std::pin::pin!(begin);
             futures::future::poll_fn(|cx| {
                 let result = begin.as_mut().poll(cx);

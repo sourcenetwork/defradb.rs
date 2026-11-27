@@ -5,7 +5,7 @@
 
 use crate::error::{QueryError, Result};
 use graphql_parser::schema::{Definition, Document, InterfaceType, ObjectType, TypeDefinition};
-use rapidhash::{HashMapExt, HashSetExt, RapidHashMap, RapidHashSet};
+use rapidhash::{HashMapExt, RapidHashMap};
 use schema::CollectionVersion;
 
 use super::directives::ParsedDirectives;
@@ -26,9 +26,10 @@ pub struct SdlParser<'a> {
     pub(super) warnings: Vec<ParseWarning>,
     /// Current type being parsed (for warning context)
     pub(super) current_type: Option<String>,
-    /// External type names (e.g. existing collection types) that can be referenced
-    /// in field types but are not defined in the SDL being parsed.
-    pub(super) known_external_types: RapidHashSet<String>,
+    /// Collections that exist already and are not defined in the SDL being
+    /// parsed, by name, each with its collection ID. A field may relate to
+    /// one, and the relation commits to that ID.
+    pub(super) known_collections: RapidHashMap<String, String>,
     /// Accumulated errors from parsing (for multi-error reporting)
     pub(super) errors: Vec<String>,
 }
@@ -83,7 +84,6 @@ impl Default for ParsedTypeDirectives {
 pub(super) struct PolicyConfig {
     pub(super) id: String,
     pub(super) resource: String,
-    pub(super) parent_field: Option<String>,
 }
 
 #[derive(Debug)]
@@ -116,14 +116,15 @@ impl<'a> SdlParser<'a> {
             definition_order: Vec::new(),
             warnings: Vec::new(),
             current_type: None,
-            known_external_types: RapidHashSet::new(),
+            known_collections: RapidHashMap::new(),
             errors: Vec::new(),
         }
     }
 
-    /// Set external type names that can be referenced but aren't defined in the SDL.
-    pub fn with_known_types(mut self, types: RapidHashSet<String>) -> Self {
-        self.known_external_types = types;
+    /// Set the collections that exist already, by name, each with its
+    /// collection ID.
+    pub fn with_known_collections(mut self, collections: RapidHashMap<String, String>) -> Self {
+        self.known_collections = collections;
         self
     }
 
@@ -275,16 +276,18 @@ pub fn parse_sdl(sdl: &str) -> Result<Vec<CollectionVersion>> {
     parser.parse()
 }
 
-/// Parse SDL with knowledge of existing collection type names.
+/// Parse SDL that may relate to collections that exist already.
 ///
-/// External types referenced in the SDL (e.g. `books: [Book]` where `Book` is
-/// an existing collection) will be resolved as named relations instead of
-/// producing "no type found" errors.
-pub fn parse_sdl_with_known_types(
+/// `known_collections` maps each existing collection's name to its collection
+/// ID. A field whose type is one of them (`author: Author` where `Author` is
+/// stored) is the relation it would be had both been declared in one SDL: it
+/// commits to the target's collection ID, so a collection has one identity
+/// however many calls its schema arrives in.
+pub fn parse_sdl_with_known_collections(
     sdl: &str,
-    known_types: RapidHashSet<String>,
+    known_collections: RapidHashMap<String, String>,
 ) -> Result<Vec<CollectionVersion>> {
-    let mut parser = SdlParser::new(sdl).with_known_types(known_types);
+    let mut parser = SdlParser::new(sdl).with_known_collections(known_collections);
     parser.parse()
 }
 
@@ -310,3 +313,7 @@ mod tests;
 #[cfg(test)]
 #[path = "identity_tests.rs"]
 mod identity_tests;
+
+#[cfg(test)]
+#[path = "known_collection_tests.rs"]
+mod known_collection_tests;

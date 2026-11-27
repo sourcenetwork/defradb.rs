@@ -116,11 +116,11 @@ fn older_index_formats_are_upgraded() {
     .unwrap()
 }
 
-/// Format 5 has the index key encoding format 6 reads. Moving its stamp must
+/// Format 6 has the index key encoding format 7 reads. Moving its stamp must
 /// not rebuild or otherwise write the index, and must make older binaries
 /// refuse the store at open.
 #[test]
-fn a_format_five_store_is_stamped_without_rebuilding() {
+fn a_format_six_store_is_stamped_without_rebuilding() {
     use storage::keys::IndexDataStoreKey;
 
     workers::block_on(async {
@@ -146,7 +146,7 @@ fn a_format_five_store_is_stamped_without_rebuilding() {
             .unwrap();
         txn.systemstore()
             .unwrap()
-            .set(INDEX_FORMAT_KEY, &5u32.to_be_bytes())
+            .set(INDEX_FORMAT_KEY, &6u32.to_be_bytes())
             .await
             .unwrap();
         txn.commit().await.unwrap();
@@ -431,7 +431,7 @@ fn rebuilds_a_descending_json_index_stamped(stored: u32, stale_walk: bool) {
             result.data.unwrap(),
             serde_json::json!({"User": [{"name": "John"}]})
         );
-        assert_eq!(CURRENT_INDEX_FORMAT, 6);
+        assert_eq!(CURRENT_INDEX_FORMAT, 7);
         assert_eq!(
             reopened.stored_index_format().await.unwrap(),
             Some(CURRENT_INDEX_FORMAT)

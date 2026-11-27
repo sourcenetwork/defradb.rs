@@ -1,6 +1,7 @@
 mod close;
 mod connect;
 mod get_identity;
+mod kill;
 mod new;
 mod restart;
 mod start_nac;
@@ -8,6 +9,7 @@ mod start_nac;
 pub use close::Close;
 pub use connect::Connect;
 pub use get_identity::GetNodeIdentity;
+pub use kill::Kill;
 pub use new::{AdmissionSpec, ConnectionManagerSpec, NewNode};
 pub use restart::Restart;
 pub use start_nac::Start;

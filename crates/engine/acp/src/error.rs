@@ -28,9 +28,6 @@ pub enum Error {
     #[error("document already registered: {0}")]
     DocumentAlreadyRegistered(String),
 
-    #[error("parent-authorized registration is unsupported by this provider")]
-    UnsupportedParentRegistration,
-
     /// Invalid relation name
     #[error("invalid relation: {0}")]
     InvalidRelation(String),
@@ -58,6 +55,18 @@ pub enum Error {
     /// This provider cannot bind native node-administrator relationship writes.
     #[error("transactional node-administrator relationship management is unsupported")]
     UnsupportedAdministrativeRelationship,
+
+    /// The provider refused to register a document because its creator may
+    /// not create it in its collection (the policy resource's
+    /// `collection.create`). Final: sending the registration again cannot
+    /// change the answer for the same relationships.
+    #[error("not authorized to create document {doc_id} in its collection: {reason}")]
+    CreateNotAuthorized { doc_id: String, reason: String },
+
+    /// A create in a collection whose policy gates creates was made without
+    /// an identity.
+    #[error("not authorized to create a document in collection {collection} without an identity: its policy restricts who may create documents")]
+    AnonymousCreate { collection: String },
 
     /// Not the owner of the document (UNAUTHORIZED)
     #[error("UNAUTHORIZED: not document owner, cannot {operation}")]

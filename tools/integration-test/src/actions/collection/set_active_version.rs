@@ -36,15 +36,17 @@ impl Op for SetActiveCollectionVersion {
 
     fn run(&self, state: &State) -> Result<Value, Failure> {
         let identity = self.common.client_identity(Self::name())?;
+        let (node, scope) = (
+            state.node_on(self.common.node())?,
+            state.scope_as(self.txn, identity),
+        );
         state
-            .block_on(
-                state
-                    .node_on(self.common.node())?
-                    .set_active_collection_version_as(
-                        &state.context_as(self.txn, identity),
-                        self.version_id.as_str(),
-                    ),
-            )
+            .block_on(async {
+                scope
+                    .on(&node)
+                    .set_active_collection_version(self.version_id.as_str())
+                    .await
+            })
             .map(|()| json!({}))
             .map_err(|e| Failure::operation(e.to_string()))
     }

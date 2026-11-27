@@ -38,11 +38,9 @@ impl Op for ListEncryptedIndexes {
         state
             .block_on(
                 state
-                    .node_on(self.common.node())?
-                    .list_encrypted_indexes_as(
-                        &state.context_as(self.txn, identity),
-                        &self.collection,
-                    ),
+                    .scope_as(self.txn, identity)
+                    .on(&*state.node_on(self.common.node())?)
+                    .list_encrypted_indexes(&self.collection),
             )
             .map(|indexes| json!({ "indexes": indexes }))
             .map_err(|e| Failure::operation(e.to_string()))

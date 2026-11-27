@@ -38,8 +38,9 @@ impl Op for ListIndexes {
         let indexes = state
             .block_on(
                 state
-                    .node_on(self.common.node())?
-                    .list_indexes_as(&state.context_as(self.txn, identity), &self.collection),
+                    .scope_as(self.txn, identity)
+                    .on(&*state.node_on(self.common.node())?)
+                    .list_indexes(&self.collection),
             )
             .map_err(|e| Failure::operation(e.to_string()))?;
         Ok(json!({ "indexes": indexes }))
