@@ -39,13 +39,18 @@ impl Op for AddView {
 
     fn run(&self, state: &State) -> Result<Value, Failure> {
         let identity = self.common.client_identity(Self::name())?;
+        let (node, scope) = (
+            state.node_on(self.common.node())?,
+            state.scope_as(self.txn, identity),
+        );
+        let transform = self.transform_cid.as_ref().map(Text::as_str);
         state
-            .block_on(state.node_on(self.common.node())?.add_view_as(
-                &state.context_as(self.txn, identity),
-                self.query.as_str(),
-                self.sdl.as_str(),
-                self.transform_cid.as_ref().map(Text::as_str),
-            ))
+            .block_on(async {
+                scope
+                    .on(&node)
+                    .add_view(self.query.as_str(), self.sdl.as_str(), transform)
+                    .await
+            })
             .map(|_| json!({}))
             .map_err(|e| Failure::operation(e.to_string()))
     }

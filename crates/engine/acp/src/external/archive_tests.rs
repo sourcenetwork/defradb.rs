@@ -42,7 +42,14 @@ impl Recording {
 
 #[async_trait]
 impl DocumentACP for Recording {
-    async fn register_doc_object(&self, _: &Did, _: &str, _: &str, _: &str) -> Result<()> {
+    async fn register_doc_object(
+        &self,
+        _: &Did,
+        _: &str,
+        _: &str,
+        _: &str,
+        _: &[crate::DerivedRelationship],
+    ) -> Result<()> {
         Ok(())
     }
 

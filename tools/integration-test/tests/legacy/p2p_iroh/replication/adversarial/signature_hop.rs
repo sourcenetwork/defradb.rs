@@ -1,9 +1,9 @@
 use integration_test::{extract_p2p_addr, TestCluster};
 use serial_test::serial;
 
-use super::blocks::{author, genesis, user, Signing};
-use super::peer::HostilePeer;
 use super::receiver::{describe, p2p_addrs, wait_for_user, wait_listening, SCHEMA};
+use integration_test::hostile::blocks::{author, genesis, user, Signing};
+use integration_test::hostile::peer::HostilePeer;
 
 fn commit_signers(cluster: &TestCluster, node: usize, doc_id: &str) -> Vec<String> {
     let commits = cluster

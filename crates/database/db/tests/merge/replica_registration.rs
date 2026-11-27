@@ -6,9 +6,7 @@
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
-use crate::replica_support::{
-    is_retry, key, Chain, Embedder, Receiver, Source, PARENT_USERS_SDL, POLICY, RESOURCE,
-};
+use crate::replica_support::{is_retry, key, Chain, Embedder, Receiver, Source, POLICY, RESOURCE};
 use defra_core::merge::MergeOutcome;
 
 fn embedder(own: Vec<identity::Did>, nodes: Vec<identity::Did>) -> Arc<Embedder> {
@@ -170,7 +168,7 @@ fn a_same_deployment_creators_row_is_never_registered_by_the_receiver() {
         // The creator's own node registers it; the replica then merges.
         chain
             .as_node(&creator.did)
-            .register_doc_object(&creator.did, POLICY, RESOURCE, &doc)
+            .register_doc_object(&creator.did, POLICY, RESOURCE, &doc, &[])
             .await
             .unwrap();
         chain.grant(&doc, "reader", &node);
@@ -413,78 +411,6 @@ fn a_local_provider_registers_the_genesis_signer_as_before() {
         assert_eq!(receiver.owed(&doc).await, acp::ReplicaOwed::default());
     })
     .unwrap()
-}
-
-#[test]
-fn signed_genesis_registers_only_under_a_parent_that_admits_its_signer() {
-    workers::block_on(async {
-        use zanzibar::ZanzibarStore as _;
-
-        let receiver = Receiver::open_collection(PARENT_USERS_SDL, |store| {
-            Arc::new(acp::ZanzibarDocumentACP::new(Arc::new(
-                acp::PersistentZanzibarStore::from_store(store),
-            )))
-        }, None, false).await;
-        let store = acp::PersistentZanzibarStore::from_store(receiver.db.store().clone());
-        let yaml = "name: admissions\nresources:\n- name: nodes\n- name: users\n  relations: [{name: parent, types: [nodes]}]\n  create: {parent: parent, requires: owner}\n";
-        let mut policy = acp::policy_yaml::build_policy(&acp::policy_yaml::parse_policy_yaml(yaml).unwrap(), 1).unwrap();
-        policy.id = POLICY.into();
-        store.store_policy(&policy).await.unwrap();
-        let creator = key();
-        let provider = receiver.acp();
-        provider.register_doc_object(&creator.did, POLICY, "nodes", "allowed").await.unwrap();
-        provider.register_doc_object(&receiver.identity, POLICY, "nodes", "other").await.unwrap();
-
-        let source = Source::with_sdl(PARENT_USERS_SDL).await;
-        let (rejected, block) = source.create(&creator, "other").await;
-        let error = receiver.try_receive(&source, &rejected, &block).await.unwrap_err();
-        assert!(error.to_string().contains("parent requires 'owner'"), "{error}");
-        assert!(!provider.is_doc_registered(POLICY, RESOURCE, &rejected).await.unwrap());
-
-        let (accepted, block) = source.create(&creator, "allowed").await;
-        assert_eq!(receiver.receive(&source, &accepted, &block).await, MergeOutcome::Merged);
-        assert_eq!(provider.get_doc_owner(POLICY, RESOURCE, &accepted).await.unwrap(), Some(creator.did));
-        assert!(store.has_relationship(POLICY, RESOURCE, &accepted, "parent", &zanzibar::Subject::entity_set("nodes", "allowed", "")).await.unwrap());
-    }).unwrap()
-}
-
-#[test]
-fn a_foreign_genesis_waits_for_parent_admission_before_its_creator_gets_write_access() {
-    workers::block_on(async {
-        let chain = Chain::new();
-        let registrant = key().did;
-        let creator = key();
-        let provider = chain.as_node(&registrant);
-        provider
-            .register_doc_object(&registrant, POLICY, "nodes", "allowed")
-            .await
-            .unwrap();
-        let receiver = Receiver::open_collection(
-            PARENT_USERS_SDL,
-            |_| provider,
-            Some(embedder(vec![], vec![])),
-            true,
-        )
-        .await;
-        let source = Source::with_sdl(PARENT_USERS_SDL).await;
-        let (rejected, block) = source.create(&creator, "missing").await;
-        assert_eq!(
-            receiver.receive(&source, &rejected, &block).await,
-            MergeOutcome::Merged
-        );
-        assert!(receiver.settle(&rejected).await.is_err());
-        assert_eq!(chain.owner(&rejected), None);
-        assert!(!chain.holds(&rejected, "writer", &creator.did));
-        let (accepted, block) = source.create(&creator, "allowed").await;
-        assert_eq!(
-            receiver.receive_in_batch(&source, &accepted, &block).await,
-            MergeOutcome::Merged
-        );
-        receiver.settle(&accepted).await.unwrap();
-        assert_eq!(chain.owner(&accepted), Some(registrant));
-        assert!(chain.holds(&accepted, "writer", &creator.did));
-    })
-    .unwrap();
 }
 
 #[test]

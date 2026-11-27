@@ -94,9 +94,6 @@ pub enum MergeError {
     #[error("history requires a resumable merge turn")]
     HistoryRequired,
 
-    #[error("merge requires a remote registration lookup")]
-    NeedsRegistration(Box<super::RegistrationLookup>),
-
     /// Discard the data attempt before recording a history's rejection.
     #[error(transparent)]
     HistoryAborted(Box<HistoryRejection>),
@@ -170,7 +167,6 @@ impl MergeError {
             | Self::Kms(_)
             | Self::NeedsDecryptionKey(_)
             | Self::NeedsBatchDecryptionKey { .. }
-            | Self::NeedsRegistration(_)
             | Self::HistoryRequired
             | Self::HistoryAborted(_)
             | Self::AdmissionTimedOut => MergeErrorDisposition::Retryable,

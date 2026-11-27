@@ -375,11 +375,11 @@ A transaction that reads document alice and updates her `age` to 10 commits succ
 
 A transaction runs `update_Snap(input: {status: "claimed"}) { content }` and gets `content: "init"`; another writer sets `content` to `"changed"` and commits first. The transaction still commits, and the document reads `status: "claimed"`, `content: "changed"`. What an update returns is read, not decided on, so it is not validated at commit. Go conflicts here.
 
-# `defra.document`: Building documents from client values
+# `defra.document`: Documents
 
 - **Parents:** ["defra"]
 
-How client values become document fields.
+What a document is, how it is named (`defra.document.id`, in `document-id.md`), and how client values become its fields, beyond what Go's tests check.
 
 # `defra.document.typed_nillable_arrays`: Typed lists fill nillable-element arrays
 
@@ -409,12 +409,26 @@ A node with a replication filter also asks it in the P2P receive path. On arriva
 
 Gossip has no reply and no retry, so a gossip head a node refuses for its per-peer rate limit or its pending-DAG capacity is kept as a durable pending record that takes no slot, and is fetched once a slot frees: a burst over both limits loses no document. These records are bounded by bytes, per source peer (`gossip_deferral_peer_bytes`) and in all (`gossip_deferral_total_bytes`). Past a budget the head is dropped, and the node reports a `p2p-gossip-head-dropped` event naming the peer and the root, so the application can resync it.
 
+# `defra.p2p.cid_check`: A block that does not hash to its CID is refused on every arrival path
+
+- **Parents:** ["defra"]
+- **Scenarios:** ["net::cid_check::a_pushed_block_not_matching_its_cid_stores_no_document", "p2p::sync::coordinator::access_tests::cid_check::a_pushed_head_not_matching_its_cid_is_refused", "p2p::sync::coordinator::access_tests::cid_check::the_receive_gate_leaves_a_head_not_matching_its_cid_to_the_ingest", "p2p::sync::coordinator::access_tests::cid_check::a_synced_block_not_matching_its_cid_is_refused", "p2p::sync::coordinator::access_tests::cid_check::a_fetched_car_with_a_block_not_matching_its_cid_is_refused", "p2p::sync::manager::process::gossip_deferral::tests::a_deferred_gossip_head_not_matching_its_cid_is_refused"]
+
+A block the node admits for processing whose bytes do not hash to the CID it names is refused before anything of it is stored, whichever way it arrives: a PushLog (gossip, pubsub or a replicator's direct push), a gossip head kept for later, a block fetched by block sync, or a fetched CAR, which is refused whole. An admitted push is answered with `block CID verification failed for <cid>: content hash does not match`, and no document is stored from it. The receive gate does not judge such a head, so a push it would refuse is still answered with that error rather than as a handled skip. A CAR refused this way leaves its document waiting for another provider. A push or gossip head the node sheds before processing it (at pending-DAG or byte-budget capacity) is not checked.
+
 # `defra.p2p.iroh_large_update`: An update too large for gossip still replicates over iroh
 
 - **Parents:** ["defra"]
 - **Scenarios:** ["net::iroh_large_update::a_document_too_large_for_gossip_replicates_over_iroh", "net::iroh_large_update::an_update_too_large_for_gossip_replicates_over_iroh"]
 
 Over iroh, a create or an update whose head block is larger than one gossip broadcast holds (4,023 bytes of payload) reaches the same peers a small one would, every subscriber of the collection connected to the writer: a document of a 160-field collection, created with every field set or updated in every field on one node, is queried with the same values on the other. Such an update goes to every connected peer as a direct PushLog request instead of a broadcast; a peer that does not subscribe declines it, and the write's broadcast reports any subscriber that did not take it.
+
+# `defra.p2p.peerless_broadcast`: A write no peer subscribes to is not logged as a failure
+
+- **Parents:** ["defra"]
+- **Scenarios:** ["net::peerless_writes::writes_on_a_networked_node_with_no_peer_succeed", "net::peerless_writes::writes_reach_a_peer_subscribed_to_the_collection_topic_alone", "p2p::peerless_broadcast::rust_p2p_writes_without_peers_log_no_broadcast_error", "p2p::peerless_broadcast::rust_p2p_write_announced_on_the_collection_topic_alone_logs_no_broadcast_error"]
+
+A node with P2P on announces each committed write on its document and collection topics. A topic no peer subscribes to reaches no one, which is not a failure: in all three combinations the write succeeds, nothing is logged at WARN or ERROR for it, and the node reports its broadcast as a success. When no peer subscribes to either topic, as on a node with no peers, the node logs only `No peer subscribed to the write's topics; nothing to announce` at DEBUG, as Go publishes such a write silently. When a peer subscribes to the collection topic but none to the document's, the usual case until a peer subscribes to that document, the write is announced on the collection topic and the node logs `No peer subscribed to the document topic; announced on the collection topic` at DEBUG, not a WARN. When a peer subscribes to the document topic but none to the collection's, the write is announced on the document topic and the node logs `No peer subscribed to the collection topic; announced on the document topic` at DEBUG, not a WARN. A publish that fails for any other reason, such as a transport error or a peer subscribed to a topic that the publish did not reach, is still logged at WARN or ERROR. The testo scenario checks that creates, a batched create and an update succeed and read back on such a node and that a second node subscribed only to the collection topic receives them; the legacy test reads the node's own log, which testo nodes do not write, for a writer with no peer and for one whose only peer subscribes to the collection topic alone.
 
 # `defra.commits`: Commit history queries beyond Go
 

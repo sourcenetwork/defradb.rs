@@ -32,6 +32,7 @@ impl acp::DocumentACP for TokenObserver {
         _policy_id: &str,
         _resource_name: &str,
         _doc_id: &str,
+        _relationships: &[acp::DerivedRelationship],
     ) -> acp::Result<()> {
         assert_eq!(identity.as_str(), DID);
         self.record();

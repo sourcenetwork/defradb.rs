@@ -705,6 +705,7 @@ where
         policy_id: &str,
         resource_name: &str,
         doc_id: &str,
+        relationships: &[crate::DerivedRelationship],
     ) -> Result<()> {
         let fact = RecoveryFact::registered(
             policy_id,
@@ -714,45 +715,15 @@ where
         );
         self.recorded(
             fact,
-            self.provider
-                .register_doc_object(identity, policy_id, resource_name, doc_id),
+            self.provider.register_doc_object(
+                identity,
+                policy_id,
+                resource_name,
+                doc_id,
+                relationships,
+            ),
         )
         .await
-    }
-
-    async fn registration_parent(
-        &self,
-        policy_id: &str,
-        child: &str,
-        id: &str,
-    ) -> Result<crate::RegistrationParent> {
-        self.provider
-            .registration_parent(policy_id, child, id)
-            .await
-    }
-
-    async fn registration_parent_rule(
-        &self,
-        policy_id: &str,
-        child: &str,
-        id: &str,
-    ) -> Result<(crate::RegistrationParent, String)> {
-        self.provider
-            .registration_parent_rule(policy_id, child, id)
-            .await
-    }
-
-    async fn register_under_parent(
-        &self,
-        identity: &Did,
-        policy_id: &str,
-        resource: &str,
-        object_id: &str,
-        parent: &crate::RegistrationParent,
-    ) -> Result<()> {
-        self.provider
-            .register_under_parent(identity, policy_id, resource, object_id, parent)
-            .await
     }
 
     async fn register_object(
@@ -782,13 +753,7 @@ where
         resource_name: &str,
         doc_id: &str,
     ) -> Result<bool> {
-        if let Some(owed) = self.owed(policy_id, resource_name, doc_id).await? {
-            if owed.parent.is_some() {
-                // Returning false could expose this row through a branchable collection.
-                return Err(Error::ProviderUnavailable(
-                    "parent admission is awaiting confirmation".into(),
-                ));
-            }
+        if self.owed(policy_id, resource_name, doc_id).await?.is_some() {
             return Ok(true);
         }
         self.provider
@@ -803,7 +768,7 @@ where
         doc_id: &str,
     ) -> Result<Option<Did>> {
         if let Some(owed) = self.owed(policy_id, resource_name, doc_id).await? {
-            return Ok(owed.parent.is_none().then_some(owed.creator));
+            return Ok((!owed.hidden()).then_some(owed.creator));
         }
         self.provider
             .get_doc_owner(policy_id, resource_name, doc_id)
@@ -825,8 +790,13 @@ where
             return Ok(false);
         }
         if let Some(owed) = self.owed(policy_id, resource_name, doc_id).await? {
-            return Ok(owed.parent.is_none()
-                && matches!(identity, Identity::Authenticated(did) if *did == owed.creator));
+            // A document in a gated collection is not valid until the
+            // provider holds its registration, and one whose creator may not
+            // create it never is: hidden from everyone, its creator included.
+            if owed.hidden() {
+                return Ok(false);
+            }
+            return Ok(matches!(identity, Identity::Authenticated(did) if *did == owed.creator));
         }
         if self
             .revoked(identity, policy_id, resource_name, doc_id)

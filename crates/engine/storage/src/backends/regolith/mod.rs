@@ -33,6 +33,8 @@ mod config;
 mod encryption;
 mod event_order;
 mod families;
+#[cfg(not(target_arch = "wasm32"))]
+mod foreign;
 mod handle;
 mod hooks;
 pub(crate) mod iterator;

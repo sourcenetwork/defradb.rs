@@ -230,7 +230,7 @@ where
         .await
         .unwrap();
     provider
-        .register_object(&token, &first, "users", "after-reopen")
+        .register_object(&token, &first, "users", "after-reopen", &[])
         .await
         .unwrap();
     assert!(provider

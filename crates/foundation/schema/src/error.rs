@@ -83,6 +83,9 @@ pub enum SchemaError {
     #[error("invalid immutable field {field_name}: {reason}")]
     InvalidImmutableField { field_name: String, reason: String },
 
+    #[error("invalid @policy(relation:) on field {field_name}: {reason}")]
+    InvalidPolicyRelation { field_name: String, reason: String },
+
     #[error("field name {0} is reserved")]
     ReservedFieldName(String),
 }

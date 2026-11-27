@@ -29,7 +29,7 @@ pub(super) fn calldata(
             policy_id: object.policy_id,
             resource: object.resource,
             object_id: object.object_id,
-            action: PolicyAction::RegisterObject,
+            action: PolicyAction::register(object.relationships),
         })?;
         let policy = vera_client::parse_policy_id(object.policy_id)
             .map_err(|error| ProviderError::Query(error.to_string()))?;
@@ -60,6 +60,7 @@ mod tests {
     fn objects(ids: &[String]) -> Vec<acp::AcpObject<'_>> {
         ids.iter()
             .map(|id| acp::AcpObject {
+                relationships: &[],
                 policy_id: POLICY,
                 resource: "users",
                 object_id: id,

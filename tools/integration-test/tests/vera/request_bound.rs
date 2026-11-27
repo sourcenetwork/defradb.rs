@@ -123,7 +123,7 @@ async fn the_chain_executes_a_request_bound_delegation_for_its_command_only() {
         let registering = bound(on("first", PolicyAction::RegisterObject), genesis, 1).await;
         assert!(matches!(
             provider
-                .register_object(&registering, &policy, "users", "second")
+                .register_object(&registering, &policy, "users", "second", &[])
                 .await,
             Err(ProviderError::Transaction(_))
         ));
@@ -159,14 +159,14 @@ async fn the_chain_executes_a_request_bound_delegation_for_its_command_only() {
         ));
         assert!(matches!(
             provider
-                .register_object(&elsewhere, &policy, "users", "first")
+                .register_object(&elsewhere, &policy, "users", "first", &[])
                 .await,
             Err(ProviderError::Transaction(_))
         ));
         assert!(!owner("first").await.0);
 
         provider
-            .register_object(&registering, &policy, "users", "first")
+            .register_object(&registering, &policy, "users", "first", &[])
             .await
             .expect("registration");
         let (registered, registrant) = owner("first").await;

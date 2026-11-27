@@ -25,6 +25,7 @@ use storage::keys::systemstore::{CollectionID, CollectionIDSequenceKey};
 
 pub mod acp;
 pub mod cache;
+pub mod create_gate;
 mod crud;
 mod encrypted_index;
 pub(crate) mod epoch;

@@ -31,6 +31,6 @@ pub use expression::RelationExpression;
 pub use lookup::PolicyLookupTable;
 pub use store::{MemoryZanzibarStore, StorePolicyOptions, ZanzibarStore};
 pub use types::{
-    decode_subject, encode_subject, CreateRule, ObjectRef, Policy, PolicySpecification, Relation,
-    Relationship, Resource, Subject, SubjectRestriction,
+    decode_subject, encode_subject, ObjectRef, Policy, PolicySpecification, Relation, Relationship,
+    Resource, Subject, SubjectRestriction,
 };

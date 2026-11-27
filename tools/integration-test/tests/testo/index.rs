@@ -11,6 +11,7 @@ mod backfill_txn;
 mod backfill_under_writes;
 mod backfill_unique;
 mod backfill_unique_txn;
+mod build_in_background;
 mod composite_in_order;
 mod crdt;
 mod delete;
@@ -40,6 +41,7 @@ mod merged_field {
 }
 mod new;
 mod new_composite;
+mod new_duplicate;
 mod new_get;
 mod new_unique;
 mod new_unique_composite;

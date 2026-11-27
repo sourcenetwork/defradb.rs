@@ -1348,8 +1348,7 @@ async fn seed_coding_session_fixture_with_schema(
     sdl: &str,
 ) -> Result<CodingSessionFixture> {
     let mut project_doc_ids: RapidHashMap<String, String> = RapidHashMap::new();
-    node.add_collection(&defra_core::RequestContext::ambient(), sdl)
-        .await?;
+    node.anonymous().add_collection(sdl).await?;
 
     let fixture = config.layout();
     for session in fixture.all_sessions() {
