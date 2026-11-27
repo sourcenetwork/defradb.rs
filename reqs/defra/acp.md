@@ -14,11 +14,18 @@ A store NAC was enabled on comes back with NAC enforced when the node restarts w
 # `defra.acp.nac_admin_dac_bypass_paths`: A NAC admin bypasses DAC on every path
 
 - **Parents:** ["defra.acp"]
-- **Scenarios:** ["acp::nac::relation_admin::dac_bypass_paths::a_nac_admin_bypasses_dac_on_commits_aggregates_subscriptions_and_writes"]
+- **Scenarios:** ["acp::nac::relation_admin::dac_bypass_paths::a_nac_admin_bypasses_dac_on_commits_aggregates_subscriptions_and_writes", "acp::nac::relation_admin::dac_bypass_paths::an_anonymous_write_does_not_inherit_a_node_admins_bypass"]
 
 While NAC is enabled, an identity NAC grants `bypass-dac` (a NAC admin) reads and writes documents DAC would hide from it on every path, as Go's `canDACBypass` decides: a query, a `_commits` query, a top-level aggregate such as `COUNT(Users: {})`, the events of a subscription it opened, a filtered `update_Users` and a `delete_Users` by docID. A request whose caller denied it the bypass, and an identity without `bypass-dac` that NAC lets read, update and delete documents, get on those paths only what DAC grants them: no rows, a count of 0, no events, and no document changed, without an error (`go.acp.nac.admin.dac-bypass`).
 
-The bypass belongs to the identity that made the request: an anonymous write on a node started with `--identity` set to a NAC admin gets no bypass, as an anonymous read gets none. A write decides the bypass in each attempt's own transaction; a grant or revoke that lands after the write picked its documents and before its attempt does not leave the write changing only the documents picked under the old bypass: the write picks them again under the bypass its attempt decided.
+The bypass belongs to the identity that made the request: an anonymous write on a node started with `--identity` set to a NAC admin gets no bypass, as an anonymous read gets none.
+
+# `defra.acp.nac_admin_dac_bypass_attempt`: A write decides its DAC bypass again in each attempt
+
+- **Parents:** ["defra.acp.nac_admin_dac_bypass_paths"]
+- **Scenarios:** ["access::dac_bypass_writes::a_bypass_granted_after_preparation_reaches_every_document", "access::dac_bypass_writes::a_bypass_revoked_after_preparation_reaches_only_what_dac_grants"]
+
+A write decides the DAC bypass in each attempt's own transaction. A grant or revoke that lands after the write picked its documents and before its attempt does not leave the write changing only the documents picked under the old bypass: the write picks them again under the bypass its attempt decided.
 
 # `defra.acp.vera_delete_archive`: A vera.rs delete retires its object
 

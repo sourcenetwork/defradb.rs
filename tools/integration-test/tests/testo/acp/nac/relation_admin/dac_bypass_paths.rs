@@ -237,3 +237,87 @@ fn a_nac_admin_bypasses_dac_on_commits_aggregates_subscriptions_and_writes() {
     }
     .execute();
 }
+
+#[test]
+#[mantra_macros::req_test("defra.acp.nac_admin_dac_bypass_paths")]
+fn an_anonymous_write_does_not_inherit_a_node_admins_bypass() {
+    TestCase {
+        id: integration_test::scenario_id!(),
+        actions: vec![
+            Close {
+                keep_data: true,
+                ..Default::default()
+            }
+            .into(),
+            Start {
+                enable_nac: true,
+                node_identity_seed: Some(2),
+                common: seed(1),
+                ..Default::default()
+            }
+            .into(),
+            AddDACPolicy {
+                policy: POLICY.into(),
+                expected_data: json!({ "policyID": m::nonempty_string() }),
+                common: Common {
+                    identity_seed: Some(1),
+                    capture: captures([("policy0", "/policyID")]),
+                    ..Default::default()
+                },
+                ..Default::default()
+            }
+            .into(),
+            AddCollection {
+                sdl: Text::concat([
+                    Text::from(r#"type Users @policy(id: ""#),
+                    Text::reference("policy0"),
+                    Text::from(r#"", resource: "users") { name: String }"#),
+                ]),
+                common: seed(1),
+                ..Default::default()
+            }
+            .into(),
+            AddNACActorRelationship {
+                relation: "admin".into(),
+                target_identity_seed: Some(2),
+                expected_data: json!({ "existedAlready": false }),
+                common: seed(1),
+                ..Default::default()
+            }
+            .into(),
+            AddDoc {
+                collection: "Users".into(),
+                doc_map: Some(json!({ "name": "Shahzad" })),
+                common: Common {
+                    identity_seed: Some(1),
+                    retry: true,
+                    ..Default::default()
+                },
+                ..Default::default()
+            }
+            .into(),
+            Request {
+                request:
+                    r#"mutation { update_Users(filter: {}, input: {name: "Anonymous"}) { name } }"#
+                        .into(),
+                expected_data: json!({ "update_Users": [] }),
+                ..Default::default()
+            }
+            .into(),
+            request(
+                1,
+                "query { Users { name } }".into(),
+                json!({ "Users": [{ "name": "Shahzad" }] }),
+            )
+            .into(),
+            request(
+                2,
+                r#"mutation { update_Users(filter: {}, input: {name: "Admin"}) { name } }"#.into(),
+                json!({ "update_Users": [{ "name": "Admin" }] }),
+            )
+            .into(),
+        ],
+        ..Default::default()
+    }
+    .execute();
+}
