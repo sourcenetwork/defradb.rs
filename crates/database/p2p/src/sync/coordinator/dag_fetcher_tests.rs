@@ -16,6 +16,8 @@ mod dag_readiness;
 mod dispatch_merge_fifo;
 #[path = "../../../tests/unit/durable_overflow_rotation.rs"]
 mod durable_overflow_rotation;
+#[path = "../../../tests/unit/missing_link_walk.rs"]
+mod missing_link_walk;
 #[path = "../../../tests/unit/productive_quantum.rs"]
 mod productive_quantum;
 #[path = "../../../tests/unit/provider_ranking.rs"]
