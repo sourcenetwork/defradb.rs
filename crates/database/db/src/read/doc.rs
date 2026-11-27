@@ -603,8 +603,8 @@ impl<S: Store + 'static> DocFetcher for DbDocFetcher<S> {
         &self,
         collection_name: &str,
         index_name: &str,
-        prefix: &[document::NormalValue],
-    ) -> query::error::Result<Option<Vec<query::fetcher::IndexEntryValues>>> {
+        prefixes: &[Vec<document::NormalValue>],
+    ) -> query::error::Result<Option<Vec<Vec<query::fetcher::IndexEntryValues>>>> {
         let (collection, datastore, systemstore, index_manager) =
             get_collection_with_index_manager(&*self.shared_txn()?, collection_name).await?;
         crate::read::index_entries::prefix_entries(
@@ -614,7 +614,7 @@ impl<S: Store + 'static> DocFetcher for DbDocFetcher<S> {
             None,
             &collection,
             index_name,
-            prefix,
+            prefixes,
         )
         .await
     }

@@ -4,13 +4,17 @@ use document::Document;
 use rapidhash::{HashMapExt, HashSetExt, RapidHashMap, RapidHashSet};
 use tracing::debug;
 
-use super::best::best_per_parent;
-use super::listed::{best_score_of, drain, Held};
+use super::best::{best_per_parent, top_with_ties};
+use super::listed::{best_scores, drain, page_full, Held, Wanted};
 use super::target::{ChunkTarget, Reads};
 use crate::error::Result;
 use crate::fetcher::DocFetcher;
 use crate::plan::chunk_parent::{chunk_parent_id, verified_hash};
 use crate::plan::scan::MAX_VECTOR_CANDIDATES;
+
+/// The chunks the search may read for each parent the page needs. Edits and
+/// long texts put many near chunks on one parent.
+const CHUNKS_PER_PARENT: usize = MAX_VECTOR_CANDIDATES;
 
 /// Whether the query may return a parent: its filter and requested document IDs.
 pub(crate) trait ParentCheck {
@@ -21,8 +25,18 @@ pub(crate) trait ParentCheck {
 pub(crate) enum Searched {
     /// At least `k` parents, each with its exact best listed chunk's score.
     Ranked(Vec<(Document, f64)>),
-    /// The search gave up before naming `k` parents.
-    Exhausted(GaveUp),
+    /// The search gave up before naming `k` parents, keeping what it learned.
+    Exhausted {
+        gave_up: GaveUp,
+        known: RapidHashMap<String, Known>,
+    },
+}
+
+/// An accepted parent the search read, with the copies of its hashes it scored.
+pub(crate) struct Known {
+    pub parent: Document,
+    pub listed: RapidHashSet<String>,
+    pub held: RapidHashMap<String, Held>,
 }
 
 /// Why a routed search gave up.
@@ -74,6 +88,7 @@ impl ChunkSearch<'_> {
         C: ParentCheck,
     {
         let mut width = self.k.max(1);
+        let budget = self.k.max(1).saturating_mul(CHUNKS_PER_PARENT);
         let mut searches = 0;
         let mut reads = Reads::default();
         let mut unlisted = 0usize;
@@ -85,7 +100,7 @@ impl ChunkSearch<'_> {
         let mut hits: Vec<(String, f64)> = Vec::new();
         let mut held: RapidHashMap<String, RapidHashMap<String, Held>> = RapidHashMap::new();
         let gave_up = loop {
-            if width > MAX_VECTOR_CANDIDATES {
+            if width > budget {
                 break GaveUp::Budget;
             }
             let ids = self
@@ -147,22 +162,10 @@ impl ChunkSearch<'_> {
                 "chunk vector index candidates"
             );
             if best.len() >= self.k {
-                let mut ranked = Vec::with_capacity(best.len());
-                let none = RapidHashMap::new();
-                for (id, found) in best {
-                    let (Some(parent), Some(Some(listed))) =
-                        (parents.remove(&id), decided.get(&id))
-                    else {
-                        continue;
-                    };
-                    // The index may have missed a better chunk of this parent.
-                    let known = held.get(&id).unwrap_or(&none);
-                    let exact =
-                        best_score_of(self.fetcher, self.target, &id, listed, known, &mut reads)
-                            .await?
-                            .unwrap_or(found);
-                    ranked.push((parent, exact));
-                }
+                let top = top_with_ties(best, self.k);
+                let ranked = self
+                    .rescore(top, &decided, &mut parents, &held, &mut reads)
+                    .await?;
                 return Ok(Search {
                     searched: Searched::Ranked(ranked),
                     searches,
@@ -183,11 +186,61 @@ impl ChunkSearch<'_> {
             refused,
             "chunk vector index could not fill the page, scoring every parent"
         );
+        let known = parents
+            .into_iter()
+            .filter_map(|(id, parent)| {
+                let listed = decided.remove(&id).flatten()?;
+                let held = held.remove(&id).unwrap_or_default();
+                Some((
+                    id,
+                    Known {
+                        parent,
+                        listed,
+                        held,
+                    },
+                ))
+            })
+            .collect();
         Ok(Search {
-            searched: Searched::Exhausted(gave_up),
+            searched: Searched::Exhausted { gave_up, known },
             searches,
             reads,
         })
+    }
+
+    /// The exact scores of the parents that can make the page, read a page of parents at a time.
+    async fn rescore(
+        &self,
+        top: Vec<(String, f64)>,
+        decided: &RapidHashMap<String, Listed>,
+        parents: &mut RapidHashMap<String, Document>,
+        held: &RapidHashMap<String, RapidHashMap<String, Held>>,
+        reads: &mut Reads,
+    ) -> Result<Vec<(Document, f64)>> {
+        let none = RapidHashMap::new();
+        let mut kept = Vec::with_capacity(top.len());
+        let mut wanted = Vec::with_capacity(top.len());
+        for (id, found) in &top {
+            let Some(Some(listed)) = decided.get(id) else {
+                continue;
+            };
+            kept.push((id, *found));
+            // The index may have missed a better chunk of this parent.
+            wanted.push(Wanted {
+                parent_id: id,
+                listed,
+                held: held.get(id).unwrap_or(&none),
+            });
+        }
+        let mut exact = Vec::with_capacity(wanted.len());
+        for page in pages(&wanted) {
+            exact.extend(best_scores(self.fetcher, self.target, page, reads).await?);
+        }
+        Ok(kept
+            .into_iter()
+            .zip(exact)
+            .filter_map(|((id, found), exact)| Some((parents.remove(id)?, exact.unwrap_or(found))))
+            .collect())
     }
 
     async fn read_chunks(&self, short_ids: &[u64], reads: &mut Reads) -> Result<Vec<Document>> {
@@ -249,6 +302,25 @@ impl ChunkSearch<'_> {
         }
         Ok(())
     }
+}
+
+/// Splits the parents into runs that `page_full` allows, in order.
+fn pages<'a, 'w>(wanted: &'a [Wanted<'w>]) -> impl Iterator<Item = &'a [Wanted<'w>]> {
+    let mut rest = wanted;
+    std::iter::from_fn(move || {
+        if rest.is_empty() {
+            return None;
+        }
+        let mut chunks = 0;
+        let mut len = 0;
+        while len < rest.len() && !page_full(len, chunks) {
+            chunks += rest[len].listed.len();
+            len += 1;
+        }
+        let (page, tail) = rest.split_at(len);
+        rest = tail;
+        Some(page)
+    })
 }
 
 #[cfg(test)]

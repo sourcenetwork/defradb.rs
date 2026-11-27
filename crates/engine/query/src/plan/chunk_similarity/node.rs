@@ -1,5 +1,6 @@
 //! The unrouted chunked `SIMILARITY`: each parent scored from its listed chunks.
 
+use std::collections::VecDeque;
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -7,7 +8,7 @@ use serde_json::Value as JsonValue;
 
 use rapidhash::{HashMapExt, RapidHashMap, RapidHashSet};
 
-use super::listed::best_score_of;
+use super::listed::{best_scores, page_full, Wanted};
 use super::target::{ChunkTarget, Reads};
 use crate::document::DocumentMapping;
 use crate::error::Result;
@@ -22,6 +23,8 @@ pub struct ChunkSimilarityNode {
     target: ChunkTarget,
     fetcher: Option<Arc<dyn DocFetcher>>,
     in_row: ListedInRow,
+    scored: VecDeque<Doc>,
+    drained: bool,
     current: Doc,
     exec_info: ExecInfo,
 }
@@ -62,35 +65,86 @@ impl ChunkSimilarityNode {
             target,
             fetcher,
             in_row,
+            scored: VecDeque::new(),
+            drained: false,
             current: Doc::default(),
             exec_info: ExecInfo::default(),
         }
     }
+
+    /// Pulls a page of rows from the source and scores them together.
+    async fn score_page(&mut self) -> Result<()> {
+        let mut rows = Vec::new();
+        let mut listed = Vec::new();
+        let mut chunks = 0;
+        while !page_full(rows.len(), chunks) {
+            if !self.source.next().await? {
+                self.drained = true;
+                break;
+            }
+            let row = self.source.value().deep_clone();
+            let hashes = listed_in_row(&row, self.in_row, &self.target);
+            chunks += hashes.as_ref().map_or(0, RapidHashSet::len);
+            rows.push(row);
+            listed.push(hashes);
+        }
+        let mut reads = Reads::default();
+        let scores = page_scores(
+            self.fetcher.as_deref(),
+            &self.target,
+            &rows,
+            &listed,
+            &mut reads,
+        )
+        .await?;
+        self.exec_info.docs_fetched += reads.docs;
+        self.exec_info.fields_fetched += reads.fields;
+        self.exec_info.indexes_fetched += reads.index_lookups;
+        for (mut row, score) in rows.into_iter().zip(scores) {
+            let score = score
+                .and_then(serde_json::Number::from_f64)
+                .map_or(JsonValue::Null, JsonValue::Number);
+            row.set(self.similarity_index, score);
+            self.scored.push_back(row);
+        }
+        Ok(())
+    }
 }
 
-/// A parent row's best listed chunk's score.
-async fn score_row(
+/// Each row's best listed chunk's score, read for the whole page at once.
+async fn page_scores(
     fetcher: Option<&dyn DocFetcher>,
     target: &ChunkTarget,
-    in_row: ListedInRow,
-    row: &Doc,
+    rows: &[Doc],
+    listed: &[Option<RapidHashSet<String>>],
     reads: &mut Reads,
-) -> Result<Option<f64>> {
-    let (Some(fetcher), Some(parent_id)) = (fetcher, row.doc_id()) else {
-        return Ok(None);
+) -> Result<Vec<Option<f64>>> {
+    let mut scores = vec![None; rows.len()];
+    let Some(fetcher) = fetcher else {
+        return Ok(scores);
     };
-    let Some(listed) = listed_in_row(row, in_row, target) else {
-        return Ok(None);
-    };
-    best_score_of(
-        fetcher,
-        target,
-        parent_id,
-        &listed,
-        &RapidHashMap::new(),
-        reads,
-    )
-    .await
+    let none = RapidHashMap::new();
+    let (slots, wanted): (Vec<usize>, Vec<Wanted<'_>>) = rows
+        .iter()
+        .zip(listed)
+        .enumerate()
+        .filter_map(|(slot, (row, listed))| {
+            let wanted = Wanted {
+                parent_id: row.doc_id()?,
+                listed: listed.as_ref()?,
+                held: &none,
+            };
+            Some((slot, wanted))
+        })
+        .unzip();
+    if wanted.is_empty() {
+        return Ok(scores);
+    }
+    let found = best_scores(fetcher, target, &wanted, reads).await?;
+    for (slot, score) in slots.into_iter().zip(found) {
+        scores[slot] = score;
+    }
+    Ok(scores)
 }
 
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
@@ -98,6 +152,8 @@ async fn score_row(
 impl PlanNode for ChunkSimilarityNode {
     async fn init(&mut self) -> Result<()> {
         self.exec_info = ExecInfo::default();
+        self.scored.clear();
+        self.drained = false;
         self.source.init().await
     }
 
@@ -107,26 +163,12 @@ impl PlanNode for ChunkSimilarityNode {
 
     async fn next(&mut self) -> Result<bool> {
         self.exec_info.iterations += 1;
-        if !self.source.next().await? {
-            return Ok(false);
+        if self.scored.is_empty() && !self.drained {
+            self.score_page().await?;
         }
-        let mut row = self.source.value().deep_clone();
-        let mut reads = Reads::default();
-        let score = score_row(
-            self.fetcher.as_deref(),
-            &self.target,
-            self.in_row,
-            &row,
-            &mut reads,
-        )
-        .await?;
-        self.exec_info.docs_fetched += reads.docs;
-        self.exec_info.fields_fetched += reads.fields;
-        self.exec_info.indexes_fetched += reads.index_lookups;
-        let score = score
-            .and_then(serde_json::Number::from_f64)
-            .map_or(JsonValue::Null, JsonValue::Number);
-        row.set(self.similarity_index, score);
+        let Some(row) = self.scored.pop_front() else {
+            return Ok(false);
+        };
         self.current = row;
         Ok(true)
     }

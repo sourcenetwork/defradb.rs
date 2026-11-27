@@ -30,15 +30,16 @@ fn an_index_that_cannot_fill_the_page_falls_back_to_every_article() {
         )
         .into(),
         // Three chunks name two articles; asking for six finds nothing new, so
-        // all three articles are read and the two with a body look up their
-        // three listed chunks. The empty article stores only its title.
+        // all three articles are read. The search already scored every copy of
+        // the two bodies' chunks, so one index lookup confirms that and no chunk
+        // is read again. The empty article stores only its title.
         explained(
             ", limit: 3",
             json!({
                 "iterations": 4,
-                "docFetches": 11,
-                "fieldFetches": 6 * CHUNK_FIELDS + 4 * ARTICLE_FIELDS + 1,
-                "indexFetches": 4,
+                "docFetches": 8,
+                "fieldFetches": 3 * CHUNK_FIELDS + 4 * ARTICLE_FIELDS + 1,
+                "indexFetches": 3,
                 "vectorIndex": CHUNK_VECTOR_INDEX,
                 "fallback": "nothingNew",
             }),

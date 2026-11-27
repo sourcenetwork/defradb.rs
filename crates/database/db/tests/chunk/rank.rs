@@ -4,7 +4,11 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use db::chunk::split::{split, ChunkConfig, SplitterVersion};
+use db::LensedAutoCommitFetcher;
+use document::NormalValue;
 use query::access_hooks::{ReadRequest, ReadValidator};
+use query::fetcher::DocFetcher;
 use query::{QueryExecutor, QueryRequest};
 use schema::CollectionVersion;
 use serde_json::{json, Value};
@@ -65,6 +69,76 @@ fn a_chunk_its_own_app_check_refuses_never_scores_its_article() {
         let (articles, reasons) = ranked(&refused).await;
         assert_eq!(articles, json!([{ "sim": null }]));
         assert_eq!(reasons, vec!["filter".to_string()]);
+    })
+    .unwrap()
+}
+
+const CONFIG: ChunkConfig = ChunkConfig {
+    version: SplitterVersion::CURRENT,
+    max_chars: 64,
+    overlap: 0,
+};
+const FIRST: &str = "The first paragraph tells of rivers and the sea.";
+const SECOND: &str = "The second paragraph tells of engines and steam.";
+const EDITED: &str = "The second paragraph now tells of music and song.";
+
+fn hashes(paragraphs: &[&str]) -> Vec<String> {
+    split(&paragraphs.join("\n\n"), &CONFIG)
+        .into_iter()
+        .map(|chunk| chunk.hash)
+        .collect()
+}
+
+#[test]
+fn one_index_read_answers_each_parent_and_hash_on_its_own() {
+    workers::block_on(async {
+        let provider = Provider::start();
+        let (db, open) = setup(&provider.sdl("@index(vector: {dimensions: 2})")).await;
+        let created = run(
+            &open,
+            &format!(
+                r#"mutation {{ add_Article(input: {{body: "{FIRST}\n\n{SECOND}"}}) {{ _docID }} }}"#
+            ),
+        )
+        .await;
+        let id = created["add_Article"][0]["_docID"].as_str().unwrap().to_string();
+        run(
+            &open,
+            &format!(
+                r#"mutation {{ update_Article(docID: "{id}", input: {{body: "{FIRST}\n\n{EDITED}"}}) {{ _docID }} }}"#
+            ),
+        )
+        .await;
+        let chunks = db.get_collection(CHUNKS).unwrap().unwrap();
+        let index = chunks
+            .schema()
+            .indexes
+            .iter()
+            .find(|index| {
+                let fields: Vec<&str> = index.fields.iter().map(|f| f.name.as_str()).collect();
+                fields == ["_sourceID", "hash"]
+            })
+            .unwrap()
+            .name
+            .clone();
+        let (old, new) = (hashes(&[FIRST, SECOND]), hashes(&[FIRST, EDITED]));
+        assert_eq!((old.len(), new.len(), old[0] == new[0]), (2, 2, true));
+        let parent = NormalValue::String(id);
+        let prefixes = vec![
+            vec![parent.clone(), NormalValue::String(new[0].clone())],
+            vec![parent.clone(), NormalValue::String(new[1].clone())],
+            vec![parent.clone(), NormalValue::String(old[1].clone())],
+            vec![parent.clone(), NormalValue::String("no such hash".into())],
+            vec![parent],
+        ];
+        let found = LensedAutoCommitFetcher::new(Arc::clone(&db))
+            .index_prefix_entries(CHUNKS, &index, &prefixes)
+            .await
+            .unwrap()
+            .unwrap();
+        let counts: Vec<usize> = found.iter().map(Vec::len).collect();
+        // The superseded chunk stays stored, so only the parent alone reaches all three.
+        assert_eq!(counts, vec![1, 1, 1, 0, 3]);
     })
     .unwrap()
 }

@@ -25,6 +25,21 @@ where
     best
 }
 
+/// The parents scoring at least the `k`-th best, in their order: the only
+/// ones that can make a page of `k`.
+pub(crate) fn top_with_ties(best: Vec<(String, f64)>, k: usize) -> Vec<(String, f64)> {
+    // A NaN orders nothing, so with one every parent stays a candidate.
+    if k == 0 || best.len() <= k || best.iter().any(|(_, score)| score.is_nan()) {
+        return best;
+    }
+    let mut scores: Vec<f64> = best.iter().map(|(_, score)| *score).collect();
+    scores.sort_unstable_by(|a, b| b.total_cmp(a));
+    let cut = scores[k - 1];
+    best.into_iter()
+        .filter(|(_, score)| *score >= cut)
+        .collect()
+}
+
 #[cfg(test)]
 #[path = "best_tests.rs"]
 mod tests;

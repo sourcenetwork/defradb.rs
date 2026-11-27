@@ -634,9 +634,9 @@ impl<S: Store + 'static> DocFetcher for LensedDocFetcher<S> {
         &self,
         collection_name: &str,
         index_name: &str,
-        prefix: &[document::NormalValue],
-    ) -> query::error::Result<Option<Vec<query::fetcher::IndexEntryValues>>> {
-        self.index_prefix_entries_impl(collection_name, index_name, prefix)
+        prefixes: &[Vec<document::NormalValue>],
+    ) -> query::error::Result<Option<Vec<Vec<query::fetcher::IndexEntryValues>>>> {
+        self.index_prefix_entries_impl(collection_name, index_name, prefixes)
             .await
     }
 

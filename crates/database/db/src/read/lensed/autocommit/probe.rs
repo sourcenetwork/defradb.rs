@@ -69,8 +69,8 @@ impl<S: Store + 'static> LensedAutoCommitFetcher<S> {
         &self,
         collection_name: &str,
         index_name: &str,
-        prefix: &[document::NormalValue],
-    ) -> query::error::Result<Option<Vec<query::fetcher::IndexEntryValues>>> {
+        prefixes: &[Vec<document::NormalValue>],
+    ) -> query::error::Result<Option<Vec<Vec<query::fetcher::IndexEntryValues>>>> {
         let collection = self
             .db
             .get_collection(collection_name)
@@ -99,7 +99,7 @@ impl<S: Store + 'static> LensedAutoCommitFetcher<S> {
             Some(self.db.lens_store()),
             &collection,
             index_name,
-            prefix,
+            prefixes,
         )
         .await;
         let _ = txn.discard();

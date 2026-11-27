@@ -506,15 +506,16 @@ pub trait DocFetcher: MaybeSendSync {
         ))
     }
 
-    /// The entries of `index_name` whose leading values equal `prefix`, read
-    /// from the index alone; `None` when this fetcher can't read entries.
+    /// For each prefix, the entries of `index_name` whose leading values equal
+    /// it, read from the index alone in one call; `None` when this fetcher
+    /// can't read entries.
     async fn index_prefix_entries(
         &self,
         collection_name: &str,
         index_name: &str,
-        prefix: &[document::NormalValue],
-    ) -> Result<Option<Vec<IndexEntryValues>>> {
-        let _ = (collection_name, index_name, prefix);
+        prefixes: &[Vec<document::NormalValue>],
+    ) -> Result<Option<Vec<Vec<IndexEntryValues>>>> {
+        let _ = (collection_name, index_name, prefixes);
         Ok(None)
     }
 
