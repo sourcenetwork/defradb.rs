@@ -445,7 +445,7 @@ pub(crate) const OWED_SETTLE_DEADLINE: std::time::Duration = std::time::Duration
 /// Submit what the committed transaction `staged_by` now owes the provider:
 /// the changes on the objects it staged on, within
 /// [`OWED_SETTLE_DEADLINE`]. The commit stands whatever this comes to.
-async fn settle_owed_changes(acp: Arc<dyn acp::DocumentACP>, staged_by: u64) {
+pub(super) async fn settle_owed_changes(acp: Arc<dyn acp::DocumentACP>, staged_by: u64) {
     // The node's drainer takes up whatever this wait leaves.
     acp.owed_changed();
     let pass = acp.settle_owed_changes(acp::OwedScope::Transaction(staged_by));

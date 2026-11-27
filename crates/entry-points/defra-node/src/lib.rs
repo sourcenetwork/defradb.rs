@@ -1346,6 +1346,10 @@ mod delegated_relationship_tests;
 mod staged_relationship_tests;
 
 #[cfg(all(test, feature = "vera", not(target_arch = "wasm32")))]
+#[path = "../tests/unit/transfer_owner.rs"]
+mod transfer_owner_tests;
+
+#[cfg(all(test, feature = "vera", not(target_arch = "wasm32")))]
 #[path = "../tests/unit/remote_owner_observation.rs"]
 mod remote_owner_observation_tests;
 
