@@ -26,22 +26,31 @@ pub enum ActorKey {
 
 impl ActorKey {
     /// Whether `issuer` is a spelling of this key that vera.rs accepts as a
-    /// token's issuer: either point encoding of a secp256k1 key, and the one
-    /// canonical DID of an Ed25519 or P-256 key.
+    /// token's issuer: any of the four of a secp256k1 key (either point
+    /// encoding, in base58btc or base64url), and the one canonical DID of an
+    /// Ed25519 or P-256 key. vera.rs decides which spellings it takes, and
+    /// names each by its canonical DID: the base58btc spelling of the
+    /// compressed key.
     pub fn names(&self, issuer: &str) -> bool {
-        match self {
-            Self::Secp256k1(key) => {
-                issuer == bearer::did_from_key(key, true)
-                    || issuer == bearer::did_from_key(key, false)
-            }
-            Self::Ed25519(key) => {
-                create_did_key(KeyType::Ed25519, key.as_bytes()).is_ok_and(|did| did == issuer)
-            }
+        match (
+            vera_crypto::jwt::canonical_actor(issuer),
+            self.canonical_did(),
+        ) {
+            (Ok(actor), Some(own)) => actor == own,
+            _ => false,
+        }
+    }
+
+    /// The DID vera.rs records this key under.
+    fn canonical_did(&self) -> Option<String> {
+        let did = match self {
+            Self::Secp256k1(key) => return Some(bearer::did_from_key(key, true)),
+            Self::Ed25519(key) => create_did_key(KeyType::Ed25519, key.as_bytes()),
             Self::P256(key) => {
                 create_did_key(KeyType::Secp256r1, key.to_sec1_point(true).as_bytes())
-                    .is_ok_and(|did| did == issuer)
             }
-        }
+        };
+        did.ok()
     }
 }
 

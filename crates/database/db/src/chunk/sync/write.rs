@@ -208,7 +208,7 @@ where
             &doc,
             identity.doc_short_id,
             &block,
-            None,
+            Default::default(),
         )
         .await?;
         doc.set_id(doc_id.clone());

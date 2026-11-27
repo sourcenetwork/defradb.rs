@@ -37,7 +37,12 @@ impl Op for DeleteReplicator {
         let id = self.peer_id(state)?;
         let node = state.node_on(self.common.node())?;
         state
-            .block_on(node.delete_replicator_as(&state.context_as(None, identity), &id, &[]))
+            .block_on(
+                state
+                    .scope_as(None, identity)
+                    .scoped(&node)
+                    .delete_replicator(&id, &[]),
+            )
             .map_err(failed)?;
         Ok(json!({}))
     }

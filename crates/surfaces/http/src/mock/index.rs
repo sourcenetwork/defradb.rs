@@ -73,6 +73,7 @@ impl IndexOperations for MockIndexOperations {
         name: Option<&str>,
         unique: bool,
         vector: Option<schema::VectorIndexDescription>,
+        _build_in_background: bool,
     ) -> Result<IndexInfo, String> {
         let index_name = match name {
             Some(n) => n.to_string(),
@@ -155,6 +156,7 @@ impl IndexOperations for FailingMockIndexOperations {
         _name: Option<&str>,
         _unique: bool,
         _vector: Option<schema::VectorIndexDescription>,
+        _build_in_background: bool,
     ) -> Result<IndexInfo, String> {
         Err(self.error.clone())
     }

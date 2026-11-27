@@ -1,6 +1,6 @@
 use defra_core::signing::{SigningConfig, SigningKeyType};
 use defra_core::RequestContext;
-use defra_node::{Node, SigningKey};
+use defra_node::{Node, ScopedNode, SigningKey};
 use identity::{Identity as _, RawIdentity};
 
 fn identity_from_key(
@@ -38,12 +38,11 @@ fn document_id(response: &query::QueryResponse) -> String {
         .to_string()
 }
 
-async fn create(node: &Node, context: &RequestContext, name: &str) -> String {
-    let response = node
-        .execute_as(
-            context,
-            &format!(r#"mutation {{ add_Widget(input: {{name: "{name}"}}) {{ _docID }} }}"#),
-        )
+async fn create(scope: &ScopedNode<'_>, name: &str) -> String {
+    let response = scope
+        .execute(&format!(
+            r#"mutation {{ add_Widget(input: {{name: "{name}"}}) {{ _docID }} }}"#
+        ))
         .await;
     assert!(
         response.errors.is_empty(),
@@ -53,18 +52,11 @@ async fn create(node: &Node, context: &RequestContext, name: &str) -> String {
     document_id(&response)
 }
 
-async fn commit_signatures(
-    node: &Node,
-    context: &RequestContext,
-    doc_id: &str,
-) -> Vec<serde_json::Value> {
-    let response = node
-        .execute_as(
-            context,
-            &format!(
-                r#"query {{ _commits(docID: "{doc_id}") {{ signature {{ type identity }} }} }}"#
-            ),
-        )
+async fn commit_signatures(scope: &ScopedNode<'_>, doc_id: &str) -> Vec<serde_json::Value> {
+    let response = scope
+        .execute(&format!(
+            r#"query {{ _commits(docID: "{doc_id}") {{ signature {{ type identity }} }} }}"#
+        ))
         .await;
     assert!(
         response.errors.is_empty(),
@@ -116,12 +108,9 @@ fn execute_as_signs_writes_and_keeps_the_caller_identity() {
             .build()
             .await
             .unwrap();
-        node.add_collection(
-            &defra_core::RequestContext::ambient(),
-            "type Widget { name: String }",
-        )
-        .await
-        .unwrap();
+        node.add_collection("type Widget { name: String }")
+            .await
+            .unwrap();
         assert!(node.node_identity_did().is_some());
         assert!(
             defra_core::signing::get_identity(node.node_identity_did().unwrap()).is_some(),
@@ -138,8 +127,8 @@ fn execute_as_signs_writes_and_keeps_the_caller_identity() {
             "the node signer must resolve"
         );
 
-        let doc_id = create(&node, &RequestContext::ambient(), "node-signed").await;
-        let rows = commit_signatures(&node, &RequestContext::ambient(), &doc_id).await;
+        let doc_id = create(&node.anonymous(), "node-signed").await;
+        let rows = commit_signatures(&node.anonymous(), &doc_id).await;
         assert!(
             signed_by(&rows, &node_identity),
             "node-key writes must be signed by the node: {rows:?}"
@@ -147,17 +136,17 @@ fn execute_as_signs_writes_and_keeps_the_caller_identity() {
 
         // A key the process registered for the caller's DID is not the
         // caller's to sign with: without a key of its own the node signs.
-        let caller = RequestContext::default().with_identity(Some(caller_did.to_string()));
-        let doc_id = create(&node, &caller, "registered-caller").await;
-        let rows = commit_signatures(&node, &caller, &doc_id).await;
+        let caller = node.with_identity(identity::Did::new(caller_did.to_string()).unwrap());
+        let doc_id = create(&caller, "registered-caller").await;
+        let rows = commit_signatures(&caller, &doc_id).await;
         assert!(
             signed_by(&rows, &node_identity),
             "a caller without a key must be signed by the node: {rows:?}"
         );
 
-        let keyed = caller.clone().with_signing(Some(caller_key));
-        let doc_id = create(&node, &keyed, "caller-signed").await;
-        let rows = commit_signatures(&node, &caller, &doc_id).await;
+        let keyed = caller.clone().with_signing(caller_key);
+        let doc_id = create(&keyed, "caller-signed").await;
+        let rows = commit_signatures(&caller, &doc_id).await;
         assert!(
             signed_by(&rows, &caller_identity),
             "a caller's own key must sign its writes: {rows:?}"
@@ -172,7 +161,7 @@ fn execute_as_signs_writes_and_keeps_the_caller_identity() {
             regression_response.errors
         );
         let regression_doc = document_id(&regression_response);
-        let rows = commit_signatures(&node, &RequestContext::ambient(), &regression_doc).await;
+        let rows = commit_signatures(&node.anonymous(), &regression_doc).await;
         assert!(
             signed_by(&rows, &node_identity),
             "Node::execute writes must stay signed by the node: {rows:?}"
@@ -181,14 +170,11 @@ fn execute_as_signs_writes_and_keeps_the_caller_identity() {
 
         let unsigned_node = Node::builder().build().await.unwrap();
         unsigned_node
-            .add_collection(
-                &defra_core::RequestContext::ambient(),
-                "type Widget { name: String }",
-            )
+            .add_collection("type Widget { name: String }")
             .await
             .unwrap();
-        let doc_id = create(&unsigned_node, &RequestContext::default(), "unsigned").await;
-        let rows = commit_signatures(&unsigned_node, &RequestContext::default(), &doc_id).await;
+        let doc_id = create(&unsigned_node.anonymous(), "unsigned").await;
+        let rows = commit_signatures(&unsigned_node.anonymous(), &doc_id).await;
         assert!(
             unsigned(&rows),
             "disabled signing must stay unsigned: {rows:?}"

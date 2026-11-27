@@ -6,12 +6,9 @@ use serde_json::json;
 
 async fn node() -> Node {
     let node = Node::builder().build().await.unwrap();
-    node.add_collection(
-        &defra_core::RequestContext::ambient(),
-        "type Users { name: String @index  age: Int }",
-    )
-    .await
-    .unwrap();
+    node.add_collection("type Users { name: String @index  age: Int }")
+        .await
+        .unwrap();
     let response = node
         .execute(
             r#"mutation { add_Users(input: [

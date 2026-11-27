@@ -305,6 +305,9 @@ impl From<&FieldDefinitionDeltaPayload> for Ipld {
         if payload.immutable {
             map.insert("immutable".to_string(), Ipld::Bool(true));
         }
+        if let Some(ref relation) = payload.policy_relation {
+            map.insert("policyRelation".to_string(), Ipld::String(relation.clone()));
+        }
         Ipld::Map(map)
     }
 }

@@ -141,7 +141,6 @@ fn import_signed_node(c: &mut Criterion) {
     let mut group = c.benchmark_group("backup_import_signed_node");
     group.sample_size(10);
     let names = vec![COLLECTION.to_string()];
-    let context = defra_core::RequestContext::default();
     for count in CORPUS {
         let source = rt.block_on(fixture(count));
         let dump = rt
@@ -162,17 +161,15 @@ fn import_signed_node(c: &mut Criterion) {
                             .build()
                             .await
                             .expect("a signing node");
-                        node.add_collection(
-                            &context,
-                            "type User { name: String city: String age: Int }",
-                        )
-                        .await
-                        .expect("the collection to register");
+                        node.anonymous()
+                            .add_collection("type User { name: String city: String age: Int }")
+                            .await
+                            .expect("the collection to register");
                         node
                     })
                 },
                 |node| {
-                    rt.block_on(node.import_backup_as(&context, black_box(dump)))
+                    rt.block_on(node.anonymous().import_backup(black_box(dump)))
                         .expect("the import to succeed")
                 },
                 criterion::BatchSize::LargeInput,

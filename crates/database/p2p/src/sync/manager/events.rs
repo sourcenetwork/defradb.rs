@@ -95,6 +95,19 @@ pub enum SyncEvent {
         peer_permit: DagFetchPeerPermit,
     },
 
+    /// A DocSync reply advertised heads of `doc_id`, and every one of them is
+    /// already merged here. Nothing will merge for it, so the replication
+    /// loop reports it as already merged, and an explicit sync waiting on
+    /// the document stops waiting.
+    HeadsAlreadyMerged {
+        /// One of the advertised heads, named in the report.
+        cid: Cid,
+        /// Document ID the heads belong to.
+        doc_id: String,
+        /// Collection ID, empty when the reply does not name it.
+        collection_id: String,
+    },
+
     /// DAG is ready for merge after block-sync fetch completed.
     ///
     /// All missing blocks have been fetched. The database layer should now

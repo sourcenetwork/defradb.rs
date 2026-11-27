@@ -174,6 +174,7 @@ impl DocumentACP for ChainView {
         _: &str,
         _: &str,
         doc: &str,
+        _relationships: &[acp::DerivedRelationship],
     ) -> acp::Result<()> {
         if self.chain.hold_registrations.load(Ordering::SeqCst) {
             return Err(acp::Error::ProviderUnavailable("held".into()));
@@ -187,33 +188,6 @@ impl DocumentACP for ChainView {
             return Err(acp::Error::DocumentAlreadyRegistered(doc.to_owned()));
         }
         Ok(())
-    }
-
-    async fn registration_parent(
-        &self,
-        _: &str,
-        _: &str,
-        id: &str,
-    ) -> acp::Result<acp::RegistrationParent> {
-        Ok(acp::RegistrationParent {
-            resource: "nodes".into(),
-            object_id: id.into(),
-        })
-    }
-
-    async fn register_under_parent(
-        &self,
-        actor: &Did,
-        policy: &str,
-        child: &str,
-        doc: &str,
-        parent: &acp::RegistrationParent,
-    ) -> acp::Result<()> {
-        if parent.resource != "nodes" || self.chain.owner(&parent.object_id).as_ref() != Some(actor)
-        {
-            return Err(acp::Error::PermissionDenied("parent requires owner".into()));
-        }
-        self.register_doc_object(actor, policy, child, doc).await
     }
 
     async fn is_doc_registered(&self, _: &str, _: &str, doc: &str) -> acp::Result<bool> {
@@ -308,12 +282,6 @@ impl ReplicaOwnership for Embedder {
     }
 }
 
-/// `Users` whose policy registers each document under the object its `name`
-/// field names.
-pub(crate) const PARENT_USERS_SDL: &str = r#"type Users @policy(id: "replica-policy", resource: "users", parentField: "name") {
-    name: String
-}"#;
-
 /// A key that signs blocks, and its DID.
 #[derive(Clone)]
 pub(crate) struct Key {
@@ -339,20 +307,13 @@ pub(crate) fn key() -> Key {
     }
 }
 
-/// The creator's node, on its own deployment, every block signed by the key
-/// that writes it. It has no ACP, unless its collection registers documents
-/// under a parent: then a local ACP of its own admits each creator under the
-/// parent it names.
+/// The creator's node, on its own deployment: no ACP, every block signed by
+/// the key that writes it.
 pub(crate) struct Source {
     db: Arc<DB<RegolithStore>>,
     pub(crate) blocks: Arc<Blocks>,
     version: CollectionVersion,
-    acp: Option<Arc<dyn DocumentACP>>,
 }
-
-/// The policy a gated source's own ACP holds: a `users` document is created
-/// under a `nodes` object its creator owns.
-const ADMISSIONS: &str = "name: admissions\nresources:\n- name: nodes\n- name: users\n  relations: [{name: parent, types: [nodes]}]\n  create: {parent: parent, requires: owner}\n";
 
 impl Source {
     pub(crate) async fn open() -> Self {
@@ -368,33 +329,10 @@ impl Source {
             .await
             .unwrap()
             .remove(0);
-        let gated = version
-            .policy
-            .as_ref()
-            .is_some_and(|policy| policy.parent_field.is_some());
-        let acp: Option<Arc<dyn DocumentACP>> = match gated {
-            true => {
-                use zanzibar::ZanzibarStore as _;
-
-                let zanzibar = Arc::new(acp::PersistentZanzibarStore::from_store(store.clone()));
-                let mut policy = acp::policy_yaml::build_policy(
-                    &acp::policy_yaml::parse_policy_yaml(ADMISSIONS).unwrap(),
-                    1,
-                )
-                .unwrap();
-                policy.id = POLICY.into();
-                zanzibar.store_policy(&policy).await.unwrap();
-                let acp: Arc<dyn DocumentACP> = Arc::new(acp::ZanzibarDocumentACP::new(zanzibar));
-                db.set_document_acp(acp.clone());
-                Some(acp)
-            }
-            false => None,
-        };
         Self {
             db,
             blocks: Arc::new(DefraBlockstore::new(store, false)),
             version,
-            acp,
         }
     }
 
@@ -408,25 +346,13 @@ impl Source {
         )
     }
 
-    /// `by` creates a document named `name`. On a gated source, `by` is
-    /// admitted under the parent `name` names, and creates as itself.
+    /// `by` creates a document named `name`.
     pub(crate) async fn create(&self, by: &Key, name: &str) -> (String, Composite) {
         let mut doc = self.document();
         doc.set("name", NormalValue::String(name.into())).unwrap();
-        let creator = match &self.acp {
-            Some(acp) => {
-                if !acp.is_doc_registered(POLICY, "nodes", name).await.unwrap() {
-                    acp.register_doc_object(&by.did, POLICY, "nodes", name)
-                        .await
-                        .unwrap();
-                }
-                Some(by.did.to_string())
-            }
-            None => None,
-        };
         set_signing_config(Some(by.signing.clone()));
         let created = defra_core::signing::scope_broadcast_creator_did(
-            creator,
+            None,
             AutoCommitMutator::new(self.db.clone()).create("Users", doc),
         )
         .await;
@@ -638,34 +564,6 @@ impl Receiver {
             }
             self.blocks.put(&cid, &data).await.unwrap();
         }
-    }
-
-    pub(crate) async fn receive_in_batch(
-        &self,
-        from: &Source,
-        doc_id: &str,
-        composite: &Composite,
-    ) -> MergeOutcome {
-        self.copy_blocks(from, composite).await;
-        let block = defra_core::merge::MergeBlock {
-            cid: composite.0,
-            block_data: composite.1.clone(),
-            doc_id: doc_id.to_owned(),
-            collection_id: self.collection_id.clone(),
-            creator: "did:key:z6MkCarrier".into(),
-            sender_peer: Some("peer".into()),
-            is_explicit_replicator: false,
-            explicit_replay_authorization: None,
-            verified_creator: None,
-        };
-        let mut results = self
-            .handler
-            .inner()
-            .try_batch_merge(&[block])
-            .await
-            .unwrap();
-        assert_eq!(results.len(), 1);
-        results.pop().unwrap().unwrap()
     }
 
     /// Re-drive what is ready to be tried again.

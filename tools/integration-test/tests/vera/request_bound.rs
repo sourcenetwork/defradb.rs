@@ -9,6 +9,7 @@
 
 use std::time::Duration;
 
+use base64::Engine as _;
 use vera::vera_rs::{
     caller_delegation, request_delegation, request_digest, DelegationSigner, Ed25519Signer,
     RequestBinding,
@@ -33,6 +34,41 @@ resources:
         types:
           - actor
 ";
+
+/// An Ed25519 signer named in base64url, as a host may name it.
+struct Respelled {
+    inner: Ed25519Signer,
+    did: String,
+}
+
+impl DelegationSigner for Respelled {
+    fn did(&self) -> &str {
+        &self.did
+    }
+
+    fn algorithm(&self) -> vera::vera_rs::DelegationAlgorithm {
+        self.inner.algorithm()
+    }
+
+    fn sign<'a>(
+        &'a self,
+        signing_input: &'a [u8],
+    ) -> defra_core::thread_bounds::MaybeBoxFuture<'a, Result<Vec<u8>, vera::vera_rs::SignerError>>
+    {
+        self.inner.sign(signing_input)
+    }
+}
+
+/// `did`, a base58btc `did:key`, with its multibase rewritten in base64url.
+fn base64url(did: &str) -> String {
+    let bytes = bs58::decode(&did["did:key:z".len()..])
+        .into_vec()
+        .expect("base58btc");
+    format!(
+        "did:key:u{}",
+        base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes)
+    )
+}
 
 /// The deployment's genesis identity as the chain's JSON-RPC answers it,
 /// unverified: the parent of its first block.
@@ -63,6 +99,7 @@ async fn genesis_on_chain(rpc_url: &str) -> [u8; 32] {
 
 #[nuclei::test]
 #[serial_test::serial]
+#[mantra_macros::req_test("defra.acp.vera_issuer_spelling")]
 async fn the_chain_executes_a_request_bound_delegation_for_its_command_only() {
     edge::compat(async {
         let node = Embedded::start().await;
@@ -77,7 +114,12 @@ async fn the_chain_executes_a_request_bound_delegation_for_its_command_only() {
             .genesis_id
             .expect("the provider knows its genesis identity");
         assert_eq!(genesis, genesis_on_chain(&node.rpc_url()).await);
-        let user = Ed25519Signer::from_slice(&[9; 32]).expect("key");
+        let inner = Ed25519Signer::from_slice(&[9; 32]).expect("key");
+        let canonical = inner.did().to_owned();
+        let user = Respelled {
+            did: base64url(&canonical),
+            inner,
+        };
         let reader = SubjectRef::Actor(READER.to_string());
         let on = |object_id, action| PolicyCommand {
             policy_id: &policy,
@@ -123,7 +165,7 @@ async fn the_chain_executes_a_request_bound_delegation_for_its_command_only() {
         let registering = bound(on("first", PolicyAction::RegisterObject), genesis, 1).await;
         assert!(matches!(
             provider
-                .register_object(&registering, &policy, "users", "second")
+                .register_object(&registering, &policy, "users", "second", &[])
                 .await,
             Err(ProviderError::Transaction(_))
         ));
@@ -144,7 +186,7 @@ async fn the_chain_executes_a_request_bound_delegation_for_its_command_only() {
                 )
                 .expect("bound to a request")
                 .expect("its request"),
-            user.did()
+            canonical
         );
 
         // Bound to the right command on another deployment's genesis: the
@@ -159,19 +201,19 @@ async fn the_chain_executes_a_request_bound_delegation_for_its_command_only() {
         ));
         assert!(matches!(
             provider
-                .register_object(&elsewhere, &policy, "users", "first")
+                .register_object(&elsewhere, &policy, "users", "first", &[])
                 .await,
             Err(ProviderError::Transaction(_))
         ));
         assert!(!owner("first").await.0);
 
         provider
-            .register_object(&registering, &policy, "users", "first")
+            .register_object(&registering, &policy, "users", "first", &[])
             .await
             .expect("registration");
         let (registered, registrant) = owner("first").await;
         assert!(registered);
-        assert_eq!(registrant, user.did());
+        assert_eq!(registrant, canonical);
 
         // A grant under its own delegation, then revoked under a plain one.
         let grant = PolicyAction::SetRelationship {

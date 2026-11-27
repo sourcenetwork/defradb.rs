@@ -58,6 +58,7 @@ impl VeraProvider for CountingProvider {
         _: &str,
         _: &str,
         _: &str,
+        _relationships: &[acp::DerivedRelationship],
     ) -> Result<(), ProviderError> {
         unreachable!("decisions only")
     }

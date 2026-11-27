@@ -93,8 +93,8 @@ async fn run(client_edge: &edge::Edge, nac: bool, writers: usize, operations: us
         builder = builder.with_node_acp_enabled();
     }
     let node = builder.build().await.unwrap();
-    let context = defra_core::RequestContext::default().with_identity(Some(did));
-    node.add_collection(&context, &format!("type {COLLECTION} {{ label: String }}"))
+    node.with_identity(identity::Did::new(did).unwrap())
+        .add_collection(&format!("type {COLLECTION} {{ label: String }}"))
         .await
         .unwrap();
 

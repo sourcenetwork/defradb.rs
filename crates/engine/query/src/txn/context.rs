@@ -104,6 +104,19 @@ impl AcpRegistrationProjection {
         std::sync::Arc::new(Self::detached())
     }
 
+    /// The registration owed for a document, as this transaction sees it.
+    pub async fn owed_registration(
+        &self,
+        policy_id: &str,
+        resource_name: &str,
+        doc_id: &str,
+    ) -> AcpResult<Option<acp::PendingRegistration>> {
+        let Some(pending) = &self.pending else {
+            return Ok(None);
+        };
+        pending.get(policy_id, resource_name, doc_id).await
+    }
+
     /// The creator a registration is owed to, as this transaction sees it.
     pub async fn owed_creator(
         &self,
@@ -155,6 +168,31 @@ async fn owed_creator(
         }
         _ => Ok(None),
     }
+}
+
+/// Who may access a document whose registration is owed: `Some(None)` when
+/// nobody may, as the provider refused its registration as a create its
+/// creator may not make; `Some(Some(creator))` while it waits; `None` when
+/// nothing is owed.
+async fn owed_reader(
+    acp: &dyn DocumentACP,
+    projection: Option<&AcpRegistrationProjection>,
+    policy_id: &str,
+    resource_name: &str,
+    doc_id: &str,
+) -> AcpResult<Option<Option<Did>>> {
+    match projection {
+        Some(projection) if !acp.supports_transactions() => Ok(projection
+            .owed_registration(policy_id, resource_name, doc_id)
+            .await?
+            .map(|owed| (!owed.hidden()).then_some(owed.creator))),
+        _ => Ok(None),
+    }
+}
+
+/// Whether `identity` is the reader [`owed_reader`] names.
+fn is_owed_reader(identity: &Identity, reader: Option<Did>) -> bool {
+    reader.is_some_and(|creator| is_creator(identity, &creator))
 }
 
 /// What the relationship deletes a transaction sees unsettled say about
@@ -411,8 +449,8 @@ pub async fn check_doc_access_with_projection(
     {
         return Ok(decided);
     }
-    if let Some(creator) = owed_creator(acp, projection, policy_id, resource_name, doc_id).await? {
-        return Ok(is_creator(identity, &creator));
+    if let Some(reader) = owed_reader(acp, projection, policy_id, resource_name, doc_id).await? {
+        return Ok(is_owed_reader(identity, reader));
     }
     if let Some(decided) = decided_by_owed(
         acp,
@@ -462,11 +500,11 @@ pub async fn check_doc_access_with_prepared_inputs(
     }
     // A registration this transaction owes overrides remote state, while
     // transaction-capable providers stay live so their reads participate in OCC.
-    if let Some(creator) = owed_creator(acp, projection, policy_id, resource_name, doc_id)
+    if let Some(reader) = owed_reader(acp, projection, policy_id, resource_name, doc_id)
         .await
         .map_err(crate::error::QueryError::from_acp)?
     {
-        return Ok(is_creator(identity, &creator));
+        return Ok(is_owed_reader(identity, reader));
     }
     let Some(inputs) = inputs.filter(|_| !acp.supports_transactions()) else {
         return check_doc_access_with_projection(
@@ -617,12 +655,12 @@ async fn doc_read_access(
                 explicit: true,
             });
         }
-        if let Some(creator) = owed_creator(acp, projection, policy_id, resource_name, object_id)
+        if let Some(reader) = owed_reader(acp, projection, policy_id, resource_name, object_id)
             .await
             .map_err(crate::error::QueryError::from_acp)?
         {
             return Ok(DocAccess {
-                has_access: is_creator(identity, &creator),
+                has_access: is_owed_reader(identity, reader),
                 explicit: true,
             });
         }
@@ -958,6 +996,7 @@ mod tests {
             _policy_id: &str,
             _resource_name: &str,
             _doc_id: &str,
+            _relationships: &[acp::DerivedRelationship],
         ) -> AcpResult<()> {
             Ok(())
         }
