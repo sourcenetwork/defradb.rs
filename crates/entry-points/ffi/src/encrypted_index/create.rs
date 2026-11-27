@@ -2,7 +2,7 @@ use std::ffi::c_char;
 
 use acp::nac::NodePermission;
 
-use crate::request::Request;
+use crate::request::{on_scope, Request};
 use crate::target::go_string;
 use crate::types::DefraResult;
 use crate::{ffi_async, ffi_entry, try_ffi};
@@ -35,13 +35,15 @@ pub unsafe fn defra_encrypted_index_new(
         let collection_name = go_string(collection_name);
         let field_name = go_string(field_name);
         let node = try_ffi!(request.node_handle());
-        let context = request.context();
+        let scope = try_ffi!(request.node_scope());
 
         ffi_async!(caller, {
-            let index = node
-                .add_encrypted_index_as(&context, &collection_name, &field_name)
-                .await
-                .map_err(|e| e.to_string())?;
+            let index = on_scope!(node, &scope, |scoped| {
+                scoped
+                    .add_encrypted_index(&collection_name, &field_name)
+                    .await
+            })
+            .map_err(|e| e.to_string())?;
             serde_json::to_string(&index).map_err(|e| format!("failed to serialize result: {}", e))
         })
     }
@@ -64,12 +66,15 @@ pub unsafe fn defra_encrypted_index_delete(
         let collection_name = go_string(collection_name);
         let field_name = go_string(field_name);
         let node = try_ffi!(request.node_handle());
-        let context = request.context();
+        let scope = try_ffi!(request.node_scope());
 
         ffi_async!(caller, {
-            node.delete_encrypted_index_as(&context, &collection_name, &field_name)
-                .await
-                .map_err(|e| e.to_string())?;
+            on_scope!(node, &scope, |scoped| {
+                scoped
+                    .delete_encrypted_index(&collection_name, &field_name)
+                    .await
+            })
+            .map_err(|e| e.to_string())?;
             Ok("{}".to_string())
         })
     }

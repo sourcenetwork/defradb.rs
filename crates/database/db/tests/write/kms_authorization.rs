@@ -39,7 +39,7 @@ fn prepared_upsert_keeps_hidden_matches_out_of_its_target_set() {
                 )
                 .await
                 .unwrap();
-            acp.register_doc_object(owner, "policy", "protected", &doc.doc_id.to_string())
+            acp.register_doc_object(owner, "policy", "protected", &doc.doc_id.to_string(), &[])
                 .await
                 .unwrap();
         }

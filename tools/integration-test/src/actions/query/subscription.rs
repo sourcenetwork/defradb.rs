@@ -1,7 +1,6 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use defra_core::RequestContext;
 use events::{EventName, Message};
 use query::subscription::{
     open_failure, response_has_data, subscription_accepts_doc_id, subscription_doc_ids,
@@ -51,7 +50,7 @@ pub struct OpenSubscription {
     node: String,
     query: String,
     variables: Option<Value>,
-    context: RequestContext,
+    scope: crate::node_scope::NodeScope,
     expected: Option<usize>,
     source: Source,
     /// A response the HTTP stream sent while the open waited for its check.
@@ -136,12 +135,12 @@ impl SubscriptionRequest {
         let events = node.subscribe(&[EventName::Update]).into_receiver();
         // Subscribed first, then checked once as a plain request, as the
         // HTTP stream opens: an invalid request fails the open.
-        let response = state
-            .block_on(node.execute_request_as(
-                &state.context_as(None, identity),
-                self.with_variables(query::QueryRequest::new(query)),
-            ))
-            .map_err(|e| Failure::operation(e.to_string()))?;
+        let response = state.block_on(
+            state
+                .scope_as(None, identity)
+                .scoped(&node)
+                .execute_request(self.with_variables(query::QueryRequest::new(query))),
+        );
         if let Some(OpenFailure::Invalid(error)) = open_failure(&response) {
             return Err(Failure::operation(error));
         }
@@ -254,7 +253,7 @@ impl SubscriptionRequest {
                 node: self.common.node().to_owned(),
                 query: query.to_owned(),
                 variables: self.variables.clone(),
-                context: state.context_as(None, identity),
+                scope: state.scope_as(None, identity),
                 expected: self.expected_count.and_then(|n| usize::try_from(n).ok()),
                 source,
                 first,
@@ -316,9 +315,7 @@ impl SubscriptionRequest {
             if let Some(variables) = &open.variables {
                 request = request.with_variables(variables.clone());
             }
-            let response = state
-                .block_on(node.execute_request_as(&open.context, request))
-                .map_err(|e| Failure::operation(e.to_string()))?;
+            let response = state.block_on(open.scope.scoped(&node).execute_request(request));
             if response_has_data(&response) {
                 delivered.push(json!({ "data": response.data }));
             }

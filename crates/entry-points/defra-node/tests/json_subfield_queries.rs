@@ -4,8 +4,7 @@ use serde_json::json;
 
 async fn json_blob_node(sdl: &str) -> Result<Node> {
     let node = Node::builder().build().await?;
-    node.add_collection(&defra_core::RequestContext::ambient(), sdl)
-        .await?;
+    node.add_collection(sdl).await?;
     for payload in [
         json!({"i": {"love": "eating my family and commas"}}),
         json!({"i": {"love": "nothing"}}),

@@ -5,8 +5,10 @@ use std::sync::Arc;
 
 use query::QueryExecutor;
 
+#[cfg(feature = "http")]
 use crate::acp_ops::AcpOps;
-use crate::{Error, Node, Result, SchemaOps};
+use crate::db_impls::DbSchemaOps;
+use crate::{Error, Node, Result};
 
 pub(crate) type Database = Arc<db::DB<storage::RegolithStore>>;
 
@@ -16,7 +18,8 @@ pub(crate) struct NodeOps {
     pub(crate) database: Database,
     pub(crate) txn_registry: Arc<db::DbTransactionRegistry<storage::RegolithStore>>,
     pub(crate) runner: Arc<dyn QueryExecutor>,
-    pub(crate) schema_ops: Arc<dyn SchemaOps>,
+    pub(crate) schema_ops: DbSchemaOps,
+    #[cfg(feature = "http")]
     pub(crate) acp_ops: Arc<dyn AcpOps>,
     pub(crate) document_acp: Arc<dyn acp::DocumentACP>,
     pool: Option<workers::Pool>,
@@ -59,7 +62,8 @@ impl Node {
             database: Arc::clone(&self.database),
             txn_registry: Arc::clone(&self.txn_registry),
             runner: Arc::clone(&self.runner),
-            schema_ops: Arc::clone(&self.schema_ops),
+            schema_ops: self.schema_ops.clone(),
+            #[cfg(feature = "http")]
             acp_ops: Arc::clone(&self.acp_ops),
             document_acp: Arc::clone(&self.document_acp),
             pool: self.pool.clone(),

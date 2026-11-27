@@ -50,7 +50,7 @@ where
         };
         let alone = match journal.outcome(&flight).await {
             RequestOutcome::Applied => {
-                return Ok(Some(self.settle_applied(journal, change).await?));
+                return Ok(Some(self.settle_applied(change).await?));
             }
             RequestOutcome::Unavailable { reason } => {
                 unavailable(change, &reason);
@@ -130,7 +130,7 @@ where
             RequestOutcome::Applied => {
                 let mut steps = Vec::with_capacity(changes.len());
                 for change in &changes {
-                    steps.push(self.settle_applied(journal, change).await?);
+                    steps.push(self.settle_applied(change).await?);
                 }
                 Ok(steps)
             }
@@ -255,8 +255,7 @@ where
     }
 
     /// Delete the record of `change`, which took effect on the provider.
-    async fn settle_applied(&self, journal: &dyn OwedJournal, change: &OwedChange) -> Result<Step> {
-        journal.applied(change);
+    async fn settle_applied(&self, change: &OwedChange) -> Result<Step> {
         Ok(if self.write(change.seq, Write::Settle).await? {
             let tuple = &change.tuple;
             self.object_changed(&tuple.policy_id, &tuple.resource, &tuple.object);

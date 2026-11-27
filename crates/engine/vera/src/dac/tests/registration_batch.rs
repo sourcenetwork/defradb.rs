@@ -78,6 +78,7 @@ impl VeraProvider for Lists {
         _: &str,
         _: &str,
         object_id: &str,
+        _relationships: &[acp::DerivedRelationship],
     ) -> std::result::Result<(), ProviderError> {
         self.reach()?;
         self.singles.push(object_id.to_owned());
@@ -190,6 +191,7 @@ fn ids(count: usize) -> Vec<String> {
 fn objects(ids: &[String]) -> Vec<acp::AcpObject<'_>> {
     ids.iter()
         .map(|id| acp::AcpObject {
+            relationships: &[],
             policy_id: POLICY,
             resource: "users",
             object_id: id,
@@ -202,7 +204,7 @@ fn owner() -> Did {
 }
 
 fn acp_of(provider: &Arc<Lists>) -> VeraDocumentACP {
-    VeraDocumentACP::without_access_cache(provider.clone())
+    VeraDocumentACP::new(provider.clone())
 }
 
 #[nuclei::test]

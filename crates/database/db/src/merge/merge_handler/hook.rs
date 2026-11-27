@@ -100,11 +100,16 @@ pub trait CompositeMergeHook: MaybeSendSync {
         Ok(None)
     }
 
+    /// What runs after a composite of `doc_id` committed. `relationships`
+    /// are those the document carries through its `@policy(relation:)`
+    /// fields, as far as this composite merged their values (a genesis
+    /// does), which a registration of the document is sent with.
     fn post_commit_action(
         &self,
         _doc_id: &str,
         _collection: &CollectionVersion,
         _metadata: &BlockMetadata<'_>,
+        _relationships: Vec<acp::DerivedRelationship>,
     ) -> Option<Box<dyn CompositePostCommitAction>> {
         None
     }

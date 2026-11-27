@@ -144,13 +144,18 @@ fn a_failed_strict_read_in_a_transaction_leaves_it_usable() {
         let node = node(&remote).await;
         let hidden = created(node.execute_request(create("unchecked")).await);
         remote.unchecked.insert(hidden.clone(), ());
-        let txn = node.begin_transaction(false).await.unwrap();
+        let txn = node.new_txn(false).await.map(|txn| txn.detach()).unwrap();
         let refused = node
-            .execute_request_in_txn(strict("{ Record { name } }", OWNER), &txn)
+            .with_transaction(txn)
+            .execute_request(strict("{ Record { name } }", OWNER))
             .await;
         assert!(unavailable(&refused, &hidden), "{:?}", refused.errors);
-        created(node.execute_request_in_txn(create("after"), &txn).await);
-        node.commit_transaction(&txn).await.unwrap();
+        created(
+            node.with_transaction(txn)
+                .execute_request(create("after"))
+                .await,
+        );
+        node.with_transaction(txn).commit().await.unwrap();
         remote.unchecked.remove(&hidden);
         let response = node.execute_request(read(OWNER)).await;
         assert_eq!(names(&response), ["after", "unchecked"]);

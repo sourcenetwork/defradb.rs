@@ -65,7 +65,13 @@ where
                 .owed(object.policy_id, object.resource, object.object_id)
                 .await
             {
-                Ok(Some(owed)) if seen.insert(owed.key()) => owed,
+                Ok(Some(owed)) if seen.insert(owed.key()) => {
+                    if owed.create_refused() {
+                        outcomes[index] = Some(self.parked_create(&owed).await);
+                        continue;
+                    }
+                    owed
+                }
                 Ok(_) => {
                     outcomes[index] = Some(Ok(()));
                     continue;
@@ -145,7 +151,6 @@ where
         let (registrar, serving) = self.registrar_from(owed, None)?;
         let creator = self.provider.canonical_actor(&owed.creator).to_string();
         let sender = match (&owed.authority, serving) {
-            _ if owed.parent.is_some() => None,
             (_, true) if self.serving_binds_one_request() => None,
             (_, true) => Some(Sender::Serving(creator)),
             _ if owed.request_bound => None,
@@ -175,6 +180,7 @@ where
                         policy_id: &owed.policy_id,
                         resource: &owed.resource_name,
                         object_id: &owed.doc_id,
+                        relationships: &owed.relationships,
                     })
                     .collect();
                 group

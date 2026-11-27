@@ -57,13 +57,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                     // write path compares same-representation values and still
                     // enforces immutability for JSON fields.
                     .filter(|field| {
-                        (field.immutable
-                            || collection
-                                .schema()
-                                .policy
-                                .as_ref()
-                                .and_then(|policy| policy.parent_field.as_deref())
-                                == Some(field.name.as_str()))
+                        field.immutable
                             && !field
                                 .kind
                                 .as_scalar()
@@ -186,18 +180,6 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                 let field_name = effective
                     .field()
                     .map_or(link_name.as_str(), |delta| delta.field_name);
-                if context
-                    .collection
-                    .as_ref()
-                    .and_then(|collection| collection.schema().policy.as_ref())
-                    .and_then(|policy| policy.parent_field.as_deref())
-                    == Some(field_name)
-                    && !matches!(effective, CrdtDelta::Lww(_))
-                {
-                    return Err(MergeError::ImmutableFieldChanged(format!(
-                        "registration parent field '{field_name}' requires a register delta"
-                    )));
-                }
                 if immutable_fields.contains(field_name) {
                     if let Some(baseline) = immutable_baseline.as_ref() {
                         Self::check_immutable_delta(
