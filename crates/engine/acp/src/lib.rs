@@ -1,7 +1,8 @@
 //! Access Control Policy (ACP) for DefraDB
 //!
-//! Document access control (DAC) and node access control (NAC), both evaluated
-//! by the `zanzibar` engine over relationship tuples.
+//! Document access control (DAC) and node access control (NAC). NAC and the
+//! local DAC are evaluated by the `zanzibar` engine over relationship tuples;
+//! a Vera DAC is decided by the chain.
 //!
 //! # Architecture
 //!
@@ -24,7 +25,10 @@
 //!   that declares one is refused (``'owner` is a reserved relation name``)
 //! - The owner holds every permission: each expression is joined to `owner`
 //!   by union, an empty expression grants the owner alone, and an expression
-//!   may not name `owner` (``permission cannot reference `owner` relation``)
+//!   may not name the resource's own `owner` (``permission cannot reference
+//!   `owner` relation``); `parent->owner` is accepted
+//! - Under `spec: defra` every resource needs `read` and `write`, and `read`
+//!   is joined to `write`, so an empty `read` also grants the `write` holders
 //! - Expressions use `+` (union), `-` (difference), `&` (intersection) and
 //!   `relation->permission` (follow `relation` to the object it names and
 //!   check `permission` there), with equal precedence, left to right, and

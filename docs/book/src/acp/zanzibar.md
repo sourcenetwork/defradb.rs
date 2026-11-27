@@ -33,9 +33,13 @@ permissions). The rules, as `crates/engine/acp/src/policy_yaml/` applies them:
   is refused (``'owner` is a reserved relation name``).
 - **The owner holds every permission.** Each permission's expression is joined to
   `owner` by union, and a permission with no `expr` grants the owner alone. An expression
-  that names `owner` is refused (``permission cannot reference `owner` relation``,
-  `go.acp.dac.policy.invalid`). No expression can take a permission away from the owner:
-  `reader - blocked` means `owner + (reader - blocked)`.
+  that names the resource's own `owner` is refused (``permission cannot reference `owner`
+  relation``, `go.acp.dac.policy.invalid`); `parent->owner`, the owner of the object
+  `parent` names, is accepted, as in acp_core. No expression can take a permission away
+  from the owner: `reader - blocked` means `owner + (reader - blocked)`.
+- **`spec: defra`.** A policy that sets it must give every resource `read` and `write`
+  permissions, and its `read` is joined to `write`: whoever holds `write` reads too, so
+  there a `read` with no `expr` grants the owner and the `write` holders.
 - **Operators.** `+` is union, `-` difference, `&` intersection, and `rel->perm` follows
   relation `rel` to the object it names and checks `perm` there. They have equal
   precedence and apply left to right; parentheses group. This is the grammar of
@@ -47,6 +51,16 @@ permissions). The rules, as `crates/engine/acp/src/policy_yaml/` applies them:
   `update` and `delete` permissions (`go.acp.dac.link.accepted`,
   `go.acp.dac.link.bad-policy`). Whoever can update or delete a document can also read
   it (`DocumentPermission::implies_read_permissions`).
+- **`manages`.** A relation's `manages: [rel, ...]` lets its holders add and remove tuples
+  of those relations; the owner may always do so, and nobody else may
+  (`PolicyResource::get_managers_for_relation`, `go.acp.dac.relationship.manager`).
+  Managing a relation grants no read, update or delete by itself. `owner` cannot be
+  managed.
+- **`create`.** A resource's `create: {parent: <relation>, requires: <permission>}` admits
+  a new document only if its creator holds `requires` on the parent object it names. Its
+  collection must then pass `parentField` in `@policy`, and only then
+  (`defra.acp.parent_registration`; [Parent-authorized document
+  creation](transactional.md#parent-authorized-document-creation)).
 
 An example, in which a file is readable by its readers, its editors and the readers of
 its directory, except anyone blocked:
@@ -112,7 +126,10 @@ A local ACP names a policy as Go's acp_core does: a SHA-256 of the policy's name
 resources, relations and permissions, hashed again with a counter
 (`policy_yaml::generate_policy_id`). The counter comes from the engine's `Db::allocate`
 (the same atomic allocator as short IDs, `PersistentZanzibarStore::next_policy_counter`),
-so two adds of one body get two IDs (`go.acp.dac.policy.ids`). Vera names its policies
+so two adds of one body get two IDs (`go.acp.dac.policy.ids`). A policy that uses
+`actor:individual` or a `create` rule, which acp_core cannot express, also hashes those
+(under `defra/individual-actor/v1` and `defra/parent-registration/v1`), so its ID is not
+one acp_core would compute. Vera names its policies
 itself ([Vera](vera.md)). A policy body is content-checked: a different body under an
 existing ID is a typed error (`a different policy already exists under ID ...`), not a
 silent overwrite.

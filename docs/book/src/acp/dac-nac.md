@@ -50,8 +50,9 @@ Two properties worth knowing:
 
 - **While temporarily disabled, nothing is gated but NAC itself is frozen**: every node
   operation is allowed, as when NAC is not configured, but adding or removing NAC
-  relationships is refused (`cannot modify relationships while NAC is disabled -
-  re-enable NAC first`), and re-enabling still needs `re-enable-nac` (`go.acp.nac.lifecycle.disable`,
+  relationships is refused, even for the node's own identity (`operation requires ACP,
+  but ACP not available`, `go.acp.nac.relationship.add`, `go.acp.nac.relationship.delete`),
+  and re-enabling still needs `re-enable-nac` (`go.acp.nac.lifecycle.disable`,
   `go.acp.nac.lifecycle.re-enable`). A disabled NAC that still accepted relationship
   changes would let anyone make themselves admin before it is re-enabled.
 - **`bypass-dac`**: a privilege on the NAC object that lets an authenticated identity
