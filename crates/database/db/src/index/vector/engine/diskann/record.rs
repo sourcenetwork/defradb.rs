@@ -42,7 +42,7 @@ where
     /// Where `id`'s record is, and its bytes. With resident codes the key
     /// starts with the cluster the node's code names: the code cache's,
     /// which may be another generation's, and else the transaction's own
-    /// (`proofs/tla/DiskAnnClusterKeys.tla` `Found`). A node with no code
+    /// (`proofs/tla/DiskAnnClusterKeys.tla` `Locate`). A node with no code
     /// has no record.
     pub(super) async fn locate(&self, m: usize, id: NodeId) -> Result<Option<Located>> {
         if !self.params.resident_codes {

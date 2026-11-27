@@ -11,7 +11,7 @@ pub(super) const PROPERTIES: &[Property] = &[
         anchor: "crates/database/db/src/index/vector/engine/diskann/record.rs locate, record, choose_cluster; crates/database/db/src/index/vector/engine/diskann/graph.rs link; crates/database/db/src/index/vector/engine/diskann/merge.rs consolidate",
         model_ref: "MC_DiskAnnClusterKeys_Green.cfg (GREEN) / MC_DiskAnnClusterKeys_Red_NoFallback.cfg / MC_DiskAnnClusterKeys_Red_NoFallbackLink.cfg / MC_DiskAnnClusterKeys_Red_MoveCluster.cfg (RED)",
         tiers: &[Contract],
-        bound_by: "crates/database/db/tests/vector/diskann_clusters.rs a_search_finds_records_whatever_cluster_the_cache_names, a_node_linked_again_keeps_its_cluster, an_index_written_before_clusters_keeps_working",
+        bound_by: "crates/database/db/tests/vector/diskann_clusters.rs a_search_finds_records_whatever_cluster_the_cache_names, a_node_linked_again_keeps_its_cluster, an_index_written_before_clusters_keeps_working, a_reclustered_node_linked_again_has_one_record",
     },
     Property {
         family: "DiskANN cluster keys",

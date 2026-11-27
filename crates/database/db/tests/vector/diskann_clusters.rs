@@ -236,3 +236,55 @@ fn an_index_written_before_clusters_keeps_working() {
     })
     .unwrap()
 }
+
+/// A stale cache cannot make a merge treat a re-clustered node as new. The
+/// node is consolidated from the old layout, linked fresh under a cluster,
+/// then linked again while the cache still names its bare id key.
+#[test]
+fn a_reclustered_node_linked_again_has_one_record() {
+    workers::block_on(async {
+        let (vectors, _) = corpus();
+        let mut index = built(&vectors).await;
+        unclustered(&mut index).await;
+        let (old_code, old_cluster) = stored_code(&index, 7).await;
+        assert_eq!(old_cluster, None);
+
+        for id in 1..=130 {
+            index.delete(NodeId(id)).await.unwrap();
+        }
+        index.build().await.unwrap();
+        assert!(!keys(&index).await.iter().any(|(id, _)| *id == NodeId(7)));
+
+        let first = crate::diskann_streaming::fresh(0x40FE);
+        index
+            .insert(NodeId(CORPUS as u64 + 1), &first)
+            .await
+            .unwrap();
+        index.build().await.unwrap();
+        index.insert(NodeId(7), &first).await.unwrap();
+        index.build().await.unwrap();
+        let linked = stored_code(&index, 7).await.1;
+        assert!(linked.is_some());
+        assert_ne!(linked, Some(codec::cluster_tag(NodeId(7))));
+
+        let generation = index.state().await.unwrap().unwrap().generation;
+        let mut stale = Codes::default();
+        stale.insert(NodeId(7), &old_code, None).unwrap();
+        let cache = Arc::new(CodeCache::default());
+        cache.replace(generation, stale);
+        index = index.with_codes(cache);
+
+        let second = crate::diskann_streaming::fresh(0x51AB);
+        index.insert(NodeId(7), &second).await.unwrap();
+        index.build().await.unwrap();
+
+        let records: Vec<_> = keys(&index)
+            .await
+            .into_iter()
+            .filter(|(id, _)| *id == NodeId(7))
+            .collect();
+        assert_eq!(records.len(), 1, "{records:?}");
+        assert!(records[0].1.is_some(), "{records:?}");
+    })
+    .unwrap()
+}
