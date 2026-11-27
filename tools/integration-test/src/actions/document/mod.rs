@@ -1,4 +1,5 @@
 mod add;
+mod add_client_signed;
 mod client_signing_session;
 mod delete;
 mod delete_with_filter;
@@ -9,6 +10,7 @@ mod update;
 mod update_with_filter;
 
 pub use add::AddDoc;
+pub use add_client_signed::AddDocClientSigned;
 pub use client_signing_session::{ClientSigningSession, SigningMisstep};
 pub use delete::DeleteDoc;
 pub use delete_with_filter::DeleteWithFilter;

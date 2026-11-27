@@ -186,7 +186,7 @@ fn a_preparation_is_taken_for_its_own_change_and_provider_only() {
             .await;
         let other = RemoteAcp::new();
         other
-            .register_doc_object(&alice(), POLICY, RESOURCE, &doc)
+            .register_doc_object(&alice(), POLICY, RESOURCE, &doc, &[])
             .await
             .unwrap();
         let elsewhere = staging

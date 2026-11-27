@@ -21,8 +21,8 @@ use super::directives::{
 };
 use super::field_type_refusal::refusal;
 use super::helpers::{
-    graphql_schema_value_to_json, normalize_datetime_string, parse_governed_directive,
-    parse_graphql_type, parse_policy_directive,
+    graphql_schema_value_to_json, normalize_datetime_string, parse_field_policy_directive,
+    parse_governed_directive, parse_graphql_type, parse_policy_directive,
 };
 use super::parser::{CompositeIndex, ParsedField, ParsedTypeDirectives, SdlParser};
 use super::warnings::{DirectiveLocation, ParseWarning};
@@ -146,12 +146,17 @@ impl<'a> SdlParser<'a> {
                     });
                 }
                 "policy" => {
-                    // Known but not yet implemented - emit warning so users know
-                    self.warnings.push(ParseWarning::UnimplementedDirective {
-                        directive_name: directive.name.clone(),
-                        type_name: type_name.clone(),
-                        field_name: Some(field_name.to_string()),
-                    });
+                    let owner = format!("{type_name}.{field_name}");
+                    match parse_field_policy_directive(directive, &owner)? {
+                        Some(relation) => result.policy_relation = Some(relation),
+                        // Without `relation:` the directive does nothing on a
+                        // field, as before bindings existed.
+                        None => self.warnings.push(ParseWarning::UnimplementedDirective {
+                            directive_name: directive.name.clone(),
+                            type_name: type_name.clone(),
+                            field_name: Some(field_name.to_string()),
+                        }),
+                    }
                 }
                 _ => {
                     // Unknown directive - emit warning for forward compatibility

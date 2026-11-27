@@ -30,26 +30,23 @@ rows() {
     local lens="no"
     has_feature "$features" wasmtime-runtime && lens="yes"
 
-    local acp="no"
-    has_feature "$features" vera && acp="yes"
-
-    printf '%s\t%s\t%s\t%s\t%s\n' "$artifact" "$platform" "$transports" "$lens" "$acp"
+    printf '%s\t%s\t%s\t%s\n' "$artifact" "$platform" "$transports" "$lens"
   done
 }
 
 echo '## Capability matrix'
 echo
-echo '| Artifact | Platforms | Transports | Lens migrations | Vera ACP |'
-echo '|---|---|---|---|---|'
+echo '| Artifact | Platforms | Transports | Lens migrations |'
+echo '|---|---|---|---|'
 
 rows | awk -F'\t' '
-  !seen[$1]++ { order[++count] = $1; transports[$1] = $3; lens[$1] = $4; acp[$1] = $5 }
+  !seen[$1]++ { order[++count] = $1; transports[$1] = $3; lens[$1] = $4 }
   { platforms[$1] = platforms[$1] == "" ? $2 : platforms[$1] ", " $2 }
   END {
     for (i = 1; i <= count; i++) {
       artifact = order[i]
-      printf "| `%s_*` | %s | %s | %s | %s |\n",
-        artifact, platforms[artifact], transports[artifact], lens[artifact], acp[artifact]
+      printf "| `%s_*` | %s | %s | %s |\n",
+        artifact, platforms[artifact], transports[artifact], lens[artifact]
     }
   }
 '

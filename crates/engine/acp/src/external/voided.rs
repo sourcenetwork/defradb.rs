@@ -43,6 +43,8 @@ pub enum VoidedEffect {
         policy_id: String,
         resource: String,
         object: String,
+        /// The relationships it was registered with.
+        relationships: Vec<crate::DerivedRelationship>,
         /// What the registration was sent under.
         authority: OwedAuthority,
         /// Whether that delegation was bound to this one registration.
@@ -93,6 +95,7 @@ where
                     policy_id,
                     resource,
                     object,
+                    relationships,
                     authority,
                     request_bound,
                 } => {
@@ -103,8 +106,14 @@ where
                     {
                         continue;
                     }
+                    // A registration the provider held in a collection that
+                    // gates creates passed `create`, which only an arrow over
+                    // a derived relationship admits, so it carries some: it
+                    // is owed again hidden, as it was first.
                     let pending =
                         PendingRegistration::new(creator.clone(), policy_id, resource, object)
+                            .with_relationships(relationships.clone())
+                            .gated(!relationships.is_empty())
                             .with_authority(Ok(authority.clone()), *request_bound);
                     registrations.record(&pending).await?;
                 }

@@ -58,12 +58,9 @@ impl Op for DeleteNACActorRelationship {
         state
             .block_on(
                 state
-                    .node_on(self.common.node())?
-                    .delete_nac_actor_relationship_as(
-                        &state.context_as(None, identity),
-                        &self.relation,
-                        &target,
-                    ),
+                    .scope_as(None, identity)
+                    .scoped(&*state.node_on(self.common.node())?)
+                    .delete_nac_actor_relationship(&self.relation, &target),
             )
             .map(result)
             .map_err(|e| Failure::operation(e.to_string()))

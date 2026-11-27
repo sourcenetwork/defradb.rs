@@ -508,7 +508,7 @@ pub async fn observe_doc_actor_relationship(
 ///
 /// The core allows the document's owner or a holder of a relation that
 /// manages one on its resource, as the embedded
-/// `Node::list_dac_relationships_as`.
+/// `ScopedNode::list_dac_relationships`.
 pub async fn list_doc_relationships(
     State(state): State<AppState>,
     identity: ExtractIdentity,

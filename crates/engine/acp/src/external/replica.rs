@@ -135,10 +135,9 @@ where
         }
         let registrant = self.provider.canonical_actor(unit.registrant);
         let creator = self.provider.canonical_actor(unit.creator);
-        let mut registration =
+        let registration =
             PendingRegistration::new(registrant.clone(), policy_id, resource, doc_id)
                 .for_replica_of(creator.clone());
-        registration.parent = unit.parent.cloned();
         let authority = self
             .provider
             .command_authority(&registrant, registration.command())?;

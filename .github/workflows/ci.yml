@@ -290,6 +290,9 @@ jobs:
               cargo clippy -p cli --features embedded-vera --all-targets -- -D warnings
               cargo clippy -p db --features p2p --all-targets -- -D warnings
               cargo clippy -p cli --features iroh,model-trace --all-targets -- -D warnings
+              cargo clippy -p p2p --features pinc-transport,iroh-transport --all-targets -- -D warnings
+              cargo clippy -p cli --features pinc --all-targets -- -D warnings
+              cargo clippy -p integration-test --features pinc --all-targets -- -D warnings
           - group: minimal
             commands: |
               cargo clippy -p defra-node --no-default-features --features native --all-targets -- -D warnings
@@ -547,8 +550,16 @@ jobs:
       - run: cargo nextest run --cargo-profile super-dev -p defra-node --features p2p
       - run: cargo nextest run --cargo-profile super-dev -p vera-embedded --features node --test hosted_node --test node_placement
       - run: cargo nextest run --cargo-profile super-dev -p defra-node --features embedded-vera,http --test embedded_vera
+      # The vera binary's create gate scenario runs on an in-process Vera node and needs no verad
+      # and no CLI binary, so the nextest setup scripts are told not to build them.
+      - run: cargo nextest run --cargo-profile super-dev -p integration-test --test vera -E 'test(/^create_gate::/)'
+        env:
+          DEFRA_RUST_BINARY: /usr/bin/false
+          DEFRA_IROH_BINARY: /usr/bin/false
+          DEFRA_VERA_BINARY: /usr/bin/false
       - run: cargo nextest run --cargo-profile super-dev -p defra-node --features embedded-vera,p2p --test embedded_vera_replication
       - run: cargo nextest run --cargo-profile super-dev -p cli --features embedded-vera --test embedded_vera --test embedded_vera_config
+      - run: cargo nextest run --cargo-profile super-dev -p p2p --features pinc-transport,iroh-transport -E 'test(/pinc/)'
 
   wasm-check:
     name: WASM Build Check
@@ -651,7 +662,7 @@ jobs:
           cargo nextest run --no-fail-fast --run-ignored all \
             -p query -p p2p -p db -p defra-http -p defra-node -p acp -p conformance \
             --features p2p/iroh-transport \
-            --lib --test storage_failure --test block --test merge --test projection_scope --test parent_registration --test lean_conformance \
+            --lib --test storage_failure --test block --test merge --test projection_scope --test lean_conformance \
             -E '
               binary_id(query::storage_failure)
               | binary_id(p2p) & (
@@ -673,7 +684,6 @@ jobs:
                 | test(=genesis_access::genesis_reader_matches_executed_lean_model))
               | binary_id(defra-node) & test(owner_observation_tests)
               | binary_id(acp::projection_scope)
-              | binary_id(acp::parent_registration)
               | binary_id(conformance)
               | binary_id(conformance::lean_conformance)'
 
@@ -1004,9 +1014,10 @@ jobs:
       # A failing scenario shows its in-process nodes' P2P trace.
       DEFRA_TEST_TRACE: p2p=debug,defra_p2p_adapter=debug,warn
       TESTO_FILTER: binary(testo)
-      # Not run anywhere: p2p_interop_bench, whose one test is an ignored
+      # Not run here: p2p_interop_bench, whose one test is an ignored
       # benchmark that prints latencies, and vera, whose cluster needs the
-      # verad validator binary from vera.rs, which CI does not build.
+      # verad validator binary from vera.rs, which CI does not build; the
+      # feature tests run vera's create_gate scenarios, which need none.
       # c_rust_to_go_outage_replay (#2089) flips between runs: the Go receiver
       # sometimes misses the protected document written while it was down. A
       # known-failure entry would fail every run it passes, so the test is left

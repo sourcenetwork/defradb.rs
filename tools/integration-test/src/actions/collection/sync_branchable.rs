@@ -37,10 +37,10 @@ impl Op for SyncBranchableCollection {
     fn run(&self, state: &State) -> Result<Value, Failure> {
         let identity = self.common.client_identity(Self::name())?;
         let node = state.node_on(self.common.node())?;
-        let context = state.context_as(None, identity);
+        let scope = state.scope_as(None, identity);
         let id = self.known_id(&node)?;
         state
-            .block_on(node.sync_branchable_collection_as(&context, &id))
+            .block_on(scope.scoped(&node).sync_branchable_collection(&id))
             .map(|()| json!({}))
             .map_err(|e| Failure::operation(e.to_string()))
     }

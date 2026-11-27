@@ -102,12 +102,22 @@ impl Verified {
         .with_variables(json!({ "input": input }))
         .with_identity(Some(Did::new(&self.user).unwrap()));
         let doc = graph.doc_id().to_owned();
-        let txn = self.node.begin_transaction(false).await.unwrap();
+        let txn = self
+            .node
+            .new_txn(false)
+            .await
+            .map(|txn| txn.detach())
+            .unwrap();
         let response = self
             .node
-            .execute_verified_create_in_txn(request, &txn, &graph, credential(&doc))
+            .with_transaction(txn)
+            .execute_verified_create(request, &graph, credential(&doc))
             .await;
-        Attempt { doc, txn, response }
+        Attempt {
+            doc,
+            txn: query::TransactionHandle::new(txn.to_string()),
+            response,
+        }
     }
 
     pub(super) fn delegation(&self) -> SignerCredential {
@@ -128,7 +138,12 @@ impl Verified {
             "{:?}",
             response.errors
         );
-        assert!(self.node.commit_transaction(&txn).await.is_err());
+        assert!(self
+            .node
+            .with_transaction(txn.parse::<defra_core::TxnId>().unwrap())
+            .commit()
+            .await
+            .is_err());
         assert!(self.records().await.is_empty());
         assert!(self.owed().await.is_empty());
         assert!(!self
@@ -149,7 +164,11 @@ impl Verified {
             self.remote.owners.get(&doc).is_none(),
             "nothing is sent before the commit"
         );
-        self.node.commit_transaction(&txn).await.unwrap();
+        self.node
+            .with_transaction(txn.parse::<defra_core::TxnId>().unwrap())
+            .commit()
+            .await
+            .unwrap();
         assert_eq!(
             self.remote.owners.get(&doc).as_deref(),
             Some(self.user.as_str())
@@ -200,8 +219,15 @@ impl Verified {
         doc: &str,
     ) -> crate::Result<RelationshipChange> {
         self.node
-            .add_dac_actor_relationship_change_for_in_txn(
-                txn, context, "Record", doc, "reader", READER,
+            .core()
+            .change_dac_actor_relationship_for(
+                txn.parse::<defra_core::TxnId>().unwrap(),
+                context,
+                "Record",
+                doc,
+                "reader",
+                READER,
+                false,
             )
             .await
     }
@@ -361,7 +387,11 @@ fn a_grant_in_a_verified_transaction_takes_its_own_request_bound_delegation() {
             "{staged:?}"
         );
         assert!(on.remote.take_writes().is_empty());
-        on.node.commit_transaction(&txn).await.unwrap();
+        on.node
+            .with_transaction(txn.parse::<defra_core::TxnId>().unwrap())
+            .commit()
+            .await
+            .unwrap();
 
         // The stub takes a grant from an object's owner only, so the grant
         // landed after the registration.
@@ -393,7 +423,11 @@ fn a_request_bound_delegation_that_expires_before_submission_parks_its_change() 
         ));
 
         on.remote.lapsed.store(true, Ordering::SeqCst);
-        on.node.commit_transaction(&txn).await.unwrap();
+        on.node
+            .with_transaction(txn.parse::<defra_core::TxnId>().unwrap())
+            .commit()
+            .await
+            .unwrap();
 
         assert_eq!(
             on.remote.owners.get(&doc).as_deref(),
