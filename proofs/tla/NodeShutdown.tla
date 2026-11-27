@@ -33,7 +33,8 @@
 \*      await them. From its start no write can register its marker any more;
 \*      With the embedded-vera feature the node's own Vera node stops here,
 \*      after P2P and before the network drain; that step and its deadline
-\*      are modeled apart, in EmbeddedVeraStop.tla;
+\*      are modeled apart, in EmbeddedVeraStop.tla, and the switches of the
+\*      active device it waits for, in EmbeddedVeraSwitch.tla;
 \*   4. stop accepting the rest of the node's network work and drain it, up
 \*      to a deadline (NodeEdge::drain). This closes the node's scope, and
 \*      with it the request scope if it was still open;

@@ -63,6 +63,7 @@ pub(super) async fn setup(
                     .as_secs(),
                 policies: Vec::new(),
             },
+            device: vera_embedded::HostDevice::Alone,
             listen,
             start_deadline: START_DEADLINE,
             stop_deadline: STOP_DEADLINE,

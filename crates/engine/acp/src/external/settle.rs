@@ -53,6 +53,7 @@
 //! journals them: the journal that held its request is not there to ask.
 
 use datastore::BasicTxn;
+use identity::Did;
 use rapidhash::{HashSetExt, RapidHashSet};
 use storage::corekv::Store;
 use zanzibar::types::Subject;
@@ -61,7 +62,8 @@ use super::{storage_error, ExternalDocumentAcp};
 use crate::error::{Error, Result};
 use crate::outbox::record::of_this_run;
 use crate::outbox::{
-    InFlight, OwedAuthority, OwedChange, OwedState, OwedSubject, OwedTuple, StagedCount, Submission,
+    InFlight, OwedAuthority, OwedChange, OwedState, OwedSubject, OwedTuple, StagedCount,
+    Submission, MAX_UNSETTLED_OWED_CHANGES_PER_ACTOR,
 };
 use crate::pending::PendingRegistration;
 use crate::recovery::RecoveryLedger;
@@ -72,14 +74,29 @@ use crate::recovery::RecoveryLedger;
 /// neither is an error of the node's own.
 pub const MAX_FAILED_SUBMISSIONS: u32 = 5;
 
+/// The most objects a pass for one transaction or one actor submits on,
+/// the first in queue order. What a transaction or an actor stages is
+/// bounded ([`MAX_OWED_CHANGES_PER_TRANSACTION`],
+/// [`MAX_UNSETTLED_OWED_CHANGES_PER_ACTOR`]), but archives count against
+/// neither: there is one per deleted document. Changes on objects past this
+/// wait for the next pass over everything owed.
+///
+/// [`MAX_OWED_CHANGES_PER_TRANSACTION`]: crate::outbox::MAX_OWED_CHANGES_PER_TRANSACTION
+pub const MAX_SCOPED_PASS_OBJECTS: usize = MAX_UNSETTLED_OWED_CHANGES_PER_ACTOR as usize;
+
 /// Which owed changes a pass submits.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum OwedScope {
+pub enum OwedScope<'a> {
     /// Everything owed.
     All,
     /// What is owed on the objects the transaction with this ID staged
-    /// changes on: its own changes and those that precede them there.
+    /// changes on: its own changes and those that precede them there. At
+    /// most [`MAX_SCOPED_PASS_OBJECTS`] objects.
     Transaction(u64),
+    /// What is owed on the objects this actor staged changes on: its own
+    /// changes and those that precede them there. At most
+    /// [`MAX_SCOPED_PASS_OBJECTS`] objects.
+    Actor(&'a Did),
 }
 
 /// What one pass over the owed relationship changes did.
@@ -199,13 +216,13 @@ where
     /// Submit the owed relationship changes `scope` names once, from the
     /// head of the queue. One pass runs at a time; a second waits for the
     /// first.
-    pub async fn settle_owed_changes_once(&self, scope: OwedScope) -> Result<OwedSettlement> {
+    pub async fn settle_owed_changes_once(&self, scope: OwedScope<'_>) -> Result<OwedSettlement> {
         self.owed_layout().await?;
         let _pass = self.settling.lock().await;
         let objects = match scope {
             OwedScope::All => None,
-            OwedScope::Transaction(txn) => {
-                let objects = self.objects_staged_by(txn).await?;
+            OwedScope::Transaction(_) | OwedScope::Actor(_) => {
+                let objects = self.objects_staged_by(scope).await?;
                 if objects.is_empty() {
                     return Ok(OwedSettlement::default());
                 }
@@ -215,8 +232,18 @@ where
         self.pass(objects.as_ref()).await
     }
 
-    /// The objects the changes transaction `txn` staged are on.
-    async fn objects_staged_by(&self, txn: u64) -> Result<RapidHashSet<ObjectKey>> {
+    /// The objects the changes `scope` names are on, the first
+    /// [`MAX_SCOPED_PASS_OBJECTS`] in queue order.
+    async fn objects_staged_by(&self, scope: OwedScope<'_>) -> Result<RapidHashSet<ObjectKey>> {
+        let actor = match scope {
+            OwedScope::Actor(actor) => Some(self.provider.canonical_actor(actor)),
+            OwedScope::All | OwedScope::Transaction(_) => None,
+        };
+        let staged = |change: &OwedChange| match scope {
+            OwedScope::All => true,
+            OwedScope::Transaction(txn) => of_this_run(change.txn, change.epoch, txn),
+            OwedScope::Actor(_) => actor.as_ref() == Some(&change.actor),
+        };
         let mut objects = RapidHashSet::new();
         let mut after = None;
         loop {
@@ -225,11 +252,12 @@ where
                 return Ok(objects);
             };
             after = Some(last.seq);
-            objects.extend(
-                page.iter()
-                    .filter(|change| of_this_run(change.txn, change.epoch, txn))
-                    .map(|change| object_of(&change.tuple)),
-            );
+            for change in page.iter().filter(|change| staged(change)) {
+                if objects.len() == MAX_SCOPED_PASS_OBJECTS {
+                    return Ok(objects);
+                }
+                objects.insert(object_of(&change.tuple));
+            }
         }
     }
 

@@ -11,6 +11,8 @@ use vera_jsonrpc::LocalRpc;
 /// node's directory. A provider can outlive the node it was built for, so
 /// the host that stops the node closes the link: every transport sharing
 /// it then refuses its calls, and the directory is free for the next node.
+/// A closed link stays closed: a switch that ends after the close does not
+/// open it again (proofs/tla/EmbeddedVeraSwitch.tla, LinkShuts).
 #[derive(Clone)]
 pub(crate) struct Link(Arc<Atom<Option<LocalRpc>>>);
 
@@ -22,6 +24,13 @@ impl Link {
     /// The method table, unless the link is closed.
     pub(crate) fn rpc(&self) -> Option<LocalRpc> {
         self.0.load_clone()
+    }
+
+    /// Points every transport sharing the link at `rpc`, the method table of
+    /// the node that replaced this one, unless the link is closed.
+    #[cfg(feature = "node")]
+    pub(crate) fn open(&self, rpc: &LocalRpc) {
+        self.0.rcu(|current| current.as_ref().map(|_| rpc.clone()));
     }
 
     #[cfg(feature = "node")]

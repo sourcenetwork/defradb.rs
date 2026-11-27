@@ -147,6 +147,7 @@ pub(crate) async fn own(
                 created: now(),
                 policies: vec![seed()],
             },
+            device: defra_node::EmbeddedVeraDevice::Alone,
             listen: "127.0.0.1:0".parse().expect("address"),
             start_deadline: Duration::from_secs(60),
             stop_deadline: Duration::from_secs(30),

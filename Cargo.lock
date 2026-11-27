@@ -3497,6 +3497,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "vera",
+ "vera-client",
  "vera-embedded",
  "workers",
  "zanzibar",

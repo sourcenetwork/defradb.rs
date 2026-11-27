@@ -73,7 +73,7 @@ pub use derived_relationship::DerivedRelationship;
 pub use error::{Error, Result};
 pub use external::{
     ExternalDocumentAcp, OweAgain, OwedScope, OwedSettlement, RedriveReport, VoidedEffect,
-    MAX_CHANGES_PER_REQUEST, MAX_FAILED_SUBMISSIONS, OBSERVATION_PATIENCE,
+    MAX_CHANGES_PER_REQUEST, MAX_FAILED_SUBMISSIONS, MAX_SCOPED_PASS_OBJECTS, OBSERVATION_PATIENCE,
 };
 pub use identity::Identity;
 pub use local::{LocalDocumentACP, MemoryAcpStore};

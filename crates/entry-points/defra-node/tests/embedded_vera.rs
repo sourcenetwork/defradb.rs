@@ -45,6 +45,15 @@ mod rpc_port;
 #[path = "embedded_vera/strict_reads.rs"]
 mod strict_reads;
 
+#[path = "embedded_vera/switching.rs"]
+mod switching;
+
+#[path = "embedded_vera/switch_recovery.rs"]
+mod switch_recovery;
+
+#[path = "embedded_vera/switch_gated.rs"]
+mod switch_gated;
+
 #[cfg(feature = "http")]
 #[path = "embedded_vera/verified_edit.rs"]
 mod verified_edit;
@@ -138,6 +147,7 @@ async fn starting_with(
                 created: now(),
                 policies,
             },
+            device: defra_node::EmbeddedVeraDevice::Alone,
             listen: "127.0.0.1:0".parse().expect("address"),
             start_deadline: Duration::from_secs(60),
             stop_deadline: Duration::from_secs(30),
@@ -511,6 +521,7 @@ fn a_caller_that_keeps_its_key_writes_through_its_own_delegation() {
                     created: now(),
                     policies: Vec::new(),
                 },
+                device: defra_node::EmbeddedVeraDevice::Alone,
                 listen: "127.0.0.1:0".parse().expect("address"),
                 start_deadline: Duration::from_secs(60),
                 stop_deadline: Duration::from_secs(30),

@@ -24,9 +24,9 @@ pub(super) const PROPERTIES: &[Property] = &[
     },
     Property {
         family: "vera.rs embedded transport",
-        name: "within_iff / network_accepted_is_accepted / longer_is_refused / answer_in_time_is_kept / silent_node_ends_the_wait / late_answer_is_not_waited_for / node_error_keeps_its_code / busy_node_is_asked_again / slow_node_is_asked_again / stopped_node_is_not_asked_again / asked_again_iff / asked_again_as_over_http / client_errors_stay_distinct / transport_errors_stay_distinct",
+        name: "within_iff / network_accepted_is_accepted / longer_is_refused / answer_in_time_is_kept / silent_node_ends_the_wait / late_answer_is_not_waited_for / node_error_keeps_its_code / busy_node_is_asked_again / slow_node_is_asked_again / stopped_node_is_not_asked_again / other_node_errors_keep_their_code / backup_refusal_is_not_asked_again / asked_again_iff / asked_again_as_over_http / client_errors_stay_distinct / transport_errors_stay_distinct",
         axis: Lean,
-        anchor: "crates/engine/vera-embedded/src/call.rs within; crates/engine/vera-embedded/src/deadline.rs bounded; crates/engine/vera-embedded/src/submission.rs client_error; crates/engine/vera-embedded/src/acp.rs transport_error; crates/engine/vera/src/vera_rs/client.rs ClientError::retryable",
+        anchor: "crates/engine/vera-embedded/src/call.rs within; crates/engine/vera-embedded/src/error.rs Failure::from_node; crates/engine/vera-embedded/src/deadline.rs bounded; crates/engine/vera-embedded/src/submission.rs client_error; crates/engine/vera-embedded/src/acp.rs transport_error; crates/engine/vera/src/vera_rs/client.rs ClientError::retryable",
         model_ref: "VeraEmbeddedTransport (lake build)",
         tiers: &[Boundary],
         bound_by: "",

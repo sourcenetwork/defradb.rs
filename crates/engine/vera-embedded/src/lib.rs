@@ -32,8 +32,20 @@ mod submission;
 
 pub use error::EmbeddedError;
 #[cfg(feature = "node")]
-pub use host::{Deployment, HostConfig, HostError, HostedNode, SeededPolicy, ThreadBudget};
+pub use host::{
+    Deployment, HostConfig, HostDevice, HostError, HostedNode, SeededPolicy, ThreadBudget,
+};
+#[cfg(feature = "node")]
+pub use vera_domain::{PublicKey, TermCertificate, TermChange};
 pub use vera_jsonrpc::LocalRpc;
+/// What a host needs to run one of several devices of a deployment: the
+/// key material it keeps in its keystore, the account's devices, and what
+/// a switch of the active device reports.
+#[cfg(feature = "node")]
+pub use vera_node::{
+    Contest, Device, DeviceKey, DiscardedSubmission, SoloDeployment, SoloError, SoloKeys,
+    Switching, TermRefusal,
+};
 
 /// The in-process channel to one embedded Vera node.
 ///

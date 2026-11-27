@@ -92,6 +92,81 @@ impl NodeCore<'_> {
             .await
     }
 
+    /// Send what `actor` owes the document ACP provider now: the
+    /// registrations of documents it created that can be sent, then the
+    /// relationship changes on the objects it staged changes on, in queue
+    /// order. Changes of other actors that precede its own on those objects
+    /// go first, each with its own recorded authority; nothing else of
+    /// theirs is sent. Returns what `actor` still owes afterwards: on a
+    /// provider that takes no submission yet, such as an embedded Vera
+    /// backup, that is the listing with nothing settled, not an error.
+    ///
+    /// For a host whose embedded Vera node just became the deployment's
+    /// active device by a call of its own on `Node::embedded_vera`;
+    /// `Node::take_over_embedded_vera` sends what every actor owes by
+    /// itself. A backup takes no submission, so what was created on it
+    /// waits, and the node's drainer sends only relationship changes by
+    /// itself; a registration otherwise waits for the next start. The same
+    /// callers as [`Self::owed_acp`] may ask.
+    pub(crate) async fn send_owed_acp(
+        &self,
+        context: &RequestContext,
+        actor: &str,
+    ) -> Result<Vec<acp::OwedEntry>> {
+        let reader = self.owed_reader(context)?;
+        let actor = Did::new(actor).map_err(Error::InvalidIdentityDid)?;
+        let acp = self.node.ops().document_acp;
+        if !reader.reads(acp.as_ref(), &actor) {
+            return Err(denied(
+                "only an actor and the node send what the actor owes",
+            ));
+        }
+        self.node
+            .on_acp(move || async move {
+                let owed = acp.owed_entries(acp::OwedFilter::Actor(&actor)).await?;
+                let registrations: Vec<acp::AcpObject<'_>> = owed
+                    .iter()
+                    .filter(|entry| entry.sendable && entry.what == acp::OwedWhat::Registration)
+                    // The owed record keeps the relationships a gated create
+                    // derived, and the redrive sends it as recorded.
+                    .map(|entry| {
+                        acp::AcpObject::new(&entry.policy_id, &entry.resource, &entry.object)
+                    })
+                    .collect();
+                // A registration or change that is not sent stays owed, with the
+                // reason in the listing returned below.
+                drop(acp.redrive_registrations(&registrations).await);
+                acp.settle_owed_changes(acp::OwedScope::Actor(&actor))
+                    .await?;
+                Ok(acp.owed_entries(acp::OwedFilter::Actor(&actor)).await?)
+            })
+            .await
+    }
+
+    /// Send everything the node owes the document ACP provider once: every
+    /// owed registration, then every staged relationship change, each with
+    /// the authority recorded with it. What is not sent stays owed and is
+    /// reported by [`Self::owed_acp`]. For the node itself, once its
+    /// provider takes submissions again.
+    #[cfg(feature = "embedded-vera")]
+    pub(crate) async fn send_all_owed_acp(&self) -> Result<()> {
+        let acp = self.node.ops().document_acp;
+        self.node
+            .on_acp(move || async move {
+                let registrations = acp.redrive_owed_registrations().await?;
+                let changes = acp.settle_owed_changes(acp::OwedScope::All).await?;
+                tracing::info!(
+                    registrations_settled = registrations.settled,
+                    registrations_left = registrations.failed,
+                    changes_settled = changes.settled,
+                    provider_unavailable = changes.provider_unavailable,
+                    "Sent what the node owed its document ACP provider"
+                );
+                Ok(())
+            })
+            .await
+    }
+
     /// Wait, for at most `deadline`, until what the committed transaction
     /// `txn` owes the provider is settled or has come to rest, and say
     /// which: [`acp::OwedWait::Settled`] when the provider holds all of it,

@@ -130,3 +130,20 @@ fn a_wait_cut_short_by_a_stopping_runtime_is_not_asked_again() {
         "transport: vera_getReceiptProof: the network runtime is shutting down"
     );
 }
+
+#[test]
+fn a_backups_refusal_is_not_asked_again_until_a_switch() {
+    let refused = client_error(Failure::from_node(
+        "vera_sendNativeTx",
+        LocalRpcError::Call {
+            code: -32002,
+            message: "this node is a backup".into(),
+            data: Some(r#"{"retryable":true,"role":"backup"}"#.into()),
+        },
+    ));
+    assert!(!refused.retryable(), "{refused:?}");
+    assert_eq!(
+        refused.to_string(),
+        "transport: vera_sendNativeTx: the embedded Vera node is a backup and takes no submission"
+    );
+}

@@ -143,6 +143,29 @@ async fn a_read_the_chain_overtook_is_asked_again_until_answered() {
     assert_eq!(asked.get(), ATTEMPTS);
 }
 
+/// The reads of an exact observation report the light client's refusal as a
+/// query error, and the observation is asked again like any overtaken read.
+#[nuclei::test]
+async fn an_observation_whose_read_the_chain_overtook_is_asked_again() {
+    let asked = Cell::new(0);
+    let heads = super::super::transport_tests::silent_heads().await;
+    let outcome = verified(&heads, || {
+        asked.set(asked.get() + 1);
+        let ask = asked.get();
+        async move {
+            if ask == 1 {
+                Err(Box::new(crate::ProviderError::Query(REFUSAL.into())) as Failure)
+            } else {
+                Ok(ask)
+            }
+        }
+    })
+    .await;
+    assert_eq!(answered(outcome), Some(2));
+    let other: Failure = Box::new(crate::ProviderError::Query("policy is unavailable".into()));
+    assert!(!super::overtaken(&other), "any other query error is final");
+}
+
 #[nuclei::test]
 async fn a_decision_the_chain_overtook_is_asked_again() {
     let asked = Cell::new(0);

@@ -48,6 +48,23 @@ pub(super) const PROPERTIES: &[Property] = &[
         bound_by: "crates/engine/vera-embedded/tests/hosted_node.rs once_the_node_stops_the_provider_verifies_no_new_decision; crates/engine/vera-embedded/tests/stopped_node_decisions.rs a_remembered_decision_is_not_given_past_the_freshness_limit",
     },
     Property {
+        // A device's Vera node is replaced by a switch while the host
+        // watches it, reads it and may stop it: a watch lets go when a
+        // switch or the stop asks for the node, a stop drops a switch in
+        // progress, waits for every node thread to release the directory
+        // and leaves a bounded reaper at its deadline, a switch that left
+        // the node halted empties the slot and a restart starts it again,
+        // the slot records the device its node runs as, and a closed link
+        // stays closed.
+        family: "Node shutdown order",
+        name: "INV_ClosedAfterStop / INV_NoStartAfterStop / INV_SlotRuns / INV_StoppedMeansEnded / INV_DeviceNamesNode / LIVE_NoNodeAfterStop / LIVE_DropStops / LIVE_SwitchEnds / LIVE_WatchWakes / LIVE_StopReturns / LIVE_Recovers: once the hosted Vera node's stop returned no transport reaches a Vera node, no switch or restart launches a node after the stop began, an unwritten slot never holds a halted node, a stop that reports success leaves no Vera node thread holding the directory, an unwritten slot records the device its node runs as, no node runs on after the stop unless the reaper gave up and none after the host dropped it, a switch ends, a watch parked for writers wakes once they are gone, the stop returns, and a switch that left no node is undone by a restart",
+        axis: Tla,
+        anchor: "crates/engine/vera-embedded/src/host/held.rs Held::replace, Held::watch, Asking; crates/engine/vera-embedded/src/host/switch.rs HostedNode::switch, settle; crates/engine/vera-embedded/src/host/restart.rs HostedNode::start_again, HostedNode::stop_foreign; crates/engine/vera-embedded/src/host.rs HostedNode::stop, HostedNode::unless_stopped; crates/engine/vera-embedded/src/host/release.rs released; crates/engine/vera-embedded/src/link.rs Link::open; crates/entry-points/defra-node/src/lib.rs Node::shutdown",
+        model_ref: "MC_EmbeddedVeraSwitch_{Green,Red_WatchHolds,Red_AskStays,Red_NoReaper,Red_NoAbort,Red_NoSwitchDeadline,Red_KeepsHalted,Red_NoRestart,Red_LinkReopens,Red_NoReleaseWait,Red_KeepsDevice}.cfg",
+        tiers: &[Boundary],
+        bound_by: "crates/entry-points/defra-node/tests/embedded_vera/switching.rs two_devices_switch_the_active_role_and_settle_what_the_backup_owed; crates/entry-points/defra-node/tests/embedded_vera/switch_recovery.rs a_stop_during_a_switch_starts_no_node, a_stop_during_a_switch_waits_for_the_node, a_failed_take_over_is_completed_in_place",
+    },
+    Property {
         // A signed query or transformed route keeps a request-scope permit
         // while its started worker writes, so P2P cannot stop first.
         family: "Node shutdown order",

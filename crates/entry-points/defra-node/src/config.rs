@@ -20,7 +20,7 @@ pub enum DocumentAcpConfig {
     Provider(crate::DocumentAcpProvider),
     /// Document ACP via a Vera node this node runs in its own process.
     #[cfg(feature = "embedded-vera")]
-    EmbeddedVera(crate::EmbeddedVeraConfig),
+    EmbeddedVera(Box<crate::EmbeddedVeraConfig>),
 }
 
 /// Configuration for the optional HTTP GraphQL server.

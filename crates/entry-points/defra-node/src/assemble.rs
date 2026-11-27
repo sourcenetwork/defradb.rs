@@ -591,7 +591,7 @@ where
         .as_ref()
         .and_then(|vera| vera.rpc_addr());
     #[cfg(feature = "embedded-vera")]
-    let embedded_vera = crate::single_slot(acp_setup.embedded_vera);
+    let embedded_vera = acp_setup.embedded_vera;
     database.set_dac_policies(acp_setup.dac_policies);
     let schema_ops = db_impls::DbSchemaOps::new(
         database.clone(),

@@ -31,7 +31,9 @@
 \* once however often it is sent: its sequence is spent by the first.
 \*
 \* Two things can cut a call short of its deadline. A failure that cannot
-\* pass ends it at once: the node has stopped, an answer is not a receipt, a
+\* pass ends it at once: the node has stopped or is a backup that takes no
+\* submission (crates/engine/vera-embedded/src/error.rs Failure::from_node),
+\* an answer is not a receipt, a
 \* receipt does not verify, or a found receipt cannot be acknowledged (the
 \* light client does not reach its height, the worker refuses it). And the
 \* node may drop a request it admitted before executing it (its pool evicts
@@ -202,9 +204,9 @@ DeadlinePasses ==
   /\ journal' = (journal /\ RetainsOnTimeout)  \* kept, or dropped
   /\ UNCHANGED <<awaiting, held, effects, fatal, dropped, disturbed>>
 
-\* A failure that cannot pass ends the call at once: a stopped node, an
-\* answer that is no receipt, a receipt that does not verify. The journal is
-\* not touched.
+\* A failure that cannot pass ends the call at once: a stopped node, a
+\* backup, an answer that is no receipt, a receipt that does not verify. The
+\* journal is not touched.
 FatalFailure ==
   /\ loop \in {"asking", "sending"}     \* the loop is still running
   /\ disturbed < Disturbances          \* such failures are not endless

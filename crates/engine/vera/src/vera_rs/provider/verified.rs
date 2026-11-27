@@ -174,10 +174,13 @@ where
     E: AsRef<dyn Error + Send + Sync + 'static> + Display,
 {
     error.to_string().starts_with(OVERTAKEN)
-        || matches!(
-            error.as_ref().downcast_ref::<crate::ProviderError>(),
-            Some(crate::ProviderError::ProofsOvertaken(_))
-        )
+        || match error.as_ref().downcast_ref::<crate::ProviderError>() {
+            Some(crate::ProviderError::ProofsOvertaken(_)) => true,
+            // An observation's own reads carry the light client's refusal
+            // as the text of a query error.
+            Some(crate::ProviderError::Query(refusal)) => refusal.starts_with(OVERTAKEN),
+            _ => false,
+        }
 }
 
 /// Whether a read failed late, not wrong: overtaken by a newer block, refused

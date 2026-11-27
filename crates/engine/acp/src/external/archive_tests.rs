@@ -673,3 +673,40 @@ fn a_registration_still_owed_grants_its_creator_nothing_once_the_document_is_del
     })
     .unwrap()
 }
+
+#[test]
+fn a_pass_for_one_actor_takes_a_bounded_number_of_its_objects() {
+    workers::block_on(async {
+        let (provider, gate) = gate();
+        let owner = &did(OWNER);
+        // Archives count against no bound on staging, so an owner whose
+        // documents were deleted may owe more objects than a scoped pass
+        // takes.
+        let limit = MAX_SCOPED_PASS_OBJECTS;
+        for n in 0..=limit {
+            let object = &format!("bae-gone-{n}");
+            in_transaction(&gate, |outbox| async move {
+                outbox
+                    .stage_archive(StageArchive {
+                        object,
+                        ..archive(owner)
+                    })
+                    .await
+            })
+            .await
+            .expect("a delete commits");
+        }
+        let pass = gate
+            .settle_owed_changes_once(OwedScope::Actor(owner))
+            .await
+            .unwrap();
+        assert_eq!(pass.settled, limit as u64);
+        let left = gate.owed_changes_after(None).await.unwrap();
+        assert_eq!(left.len(), 1);
+        assert_eq!(left[0].tuple.object, format!("bae-gone-{limit}"));
+        let rest = gate.settle_owed_changes_once(OwedScope::All).await.unwrap();
+        assert_eq!(rest.settled, 1);
+        assert_eq!(provider.writes().len(), limit + 1);
+    })
+    .unwrap()
+}

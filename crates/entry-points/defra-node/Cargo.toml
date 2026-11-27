@@ -147,6 +147,8 @@ defra-http = { path = "../../surfaces/http" }
 defra-p2p-adapter = { path = "../../surfaces/p2p-adapter", default-features = false }
 futures.workspace = true
 mantra-macros = "0.9"
+# The term certificates the device switching test approves as the deployment's operator.
+vera-client = "0.2.0"
 kovan.workspace = true
 crypto = { path = "../../foundation/crypto" }
 tempfile = "3"

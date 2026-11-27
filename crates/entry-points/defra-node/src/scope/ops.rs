@@ -344,6 +344,12 @@ macro_rules! standalone_ops {
             /// that actor or the node's principal.
             fn owed_acp(actor: &str) -> crate::Result<Vec<acp::OwedEntry>>;
 
+            /// Send what `actor` owes the remote document ACP provider now,
+            /// for that actor or the node's principal, and return what it
+            /// still owes afterwards: on an embedded Vera backup, the listing
+            /// with nothing settled.
+            fn send_owed_acp(actor: &str) -> crate::Result<Vec<acp::OwedEntry>>;
+
             /// Wait, for at most `deadline`, until what the committed
             /// transaction `txn` owes the provider is settled or has come to
             /// rest, and say which.

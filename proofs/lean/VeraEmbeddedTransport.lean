@@ -6,8 +6,9 @@ through the node's method table and gets the answer back without a socket.
 Each call ends in one of six ways: the node gives a result, the node refuses
 with an error code, the result is longer than the caller allows, the result is
 not JSON, the node gives no answer before the caller's deadline, or the call
-never reached the node (the node has stopped, or the request could not be
-handed over).
+never reached a node that takes it (the node has stopped, the request could
+not be handed over, or the node is a backup of the deployment's active device,
+which takes no submission until a switch makes it the active one).
 
 The provider already knows these endings from its network transports. It asks
 again after a busy answer or a timeout and gives up on anything else. The
@@ -18,12 +19,13 @@ What must never happen:
   * a result the network transports would accept is refused in-process;
   * a caller waits without end for a node that does not answer;
   * an answer that came in time is thrown away;
-  * a busy or slow node is not asked again, or a stopped node is asked again
-    and again;
+  * a busy or slow node is not asked again, or a stopped node or a backup is
+    asked again and again;
   * two different endings are reported as the same one, so that a caller
     cannot tell a stopped node from a busy or a slow one.
 
-Rust owner: `within` in `crates/engine/vera-embedded/src/call.rs`, `bounded` in
+Rust owner: `within` in `crates/engine/vera-embedded/src/call.rs`,
+`Failure::from_node` in `crates/engine/vera-embedded/src/error.rs`, `bounded` in
 `crates/engine/vera-embedded/src/deadline.rs`, `client_error` in
 `crates/engine/vera-embedded/src/submission.rs` and `transport_error` in
 `crates/engine/vera-embedded/src/acp.rs`. The retry rule they feed is
@@ -107,6 +109,28 @@ inductive Failure where
   | channel
   deriving DecidableEq
 
+/-- An error the node's method table answered with: its JSON-RPC code, and
+whether its data names the node a backup (`LocalRpcError::is_backup_refusal`). -/
+structure NodeError where
+  /-- The JSON-RPC error code. -/
+  code : Int
+  /-- Whether a backup refused the call because it takes no submission. -/
+  fromBackup : Bool
+
+/-- The ending a node's error is. A backup's refusal is a call that reached
+no node that takes it, like a stopped node's; every other error is the
+node's own answer with its code. -/
+def ofNode (error : NodeError) : Failure :=
+  -- A backup cannot take the call until a switch makes it the active device.
+  if error.fromBackup then .channel
+  -- Anything else is the node's answer.
+  else .node error.code
+
+/-- A node's error that does not come from a backup keeps its code. -/
+theorem other_node_errors_keep_their_code (code : Int) :
+    ofNode { code := code, fromBackup := false } = .node code :=
+  rfl
+
 /-- What the submission client is told: the error it already gets from the
 HTTP transport for the same ending. -/
 inductive ClientError where
@@ -161,6 +185,13 @@ theorem slow_node_is_asked_again : retryable (clientError .elapsed) = true :=
 /-- A stopped node is not asked again: the request stays in the worker's
 journal for the next node instead of being repeated at a node that is gone. -/
 theorem stopped_node_is_not_asked_again : retryable (clientError .channel) = false :=
+  rfl
+
+/-- A backup's refusal is not asked again, whatever its code: asking the
+backup again cannot succeed, and the request stays owed for the node a switch
+makes the active device. Over HTTP the same `-32002` would be asked again. -/
+theorem backup_refusal_is_not_asked_again (code : Int) :
+    retryable (clientError (ofNode { code := code, fromBackup := true })) = false :=
   rfl
 
 /-- The provider asks again in exactly three cases: the node answered with one
