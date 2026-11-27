@@ -50,6 +50,7 @@ mod push_docs_selected_isolation;
 mod push_docs_selected_stop;
 mod push_docs_selection;
 mod receive_gate;
+mod relation_definition_sync;
 mod replica_registration;
 mod replica_support;
 mod replicated;
