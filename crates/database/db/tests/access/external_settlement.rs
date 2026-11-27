@@ -562,6 +562,48 @@ fn a_pass_for_one_transaction_submits_what_is_owed_on_its_objects_only() {
 }
 
 #[test]
+fn a_pass_for_one_actor_submits_what_is_owed_on_its_objects_only() {
+    workers::block_on(async {
+        let staging = Staging::new().await;
+        let first = staging.create(alice(), "first", None).await;
+        let second = staging.create(bob(), "second", None).await;
+        let mut manager = add(bob(), &second, alice());
+        manager.relation = MANAGER;
+        staging.on_provider(bob(), manager).await;
+        staging.commit_change(add(alice(), &first, bob())).await;
+        // Alice's change on Bob's document precedes Bob's own there.
+        staging
+            .commit_change(add(alice(), &second, mallory()))
+            .await;
+        staging.commit_change(add(bob(), &second, carol())).await;
+
+        let (alice, bob, mallory) = (alice(), bob(), mallory());
+        let pass = |scope| {
+            let gate = &staging.gate;
+            async move { gate.settle_owed_changes_once(scope).await.unwrap() }
+        };
+        assert_eq!(
+            pass(OwedScope::Actor(&mallory)).await,
+            OwedSettlement::default()
+        );
+        // Bob's object, with what Alice owed on it before him.
+        assert_eq!(pass(OwedScope::Actor(&bob)).await, settled(2));
+        assert_eq!(
+            staging.remote.take_writes(),
+            [
+                (true, second.clone(), mallory.to_string()),
+                (true, second.clone(), carol().to_string()),
+            ]
+        );
+        assert_eq!(staging.queue().await.len(), 1);
+        assert_eq!(pass(OwedScope::Actor(&alice)).await, settled(1));
+        assert!(staging.remote.holds(&first, &bob));
+        assert!(staging.queue().await.is_empty());
+    })
+    .unwrap()
+}
+
+#[test]
 fn a_change_whose_authority_lapsed_waits_and_holds_its_tuple() {
     workers::block_on(async {
         let staging = Staging::new().await;

@@ -173,6 +173,15 @@
 \*                                          reauthorize and settle, behind the
 \*                                          node calls in
 \*                                          crates/entry-points/defra-node/src/node_core/owed.rs;
+\*   the settlement loop on demand: a       crates/entry-points/defra-node/src/node_core/
+\*   host's call, and the node once its     owed.rs send_owed_acp (a pass over the
+\*   embedded Vera device is active         objects one actor staged changes on,
+\*                                          the first MAX_SCOPED_PASS_OBJECTS,
+\*                                          OwedScope::Actor) and send_all_owed_acp
+\*                                          (redrive_owed_registrations, then a
+\*                                          pass over all), called by
+\*                                          crates/entry-points/defra-node/src/
+\*                                          embedded_vera_switch.rs;
 \*   the drainer task, woken by commits     crates/entry-points/defra-node/src/
 \*   and backing off while the provider     owed_drainer.rs drain, started by
 \*   is away                                gate_external_acp;

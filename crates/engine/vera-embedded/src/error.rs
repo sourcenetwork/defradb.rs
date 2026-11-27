@@ -14,6 +14,12 @@ pub enum EmbeddedError {
     #[error("{method}: the embedded Vera node has stopped")]
     Stopped { method: String },
 
+    /// The node is a backup of the deployment's active device and takes no
+    /// submission. Asking it again cannot succeed until a switch makes it
+    /// the active device: the request stays owed for that node.
+    #[error("{method}: the embedded Vera node is a backup and takes no submission")]
+    Backup { method: String },
+
     /// The node gave no answer within the deadline. It may still finish the
     /// method: only the wait ended, so asking again is safe and may succeed.
     #[error("{method}: no answer from the embedded Vera node within {deadline:?}")]
@@ -58,6 +64,9 @@ pub(crate) enum Failure {
 impl Failure {
     pub(crate) fn from_node(method: &str, error: LocalRpcError) -> Self {
         let method = method.to_owned();
+        if error.is_backup_refusal() {
+            return Self::Channel(EmbeddedError::Backup { method });
+        }
         match error {
             LocalRpcError::Call { code, message, .. } => Self::Node { code, message },
             LocalRpcError::Payload(reason) => {

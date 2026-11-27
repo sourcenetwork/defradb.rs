@@ -50,6 +50,7 @@ mod registration_list;
 #[cfg(test)]
 mod signer_tests;
 mod submission;
+mod term_read;
 mod terms;
 #[cfg(test)]
 mod transport_tests;
@@ -397,18 +398,18 @@ impl VeraRsProvider {
         }
     }
 
-    /// `read`, refused unless the provider is admitted before it and still
-    /// admitted at the same checked term after it: a term certified, or
-    /// checked, while the read was on its way may void the state it was
-    /// answered at.
-    async fn admitted_read<T>(
-        &self,
-        read: impl std::future::Future<Output = Result<T, ProviderError>>,
-    ) -> Result<T, ProviderError> {
-        let epoch = self.admitted().await?;
-        let answer = read.await?;
-        self.follower.still(epoch)?;
-        Ok(answer)
+    /// The answer of `read`, served only when the provider is admitted
+    /// before it and still admitted at the same checked term after it: a
+    /// term certified, or checked, while the read was on its way may void
+    /// the state it was answered at. A read so overtaken is asked again once
+    /// the term is checked ([`term_read::at_one_term`]): the first revision
+    /// of a new term may be the very one the read is answered at.
+    async fn admitted_read<T, R, F>(&self, read: R) -> Result<T, ProviderError>
+    where
+        R: Fn() -> F,
+        F: std::future::Future<Output = Result<T, ProviderError>>,
+    {
+        term_read::at_one_term(|| self.admitted(), |epoch| self.follower.still(epoch), read).await
     }
 
     /// How many waits for a receipt ended at
@@ -865,7 +866,7 @@ impl VeraProvider for VeraRsProvider {
     ) -> Result<Option<ProviderPolicyInfo>, ProviderError> {
         let id = hex::encode(Self::policy_id_to_bytes32(policy_id)?);
         let proof = self
-            .admitted_read(async {
+            .admitted_read(|| async {
                 verified(self.light_client.header_chain(), || {
                     self.light_client.read_policy(&id)
                 })
@@ -902,7 +903,7 @@ impl VeraProvider for VeraRsProvider {
             id: object_id.into(),
         };
         let owner = self
-            .admitted_read(async {
+            .admitted_read(|| async {
                 verified(self.light_client.header_chain(), || {
                     self.light_client.read_object_owner(&policy, &object)
                 })
@@ -920,7 +921,7 @@ impl VeraProvider for VeraRsProvider {
         &self,
         query: AssignmentQuery<'_>,
     ) -> Result<CertifiedAssignments, ProviderError> {
-        self.admitted_read(assignments::read(self, query)).await
+        self.admitted_read(|| assignments::read(self, query)).await
     }
 
     async fn query_actor_relationship(
@@ -929,7 +930,7 @@ impl VeraProvider for VeraRsProvider {
     ) -> Result<bool, ProviderError> {
         // An observation overtaken by a block between its reads is asked
         // again from the policy read, as every overtaken read is.
-        self.admitted_read(async {
+        self.admitted_read(|| async {
             verified(self.light_client.header_chain(), || async {
                 exact_relationship::query(&self.light_client, query)
                     .await
@@ -948,7 +949,7 @@ impl VeraProvider for VeraRsProvider {
         &self,
         query: &acp::TransportSentinelQuery,
     ) -> Result<bool, ProviderError> {
-        self.admitted_read(async {
+        self.admitted_read(|| async {
             verified(self.light_client.header_chain(), || async {
                 exact_relationship::sentinel(&self.light_client, query)
                     .await
@@ -968,7 +969,7 @@ impl VeraProvider for VeraRsProvider {
         group: &acp::ReplicaGroup,
         signer: &identity::Did,
     ) -> Result<bool, ProviderError> {
-        self.admitted_read(assignments::group_member(self, group, signer))
+        self.admitted_read(|| assignments::group_member(self, group, signer))
             .await
     }
 
@@ -981,7 +982,7 @@ impl VeraProvider for VeraRsProvider {
         actor_did: &str,
     ) -> Result<bool, ProviderError> {
         let request = access_request(resource, object_id, permission, actor_did)?;
-        self.admitted_read(async {
+        self.admitted_read(|| async {
             verified(self.light_client.header_chain(), || {
                 self.light_client.verify_access(policy_id, &request)
             })
@@ -1018,7 +1019,7 @@ impl VeraProvider for VeraRsProvider {
             request,
         };
         let decision = self
-            .admitted_read(async {
+            .admitted_read(|| async {
                 verified(self.light_client.header_chain(), || {
                     self.light_client.verify_access_decision(&expected)
                 })

@@ -280,7 +280,10 @@ pub trait DocumentACP: MaybeSendSync {
     /// Submit the relationship changes owed to this provider that `scope`
     /// names, once, in order. Nothing is owed to a provider that keeps no
     /// outbox.
-    async fn settle_owed_changes(&self, scope: crate::OwedScope) -> Result<crate::OwedSettlement> {
+    async fn settle_owed_changes(
+        &self,
+        scope: crate::OwedScope<'_>,
+    ) -> Result<crate::OwedSettlement> {
         let _ = scope;
         Ok(crate::OwedSettlement::default())
     }
@@ -445,6 +448,14 @@ pub trait DocumentACP: MaybeSendSync {
     ) -> Result<()> {
         let _ = (policy_id, resource_name, doc_id);
         Ok(())
+    }
+
+    /// Send every registration owed to this provider once, whoever created
+    /// its document: what a node does at start, and again once the provider
+    /// takes submissions after it refused them. Nothing is owed to a
+    /// provider that keeps no outbox.
+    async fn redrive_owed_registrations(&self) -> Result<crate::RedriveReport> {
+        Ok(crate::RedriveReport::default())
     }
 
     /// [`Self::redrive_registration`] for each of `objects`, in their order:

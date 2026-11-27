@@ -129,7 +129,7 @@ impl VeraRsProvider {
     /// The verified record of policy `id`, which must exist.
     async fn read_policy_record(&self, id: &str) -> Result<PolicyRecord, ProviderError> {
         let record = self
-            .admitted_read(async {
+            .admitted_read(|| async {
                 verified(self.light_client.header_chain(), || {
                     self.light_client.read_policy(id)
                 })

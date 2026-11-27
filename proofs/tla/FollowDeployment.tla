@@ -62,7 +62,9 @@
 \*       provider call; hands what is owed again to the outbox before it decides again)
 \*   crates/engine/vera/src/vera_rs/provider.rs           decision_state (the term in the key),
 \*       admitted, admitted_read (admitted before each read, and at the same checked
-\*       term after it); provider/submission.rs (admitted again once the worker is held)
+\*       term after it); provider/term_read.rs at_one_term (a read a term overtook is
+\*       not served; it is asked again as a new read, admitted like any other);
+\*       provider/submission.rs (admitted again once the worker is held)
 \*   crates/engine/acp/src/external/voided.rs             ExternalDocumentAcp::owe_again
 \*   acp-light-client src/term.rs                         certify, adopt (the head is dropped)
 \*

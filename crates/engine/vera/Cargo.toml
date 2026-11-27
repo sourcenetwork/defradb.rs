@@ -71,7 +71,7 @@ alloy-sol-types.workspace = true
 alloy-primitives.workspace = true
 
 # Authenticated ACP records and permission evaluation
-acp-light-client = { git = "https://github.com/sourcenetwork/backbone.git", rev = "3421379115d69fd8bed8536943d5397ac6eb5ace" }
+acp-light-client = { package = "vera-light-client", git = "https://github.com/sourcenetwork/vera.rs", rev = "f51f4de9c459982c704bf0b95640121dbbca5cba" }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 # HTTP for JSON-RPC on nuclei sockets; the browser's fetch on wasm32 (below).

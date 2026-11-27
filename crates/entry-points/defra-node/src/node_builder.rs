@@ -270,7 +270,7 @@ impl NodeBuilder {
     /// Requires the `embedded-vera` feature.
     #[cfg(feature = "embedded-vera")]
     pub fn with_embedded_vera(mut self, config: crate::EmbeddedVeraConfig) -> Self {
-        self.config.document_acp = DocumentAcpConfig::EmbeddedVera(config);
+        self.config.document_acp = DocumentAcpConfig::EmbeddedVera(Box::new(config));
         self
     }
 

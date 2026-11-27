@@ -61,6 +61,8 @@ mod embedded_signer;
 mod embedded_vera;
 #[cfg(feature = "embedded-vera")]
 mod embedded_vera_config;
+#[cfg(feature = "embedded-vera")]
+mod embedded_vera_switch;
 mod error;
 #[cfg(feature = "libp2p")]
 mod libp2p_recovery;
@@ -151,8 +153,8 @@ pub use dense_search::{DenseHybridSearchHit, DenseHybridSearchRequest, DenseHybr
 pub use embedded_signer::{EmbeddedSigner, EmbeddedSignerError};
 #[cfg(feature = "embedded-vera")]
 pub use embedded_vera_config::{
-    EmbeddedVeraActor, EmbeddedVeraConfig, EmbeddedVeraDeployment, EmbeddedVeraPolicy,
-    EmbeddedVeraTrust,
+    EmbeddedVeraActor, EmbeddedVeraConfig, EmbeddedVeraDeployment, EmbeddedVeraDevice,
+    EmbeddedVeraNode, EmbeddedVeraPolicy, EmbeddedVeraTrust,
 };
 pub use error::{Error, Result};
 pub use events::EventName;
@@ -178,6 +180,10 @@ pub use telemetry::{ConflictMetricsSnapshot, RetryLayerSnapshot};
 pub use telemetry::{TelemetryConfig, TelemetryHandle};
 #[cfg(feature = "vera")]
 pub use vera_config::{VeraActor, VeraConfig};
+/// The embedded Vera host's types: a deployment's key material, the
+/// account's devices, term certificates and what a switch reports.
+#[cfg(feature = "embedded-vera")]
+pub use vera_embedded;
 pub use zeroize::Zeroizing;
 
 use network::NodeEdge;
@@ -251,11 +257,11 @@ pub struct Node {
     network: Option<NodeEdge>,
     /// The database's worker pool: the node's data-path calls run there.
     pool: Option<workers::Pool>,
-    /// The Vera node this node runs for document ACP, until shutdown takes
-    /// it. A node dropped without [`Node::shutdown`] drops it here, which
-    /// tells it to stop and waits for nothing.
+    /// The Vera node this node runs for document ACP. Shutdown stops it; a
+    /// node dropped without [`Node::shutdown`] drops it here, which tells it
+    /// to stop and waits for nothing.
     #[cfg(feature = "embedded-vera")]
-    embedded_vera: kovan_queue::seg_queue::SegQueue<vera_embedded::HostedNode>,
+    embedded_vera: Option<vera_embedded::HostedNode>,
     #[cfg(feature = "embedded-vera")]
     embedded_vera_trust: Option<EmbeddedVeraTrust>,
     #[cfg(feature = "embedded-vera")]
@@ -294,7 +300,7 @@ struct TransactionCleanupConfig {
     sweep_interval: Duration,
 }
 
-#[cfg(any(feature = "otel", feature = "embedded-vera"))]
+#[cfg(feature = "otel")]
 fn single_slot<T>(value: Option<T>) -> kovan_queue::seg_queue::SegQueue<T>
 where
     T: 'static,
@@ -715,6 +721,15 @@ impl Node {
         self.embedded_vera_trust.as_ref()
     }
 
+    /// The Vera node this node runs for document ACP, for a host that moves
+    /// the deployment's active role between the account's devices
+    /// ([`EmbeddedVeraDevice`]). Document ACP reaches whichever node a switch
+    /// leaves running. `None` when this node runs no Vera node.
+    #[cfg(feature = "embedded-vera")]
+    pub fn embedded_vera(&self) -> Option<&EmbeddedVeraNode> {
+        self.embedded_vera.as_ref()
+    }
+
     /// The address bound at startup when the hosted Vera deployment serves JSON-RPC.
     #[cfg(feature = "embedded-vera")]
     pub fn embedded_vera_rpc_addr(&self) -> Option<std::net::SocketAddr> {
@@ -863,7 +878,7 @@ impl Node {
         // A failed stop is returned once the rest of the teardown has run: the
         // Vera node may still hold its directory.
         #[cfg(feature = "embedded-vera")]
-        let vera_stopped = match self.embedded_vera.pop() {
+        let vera_stopped = match &self.embedded_vera {
             Some(vera) => vera.stop().await,
             None => Ok(()),
         };

@@ -64,7 +64,7 @@ mod settle;
 mod voided;
 
 pub use drain::MAX_CHANGES_PER_REQUEST;
-pub use settle::{OwedScope, OwedSettlement, MAX_FAILED_SUBMISSIONS};
+pub use settle::{OwedScope, OwedSettlement, MAX_FAILED_SUBMISSIONS, MAX_SCOPED_PASS_OBJECTS};
 pub use voided::{OweAgain, VoidedEffect};
 
 /// Records read into memory per redrive page, bounded by their encoded size.
@@ -598,7 +598,7 @@ where
         self.provider.submit_owed_change(change).await
     }
 
-    async fn settle_owed_changes(&self, scope: OwedScope) -> Result<OwedSettlement> {
+    async fn settle_owed_changes(&self, scope: OwedScope<'_>) -> Result<OwedSettlement> {
         self.settle_owed_changes_once(scope).await
     }
 
@@ -652,6 +652,10 @@ where
         doc_id: &str,
     ) -> Result<()> {
         self.settle_if_owed(policy_id, resource_name, doc_id).await
+    }
+
+    async fn redrive_owed_registrations(&self) -> Result<RedriveReport> {
+        self.redrive_owed().await
     }
 
     async fn redrive_registrations(&self, objects: &[crate::AcpObject<'_>]) -> Vec<Result<()>> {

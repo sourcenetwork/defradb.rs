@@ -26,8 +26,9 @@ impl RpcTransport for EmbeddedTransport {
 /// What the submission client is told, in the terms the HTTP transport uses
 /// for the same outcome. A node error keeps its code, so a busy node
 /// (`-32002`) is asked again as it is over HTTP, and so is a node that gave
-/// no answer in time, as after an HTTP timeout. A stopped node is not: the
-/// request stays in the worker's journal for the next node.
+/// no answer in time, as after an HTTP timeout. A stopped node is not, nor a
+/// backup, which takes no submission until a switch makes it the active
+/// device: the request stays in the worker's journal for the next node.
 pub(crate) fn client_error(failure: Failure) -> ClientError {
     match failure {
         Failure::Node { code, message } => ClientError::Rpc {

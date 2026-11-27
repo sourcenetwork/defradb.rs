@@ -98,6 +98,7 @@ async fn a_read_at_a_starved_head_waits_for_the_next_revision() {
                 created: now(),
                 policies: Vec::new(),
             },
+            device: vera_embedded::HostDevice::Alone,
             listen: "127.0.0.1:0".parse().unwrap(),
             start_deadline: Duration::from_secs(60),
             stop_deadline: Duration::from_secs(30),

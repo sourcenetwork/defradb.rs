@@ -15,7 +15,10 @@
 \*      (NodeEdge::drain_requests). A request still waiting at the deadline
 \*      is given up on, and shutdown goes on without it;
 \*   2. tell the Vera node to stop, close its transports, and wait for its
-\*      thread up to a deadline (vera-embedded HostedNode::stop);
+\*      thread up to a deadline (vera-embedded HostedNode::stop). The wait
+\*      includes a switch of the active device in progress; how the stop
+\*      shares the Vera node with switches is modeled in
+\*      EmbeddedVeraSwitch.tla;
 \*   3. drain the rest of the node's network work and go on to close the
 \*      store.
 \* A Vera node told to stop may never finish: its runtime can hang while it

@@ -7,6 +7,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 pub use vera_embedded::Deployment as EmbeddedVeraDeployment;
+pub use vera_embedded::HostDevice as EmbeddedVeraDevice;
+pub use vera_embedded::HostedNode as EmbeddedVeraNode;
 pub use vera_embedded::SeededPolicy as EmbeddedVeraPolicy;
 
 pub use crate::vera_config::VeraActor as EmbeddedVeraActor;
@@ -19,8 +21,14 @@ pub use crate::vera_config::VeraActor as EmbeddedVeraActor;
 pub struct EmbeddedVeraConfig {
     /// Directory the Vera node owns. It must not hold another store.
     pub data_dir: PathBuf,
-    /// The deployment created on first start and reopened afterwards.
+    /// The deployment an [`EmbeddedVeraDevice::Alone`] node creates on
+    /// first start and reopens afterwards. The account's other devices read
+    /// their deployment from its record instead.
     pub deployment: EmbeddedVeraDeployment,
+    /// Which of the account's devices this node's Vera node is: the only
+    /// one, the active one with the key material the host holds, or a
+    /// backup of the active one.
+    pub device: EmbeddedVeraDevice,
     /// The Vera node's consensus listener. `127.0.0.1:0` keeps it on
     /// loopback with a port the system picks.
     pub listen: SocketAddr,
@@ -52,6 +60,7 @@ impl fmt::Debug for EmbeddedVeraConfig {
             .debug_struct("EmbeddedVeraConfig")
             .field("data_dir", &self.data_dir)
             .field("deployment", &self.deployment)
+            .field("device", &self.device)
             .field("listen", &self.listen)
             .field("start_deadline", &self.start_deadline)
             .field("stop_deadline", &self.stop_deadline)
@@ -67,6 +76,7 @@ impl PartialEq for EmbeddedVeraConfig {
     fn eq(&self, other: &Self) -> bool {
         self.data_dir == other.data_dir
             && self.deployment == other.deployment
+            && self.device == other.device
             && self.listen == other.listen
             && self.start_deadline == other.start_deadline
             && self.stop_deadline == other.stop_deadline

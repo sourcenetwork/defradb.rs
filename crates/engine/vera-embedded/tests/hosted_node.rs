@@ -33,6 +33,7 @@ fn config(directory: &Path) -> HostConfig {
             created: now(),
             policies: Vec::new(),
         },
+        device: vera_embedded::HostDevice::Alone,
         listen: "127.0.0.1:0".parse().expect("address"),
         start_deadline: Duration::from_secs(60),
         stop_deadline: Duration::from_secs(30),
