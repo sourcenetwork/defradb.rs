@@ -553,15 +553,16 @@ pub trait VeraProvider: MaybeSendSync {
     /// The verified ACP state a decision is read at, when the provider
     /// proves one and it is still fresh (the vera.rs light client's module
     /// state root, within its freshness limit). A decision cached under it
-    /// is exact: a new state is a new key, and a state that aged out is no
-    /// key at all.
+    /// is exact: a new state is a new key, and an aged-out state yields
+    /// `None`. The default opts out of reuse across completed checks.
     fn decision_state(&self) -> Option<String> {
         None
     }
 
     /// Whether [`Self::verify_access`] proves every decision against the
     /// provider's finalized state at a revision within its freshness limit,
-    /// and fails when it cannot: the vera.rs light client does.
+    /// and fails when it cannot. Host providers must opt in when they can
+    /// make that guarantee. The vera.rs light client does.
     fn proves_decisions(&self) -> bool {
         false
     }

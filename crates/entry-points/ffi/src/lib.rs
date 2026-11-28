@@ -4,7 +4,7 @@
 //! (`libdefradb.h`), each named `defra_<noun>_<verb>` after the Go file that
 //! defines it (`collection_add.go` is `defra_collection_add`). The API, not
 //! the ABI: the names and types are prefixed (`DefraResult`, not Go's
-//! `Result`), and [`types::NodeInitOptions`] adds fields after Go's, so a
+//! `Result`), and [`types::NodeInitOptions`] has its own layout, so a
 //! program built against Go's header does not link or run against this
 //! library unchanged. Like Go's, a call that
 //! works on a store takes one handle naming a node or one of its open

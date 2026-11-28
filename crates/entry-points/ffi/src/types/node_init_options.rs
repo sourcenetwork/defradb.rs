@@ -3,12 +3,8 @@ use std::ptr;
 
 /// Options for node initialization.
 ///
-/// Go's NodeInitOptions struct, field for field except `disable_api`: this
-/// library serves no HTTP API yet, so it has no API to disable. An all-zero
-/// struct (null strings, zero numbers) is the default node, and every opt-out
-/// is a `disable_` flag. The fields after Go's are this implementation's own,
-/// so the layout differs from Go's: a caller passes this header's struct,
-/// never one laid out by Go's `defra_structs.h`.
+/// An all-zero struct (null strings, zero numbers) is the default node, and
+/// every opt-out is a `disable_` flag. Callers use this header's layout.
 ///
 /// Go's Badger options name the store regolith replaced, so they are named
 /// for the store here (`store_file_size`, `store_encryption_key`). A Go
@@ -106,34 +102,24 @@ pub struct NodeInitOptions {
     /// HTTP idle timeout in milliseconds. Not supported yet.
     pub http_idle_timeout_ms: i64,
 
-    /// Document ACP: "local" (default). Go's "remote" is not supported, and
-    /// neither are the `remote_dac_` and `vera_` fields that configure it.
-    /// Those fields stay because fields are only ever appended: callers
-    /// built against this layout, Go's rustffi test client among them, name
-    /// them, and setting one fails `defra_node_new`.
+    /// Document ACP: "local" (default).
     pub document_acp_type: *const c_char,
     /// Separate document ACP store path. Not supported: document ACP lives
     /// in the node's store.
     pub document_acp_path: *const c_char,
-    /// Remote document ACP log ID. Not supported.
-    pub remote_dac_log_id: *const c_char,
-    /// Remote document ACP gRPC address. Not supported.
-    pub remote_dac_grpc_address: *const c_char,
-    /// Remote document ACP CometBFT RPC address. Not supported.
-    pub remote_dac_comet_rpc_address: *const c_char,
+    /// Reserved for layout compatibility. Leave these pointers null.
+    pub _reserved_acp0: *const c_char,
+    pub _reserved_acp1: *const c_char,
+    pub _reserved_acp2: *const c_char,
 
     /// Separate node ACP store path. Not supported: node ACP lives in the
     /// node's store.
     pub node_acp_path: *const c_char,
 
-    /// Remote document ACP chain ID. Not supported.
-    pub vera_chain_id: *const c_char,
-    /// Remote document ACP signer key bytes. Not supported.
-    pub vera_signer_key: *const u8,
-    /// Length of `vera_signer_key` in bytes.
-    pub vera_signer_key_len: c_int,
-    /// Reserved, so the struct has no padding: leave it zero. It never
-    /// becomes a field; new fields go after the struct's last one.
+    /// Reserved for layout compatibility. Leave these fields zero.
+    pub _reserved_acp3: *const c_char,
+    pub _reserved_acp4: *const u8,
+    pub _reserved_acp5: c_int,
     pub _reserved3: u32,
     /// P2P transport: "libp2p" (default) or "iroh".
     pub p2p_transport: *const c_char,
@@ -286,13 +272,13 @@ impl Default for NodeInitOptions {
             http_idle_timeout_ms: 0,
             document_acp_type: ptr::null(),
             document_acp_path: ptr::null(),
-            remote_dac_log_id: ptr::null(),
-            remote_dac_grpc_address: ptr::null(),
-            remote_dac_comet_rpc_address: ptr::null(),
+            _reserved_acp0: ptr::null(),
+            _reserved_acp1: ptr::null(),
+            _reserved_acp2: ptr::null(),
             node_acp_path: ptr::null(),
-            vera_chain_id: ptr::null(),
-            vera_signer_key: ptr::null(),
-            vera_signer_key_len: 0,
+            _reserved_acp3: ptr::null(),
+            _reserved_acp4: ptr::null(),
+            _reserved_acp5: 0,
             _reserved3: 0,
             p2p_transport: ptr::null(),
             iroh_relay_url: ptr::null(),

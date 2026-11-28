@@ -40,11 +40,11 @@ The TLA model is grounded in ACP tuple storage and Vera access checks:
 - `crates/engine/acp/src/local.rs:390-439`: local P2P export/replace reconciles
   document-scoped relationships while preserving owner.
 - `crates/engine/vera/src/dac.rs` `VeraDocumentACP::check_doc_access`: a Vera ACP
-  check asks the provider through `decisions` every time; it keeps no decision cache.
+  check goes through the remote decision service.
 - `crates/engine/vera/src/decisions.rs` `RemoteDecisions`: a decision is reused only
   under the verified state it was read at, so a revocation that moves the state is a
-  new key. The model therefore has no cache: a node grants exactly what its tuple
-  view holds.
+  new key. Checks at the same verified state are represented by reads of the
+  same tuple view.
 
 ## Brainstorming Outcome
 
@@ -175,7 +175,6 @@ closure.  TLA+ proves the replicated tuple model has the desired
 post-propagation revocation behavior only when revoke propagation removes the
 tuple from each node's view.
 
-The combined result is source-anchored but not an automated conformance proof.
 The Rust code must keep tuple removal coupled to relationship mutation and
-replication paths, must not add a decision cache that outlives a revocation, and ACP policy changes that use `Difference` must not be
-summarized as globally monotone under tuple deletion.
+replication paths and scope any reused decision to its verified state. The
+positive-fragment removal theorem excludes policies that use `Difference`.

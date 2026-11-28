@@ -82,6 +82,21 @@ async fn generate_header(ctx: &WorktreeContext, verbose: bool) -> Result<()> {
         ));
     }
 
+    // The pinned Go client names the former fields in its struct literal.
+    // Give its private header the old names for the reserved ABI slots.
+    let mut header = nuclei::fs::read_to_string(&header_dest).await?;
+    for (slot, field) in [
+        ("_reserved_acp0", "remote_dac_log_id"),
+        ("_reserved_acp1", "remote_dac_grpc_address"),
+        ("_reserved_acp2", "remote_dac_comet_rpc_address"),
+        ("_reserved_acp3", "vera_chain_id"),
+        ("_reserved_acp4", "vera_signer_key"),
+        ("_reserved_acp5", "vera_signer_key_len"),
+    ] {
+        header = header.replace(slot, field);
+    }
+    nuclei::fs::write(&header_dest, header).await?;
+
     if verbose {
         println!("Header generated at: {}", header_dest.display());
     }

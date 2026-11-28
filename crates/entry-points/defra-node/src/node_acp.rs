@@ -131,8 +131,9 @@ fn remote_edge(network: Option<&edge::Edge>) -> Result<edge::Edge> {
 }
 
 /// Document ACP over a provider whose reads are verified: access decisions
-/// run on `edge` and are not cached, the provider's policies are mirrored into
-/// `store`, and owed registrations are gated and redriven.
+/// run on `edge` and are reused only with a fresh verified state key. The
+/// provider's policies are mirrored into `store`, and owed registrations
+/// are gated and redriven.
 #[cfg(feature = "vera")]
 pub(crate) fn verified_acp_setup<S>(
     provider: Arc<dyn vera::VeraProvider>,

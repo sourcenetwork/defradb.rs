@@ -32,7 +32,8 @@ test corpus measures.
 `ffi-test` writes exactly two things into that checkout, both regenerated from
 `crates/entry-points/ffi` on every run and neither ever committed:
 
-- **`defra.h`** — cbindgen output.
+- **`defra.h`** — cbindgen output with the pinned client’s original names for
+  the reserved ACP slots.
 - **the shared library** — `cargo build --release -p ffi`, copied in as
   `libdefra_ffi.*`.
 
