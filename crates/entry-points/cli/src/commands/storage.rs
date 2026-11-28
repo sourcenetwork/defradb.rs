@@ -23,6 +23,7 @@ enum StorageCommand {
         versions: bool,
     },
     /// Copy a stopped Regolith database into a new directory on the same filesystem.
+    /// Opening the source may upgrade it or reseal its manifest under the current key.
     Checkpoint { destination: PathBuf },
 }
 

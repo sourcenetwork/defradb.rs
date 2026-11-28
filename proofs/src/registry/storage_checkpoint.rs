@@ -16,9 +16,9 @@ pub(super) const PROPERTIES: &[Property] = &[
     },
     Property {
         family: "Storage checkpoint",
-        name: "StorageCheckpoint.checkpoint_reads / StorageCheckpoint.checkpoint_genesis_id",
+        name: "StorageCheckpoint.checkpoint_reads / StorageCheckpoint.checkpoint_genesis_id: consequences of Regolith's assumed copy contract",
         axis: Lean,
-        anchor: "crates/engine/storage/src/backends/regolith/store.rs RegolithStore::checkpoint_to_new_directory",
+        anchor: "Regolith checkpoint copy contract (assumed); crates/engine/storage/src/backends/regolith/store.rs RegolithStore::checkpoint_to_new_directory (delegation)",
         model_ref: "StorageCheckpoint (lake build)",
         tiers: &[Boundary],
         bound_by: TEST,
