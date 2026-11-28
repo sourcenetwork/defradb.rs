@@ -52,6 +52,13 @@ fn hash_policy_fields(policy: &ParsedPolicy) -> Vec<u8> {
             hasher.update(permission.name.as_bytes());
             hasher.update(permission.expr.as_bytes());
         }
+
+        // Only a present `create` is hashed, so a policy without one keeps
+        // the ID it had before the section existed.
+        if let Some(create) = resource.collection_create() {
+            hasher.update(b"collection.create");
+            hasher.update(create.as_bytes());
+        }
     }
 
     let mut individual: Vec<_> = resources
@@ -94,20 +101,6 @@ fn hash_policy_fields(policy: &ParsedPolicy) -> Vec<u8> {
         }
     }
 
-    if resources.iter().any(|r| r.create.is_some()) {
-        let mut gated = Sha256::new();
-        gated.update(b"defra/parent-registration/v1\0");
-        gated.update(hasher.finalize());
-        for resource in resources {
-            if let Some(rule) = &resource.create {
-                for part in [&resource.name, &rule.parent, &rule.requires] {
-                    gated.update((part.len() as u64).to_be_bytes());
-                    gated.update(part.as_bytes());
-                }
-            }
-        }
-        return gated.finalize().to_vec();
-    }
     hasher.finalize().to_vec()
 }
 
@@ -132,13 +125,28 @@ pub struct ParsedPolicy {
 #[serde(deny_unknown_fields)]
 pub struct PolicyResource {
     pub name: String,
-    pub create: Option<zanzibar::CreateRule>,
     #[serde(default)]
     pub description: String,
     #[serde(default)]
     pub permissions: Vec<PolicyPermission>,
     #[serde(default)]
     pub relations: Vec<PolicyRelation>,
+    /// Collection access control: who may add objects to the resource.
+    #[serde(default)]
+    pub collection: Option<PolicyCollection>,
+}
+
+/// A resource's `collection` section.
+///
+/// `create` is omitted (anyone may create), `"*"` (anyone, said explicitly),
+/// or an expression over the relations a new object carries, which acp
+/// evaluates. The local engine does not gate creates, so it keeps the text
+/// without reading it.
+#[derive(Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PolicyCollection {
+    #[serde(default)]
+    pub create: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -231,6 +239,11 @@ impl ParsedPolicy {
 }
 
 impl PolicyResource {
+    /// The `create` expression of the resource's `collection` section.
+    pub fn collection_create(&self) -> Option<&str> {
+        self.collection.as_ref()?.create.as_deref()
+    }
+
     pub fn has_permission(&self, name: &str) -> bool {
         self.permissions.iter().any(|p| p.name == name)
     }
@@ -321,8 +334,8 @@ pub fn build_policy(parsed: &ParsedPolicy, counter: u64) -> crate::error::Result
         resources.push(Resource {
             name: res.name.clone(),
             description: res.description.clone(),
-            create: res.create.clone(),
             relations,
+            collection_create: res.collection_create().map(str::to_owned),
         });
     }
 
@@ -334,8 +347,8 @@ pub fn build_policy(parsed: &ParsedPolicy, counter: u64) -> crate::error::Result
         description: parsed.description.clone(),
         actor: Some(Resource {
             name: "actor".into(),
-            create: None,
             description: String::new(),
+            collection_create: None,
             relations: parsed
                 .actor
                 .relations

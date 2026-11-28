@@ -33,7 +33,16 @@ mod dac {
         mod with_relationship;
     }
     mod count;
+    mod create_gate {
+        mod binding;
+        mod common;
+        mod immutable_relation;
+        mod local_gate;
+        mod not_encrypted;
+        mod policy_section;
+    }
     mod delete_with_index;
+    mod deleted_history;
     mod index {
         mod new;
         mod query;
@@ -73,7 +82,6 @@ mod dac {
         mod update;
         mod update_by_non_creator_on_peer;
     }
-    mod parent_registration;
     mod query {
         mod with_cid_shared_field;
     }
@@ -81,6 +89,7 @@ mod dac {
     mod register_and_read;
     mod register_and_update;
     mod relation_objects;
+    mod remote_dac_cli;
     mod relationship {
         mod doc_actor {
             mod add {

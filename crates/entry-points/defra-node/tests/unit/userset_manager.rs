@@ -83,7 +83,8 @@ async fn attempt(node: &Node, did: &str, doc: &str, relation: &str, target: &str
         .clone()
         .with_txn(Some(handle.as_str().parse().unwrap()));
     let result = node
-        .add_dac_actor_relationship_as(&tx, "ManagedConfiguration", doc, relation, target)
+        .core()
+        .add_dac_actor_relationship(&tx, "ManagedConfiguration", doc, relation, target)
         .await
         .is_ok();
     node.runner()
@@ -115,41 +116,40 @@ fn exercise_userset_manager() -> Vec<bool> {
             for permission in [acp::NodePermission::DocumentRead, acp::NodePermission::DocumentUpdate,
                 acp::NodePermission::CollectionGet, acp::NodePermission::DacRelationAdd,
                 acp::NodePermission::DacRelationDelete] {
-                node.add_nac_actor_relationship_as(&context(&root), permission.as_str(), subject).await.unwrap();
+                node.with_identity(identity::Did::new(&root).unwrap()).add_nac_actor_relationship(permission.as_str(), subject).await.unwrap();
             }
         }
-        let owner_context = context(&root);
-        let policy = node.add_dac_policy_as(&owner_context, POLICY).await.unwrap();
-        node.add_collection(&owner_context, &format!("type ManagedNode @policy(id: \"{policy}\", resource: \"nodes\") {{name:String}}\ntype ManagedConfiguration @policy(id: \"{policy}\", resource: \"configuration\") {{name:String}}")) .await.unwrap();
+        let policy = node.with_identity(identity::Did::new(&root).unwrap()).add_dac_policy(POLICY, None).await.unwrap();
+        node.with_identity(identity::Did::new(&root).unwrap()).add_collection(&format!("type ManagedNode @policy(id: \"{policy}\", resource: \"nodes\") {{name:String}}\ntype ManagedConfiguration @policy(id: \"{policy}\", resource: \"configuration\") {{name:String}}")) .await.unwrap();
         let node_doc = create(&node, &node_signer, &owner, "ManagedNode", "primary").await;
         let other_doc = create(&node, &other_signer, &other, "ManagedNode", "other").await;
         let doc = create(&node, &config_signer, &config, "ManagedConfiguration", "target").await;
-        node.add_dac_actor_relationship_as(&context(&owner), "ManagedNode", &node_doc, "administrator", &admin).await.unwrap();
-        node.add_dac_actor_relationship_as(&context(&other), "ManagedNode", &other_doc, "administrator", &sibling).await.unwrap();
+        node.with_identity(identity::Did::new(&owner).unwrap()).add_dac_actor_relationship("ManagedNode", &node_doc, "administrator", &admin).await.unwrap();
+        node.with_identity(identity::Did::new(&other).unwrap()).add_dac_actor_relationship("ManagedNode", &other_doc, "administrator", &sibling).await.unwrap();
         for target in [format!("nodes:\"{node_doc}\"#owner"), format!("nodes:\"{node_doc}\"#administrator"), format!("configuration:\"{doc}\"#selection_manager")] {
-            node.add_dac_actor_relationship_as(&context(&config), "ManagedConfiguration", &doc, "selection_manager", &target).await.unwrap();
+            node.with_identity(identity::Did::new(&config).unwrap()).add_dac_actor_relationship("ManagedConfiguration", &doc, "selection_manager", &target).await.unwrap();
         }
         let mut decisions = Vec::new();
         for (actor, relation) in [(&config, "selected_by"), (&owner, "selected_by"), (&admin, "selected_by"),
             (&outsider, "selected_by"), (&sibling, "selected_by"), (&admin, "reader")] {
             decisions.push(attempt(&node, actor, &doc, relation, &outsider).await);
         }
-        node.delete_dac_actor_relationship_as(&context(&owner), "ManagedNode", &node_doc, "administrator", &admin).await.unwrap();
+        node.with_identity(identity::Did::new(&owner).unwrap()).delete_dac_actor_relationship("ManagedNode", &node_doc, "administrator", &admin).await.unwrap();
         decisions.push(attempt(&node, &admin, &doc, "selected_by", &outsider).await);
-        node.add_dac_actor_relationship_as(&context(&owner), "ManagedNode", &node_doc, "administrator", &admin).await.unwrap();
+        node.with_identity(identity::Did::new(&owner).unwrap()).add_dac_actor_relationship("ManagedNode", &node_doc, "administrator", &admin).await.unwrap();
         decisions.push(attempt(&node, &admin, &doc, "selected_by", &outsider).await);
-        node.add_dac_actor_relationship_as(&context(&config), "ManagedConfiguration", &doc, "selection_manager", &outsider).await.unwrap();
+        node.with_identity(identity::Did::new(&config).unwrap()).add_dac_actor_relationship("ManagedConfiguration", &doc, "selection_manager", &outsider).await.unwrap();
         decisions.push(attempt(&node, &outsider, &doc, "selected_by", &sibling).await);
-        node.delete_dac_actor_relationship_as(&context(&config), "ManagedConfiguration", &doc, "selection_manager", &outsider).await.unwrap();
-        node.add_dac_actor_relationship_as(&context(&config), "ManagedConfiguration", &doc, "selection_manager", "*").await.unwrap();
+        node.with_identity(identity::Did::new(&config).unwrap()).delete_dac_actor_relationship("ManagedConfiguration", &doc, "selection_manager", &outsider).await.unwrap();
+        node.with_identity(identity::Did::new(&config).unwrap()).add_dac_actor_relationship("ManagedConfiguration", &doc, "selection_manager", "*").await.unwrap();
         decisions.push(attempt(&node, &outsider, &doc, "selected_by", &sibling).await);
-        node.delete_dac_actor_relationship_as(&context(&config), "ManagedConfiguration", &doc, "selection_manager", "*").await.unwrap();
+        node.with_identity(identity::Did::new(&config).unwrap()).delete_dac_actor_relationship("ManagedConfiguration", &doc, "selection_manager", "*").await.unwrap();
         assert_eq!(decisions, vec![true, true, true, false, false, false, false, true, true, true]);
         let admin_context = context(&admin);
         let handle = node.runner().begin_txn_as(&admin_context, false).await.unwrap();
         let tx = admin_context.clone().with_txn(Some(handle.as_str().parse().unwrap()));
-        node.add_dac_actor_relationship_as(&tx, "ManagedConfiguration", &doc, "selected_by", &outsider).await.unwrap();
-        node.delete_dac_actor_relationship_as(&context(&owner), "ManagedNode", &node_doc, "administrator", &admin).await.unwrap();
+        node.core().add_dac_actor_relationship(&tx, "ManagedConfiguration", &doc, "selected_by", &outsider).await.unwrap();
+        node.with_identity(identity::Did::new(&owner).unwrap()).delete_dac_actor_relationship("ManagedNode", &node_doc, "administrator", &admin).await.unwrap();
         assert!(node.runner().commit_txn_as(&admin_context, &handle).await.is_err(), "revocation must conflict with a grant whose userset traversal read the old membership");
         let observed = node.execute_request(query::QueryRequest::new("{ ManagedConfiguration {_docID} }").with_identity(Some(outsider.parse().unwrap()))).await;
         assert!(!observed.has_errors(), "{:?}", observed.errors);

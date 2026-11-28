@@ -1,6 +1,9 @@
-//! The stuck-poll monitor. Each worker publishes when its current poll began;
-//! a scan on a timer finds a poll past the limit, reports it once per task
-//! (its name, its worker, how long), marks the worker stuck so routing sends
+//! The stuck-poll monitor. Each worker publishes which poll it is in: a task
+//! poll with when it began, or a hook poll, which the scan times from when
+//! it first sees it (so a slow hook is found up to one scan period late,
+//! and the worker reads no clock for it). A scan on a timer finds a poll
+//! past the limit, reports it once per task or once per hook poll (its
+//! name, its worker, how long), marks the worker stuck so routing sends
 //! it nothing new, and moves the movable jobs still queued in its inbox to
 //! free workers on the same node. Bound jobs wait for their owner, and no
 //! running task is ever moved.
@@ -14,7 +17,7 @@ use std::sync::{Arc, Weak};
 use std::time::Duration;
 
 use super::PoolShared;
-use crate::worker::{micros, report_long_poll, REPORTED};
+use crate::worker::{micros, report_long_hook, report_long_poll, REPORTED};
 
 /// How many workers run the scan when no driver does.
 pub(crate) const WATCHERS: usize = 2;
@@ -74,25 +77,40 @@ pub(crate) fn scan(pool: &PoolShared, now: u64) -> usize {
     let limit = micros(pool.stuck_after);
     let mut stuck = 0;
     for worker in pool.workers.iter() {
+        worker.sweep_mark();
         let Some(beat) = worker.heartbeat.read() else {
             continue;
         };
-        let elapsed = now.saturating_sub(beat.start);
+        let elapsed = if beat.hook() {
+            // The scan's start can predate a poll recorded before this read.
+            worker.hook_elapsed(beat.number(), pool.clock.now_micros().max(now))
+        } else {
+            now.saturating_sub(beat.start())
+        };
         if elapsed <= limit {
             continue;
         }
         stuck += 1;
-        worker.stuck.store(true, Ordering::SeqCst);
+        worker.mark_stuck(beat.word);
         // The poll may have ended between the read and the mark, after the
-        // worker cleared its flag: a worker no longer in that poll is not
+        // worker looked for its mark: a worker no longer in that poll is not
         // left marked, or an idle worker would be routed around for good.
-        if worker.heartbeat.read().map(|now| now.start) != Some(beat.start) {
-            worker.stuck.store(false, Ordering::SeqCst);
+        if worker.heartbeat.word() != Some(beat.word) {
+            worker.unmark(beat.word);
         }
-        let task = beat.task & !REPORTED;
-        if beat.task & REPORTED == 0 && worker.reported.swap(task, Ordering::AcqRel) != task {
-            worker.counters.long_polls.fetch_add(1, Ordering::Relaxed);
-            report_long_poll(worker.id.index, beat.name, elapsed, pool.stuck_after);
+        if beat.hook() {
+            if worker.claim_hook_report(beat.word) {
+                worker
+                    .counters
+                    .long_hook_polls
+                    .fetch_add(1, Ordering::Relaxed);
+                report_long_hook(worker.id.index, elapsed, pool.stuck_after);
+            }
+        } else {
+            if beat.task & REPORTED == 0 && worker.claim_task_report(beat.word) {
+                worker.counters.long_polls.fetch_add(1, Ordering::Relaxed);
+                report_long_poll(worker.id.index, beat.name, elapsed, pool.stuck_after);
+            }
         }
         while let Some(job) = worker.take_free() {
             match pool.reroute(job, worker) {

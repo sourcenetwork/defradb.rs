@@ -62,12 +62,12 @@ impl Op for AddCollection {
 
     fn run(&self, state: &State) -> Result<Value, Failure> {
         let identity = self.common.client_identity(Self::name())?;
+        let (node, scope) = (
+            state.node_on(self.common.node())?,
+            state.scope_as_on(self.common.node(), self.txn, identity),
+        );
         state
-            .block_on(
-                state
-                    .node_on(self.common.node())?
-                    .add_collection(&state.context_as(self.txn, identity), self.sdl.as_str()),
-            )
+            .block_on(async { scope.on(&node).add_collection(self.sdl.as_str()).await })
             .map(|collections| json!({ "collections": collections }))
             .map_err(|e| Failure::operation(e.to_string()).with_code(e.code()))
     }

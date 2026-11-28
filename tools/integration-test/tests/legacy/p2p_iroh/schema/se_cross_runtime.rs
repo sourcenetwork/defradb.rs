@@ -1,7 +1,7 @@
 //! Searchable-encryption (SE) query/serve over the **iroh** transport, #976.
 //!
 //! Mirrors the libp2p `rust_rust_se_cross_node` test
-//! (`tests/encryption/se_cross_runtime.rs`) but runs both nodes on the iroh
+//! (`tests/legacy/encryption/se_cross_runtime.rs`) but runs both nodes on the iroh
 //! transport (`with_iroh_transport`, which auto-builds the iroh-featured Rust
 //! binary). It proves the SE query fan-out / serve loop is wired over iroh:
 //! the document OWNER (node 0) runs `encrypted_User`, generates the search tag,

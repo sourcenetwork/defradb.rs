@@ -2,7 +2,7 @@ use std::ffi::c_char;
 
 use acp::nac::NodePermission;
 
-use crate::request::Request;
+use crate::request::{on_scope, Request};
 use crate::target::{go_string, CollectionArgs};
 use crate::types::{CollectionOptions, DefraResult};
 use crate::{ffi_async, ffi_entry, try_ffi};
@@ -24,12 +24,13 @@ pub unsafe fn defra_index_delete(
         let collection_name = CollectionArgs::read(&opts).name.unwrap_or_default();
         let index_name = go_string(index_name);
         let node = try_ffi!(request.node_handle());
-        let context = request.context();
+        let scope = try_ffi!(request.node_scope());
 
         ffi_async!(caller, {
-            node.delete_index_as(&context, &collection_name, &index_name)
-                .await
-                .map_err(|e| e.to_string())?;
+            on_scope!(node, &scope, |scoped| {
+                scoped.delete_index(&collection_name, &index_name).await
+            })
+            .map_err(|e| e.to_string())?;
             Ok("{}".to_string())
         })
     }
@@ -51,28 +52,30 @@ pub unsafe fn defra_index_list(
         let request = try_ffi!(Request::begin(node_ptr, identity_ptr, NodePermission::IndexList));
         let collection_name = CollectionArgs::read(&opts).name;
         let node = try_ffi!(request.node_handle());
-        let context = request.context();
+        let scope = try_ffi!(request.node_scope());
 
         ffi_async!(caller, {
             let json = match collection_name {
                 Some(name) => {
-                    let indexes = node
-                        .list_indexes_as(&context, &name)
-                        .await
-                        .map_err(|e| e.to_string())?;
+                    let indexes = on_scope!(node, &scope, |scoped| {
+                        scoped.list_indexes(&name).await
+                    })
+                    .map_err(|e| e.to_string())?;
                     serde_json::to_string(&indexes)
                 }
                 None => {
-                    let collections = node
-                        .get_collections_as(&context, &db::CollectionSelector::all())
-                        .await
-                        .map_err(|e| e.to_string())?;
+                    let collections = on_scope!(node, &scope, |scoped| {
+                        scoped
+                            .get_collections(&db::CollectionSelector::all())
+                            .await
+                    })
+                    .map_err(|e| e.to_string())?;
                     let mut all = rapidhash::RapidHashMap::default();
                     for collection in collections {
-                        let indexes = node
-                            .list_indexes_as(&context, &collection.name)
-                            .await
-                            .map_err(|e| e.to_string())?;
+                        let indexes = on_scope!(node, &scope, |scoped| {
+                            scoped.list_indexes(&collection.name).await
+                        })
+                        .map_err(|e| e.to_string())?;
                         if !indexes.is_empty() {
                             all.insert(collection.name, indexes);
                         }

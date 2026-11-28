@@ -27,7 +27,7 @@ position in the list.
 
 Rust anchors: `codec::add_edges` and `codec::decode_record`
 (`crates/database/db/src/index/vector/engine/diskann/codec.rs`), called from
-`DiskAnn::add_back_edges` (`crates/database/db/src/index/vector/engine/diskann/graph.rs`)
+`DiskAnn::add_back_edges` (`crates/database/db/src/index/vector/engine/diskann/back_edges.rs`)
 when codes are not resident. Checked against the decoded loop by
 `adding_edges_in_place_writes_what_decoding_and_encoding_would`
 (`crates/database/db/tests/vector/diskann_back_edges.rs`).

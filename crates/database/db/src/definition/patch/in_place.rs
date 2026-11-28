@@ -114,7 +114,13 @@ impl<S: Store> crate::database::DB<S> {
                 collections.rcu(|old| {
                     let mut cache = old.clone();
                     match &cached_collection {
-                        Some(collection) => cache.put_named(&registered_name, collection.clone()),
+                        Some(collection) => cache.put_named(
+                            &registered_name,
+                            collection.with_current_index_actions(
+                                old.by_id(collection.collection_id()),
+                                &[],
+                            ),
+                        ),
                         None => {
                             cache.remove(&registered_name);
                         }

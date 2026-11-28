@@ -121,7 +121,8 @@ pub enum Error {
     #[error("server returned error: {0}")]
     Server(String),
 
-    /// A server refusal with the stable code a client classifies it by.
+    /// The server's refusal with the stable code its body carries. Printed
+    /// as [`Self::Server`] is, so the CLI shows Go's text alone.
     #[error("server returned error: {message}")]
     ServerRefused { message: String, code: String },
 
@@ -175,10 +176,12 @@ pub enum Error {
 }
 
 impl Error {
-    /// The stable code a server refusal carries, when it carries one.
+    /// The stable code the server or the documents API reported with this
+    /// refusal, when it reported one.
     pub fn code(&self) -> Option<&str> {
         match self {
             Self::ServerRefused { code, .. } => Some(code),
+            Self::Documents(error) => error.code(),
             _ => None,
         }
     }

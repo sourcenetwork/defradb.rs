@@ -31,6 +31,7 @@ mod add {
             mod with_txn;
         }
     }
+    mod signed_duplicate;
     mod simple;
     mod simple_add_many;
     mod txn_discard;

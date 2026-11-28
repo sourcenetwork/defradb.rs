@@ -20,29 +20,6 @@ impl<S> ChunkWrites<'_, S>
 where
     S: Store + 'static,
 {
-    /// Whether the parent's current blocks encrypt `field`, by document or by field.
-    pub(super) async fn parent_encrypts(&self, parent_doc_id: &str, field: &str) -> Result<bool> {
-        let systemstore = self
-            .txn
-            .systemstore()
-            .map_err(|e| QueryError::execution(e.to_string()))?;
-        let Some(parent) = crate::docid::map::get_doc_ref(&systemstore, parent_doc_id)
-            .await
-            .map_err(|e| QueryError::execution(e.to_string()))?
-        else {
-            return Ok(false);
-        };
-        let (encrypt_doc, fields) = crate::block::builder::inherited_encryption_policy(
-            &self.blockstore()?,
-            &self.headstore()?,
-            parent,
-            &[field.to_string()],
-        )
-        .await
-        .map_err(QueryError::execution)?;
-        Ok(encrypt_doc || !fields.is_empty())
-    }
-
     pub(super) async fn open(&self, name: &str) -> Result<ChunkCollection> {
         ChunkCollection::open(self.txn, name).await
     }
@@ -92,14 +69,19 @@ impl ChunkCollection {
     }
 
     /// Which of the `planned` hashes `parent` already has a chunk document for.
-    /// Only those are kept, since a parent's old chunks stay until it is deleted.
+    ///
+    /// One prefix scan includes staged chunks and avoids a separate walk of
+    /// the transaction's buffered writes for each hash.
     pub(crate) async fn existing_of(
         &self,
         parent: &str,
         planned: &RapidHashSet<&str>,
     ) -> Result<RapidHashSet<String>> {
-        let mut entries = self.scan_of(parent).await?;
         let mut existing = RapidHashSet::default();
+        if planned.is_empty() {
+            return Ok(existing);
+        }
+        let mut entries = self.scan_of(parent).await?;
         while let Some(entry) = entries
             .next()
             .await
@@ -113,6 +95,9 @@ impl ChunkCollection {
             };
             if let Some(hash) = hash.filter(|hash| planned.contains(hash.as_str())) {
                 existing.insert(hash);
+                if existing.len() == planned.len() {
+                    break;
+                }
             }
         }
         Ok(existing)
@@ -125,17 +110,20 @@ impl ChunkCollection {
     /// The short IDs of `parent`'s chunks with `hash`. Peers that sign or
     /// encrypt their chunks can each hold one under its own ID.
     pub(crate) async fn chunks_with(&self, parent: &str, hash: &str) -> Result<Vec<u64>> {
-        let entries = self
-            .scan(&[
-                NormalValue::String(parent.to_string()),
-                NormalValue::String(hash.to_string()),
-            ])
-            .await?;
+        let entries = self.scan_of_hash(parent, hash).await?;
         short_ids(entries).await
     }
 
     async fn scan_of(&self, parent: &str) -> Result<RangeIterator> {
         self.scan(&[NormalValue::String(parent.to_string())]).await
+    }
+
+    async fn scan_of_hash(&self, parent: &str, hash: &str) -> Result<RangeIterator> {
+        self.scan(&[
+            NormalValue::String(parent.to_string()),
+            NormalValue::String(hash.to_string()),
+        ])
+        .await
     }
 
     async fn scan(&self, prefix: &[NormalValue]) -> Result<RangeIterator> {

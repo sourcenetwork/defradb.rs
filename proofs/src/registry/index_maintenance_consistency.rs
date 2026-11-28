@@ -27,6 +27,24 @@ pub(super) const PROPERTIES: &[Property] = &[
         bound_by: "proofs/tests/behavioral/index.rs index_reconciles_lww_merge_after_restart",
     },
     Property {
+        family: "Index-maintenance consistency",
+        name: "INV_NoDuplicate / INV_NoLostIndex / INV_RefusedOnlyCopies: a create refuses a listed copy and validates its definition read",
+        axis: Tla,
+        anchor: "crates/database/db/src/index/duplicate.rs refuse_duplicate_index",
+        model_ref: "MC_DuplicateIndex_{Green,Red_NoCheck,Red_NoValidate}.cfg",
+        tiers: &[Boundary],
+        bound_by: "tools/integration-test/tests/testo/index/new_duplicate.rs",
+    },
+    Property {
+        family: "Index-maintenance consistency",
+        name: "DuplicateIndex.refused_iff_listed / create_listed / created_keeps_all / hidden_does_not_refuse / second_create_refused / create_keeps_listed_nodup",
+        axis: Lean,
+        anchor: "crates/database/db/src/index/duplicate.rs refuse_duplicate_index",
+        model_ref: "DuplicateIndex (lake build)",
+        tiers: &[Boundary],
+        bound_by: "tools/integration-test/tests/testo/index/new_duplicate.rs",
+    },
+    Property {
         // A text, JSON or custom field's merge writes its merged value into
         // the document before the composite updates the index, so the
         // update starts from a read taken before the field merges.
@@ -108,12 +126,12 @@ pub(super) const PROPERTIES: &[Property] = &[
     },
     Property {
         family: "Index-maintenance consistency",
-        name: "INV_FreshAttempt / INV_OpenCompatible / INV_FailureKeepsStamp / INV_FutureRefusedUntouched / INV_LegacyIntact — rebuild older indexes before stamping; refuse future formats",
+        name: "INV_FreshAttempt / INV_OpenCompatible / INV_FailureKeepsStamp / INV_FutureRefusedUntouched / INV_StampOnlyNoWrites / INV_LegacyIntact — rebuild older indexes before stamping, only the JSON ones from format 5, stamp format 6 without a format rebuild, and refuse future formats",
         axis: Tla,
-        anchor: "crates/database/db/src/definition/migration/format.rs CURRENT_INDEX_FORMAT, DB::stored_index_format, DB::migrate_index_format; crates/database/db/src/database/mod.rs DB::finish_open; crates/database/db/src/index/deferred/drain.rs; crates/database/db/src/index/manager/deferred.rs",
-        model_ref: "MC_IndexFormatGuard_{Green,Red_SkipRebuild,Red_EarlyStamp,Red_DeleteLegacy,Red_UnguardedRecord,Red_StaleProgress,Red_Future}.cfg",
+        anchor: "crates/database/db/src/definition/migration/format.rs CURRENT_INDEX_FORMAT, DB::stored_index_format, DB::migrate_index_format, DB::rebuild_indexes_owed; crates/database/db/src/database/mod.rs DB::finish_open; crates/database/db/src/index/deferred/drain.rs; crates/database/db/src/index/manager/deferred.rs",
+        model_ref: "MC_IndexFormatGuard_{Green,Red_SkipRebuild,Red_EarlyStamp,Red_DeleteLegacy,Red_UnguardedRecord,Red_StaleProgress,Red_Future,Red_SkipJson}.cfg",
         tiers: &[Boundary],
-        bound_by: "crates/database/db/tests/definition/format.rs",
+        bound_by: "crates/database/db/tests/definition/format.rs; crates/database/db/tests/definition/format_json.rs a_format_5_store_rebuilds_only_its_json_indexes, a_format_4_store_rebuilds_every_index",
     },
     Property {
         family: "Index-maintenance consistency",
@@ -151,9 +169,20 @@ pub(super) const PROPERTIES: &[Property] = &[
         // The drain finds a document's old entries only through its position
         // record, so the record must read back as the keys it names.
         family: "Index-maintenance consistency",
-        name: "decode_encode — a position record reads back as exactly its entry keys",
+        name: "decodeRecord_encodeValues — a position record of field values reads back as exactly its entry keys",
         axis: Lean,
         anchor: "crates/database/db/src/index/deferred/record.rs encode_record, decode_record",
+        model_ref: "PositionRecord (lake build)",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
+        // Stores written before records kept field values hold whole keys;
+        // such a record is never taken for one of values and still reads back.
+        family: "Index-maintenance consistency",
+        name: "decodeRecord_encode — a position record of whole keys still reads back as exactly its entry keys",
+        axis: Lean,
+        anchor: "crates/database/db/src/index/deferred/record.rs decode_record, decode_keys",
         model_ref: "PositionRecord (lake build)",
         tiers: &[Boundary],
         bound_by: "",

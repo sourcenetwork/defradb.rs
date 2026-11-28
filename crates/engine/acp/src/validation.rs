@@ -72,6 +72,62 @@ pub fn validate_resource_interface(
     Ok(())
 }
 
+/// Validate that relation `relation` of resource `resource_name` can bind a
+/// field whose value is a document of the collection under `target_resource`.
+///
+/// The relation must be one the resource declares (not a permission, not
+/// `owner`), and its `types` must admit exactly `target_resource`: one object
+/// type with no relation, so the relationship derived from the field,
+/// `<resource>:<doc>#<relation>@<target_resource>:<value>`, is the only kind
+/// it holds.
+pub fn validate_relation_binding(
+    policy: &Policy,
+    resource_name: &str,
+    relation: &str,
+    target_resource: &str,
+) -> Result<(), String> {
+    let context = || {
+        format!(
+            "PolicyID: {}, ResourceName: {}, Relation: {}",
+            policy.id, resource_name, relation
+        )
+    };
+    let resource = policy.get_resource(resource_name).ok_or_else(|| {
+        format!(
+            "resource does not exist on the specified policy. PolicyID: {}, ResourceName: {}",
+            policy.id, resource_name
+        )
+    })?;
+    let declared = resource
+        .get_relation(relation)
+        .filter(|declared| declared.expression == crate::RelationExpression::This);
+    let Some(declared) = declared else {
+        return Err(format!(
+            "relation does not exist on the resource. {}",
+            context()
+        ));
+    };
+    if relation == "owner" {
+        return Err(format!(
+            "the owner relation cannot be bound to a field. {}",
+            context()
+        ));
+    }
+    let admits_target = matches!(
+        &declared.subject_restriction,
+        Some(crate::SubjectRestriction::EntitySet { resource, relation })
+            if resource == target_resource && relation.is_empty()
+    );
+    if !admits_target {
+        return Err(format!(
+            "relation types must be exactly the related collection's resource. {}, Expected: {}",
+            context(),
+            target_resource
+        ));
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

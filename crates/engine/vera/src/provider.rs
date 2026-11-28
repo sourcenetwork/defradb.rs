@@ -276,26 +276,18 @@ pub trait VeraProvider: MaybeSendSync {
         nonce: Option<acp::PolicyNonce>,
     ) -> Result<String, ProviderError>;
 
+    /// Register `object_id` with the token's actor as its owner, together
+    /// with `relationships`, what the document carries through its
+    /// `@policy(relation:)` fields: the provider checks the collection's
+    /// `create` over them and stores them with the owner.
     async fn register_object(
         &self,
         bearer_token: &str,
         policy_id: &str,
         resource: &str,
         object_id: &str,
+        relationships: &[acp::DerivedRelationship],
     ) -> Result<(), ProviderError>;
-
-    async fn register_under_parent(
-        &self,
-        _bearer_token: &str,
-        _policy_id: &str,
-        _resource: &str,
-        _object_id: &str,
-        _parent: &acp::RegistrationParent,
-    ) -> Result<(), ProviderError> {
-        Err(ProviderError::Unsupported(
-            "parent-authorized registration".into(),
-        ))
-    }
 
     /// Register each of `objects` under `bearer_token` in one request the
     /// provider applies in order, all or none, at most
@@ -320,6 +312,23 @@ pub trait VeraProvider: MaybeSendSync {
         resource: &str,
         object_id: &str,
     ) -> Result<(), ProviderError>;
+
+    /// Give the object to `new_owner` under `bearer_token`, its owner's.
+    /// A provider that moves no object between owners refuses it as
+    /// unsupported.
+    async fn transfer_object(
+        &self,
+        bearer_token: &str,
+        policy_id: &str,
+        resource: &str,
+        object_id: &str,
+        new_owner: &str,
+    ) -> Result<(), ProviderError> {
+        let _ = (bearer_token, policy_id, resource, object_id, new_owner);
+        Err(ProviderError::Unsupported(
+            "this provider moves no object to another owner".into(),
+        ))
+    }
 
     async fn set_relationship(
         &self,

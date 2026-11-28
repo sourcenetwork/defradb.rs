@@ -327,9 +327,11 @@ fn an_unwatched_worker_measures_its_own_long_polls_and_reports_a_task_once() {
 fn a_poll_the_monitor_flagged_is_cleared_when_it_returns() {
     let (mut worker, shared) = worker();
     let flagger = shared.clone();
-    let _done = spawn_local(async move { flagger.stuck.store(true, Ordering::SeqCst) });
+    let _done = spawn_local(async move {
+        flagger.mark_stuck(flagger.heartbeat.read().map_or(0, |beat| beat.word))
+    });
     settle(&mut worker);
-    assert!(!shared.stuck.load(Ordering::SeqCst));
+    assert!(!shared.is_stuck());
 }
 
 #[test]

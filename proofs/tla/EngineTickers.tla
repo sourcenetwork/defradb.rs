@@ -81,7 +81,8 @@
 \*   | Model          | Rust                                                        |
 \*   |----------------|-------------------------------------------------------------|
 \*   | count          | regolith::Statistics::get_ticker: the sum of the shards the |
-\*   |                | engine's record_tick adds to (regolith src/statistics.rs)   |
+\*   |                | engine's Statistics::add adds to                            |
+\*   |                | (regolith:src/statistics.rs)                                |
 \*   | made           | bookkeeping only: every count the engine made               |
 \*   | mark           | Source::published[at] (:71), zero at export (:119)          |
 \*   | totals         | TOTALS[at] (:43)                                            |
@@ -99,8 +100,8 @@
 \*   | owed           | now - seen, between a won compare_exchange_weak (:86-92)    |
 \*   |                | and its TOTALS[at].fetch_add (:93)                          |
 \*   | Count          | the engine counting into its Statistics (regolith           |
-\*   |                | Statistics::record_tick)                                    |
-\*   | Reset          | regolith::Statistics::reset (regolith src/statistics.rs)    |
+\*   |                | Statistics::add)                                            |
+\*   | Reset          | regolith::Statistics::reset (regolith:src/statistics.rs)    |
 \*   | LetGo          | the store and its engine dropping their Arc<Statistics>     |
 \*   | Visit          | engine_ticker_totals: LIVE.iter (:141), upgrade (:142);     |
 \*   |                | past the last export, the TOTALS loads (:146-153)           |
