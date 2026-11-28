@@ -160,6 +160,43 @@ fn search_through_index(c: &mut Criterion) {
             black_box(hits.len())
         });
     });
+    group.bench_function(BenchmarkId::new("ivfpq_counted", dimensions), |b| {
+        b.to_async(&rt).iter(|| async {
+            let mut txn = store.new_txn(true).await.expect("a transaction");
+            let (hits, reads) = index
+                .search_counted(&mut txn, black_box(&query), K, None)
+                .await
+                .expect("search");
+            txn.discard();
+            black_box((hits.len(), reads))
+        });
+    });
+
+    let (store, index) = rt.block_on(common::vector::filled_hnsw(128, 2_000));
+    let query = Corpus::new(SEED ^ 0x2A2).vector(128);
+    group.bench_function(BenchmarkId::new("hnsw", 128), |b| {
+        b.to_async(&rt).iter(|| async {
+            let mut txn = store.new_txn(true).await.expect("a transaction");
+            let hits = index
+                .search(&mut txn, black_box(&query), K, None)
+                .await
+                .expect("search");
+            txn.discard();
+            black_box(hits.len())
+        });
+    });
+    // The path a routed query takes: the same search, counting its reads.
+    group.bench_function(BenchmarkId::new("hnsw_counted", 128), |b| {
+        b.to_async(&rt).iter(|| async {
+            let mut txn = store.new_txn(true).await.expect("a transaction");
+            let (hits, reads) = index
+                .search_counted(&mut txn, black_box(&query), K, None)
+                .await
+                .expect("search");
+            txn.discard();
+            black_box((hits.len(), reads))
+        });
+    });
     group.finish();
 }
 

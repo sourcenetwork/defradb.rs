@@ -118,4 +118,43 @@ theorem reclaim_shrinks (entries : Nat) (h : 0 < entries) : entries - 1 < entrie
   -- Removing an entry from a non-empty index leaves fewer entries.
   exact Nat.sub_lt h Nat.one_pos
 
+-- The bookkeeping a history walk holds on disk: its stack frames and its node marks.
+structure Book where
+  frames : Nat
+  marks : Nat
+  deriving DecidableEq
+
+-- The key count the root's progress must store for a given bookkeeping.
+def Book.keys (b : Book) : Nat := b.frames + b.marks
+
+-- Pushing a parent writes one frame and one open mark.
+def Book.push (b : Book) : Book := { frames := b.frames + 1, marks := b.marks + 1 }
+
+-- Popping a node: its frame goes, and its mark goes too unless the node was skipped.
+def Book.pop (b : Book) (keep : Bool) : Book :=
+  { frames := b.frames - 1, marks := if keep then b.marks else b.marks - 1 }
+
+-- A push adds exactly the two keys history_walk.rs adds to `Progress::keys`.
+theorem push_accounts (b : Book) : b.push.keys = b.keys + 2 := by
+  -- One frame and one mark: two more keys.
+  simp [Book.push, Book.keys]; omega
+
+-- Popping an applied node removes exactly the two keys the walk subtracts.
+theorem pop_applied_accounts (b : Book) (hf : 1 ≤ b.frames) (hm : 1 ≤ b.marks) :
+    (b.pop false).keys = b.keys - 2 := by
+  -- The frame and the mark both go.
+  simp [Book.pop, Book.keys]; omega
+
+-- Popping a skipped node removes only its frame, the one key the walk subtracts.
+theorem pop_skipped_accounts (b : Book) (hf : 1 ≤ b.frames) :
+    (b.pop true).keys = b.keys - 1 := by
+  -- The done mark stays so a second branch passes the node over.
+  simp [Book.pop, Book.keys]; omega
+
+-- A push followed by an applied pop leaves the bookkeeping as it was: an applied
+-- node, however deep the history, retains nothing once it is finished.
+theorem applied_node_retains_nothing (b : Book) : (b.push.pop false) = b := by
+  -- The frame and mark the push wrote are exactly the ones the pop deletes.
+  cases b; simp [Book.push, Book.pop]
+
 end HistoryTurns

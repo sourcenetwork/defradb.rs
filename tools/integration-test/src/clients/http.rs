@@ -67,9 +67,13 @@ impl State {
         T: Send + 'static,
     {
         let url = self.url_on(name)?;
+        // A node that decides document ACP on Vera takes the identity's own
+        // Vera delegation as its bearer token, in place of an identity token.
         let token = identity.map(|seed| {
-            cli::commands::client::generate_auth_token(&private_key_hex(seed), &url)
-                .expect("a token for a test identity")
+            self.vera_delegation(name, seed).unwrap_or_else(|| {
+                cli::commands::client::generate_auth_token(&private_key_hex(seed), &url)
+                    .expect("a token for a test identity")
+            })
         });
         let client = HttpClient::new(&url, &network_edge())
             .expect("http client")

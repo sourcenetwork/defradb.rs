@@ -39,7 +39,13 @@ where
                     .await?
                     .ok_or_else(|| Error::CollectionNotFound(name.clone()))?;
                 txn.validate_collection_for_write(&collection).await?;
-                db.purge_documents(txn, &collection, &doc_ids).await
+                db.purge_documents(
+                    txn,
+                    &collection,
+                    &doc_ids,
+                    crate::collection::ops::purge::AcpObjects::Release,
+                )
+                .await
             })
         })
         .await

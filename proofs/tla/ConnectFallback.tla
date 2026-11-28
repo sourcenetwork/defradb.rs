@@ -46,7 +46,7 @@
 \*   | Fams, "P", "F"   | first_connected's partition by family (connect.rs:155-158):|
 \*   |                  | `preferred` and `fallback`                                 |
 \*   | att[f] = "run"   | the attempt's TcpStream::connect future runs: nuclei tries |
-\*   |                  | the family's addresses in order (nuclei net/tcp.rs connect)|
+\*   |                  | the family's addresses in order (nuclei:src/net/tcp.rs)    |
 \*   | att[f] = "idle"  | the fallback future pinned but never polled (connect.rs:   |
 \*   |                  | 163): an async connect does nothing until polled           |
 \*   | "ok", "bad"      | the attempt connected, or failed, and the task has not     |

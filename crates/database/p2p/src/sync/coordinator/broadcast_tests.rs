@@ -574,6 +574,92 @@ async fn fanout_registration_failure_is_peer_local() {
     recorder.abort();
 }
 
+/// A write asks for every replicator's marker at once (#3471): this recorder
+/// answers no registration until it holds all three, which a write that
+/// waits for each registration before asking for the next never reaches.
+#[nuclei::test]
+async fn fanout_registrations_run_at_once() {
+    use super::super::access_tests::NoopTransport;
+    use crate::bitswap::{AccessMode, ReplicatorRegistry};
+    use crate::replicator::EqOnlyFilterMatcher;
+    use crate::sync::collection_store::MemoryCollectionStorage;
+    use defra_core::{Block, CompositeDeltaPayload, CrdtDelta};
+
+    const PEERS: [&str; 3] = ["together-a", "together-b", "together-c"];
+
+    let block = Block::new(
+        CrdtDelta::Composite(CompositeDeltaPayload {
+            collection_version_id: "collection1".to_string(),
+            priority: 1,
+            status: 1,
+        }),
+        vec![],
+        vec![],
+    );
+    let data = block.to_dag_cbor().unwrap();
+    let cid = block.generate_cid().unwrap();
+
+    let transport = NoopTransport::new();
+    let store = Arc::new(storage::RegolithStore::in_memory().unwrap());
+    let blockstore = Arc::new(blockstore::DefraBlockstore::new(store, true));
+    let (mut coordinator, _events) = SyncCoordinator::with_head_provider(
+        transport.clone(),
+        blockstore,
+        crate::network::test_network(),
+        crate::sync::SyncConfig::default(),
+        AccessMode::Open,
+        Arc::new(ReplicatorRegistry::new()),
+        Arc::new(MemoryCollectionStorage::default()),
+        Arc::new(crate::sync::head_provider::NoOpHeadProvider),
+        Arc::new(EqOnlyFilterMatcher),
+    )
+    .await
+    .unwrap();
+    let (failure_tx, mut failure_rx) = crate::rt::mpsc::channel::<crate::sync::PushFailure>(16);
+    coordinator.set_failure_channel(failure_tx);
+    let recorder = crate::rt::spawn(async move {
+        let mut held = Vec::new();
+        while let Some(mut event) = failure_rx.recv().await {
+            let Some(reply) = event.durable_tx.take() else {
+                continue;
+            };
+            if event.admission_only || event.acknowledged || event.create_retry {
+                let _ = reply.send(event.marker_generation);
+                continue;
+            }
+            held.push(reply);
+            if held.len() == PEERS.len() {
+                for (generation, reply) in held.drain(..).enumerate() {
+                    let _ = reply.send(Some(generation as u64 + 1));
+                }
+            }
+        }
+    });
+    for peer in PEERS {
+        coordinator.peer_state().peer_connected(peer);
+        transport
+            .create_replicator(
+                &PeerId::new(peer.to_string()),
+                vec!["collection1".to_string()],
+            )
+            .await
+            .unwrap();
+    }
+
+    crate::rt::time::timeout(
+        Duration::from_secs(5),
+        coordinator.push_to_replicators(&cid, &data, "doc1", "collection1"),
+    )
+    .await
+    .expect("a write must not wait for one registration before asking for the next")
+    .expect("every replicator registered");
+    let snapshot = coordinator.sync_status().await.push_backlog;
+    assert_eq!(snapshot.enqueued_total, PEERS.len() as u64);
+
+    coordinator.shutdown().await;
+    recorder.abort();
+}
+
 /// Go pushes an update only to the replicators of its collection
 /// (internal/db/p2p/p2p.go pushLogToReplicators), so a replicator added with
 /// no collections receives nothing. Registries now keep such a replicator

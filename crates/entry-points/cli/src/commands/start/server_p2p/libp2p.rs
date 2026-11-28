@@ -443,6 +443,7 @@ impl Node {
                 .peerstore()
                 .with_retry_schedule(retry_schedule.clone()),
             failure_rx,
+            coordinator.failure_recorder_stats(),
         );
         let se_repusher =
             db::merge::pooled_se_repusher(replication.broadcast_mutator.clone(), database.pool());

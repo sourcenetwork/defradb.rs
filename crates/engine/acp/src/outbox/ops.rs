@@ -15,6 +15,7 @@
 //! by its head key, which only staging reads and writes.
 
 use storage::corekv::{IterOptions, Reader, Store, Writer};
+use storage::merge::counter_i64;
 use storage::merge::owed::{self, part, Counters};
 
 use super::keys::{self, OwedTupleState};
@@ -36,7 +37,8 @@ fn inconsistent(what: &str, seq: u64) -> Error {
 /// actor on an object; deletes naming an actor on an object.
 pub(super) const FIRST: usize = 0;
 /// The second counter: deletes of the owner relation naming an actor on an
-/// object; archives of an object. The node's leaves it at zero.
+/// object, and transfers of an object away from an actor; archives of an
+/// object. The node's leaves it at zero.
 pub(super) const SECOND: usize = 1;
 /// How far the settled part sits from the staged one.
 const SETTLED: usize = 2;
@@ -77,9 +79,11 @@ where
         .ok_or_else(|| Error::Serialization("owed ACP count is malformed".into()))
 }
 
-/// What a live key holds: whether its change is a delete.
+/// What a live key holds: whether its change is a delete, or a transfer,
+/// which revokes no tuple of its own (its actor's denial is counted).
 const LIVE_ADD: &[u8] = &[0];
 const LIVE_DELETE: &[u8] = &[1];
+const LIVE_TRANSFER: &[u8] = &[2];
 
 /// What is unsettled on one tuple, from its live sequences: the first and
 /// last are its oldest and latest, and how many there are, and how many of
@@ -98,7 +102,7 @@ where
     while let Some(entry) = iter.next().await.map_err(storage_error)? {
         let seq = keys::live_seq(&entry.key, &prefix)?;
         let delete = match entry.value.as_ref() {
-            LIVE_ADD => 0,
+            LIVE_ADD | LIVE_TRANSFER => 0,
             LIVE_DELETE => 1,
             _ => {
                 return Err(Error::Serialization(
@@ -421,6 +425,17 @@ where
         let object = keys::object_key(&tuple.policy_id, &tuple.resource, &tuple.object);
         merge(txn, &object, &delta(false, true)).await?;
     }
+    // A transfer takes the owner relation from its actor: counted as such a
+    // delete naming it, it denies the actor on the object until it settles.
+    if change.op == OwedOp::Transfer {
+        let actor = keys::subject_key(
+            &tuple.policy_id,
+            &tuple.resource,
+            &tuple.object,
+            &change.actor,
+        );
+        merge(txn, &actor, &delta(true, true)).await?;
+    }
     if let (true, OwedSubject::Actor { did }) = (delete, &tuple.subject) {
         let subject = keys::subject_key(&tuple.policy_id, &tuple.resource, &tuple.object, did);
         merge(
@@ -456,6 +471,16 @@ pub(super) struct StageMarks {
 /// and commits first aborts this one, and the attempt that then commits read
 /// that commit before it took its own, later, sequence. Settling never
 /// touches the head key, so a settle of the tuple aborts nothing.
+///
+/// A transfer orders its whole object the same way
+/// (`proofs/tla/OwnerTransfer.tla`, `CommitConflict`). Every staging on the
+/// object blind-merges its staging marker; a transfer reads that marker
+/// validated and writes the object's transfer key, which every other change
+/// reads validated. Of a transfer and another change staged on one object at
+/// once, the one that commits second is aborted, and its next attempt takes
+/// a later sequence: changes on an object around a transfer hold their places
+/// in the queue in the order they committed. Two changes that are not
+/// transfers do not conflict by this, and a settle touches neither key.
 pub(super) async fn stage<T>(
     txn: &T,
     sequences: &dyn Store,
@@ -467,6 +492,14 @@ where
 {
     let head_key = keys::head_key(&new.tuple);
     txn.get(&head_key).await.map_err(storage_error)?;
+    let transfer_key =
+        keys::transfer_key(&new.tuple.policy_id, &new.tuple.resource, &new.tuple.object);
+    let staged_key = keys::staged_key(&new.tuple.policy_id, &new.tuple.resource, &new.tuple.object);
+    if new.op == OwedOp::Transfer {
+        txn.get(&staged_key).await.map_err(storage_error)?;
+    } else {
+        txn.get(&transfer_key).await.map_err(storage_error)?;
+    }
     let seq = sequences
         .allocate(keys::SEQUENCE_KEY, 1)
         .await
@@ -482,12 +515,16 @@ where
 
     put(txn, &keys::queue_key(seq), &record).await?;
     put(txn, &head_key, &seq.to_be_bytes()).await?;
-    let live = if change.op != OwedOp::Add {
-        LIVE_DELETE
-    } else {
-        LIVE_ADD
+    if change.op == OwedOp::Transfer {
+        put(txn, &transfer_key, &seq.to_be_bytes()).await?;
+    }
+    let live = match change.op {
+        OwedOp::Add => LIVE_ADD,
+        OwedOp::Transfer => LIVE_TRANSFER,
+        OwedOp::Delete | OwedOp::Archive => LIVE_DELETE,
     };
     put(txn, &keys::live_key(&change.tuple, seq), live).await?;
+    merge(txn, &staged_key, &counter_i64(1)).await?;
     account(txn, &change, false).await?;
     Ok(change)
 }

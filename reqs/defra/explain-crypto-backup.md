@@ -64,6 +64,13 @@ With `@index` on `age`, filtering `age: {_eq: 30}` over three docs reports `scan
 
 The Rust execution explain includes `indexName` on an index-backed `scanNode`. A direct foreign-key lookup names the index it uses; otherwise the child scan retains its index name. This is a deliberate Rust-only addition to the Go execute-explain shape.
 
+# `defra.explain.execute.vector_index_fetches`: A routed vector search counts the index entries it reads
+
+- **Parents:** ["defra"]
+- **Scenarios:** ["explain.execute.vector_index_fetches.hnsw_search_counts_its_reads", "explain.execute.vector_index_fetches.flat_search_counts_its_reads", "explain.execute.vector_index_fetches.ivfflat_search_counts_its_reads", "explain.execute.vector_index_fetches.ivfpq_search_counts_its_reads", "explain.execute.vector_index_fetches.ssg_search_counts_its_reads", "explain.execute.vector_index_fetches.diskann_search_counts_its_reads", "query.simple.query-simple-with-similarity-on-vector-index-returns-k-nearest"]
+
+For a query routed to a vector index (`User(order: {_alias: {sim: DESC}}, limit: k)` selecting `sim: SIMILARITY(vector: {...})` on a field with `@index(vector: ...)`), `@explain(type: execute)` reports on the routed `scanNode` an `indexFetches` equal to the number of vector-index entries the search read from storage (graph nodes, inverted-list entries, codebooks, the index's metadata and pending entries), summed over every widening pass, the way a scalar index counts each entry it reads. With eight indexed documents and `limit: 2` it is at least 2 for every algorithm (`hnsw`, `flat`, `ivfflat`, `ivfpq`, `ssg`, `diskann`), and a larger page that needs more widening passes reports the reads from every pass. An empty index's failed advisory-metadata read and ordinary-metadata fallback count two fetches even though the scan falls back and does not name the index as serving the page. Go reports 1 for the whole search; the count is a measurement only and changes no query result. Plan explain (default and `simple`) does not report `indexFetches`.
+
 # `go.explain.execute.orphan`: Orphan node counters
 
 - **Parents:** ["go.explain.execute"]
@@ -338,6 +345,13 @@ Two peers whose `@branchable` collection versions have diverged each create an e
 - **Scenarios:** ["searchable_encryption.patch-collection-modify-encrypted-index-should-error", "searchable_encryption.patch-collection-new-encrypted-index-should-error", "searchable_encryption.patch-collection-remove-encrypted-index-should-error"]
 
 A collection patch that adds, removes or modifies `/Users/EncryptedIndexes` fails with `collection encrypted indexes cannot be mutated`.
+
+# `defra.searchable_encryption.index.one_answer`: Every client manages encrypted indexes through the same checks
+
+- **Parents:** ["go.searchable_encryption.index"]
+- **Scenarios:** ["searchable_encryption::missing_collection::encrypted_index_on_a_missing_collection_is_refused_in_and_outside_a_transaction", "searchable_encryption::missing_collection::a_transaction_cannot_list_encrypted_indexes_for_a_deleted_collection", "searchable_encryption::caller_identity::an_anonymous_caller_cannot_use_the_signing_nodes_identity_in_a_transaction"]
+
+`NewEncryptedIndex`, `ListEncryptedIndexes`, `ListAllEncryptedIndexes` and `DeleteEncryptedIndex` answer the same through the embedded node, FFI, the CLI, the embedded node's HTTP server and the HTTP server `defradb start` runs. In a transaction each runs there, with node access checked in it for the request's caller identity, never the signing node's transaction-owner identity; with none, the caller must hold `get-collection` and then the operation's own permission (`new-encrypted-index`, `list-encrypted-index`, `delete-encrypted-index`), or `list-all-encrypted-index` alone for every collection's listing, and a change commits in a transaction of its own. An anonymous caller inside a transaction owned by the signing node is refused with `not authorized to perform operation. Permission: get-collection` for `NewEncryptedIndex`, `ListEncryptedIndexes` and `DeleteEncryptedIndex`, and with `not authorized to perform operation. Permission: list-all-encrypted-index` for `ListAllEncryptedIndexes`. A collection the node does not hold fails with `collection not found. Name: <name>` (Go's `collection not found`, naming the collection), inside a transaction and outside one alike, including a collection deleted after a transaction opened; and a transaction that is not open fails with `transaction not found`.
 
 # `defra.signature`: Block signing
 

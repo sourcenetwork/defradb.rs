@@ -20,6 +20,7 @@ mod dag_sync;
 mod dispatch_queue;
 pub(crate) mod doc_sync_ids;
 mod event_dispatcher;
+mod failure_recorder_stats;
 mod head_provider;
 mod head_scope;
 mod manager;
@@ -60,6 +61,10 @@ pub use dispatch_queue::{
 pub(crate) use event_dispatcher::classify_p2p_event;
 pub(crate) use event_dispatcher::DispatchDiagnostics;
 pub use event_dispatcher::{DispatchAdmission, DispatchClass, DispatchEvent, DispatchSnapshot};
+pub use failure_recorder_stats::{
+    FailureRecorderSnapshot, FailureRecorderStats, FAILURE_RECORDER_LANES,
+    FAILURE_RECORDER_LANE_CAPACITY,
+};
 pub use head_provider::{DocumentHeadProvider, NoOpHeadProvider};
 #[cfg(any(feature = "libp2p-transport", feature = "iroh-transport"))]
 pub(crate) use manager::record_gossip_decode_failure_sample;

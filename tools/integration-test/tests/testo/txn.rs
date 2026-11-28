@@ -20,6 +20,7 @@ mod new_index;
 mod outcome;
 mod patch_collection;
 mod refresh_view;
+mod relation_join_read;
 mod request;
 mod returned_field;
 mod set_active_collection_version;

@@ -324,6 +324,7 @@ fn named(command: &crate::PolicyCommand<'_>) -> String {
             subject: on,
         } => format!("delete {object} {relation} {}", subject(on)),
         PolicyAction::ArchiveObject => format!("archive {object}"),
+        PolicyAction::TransferObject { new_owner } => format!("transfer {object} to {new_owner}"),
     }
 }
 

@@ -20,7 +20,7 @@ use crate::worker::REPORTED;
 use crate::{block_on, current_worker, placement};
 
 /// Shared state of `workers` unpinned workers on one node, no threads.
-fn bare(workers: usize, clock: Arc<ManualClock>) -> Arc<PoolShared> {
+pub(super) fn bare(workers: usize, clock: Arc<ManualClock>) -> Arc<PoolShared> {
     let config = Config {
         workers: Workers::Count(workers),
         placement: Placement::Unpinned,
@@ -100,7 +100,7 @@ fn the_monitor_reports_a_stuck_poll_once_and_routes_around_it() {
     );
     clock.advance(2_000);
     assert_eq!(monitor::scan(&shared, clock.now_micros()), 1);
-    assert!(stuck.stuck.load(Ordering::SeqCst));
+    assert!(stuck.is_stuck());
     assert_eq!(stuck.stats().long_polls, 1);
     monitor::scan(&shared, clock.now_micros());
     assert_eq!(stuck.stats().long_polls, 1, "reported once per task");
@@ -122,7 +122,7 @@ fn an_idle_worker_is_never_marked_stuck() {
     shared.workers[0].heartbeat.idle();
     clock.advance(20_000);
     assert_eq!(monitor::scan(&shared, clock.now_micros()), 0);
-    assert!(!shared.workers[0].stuck.load(Ordering::SeqCst));
+    assert!(!shared.workers[0].is_stuck());
 }
 
 #[test]
@@ -133,10 +133,7 @@ fn a_task_reported_before_is_not_reported_again() {
     clock.advance(50_000);
     assert_eq!(monitor::scan(&shared, clock.now_micros()), 1);
     assert_eq!(shared.workers[1].stats().long_polls, 0);
-    assert!(
-        shared.workers[1].stuck.load(Ordering::SeqCst),
-        "still routed around"
-    );
+    assert!(shared.workers[1].is_stuck(), "still routed around");
 }
 
 #[test]
@@ -185,7 +182,7 @@ fn a_key_keeps_its_worker_and_falls_back_to_one_peer_while_it_is_stuck() {
             .index] = true;
     }
     assert!(used.iter().all(|u| *u), "keys spread over every worker");
-    shared.workers[0].stuck.store(true, Ordering::SeqCst);
+    shared.workers[0].mark_stuck(0);
     let fallback = shared.route(Target::Key(key)).unwrap().id.index;
     assert_ne!(fallback, 0);
     for _ in 0..20 {

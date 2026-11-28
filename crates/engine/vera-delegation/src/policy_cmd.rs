@@ -8,7 +8,7 @@
 use alloy_primitives::Bytes;
 use alloy_sol_types::SolCall as _;
 use vera_modules::acp::relationship_values;
-use vera_modules::acp::types::{Object, PolicyCmd, Relationship, Subject};
+use vera_modules::acp::types::{Actor, Object, PolicyCmd, Relationship, Subject};
 
 use crate::abi::IAcp;
 use crate::{
@@ -46,6 +46,13 @@ pub fn typed(command: &PolicyCommand<'_>) -> Result<PolicyCmd, CommandError> {
             PolicyCmd::DeleteRelationship(relationship(relation, subject)?)
         }
         PolicyAction::ArchiveObject => archive_object(command.resource, command.object_id),
+        PolicyAction::TransferObject { new_owner } => PolicyCmd::TransferObject {
+            object: object(command.resource, command.object_id),
+            new_owner: did_spelling::wire(new_owner)
+                .parse()
+                .map(Actor)
+                .map_err(|e| CommandError::Subject(format!("{e}")))?,
+        },
     })
 }
 

@@ -363,3 +363,48 @@ fn a_subject_vera_rs_has_no_command_for_is_refused() {
         assert!(request_digest(&command).is_err());
     }
 }
+
+#[test]
+fn a_transfer_names_its_new_owner_as_vera_rs_takes_it_and_its_digest_follows() {
+    let transfer = |new_owner| PolicyCommand {
+        policy_id: POLICY,
+        resource: "users",
+        object_id: "bae-1",
+        action: PolicyAction::TransferObject { new_owner },
+    };
+    let ed25519 = typed(&transfer(ED25519)).expect("a command");
+    assert_eq!(
+        serde_json::to_vec(&ed25519).unwrap(),
+        serde_json::to_vec(&PolicyCmd::TransferObject {
+            object: object("users", "bae-1"),
+            new_owner: Actor(ED25519.parse().unwrap()),
+        })
+        .unwrap()
+    );
+    assert_eq!(
+        String::from_utf8(sent(POLICY, &ed25519)).unwrap(),
+        format!(
+            r#"{{"TransferObject":{{"object":{{"resource":"users","id":"bae-1"}},"new_owner":"{ED25519}"}}}}"#
+        )
+    );
+    // vera.rs takes a P-256 key under its compressed spelling only.
+    assert_eq!(
+        sent(POLICY, &typed(&transfer(P256_UNCOMPRESSED)).unwrap()),
+        sent(POLICY, &typed(&transfer(P256_COMPRESSED)).unwrap())
+    );
+    let received: PolicyCmd = serde_json::from_slice(&sent(POLICY, &ed25519)).unwrap();
+    assert_eq!(
+        request_digest(&transfer(ED25519)).unwrap(),
+        DelegatedOperation::PolicyCommand(POLICY, &received)
+            .digest()
+            .unwrap()
+    );
+    assert_ne!(
+        request_digest(&transfer(ED25519)).unwrap(),
+        request_digest(&transfer(SECP256K1_COMPRESSED)).unwrap()
+    );
+    assert!(matches!(
+        typed(&transfer("not a DID")),
+        Err(CommandError::Subject(_))
+    ));
+}

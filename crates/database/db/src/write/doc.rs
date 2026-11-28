@@ -470,7 +470,7 @@ impl<S: Store + 'static> DocMutator for DbDocMutator<S> {
         self.ensure_collection_can_write(collection_name, &collection)
             .await?;
         crate::chunk::user_writes::ensure_user_writable(collection.schema())?;
-        let chunk_plans = crate::chunk::sync::plan_chunks(
+        let mut chunk_plans = crate::chunk::sync::plan_chunks(
             collection.schema(),
             &doc,
             Some(&modified_fields),
@@ -540,6 +540,7 @@ impl<S: Store + 'static> DocMutator for DbDocMutator<S> {
         };
         let heads =
             crate::write::autocommit::helpers::load_update_heads(&datastore, doc_short_id).await?;
+        crate::chunk::sync::inherit_encryption(&mut chunk_plans, &blockstore, &heads).await?;
         update_pipeline::write_local(
             &self.db,
             &stores,
@@ -670,7 +671,7 @@ impl<S: Store + 'static> DocMutator for DbDocMutator<S> {
                 })),
                 _ => context.clone(),
             };
-            crate::write::autocommit::helpers::unregister_deleted_doc(
+            crate::write::autocommit::helpers::archive_deleted_doc(
                 self.db.document_acp(),
                 &systemstore,
                 &collection,

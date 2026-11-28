@@ -53,7 +53,9 @@ impl<S: Store> crate::database::DB<S> {
         let mut cached = Cached::Taken;
         self.collections.rcu(|old| {
             let mut cache = old.clone();
-            cached = cache.offer(collection.clone());
+            cached = cache.offer(
+                collection.with_current_index_actions(old.by_id(collection.collection_id()), &[]),
+            );
             cache
         });
         if cached == Cached::NameHeldByAnother {

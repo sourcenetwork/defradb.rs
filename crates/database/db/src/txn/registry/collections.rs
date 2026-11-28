@@ -230,7 +230,13 @@ impl<S: Store + 'static> DbTransactionRegistry<S> {
                             // `committed` already carries the index action state this
                             // transaction wrote; caching a plain Collection::new here
                             // would drop it the moment the callback fired.
-                            cache.put_named(committed.name(), committed.clone());
+                            cache.put_named(
+                                committed.name(),
+                                committed.with_current_index_actions(
+                                    old.by_id(committed.collection_id()),
+                                    &[],
+                                ),
+                            );
                         } else if was_active {
                             cache.remove(committed.name());
                         }
