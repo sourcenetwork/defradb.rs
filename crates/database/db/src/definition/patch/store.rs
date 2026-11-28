@@ -17,6 +17,7 @@ impl<S: Store> crate::database::DB<S> {
         is_active_explicitly_set: bool,
         migration: Option<lens::LensConfig>,
     ) -> Result<StoredVersion> {
+        let replaces_chunks = old_schema.embedding_generation != new_schema.embedding_generation;
         let old_version_id = old_schema.version_id.as_str();
         let actual_name = old_schema.name.as_str();
         let collection_id = old_schema.collection_id.as_str();
@@ -337,13 +338,15 @@ impl<S: Store> crate::database::DB<S> {
                     .set(&name_key.bytes(), new_version_id.as_bytes())
                     .await
                     .map_err(Error::Storage)?;
-                crate::definition::migration::owe_reindex(
-                    &systemstore,
-                    &self.collections,
-                    collection_id,
-                    None,
-                )
-                .await?;
+                if !replaces_chunks {
+                    crate::definition::migration::owe_reindex(
+                        &systemstore,
+                        &self.collections,
+                        collection_id,
+                        None,
+                    )
+                    .await?;
+                }
             }
 
             // 4. Add version index at /collection/version/{collection_id}/{new_version_id}
@@ -655,6 +658,6 @@ impl<S: Store> crate::database::DB<S> {
 /// A version [`crate::database::DB::store_new_version`] wrote, and the lens it
 /// committed, for the follow-up once its transaction commits.
 pub(crate) struct StoredVersion {
-    schema: CollectionVersion,
+    pub(super) schema: CollectionVersion,
     migration: Option<crate::definition::migration::committed_lenses::PreparedLens>,
 }

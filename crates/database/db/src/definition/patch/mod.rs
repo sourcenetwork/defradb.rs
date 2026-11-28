@@ -8,6 +8,7 @@
 //! validated together before each changed collection is stored.
 
 mod added;
+mod embedding_switch;
 mod in_place;
 mod patch_slop;
 mod store;
@@ -18,6 +19,7 @@ mod version;
 use crate::collection::Collection;
 use crate::error::{Error, Result};
 use crate::txn::DbTxn;
+use query::{error::QueryError, prepared::PreparedInputMemo};
 use rapidhash::{RapidHashMap, RapidHashSet};
 use schema::{CollectionSource, CollectionVersion};
 use serde_json::Value;
@@ -33,7 +35,7 @@ pub(crate) struct PendingPatch {
     is_active_explicitly_set: bool,
 }
 
-impl<S: Store> crate::database::DB<S> {
+impl<S: Store + 'static> crate::database::DB<S> {
     /// Apply a JSON Patch to one or more collection schemas.
     ///
     /// The patch works on a map of every collection version keyed by version
@@ -64,6 +66,34 @@ impl<S: Store> crate::database::DB<S> {
             .await?;
 
         let raw = validate::operations(patch)?;
+        let mut inputs = None;
+        loop {
+            match self
+                .patch_collection_attempt(context, &raw, migration.clone(), &mut inputs)
+                .await
+            {
+                Err(Error::Query(QueryError::NeedsInput(request))) => {
+                    let Some(inputs) = &inputs else {
+                        return Err(QueryError::NeedsInput(request).into());
+                    };
+                    inputs
+                        .answer_wave(&request, |wave| {
+                            crate::write::prepare::resolve_inputs(self, context, wave)
+                        })
+                        .await?;
+                }
+                result => return result,
+            }
+        }
+    }
+
+    async fn patch_collection_attempt(
+        &self,
+        context: &defra_core::RequestContext,
+        raw: &[Value],
+        migration: Option<lens::LensConfig>,
+        inputs: &mut Option<PreparedInputMemo>,
+    ) -> Result<()> {
         // Every read and write of the patch runs in this one transaction, so
         // the patch commits whole or not at all.
         let mut txn = self.new_txn(false).await?;
@@ -77,7 +107,7 @@ impl<S: Store> crate::database::DB<S> {
         // collection an earlier operation added.
         let mut patched = versions.clone();
         let mut ops = Vec::with_capacity(raw.len());
-        for raw_op in &raw {
+        for raw_op in raw {
             // Collections resolve by their stored names, which an earlier
             // operation may have moved away; fields by the current state.
             let op =
@@ -142,7 +172,27 @@ impl<S: Store> crate::database::DB<S> {
             validate_index_fields(version)?;
         }
         for patched in &changed {
+            if patched.old_schema.is_generated()
+                && patched.old_schema.is_active != patched.new_schema.is_active
+                && old_versions.iter().any(|version| {
+                    version.collection_id == patched.old_schema.collection_id
+                        && version.embedding_generation.is_some()
+                })
+            {
+                return Err(Error::InvalidPatch(
+                    "the active chunk embedding generation can only change through a chunk embedding switch".into(),
+                ));
+            }
             self.validate_changed(&txn, patched).await?;
+        }
+        if migration.is_some()
+            && changed.iter().any(|p| {
+                schema::definition_validation::chunk_embedding_switch(&p.old_schema, &p.new_schema)
+            })
+        {
+            return Err(Error::InvalidPatch(
+                "a lens cannot be supplied with a chunk embedding switch".into(),
+            ));
         }
         if migration.is_some() && changed.len() > 1 {
             return Err(Error::InvalidPatch(
@@ -173,6 +223,22 @@ impl<S: Store> crate::database::DB<S> {
         let mut migration = migration;
         let mut stored = Vec::new();
         for patched in changed {
+            if schema::definition_validation::chunk_embedding_switch(
+                &patched.old_schema,
+                &patched.new_schema,
+            ) {
+                stored.push(
+                    self.switch_chunk_embeddings(
+                        &mut txn,
+                        context,
+                        patched,
+                        inputs.get_or_insert_with(PreparedInputMemo::default),
+                    )
+                    .await?,
+                );
+                continue;
+            }
+
             if self.update_version_in_place(&mut txn, &patched).await? {
                 continue;
             }
@@ -218,6 +284,11 @@ impl<S: Store> crate::database::DB<S> {
             new_schema,
             ..
         } = patched;
+        if old_schema.embedding_generation != new_schema.embedding_generation {
+            return Err(Error::InvalidPatch(
+                "embedding generation is assigned by a chunk embedding switch".into(),
+            ));
+        }
         Collection::validate_default_values(new_schema)?;
         // Matches Go's validateDematerializedViewHasNoData.
         if old_schema.is_materialized

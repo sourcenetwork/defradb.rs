@@ -325,12 +325,12 @@ With `body: String @chunk` and `body_v: [Float32!] @embedding(fields: ["body"], 
 
 Adding `Article` with `body_v: [Float32!] @embedding(fields: ["title", "body"], ...)` over the chunked `body` fails with `@embedding over a @chunk field must embed only that field. Field: Article.body_v`. An embedding whose `template` reads the chunked field, like `{{ .body }}`, fails the same way.
 
-# `defra.chunk.embed.patch`: A patch cannot move or change a chunk embedding
+# `defra.chunk.embed.patch`: A patch cannot move or remove a chunk embedding
 
 - **Parents:** ["defra.chunk.embed"]
-- **Scenarios:** ["chunk::embed_patch::a_patch_cannot_move_or_change_a_chunk_embedding"]
+- **Scenarios:** ["chunk::embed_patch::a_patch_cannot_move_or_remove_a_chunk_embedding"]
 
-Replacing the model of `/Article__body_chunk/VectorEmbeddings/0`, or removing it, fails with `a generated chunk collection's embeddings cannot be mutated. Collection: Article__body_chunk`. Adding to `/Article/VectorEmbeddings` an embedding whose `Fields` name `body` fails with `an embedding over a chunked field belongs to its chunk collection. Field: Article.title`.
+Removing `/Article__body_chunk/VectorEmbeddings/0` fails with `a generated chunk collection's embeddings cannot be mutated. Collection: Article__body_chunk`. Adding to `/Article/VectorEmbeddings` an embedding whose `Fields` name `body` fails with `an embedding over a chunked field belongs to its chunk collection. Field: Article.title`.
 
 # `defra.chunk.embed.chunks`: Each chunk is embedded on its own text
 
@@ -408,3 +408,24 @@ Adding an article with `body` encrypted asks the model for each chunk once, and 
 - **Scenarios:** ["chunk::embed_writes::an_upsert_embeds_the_chunks_it_creates"]
 
 An `upsert_Article` that finds no article creates one, asks the model for each of its chunks once, and every chunk holds its vector.
+
+# `defra.chunk.embed.switch`: Replace the embeddings of a generated chunk collection
+
+- **Parents:** ["defra.chunk.embed"]
+- **Scenarios:** ["chunk::embed_switch::switch_replaces_searchable_chunks", "chunk::embed_switch::wrong_dimensions_keep_the_old_generation", "chunk::embed_switch::provider_failure_keeps_the_old_generation", "chunk::embed_switch::a_protected_source_requires_bulk_read_authority"]
+
+A collection patch may change the provider and embedding selection of an existing
+chunk embedding, together with the dimensions of its vector index. The patch
+changes `VectorEmbeddings/<position>/Provider`, `VectorEmbeddings/<position>/Model`
+and `Indexes/<position>/KindDescription/Dimensions` in one request. It keeps
+the chunk text, hash and source. Once it succeeds, only replacement
+chunks are searchable. A provider failure or a vector with the wrong dimensions
+leaves the previous definition and searchable chunks in place. For example, a
+two-dimensional response to a switch that declares four dimensions fails with
+`chunk embedding Article__body_chunk.body_v returned 2 dimensions, expected 4`.
+
+The caller needs node permission to patch collections and read documents. If the
+source collection has a document policy, the caller must be the node identity
+or have DAC bypass. A caller without bulk read authority gets
+`not authorized to perform operation. Permission: bypass-dac` before the
+provider receives any protected text.

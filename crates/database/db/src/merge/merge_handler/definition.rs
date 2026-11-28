@@ -178,6 +178,11 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
             .map(schema::ChunkedField::from)
             .collect();
         schema.chunk_of = payload.chunk_of.as_deref().map(schema::ChunkSource::from);
+        if schema.is_generated() {
+            schema
+                .embedding_generation
+                .clone_from(&payload.embedding_generation);
+        }
         // The version ID binds the policy by a CID over its reference. The
         // record keeps the binding, and the policy itself only when a version
         // this node holds of the same collection supplies the reference the

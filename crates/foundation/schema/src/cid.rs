@@ -57,6 +57,8 @@ pub struct Commitments<'a> {
     pub chunked_fields: &'a [crate::ChunkedField],
     /// The parent field of a generated chunk collection.
     pub chunk_of: Option<&'a crate::ChunkSource>,
+    /// Commitment to the settings used by the replacement chunks.
+    pub embedding_generation: Option<&'a str>,
 }
 
 /// The policy commitment for a collection's optional policy.
@@ -91,6 +93,7 @@ impl<'a> Commitments<'a> {
             policy_cid: policy_commitment(version.policy.as_ref()),
             chunked_fields: &version.chunked_fields,
             chunk_of: version.chunk_of.as_ref(),
+            embedding_generation: version.embedding_generation.as_deref(),
         }
     }
 
@@ -296,6 +299,7 @@ fn build_collection_delta(
     if let Some(source) = commitments.chunk_of {
         delta = delta.with_chunk_of(source.into());
     }
+    delta.embedding_generation = commitments.embedding_generation.map(str::to_owned);
     delta
 }
 

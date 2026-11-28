@@ -375,6 +375,15 @@ impl Collection {
             .await
     }
 
+    pub(crate) async fn get_live_with_validated_short_ids(
+        &self,
+        datastore: &NamespaceView,
+        systemstore: &NamespaceView,
+    ) -> Result<Vec<(u64, Document, bool)>> {
+        self.scan_documents(datastore, systemstore, false, None, true)
+            .await
+    }
+
     /// Read every live document and validate the scanned range, including
     /// concurrent inserts, before a transaction commits a decision based on it.
     pub async fn get_all_with_datastore_validated(
@@ -383,7 +392,7 @@ impl Collection {
         systemstore: &NamespaceView,
     ) -> Result<Vec<Document>> {
         Ok(self
-            .scan_documents(datastore, systemstore, false, None, true)
+            .get_live_with_validated_short_ids(datastore, systemstore)
             .await?
             .into_iter()
             .map(|(_, doc, _)| doc)

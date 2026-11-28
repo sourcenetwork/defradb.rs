@@ -48,8 +48,10 @@ pub(super) fn validate_chunks_not_modified(
                 "a generated chunk collection's fields cannot be mutated. Collection: {}",
                 new_col.name
             ));
-        } else if old_col.is_generated() && new_col.vector_embeddings != old_col.vector_embeddings {
-            // TODO(https://github.com/sourcenetwork/defradb.rs/issues/3382): a way off a retired model.
+        } else if old_col.is_generated()
+            && new_col.vector_embeddings != old_col.vector_embeddings
+            && !chunk_embedding_switch(old_col, new_col)
+        {
             errs.push(format!(
                 "a generated chunk collection's embeddings cannot be mutated. Collection: {}",
                 new_col.name
@@ -107,4 +109,47 @@ pub(super) fn validate_chunk_settings(
         .flat_map(chunk_settings_errors)
         .map(|error| error.to_string())
         .collect()
+}
+
+/// Whether the difference is confined to replacement embedding settings and
+/// dimensions of their existing indexes.
+pub fn chunk_embedding_switch(old: &CollectionVersion, new: &CollectionVersion) -> bool {
+    if !old.is_generated()
+        || !old.is_active
+        || !new.is_active
+        || old.vector_embeddings.is_empty()
+        || old.vector_embeddings.len() != new.vector_embeddings.len()
+        || old.indexes.len() != new.indexes.len()
+        || (old.vector_embeddings == new.vector_embeddings && old.indexes == new.indexes)
+    {
+        return false;
+    }
+    old.vector_embeddings
+        .iter()
+        .zip(&new.vector_embeddings)
+        .all(|(before, after)| {
+            before.field_name == after.field_name
+                && before.fields == after.fields
+                && before.template == after.template
+        })
+        && old.indexes.iter().zip(&new.indexes).all(|(before, after)| {
+            if before == after {
+                return true;
+            }
+            let (Some(before_vector), Some(mut after_vector)) =
+                (before.vector(), after.vector().copied())
+            else {
+                return false;
+            };
+            if !new.vector_embeddings.iter().any(|embedding| {
+                before
+                    .fields
+                    .first()
+                    .is_some_and(|field| field.name == embedding.field_name)
+            }) {
+                return false;
+            }
+            after_vector.dimensions = before_vector.dimensions;
+            before == &after.clone().as_vector(after_vector)
+        })
 }

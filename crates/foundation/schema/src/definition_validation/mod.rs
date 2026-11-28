@@ -4,6 +4,7 @@
 //! set of validators after every patch to ensure old vs new state consistency.
 
 mod chunk_validators;
+pub use chunk_validators::chunk_embedding_switch;
 mod global_validators;
 mod helpers;
 mod new_field_validators;

@@ -348,6 +348,12 @@ impl TryFrom<&CollectionDefinitionDeltaPayload> for Ipld {
                 Ipld::List(payload.chunked_fields.iter().map(Ipld::from).collect()),
             );
         }
+        if let Some(generation) = &payload.embedding_generation {
+            map.insert(
+                "embeddingGeneration".to_owned(),
+                Ipld::String(generation.clone()),
+            );
+        }
         if let Some(ref chunk_of) = payload.chunk_of {
             map.insert("chunkOf".to_string(), Ipld::from(chunk_of.as_ref()));
         }

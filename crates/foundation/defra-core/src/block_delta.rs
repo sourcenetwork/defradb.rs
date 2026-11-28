@@ -425,6 +425,14 @@ pub struct CollectionDefinitionDeltaPayload {
     /// The parent field a generated chunk collection holds the chunks of.
     #[serde(rename = "chunkOf", default, skip_serializing_if = "Option::is_none")]
     pub chunk_of: Option<Box<ChunkOfDelta>>,
+
+    /// Binds replacement vectors to the settings of this definition version.
+    #[serde(
+        rename = "embeddingGeneration",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub embedding_generation: Option<String>,
 }
 
 /// The splitter version a `@chunk` setting that states none was cut with.
@@ -482,6 +490,7 @@ impl CollectionDefinitionDeltaPayload {
             policy_cid: None,
             chunked_fields: Vec::new(),
             chunk_of: None,
+            embedding_generation: None,
         }
     }
 

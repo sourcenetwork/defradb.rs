@@ -794,6 +794,7 @@ impl<'a> SdlParser<'a> {
             policy_cid: None,
             chunked_fields: &type_def.directives.chunked_fields,
             chunk_of: type_def.directives.chunk_of.as_ref(),
+            embedding_generation: None,
         };
         let collection_id = generate_collection_id(&type_def.name, &fields, headstore, commitments);
 

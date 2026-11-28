@@ -50,7 +50,42 @@ where
     })
 }
 
+#[derive(Deserialize)]
+struct StoredEmbeddingGeneration {
+    #[serde(rename = "EmbeddingGeneration", default)]
+    generation: Option<serde::de::IgnoredAny>,
+}
+
 impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
+    pub(super) async fn crosses_chunk_embedding_generation(
+        systemstore: &NamespaceView,
+        collection: &Collection,
+        active_version: &str,
+        stored_definition: &[u8],
+    ) -> std::result::Result<bool, MergeError> {
+        if !collection.schema().is_generated() || collection.version_id() == active_version {
+            return Ok(false);
+        }
+        if decode::<StoredEmbeddingGeneration>(collection.version_id(), stored_definition)?
+            .generation
+            .is_some()
+        {
+            return Ok(true);
+        }
+        let Some(active) = systemstore
+            .get(&CollectionKey::new(active_version).bytes())
+            .await
+            .map_err(|error| MergeError::Database(crate::error::Error::Storage(error)))?
+        else {
+            return Ok(false);
+        };
+        Ok(
+            decode::<StoredEmbeddingGeneration>(active_version, &active)?
+                .generation
+                .is_some(),
+        )
+    }
+
     /// Owes `collection`'s collection a reindex, in the merge's transaction,
     /// when the active version `active_version` has indexes and reads the
     /// document, stored at another version of it, through a lens. The active

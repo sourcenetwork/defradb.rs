@@ -88,7 +88,7 @@ pub(crate) struct ChunkWrites<'a, S>
 where
     S: Store + 'static,
 {
-    pub(crate) db: &'a Arc<DB<S>>,
+    pub(crate) db: &'a DB<S>,
     pub(crate) txn: &'a DbTxn<S>,
     pub(crate) context: &'a RequestContext,
     pub(crate) prepared_inputs: Option<&'a PreparedInputMemo>,
@@ -143,7 +143,7 @@ where
                     continue;
                 }
                 let mut doc = Self::chunk_document(&target, parent_doc_id, text, hash.clone())?;
-                if let Some(miss) = self.embed(&target, &mut doc)? {
+                if let Some(miss) = self.embed(&target.collection, &mut doc)? {
                     first_miss.get_or_insert(miss);
                 }
                 docs.push((doc, hash));
