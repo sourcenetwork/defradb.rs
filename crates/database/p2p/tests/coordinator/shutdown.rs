@@ -1,5 +1,7 @@
-use super::SyncShutdownHandle;
+use super::{SyncShutdownHandle, BACKGROUND_TASK_SHUTDOWN_TIMEOUT};
 use crate::network::{test_network, Network};
+use crate::tracked_task::TrackedTask;
+use futures::FutureExt;
 use nuclei::sync::oneshot;
 use std::sync::Arc;
 
@@ -139,6 +141,32 @@ async fn shutdown_rejects_new_tasks_without_spawning_them() {
     assert_eq!(shutdown.retained_task_count(), 0);
 }
 
+#[test]
+fn drain_waits_for_an_admitted_registration_to_publish() {
+    edge::testing::paused(|edge| async move {
+        let shutdown = SyncShutdownHandle::new(1, Network::on(edge));
+        let access = shutdown.begin_task_registry_access().unwrap();
+        let resource = Arc::new(());
+        let retained = Arc::downgrade(&resource);
+        let task = TrackedTask::spawn(shutdown.network().edge(), async move {
+            let _resource = resource;
+            std::future::pending::<()>().await;
+        });
+
+        assert!(shutdown.begin_shutdown());
+        let mut drain =
+            std::pin::pin!(shutdown.drain_background_tasks(BACKGROUND_TASK_SHUTDOWN_TIMEOUT));
+        assert!((&mut drain).now_or_never().is_none());
+        assert!(shutdown.begin_task_registry_access().is_none());
+
+        access.register_task(task);
+        drop(access);
+        drain.await;
+        assert!(retained.upgrade().is_none());
+        assert!(shutdown.inner.background_tasks.is_empty());
+    })
+}
+
 #[nuclei::test(threads = 2)]
 async fn task_registration_racing_shutdown_does_not_leave_resources_alive() {
     for _ in 0..32 {
@@ -163,18 +191,11 @@ async fn task_registration_racing_shutdown_does_not_leave_resources_alive() {
         shutdown.shutdown().await;
         registration.join().await.unwrap();
 
-        // A registration that lost the race self-aborts and returns before the
-        // runtime has dropped the cancelled future, so the resource release
-        // trails `spawn_task` by a scheduling turn. What shutdown owes is that
-        // the release happens at all, not that it already happened.
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
-        while retained.upgrade().is_some() {
-            assert!(
-                std::time::Instant::now() < deadline,
-                "registration raced past the drain"
-            );
-            nuclei::time::sleep(std::time::Duration::from_millis(5)).await;
-        }
+        assert!(
+            retained.upgrade().is_none(),
+            "registration raced past the drain"
+        );
+        assert!(shutdown.inner.background_tasks.is_empty());
     }
 }
 
