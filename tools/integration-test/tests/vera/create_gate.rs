@@ -129,10 +129,16 @@ fn add(collection: &str, input: &str) -> String {
 }
 
 fn created(response: QueryResponse, collection: &str) -> String {
+    created_by(response, &format!("add_{collection}"))
+}
+
+fn created_by(response: QueryResponse, key: &str) -> String {
     assert!(!response.has_errors(), "{:?}", response.errors);
-    response.data.expect("data")[format!("add_{collection}")][0]["_docID"]
-        .as_str()
-        .expect("document ID")
+    let data = response.data.expect("data");
+    let row = data[key].as_array().and_then(|rows| rows.first()).cloned();
+    row.as_ref()
+        .and_then(|row| row["_docID"].as_str())
+        .unwrap_or_else(|| panic!("no {key} document ID in {data}"))
         .to_owned()
 }
 
@@ -289,6 +295,35 @@ async fn a_gated_collection_admits_creators_its_policy_lets_create() {
             ),
             vec![book.clone()]
         );
+
+        // Each document of a batched create and an upsert's create branch
+        // is registered with its parent when its commit settles.
+        let batch = node
+            .execute_request(alice.request(&format!(
+                r#"mutation {{ add_Book(input: [
+                    {{title: "Messiah", author: "{author}"}},
+                    {{title: "God Emperor", author: "{author}"}}
+                ]) {{ _docID }} }}"#,
+            )))
+            .await;
+        let batch_ids = ids(batch, "add_Book");
+        assert_eq!(batch_ids.len(), 2);
+        for id in &batch_ids {
+            assert!(settled_reads(&node, &dave.did, &policy, "book", id).await);
+        }
+
+        let upserted = created_by(
+            node.execute_request(alice.request(&format!(
+                r#"mutation {{ upsert_Book(
+                    filter: {{title: {{_eq: "Heretics"}}}},
+                    add: {{title: "Heretics", author: "{author}"}},
+                    update: {{title: "Heretics"}}
+                ) {{ _docID }} }}"#,
+            )))
+            .await,
+            "upsert_Book",
+        );
+        assert!(settled_reads(&node, &dave.did, &policy, "book", &upserted).await);
 
         // bob may not publish for Mike: his create is decided before its
         // transaction on Vera's certified state and refused, so nothing is
