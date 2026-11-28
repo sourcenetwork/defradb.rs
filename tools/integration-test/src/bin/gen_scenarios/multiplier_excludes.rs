@@ -163,8 +163,21 @@ pub fn resolve(path: &str, test: &str, go: &[GoExclude]) -> Option<(Vec<&'static
     Some((names, reason))
 }
 
+/// Reports only Go exclusions that are absent from the emitted scenario.
+pub fn reported_runs_here(
+    path: &str,
+    test: &str,
+    go: &[GoExclude],
+    emitted: &[&str],
+) -> Vec<(&'static str, &'static str)> {
+    go.iter()
+        .filter(|exclude| !emitted.contains(&exclude.multiplier))
+        .filter_map(|exclude| runs_here(path, test, exclude).map(|why| (exclude.multiplier, why)))
+        .collect()
+}
+
 /// Why defradb.rs runs a test Go excludes, if it does.
-pub fn runs_here(path: &str, test: &str, exclude: &GoExclude) -> Option<&'static str> {
+fn runs_here(path: &str, test: &str, exclude: &GoExclude) -> Option<&'static str> {
     RUNS_HERE
         .iter()
         .find(|(go, _)| match go {
@@ -226,6 +239,17 @@ mod tests {
             resolve(path, test, &[]),
             Some((vec!["secondary-index"], reason.to_owned()))
         );
+    }
+
+    #[test]
+    fn report_omits_a_go_override_still_excluded_by_an_entry() {
+        let path = "tests/integration/collection_version/updates/remove/fields/simple_test.go";
+        let test = "TestCollectionVersionUpdatesRemoveField";
+        let go = excluded("https://github.com/sourcenetwork/defradb/issues/4722");
+        let (emitted, _) = resolve(path, test, &go).unwrap();
+
+        assert!(reported_runs_here(path, test, &go, &emitted).is_empty());
+        assert_eq!(reported_runs_here(path, test, &go, &[]).len(), 1);
     }
 
     #[test]

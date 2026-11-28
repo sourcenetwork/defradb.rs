@@ -218,21 +218,14 @@ fn generate(args: &Args) -> Result<()> {
                     names.join(", ")
                 ));
             }
-            for exclude in &go_excludes {
-                if excludes
-                    .as_ref()
-                    .is_some_and(|(names, _)| names.contains(&exclude.multiplier))
-                {
-                    continue;
-                }
-                if let Some(why) =
-                    multiplier_excludes::runs_here(&source.path, &source.test, exclude)
-                {
-                    run_here.push(format!(
-                        "{} {}: {why}",
-                        item.scenario.id, exclude.multiplier
-                    ));
-                }
+            let emitted = excludes.as_ref().map_or(&[][..], |(names, _)| names);
+            for (multiplier, why) in multiplier_excludes::reported_runs_here(
+                &source.path,
+                &source.test,
+                &go_excludes,
+                emitted,
+            ) {
+                run_here.push(format!("{} {multiplier}: {why}", item.scenario.id));
             }
             body.push_str(&emit::test_fn(
                 item,
