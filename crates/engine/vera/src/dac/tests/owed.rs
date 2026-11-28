@@ -38,6 +38,8 @@ struct OwedProvider {
     windowed: AtomicBool,
     /// The tokens the writes were sent with.
     tokens: SegQueue<String>,
+    /// How many registrations were submitted.
+    registrations: std::sync::atomic::AtomicUsize,
 }
 
 impl OwedProvider {
@@ -52,6 +54,7 @@ impl OwedProvider {
             expires_in_flight: AtomicBool::new(false),
             windowed: AtomicBool::new(false),
             tokens: SegQueue::new(),
+            registrations: std::sync::atomic::AtomicUsize::new(0),
         })
     }
 
@@ -61,6 +64,10 @@ impl OwedProvider {
 
     fn sent(&self) -> Vec<String> {
         std::iter::from_fn(|| self.tokens.pop()).collect()
+    }
+
+    fn registrations(&self) -> usize {
+        self.registrations.load(Ordering::Relaxed)
     }
 
     fn write(&self, token: &str) -> std::result::Result<bool, ProviderError> {
@@ -196,6 +203,7 @@ impl VeraProvider for OwedProvider {
         _object_id: &str,
         _relationships: &[acp::DerivedRelationship],
     ) -> std::result::Result<(), ProviderError> {
+        self.registrations.fetch_add(1, Ordering::Relaxed);
         Ok(())
     }
 
@@ -734,7 +742,8 @@ fn a_delegation_bound_to_one_request_counts_for_the_command_it_names_only() {
 }
 
 #[test]
-fn a_host_precheck_answers_as_the_send_path_does() {
+#[mantra_macros::req_test("defra.acp.request_bound_authority")]
+fn a_host_prechecks_the_presented_delegation() {
     let provider = OwedProvider::new(true);
     let acp = VeraDocumentACP::new(provider.clone());
     let registration = |object| acp::ProviderCommand::RegisterObject {
@@ -767,6 +776,16 @@ fn a_host_precheck_answers_as_the_send_path_does() {
         acp.request_bound_authority(&did(REMOTE), &accepted, registration("doc-1")),
         Ok(OwedAuthority::Delegation { .. })
     ));
+    let held = bound_to(HELD, "register doc-1");
+    assert_eq!(
+        acp.request_bound_authority(&did(HELD), &held, registration("doc-1"))
+            .unwrap(),
+        OwedAuthority::Delegation { token: held }
+    );
+    assert!(matches!(
+        acp.request_bound_authority(&did(HELD), "not-a-delegation-at-all", registration("doc-1")),
+        Err(acp::Error::OwedAuthorityUnavailable { ref actor, .. }) if actor == HELD
+    ));
 
     provider.expired.store(true, Ordering::Relaxed);
     compare(REMOTE, &accepted, "doc-1");
@@ -779,11 +798,37 @@ fn a_host_precheck_answers_as_the_send_path_does() {
         sent,
         Err(acp::Error::DelegationOutsideWindow { .. })
     ));
-    assert!(matches!(
-        checked,
-        Err(acp::Error::DelegationOutsideWindow { .. })
-    ));
+    let acp::Error::DelegationOutsideWindow { actor, window } = checked.unwrap_err() else {
+        panic!("the precheck reports the delegation outside its window");
+    };
+    assert_eq!(actor, REMOTE);
+    assert_eq!(
+        window,
+        acp::DelegationWindow {
+            not_before: 10,
+            expires_at: 20,
+            provider_time: 21,
+            refusal: acp::WindowRefusal::Expired,
+        }
+    );
     assert!(provider.sent().is_empty(), "the check sent nothing");
+    assert_eq!(provider.registrations(), 0, "the check registered nothing");
+
+    let gate = acp::ExternalDocumentAcp::new(
+        Arc::new(VeraDocumentACP::new(OwedProvider::new(true))),
+        Arc::new(storage::RegolithStore::in_memory().unwrap()),
+    );
+    assert_eq!(
+        gate.request_bound_authority(&did(REMOTE), &accepted, registration("doc-1"))
+            .unwrap(),
+        OwedAuthority::Delegation {
+            token: accepted.clone()
+        }
+    );
+    assert!(matches!(
+        gate.request_bound_authority(&did(REMOTE), "delegation:not-a-request-binding", registration("doc-1")),
+        Err(acp::Error::OwedAuthorityUnavailable { ref actor, .. }) if actor == REMOTE
+    ));
 }
 
 #[nuclei::test]

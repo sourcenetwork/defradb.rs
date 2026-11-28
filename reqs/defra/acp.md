@@ -112,10 +112,10 @@ A host may name its delegation signer by any `did:key` spelling of the signer's 
 # `defra.acp.request_bound_authority`: A host can check a request-bound delegation before a write
 
 - **Parents:** ["defra.acp"]
-- **Scenarios:** ["vera::a_host_precheck_answers_as_the_send_path_does"]
+- **Scenarios:** ["dac::tests::owed::a_host_prechecks_the_presented_delegation"]
 - **Scope:** "crate test, not testo: the check is a host-facing provider seam and a testo node cannot construct the request-bound delegation the provider verifies"
 
-`DocumentACP::request_bound_authority` takes a signer, a delegation token and the provider command a write would send, and answers with the authority the send path gives for that command. An accepted token returns the provider's authority. A token the send path refuses returns the same `OwedAuthorityUnavailable` reason, and one outside its validity window returns `DelegationOutsideWindow` with the provider's window. Checking sends nothing and records nothing.
+`DocumentACP::request_bound_authority` takes a signer, a delegation token and the provider command a write would send, and checks that token as the signer's request-bound delegation. An accepted token returns `Delegation`. A token the request-bound send path refuses returns the same `OwedAuthorityUnavailable` reason, and one outside its validity window returns `DelegationOutsideWindow` with the provider's window. A key the node holds for the signer does not make any other token acceptable to this check. Checking sends nothing and records nothing.
 
 # `go.acp.nac.gates.signature`: Block signature verification is gated
 
