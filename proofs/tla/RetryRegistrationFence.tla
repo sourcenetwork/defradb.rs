@@ -10,7 +10,7 @@
 \*   - the committing write (crates/database/p2p/src/sync/coordinator/broadcast.rs
 \*     admit_replicator_push) lists the peers, asks for every peer's
 \*     registration at once, waits for all of them, and queues a push for each
-\*     peer whose marker was written;
+\*     peer whose scope is owed by its marker or a newer one;
 \*   - each registration (crates/engine/storage/src/stores/peerstore.rs
 \*     RegisterScopeMarkerAttempt::run) writes its marker, or is rejected, or
 \*     fails on a storage fault;
@@ -23,7 +23,7 @@
 \*     registration read, or lands below a newer marker
 \*     (ACT_RegistrationCannotCrossFence);
 \*   - once the write is done, a listed peer has no decision, or the queued
-\*     pushes are not exactly the peers whose marker was written
+\*     pushes are not exactly the peers whose scope is owed
 \*     (INV_FanOutPeerLocal).
 \*
 \* The registrations of one write run at once: nothing here waits for one
@@ -52,10 +52,11 @@ CONSTANT Peers,      \* the replicator peers the write may list
          Faults,     \* whether a registration may fail on a storage fault
          CheckEpoch, \* guard: a registration lands only on the incarnation it read
          CheckOrder, \* guard: a registration never lands below a newer marker
+         KeepFallbackFence, \* guard: a failed batch keeps its staged registration
          FanOut      \* how the write treats its registrations (see below)
 
 \* Faults is on or off.
-ASSUME Faults \in BOOLEAN
+ASSUME /\ Faults \in BOOLEAN /\ KeepFallbackFence \in BOOLEAN
 \* "PerPeer" is the code: each peer decided on its own, queued after all are
 \* decided. "AbortOnFirstFail" stops at the first rejection. "NoJoin" queues
 \* before every registration is decided.
@@ -159,11 +160,30 @@ Commit(g) == /\ g \in staged                                      \* it is in fl
              /\ UNCHANGED <<present, epoch, allocated, owner, captured>> \* nothing else moves
              /\ UNCHANGED <<phase, listed, mine, queued>>          \* the write only learns
 
-\* Token g's registration fails its fence and writes nothing.
+\* RED only: after a failed batch, a fresh single call can read the new
+\* incarnation and leave a marker for a peer the original call did not see.
+\* A guarded retry already uses Commit and Reject with the original token.
+FallbackRebind(g) ==
+  /\ ~KeepFallbackFence                                      \* only when the guard is removed
+  /\ g \in staged                                            \* the original registration is in flight
+  /\ LET p == owner[g] IN                                    \* the peer it was sent to
+       /\ present[p] /\ captured[g] # epoch[p]                \* a replacement incarnation exists
+       /\ g >= marker[p]                                     \* the old token can expose the fence breach
+       /\ marker' = [marker EXCEPT ![p] = g]                   \* a fresh call leaves a marker there
+  /\ staged' = staged \ {g}                                   \* the registration is now decided
+  /\ Decide(g, "registered")                                \* the write learns it landed
+  /\ UNCHANGED <<present, epoch, allocated, owner, captured>> \* keep the original incarnation as witness
+  /\ UNCHANGED <<phase, listed, mine, queued>>                \* the write only learns
+
+\* Token g fails its fence and writes nothing. If a newer marker already
+\* owes the scope under the same incarnation, the push still carries its
+\* own token, which cannot clear the newer marker.
 Reject(g) == /\ g \in staged                                      \* it is in flight
              /\ ~Fence(g)                                         \* and not allowed to land
              /\ staged' = staged \ {g}                             \* it is no longer in flight
-             /\ Decide(g, "unregistered")                         \* the write learns it failed
+             /\ LET p == owner[g] IN                             \* which peer this was for
+                  Decide(g, IF present[p] /\ captured[g] = epoch[p] /\ g < marker[p]
+                            THEN "registered" ELSE "unregistered") \* owed by a newer marker or refused
              /\ UNCHANGED <<present, epoch, allocated, owner, captured, marker>> \* nothing durable moves
              /\ UNCHANGED <<phase, listed, mine, queued>>          \* the write only learns
 
@@ -207,7 +227,7 @@ AbortFanOut == /\ FanOut = "AbortOnFirstFail"                   \* only in that 
                /\ UNCHANGED fenceVars                           \* nothing durable moves
                /\ UNCHANGED <<listed, mine, outcome, queued>>   \* and nothing is queued
 
-\* The write queues a push for every peer whose marker was written. In the
+\* The write queues a push for every peer whose scope is owed. In the
 \* code it waits for every registration together first (join_all); "NoJoin"
 \* plants the bug of queueing while some are still undecided.
 Enqueue == /\ phase = "register"                                          \* while registering
@@ -229,7 +249,7 @@ FanStep == \/ List                                                              
 \* and any registration landing, failing its fence, or faulting.
 Next == \/ FanStep                                                            \* the write moves
         \/ \E p \in Peers : Allocate(p) \/ Forget(p) \/ Readd(p) \/ Reincarnate(p) \* others act
-        \/ \E g \in Tokens : Commit(g) \/ Reject(g) \/ Fault(g)                \* a registration ends
+        \/ \E g \in Tokens : Commit(g) \/ Reject(g) \/ Fault(g) \/ FallbackRebind(g)                \* a registration ends
 
 \* The write keeps moving while it can; nothing else is forced to.
 Spec == Init /\ [][Next]_vars /\ WF_vars(FanStep)

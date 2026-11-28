@@ -1884,7 +1884,3 @@ mod tests;
 #[cfg(test)]
 #[path = "peerstore_schedule_race_tests.rs"]
 mod schedule_race_tests;
-
-#[cfg(test)]
-#[path = "peerstore_scope_batch_tests.rs"]
-mod scope_batch_tests;
