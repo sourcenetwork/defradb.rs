@@ -5,14 +5,11 @@ use std::task::{Context, Waker};
 use std::time::Duration;
 
 use prolly::{tree::DEFAULT_TARGET, Item, MemStore, Node, Store as _, Tree};
-use regolith::sync::Event;
 
-use super::tests::{entries, entry, node_keys, publish, sweep, Publish, StoredRoots};
-use super::{node_key, reclaim_every, LiveRoots, LiveRootsFuture, ProllyNodes};
+use super::tests::{entries, entry, node_keys, publish, sweep};
+use super::{node_key, reclaim_every, ProllyNodes, ROOTS_KEY};
 use crate::backends::RegolithStore;
-use crate::corekv::{
-    engine_retry_options, RetryAttemptError, RetryAttemptFn, RetryAttemptFuture, RetryTxn,
-};
+use crate::corekv::{engine_retry_options, RetryAttemptError};
 
 fn leaf() -> Node {
     Node {
@@ -55,6 +52,38 @@ fn a_put_is_readable_before_and_after_its_publish() {
 }
 
 #[test]
+fn publication_only_stores_nodes_named_by_its_roots() {
+    workers::block_on(async {
+        let store = Arc::new(RegolithStore::in_memory().unwrap());
+        let mut writer = ProllyNodes::new(Arc::clone(&store), engine_retry_options(5));
+        let root = leaf();
+        let mut abandoned = root.clone();
+        abandoned.items[0].value = b"abandoned".to_vec();
+        let hash = writer.put(root.clone()).await.unwrap();
+        writer.put(abandoned.clone()).await.unwrap();
+
+        publish(&mut writer, &[hash]).await;
+
+        let snapshot = crate::corekv::Store::new_txn(&*store, true).await.unwrap();
+        assert_eq!(
+            &snapshot.get(ROOTS_KEY).await.unwrap().unwrap()[..],
+            &hash.0
+        );
+        assert_eq!(
+            &snapshot.get(&node_key(&hash)).await.unwrap().unwrap()[..],
+            root.encode().as_slice()
+        );
+        assert!(snapshot
+            .get(&node_key(&abandoned.hash()))
+            .await
+            .unwrap()
+            .is_none());
+        snapshot.discard();
+    })
+    .unwrap();
+}
+
+#[test]
 fn an_edit_stores_nothing_until_the_transaction_that_publishes_its_root() {
     workers::block_on(async {
         let store = Arc::new(RegolithStore::in_memory().unwrap());
@@ -88,21 +117,8 @@ fn an_edit_stores_nothing_until_the_transaction_that_publishes_its_root() {
     .unwrap()
 }
 
-/// A root write that refuses to publish.
-struct Refuse;
-
-impl RetryAttemptFn for Refuse {
-    fn run<'a>(&'a mut self, _txn: &'a mut dyn RetryTxn) -> RetryAttemptFuture<'a> {
-        Box::pin(async move {
-            Err(RetryAttemptError::Storage(crate::corekv::Error::Other(
-                "the root write refused".into(),
-            )))
-        })
-    }
-}
-
 #[test]
-fn a_refused_root_write_stores_none_of_its_nodes() {
+fn a_missing_root_leaves_the_other_nodes_pending() {
     workers::block_on(async {
         let store = Arc::new(RegolithStore::in_memory().unwrap());
         let mut regolith = ProllyNodes::new(Arc::clone(&store), engine_retry_options(5));
@@ -111,11 +127,14 @@ fn a_refused_root_write_stores_none_of_its_nodes() {
         let pending = regolith.pending_bytes();
 
         let error = regolith
-            .publish::<()>(Box::new(Refuse))
+            .publish(&[prolly::Hash::of(b"missing"), hash])
             .await
             .unwrap_err()
             .into_storage();
-        assert!(error.to_string().contains("refused"), "{error}");
+        assert!(
+            error.to_string().contains("is missing from the store"),
+            "{error}"
+        );
         assert_eq!(
             stored(&store, &node).await,
             None,
@@ -187,12 +206,6 @@ fn failing(regolith: &Arc<RegolithStore>, stall: bool) -> ProllyNodes<FailFirstW
     ProllyNodes::new(store, engine_retry_options(5))
 }
 
-fn root_write(root: &Node) -> Box<Publish> {
-    Box::new(Publish {
-        roots: root.hash().0.to_vec(),
-    })
-}
-
 #[test]
 fn a_failed_publish_keeps_its_nodes_pending_and_the_next_publish_writes_them() {
     workers::block_on(async {
@@ -203,11 +216,7 @@ fn a_failed_publish_keeps_its_nodes_pending_and_the_next_publish_writes_them() {
         let pending = nodes.pending_bytes();
         assert!(pending > 0);
 
-        let error = nodes
-            .publish::<()>(root_write(&node))
-            .await
-            .unwrap_err()
-            .into_storage();
+        let error = nodes.publish(&[hash]).await.unwrap_err().into_storage();
         assert!(
             error.to_string().contains("injected write failure"),
             "{error}"
@@ -215,7 +224,7 @@ fn a_failed_publish_keeps_its_nodes_pending_and_the_next_publish_writes_them() {
         assert_eq!(nodes.pending_bytes(), pending, "nothing was written");
         assert_eq!(nodes.get(&hash).await.unwrap().as_deref(), Some(&node));
 
-        nodes.publish::<()>(root_write(&node)).await.unwrap();
+        nodes.publish(&[hash]).await.unwrap();
         assert_eq!(nodes.pending_bytes(), 0);
         assert_eq!(stored(&regolith, &node).await, Some(node.encode()));
     })
@@ -232,7 +241,8 @@ fn a_publish_dropped_before_its_commit_keeps_its_nodes_pending() {
         let pending = nodes.pending_bytes();
 
         {
-            let mut publishing = std::pin::pin!(nodes.publish::<()>(root_write(&node)));
+            let roots = [hash];
+            let mut publishing = std::pin::pin!(nodes.publish(&roots));
             let polled = publishing
                 .as_mut()
                 .poll(&mut Context::from_waker(Waker::noop()));
@@ -245,7 +255,7 @@ fn a_publish_dropped_before_its_commit_keeps_its_nodes_pending() {
             "a dropped publish loses no put"
         );
 
-        nodes.publish::<()>(root_write(&node)).await.unwrap();
+        nodes.publish(&[hash]).await.unwrap();
         assert_eq!(nodes.pending_bytes(), 0);
         assert_eq!(stored(&regolith, &node).await, Some(node.encode()));
     })
@@ -280,13 +290,10 @@ fn pages_reclaim_every_node_the_live_root_left_behind() {
         let before = node_keys(&store).await.len();
         assert!(before > memory.len(), "the edits left old nodes");
 
-        let roots = Arc::new(StoredRoots);
         let page = (before / 4).max(1);
         let mut start = None;
         loop {
-            let report = ProllyNodes::reclaim(&*store, Arc::clone(&roots), start, page)
-                .await
-                .unwrap();
+            let report = ProllyNodes::reclaim(&*store, start, page).await.unwrap();
             assert!(report.scanned <= page);
             start = report.next_start;
             if start.is_none() {
@@ -301,44 +308,35 @@ fn pages_reclaim_every_node_the_live_root_left_behind() {
     .unwrap();
 }
 
-struct ReadSignal(Arc<Event>);
-
-impl LiveRoots for ReadSignal {
-    fn read<'txn>(&'txn self, _: &'txn mut dyn RetryTxn) -> LiveRootsFuture<'txn> {
-        Box::pin(async move {
-            self.0.set();
-            Ok(Vec::new())
-        })
-    }
-}
-
 #[test]
-fn the_scheduler_runs_a_reclaim_page_on_its_worker() {
+fn the_scheduler_reclaims_old_nodes_and_keeps_the_live_root() {
     let pool = workers::Pool::start(workers::Config::unplaced(1)).unwrap();
     pool.submit_and_wait(workers::Target::Worker(0), || async {
         let store = Arc::new(RegolithStore::in_memory().unwrap());
-        let mut regolith = ProllyNodes::new(Arc::clone(&store), engine_retry_options(5));
-        let node = leaf();
-        let hash = regolith.put(node).await.unwrap();
-        publish(&mut regolith, &[hash]).await;
+        let mut writer = ProllyNodes::new(Arc::clone(&store), engine_retry_options(5));
+        let mut tree = Tree::build(&mut writer, DEFAULT_TARGET, (0..3).map(entry))
+            .await
+            .unwrap();
+        publish(&mut writer, &[tree.root().unwrap()]).await;
+        tree.remove(&mut writer, &entry(1).0).await.unwrap();
+        publish(&mut writer, &[tree.root().unwrap()]).await;
+        assert_eq!(node_keys(&store).await.len(), 2);
 
-        let read = Arc::new(Event::new());
         let schedule = workers::spawn_background(None, "prolly-reclaim", {
             let store = Arc::clone(&store);
-            let read = Arc::clone(&read);
             move || async move {
-                let _ = reclaim_every(
-                    store,
-                    Arc::new(ReadSignal(read)),
-                    Duration::from_millis(20),
-                    1,
-                )
-                .await;
+                let _ = reclaim_every(store, Duration::from_millis(20), 1).await;
             }
         });
-        workers::timeout(Duration::from_secs(2), read.wait())
-            .await
-            .expect("the scheduled reclaim page ran");
+        workers::timeout(Duration::from_secs(2), async {
+            while node_keys(&store).await.len() != 1 {
+                workers::sleep(Duration::from_millis(10)).unwrap().await;
+            }
+        })
+        .await
+        .expect("the scheduled reclaim committed its deletion");
+        let reader = ProllyNodes::new(store, engine_retry_options(5));
+        assert_eq!(entries(&tree, &reader).await.len(), 2);
         schedule.abort();
     })
     .unwrap();

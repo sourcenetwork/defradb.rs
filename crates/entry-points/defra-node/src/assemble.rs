@@ -617,6 +617,19 @@ where
         database.clone().start_deferred_index_task(),
     ]));
     #[cfg(not(target_arch = "wasm32"))]
+    {
+        use storage::stores::prolly_nodes::{reclaim_every, NODES_PER_SWEEP};
+        let store = Arc::clone(database.store());
+        background_tasks.push(workers::spawn_background(
+            database.pool(),
+            "prolly::reclaim",
+            move || async move {
+                let _ =
+                    reclaim_every(store, std::time::Duration::from_secs(60), NODES_PER_SWEEP).await;
+            },
+        ));
+    }
+    #[cfg(not(target_arch = "wasm32"))]
     if let Some(replay) = database.clone().start_parked_replay() {
         background_tasks.push(replay);
     }

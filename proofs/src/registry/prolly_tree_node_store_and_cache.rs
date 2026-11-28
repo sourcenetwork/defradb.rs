@@ -10,9 +10,9 @@ pub(super) const PROPERTIES: &[Property] = &[
         // so a publish and a read never overlap. The Rust cache's CLOCK victim
         // choice is one of the model's "any part that fits".
         family: "Prolly tree node store and cache",
-        name: "GetFinds / CacheBounded / HugeEvictsNothing / PublishedStored / BuildWhole: a node put is always readable, the cache stays under its byte budget, a node over budget evicts nothing, a published root names only stored nodes, and a build whose put failed never returns a tree",
+        name: "GetFinds / CacheBounded / HugeEvictsNothing / PublishedStored / BuildWhole: a pending node is readable, the cache stays under its byte budget, a node over budget evicts nothing, a published root names only stored nodes, and a build whose put failed never returns a tree",
         axis: Tla,
-        anchor: "crates/foundation/prolly/src/cache.rs Cached::get, Cached::insert; crates/foundation/prolly/src/tree.rs collapse; crates/engine/storage/src/stores/prolly_nodes.rs ProllyNodes::get, ProllyNodes::put, ProllyNodes::publish; crates/foundation/prolly/src/build.rs Builder::push, Builder::finish",
+        anchor: "crates/foundation/prolly/src/cache.rs Cached::get, Cached::insert; crates/foundation/prolly/src/tree.rs collapse; crates/engine/storage/src/stores/prolly_nodes.rs ProllyNodes::get, ProllyNodes::put, ProllyNodes::publish, PublishNodes::run; crates/foundation/prolly/src/build.rs Builder::push, Builder::finish",
         model_ref: "MC_ProllyNodeCache_Green.cfg (GREEN) / MC_ProllyNodeCache_{Red_SkipPending,Red_NoEvict,Red_CacheHuge,Red_DropOnFail,Red_RootWithoutNodes,Red_FinishAfterFail}.cfg (RED)",
         tiers: &[Boundary],
         bound_by: "",
@@ -21,12 +21,11 @@ pub(super) const PROPERTIES: &[Property] = &[
         // A sweep's candidates are one bounded page. The delete transaction
         // reads the live roots itself, validated, so a root published before
         // its commit re-runs it. A tree edit's nodes wait in memory and
-        // commit in the transaction that publishes their root. The model
-        // trusts that `LiveRoots::read` returns every live root.
+        // commit in the transaction that publishes their root. Both paths use the same stored root list.
         family: "Prolly tree node store and cache",
         name: "SweepKeepsLiveRoots: a page sweep racing a root's publication never deletes a node the live root names",
         axis: Tla,
-        anchor: "crates/engine/storage/src/stores/prolly_nodes.rs ProllyNodes::reclaim, node_keys, ReclaimNodes::run, mark_roots, LiveRoots::read, ProllyNodes::put, ProllyNodes::publish, PublishNodes::run; crates/engine/storage/src/stores/prolly_nodes/schedule.rs reclaim_every; crates/foundation/prolly/src/tree.rs collapse",
+        anchor: "crates/engine/storage/src/stores/prolly_nodes.rs ProllyNodes::reclaim, node_keys, ReclaimNodes::run, mark_roots, read_roots, ProllyNodes::put, ProllyNodes::publish, PublishNodes::run; crates/engine/storage/src/stores/prolly_nodes/schedule.rs reclaim_every; crates/foundation/prolly/src/tree.rs collapse",
         model_ref: "MC_ProllyNodeReclaim_Green.cfg (GREEN) / MC_ProllyNodeReclaim_{Red_FixedRoots,Red_NoValidation,Red_PutAlone,Red_DeleteMarked}.cfg (RED)",
         tiers: &[Boundary],
         bound_by: "",

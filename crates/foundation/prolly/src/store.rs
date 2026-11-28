@@ -16,10 +16,8 @@ use crate::{error::Result, hash::Hash, node::Node};
 /// A node is named by the hash of its bytes, so the node under a hash never
 /// changes: a copy kept anywhere is never stale.
 ///
-/// A tree operation only puts nodes; it never makes them durable itself. A
-/// store that persists them commits them in the transaction that publishes
-/// the root naming them (`ProllyNodes::publish` in the storage crate), so no
-/// node is stored apart from a root, and no root apart from its nodes.
+/// Persistent storage publishes roots and their nodes through
+/// `ProllyNodes::publish` in the storage crate.
 ///
 /// The futures need not be `Send`: a tree is read and written on one worker.
 pub trait Store {
