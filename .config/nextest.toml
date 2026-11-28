@@ -24,7 +24,7 @@ test-group = "nodes"
 retries = 1
 
 [[profile.default.scripts]]
-filter = "package(integration-test)"
+filter = "package(integration-test) & !binary(gen_scenarios)"
 setup = "integration-binaries"
 
 [[profile.default.scripts]]

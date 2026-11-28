@@ -89,6 +89,8 @@ jobs:
           shared-key: unit
           save-if: ${{ github.ref == 'refs/heads/main' && (matrix.group == 'surfaces' || matrix.group == 'all') }}
       - run: cargo nextest run --cargo-profile super-dev $PACKAGES
+      - if: matrix.group == 'surfaces' || matrix.group == 'all'
+        run: cargo nextest run --cargo-profile super-dev -p integration-test --features generator --bin gen_scenarios
       # The proofs registry anchors and family matrix are static checks the merge
       # queue kept failing on (#3308); they reuse this group's p2p build.
       - if: matrix.group == 'network' || matrix.group == 'all'

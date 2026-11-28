@@ -1,9 +1,11 @@
 //! What the corpus does not carry, read from the Go test source at the
-//! parity pin: each test's `SupportedClientTypes`.
+//! parity pin: each test's `SupportedClientTypes` and `MultiplierExcludes`.
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::process::Command;
+
+use super::go_excludes::{self, Excludes, GoExclude};
 
 /// Go's client types, as the Rust clients that stand for them.
 const CLIENTS: &[(&str, &[&str])] = &[
@@ -96,10 +98,7 @@ impl GoSource {
                 Some(rest) => list(rest),
                 None if value.starts_with("immutable.None") => continue,
                 None => {
-                    let name: String = value
-                        .chars()
-                        .take_while(|c| c.is_alphanumeric() || *c == '_')
-                        .collect();
+                    let name = identifier(value);
                     match self.package_value(path, &name) {
                         Some(list) => list,
                         None => {
@@ -119,8 +118,68 @@ impl GoSource {
         }
     }
 
+    /// The `MultiplierExcludes` of Go test `test` in `path`, keeping the
+    /// multipliers defradb.rs runs.
+    pub fn multiplier_excludes(&mut self, path: &str, test: &str) -> Excludes {
+        let Some(text) = self.file(path) else {
+            return Excludes::Unresolved(format!("{path} is not at {}", self.pin));
+        };
+        let Some(body) = function_body(&text, test) else {
+            return Excludes::Unresolved(format!("no func {test} in {path}"));
+        };
+        if !body.match_indices("TestCase").any(|(at, name)| {
+            !go_excludes::commented_out(body, at)
+                && body[at + name.len()..].trim_start().starts_with('{')
+        }) {
+            return Excludes::Unresolved(format!("{path}::{test} has no inline TestCase"));
+        }
+        let mut found: Vec<GoExclude> = Vec::new();
+        for (at, key) in body.match_indices("MultiplierExcludes:") {
+            if go_excludes::commented_out(body, at) {
+                continue;
+            }
+            let value = body[at + key.len()..].trim_start();
+            let names = match go_excludes::literal(value) {
+                Some(names) => names,
+                None => {
+                    let name = identifier(value);
+                    match self.package_assignment(path, &name, go_excludes::literal) {
+                        Some(names) => names,
+                        None => {
+                            return Excludes::Unresolved(format!(
+                                "{path}::{test} excludes {name:?}"
+                            ))
+                        }
+                    }
+                }
+            };
+            let reason = go_excludes::comment_above(body, at);
+            for multiplier in names {
+                let exclude = GoExclude {
+                    multiplier,
+                    reason: reason.clone(),
+                };
+                if !found.contains(&exclude) {
+                    found.push(exclude);
+                }
+            }
+        }
+        Excludes::Listed(found)
+    }
+
     /// The list a package-level `name = immutable.Some(...)` holds.
     fn package_value(&mut self, path: &str, name: &str) -> Option<Vec<&'static str>> {
+        self.package_assignment(path, name, |value| {
+            value.strip_prefix("immutable.Some(").map(list)
+        })
+    }
+
+    /// What `parse` reads from the value of the first package-level
+    /// `name = ...` in `path`'s package that it accepts.
+    fn package_assignment<T, F>(&mut self, path: &str, name: &str, parse: F) -> Option<T>
+    where
+        F: Fn(&str) -> Option<T>,
+    {
         if name.is_empty() {
             return None;
         }
@@ -133,15 +192,24 @@ impl GoSource {
                     continue;
                 }
                 let rest = text[at + name.len()..].trim_start();
-                if let Some(value) = rest.strip_prefix('=') {
-                    if let Some(open) = value.trim_start().strip_prefix("immutable.Some(") {
-                        return Some(list(open));
-                    }
+                if let Some(parsed) = rest
+                    .strip_prefix('=')
+                    .and_then(|value| parse(value.trim_start()))
+                {
+                    return Some(parsed);
                 }
             }
         }
         None
     }
+}
+
+/// The Go identifier `value` starts with.
+fn identifier(value: &str) -> String {
+    value
+        .chars()
+        .take_while(|c| c.is_alphanumeric() || *c == '_')
+        .collect()
 }
 
 /// Go's `func test(` body, up to the next top-level `func`.
@@ -199,6 +267,24 @@ mod tests {
     fn reads_an_inline_list_without_comments() {
         let rest = "[]state.ClientType{\n// state.CLIClientType is out\nstate.HTTPClientType,\nstate.JSClientType}),\n";
         assert_eq!(list(rest), vec!["RustHttp", "GoHttp"]);
+    }
+
+    #[test]
+    fn reports_an_exclusion_it_cannot_read_from_a_helper() {
+        let path = "foo_test.go";
+        let mut go = GoSource::new(PathBuf::new(), "pin".to_owned());
+        go.files.insert(
+            path.to_owned(),
+            Some(
+                "package x\nfunc TestA(t *testing.T) { run(sharedCase()) }\n\
+                 func sharedCase() TestCase { return TestCase{} }\n"
+                    .to_owned(),
+            ),
+        );
+        assert!(matches!(
+            go.multiplier_excludes(path, "TestA"),
+            Excludes::Unresolved(reason) if reason.contains("no inline TestCase")
+        ));
     }
 
     #[test]

@@ -1,7 +1,8 @@
-//! Go tests that do not run under a multiplier, by Go source file and test:
-//! the multipliers each excludes and the comment its generated test carries.
-//! Go's own `MultiplierExcludes` are not carried over yet:
-//! https://github.com/sourcenetwork/defradb.rs/issues/3046
+//! Which multipliers each generated test does not run under. A test carries
+//! Go's own `MultiplierExcludes`, read at the parity pin, unless defradb.rs
+//! runs it anyway (`RUNS_HERE`); a defradb.rs reason (`ENTRIES`) replaces Go's.
+
+use super::go_excludes::GoExclude;
 
 const SECONDARY_INDEX: &[&str] = &["secondary-index"];
 
@@ -75,10 +76,160 @@ const INDEXED_FIELD_PATCH: &str =
                                    or replace an indexed field, as Go's: \
                                    https://github.com/sourcenetwork/defradb/issues/4722";
 
-/// The multipliers Go test `test` in `path` does not run under, and why.
-pub fn lookup(path: &str, test: &str) -> Option<(&'static [&'static str], &'static str)> {
-    ENTRIES
+/// The Go exclusions defradb.rs does not share, and why the test runs here.
+const RUNS_HERE: &[(GoReason, &str)] = &[
+    (GoReason::Cites(GO_4439), COUNTERS),
+    (
+        GoReason::Test(
+            "tests/integration/net/simple/peer/crdt/pncounter_convergence_test.go",
+            "TestP2PUpdate_WithPNCounterFiveNodesRepeatedUpdates_AllConverge",
+        ),
+        COUNTERS,
+    ),
+    (
+        GoReason::Cites("https://github.com/sourcenetwork/defradb/issues/4722"),
+        "defradb.rs patches a collection whose fields have dependent indexes; removing \
+         or replacing an indexed field is refused, as Go's, and excluded in `ENTRIES`.",
+    ),
+];
+
+const GO_4439: &str = "https://github.com/sourcenetwork/defradb/issues/4439";
+
+const COUNTERS: &str = "defradb.rs indexes counter fields.";
+
+/// Which Go exclusions a `RUNS_HERE` entry covers.
+enum GoReason {
+    /// Every exclusion whose Go comment cites this link.
+    Cites(&'static str),
+    /// The exclusion of one Go test, by source file and test.
+    Test(&'static str, &'static str),
+}
+
+/// The multipliers a generated test does not run under and the comment it
+/// carries, given Go test `test` in `path` and the exclusions Go lists for it.
+pub fn resolve(path: &str, test: &str, go: &[GoExclude]) -> Option<(Vec<&'static str>, String)> {
+    if let Some((_, _, names, reason)) =
+        ENTRIES.iter().find(|(p, t, _, _)| *p == path && *t == test)
+    {
+        return Some((names.to_vec(), (*reason).to_owned()));
+    }
+    let carried: Vec<&GoExclude> = go
         .iter()
-        .find(|(p, t, _, _)| *p == path && *t == test)
-        .map(|(_, _, names, reason)| (*names, *reason))
+        .filter(|exclude| runs_here(path, test, exclude).is_none())
+        .collect();
+    let mut names = Vec::new();
+    for exclude in &carried {
+        if !names.contains(&exclude.multiplier) {
+            names.push(exclude.multiplier);
+        }
+    }
+    if names.is_empty() {
+        return None;
+    }
+    let mut reasons: Vec<&str> = Vec::new();
+    for exclude in &carried {
+        if !exclude.reason.is_empty() && !reasons.contains(&exclude.reason.as_str()) {
+            reasons.push(&exclude.reason);
+        }
+    }
+    let reason = match reasons.is_empty() {
+        true => "Excluded as in Go.".to_owned(),
+        false => format!("Excluded as in Go: {}", reasons.join(" ")),
+    };
+    Some((names, reason))
+}
+
+/// Reports only Go exclusions that are absent from the emitted scenario.
+pub fn reported_runs_here(
+    path: &str,
+    test: &str,
+    go: &[GoExclude],
+    emitted: &[&str],
+) -> Vec<(&'static str, &'static str)> {
+    go.iter()
+        .filter(|exclude| !emitted.contains(&exclude.multiplier))
+        .filter_map(|exclude| runs_here(path, test, exclude).map(|why| (exclude.multiplier, why)))
+        .collect()
+}
+
+/// Why defradb.rs runs a test Go excludes, if it does.
+fn runs_here(path: &str, test: &str, exclude: &GoExclude) -> Option<&'static str> {
+    RUNS_HERE
+        .iter()
+        .find(|(go, _)| match go {
+            GoReason::Cites(link) => exclude.reason.contains(link),
+            GoReason::Test(p, t) => *p == path && *t == test,
+        })
+        .map(|(_, why)| *why)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn excluded(reason: &str) -> Vec<GoExclude> {
+        vec![GoExclude {
+            multiplier: "secondary-index",
+            reason: reason.to_owned(),
+        }]
+    }
+
+    #[test]
+    fn carries_a_go_exclusion_with_its_comment() {
+        assert_eq!(
+            resolve("a_test.go", "TestA", &excluded("The join is inverted.")),
+            Some((
+                vec!["secondary-index"],
+                "Excluded as in Go: The join is inverted.".to_owned()
+            ))
+        );
+    }
+
+    #[test]
+    fn emits_one_multiplier_with_both_reasons() {
+        let mut go = excluded("First reason.");
+        go.extend(excluded("Second reason."));
+        assert_eq!(
+            resolve("a_test.go", "TestA", &go),
+            Some((
+                vec!["secondary-index"],
+                "Excluded as in Go: First reason. Second reason.".to_owned()
+            ))
+        );
+    }
+
+    #[test]
+    fn runs_a_go_exclusion_defradb_rs_does_not_share() {
+        let reason = format!("Counters cannot be indexed. {GO_4439}");
+        assert_eq!(resolve("a_test.go", "TestA", &excluded(&reason)), None);
+    }
+
+    #[test]
+    fn a_defradb_rs_reason_replaces_go_s() {
+        let (path, test, _, reason) = ENTRIES[0];
+        assert_eq!(
+            resolve(path, test, &excluded("Go's reason.")),
+            Some((vec!["secondary-index"], reason.to_owned()))
+        );
+        assert_eq!(
+            resolve(path, test, &[]),
+            Some((vec!["secondary-index"], reason.to_owned()))
+        );
+    }
+
+    #[test]
+    fn report_omits_a_go_override_still_excluded_by_an_entry() {
+        let path = "tests/integration/collection_version/updates/remove/fields/simple_test.go";
+        let test = "TestCollectionVersionUpdatesRemoveField";
+        let go = excluded("https://github.com/sourcenetwork/defradb/issues/4722");
+        let (emitted, _) = resolve(path, test, &go).unwrap();
+
+        assert!(reported_runs_here(path, test, &go, &emitted).is_empty());
+        assert_eq!(reported_runs_here(path, test, &go, &[]).len(), 1);
+    }
+
+    #[test]
+    fn no_exclusion_without_one() {
+        assert_eq!(resolve("a_test.go", "TestA", &[]), None);
+    }
 }
