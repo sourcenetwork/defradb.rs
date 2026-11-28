@@ -117,7 +117,7 @@ impl Home {
             .unwrap();
         assert!(begun.status().is_success(), "{}", begun.status());
         let body: Value = begun.json().await.unwrap();
-        body["id"].as_u64().unwrap().to_string()
+        body["id"].to_string()
     }
 
     async fn finish(&self, auth: &str, tx: &str, commit: bool) -> u16 {
@@ -179,9 +179,9 @@ impl Home {
     }
 
     async fn owed_by(&self, did: &identity::Did) -> usize {
-        let context = defra_core::RequestContext::default().with_identity(Some(did.to_string()));
         self.node
-            .owed_acp_as(&context, did.as_str())
+            .with_identity(identity::Did::new(did.to_string()).unwrap())
+            .owed_acp(did.as_str())
             .await
             .unwrap()
             .len()
@@ -277,7 +277,7 @@ fn a_refused_or_discarded_grant_owes_nothing() {
         assert_eq!(home.finish(&auth, &tx, false).await, 200);
         assert_eq!(home.owed_by(&owner.did).await, 0);
 
-        let stranger_did = identity::Did::new(STRANGER).unwrap();
+        let stranger_did = identity::Did::new(STRANGER.to_string()).unwrap();
         assert!(!chain_reads(&home.node, &stranger_did, &home.policy, &doc).await);
         home.node.shutdown().await.expect("shutdown");
     })

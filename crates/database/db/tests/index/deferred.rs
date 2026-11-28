@@ -8,10 +8,7 @@ use db::{AutoCommitMutator, LensedAutoCommitFetcher, DB};
 use document::NormalValue;
 use query::mutator::DocMutator;
 use query::{QueryExecutor, QueryRequest, QueryRunner};
-use schema::{
-    CType, CollectionVersion, FieldDescription, FieldKind, IndexKind, IndexedFieldDescription,
-    OrderedIndexDescription,
-};
+use schema::{IndexKind, IndexedFieldDescription, OrderedIndexDescription};
 use storage::corekv::{IterOptions, Iterator as _};
 use storage::keys::{IndexDataStoreKey, IndexedField};
 use storage::RegolithStore;
@@ -20,21 +17,11 @@ mod drop_history;
 mod plan_size;
 mod requests;
 mod upgrade;
+mod whole_key_records;
 
 const COLLECTION: &str = "Tallies";
 
-fn collection() -> CollectionVersion {
-    CollectionVersion::new(
-        COLLECTION,
-        "v1",
-        "col-deferred-tallies",
-        vec![
-            FieldDescription::new("1", "_docID", FieldKind::doc_id(), CType::LwwRegister),
-            FieldDescription::new("2", "count", FieldKind::int(), CType::PCounter),
-            FieldDescription::new("3", "name", FieldKind::string(), CType::LwwRegister),
-        ],
-    )
-}
+const COLLECTION_SDL: &str = r#"type Tallies { count: Int @crdt(type: "pcounter") name: String }"#;
 
 struct Node {
     db: Arc<DB<RegolithStore>>,
@@ -55,7 +42,9 @@ impl Node {
 
     async fn with(db: Arc<DB<RegolithStore>>, fresh: bool) -> Self {
         let index_id = if fresh {
-            db.create_collection(collection()).await.unwrap();
+            db.add_collection(&defra_core::RequestContext::ambient(), COLLECTION_SDL)
+                .await
+                .unwrap();
             db.create_index(
                 COLLECTION,
                 Some("by_count"),
@@ -369,7 +358,9 @@ fn a_transaction_reads_its_own_increment_through_the_index() {
 fn a_unique_index_on_a_counter_keeps_one_winner() {
     workers::block_on(async {
         let db = Arc::new(DB::new(RegolithStore::in_memory().unwrap()).unwrap());
-        db.create_collection(collection()).await.unwrap();
+        db.add_collection(&defra_core::RequestContext::ambient(), COLLECTION_SDL)
+            .await
+            .unwrap();
         db.create_index(
             COLLECTION,
             Some("by_count"),

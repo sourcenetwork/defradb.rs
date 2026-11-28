@@ -185,23 +185,18 @@ pub async fn is_connected(cluster: &TestCluster, node: usize, peer: &str) -> boo
         .is_ok_and(|details| details["connected"].as_bool() == Some(true))
 }
 
-/// DAG fetches `node` has in flight to `peer`.
-pub async fn fetches_in_flight_to(cluster: &TestCluster, node: usize, peer: &str) -> u64 {
-    let status = sync_status(cluster, node).await;
-    status["peer_fetches"]
+/// The roots holding a fetch slot with an attempt running, from a sync status.
+pub fn running_slots(status: &Value) -> BTreeSet<String> {
+    status["pending_dag_fetch_slots"]["roots"]
         .as_array()
-        .and_then(|peers| peers.iter().find(|p| p["peer"].as_str() == Some(peer)))
-        .map(|p| count(p, "in_flight"))
-        .unwrap_or(0)
-}
-
-/// Pending roots `node` holds whose source is `peer`.
-pub async fn pending_from(cluster: &TestCluster, node: usize, peer: &str) -> u64 {
-    let details = cluster
-        .p2p_peer_details(node, peer)
-        .await
-        .unwrap_or_else(|e| panic!("node{node} details of {peer}: {e}"));
-    count(&details, "pending_fetch_count")
+        .map(|roots| {
+            roots
+                .iter()
+                .filter(|slot| slot["state"].as_str() == Some("running"))
+                .filter_map(|slot| slot["root_cid"].as_str().map(String::from))
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 /// Poll `check` until it holds or `timeout` passes; whether it held.

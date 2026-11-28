@@ -1,5 +1,5 @@
-use super::super::parser::{parse_sdl, parse_sdl_with_known_types};
-use rapidhash::{HashSetExt, RapidHashSet};
+use super::super::parser::{parse_sdl, parse_sdl_with_known_collections};
+use rapidhash::RapidHashMap;
 use schema::{FieldKind, CHUNK_SOURCE_ID_FIELD};
 
 const SDL: &str = r#"
@@ -190,23 +190,24 @@ fn chunk_refuses_a_second_chunk_on_one_field() {
     );
 }
 
-fn known(names: &[&str]) -> RapidHashSet<String> {
-    let mut known = RapidHashSet::new();
-    known.extend(names.iter().map(|name| name.to_string()));
-    known
+fn known(names: &[&str]) -> RapidHashMap<String, String> {
+    names
+        .iter()
+        .map(|name| (name.to_string(), format!("{name}-id")))
+        .collect()
 }
 
 #[test]
 fn a_chunk_name_is_not_taken_when_its_parent_is_already_known() {
     let collections =
-        parse_sdl_with_known_types(SDL, known(&["Article", "Article__body_chunk"])).unwrap();
+        parse_sdl_with_known_collections(SDL, known(&["Article", "Article__body_chunk"])).unwrap();
     let names: Vec<&str> = collections.iter().map(|c| c.name.as_str()).collect();
     assert_eq!(names, vec!["Article", "Article__body_chunk"]);
 }
 
 #[test]
 fn a_stored_collection_takes_the_chunk_name_of_a_new_parent() {
-    let err = parse_sdl_with_known_types(SDL, known(&["Article__body_chunk"]))
+    let err = parse_sdl_with_known_collections(SDL, known(&["Article__body_chunk"]))
         .unwrap_err()
         .to_string();
     assert_eq!(
@@ -241,11 +242,133 @@ fn chunk_ids_match_the_ones_made_before_the_splitter_version() {
     );
 }
 
+const EMBEDDED_SDL: &str = r#"
+    type Article {
+        title: String
+        body: String @chunk
+        body_v: [Float32!] @embedding(fields: ["body"], provider: "openai", model: "m", url: "http://e") @index(vector: {dimensions: 3})
+        title_v: [Float32!] @embedding(fields: ["title"], provider: "openai", model: "m", url: "http://e")
+    }
+"#;
+
+#[test]
+fn an_embedding_of_a_chunked_field_moves_to_the_chunk_collection() {
+    let collections = parse_sdl(EMBEDDED_SDL).unwrap();
+    let (article, chunk) = (&collections[0], &collections[1]);
+    assert!(article.field_by_name("body_v").is_none());
+    assert!(article.indexes.iter().all(|index| !index.is_vector()));
+    let embeddings: Vec<_> = article
+        .vector_embeddings
+        .iter()
+        .map(|e| e.field_name.as_str())
+        .collect();
+    assert_eq!(embeddings, vec!["title_v"]);
+
+    let [embedding] = chunk.vector_embeddings.as_slice() else {
+        panic!("one embedding on the chunks: {:?}", chunk.vector_embeddings);
+    };
+    assert_eq!(embedding.field_name, "body_v");
+    assert_eq!(embedding.fields, vec!["text".to_string()]);
+    assert_eq!(
+        (
+            embedding.provider.as_str(),
+            embedding.model.as_str(),
+            embedding.url.as_str()
+        ),
+        ("openai", "m", "http://e")
+    );
+    let vector = chunk
+        .indexes
+        .iter()
+        .find(|index| index.is_vector())
+        .unwrap();
+    assert_eq!(vector.fields[0].name, "body_v");
+    assert_eq!(vector.vector().unwrap().dimensions, 3);
+}
+
+#[test]
+fn an_embedding_of_a_chunked_field_with_a_template_is_refused() {
+    let sdl = r#"type Article {
+        body: String @chunk
+        body_v: [Float32!] @embedding(fields: ["body"], template: "{{ .body }}")
+    }"#;
+    let err = parse_sdl(sdl).unwrap_err().to_string();
+    assert!(
+        err.contains(
+            "@embedding over a @chunk field must embed only that field. Field: Article.body_v"
+        ),
+        "{err}"
+    );
+}
+
+#[test]
+fn a_template_embedding_that_reads_a_chunked_field_is_refused() {
+    let sdl = r#"type Article {
+        body: String @chunk
+        body_v: [Float32!] @embedding(template: "{{ .body }}")
+    }"#;
+    let err = parse_sdl(sdl).unwrap_err().to_string();
+    assert!(
+        err.contains(
+            "@embedding over a @chunk field must embed only that field. Field: Article.body_v"
+        ),
+        "{err}"
+    );
+}
+
+#[test]
+fn a_template_read_after_a_quoted_closing_brace_is_refused() {
+    let sdl = r#"type Article {
+        title: String
+        body: String @chunk
+        title_v: [Float32!] @embedding(fields: ["title"], template: "{{ printf \"%s}}\" .body }}")
+    }"#;
+    let err = parse_sdl(sdl).unwrap_err().to_string();
+    assert!(
+        err.contains(
+            "@embedding over a @chunk field must embed only that field. Field: Article.title_v"
+        ),
+        "{err}"
+    );
+}
+
+#[test]
+fn a_chunked_field_named_only_in_a_template_comment_stays_on_the_parent() {
+    let sdl = r#"type Article {
+        title: String
+        body: String @chunk
+        title_v: [Float32!] @embedding(fields: ["title"], template: "{{ .title }} {{/* .body */}}")
+    }"#;
+    let collections = parse_sdl(sdl).unwrap();
+    let names: Vec<&str> = collections[0]
+        .vector_embeddings
+        .iter()
+        .map(|e| e.field_name.as_str())
+        .collect();
+    assert_eq!(names, vec!["title_v"]);
+    assert!(collections[1].vector_embeddings.is_empty());
+}
+
 #[test]
 fn chunk_declares_the_current_splitter_version() {
     let article = &parse_sdl(SDL).unwrap()[0];
     assert_eq!(
         article.chunked_field("body").unwrap().splitter_version,
         chunk_split::split::SplitterVersion::CURRENT.number()
+    );
+}
+
+#[test]
+fn an_embedding_field_named_like_a_chunk_field_is_refused() {
+    let sdl = r#"type Article {
+        body: String @chunk
+        text: [Float32!] @embedding(fields: ["body"])
+    }"#;
+    let err = parse_sdl(sdl).unwrap_err().to_string();
+    assert!(
+        err.contains(
+            "@chunk needs the field name Article__body_chunk.text, which is already taken"
+        ),
+        "{err}"
     );
 }

@@ -27,12 +27,14 @@ async fn holds(node: &Node, did: &str, permission: NodePermission) -> bool {
 }
 
 async fn grant(node: &Node, by: &str, relation: &str, target: &str) -> crate::Result<bool> {
-    node.add_nac_actor_relationship_as(&context(by), relation, target)
+    node.with_identity(identity::Did::new(by).unwrap())
+        .add_nac_actor_relationship(relation, target)
         .await
 }
 
 async fn revoke(node: &Node, by: &str, relation: &str, target: &str) -> crate::Result<bool> {
-    node.delete_nac_actor_relationship_as(&context(by), relation, target)
+    node.with_identity(identity::Did::new(by).unwrap())
+        .delete_nac_actor_relationship(relation, target)
         .await
 }
 
@@ -174,7 +176,8 @@ async fn stage(node: &Node, by: &str, edges: &[SourcePermission]) -> bool {
     let tx = who.clone().with_txn(Some(handle.as_str().parse().unwrap()));
     for item in edges {
         if node
-            .change_nac_source_permission_as(&tx, item)
+            .core()
+            .change_nac_source_permission(&tx, item)
             .await
             .is_err()
         {
@@ -333,14 +336,16 @@ fn explain_reports_provenance_behind_its_gate() {
         );
 
         let owner = node
-            .explain_nac_subject_as(&context(OWNER), OWNER)
+            .with_identity(identity::Did::new(OWNER).unwrap())
+            .explain_nac_subject(OWNER)
             .await
             .unwrap();
         assert_eq!(owner.len(), NodePermission::all().len());
         assert!(owner.iter().all(|item| item.via == PermissionVia::Owner));
 
         let admin = node
-            .explain_nac_subject_as(&context(ADMIN), ADMIN)
+            .with_identity(identity::Did::new(ADMIN).unwrap())
+            .explain_nac_subject(ADMIN)
             .await
             .unwrap();
         assert_eq!(
@@ -354,7 +359,8 @@ fn explain_reports_provenance_behind_its_gate() {
 
         for requestor in [HOLDER, ADMIN, OWNER, AUDITOR] {
             let holder = node
-                .explain_nac_subject_as(&context(requestor), HOLDER)
+                .with_identity(identity::Did::new(requestor).unwrap())
+                .explain_nac_subject(HOLDER)
                 .await
                 .unwrap();
             assert_eq!(via(&holder, HELD), [PermissionVia::Direct]);
@@ -369,35 +375,40 @@ fn explain_reports_provenance_behind_its_gate() {
 
         for requestor in [DELEGATE, OTHER] {
             let denied = node
-                .explain_nac_subject_as(&context(requestor), HOLDER)
+                .with_identity(identity::Did::new(requestor).unwrap())
+                .explain_nac_subject(HOLDER)
                 .await
                 .unwrap_err();
             assert!(denied.to_string().contains("not authorized"), "{denied}");
         }
-        assert!(node
-            .explain_nac_subject_as(&RequestContext::default(), HOLDER)
-            .await
-            .is_err());
+        assert!(node.anonymous().explain_nac_subject(HOLDER).await.is_err());
 
-        node.disable_nac_as(&context(OWNER)).await.unwrap();
+        node.with_identity(identity::Did::new(OWNER).unwrap())
+            .disable_nac()
+            .await
+            .unwrap();
         for requestor in [DELEGATE, OTHER] {
             assert!(
-                node.explain_nac_subject_as(&context(requestor), HOLDER)
+                node.with_identity(identity::Did::new(requestor).unwrap())
+                    .explain_nac_subject(HOLDER)
                     .await
                     .is_err(),
                 "disabling NAC must not disclose another subject's grants"
             );
         }
         assert!(node
-            .explain_nac_subject_as(&context(AUDITOR), HOLDER)
+            .with_identity(identity::Did::new(AUDITOR).unwrap())
+            .explain_nac_subject(HOLDER)
             .await
             .is_ok());
         assert!(node
-            .explain_nac_subject_as(&context(OWNER), "*")
+            .with_identity(identity::Did::new(OWNER).unwrap())
+            .explain_nac_subject("*")
             .await
             .is_err());
         let other = node
-            .explain_nac_subject_as(&context(OTHER), OTHER)
+            .with_identity(identity::Did::new(OTHER).unwrap())
+            .explain_nac_subject(OTHER)
             .await
             .unwrap();
         assert!(other.is_empty(), "{other:?}");
@@ -430,14 +441,16 @@ fn document_relationship_listing_is_owner_or_manager_only() {
     workers::block_on(async {
         let node = Node::builder().build().await.unwrap();
         let policy = node
-            .add_dac_policy_as(&context(DOC_OWNER), LISTING_POLICY)
+            .with_identity(identity::Did::new(DOC_OWNER).unwrap())
+            .add_dac_policy(LISTING_POLICY, None)
             .await
             .unwrap();
-        node.add_collection(&format!(
-            "type Users @policy(id: \"{policy}\", resource: \"users\") {{ name: String }}"
-        ))
-        .await
-        .unwrap();
+        node.with_identity(identity::Did::new(DOC_OWNER).unwrap())
+            .add_collection(&format!(
+                "type Users @policy(id: \"{policy}\", resource: \"users\") {{ name: String }}"
+            ))
+            .await
+            .unwrap();
         let created = node
             .execute_request(
                 query::QueryRequest::new("mutation { add_Users(input: {name: \"a\"}) { _docID } }")
@@ -449,16 +462,19 @@ fn document_relationship_listing_is_owner_or_manager_only() {
             .as_str()
             .unwrap()
             .to_owned();
-        node.add_dac_actor_relationship_as(&context(DOC_OWNER), "Users", &doc, "admin", MANAGER)
+        node.with_identity(identity::Did::new(DOC_OWNER).unwrap())
+            .add_dac_actor_relationship("Users", &doc, "admin", MANAGER)
             .await
             .unwrap();
-        node.add_dac_actor_relationship_as(&context(DOC_OWNER), "Users", &doc, "reader", READER)
+        node.with_identity(identity::Did::new(DOC_OWNER).unwrap())
+            .add_dac_actor_relationship("Users", &doc, "reader", READER)
             .await
             .unwrap();
 
         for requestor in [DOC_OWNER, MANAGER] {
             let mut listed: Vec<_> = node
-                .list_dac_relationships_as(&context(requestor), "Users", &doc)
+                .with_identity(identity::Did::new(requestor).unwrap())
+                .list_dac_relationships("Users", &doc)
                 .await
                 .unwrap()
                 .into_iter()
@@ -476,12 +492,14 @@ fn document_relationship_listing_is_owner_or_manager_only() {
         }
         for requestor in [READER, STRANGER] {
             assert!(node
-                .list_dac_relationships_as(&context(requestor), "Users", &doc)
+                .with_identity(identity::Did::new(requestor).unwrap())
+                .list_dac_relationships("Users", &doc)
                 .await
                 .is_err());
         }
         assert!(node
-            .list_dac_relationships_as(&RequestContext::default(), "Users", &doc)
+            .anonymous()
+            .list_dac_relationships("Users", &doc)
             .await
             .is_err());
         node.shutdown().await.unwrap();
@@ -661,10 +679,10 @@ fn http_inspection_routes_apply_the_embedded_gates() {
                     .unwrap();
             }
             let policy = node
-                .add_dac_policy_as(&context(&owner_did), LISTING_POLICY)
+                .with_identity(identity::Did::new(&owner_did).unwrap()).add_dac_policy(LISTING_POLICY, None)
                 .await
                 .unwrap();
-            node.add_collection(&format!(
+            node.with_identity(identity::Did::new(&owner_did).unwrap()).add_collection(&format!(
                 "type Users @policy(id: \"{policy}\", resource: \"users\") {{ name: String }}"
             ))
             .await
@@ -703,7 +721,7 @@ fn http_inspection_routes_apply_the_embedded_gates() {
             ] {
                 let response = get(who, explain.clone()).await.unwrap();
                 let embedded = node
-                    .explain_nac_subject_as(&context(did), &holder_did)
+                    .with_identity(identity::Did::new(did).unwrap()).explain_nac_subject(&holder_did)
                     .await;
                 assert_eq!(response.status().is_success(), allowed, "{did}");
                 assert_eq!(embedded.is_ok(), allowed, "{did}");
@@ -722,7 +740,7 @@ fn http_inspection_routes_apply_the_embedded_gates() {
             ] {
                 let response = get(who, listing.clone()).await.unwrap();
                 let embedded = node
-                    .list_dac_relationships_as(&context(did), "Users", &doc)
+                    .with_identity(identity::Did::new(did).unwrap()).list_dac_relationships("Users", &doc)
                     .await;
                 assert_eq!(response.status().is_success(), allowed, "{did}");
                 assert_eq!(embedded.is_ok(), allowed, "{did}");
@@ -749,26 +767,14 @@ fn http_inspection_routes_apply_the_embedded_gates() {
             let response = get(&holder, observe(&doc, &stranger_did)).await.unwrap();
             assert!(response.status().is_success());
             assert!(!response.json::<bool>().await.unwrap());
-            node.add_dac_actor_relationship_as(
-                &context(&holder_did),
-                "Users",
-                &doc,
-                "reader",
-                &stranger_did,
-            )
+            node.with_identity(identity::Did::new(&holder_did).unwrap()).add_dac_actor_relationship("Users", &doc, "reader", &stranger_did)
             .await
             .unwrap();
             let response = get(&holder, observe(&doc, &stranger_did)).await.unwrap();
             assert!(response.status().is_success());
             assert!(response.json::<bool>().await.unwrap());
             assert!(node
-                .observe_dac_actor_relationship_as(
-                    &context(&holder_did),
-                    "Users",
-                    &doc,
-                    "reader",
-                    &stranger_did
-                )
+                .with_identity(identity::Did::new(&holder_did).unwrap()).observe_dac_actor_relationship("Users", &doc, "reader", &stranger_did)
                 .await
                 .unwrap());
 

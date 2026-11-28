@@ -16,7 +16,10 @@ use bytes::Bytes;
 use std::sync::Arc;
 use tracing;
 
+mod scope_batch;
 mod selected_car;
+
+pub use scope_batch::{ScopeOutcome, ScopeRecord, ScopeRun};
 
 const RETRY_MARKER_GENERATION_MAGIC: &[u8] = b"DFRGMARKER1";
 
@@ -61,6 +64,63 @@ async fn restart_after_delivery(
             .await?;
     }
     Ok(())
+}
+
+/// One walk of `peer_id`'s scope markers: whether one is left, and the empty
+/// legacy keys passed on the way.
+async fn walk_scope_markers(
+    io: &dyn crate::corekv::RetryAttemptIO,
+    peer_id: &str,
+    validated: bool,
+) -> Result<(bool, Vec<Vec<u8>>)> {
+    let mut empty_legacy_keys = Vec::new();
+    for (prefix, expected_prefix) in [
+        (
+            ReplicatorRetryDocIDKey::peer_prefix(peer_id),
+            format!("/rep/retry/doc/{peer_id}/"),
+        ),
+        (
+            ReplicatorRetryCollectionKey::peer_prefix(peer_id),
+            format!("/rep/retry/col/{peer_id}/"),
+        ),
+    ] {
+        let options = IterOptions::new()
+            .with_prefix(prefix)
+            .with_validation(validated);
+        let mut iter = io.iterator(options).await?;
+        while let Some(pair) = iter.next().await? {
+            let key = String::from_utf8_lossy(&pair.key);
+            if key
+                .strip_prefix(&expected_prefix)
+                .is_some_and(str::is_empty)
+            {
+                empty_legacy_keys.push(pair.key);
+            } else {
+                iter.close().await?;
+                return Ok((true, empty_legacy_keys));
+            }
+        }
+        iter.close().await?;
+    }
+    Ok((false, empty_legacy_keys))
+}
+
+/// Whether `peer_id` has a scope marker left, and, when it has none, the
+/// empty legacy keys to delete with its schedule.
+///
+/// Finding none lets the caller delete the peer's schedule row, by which the
+/// retry pass finds the peer, so that answer comes from a validated scan: a
+/// marker another transaction commits into the range meanwhile aborts this
+/// one, and the re-run sees it (`RetryPeerSchedule.tla`). Finding a marker
+/// deletes nothing, so that walk validates nothing.
+async fn scope_markers_left(
+    io: &dyn crate::corekv::RetryAttemptIO,
+    peer_id: &str,
+) -> Result<(bool, Vec<Vec<u8>>)> {
+    if walk_scope_markers(io, peer_id, false).await?.0 {
+        return Ok((true, Vec::new()));
+    }
+    walk_scope_markers(io, peer_id, true).await
 }
 
 /// Peerstore provides storage for peer and replication metadata
@@ -385,36 +445,8 @@ impl RetryAttemptFn for PeerstoreRetryAttempt {
                     // Completion and empty-schedule cleanup share this same
                     // transaction. A separate clear after ACK could otherwise
                     // run against a re-added peer after its new marker lands.
-                    let mut has_markers = false;
-                    let mut empty_legacy_keys = Vec::new();
-                    for (prefix, expected_prefix) in [
-                        (
-                            ReplicatorRetryDocIDKey::peer_prefix(peer_id.as_str()),
-                            format!("/rep/retry/doc/{peer_id}/"),
-                        ),
-                        (
-                            ReplicatorRetryCollectionKey::peer_prefix(peer_id.as_str()),
-                            format!("/rep/retry/col/{peer_id}/"),
-                        ),
-                    ] {
-                        let mut iter = io.iterator(IterOptions::new().with_prefix(prefix)).await?;
-                        while let Some(pair) = iter.next().await? {
-                            let key = String::from_utf8_lossy(&pair.key);
-                            if key
-                                .strip_prefix(&expected_prefix)
-                                .is_some_and(str::is_empty)
-                            {
-                                empty_legacy_keys.push(pair.key);
-                            } else {
-                                has_markers = true;
-                                break;
-                            }
-                        }
-                        iter.close().await?;
-                        if has_markers {
-                            break;
-                        }
-                    }
+                    let (has_markers, empty_legacy_keys) =
+                        scope_markers_left(io.as_ref(), peer_id).await?;
                     if !has_markers {
                         for empty_key in empty_legacy_keys {
                             io.delete(&empty_key).await?;
@@ -463,38 +495,9 @@ impl RetryAttemptFn for PeerstoreRetryAttempt {
                             return Ok(Box::new(()) as crate::corekv::RetryAttemptValue);
                         }
                     }
-                    let mut has_markers = false;
-                    let mut empty_legacy_keys = Vec::new();
                     if exists {
-                        for (prefix, expected_prefix) in [
-                            (
-                                ReplicatorRetryDocIDKey::peer_prefix(peer_id.as_str()),
-                                format!("/rep/retry/doc/{peer_id}/"),
-                            ),
-                            (
-                                ReplicatorRetryCollectionKey::peer_prefix(peer_id.as_str()),
-                                format!("/rep/retry/col/{peer_id}/"),
-                            ),
-                        ] {
-                            let mut iter =
-                                io.iterator(IterOptions::new().with_prefix(prefix)).await?;
-                            while let Some(pair) = iter.next().await? {
-                                let key = String::from_utf8_lossy(&pair.key);
-                                if key
-                                    .strip_prefix(&expected_prefix)
-                                    .is_some_and(str::is_empty)
-                                {
-                                    empty_legacy_keys.push(pair.key);
-                                } else {
-                                    has_markers = true;
-                                    break;
-                                }
-                            }
-                            iter.close().await?;
-                            if has_markers {
-                                break;
-                            }
-                        }
+                        let (has_markers, empty_legacy_keys) =
+                            scope_markers_left(io.as_ref(), peer_id).await?;
                         if !has_markers {
                             for key in empty_legacy_keys {
                                 io.delete(&key).await?;
@@ -1619,6 +1622,28 @@ impl<S: Store> Peerstore<S> {
         expected_generation: Option<u64>,
         acked_heads: &[String],
     ) -> Result<bool> {
+        self.transact_conflicts(Box::new(self.complete_marker_attempt(
+            peer_id,
+            doc_id,
+            collection_id,
+            is_collection,
+            expected_generation,
+            acked_heads,
+        )))
+        .await
+    }
+
+    /// The attempt that completes one scope, for [`Self::complete_scope`] and
+    /// a batch of scope records.
+    fn complete_marker_attempt(
+        &self,
+        peer_id: &str,
+        doc_id: &str,
+        collection_id: &str,
+        is_collection: bool,
+        expected_generation: Option<u64>,
+        acked_heads: &[String],
+    ) -> PeerstoreRetryAttempt {
         let scope_id = if is_collection { collection_id } else { doc_id };
         let key = if is_collection {
             ReplicatorRetryCollectionKey::new(peer_id, collection_id).bytes()
@@ -1628,15 +1653,14 @@ impl<S: Store> Peerstore<S> {
         let acked_key = ReplicatorAckedHeadsKey::new(peer_id, scope_id, is_collection).bytes();
         let mut acked = acked_heads.to_vec();
         acked.sort_unstable();
-        self.transact_conflicts(Box::new(PeerstoreRetryAttempt::CompleteMarker {
+        PeerstoreRetryAttempt::CompleteMarker {
             peer_id: peer_id.to_owned(),
             key,
             expected_generation,
             acked_key,
             acked: acked.join("\n").into_bytes(),
             schedule: self.retry_schedule.clone(),
-        }))
-        .await
+        }
     }
 
     /// Return the current replicator incarnation, defaulting to zero for a
@@ -1856,3 +1880,11 @@ mod placed;
 #[cfg(test)]
 #[path = "peerstore_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "peerstore_schedule_race_tests.rs"]
+mod schedule_race_tests;
+
+#[cfg(test)]
+#[path = "peerstore_scope_batch_tests.rs"]
+mod scope_batch_tests;

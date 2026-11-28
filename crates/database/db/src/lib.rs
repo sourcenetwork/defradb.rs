@@ -91,11 +91,15 @@ pub use collection::acp::{
     warn_on_unsafe_policy_transition, AcpContext, PolicyTransitionCheck,
 };
 pub use collection::cache::CollectionCache;
+pub use collection::create_gate::{
+    create_gate, create_gate_of, CreateGate, CreateGateError, DerivedRelationship,
+};
 pub use collection::name::CollectionName;
 pub use collection::ops::{AddCollectionError, TruncateError};
 pub use collection::provider::DbCollectionProvider;
 pub use collection::retriever::{resolve_collection_from_doc_id, DocCollectionInfo};
 pub use collection::snapshot::CollectionSnapshot;
+pub use collection::EncryptedIndexError;
 #[allow(deprecated)]
 pub use collection::{collection_short_id, Collection, DbCollectionTruncator};
 pub use collection::{Cached, CollectionMap};

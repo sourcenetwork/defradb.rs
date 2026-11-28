@@ -5,10 +5,7 @@ use db::DB;
 use defra_http::{AppState, AppStateBuilder, ExtractIdentity};
 use query::mutator::DocMutator;
 use query::{QueryExecutor, QueryRequest, QueryRunner};
-use schema::{
-    CType, CollectionVersion, FieldDescription, FieldKind, IndexKind, IndexedFieldDescription,
-    OrderedIndexDescription,
-};
+use schema::{IndexKind, IndexedFieldDescription, OrderedIndexDescription};
 use storage::corekv::Store;
 use storage::{RegolithStore, RegolithStoreOptions};
 use telemetry::ConflictMetricsSnapshot;
@@ -35,21 +32,11 @@ pub fn chunk_max_chars() -> Option<u32> {
         })
 }
 
-async fn create_plain(db: &DB<RegolithStore>) {
-    let collection = CollectionVersion::new(
-        COLLECTION,
-        "write-baseline-v1",
-        "write-baseline",
-        vec![
-            FieldDescription::new("1", "_docID", FieldKind::doc_id(), CType::LwwRegister),
-            FieldDescription::new("2", "label", FieldKind::string(), CType::LwwRegister),
-            FieldDescription::new("3", "left", FieldKind::string(), CType::LwwRegister),
-            FieldDescription::new("4", "right", FieldKind::string(), CType::LwwRegister),
-            FieldDescription::new("5", "count", FieldKind::int(), CType::LwwRegister)
-                .with_crdt_type(CType::PnCounter),
-        ],
-    );
-    db.create_collection(collection).await.unwrap();
+/// `DEFRA_BASELINE_EMBEDDING_URL` embeds the chunked `left` through that provider.
+pub fn embedding_url() -> Option<String> {
+    // Only a chunked field is embedded, so the URL alone changes nothing.
+    chunk_max_chars()?;
+    std::env::var("DEFRA_BASELINE_EMBEDDING_URL").ok()
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -85,9 +72,17 @@ impl Scenario {
     fn mutation(self, writer: usize, operation: usize, ids: &[String]) -> String {
         let token = format!("writer-{writer}-operation-{operation}");
         match self {
-            Self::Creates => format!(
-                r#"mutation {{ add_Sample(input: {{label: "{token}", left: "same", right: "same", count: 0}}) {{ _docID }} }}"#
-            ),
+            Self::Creates => {
+                // Each create embeds a text of its own, so the cache answers none of them.
+                let left = if embedding_url().is_some() {
+                    token.as_str()
+                } else {
+                    "same"
+                };
+                format!(
+                    r#"mutation {{ add_Sample(input: {{label: "{token}", left: "{left}", right: "same", count: 0}}) {{ _docID }} }}"#
+                )
+            }
             Self::SharedUpdates | Self::CountersIndexes | Self::Counters | Self::CounterIndex => {
                 let id = &ids[operation % ids.len()];
                 let input = match self {
@@ -142,22 +137,28 @@ impl Fixture {
         if projector::requested() {
             projector::install(&db);
         }
-        match chunk_max_chars() {
-            Some(max_chars) => {
-                let sdl = format!(
-                    r#"type {COLLECTION} {{
-                        label: String
-                        left: String @chunk(maxChars: {max_chars})
-                        right: String
-                        count: Int @crdt(type: "pncounter")
-                    }}"#
-                );
-                db.add_collection(&defra_core::RequestContext::ambient(), &sdl)
-                    .await
-                    .unwrap();
-            }
-            None => create_plain(&db).await,
-        }
+        let chunk = chunk_max_chars()
+            .map(|max_chars| format!("@chunk(maxChars: {max_chars})"))
+            .unwrap_or_default();
+        let embedded = embedding_url()
+            .map(|url| {
+                format!(
+                    r#"left_v: [Float32!] @embedding(fields: ["left"], provider: "openai", model: "bench", url: "{url}")"#
+                )
+            })
+            .unwrap_or_default();
+        let sdl = format!(
+            r#"type {COLLECTION} {{
+                label: String
+                left: String {chunk}
+                {embedded}
+                right: String
+                count: Int @crdt(type: "pncounter")
+            }}"#
+        );
+        db.add_collection(&defra_core::RequestContext::ambient(), &sdl)
+            .await
+            .unwrap();
         if matches!(scenario, Scenario::CountersIndexes) {
             db.create_index(
                 COLLECTION,

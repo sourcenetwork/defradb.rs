@@ -18,10 +18,28 @@ use defra_core::merge::{
 };
 use document::{Document, NormalValue};
 use identity::Did;
-use schema::{CollectionVersion, FieldDescription, FieldKind, PolicyDescription};
+use schema::CollectionVersion;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use storage::RegolithStore;
+
+const USERS_SDL: &str = r#"type Users @policy(id: "policy-1", resource: "users") { name: String }"#;
+
+fn users_collection() -> schema::CollectionVersion {
+    crate::common::schema::parsed(USERS_SDL)
+}
+
+fn users_version_id() -> &'static str {
+    static ID: regolith::sync::Lazy<String> =
+        regolith::sync::Lazy::new(|| users_collection().version_id);
+    &ID
+}
+
+fn users_collection_id() -> &'static str {
+    static ID: regolith::sync::Lazy<String> =
+        regolith::sync::Lazy::new(|| users_collection().collection_id);
+    &ID
+}
 
 type Blocks = DefraBlockstore<RegolithStore>;
 
@@ -48,30 +66,9 @@ impl Fixture {
     async fn new(owner: &Signer, hook: Option<Arc<dyn CompositeMergeHook>>) -> Self {
         let store = Arc::new(RegolithStore::in_memory().unwrap());
         let db = Arc::new(DB::from_arc(store.clone()).unwrap());
-        db.create_collection(
-            CollectionVersion::new(
-                "Users",
-                "v1",
-                "col-users",
-                vec![
-                    FieldDescription::new(
-                        "1",
-                        "_docID",
-                        FieldKind::doc_id(),
-                        schema::CType::LwwRegister,
-                    ),
-                    FieldDescription::new(
-                        "2",
-                        "name",
-                        FieldKind::string(),
-                        schema::CType::LwwRegister,
-                    ),
-                ],
-            )
-            .with_policy(PolicyDescription::new("policy-1", "users")),
-        )
-        .await
-        .unwrap();
+        db.add_collection(&defra_core::RequestContext::ambient(), USERS_SDL)
+            .await
+            .unwrap();
         let blockstore = Arc::new(DefraBlockstore::new(store, false));
         let handler = DbMergeHandler::new_with_max_merge_depth(db, blockstore.clone(), 8);
         let mut doc = Document::new(crate::common::schema::open_collection(&["name"]));
@@ -79,7 +76,7 @@ impl Fixture {
             .unwrap();
         let collection = handler
             .db()
-            .find_collection_by_id("col-users")
+            .find_collection_by_id(users_collection_id())
             .unwrap()
             .unwrap();
         let genesis = db::block::builder::build_blocks_from_document(
@@ -95,7 +92,13 @@ impl Fixture {
                 .handle_block(
                     &genesis.cid,
                     &genesis.block,
-                    BlockMetadata::normal(&genesis.doc_id, "col-users", &owner.did, None, false),
+                    BlockMetadata::normal(
+                        &genesis.doc_id,
+                        users_collection_id(),
+                        &owner.did,
+                        None,
+                        false
+                    ),
                 )
                 .await
                 .unwrap(),
@@ -111,6 +114,7 @@ impl Fixture {
                     "policy-1",
                     "users",
                     &genesis.doc_id,
+                    &[],
                 )
                 .await
                 .unwrap();
@@ -133,7 +137,7 @@ impl Fixture {
     async fn update(&self, parent: Cid, priority: u64, signer: &Signer) -> (Cid, Vec<u8>) {
         let mut block = Block::new(
             CrdtDelta::Composite(CompositeDeltaPayload {
-                collection_version_id: "v1".into(),
+                collection_version_id: users_version_id().to_string(),
                 priority,
                 status: 1,
             }),
@@ -175,7 +179,7 @@ impl Fixture {
             cid,
             block_data: bytes.into(),
             doc_id: self.doc_id.clone(),
-            collection_id: "col-users".into(),
+            collection_id: users_collection_id().to_string(),
             creator: owner.did.clone(),
             sender_peer: Some("peer".into()),
             is_explicit_replicator: false,
@@ -246,7 +250,7 @@ fn strict_collection_history_uses_the_composites_document_identity() {
             fixture.handler.set_composite_merge_hook(hook);
             let root = fixture.history(&owner, None, 64).await;
             let payload = CollectionDeltaPayload {
-                collection_version_id: "v1".into(),
+                collection_version_id: users_version_id().to_string(),
                 priority: 1,
             };
             let block = Block::new(
@@ -255,8 +259,13 @@ fn strict_collection_history_uses_the_composites_document_identity() {
                 vec![DAGLink::new("_head", root.cid)],
             );
             let cid = block.generate_cid().unwrap();
-            let metadata =
-                BlockMetadata::normal(carrier_doc, "col-users", &owner.did, Some("peer"), false);
+            let metadata = BlockMetadata::normal(
+                carrier_doc,
+                users_collection_id(),
+                &owner.did,
+                Some("peer"),
+                false,
+            );
             let mut yielded = false;
             let mut completed = false;
             for _ in 0..128 {
@@ -298,14 +307,15 @@ fn strict_collection_carrier_cannot_hide_an_unauthorized_root() {
         let root = fixture.history(&attacker, None, 64).await;
         let block = Block::new(
             CrdtDelta::Collection(CollectionDeltaPayload {
-                collection_version_id: "v1".into(),
+                collection_version_id: users_version_id().to_string(),
                 priority: 1,
             }),
             vec![],
             vec![DAGLink::new("_head", root.cid)],
         );
         let cid = block.generate_cid().unwrap();
-        let metadata = BlockMetadata::normal("", "col-users", &owner.did, Some("peer"), false);
+        let metadata =
+            BlockMetadata::normal("", users_collection_id(), &owner.did, Some("peer"), false);
         let expected = MergeOutcome::rejected(format!(
             "signer {} lacks update permission on protected document {}",
             attacker.did, fixture.doc_id
@@ -354,7 +364,7 @@ fn authorize_replay(root: &mut MergeBlock, owner: &Signer) {
     root.explicit_replay_authorization = Some(ExplicitReplayAuthorization {
         source_peer_id: "peer".into(),
         target_peer_id: "receiver".into(),
-        collection_id: "col-users".into(),
+        collection_id: users_collection_id().to_string(),
         authorizer_did: owner.did.clone(),
         expires_at: u64::MAX,
         capability: None,
@@ -534,7 +544,7 @@ async fn collection_carrier_propagates_deep_ancestor_rejection(batch: bool) {
     let root = fixture.history(&owner, Some(&attacker), 64).await;
     let block = Block::new(
         CrdtDelta::Collection(CollectionDeltaPayload {
-            collection_version_id: "v1".into(),
+            collection_version_id: users_version_id().to_string(),
             priority: 1,
         }),
         vec![],
@@ -552,7 +562,7 @@ async fn collection_carrier_propagates_deep_ancestor_rejection(batch: bool) {
                 cid,
                 block_data: block.to_dag_cbor().unwrap().into(),
                 doc_id: String::new(),
-                collection_id: "col-users".into(),
+                collection_id: users_collection_id().to_string(),
                 creator: owner.did.clone(),
                 sender_peer: Some("peer".into()),
                 is_explicit_replicator: false,
@@ -569,7 +579,13 @@ async fn collection_carrier_propagates_deep_ancestor_rejection(batch: bool) {
                 .handle_block(
                     &cid,
                     &block.to_dag_cbor().unwrap(),
-                    BlockMetadata::normal("", "col-users", &owner.did, Some("peer"), false),
+                    BlockMetadata::normal(
+                        "",
+                        users_collection_id(),
+                        &owner.did,
+                        Some("peer"),
+                        false,
+                    ),
                 )
                 .await
                 .unwrap()

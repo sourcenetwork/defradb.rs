@@ -1,4 +1,4 @@
-use crate::common::schema::test_collection;
+use crate::common::schema::{parsed, test_collection, TEST_COLLECTION_SDL};
 use acp::{DocumentACP, Identity};
 use async_trait::async_trait;
 use db::{DbCollectionProvider, LensedAutoCommitFetcher, DB};
@@ -34,10 +34,11 @@ impl DocumentACP for RemoteRegistrationAcp {
         policy_id: &str,
         resource_name: &str,
         doc_id: &str,
+        _relationships: &[acp::DerivedRelationship],
     ) -> acp::Result<()> {
         self.registrations.fetch_add(1, Ordering::SeqCst);
         self.inner
-            .register_doc_object(identity, policy_id, resource_name, doc_id)
+            .register_doc_object(identity, policy_id, resource_name, doc_id, &[])
             .await
     }
 
@@ -190,6 +191,7 @@ impl DocumentACP for RevokeAfterAttemptRead {
         _policy_id: &str,
         _resource_name: &str,
         _doc_id: &str,
+        _relationships: &[acp::DerivedRelationship],
     ) -> acp::Result<()> {
         Ok(())
     }
@@ -390,7 +392,9 @@ fn implicit_batch_replays_atomically_inside_engine_attempt() {
         let mut db = DB::new(store.clone()).unwrap();
         db.set_event_bus(bus.clone());
         let db = Arc::new(db);
-        db.create_collection(test_collection()).await.unwrap();
+        db.add_collection(&defra_core::RequestContext::ambient(), TEST_COLLECTION_SDL)
+            .await
+            .unwrap();
 
         let runner = query::QueryRunner::with_provider(
             LensedAutoCommitFetcher::new(db.clone()),
@@ -458,7 +462,10 @@ fn implicit_single_update_is_prepared_for_engine_owned_retry() {
             race_operation: Arc::new(Mutex::new(None)),
         };
         let store_db = Arc::new(DB::new(store.clone()).unwrap());
-        store_db.create_collection(test_collection()).await.unwrap();
+        store_db
+            .add_collection(&defra_core::RequestContext::ambient(), TEST_COLLECTION_SDL)
+            .await
+            .unwrap();
         let created = db::write::autocommit::AutoCommitMutator::new(store_db.clone())
             .create(
                 "TestDoc",
@@ -555,7 +562,9 @@ fn direct_mutation_api_replays_atomically_inside_engine_attempt() {
         let mut db = DB::new(store.clone()).unwrap();
         db.set_event_bus(bus.clone());
         let db = Arc::new(db);
-        db.create_collection(test_collection()).await.unwrap();
+        db.add_collection(&defra_core::RequestContext::ambient(), TEST_COLLECTION_SDL)
+            .await
+            .unwrap();
 
         let runner = query::QueryRunner::with_provider(
             LensedAutoCommitFetcher::new(db.clone()),
@@ -622,7 +631,9 @@ fn single_create_replays_after_engine_conflict_with_consistent_identity_and_cid(
             race_operation: Arc::new(Mutex::new(None)),
         };
         let db = Arc::new(DB::new(store.clone()).unwrap());
-        db.create_collection(test_collection()).await.unwrap();
+        db.add_collection(&defra_core::RequestContext::ambient(), TEST_COLLECTION_SDL)
+            .await
+            .unwrap();
 
         let result = db::write::autocommit::AutoCommitMutator::new(db.clone())
             .create(
@@ -669,9 +680,11 @@ fn transactional_acp_revoke_conflicts_and_denies_batch_update() {
             race_operation: Arc::new(Mutex::new(None)),
         };
         let db = Arc::new(DB::new(store.clone()).unwrap());
-        let collection =
-            test_collection().with_policy(schema::PolicyDescription::new("policy", "test-docs"));
-        db.create_collection(collection.clone()).await.unwrap();
+        let sdl = r#"type TestDoc @policy(id: "policy", resource: "test-docs") { x: Int }"#;
+        let collection = parsed(sdl);
+        db.add_collection(&defra_core::RequestContext::ambient(), sdl)
+            .await
+            .unwrap();
 
         let original = db::write::autocommit::AutoCommitMutator::new(db.clone())
             .create(
@@ -753,9 +766,12 @@ fn remote_acp_batch_replays_with_attempt_local_registration_projection() {
         db.set_event_bus(bus);
         let owner =
             identity::Did::new("did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK").unwrap();
-        let collection =
-            test_collection().with_policy(schema::PolicyDescription::new("policy1", "test-docs"));
-        db.create_collection(collection.clone()).await.unwrap();
+        db.add_collection(
+            &defra_core::RequestContext::ambient(),
+            r#"type TestDoc @policy(id: "policy1", resource: "test-docs") { x: Int }"#,
+        )
+        .await
+        .unwrap();
         let acp = Arc::new(RemoteRegistrationAcp {
             inner: Arc::new(acp::LocalDocumentACP::new(Arc::new(
                 acp::MemoryAcpStore::new(),

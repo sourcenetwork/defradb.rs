@@ -34,6 +34,10 @@ use crate::identity::Identity;
 use crate::pending::PendingRegistrations;
 use crate::provider_command::ProviderCommand;
 
+mod transfer;
+
+pub use transfer::StageTransfer;
+
 /// A relationship change as its caller asks for it.
 pub struct StageRelationship<'a> {
     /// The transaction staging it, where its caller knows one.
@@ -586,13 +590,6 @@ impl TransactionOutbox {
     /// `Ok(false)` for an add the provider could not be asked about.
     async fn advise(&self, actor: &Did, request: &StageRelationship<'_>) -> Result<bool> {
         let (policy_id, resource, object) = (request.policy_id, request.resource, request.object);
-        if let Some(owed) = self.pending.get(policy_id, resource, object).await? {
-            return if self.provider.canonical_actor(&owed.creator) == *actor {
-                Ok(true)
-            } else {
-                Err(refusal(request))
-            };
-        }
         let denial = self
             .denials
             .on(
@@ -608,8 +605,18 @@ impl TransactionOutbox {
                 "a revocation owed to the provider denies {actor} on {resource} {object}"
             ))
         };
+        // An owed transfer away from the actor, or an owed archive, denies
+        // it before a registration still owed to it could let it in: a
+        // creator that gave its document away stages nothing more on it.
         if matches!(denial, OwedDenial::Always | OwedDenial::Archived) {
             return Err(revoked());
+        }
+        if let Some(owed) = self.pending.get(policy_id, resource, object).await? {
+            return if self.provider.canonical_actor(&owed.creator) == *actor {
+                Ok(true)
+            } else {
+                Err(refusal(request))
+            };
         }
         let owner = match self
             .provider
@@ -674,7 +681,7 @@ fn rests_on_revoked(sources: Option<&[String]>, deletes: &[OwedTuple], actor: &D
 fn refusal(request: &StageRelationship<'_>) -> Error {
     let verb = match request.op {
         OwedOp::Add => "create",
-        OwedOp::Delete | OwedOp::Archive => "delete",
+        OwedOp::Delete | OwedOp::Archive | OwedOp::Transfer => "delete",
     };
     if request.managing_relations.is_empty() {
         Error::NotOwner {

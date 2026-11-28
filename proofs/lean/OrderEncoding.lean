@@ -4,6 +4,8 @@ import OrderEncoding.PerType
 import OrderEncoding.BytesEnc
 import OrderEncoding.CrossType
 import OrderEncoding.InLookup
+import OrderEncoding.JsonPath
+import OrderEncoding.JsonEmptyArray
 
 /-!
 # OrderEncoding_DESIGN — order-preserving key-encoding monotonicity (Lean slice)
@@ -34,6 +36,10 @@ contract is what this slice proves, structurally, from the byte-emitting code.
 * `cross_type_total_order` — distinct type markers decide cross-type comparisons by the
   marker alone, consistently with the per-type orderings; instantiated as the real chain
   `null < bytes < bool < int`.
+* `JsonEmptyArray` — the marker a JSON index writes under an empty array starts like no
+  value, sorts after every value on its path ascending and before every one descending,
+  stays inside its path's bounds, and reads back as itself while every value reads back
+  as before (`OrderEncoding/JsonEmptyArray.lean`).
 
 ## The negative side (so the positives are not vacuous)
 
@@ -235,6 +241,7 @@ from the byte-emitting definitions. -/
 #print axioms OrderEncoding.neg_swapped_bool_markers_not_order_preserving
 #print axioms OrderEncoding.neg_no_escape_bytes_collision
 #print axioms OrderEncoding.neg_shared_marker_breaks_cross_type
+#print axioms OrderEncoding.JsonPath.descending_json_sentinels_bracket_values
 #print axioms OrderEncoding.lookups_strictly_increasing
 #print axioms OrderEncoding.reversed_lookups_strictly_decreasing
 #print axioms OrderEncoding.mem_lookups
@@ -244,3 +251,15 @@ from the byte-emitting definitions. -/
 #print axioms OrderEncoding.written_nodup
 #print axioms OrderEncoding.neg_written_order_not_increasing
 #print axioms OrderEncoding.neg_keep_dup_not_increasing
+#print axioms OrderEncoding.JsonEmptyArray.marker_distinct_asc
+#print axioms OrderEncoding.JsonEmptyArray.marker_distinct_desc
+#print axioms OrderEncoding.JsonEmptyArray.value_lt_marker_asc
+#print axioms OrderEncoding.JsonEmptyArray.marker_lt_value_desc
+#print axioms OrderEncoding.JsonEmptyArray.marker_inside_path_asc
+#print axioms OrderEncoding.JsonEmptyArray.marker_inside_path_desc
+#print axioms OrderEncoding.JsonEmptyArray.decode_marker_asc
+#print axioms OrderEncoding.JsonEmptyArray.decode_value_asc
+#print axioms OrderEncoding.JsonEmptyArray.decode_marker_desc
+#print axioms OrderEncoding.JsonEmptyArray.decode_value_desc
+#print axioms OrderEncoding.JsonEmptyArray.neg_marker_on_null_reads_null_as_marker
+#print axioms OrderEncoding.JsonEmptyArray.neg_marker_inside_values_breaks_order

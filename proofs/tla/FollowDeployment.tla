@@ -51,7 +51,8 @@
 \* What must happen: every change owed again is settled, unless the node
 \* failed closed.
 \*
-\* Code this models (defradb.rs, light client at backbone rev 5ca42c8):
+\* Code this models (defradb.rs, and the light client at the backbone rev
+\* Cargo.lock pins):
 \*   crates/engine/vera/src/vera_rs/follow/mod.rs         Follow, Follow::admit, Follow::still,
 \*       Follow::epoch, reconcile, scan, uncovered
 \*   crates/engine/vera/src/vera_rs/follow/journal.rs     Journal::record, Journal::floor,
@@ -64,7 +65,7 @@
 \*       admitted, admitted_read (admitted before each read, and at the same checked
 \*       term after it); provider/submission.rs (admitted again once the worker is held)
 \*   crates/engine/acp/src/external/voided.rs             ExternalDocumentAcp::owe_again
-\*   acp-light-client src/term.rs                         certify, adopt (the head is dropped)
+\*   acp-light-client:src/term.rs                         certify, adopt (the head is dropped)
 \*
 \* Correspondence table (model -> Rust):
 \*   chain, TakeOver      the deployment's chain of requests, each executed or refused;

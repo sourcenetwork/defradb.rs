@@ -218,12 +218,27 @@ Setting `_authorID` or `author` on a `Book` links it, visible as `Author { publi
 
 Disconnecting from one or several connected peers leaves the active peer list empty; disconnecting an empty list fails with `addresses cannot be empty`.
 
+# `defra.net.peers.connection_manager_settles`: A trim's pruned peers stay disconnected
+
+- **Parents:** ["go.net.peers"]
+- **Scenarios:** ["net::connection_manager::net_connection_manager_pruned_peers_stay_disconnected", "p2p::connection_manager::rust_connection_manager_pruned_peers_stay_disconnected"]
+
+A node started with `--connection-manager-low-water`, `--connection-manager-high-water` and `--connection-manager-grace-period-ms` that gets more connections than its high-water mark closes its oldest peers outside the grace period until it is back at low water. For the 10 seconds after that trim (go-libp2p connmgr's silence period) the node runs no other trim. For the 10 seconds after any peer's last connection closes, by a trim, a restart, a network blip or `client p2p disconnect`, neither end's Kademlia dials the other: the far end of a trim sees only a remote close, so it holds on every close. With nothing else asking for a connection, the pruned peers stay out of `client p2p active-peers` and the peers it kept stay in it, so a node at high water settles instead of pruning and reconnecting. Only Kademlia's dials are held: an explicit `client p2p connect`, a replicator push or a Bitswap fetch that needs a pruned peer still reconnects to it, and a Kademlia dial that finds such a dial already in flight waits for it.
+
 # `go.net.subscribe.collection_list`: Listing collection subscriptions
 
 - **Parents:** ["go.net.subscribe"]
 - **Scenarios:** ["net.simple.peer.subscribe.collection.p2-pcollection-add-get-multiple", "net.simple.peer.subscribe.collection.p2-pcollection-add-get-single", "net.simple.peer.subscribe.collection.p2-pcollection-add-remove-get-multiple", "net.simple.peer.subscribe.collection.p2-pcollection-add-remove-get-single", "net.simple.peer.subscribe.collection.p2-pcollection-get-all"]
 
 Listing P2P collections returns nothing until some are added, then exactly the added collection IDs; removing one leaves only the rest.
+
+# `defra.net.peers.sticky_disconnect`: Explicit disconnect blocks background reconnect
+
+- **Parents:** ["go.net.peers.disconnect"]
+- **Scenarios:** ["net::info::disconnect_reconnect::a_replicator_retry_does_not_redial_a_disconnected_peer"]
+
+After an explicit disconnect, background retries and incoming connections do not reconnect that peer until an explicit local dial clears the disconnect marker.
+A refused connection that was never announced does not emit a peer-disconnected event.
 
 # `defra.replicator_filter`: A replicator that pushes only matching documents
 
@@ -315,6 +330,30 @@ Two nodes share 20 updates of a document, then lose touch. One makes 40 more upd
 
 A node that holds none of a document with 31 updates, told of its next head, fetches the whole DAG and converges on it. It is sent no block it holds besides the head it asked for (`car_received_already_held` zero), however many of the writer's heads gossip delivered before the fetch.
 
+# `defra.net.sync.documents_complete`: A document sync returns once every asked document merged
+
+- **Parents:** ["go.net.sync.documents"]
+- **Scenarios:** ["net::sync::documents_complete::a_document_sync_returns_once_every_asked_document_merged"]
+
+`SyncDocuments` on an iroh node, asking one peer for six documents the node lacks, returns only after all six have merged: a query on the node right after the call returns all six. A merge reported more than once does not stand in for another document, and once every asked document has merged the call does not wait for more reports. A composite terminally refused without being applied is not reported as merged, so it cannot complete the sync early.
+
+The wait is per document, not per head, and in that it differs from Go. Go's `SyncDocuments` merges every head every peer advertises before it returns. This sync returns once each asked document has merged at least one head, so when two peers hold different heads of one document it can return after the first merges, with the second still on its way. A sync that ends on its timeout returns `Ok` with documents still missing, as before.
+
+# `defra.net.sync.documents_already_held`: A document already held does not hold up a sync
+
+- **Parents:** ["defra.net.sync.documents_complete"]
+- **Scenarios:** ["net::sync::documents_complete::a_document_already_held_does_not_hold_up_the_sync"]
+
+A sync on an iroh node that asks for six documents, one of which it already holds and has merged at the head the peer advertises, returns as soon as the other five merge, well before the sync's 3 second idle timeout: a peer's answer whose every head of a document is already merged on the node and belongs to that document counts as that document merged. A head paired with another document's ID does not count, so a peer cannot complete one document with another's head. Go answers the held case at once too, since its merge of a head it holds returns right away.
+
+# `defra.net.replicator.list_shape`: Replicator list response shape
+
+- **Parents:** ["defra.net"]
+- **Scenarios:** ["net::simple::replicator::list_shape::a_replicator_list_reports_go_shape"]
+
+Listing replicators returns each entry as `{ID, Addresses, CollectionIDs, Status, LastStatusChange}`, with `Addresses` as an array and `Status` as Go's numeric status.
+Adding a new replicator records the current time as `LastStatusChange`; updating its collections retains its existing status and timestamp.
+
 # `defra.net.sync.fetch_slots`: A node's P2P status reports what holds its fetch slots
 
 - **Parents:** ["defra"]
@@ -327,6 +366,19 @@ A defradb.rs node's `p2p status` carries `pending_dag_fetch_slots`: the slot `li
 - **Scenarios:** ["net::sync::fetch_slots::fetch_slots_are_free_once_a_fetched_dag_merges"]
 
 A node holding none of a document with 11 updates, told of its next head, fetches the whole DAG from its peer (the peer's `car_served_cids` is at least one) and converges on it. Its `pending_dag_fetch_slots.limit` is then 4, and `pending_dag_fetch_slots.held` comes back to zero.
+
+# `defra.net.sync.missing_link_walks`: A node's P2P status reports its local DAG walks
+
+- **Parents:** ["defra"]
+
+To learn which blocks of a DAG it still misses, a defradb.rs node walks the blocks it already holds. Its `p2p status` carries `missing_link_walks`: `completed` walks, walks `preempted` because a retry-clock fetch passed its time slice, walks that failed on a local read (`errors`), the blocks looked at summed over walks (`blocks`) and in the longest one (`blocks_max`), the `pages` after which a walk let other work on its core run, and the time spent walking in microseconds, summed (`micros`) and for the longest walk (`micros_max`). A Go node has no such status.
+
+# `defra.net.sync.missing_link_walks.counted`: A fetched DAG's walks are counted
+
+- **Parents:** ["defra.net.sync.missing_link_walks"]
+- **Scenarios:** ["net::sync::missing_link_walks::a_fetched_dag_reports_its_missing_link_walks"]
+
+A node holding none of a document with 11 updates, told of its next head, fetches the whole DAG from its peer and converges on it. Its `missing_link_walks.completed`, `missing_link_walks.blocks` and `missing_link_walks.blocks_max` are then at least one, and `missing_link_walks.preempted` and `missing_link_walks.errors` are zero.
 
 # `defra.net.replicator.list`: A replicator with no collections is listed
 

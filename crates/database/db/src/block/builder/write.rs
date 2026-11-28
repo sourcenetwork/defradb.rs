@@ -179,9 +179,21 @@ pub(crate) async fn encrypts_field(
     field: &str,
 ) -> Result<bool, String> {
     let snapshot = DocHeadsSnapshot::load(headstore, identity.doc_short_id).await?;
-    let heads = snapshot.field_heads(field);
     let mut doc_scope = DocScope::new(Some(&snapshot), None);
-    let source = field_encryption_source(blockstore, &heads, field, None, &mut doc_scope).await?;
+    encrypts_field_at(blockstore, &snapshot, &mut doc_scope, field).await
+}
+
+/// [`encrypts_field`] over heads the caller already holds. `doc_scope` covers
+/// the same `snapshot` and keeps its answer, so asking for several fields of
+/// one document reads its every-field state at most once.
+pub(crate) async fn encrypts_field_at(
+    blockstore: &NamespaceView,
+    snapshot: &DocHeadsSnapshot,
+    doc_scope: &mut DocScope<'_>,
+    field: &str,
+) -> Result<bool, String> {
+    let heads = snapshot.field_heads(field);
+    let source = field_encryption_source(blockstore, &heads, field, None, doc_scope).await?;
     Ok(source != FieldEncryptionSource::Plaintext)
 }
 
@@ -252,7 +264,7 @@ async fn inherited_encryption(
 ) -> Result<([u8; 32], Cid), BuildError> {
     // Encstore first, then blockstore: blocks arriving over P2P land in the
     // encstore while locally-written ones go to the blockstore. Mirrors the
-    // merge decrypt path (`db-merge/src/merge_handler/encryption.rs`) and
+    // merge decrypt path (`crates/database/db/src/merge/merge_handler/encryption.rs`) and
     // `versioned_fetcher`.
     let enc_key = cid_bytes(&enc_cid);
     let enc_bytes = match blockstore

@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use async_tungstenite::tungstenite::{handshake::derive_accept_key, protocol::Role};
+use async_tungstenite::tungstenite::{handshake::derive_accept_key, protocol::Role, Message};
 use async_tungstenite::WebSocketStream;
 use axum::body::Body;
 use axum::extract::State;
@@ -15,6 +15,7 @@ use serde::Deserialize;
 use serde_json::json;
 
 use crate::client_signer::{SessionSigner, Wave};
+use crate::client_signing_waves::SigningWaves;
 use crate::error::HttpError;
 use crate::identity_extractor::ExtractIdentity;
 use crate::nac_guard::require_permission;
@@ -53,12 +54,6 @@ struct Start {
     #[serde(default)]
     txn_id: Option<String>,
     public_key_hex: String,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct Answer {
-    signatures: Vec<String>,
 }
 
 fn has_token(value: Option<&axum::http::HeaderValue>, token: &str) -> bool {
@@ -216,6 +211,7 @@ async fn run(mut socket: Socket, state: AppState, identity: ExtractIdentity, exp
     else {
         return;
     };
+    let public: Arc<dyn crypto::PublicKey> = Arc::from(public);
     if public.did().ok().as_deref() != identity.did().map(|did| did.as_str()) {
         return;
     }
@@ -238,6 +234,7 @@ async fn run(mut socket: Socket, state: AppState, identity: ExtractIdentity, exp
     request.operation_name = start.operation_name;
     request.variables = start.variables;
     request.identity = identity.did().cloned();
+    let mut ledger = SigningWaves::new(public);
     let execution = crate::query_context::execute_with_client_signer(
         &state, &identity, request, signing, txn, expiration,
     )
@@ -246,7 +243,7 @@ async fn run(mut socket: Socket, state: AppState, identity: ExtractIdentity, exp
     enum Event {
         Done(QueryResponse),
         Wave(Option<Wave>),
-        Closed,
+        Incoming(Option<Message>),
     }
     loop {
         if current_lifetime(expiration).is_none() {
@@ -259,7 +256,7 @@ async fn run(mut socket: Socket, state: AppState, identity: ExtractIdentity, exp
             futures::select! {
                 result = execution => Event::Done(result),
                 request = wave => Event::Wave(request),
-                _message = incoming => Event::Closed,
+                message = incoming => Event::Incoming(message.and_then(Result::ok)),
             }
         };
         match event {
@@ -271,26 +268,35 @@ async fn run(mut socket: Socket, state: AppState, identity: ExtractIdentity, exp
                 if current_lifetime(expiration).is_none() {
                     return;
                 }
+                let number = match ledger.open(&wave.payloads) {
+                    Ok(number) => number,
+                    Err(refused) => {
+                        let _ = wave.answer.send(Err(refused));
+                        continue;
+                    }
+                };
                 let payloads = wave.payloads.iter().map(hex::encode).collect::<Vec<_>>();
-                if !send_session(&mut socket, &json!({"blocks": payloads})).await {
+                if !send_session(&mut socket, &json!({"wave": number, "blocks": payloads})).await {
                     return;
                 }
-                let Some(answer) = next_json::<Answer>(&mut socket).await else {
+                let Ok(answer) = crate::client_signing_wire::receive(&mut socket).await else {
                     return;
                 };
-                let Ok(signatures) = answer
-                    .signatures
-                    .iter()
-                    .map(hex::decode)
-                    .collect::<Result<Vec<_>, _>>()
-                else {
-                    return;
-                };
-                if current_lifetime(expiration).is_none() || wave.answer.send(signatures).is_err() {
+                if current_lifetime(expiration).is_none()
+                    || wave.answer.send(ledger.answer(answer)).is_err()
+                {
                     return;
                 }
             }
-            Event::Wave(None) | Event::Closed => return,
+            Event::Incoming(Some(Message::Text(text))) => {
+                let answer = serde_json::from_str(&text).unwrap_or(serde_json::Value::Null);
+                let _ = ledger.answer(answer);
+            }
+            Event::Incoming(Some(Message::Ping(_) | Message::Pong(_) | Message::Frame(_))) => {}
+            Event::Incoming(Some(Message::Binary(_))) => {
+                let _ = ledger.answer(serde_json::Value::Null);
+            }
+            Event::Wave(None) | Event::Incoming(Some(Message::Close(_)) | None) => return,
         }
     }
 }

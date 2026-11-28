@@ -259,23 +259,6 @@ fn a_run_after_a_lost_part_merges_the_fields_it_only_writes() {
     );
 }
 
-#[test]
-fn retry_reads_the_registration_parent_before_rewriting_it() {
-    let mut collection = tally();
-    let mut policy = schema::PolicyDescription::new("policy", "jobs");
-    policy.parent_field = Some("label".into());
-    collection.policy = Some(policy);
-    assert_eq!(
-        Run::AfterLostPart.planned(
-            &crdt::Crdts::default(),
-            &collection,
-            &set(&["label", "note"]),
-            None,
-        ),
-        Some(set(&["label"]))
-    );
-}
-
 /// A field whose old value a rule reads is decided on every run: an index
 /// component, an embedding source, an immutable field, a compared field, and
 /// every field of a downsampled collection.

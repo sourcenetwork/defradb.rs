@@ -24,6 +24,27 @@ fn retry() -> RetryOptions {
     corekv::engine_retry_options(5)
 }
 
+#[nuclei::test]
+async fn updating_a_replicator_keeps_its_original_status_timestamp() {
+    let h = Harness::default();
+    let mut first = request("peer", &["Note"]);
+    first.info.status = p2p::ReplicatorStatus::Inactive;
+    first.info.last_status_change = chrono::DateTime::from_timestamp(1_700_000_000, 0).unwrap();
+    let plan = h.prepare(&first).await.unwrap();
+    h.finish(&plan, None).await.unwrap();
+
+    let mut update = request("peer", &["Note", "User"]);
+    update.info.last_status_change = chrono::DateTime::from_timestamp(1_800_000_000, 0).unwrap();
+    let plan = h.prepare(&update).await.unwrap();
+    h.finish(&plan, None).await.unwrap();
+
+    let bytes = h.store.get_replicator("peer").await.unwrap().unwrap();
+    let stored = p2p::ReplicatorInfo::from_bytes(&bytes).unwrap();
+    assert_eq!(stored.last_status_change, first.info.last_status_change);
+    assert_eq!(stored.status, p2p::ReplicatorStatus::Inactive);
+    assert_eq!(stored.collections, ["cid-Note", "cid-User"]);
+}
+
 impl Harness {
     pub(crate) async fn prepare(
         &self,

@@ -120,6 +120,78 @@ fn a_clone_is_a_snapshot_the_original_no_longer_changes() {
     assert!(!cache.is_fully_populated());
 }
 
+/// More collections than the recent layer holds, so some are folded.
+const SPANNING: usize = 40;
+
+fn spanning_cache() -> CollectionCache {
+    let mut cache = CollectionCache::new();
+    for index in 0..SPANNING {
+        cache.add(test_collection(&format!("C{index}")));
+    }
+    cache
+}
+
+#[test]
+fn every_load_stays_visible_across_folds() {
+    let cache = spanning_cache();
+
+    assert_eq!(cache.len(), SPANNING);
+    for index in 0..SPANNING {
+        let name = format!("C{index}");
+        assert_eq!(cache.get(&name).map(|c| c.name().to_owned()), Some(name));
+    }
+    let mut names = cache.names();
+    names.sort();
+    names.dedup();
+    assert_eq!(names.len(), SPANNING, "each name listed once");
+}
+
+#[test]
+fn a_reload_of_a_folded_name_answers_the_new_collection() {
+    let mut cache = spanning_cache();
+    let reloaded = Collection::new(
+        CollectionVersion::new("C0", "v2", "col-c0", vec![]),
+        crdt::Crdts::default(),
+    );
+
+    cache.add(reloaded);
+
+    assert_eq!(
+        cache.get("C0").map(|c| c.version_id().to_owned()),
+        Some("v2".into())
+    );
+    assert_eq!(cache.len(), SPANNING, "a reload adds no entry");
+    assert_eq!(cache.names().iter().filter(|name| *name == "C0").count(), 1);
+}
+
+#[test]
+fn a_removal_clears_a_name_from_both_layers() {
+    let mut cache = spanning_cache();
+    cache.add(test_collection("C0"));
+
+    assert!(cache.remove("C0").is_some());
+
+    assert!(!cache.contains("C0"));
+    assert!(cache.get("C0").is_none());
+    assert_eq!(cache.len(), SPANNING - 1);
+    assert!(cache.remove("C0").is_none());
+}
+
+#[test]
+fn a_snapshot_taken_before_a_fold_keeps_its_contents() {
+    let mut cache = CollectionCache::new();
+    cache.add(test_collection("Users"));
+    let snapshot = cache.clone();
+
+    for index in 0..SPANNING {
+        cache.add(test_collection(&format!("C{index}")));
+    }
+    cache.remove("Users");
+
+    assert_eq!(snapshot.names(), ["Users"]);
+    assert_eq!(cache.len(), SPANNING);
+}
+
 #[test]
 fn active_collection_versions_exclude_inactive_cache_entries() {
     workers::block_on(async {

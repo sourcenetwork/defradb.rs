@@ -13,6 +13,7 @@ use crate::sync::merge::{
     BlockMetadata, MergeBlock, MergeErrorDisposition, MergeHandler, MergeOutcome,
     RecoveredBlockMetadata,
 };
+use crate::sync::SyncDiagnostics;
 use crate::transport::P2PTransport;
 use rapidhash::HashSetExt;
 
@@ -477,10 +478,23 @@ where
                     )
                     .await
                 {
-                    Ok(crate::sync::BroadcastResult::Success) => {
-                        // Both topics succeeded - nothing to report
+                    Ok(
+                        crate::sync::BroadcastResult::Success
+                        | crate::sync::BroadcastResult::NoSubscribers,
+                    ) => {
+                        // Both topics succeeded, or had no one to reach - nothing to report
                     }
-                    Ok(crate::sync::BroadcastResult::PartialDocumentOnly { collection_error }) => {
+                    Ok(crate::sync::BroadcastResult::PartialDocumentOnly {
+                        collection_error_is_no_topic_peer: true,
+                        ..
+                    }) => {
+                        // The collection topic had no peer to reach, which Go
+                        // publishes to no one without an error.
+                    }
+                    Ok(crate::sync::BroadcastResult::PartialDocumentOnly {
+                        collection_error,
+                        ..
+                    }) => {
                         // Partial success - return distinct result so callers know
                         return ReplicationResult::MergedButBroadcastFailed {
                             cid,
@@ -492,7 +506,17 @@ where
                             ),
                         };
                     }
-                    Ok(crate::sync::BroadcastResult::PartialCollectionOnly { document_error }) => {
+                    Ok(crate::sync::BroadcastResult::PartialCollectionOnly {
+                        document_error_is_no_topic_peer: true,
+                        ..
+                    }) => {
+                        // The document topic had no peer to reach, which Go
+                        // publishes to no one without an error.
+                    }
+                    Ok(crate::sync::BroadcastResult::PartialCollectionOnly {
+                        document_error,
+                        ..
+                    }) => {
                         // Partial success - return distinct result so callers know
                         return ReplicationResult::MergedButBroadcastFailed {
                             cid,
@@ -994,8 +1018,17 @@ where
                 )
                 .await
             {
-                Ok(crate::sync::BroadcastResult::Success) => {}
-                Ok(crate::sync::BroadcastResult::PartialDocumentOnly { collection_error }) => {
+                Ok(
+                    crate::sync::BroadcastResult::Success
+                    | crate::sync::BroadcastResult::NoSubscribers,
+                ) => {}
+                Ok(crate::sync::BroadcastResult::PartialDocumentOnly {
+                    collection_error_is_no_topic_peer: true,
+                    ..
+                }) => {}
+                Ok(crate::sync::BroadcastResult::PartialDocumentOnly {
+                    collection_error, ..
+                }) => {
                     results[result_index] = ReplicationResult::MergedButBroadcastFailed {
                         cid: block.cid,
                         doc_id: block.doc_id.clone(),
@@ -1006,7 +1039,13 @@ where
                         ),
                     };
                 }
-                Ok(crate::sync::BroadcastResult::PartialCollectionOnly { document_error }) => {
+                Ok(crate::sync::BroadcastResult::PartialCollectionOnly {
+                    document_error_is_no_topic_peer: true,
+                    ..
+                }) => {}
+                Ok(crate::sync::BroadcastResult::PartialCollectionOnly {
+                    document_error, ..
+                }) => {
                     results[result_index] = ReplicationResult::MergedButBroadcastFailed {
                         cid: block.cid,
                         doc_id: block.doc_id.clone(),
@@ -1071,6 +1110,11 @@ where
             .await
         }
         SyncEvent::SyncError { cid, error } => ReplicationResult::Failed { cid, error },
+        SyncEvent::HeadsAlreadyMerged {
+            cid,
+            doc_id,
+            collection_id,
+        } => already_merged_result(cid, &doc_id, &collection_id),
         SyncEvent::GossipHeadDropped {
             root_cid,
             doc_id,
@@ -1159,9 +1203,12 @@ fn sourceless_complete_dispatch(event: &SyncEvent) -> Option<Cid> {
 }
 
 /// Whether the root block and every block it links are stored.
-async fn dag_is_local<B: Blockstore>(blockstore: &B, root_cid: &Cid) -> bool {
+async fn dag_is_local<B>(blockstore: &B, root_cid: &Cid, diagnostics: &SyncDiagnostics) -> bool
+where
+    B: Blockstore,
+{
     match blockstore.get(root_cid).await {
-        Ok(Some(root_data)) => find_all_missing_links(blockstore, &root_data)
+        Ok(Some(root_data)) => find_all_missing_links(blockstore, &root_data, diagnostics)
             .await
             .is_ok_and(|missing| missing.is_empty()),
         _ => false,
@@ -1216,7 +1263,13 @@ where
     let (event, _pending_owner) = match sourceless_complete_dispatch(&event) {
         Some(root_cid) => {
             let owner = coordinator.pending_dag_merge_guard(root_cid);
-            if dag_is_local(coordinator.blockstore().as_ref(), &root_cid).await {
+            if dag_is_local(
+                coordinator.blockstore().as_ref(),
+                &root_cid,
+                &coordinator.manager().diagnostics(),
+            )
+            .await
+            {
                 (into_dag_ready(event), owner)
             } else {
                 (event, None)

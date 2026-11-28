@@ -1,6 +1,7 @@
 //! `DbDocFetcher::vector_search` resolving a collection by name, which
 //! `read/routing.rs` bypasses with a hardcoded short id.
 
+use crate::common::schema::parsed;
 use db::database::DB;
 use db::DbDocFetcher;
 use db::DbDocMutator;
@@ -9,69 +10,16 @@ use document::NormalValue;
 use query::mutator::DocMutator;
 use query::runner::DocFetcher;
 use schema::CollectionVersion;
-use schema::DistanceMetric;
-use schema::FieldDescription;
-use schema::FieldKind;
-use schema::HnswParams;
-use schema::IndexDescription;
-use schema::IndexedFieldDescription;
-use schema::VectorAlgorithm;
-use schema::VectorIndexDescription;
 use std::sync::Arc;
 use storage::RegolithStore;
 
 const COLLECTION: &str = "docs";
-const DIMENSIONS: u32 = 4;
 const DOCUMENTS: usize = 40;
 
+const DOCS_SDL: &str = r#"type docs { title: String embedding: [Float!] @index(name: "by_embedding", vector: {dimensions: 4, hnsw: {metric: COSINE}}) }"#;
+
 fn schema() -> CollectionVersion {
-    let mut version = CollectionVersion::new(
-        COLLECTION,
-        "v1",
-        "col-docs",
-        vec![
-            FieldDescription::new(
-                "1",
-                "_docID",
-                FieldKind::doc_id(),
-                schema::CType::LwwRegister,
-            ),
-            FieldDescription::new(
-                "2",
-                "title",
-                FieldKind::string(),
-                schema::CType::LwwRegister,
-            ),
-            FieldDescription::new(
-                "3",
-                "embedding",
-                FieldKind::float64_array(),
-                schema::CType::LwwRegister,
-            ),
-        ],
-    );
-    version.indexes = vec![IndexDescription {
-        name: "by_embedding".to_string(),
-        id: 0,
-        fields: vec![IndexedFieldDescription {
-            name: "embedding".to_string(),
-            descending: false,
-        }],
-        unique: false,
-        kind: None,
-        auto_generated: false,
-    }
-    .as_vector(VectorIndexDescription {
-        algorithm: VectorAlgorithm::Hnsw,
-        metric: DistanceMetric::Cosine,
-        dimensions: DIMENSIONS,
-        hnsw: Some(HnswParams::default()),
-        ivfpq: None,
-        ivfflat: None,
-        ssg: None,
-        diskann: None,
-    })];
-    version
+    parsed(DOCS_SDL)
 }
 
 fn vector_at(i: usize) -> Vec<f64> {
@@ -81,7 +29,7 @@ fn vector_at(i: usize) -> Vec<f64> {
 
 async fn populated() -> (Arc<DB<RegolithStore>>, u32) {
     let db = Arc::new(DB::new(RegolithStore::in_memory().unwrap()).expect("a database"));
-    db.create_collection(schema())
+    db.add_collection(&defra_core::RequestContext::ambient(), DOCS_SDL)
         .await
         .expect("the collection must register");
 
@@ -126,6 +74,7 @@ async fn search(db: &Arc<DB<RegolithStore>>, name: &str, index_id: u32, k: usize
         .vector_search(name, index_id, &vector_at(3), k, None)
         .await
         .expect("the search must resolve the collection")
+        .short_ids
 }
 
 #[test]
@@ -166,6 +115,29 @@ fn the_nearest_hit_is_the_document_the_query_came_from() {
             document.get("title"),
             Some(&NormalValue::String("doc-3".to_string())),
             "the nearest neighbour of doc-3's own vector must be doc-3"
+        );
+    })
+    .unwrap()
+}
+
+/// The search reports the index entries it read, at least one per hit it
+/// returns, which is what an execute explain shows as `indexFetches`.
+#[test]
+fn the_search_counts_the_index_entries_it_reads() {
+    workers::block_on(async {
+        let (db, index_id) = populated().await;
+        let txn = db.new_txn(true).await.unwrap();
+        let fetcher = DbDocFetcher::new(txn);
+        let candidates = fetcher
+            .vector_search(COLLECTION, index_id, &vector_at(3), 5, None)
+            .await
+            .expect("the search must resolve the collection");
+
+        assert_eq!(candidates.short_ids.len(), 5);
+        assert!(
+            candidates.index_reads >= 5,
+            "five hits need at least five entries read, got {}",
+            candidates.index_reads
         );
     })
     .unwrap()

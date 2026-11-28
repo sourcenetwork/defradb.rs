@@ -2,6 +2,7 @@
 //! a policy-backed collection is shown to nobody, and access is decided in
 //! the transaction that read the page.
 
+mod arrivals;
 mod decisions;
 mod transaction_fetcher;
 
@@ -14,12 +15,13 @@ use db::{
 };
 use identity::Did;
 use query::{QueryExecutor, QueryRequest, QueryRunner};
-use schema::PolicyDescription;
 use serde_json::Value;
 use storage::RegolithStore;
 
 const POLICY: &str = "update-policy";
 const RESOURCE: &str = "users";
+const POLICY_USERS_SDL: &str =
+    r#"type Users @policy(id: "update-policy", resource: "users") { name: String }"#;
 const UPDATES: &str =
     r#"{ _documentUpdates(collection: "Users") { head next entries { cursor docID cid } } }"#;
 
@@ -46,16 +48,18 @@ struct Node {
 
 impl Node {
     /// A store whose document ACP is the node's own local one, kept in the
-    /// store, so a delete unregisters its document in the delete transaction.
+    /// store, so a purge unregisters its document in the purge transaction.
     async fn new(policy: bool) -> Self {
         let store = Arc::new(RegolithStore::in_memory().unwrap());
         let db = Arc::new(DB::from_arc(store.clone()).unwrap());
-        for mut schema in query::parse_sdl("type Users { name: String }").unwrap() {
-            if policy {
-                schema.policy = Some(PolicyDescription::new(POLICY, RESOURCE));
-            }
-            db.create_collection(schema).await.unwrap();
-        }
+        let sdl = if policy {
+            POLICY_USERS_SDL
+        } else {
+            "type Users { name: String }"
+        };
+        db.add_collection(&defra_core::RequestContext::ambient(), sdl)
+            .await
+            .unwrap();
         let acp: Arc<dyn DocumentACP> = Arc::new(acp::ZanzibarDocumentACP::new(Arc::new(
             acp::PersistentZanzibarStore::from_store(store),
         )));
@@ -69,10 +73,9 @@ impl Node {
     async fn outside() -> Self {
         let store = Arc::new(RegolithStore::in_memory().unwrap());
         let db = Arc::new(DB::from_arc(store).unwrap());
-        for mut schema in query::parse_sdl("type Users { name: String }").unwrap() {
-            schema.policy = Some(PolicyDescription::new(POLICY, RESOURCE));
-            db.create_collection(schema).await.unwrap();
-        }
+        db.add_collection(&defra_core::RequestContext::ambient(), POLICY_USERS_SDL)
+            .await
+            .unwrap();
         Self {
             db,
             acp: Arc::new(acp::LocalDocumentACP::new(Arc::new(
@@ -200,12 +203,11 @@ fn a_deleted_private_documents_updates_are_shown_to_nobody() {
 
             node.delete(&id).await;
             assert!(
-                !node
-                    .acp
+                node.acp
                     .is_doc_registered(POLICY, RESOURCE, &id)
                     .await
                     .unwrap(),
-                "the delete unregisters the document, which then reads as public"
+                "the delete keeps the document's object, which still decides its history"
             );
             for reader in [None, Some(stranger())] {
                 let (next, entries) = node.page(path, reader.clone()).await;
@@ -324,35 +326,56 @@ fn a_page_in_a_transaction_decides_at_that_transactions_snapshot() {
     .unwrap();
 }
 
-#[test]
-fn a_page_in_a_writing_transaction_does_not_fail_it_when_its_document_is_purged() {
-    workers::block_on(async {
-        let node = Node::new(true).await;
-        let id = node.updated_document("removed").await;
-        let runner = node.runner(Path::Registry, node.acp.clone());
-        let writing = runner.begin_txn(false).await.unwrap();
-        let mut page = QueryRequest::new(UPDATES);
-        page.identity = Some(owner());
-        let response = runner.execute_in_txn(page, &writing).await;
-        assert!(response.errors.is_empty(), "{:?}", response.errors);
-        assert_eq!(shown(&response.data.unwrap()).1, std::slice::from_ref(&id));
+/// A page in a writing transaction that showed a document, then an unrelated
+/// write in it; the document is deleted (`purge` false) or purged outside the
+/// transaction before it commits. The commit's result.
+async fn commit_after_removing_a_paged_document(
+    purge: bool,
+) -> Result<(), query::TransactionError> {
+    let node = Node::new(true).await;
+    let id = node.updated_document("removed").await;
+    let runner = node.runner(Path::Registry, node.acp.clone());
+    let writing = runner.begin_txn(false).await.unwrap();
+    let mut page = QueryRequest::new(UPDATES);
+    page.identity = Some(owner());
+    let response = runner.execute_in_txn(page, &writing).await;
+    assert!(response.errors.is_empty(), "{:?}", response.errors);
+    assert_eq!(shown(&response.data.unwrap()).1, std::slice::from_ref(&id));
 
+    if purge {
         let purged = node
             .db
             .purge_by_doc_ids("Users", &[id.parse::<document::DocID>().unwrap()], None)
             .await
             .unwrap();
         assert_eq!(purged, 1);
+    } else {
+        node.delete(&id).await;
+    }
 
-        let mut write =
-            QueryRequest::new(r#"mutation { add_Users(input: {name: "unrelated"}) { _docID } }"#);
-        write.identity = Some(owner());
-        let response = runner.execute_in_txn(write, &writing).await;
-        assert!(response.errors.is_empty(), "{:?}", response.errors);
-        runner
-            .commit_txn(&writing)
-            .await
-            .expect("the page decided nothing the transaction wrote");
+    let mut write =
+        QueryRequest::new(r#"mutation { add_Users(input: {name: "unrelated"}) { _docID } }"#);
+    write.identity = Some(owner());
+    let response = runner.execute_in_txn(write, &writing).await;
+    assert!(response.errors.is_empty(), "{:?}", response.errors);
+    runner.commit_txn(&writing).await
+}
+
+#[test]
+fn a_page_in_a_writing_transaction_does_not_fail_it_when_its_document_is_deleted() {
+    workers::block_on(async {
+        commit_after_removing_a_paged_document(false).await.expect(
+            "the page decided nothing the transaction wrote, and the delete kept its object",
+        );
+    })
+    .unwrap();
+}
+
+#[test]
+fn a_page_in_a_writing_transaction_does_not_fail_it_when_its_documents_object_is_purged() {
+    workers::block_on(async {
+        let committed = commit_after_removing_a_paged_document(true).await;
+        committed.expect("the page's access read decides nothing the transaction writes");
     })
     .unwrap();
 }
@@ -397,10 +420,9 @@ fn a_transaction_fetcher_pages_for_a_provider_outside_its_transaction() {
     workers::block_on(async {
         let store = Arc::new(RegolithStore::in_memory().unwrap());
         let db = Arc::new(DB::from_arc(store).unwrap());
-        for mut schema in query::parse_sdl("type Users { name: String }").unwrap() {
-            schema.policy = Some(PolicyDescription::new(POLICY, RESOURCE));
-            db.create_collection(schema).await.unwrap();
-        }
+        db.add_collection(&defra_core::RequestContext::ambient(), POLICY_USERS_SDL)
+            .await
+            .unwrap();
         let node = Node {
             db: db.clone(),
             acp: Arc::new(acp::LocalDocumentACP::new(Arc::new(

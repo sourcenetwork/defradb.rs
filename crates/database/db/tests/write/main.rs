@@ -5,6 +5,7 @@ mod common;
 mod batch;
 mod batch_retry;
 mod batch_signing;
+mod collision_code;
 mod conflict_reasons;
 mod counter_merges;
 mod disjoint_parts;

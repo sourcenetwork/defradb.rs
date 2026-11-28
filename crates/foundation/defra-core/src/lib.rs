@@ -63,7 +63,7 @@ pub use request_context::{RequestContext, SharedTransportSentinel};
 pub use signing::SigningKeyType;
 pub use store_backend::{parse_store_backend, StoreBackend};
 pub use text_op::{TextEdits, TextOp};
-pub use txn_id::TxnId;
+pub use txn_id::{TxnId, TxnIdParseError};
 
 /// Version information for DefraDB
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

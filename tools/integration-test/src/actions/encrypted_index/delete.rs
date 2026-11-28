@@ -39,12 +39,9 @@ impl Op for DeleteEncryptedIndex {
         state
             .block_on(
                 state
-                    .node_on(self.common.node())?
-                    .delete_encrypted_index_as(
-                        &state.context_as(self.txn, identity),
-                        &self.collection,
-                        &self.field_name,
-                    ),
+                    .scope_as(self.txn, identity)
+                    .on(&*state.node_on(self.common.node())?)
+                    .delete_encrypted_index(&self.collection, &self.field_name),
             )
             .map(|()| json!({}))
             .map_err(|e| Failure::operation(e.to_string()))

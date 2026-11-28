@@ -473,6 +473,10 @@ fn subscription_field(name: &str, ty: TypeRef, args: Vec<InputValue>) -> Subscri
 }
 
 #[cfg(test)]
+#[path = "named_relation_tests.rs"]
+mod named_relation_tests;
+
+#[cfg(test)]
 mod tests {
     use regolith::sync::Barrier;
 

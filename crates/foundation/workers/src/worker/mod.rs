@@ -11,6 +11,7 @@
 //! except [`WorkerShared`], its face to other threads.
 
 mod heartbeat;
+mod hook_beat;
 mod keyed;
 mod local;
 mod run;
@@ -30,6 +31,8 @@ use std::rc::Rc;
 use std::time::Duration;
 
 pub(crate) use heartbeat::REPORTED;
+#[cfg(test)]
+pub(crate) use heartbeat::{hook_word, task_word};
 use local::Local;
 pub(crate) use run::Worker;
 pub use shared::WorkerStats;
@@ -142,6 +145,17 @@ pub(super) fn drop_quietly<T>(value: T) {
 /// A duration in whole microseconds, the pool clock's unit.
 pub(crate) fn micros(duration: Duration) -> u64 {
     u64::try_from(duration.as_micros()).unwrap_or(u64::MAX)
+}
+
+/// Reports a poll of the I/O hook that held its worker past the limit: the
+/// worker's own I/O queue was slow, not a task.
+pub(crate) fn report_long_hook(worker: usize, elapsed: u64, limit: Duration) {
+    tracing::warn!(
+        worker,
+        elapsed_ms = elapsed / 1000,
+        limit_ms = u64::try_from(limit.as_millis()).unwrap_or(u64::MAX),
+        "the worker's I/O hook held its worker past the limit"
+    );
 }
 
 /// Reports a poll that held its worker past the limit: the one log line for

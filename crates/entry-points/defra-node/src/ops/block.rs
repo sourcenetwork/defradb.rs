@@ -4,27 +4,10 @@ use defra_core::RequestContext;
 
 use super::handle::NodeOps;
 use super::request::acting_identity;
-use crate::{Error, Node, Result};
-
-impl Node {
-    /// Check that block `cid` was signed by `public_key` (hex, of `key_type`),
-    /// read as `context`'s identity, in the transaction it carries if it
-    /// carries one (Go: `client.Store::VerifySignature`).
-    pub async fn verify_block_signature_as(
-        &self,
-        context: &RequestContext,
-        cid: &str,
-        public_key: &str,
-        key_type: crypto::KeyType,
-    ) -> Result<()> {
-        self.ops()
-            .verify_block_signature(&self.admitted_caller(context)?, cid, public_key, key_type)
-            .await
-    }
-}
+use crate::{Error, Result};
 
 impl NodeOps {
-    /// [`Node::verify_block_signature_as`] as `context` names, with no
+    /// [`crate::Node::verify_block_signature`] as `context` names, with no
     /// default caller.
     pub(crate) async fn verify_block_signature(
         &self,

@@ -15,16 +15,14 @@ mod reindex;
 mod set;
 mod shortid;
 
-use std::sync::Arc;
-
-use lens::{TransformId, TransformStore};
+use lens::TransformId;
 use storage::corekv::Store;
 
 use crate::error::Result;
 use crate::DB;
 
 pub use reindex::ReindexReport;
-pub(crate) use reindex::{owe_reindex, reindex_owed};
+pub(crate) use reindex::{owe_reindex, owed_failure, owed_status, reindex_owed};
 
 impl<S: Store> DB<S> {
     /// Run the ordered database-open migration pipeline.
@@ -38,16 +36,8 @@ impl<S: Store> DB<S> {
         self.reload_lens_configs().await
     }
 
-    /// Get a reference to the lens transform store.
-    ///
-    /// The lens store manages schema migration transforms that can be applied
-    /// when documents are fetched from older schema versions.
-    pub fn lens_store(&self) -> &Arc<dyn TransformStore> {
-        &self.lens_store
-    }
-
     /// Check if a migration exists between two schema versions.
     pub fn has_migration(&self, transform_id: &TransformId) -> bool {
-        self.lens_store.has_transform(transform_id)
+        self.lens_store().has_transform(transform_id)
     }
 }

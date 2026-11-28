@@ -1,7 +1,9 @@
 use crate::error::{Error, Result};
 use crate::txn::DbTxn;
 use datastore::NamespaceView;
-use query::fetcher::{DocumentArrival, DocumentArrivalOptions, DocumentArrivalPage};
+use query::fetcher::{
+    DocumentArrival, DocumentArrivalOptions, DocumentArrivalPage, DocumentReader,
+};
 use storage::corekv::Store;
 
 fn head_key(collection: u32) -> Vec<u8> {
@@ -42,15 +44,60 @@ pub(crate) async fn record(store: &NamespaceView, collection: u32, doc: &str) ->
         .map_err(Error::Storage)
 }
 
-pub(crate) async fn read<S: Store>(
+/// One page of the journal as `reader` may see it.
+///
+/// `txn` reads the rows, their documents' deletion state and, through the
+/// reader's provider bound to `txn`, the access decision: the same gate as
+/// the update journal (`updates::read`). A row the gate hides still moves
+/// `next` past it.
+pub(crate) async fn read<S>(
+    db: Option<&crate::database::DB<S>>,
     txn: &DbTxn<S>,
     options: &DocumentArrivalOptions,
-) -> Result<DocumentArrivalPage> {
+    reader: &DocumentReader<'_>,
+) -> Result<DocumentArrivalPage>
+where
+    S: Store,
+{
     let collection = txn
         .get_collection(&options.collection)
         .await?
-        .ok_or_else(|| Error::CollectionNotFound(options.collection.clone()))?
-        .resolved_root_id();
+        .ok_or_else(|| Error::CollectionNotFound(options.collection.clone()))?;
+    let page = rows(txn, collection.resolved_root_id(), options).await?;
+
+    let bound = reader.acp.bind_read_transaction(txn.acpstore()?);
+    let reader = DocumentReader {
+        context: reader.context,
+        acp: bound.as_deref().unwrap_or(reader.acp),
+        projection: reader.projection,
+        identity: reader.identity,
+    };
+    let mut gate = super::gate::Gate::new(txn, &collection, &reader)?;
+    for entry in &page.entries {
+        gate.decide(&entry.doc_id).await?;
+    }
+    if bound.is_none() {
+        gate.confirm(db, txn).await?;
+    }
+    Ok(DocumentArrivalPage {
+        entries: page
+            .entries
+            .into_iter()
+            .filter(|entry| gate.admits(&entry.doc_id))
+            .collect(),
+        ..page
+    })
+}
+
+/// Every stored row of the page, hidden or not.
+async fn rows<S>(
+    txn: &DbTxn<S>,
+    collection: u32,
+    options: &DocumentArrivalOptions,
+) -> Result<DocumentArrivalPage>
+where
+    S: Store,
+{
     let store = txn.systemstore()?;
     let head = number(&store, &head_key(collection)).await?;
     if options.after > head {

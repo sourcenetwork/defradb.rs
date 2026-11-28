@@ -21,30 +21,6 @@ const ENTRIES: &[(&str, &str, &[&str], &str)] = &[
          the join drops a relation when both foreign keys are indexed.",
     ),
     (
-        "tests/integration/collection_version/migrations/query/simple_test.go",
-        "TestCollectionMigrationQuery_WithMigrationsAcrossMultipleVersions_AppliesAllMigrations",
-        SECONDARY_INDEX,
-        LENS_3044,
-    ),
-    (
-        "tests/integration/collection_version/migrations/query/with_incremental_migrations_test.go",
-        "TestCollectionMigrationQuery_ThreeIncrementalMigrations_ShouldMigrateAcrossAllThree",
-        SECONDARY_INDEX,
-        LENS_3044,
-    ),
-    (
-        "tests/integration/collection_version/migrations/query/with_incremental_migrations_test.go",
-        "TestCollectionMigrationQuery_IntermediateMigrationRegisteredLast_ShouldProduceFullyMigratedResults",
-        SECONDARY_INDEX,
-        LENS_3044,
-    ),
-    (
-        "tests/integration/collection_version/migrations/query/with_incremental_migrations_test.go",
-        "TestCollectionMigrationQuery_IntermediateStampSurvivesRestart_ShouldRemigrateAfterRestart",
-        SECONDARY_INDEX,
-        LENS_3044,
-    ),
-    (
         "tests/integration/collection_version/migrations/query/with_set_default_test.go",
         "TestCollectionMigrationQuery_WithSetDefaultToOriginalVersionThatDocWasAddedAt_ClearsMigrations",
         SECONDARY_INDEX,
@@ -68,6 +44,24 @@ const ENTRIES: &[(&str, &str, &[&str], &str)] = &[
         SECONDARY_INDEX,
         CHILD_PAGE,
     ),
+    (
+        "tests/integration/collection_version/updates/remove/fields/simple_test.go",
+        "TestCollectionVersionUpdatesRemoveField",
+        SECONDARY_INDEX,
+        INDEXED_FIELD_PATCH,
+    ),
+    (
+        "tests/integration/collection_version/updates/remove/fields/simple_test.go",
+        "TestCollectionVersionUpdatesRemoveAllFields",
+        SECONDARY_INDEX,
+        INDEXED_FIELD_PATCH,
+    ),
+    (
+        "tests/integration/collection_version/updates/replace/field/simple_test.go",
+        "TestCollectionVersionUpdatesReplaceField",
+        SECONDARY_INDEX,
+        INDEXED_FIELD_PATCH,
+    ),
 ];
 
 const CHILD_PAGE: &str =
@@ -75,6 +69,11 @@ const CHILD_PAGE: &str =
 
 const LENS_3044: &str = "TODO(https://github.com/sourcenetwork/defradb.rs/issues/3044): \
                          with indexes, a query after a migration returns unmigrated fields.";
+
+const INDEXED_FIELD_PATCH: &str =
+    "The secondary-index multiplier indexes every field, and a patch may not remove \
+                                   or replace an indexed field, as Go's: \
+                                   https://github.com/sourcenetwork/defradb/issues/4722";
 
 /// The multipliers Go test `test` in `path` does not run under, and why.
 pub fn lookup(path: &str, test: &str) -> Option<(&'static [&'static str], &'static str)> {

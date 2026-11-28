@@ -88,7 +88,7 @@ async fn writes_are_confirmed_at_their_blocks_header_and_not_at_the_fallback() {
         .expect("delegation");
     for document in ["first", "second", "third"] {
         provider
-            .register_object(&delegation, &policy, "document", document)
+            .register_object(&delegation, &policy, "document", document, &[])
             .await
             .expect("registration");
     }

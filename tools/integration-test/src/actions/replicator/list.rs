@@ -10,6 +10,8 @@ use testo::prelude::*;
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ListReplicators {
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub full: bool,
     #[serde(default, skip_serializing_if = "Value::is_null")]
     pub expected_data: Value,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -36,9 +38,18 @@ impl Op for ListReplicators {
 
         let node = state.node_on(self.common.node())?;
         let listed = state
-            .block_on(node.list_replicators_as(&state.context_as(None, identity)))
+            .block_on(
+                state
+                    .scope_as(None, identity)
+                    .scoped(&node)
+                    .list_replicators(),
+            )
             .map_err(failed)?;
-        Ok(json!({ "peerIDs": listed.iter().map(|r| r.id.as_str()).collect::<Vec<_>>() }))
+        Ok(if self.full {
+            json!(listed)
+        } else {
+            json!({ "peerIDs": listed.iter().map(|r| r.id.as_str()).collect::<Vec<_>>() })
+        })
     }
 }
 
@@ -60,7 +71,11 @@ impl HttpRun for ListReplicators {
                     client.list_replicators().await
                 })?
                 .map_err(failed)?;
-            Ok(json!({ "peerIDs": listed.iter().map(|r| r.id.as_str()).collect::<Vec<_>>() }))
+            Ok(if action.full {
+                json!(listed)
+            } else {
+                json!({ "peerIDs": listed.iter().map(|r| r.id.as_str()).collect::<Vec<_>>() })
+            })
         });
     }
 }
@@ -78,9 +93,11 @@ impl CliRun for ListReplicators {
                     &["p2p", "replicator", "list"],
                 )
                 .map_err(Failure::operation)?;
-            Ok(
-                json!({ "peerIDs": printed.as_array().into_iter().flatten().map(|r| r["ID"].clone()).collect::<Vec<_>>() }),
-            )
+            Ok(if action.full {
+                printed
+            } else {
+                json!({ "peerIDs": printed.as_array().into_iter().flatten().map(|r| r["ID"].clone()).collect::<Vec<_>>() })
+            })
         });
     }
 }

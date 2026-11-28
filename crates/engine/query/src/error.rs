@@ -41,6 +41,11 @@ pub enum TransactionError {
     #[error("{0}")]
     Operation(String),
 
+    /// A field type declaration inside the transaction was refused, in Go's
+    /// words, with the code it reaches a client with.
+    #[error(transparent)]
+    UnsupportedFieldType(crate::sdl_parse::FieldTypeRefusals),
+
     /// The transaction registry lock is poisoned (indicates a panic elsewhere).
     #[error("lock poisoned: {0}")]
     LockPoisoned(String),
@@ -98,7 +103,8 @@ impl TransactionError {
     /// - `AlreadyFinalized`: Not retryable - the transaction was already committed
     ///   or rolled back.
     /// - `NotSupported`: Not retryable - transactions aren't available in this config.
-    /// - `Operation`: Not retryable - the operation itself was refused.
+    /// - `Operation`, `UnsupportedFieldType`: Not retryable - the operation
+    ///   itself was refused.
     /// - `Execution`: Retryable - transient storage errors that may succeed on retry
     ///   with a new transaction.
     /// - `Storage`: Uses the storage owner's classification; a full disk or
@@ -113,7 +119,7 @@ impl TransactionError {
             Self::NotFound(_) => false,
             Self::AlreadyFinalized(_) => false,
             Self::NotSupported(_) => false,
-            Self::Operation(_) => false,
+            Self::Operation(_) | Self::UnsupportedFieldType(_) => false,
             Self::Execution(_) => true,
             Self::Storage(source) => source.is_retriable(),
             Self::Conflict(_) => true,
@@ -135,6 +141,10 @@ pub enum QueryError {
     /// in Go's collection words.
     #[error("parse error: {0}")]
     UnknownMutationCollection(String),
+
+    /// A field type declaration the SDL may not make, in Go's words.
+    #[error(transparent)]
+    UnsupportedFieldType(#[from] crate::sdl_parse::FieldTypeRefusals),
 
     /// Invalid filter condition
     #[error("invalid filter: {0}")]
@@ -177,6 +187,15 @@ pub enum QueryError {
     /// GraphQL validation's words.
     #[error("{0}")]
     InvalidArgument(String),
+
+    /// A create's document ID, derived from its genesis block, is already
+    /// stored. Go's text; the ID is the create's own.
+    #[error("a document with the given ID already exists. DocID: {0}")]
+    DocumentAlreadyExists(String),
+
+    /// A create or save named a document that has been deleted. Go's text.
+    #[error("a document with the given ID has been deleted. DocID: {0}")]
+    DocumentDeleted(String),
 
     /// A subscription sent as a plain request: it is served only over SSE.
     #[error("parse error: {}", crate::subscription::SUBSCRIPTION_NEEDS_SSE)]
@@ -300,6 +319,7 @@ impl QueryError {
         match self {
             Self::Parse(_)
             | Self::UnknownMutationCollection(_)
+            | Self::UnsupportedFieldType(_)
             | Self::InvalidFilter(_)
             | Self::FilterFieldNotSelected { .. }
             | Self::UnknownField(_)
@@ -317,7 +337,9 @@ impl QueryError {
             | Self::InvalidMutationInput(_)
             | Self::PermissionDenied(_)
             | Self::DelegationOutsideWindow { .. }
-            | Self::Introspection(_) => true,
+            | Self::Introspection(_)
+            | Self::DocumentAlreadyExists(_)
+            | Self::DocumentDeleted(_) => true,
             Self::Storage(_)
             | Self::TransactionConflict(_)
             | Self::TransactionRetryExhausted(_)
@@ -336,6 +358,20 @@ impl QueryError {
         }
     }
 
+    /// The stable code of a document refusal: what `extensions.code` and the
+    /// documents API carry beside Go's text.
+    pub fn code(&self) -> Option<&'static str> {
+        match self {
+            Self::DocumentAlreadyExists(_) => {
+                Some(crate::executor::DOCUMENT_ALREADY_EXISTS_ERROR_CODE)
+            }
+            Self::DocumentDeleted(_) => Some(crate::executor::DOCUMENT_DELETED_ERROR_CODE),
+            _ => None,
+        }
+    }
+}
+
+impl QueryError {
     /// Retain verification diagnostics without exposing them through a query response.
     pub fn commit_access_check_failed(error: Self) -> Self {
         Self::CommitAccessCheckFailed(Box::new(error))
@@ -365,6 +401,14 @@ impl QueryError {
     /// Create an unknown field error
     pub fn unknown_field(name: impl Into<String>) -> Self {
         Self::UnknownField(name.into())
+    }
+
+    /// A selection names a field its type does not define, in graphql-go's
+    /// FieldsOnCorrectType words.
+    pub fn undefined_field(field: &str, type_name: &str) -> Self {
+        Self::UnknownField(format!(
+            "Cannot query field \"{field}\" on type \"{type_name}\"."
+        ))
     }
 
     /// Create a sub-selection-on-scalar error

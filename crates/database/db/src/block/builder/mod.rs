@@ -41,7 +41,7 @@ pub use verified_client_mutation::{
 pub(crate) use write::{
     build_document_blocks, write_delete_block_with_inputs, write_document_blocks_with_inputs,
 };
-pub(crate) use write::{doc_scope_fields, encrypts_field, fresh_nonce};
+pub(crate) use write::{doc_scope_fields, encrypts_field, encrypts_field_at, fresh_nonce};
 pub use write::{field_encryption_source, DocScope, FieldEncryptionSource};
 pub use write::{write_delete_block, write_document_blocks};
 

@@ -4,6 +4,7 @@ use crate::error::{QueryError, Result};
 use rapidhash::{RapidHashMap, RapidHashSet};
 use schema::FieldKind;
 
+use super::field_type_refusal::{FieldTypeRefusal, FieldTypeRefusals};
 use super::helpers::graphql_to_scalar_kind;
 use super::parser::{ParsedType, SdlParser};
 
@@ -29,19 +30,18 @@ impl<'a> SdlParser<'a> {
                 };
 
                 return array_kind.map(FieldKind::ScalarArray).ok_or_else(|| {
-                    QueryError::parse(format!("scalar type {} cannot be used in arrays", base))
+                    FieldTypeRefusals::from(FieldTypeRefusal::UnlistedScalar {
+                        field: field_name.to_owned(),
+                        type_name: base.clone(),
+                    })
+                    .into()
                 });
             }
             if parsed_type.is_non_null {
                 return scalar_kind
                     .to_non_nillable()
                     .map(FieldKind::Scalar)
-                    .ok_or_else(|| {
-                        QueryError::parse(format!(
-                            "NonNull variant for type {} is not supported",
-                            base
-                        ))
-                    });
+                    .ok_or_else(|| FieldTypeRefusals::from(FieldTypeRefusal::NonNull).into());
             }
             return Ok(FieldKind::Scalar(scalar_kind));
         }
@@ -91,7 +91,20 @@ impl<'a> SdlParser<'a> {
                 ));
             }
 
-            // For non-circular relations where target not yet processed, use Named
+            // A stored collection is as known as one already processed: the
+            // relation commits to its ID, so the collection has the identity
+            // it has when both are declared together.
+            if !self.type_defs.contains_key(base) {
+                if let Some(collection_id) = self.known_collections.get(base) {
+                    return Ok(FieldKind::relation(
+                        collection_id.clone(),
+                        parsed_type.is_list,
+                    ));
+                }
+            }
+
+            // A target of this SDL that is not processed yet stays Named
+            // until the second pass knows every collection ID.
             return Ok(FieldKind::named(base, parsed_type.is_list));
         }
 

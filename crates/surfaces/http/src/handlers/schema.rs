@@ -7,7 +7,7 @@
 
 use axum::{extract::State, http::HeaderMap, Json};
 
-use crate::error::{http_error_from_backend_message, HttpError};
+use crate::error::{collection_refused, HttpError};
 use crate::handlers::txn_header::txn_context;
 use crate::identity_extractor::ExtractIdentity;
 use crate::request_scope::bound;
@@ -43,7 +43,7 @@ pub async fn add_collection(
     let collections = schema_ops
         .add_collection(&body)
         .await
-        .map_err(http_error_from_backend_message)?;
+        .map_err(collection_refused)?;
 
     Ok(Json(collections))
 }

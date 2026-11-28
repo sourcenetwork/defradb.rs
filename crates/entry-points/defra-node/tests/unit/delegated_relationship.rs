@@ -34,12 +34,17 @@ async fn fixture() -> (Node, String, String) {
         .build()
         .await
         .unwrap();
-    let policy = node.add_dac_policy_as(&actor(OWNER), POLICY).await.unwrap();
-    node.add_collection(&format!(
-        "type Record @policy(id: \"{policy}\", resource: \"rows\") {{ pending: Boolean }}"
-    ))
-    .await
-    .unwrap();
+    let policy = node
+        .with_identity(identity::Did::new(OWNER).unwrap())
+        .add_dac_policy(POLICY, None)
+        .await
+        .unwrap();
+    node.with_identity(identity::Did::new(OWNER).unwrap())
+        .add_collection(&format!(
+            "type Record @policy(id: \"{policy}\", resource: \"rows\") {{ pending: Boolean }}"
+        ))
+        .await
+        .unwrap();
     let response = node
         .execute_request(
             query::QueryRequest::new("mutation { add_Record(input: {pending: true}) { _docID } }")
@@ -72,53 +77,37 @@ fn node_owned_transaction_keeps_the_selected_actor_and_finality() {
         let (node, node_did, doc) = fixture().await;
         assert_ne!(node_did, OWNER);
         let owner = actor(OWNER);
-        let transaction = node.begin_transaction_guard(false).await.unwrap();
-        let handle = transaction.handle().clone();
-        assert!(node.add_dac_actor_relationship_for_in_txn(
-            &handle, &RequestContext::default(), "Record", &doc, "reader", READER,
-        ).await.is_err());
-        assert!(node.add_dac_actor_relationship_for_in_txn(
-            &handle, &actor(READER), "Record", &doc, "reader", READER,
-        ).await.is_err());
-        assert!(node.add_dac_actor_relationship_for_in_txn(
-            &handle, &owner.clone().with_authorization_expiration(Some(0)), "Record", &doc, "reader", READER,
-        ).await.is_err());
-        let mismatched = owner.clone().with_txn(Some(defra_core::TxnId(u64::MAX)));
-        assert!(node.add_dac_actor_relationship_for_in_txn(
-            &handle, &mismatched, "Record", &doc, "reader", READER,
-        ).await.is_err());
+        let transaction = node.new_txn(false).await.unwrap();
+        let handle = transaction.id();
+        assert!(node.core().add_dac_actor_relationship_for(handle, &RequestContext::default(), "Record", &doc, "reader", READER).await.is_err());
+        assert!(node.with_transaction(handle).acting_for(identity::Did::new(READER).unwrap()).add_dac_actor_relationship("Record", &doc, "reader", READER).await.is_err());
+        assert!(node.core().add_dac_actor_relationship_for(handle, &owner.clone().with_authorization_expiration(Some(0)), "Record", &doc, "reader", READER).await.is_err());
+        let mismatched = owner.clone().with_txn(Some(defra_core::TxnId {
+            start: 0,
+            route: u64::MAX,
+        }));
+        assert!(node.core().add_dac_actor_relationship_for(handle, &mismatched, "Record", &doc, "reader", READER).await.is_err());
         let mutation = format!("mutation {{ update_Record(docID: \"{doc}\", filter: {{ pending: {{ _eq: true }} }}, input: {{ pending: false }}) {{ _docID }} }}");
-        let response = node.execute_request_in_txn(
-            query::QueryRequest::new(mutation).with_identity(Some(Did::new(OWNER).unwrap())),
-            &handle,
-        ).await;
+        let response = node.with_transaction(handle).execute_request(query::QueryRequest::new(mutation).with_identity(Some(Did::new(OWNER).unwrap()))).await;
         assert!(!response.has_errors(), "{:?}", response.errors);
         assert_eq!(response.data.unwrap()["update_Record"].as_array().unwrap().len(), 1);
-        assert!(!node.add_dac_actor_relationship_for_in_txn(
-            &handle, &owner, "Record", &doc, "reader", READER,
-        ).await.unwrap());
+        assert!(!node.with_transaction(handle).acting_for(identity::Did::new(OWNER).unwrap()).add_dac_actor_relationship("Record", &doc, "reader", READER).await.unwrap());
         assert_eq!(visible(&node).await, 0);
         transaction.commit().await.unwrap();
         assert_eq!(visible(&node).await, 1);
 
-        let transaction = node.begin_transaction_guard(false).await.unwrap();
-        assert!(node.delete_dac_actor_relationship_for_in_txn(
-            transaction.handle(), &owner, "Record", &doc, "reader", READER,
-        ).await.unwrap());
+        let transaction = node.new_txn(false).await.unwrap();
+        assert!(node.with_transaction(transaction.id()).acting_for(identity::Did::new(OWNER).unwrap()).delete_dac_actor_relationship("Record", &doc, "reader", READER).await.unwrap());
         transaction.discard().await.unwrap();
         assert_eq!(visible(&node).await, 1);
 
-        let transaction = node.begin_transaction_guard(false).await.unwrap();
-        assert!(node.delete_dac_actor_relationship_for_in_txn(
-            transaction.handle(), &owner, "Record", &doc, "reader", READER,
-        ).await.unwrap());
+        let transaction = node.new_txn(false).await.unwrap();
+        assert!(node.with_transaction(transaction.id()).acting_for(identity::Did::new(OWNER).unwrap()).delete_dac_actor_relationship("Record", &doc, "reader", READER).await.unwrap());
         transaction.commit().await.unwrap();
         assert_eq!(visible(&node).await, 0);
 
         let foreign = node.runner().begin_txn_as(&owner, false).await.unwrap();
-        assert!(node.add_dac_actor_relationship_for_in_txn(
-            &foreign, &owner, "Record", &doc, "reader", READER,
-        ).await.is_err());
+        assert!(node.with_transaction(foreign.parse::<defra_core::TxnId>().unwrap()).acting_for(identity::Did::new(OWNER).unwrap()).add_dac_actor_relationship("Record", &doc, "reader", READER).await.is_err());
         node.runner().discard_txn_as(&owner, &foreign).await.unwrap();
         node.shutdown().await.unwrap();
     }).unwrap();
@@ -129,7 +118,6 @@ fn selected_actor_nac_revocation_conflicts_with_node_owned_grant() {
     workers::block_on(async {
         let _serial = super::tests::SIGNING_STORE_GUARD.lock().await;
         let (node, node_did, doc) = fixture().await;
-        let node_actor = actor(&node_did);
         let manager = node.nac_manager().clone();
         let owner_did = Did::new(&node_did).unwrap();
         node.on_acp(move || async move {
@@ -141,45 +129,29 @@ fn selected_actor_nac_revocation_conflicts_with_node_owned_grant() {
         })
         .await
         .unwrap();
-        let tx = node.begin_transaction_guard(false).await.unwrap();
+        let tx = node.new_txn(false).await.unwrap();
         assert!(node
-            .add_dac_actor_relationship_for_in_txn(
-                tx.handle(),
-                &actor(OWNER),
-                "Record",
-                &doc,
-                "reader",
-                READER,
-            )
+            .with_transaction(tx.id())
+            .acting_for(identity::Did::new(OWNER).unwrap())
+            .add_dac_actor_relationship("Record", &doc, "reader", READER)
             .await
             .is_err());
         tx.discard().await.unwrap();
 
-        node.add_nac_actor_relationship_as(
-            &node_actor,
-            acp::NodePermission::DacRelationAdd.as_str(),
-            OWNER,
-        )
-        .await
-        .unwrap();
-        let tx = node.begin_transaction_guard(false).await.unwrap();
-        node.add_dac_actor_relationship_for_in_txn(
-            tx.handle(),
-            &actor(OWNER),
-            "Record",
-            &doc,
-            "reader",
-            READER,
-        )
-        .await
-        .unwrap();
-        node.delete_nac_actor_relationship_as(
-            &node_actor,
-            acp::NodePermission::DacRelationAdd.as_str(),
-            OWNER,
-        )
-        .await
-        .unwrap();
+        node.with_identity(identity::Did::new(&node_did).unwrap())
+            .add_nac_actor_relationship(acp::NodePermission::DacRelationAdd.as_str(), OWNER)
+            .await
+            .unwrap();
+        let tx = node.new_txn(false).await.unwrap();
+        node.with_transaction(tx.id())
+            .acting_for(identity::Did::new(OWNER).unwrap())
+            .add_dac_actor_relationship("Record", &doc, "reader", READER)
+            .await
+            .unwrap();
+        node.with_identity(identity::Did::new(&node_did).unwrap())
+            .delete_nac_actor_relationship(acp::NodePermission::DacRelationAdd.as_str(), OWNER)
+            .await
+            .unwrap();
         assert!(tx.commit().await.is_err());
         node.shutdown().await.unwrap();
     })
@@ -197,8 +169,8 @@ fn embedded_delegation_matches_executed_lean_model() {
         let _serial = super::tests::SIGNING_STORE_GUARD.lock().await;
         let (node, _, doc) = fixture().await;
         let stages_owed = node.document_acp().stages_relationship_changes();
-        let transaction = node.begin_transaction_guard(false).await.unwrap();
-        let handle = transaction.handle().clone();
+        let transaction = node.new_txn(false).await.unwrap();
+        let handle = transaction.id();
         let mut cases = Vec::<Value>::new();
         for (context, authenticated, dac) in [
             (RequestContext::default(), false, true),
@@ -206,9 +178,8 @@ fn embedded_delegation_matches_executed_lean_model() {
             (actor(OWNER), true, true),
         ] {
             let accepted = node
-                .add_dac_actor_relationship_for_in_txn(
-                    &handle, &context, "Record", &doc, "reader", READER,
-                )
+                .core()
+                .add_dac_actor_relationship_for(handle, &context, "Record", &doc, "reader", READER)
                 .await
                 .is_ok();
             cases.push(json!({
@@ -225,9 +196,9 @@ fn embedded_delegation_matches_executed_lean_model() {
         let context = actor(OWNER);
         let foreign = node.runner().begin_txn_as(&context, false).await.unwrap();
         let accepted = node
-            .add_dac_actor_relationship_for_in_txn(
-                &foreign, &context, "Record", &doc, "reader", READER,
-            )
+            .with_transaction(foreign.parse::<defra_core::TxnId>().unwrap())
+            .acting_for(identity::Did::new(OWNER).unwrap())
+            .add_dac_actor_relationship("Record", &doc, "reader", READER)
             .await
             .is_ok();
         cases.push(json!({
@@ -303,18 +274,13 @@ fn owed_staging_cases() -> Vec<serde_json::Value> {
         let provider = node.document_acp();
         let bound = provider.supports_transactions();
         let stages_owed = provider.stages_relationship_changes();
-        let transaction = node.begin_transaction_guard(false).await.unwrap();
+        let transaction = node.new_txn(false).await.unwrap();
         let mut cases = Vec::new();
         for (caller, dac) in [(READER, false), (OWNER, true)] {
             let change = node
-                .add_dac_actor_relationship_change_for_in_txn(
-                    transaction.handle(),
-                    &actor(caller),
-                    "Record",
-                    &doc,
-                    "reader",
-                    READER,
-                )
+                .with_transaction(transaction.id())
+                .acting_for(identity::Did::new(caller).unwrap())
+                .change_dac_actor_relationship("Record", &doc, "reader", READER, false)
                 .await;
             if let Ok(change) = &change {
                 assert!(

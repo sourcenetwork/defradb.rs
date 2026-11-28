@@ -17,12 +17,17 @@ fn actor(did: &str) -> RequestContext {
 
 async fn fixture() -> (Node, String) {
     let node = Node::builder().build().await.unwrap();
-    let policy = node.add_dac_policy_as(&actor(OWNER), POLICY).await.unwrap();
-    node.add_collection(&format!(
-        "type Record @policy(id: \"{policy}\", resource: \"rows\") {{ pending: Boolean }}"
-    ))
-    .await
-    .unwrap();
+    let policy = node
+        .with_identity(identity::Did::new(OWNER).unwrap())
+        .add_dac_policy(POLICY, None)
+        .await
+        .unwrap();
+    node.with_identity(identity::Did::new(OWNER).unwrap())
+        .add_collection(&format!(
+            "type Record @policy(id: \"{policy}\", resource: \"rows\") {{ pending: Boolean }}"
+        ))
+        .await
+        .unwrap();
     let result = node
         .execute_request(
             query::QueryRequest::new("mutation { add_Record(input: {pending: true}) { _docID } }")
@@ -58,7 +63,8 @@ fn relationship_grant_and_revoke_obey_commit_and_discard() {
             .clone()
             .with_txn(Some(handle.as_str().parse().unwrap()));
         assert!(!node
-            .add_dac_actor_relationship_as(&tx, "Record", &doc, "reader", READER)
+            .core()
+            .add_dac_actor_relationship(&tx, "Record", &doc, "reader", READER)
             .await
             .unwrap());
         assert_eq!(visible(&node).await, 0);
@@ -72,7 +78,8 @@ fn relationship_grant_and_revoke_obey_commit_and_discard() {
         let tx = context
             .clone()
             .with_txn(Some(handle.as_str().parse().unwrap()));
-        node.add_dac_actor_relationship_as(&tx, "Record", &doc, "reader", READER)
+        node.core()
+            .add_dac_actor_relationship(&tx, "Record", &doc, "reader", READER)
             .await
             .unwrap();
         assert_eq!(visible(&node).await, 0);
@@ -87,7 +94,8 @@ fn relationship_grant_and_revoke_obey_commit_and_discard() {
             .clone()
             .with_txn(Some(handle.as_str().parse().unwrap()));
         assert!(node
-            .delete_dac_actor_relationship_as(&tx, "Record", &doc, "reader", READER)
+            .core()
+            .delete_dac_actor_relationship(&tx, "Record", &doc, "reader", READER)
             .await
             .unwrap());
         assert_eq!(visible(&node).await, 1);
@@ -114,17 +122,17 @@ fn stale_marker_cannot_restore_revoked_relationship() {
         let request = query::QueryRequest::new(mutation.clone())
             .with_identity(Some(Did::new(OWNER).unwrap()))
             .with_context(context.clone());
-        let result = node.execute_request_in_txn(request, &handle).await;
+        let result = node.with_transaction(handle.parse::<defra_core::TxnId>().unwrap()).execute_request(request).await;
         assert!(!result.has_errors(), "{:?}", result.errors);
         assert_eq!(result.data.unwrap()["update_Record"].as_array().unwrap().len(), 1);
-        node.add_dac_actor_relationship_as(&tx, "Record", &doc, "reader", READER).await.unwrap();
+        node.core().add_dac_actor_relationship(&tx, "Record", &doc, "reader", READER).await.unwrap();
 
         let other = node.execute_request(
             query::QueryRequest::new(mutation).with_identity(Some(Did::new(OWNER).unwrap()))
         ).await;
         assert!(!other.has_errors(), "{:?}", other.errors);
-        node.add_dac_actor_relationship(OWNER, "Record", &doc, "reader", READER).await.unwrap();
-        node.delete_dac_actor_relationship(OWNER, "Record", &doc, "reader", READER).await.unwrap();
+        node.with_identity(identity::Did::new(OWNER).unwrap()).add_dac_actor_relationship("Record", &doc, "reader", READER).await.unwrap();
+        node.with_identity(identity::Did::new(OWNER).unwrap()).delete_dac_actor_relationship("Record", &doc, "reader", READER).await.unwrap();
         assert!(node.runner().commit_txn_as(&context, &handle).await.is_err());
         assert_eq!(visible(&node).await, 0);
         node.shutdown().await.unwrap();
@@ -139,7 +147,8 @@ fn wrong_actor_and_readonly_transactions_cannot_mutate_relationships() {
         let handle = node.runner().begin_txn_as(&owner, false).await.unwrap();
         let wrong = actor(READER).with_txn(Some(handle.as_str().parse().unwrap()));
         assert!(node
-            .add_dac_actor_relationship_as(&wrong, "Record", &doc, "reader", READER)
+            .core()
+            .add_dac_actor_relationship(&wrong, "Record", &doc, "reader", READER)
             .await
             .is_err());
         node.runner().discard_txn_as(&owner, &handle).await.unwrap();
@@ -148,7 +157,8 @@ fn wrong_actor_and_readonly_transactions_cannot_mutate_relationships() {
             .clone()
             .with_txn(Some(handle.as_str().parse().unwrap()));
         assert!(node
-            .add_dac_actor_relationship_as(&readonly, "Record", &doc, "reader", READER)
+            .core()
+            .add_dac_actor_relationship(&readonly, "Record", &doc, "reader", READER)
             .await
             .is_err());
         node.runner().discard_txn_as(&owner, &handle).await.unwrap();
@@ -229,7 +239,8 @@ fn revoking_node_relationship_authority_conflicts_with_pending_grant() {
         let tx = owner
             .clone()
             .with_txn(Some(handle.as_str().parse().unwrap()));
-        node.add_dac_actor_relationship_as(&tx, "Record", &doc, "reader", READER)
+        node.core()
+            .add_dac_actor_relationship(&tx, "Record", &doc, "reader", READER)
             .await
             .unwrap();
         node.on_acp(move || async move {
@@ -251,21 +262,20 @@ fn revoking_node_relationship_authority_conflicts_with_pending_grant() {
 fn revoking_a_manager_conflicts_with_its_pending_relationship_grant() {
     workers::block_on(async {
         let node = Node::builder().build().await.unwrap();
-        let policy = node.add_dac_policy_as(&actor(OWNER),
-            "name: Rows\nresources:\n  - name: rows\n    relations:\n      - name: reader\n      - name: manager\n        manages: [reader]\n    permissions:\n      - name: read\n        expr: reader\n      - name: update\n      - name: delete\n").await.unwrap();
-        node.add_collection(&format!("type Record @policy(id: \"{policy}\", resource: \"rows\") {{ pending: Boolean }}")).await.unwrap();
+        let policy = node.with_identity(identity::Did::new(OWNER).unwrap()).add_dac_policy("name: Rows\nresources:\n  - name: rows\n    relations:\n      - name: reader\n      - name: manager\n        manages: [reader]\n    permissions:\n      - name: read\n        expr: reader\n      - name: update\n      - name: delete\n", None).await.unwrap();
+        node.with_identity(identity::Did::new(OWNER).unwrap()).add_collection(&format!("type Record @policy(id: \"{policy}\", resource: \"rows\") {{ pending: Boolean }}")).await.unwrap();
         let result = node.execute_request(
             query::QueryRequest::new("mutation { add_Record(input: {pending: true}) { _docID } }")
                 .with_identity(Some(Did::new(OWNER).unwrap()))
         ).await;
         assert!(!result.has_errors(), "{:?}", result.errors);
         let doc = result.data.unwrap()["add_Record"][0]["_docID"].as_str().unwrap().to_owned();
-        node.add_dac_actor_relationship(OWNER, "Record", &doc, "manager", READER).await.unwrap();
+        node.with_identity(identity::Did::new(OWNER).unwrap()).add_dac_actor_relationship("Record", &doc, "manager", READER).await.unwrap();
         let manager = actor(READER);
         let handle = node.runner().begin_txn_as(&manager, false).await.unwrap();
         let tx = manager.clone().with_txn(Some(handle.as_str().parse().unwrap()));
-        node.add_dac_actor_relationship_as(&tx, "Record", &doc, "reader", READER).await.unwrap();
-        node.delete_dac_actor_relationship(OWNER, "Record", &doc, "manager", READER).await.unwrap();
+        node.core().add_dac_actor_relationship(&tx, "Record", &doc, "reader", READER).await.unwrap();
+        node.with_identity(identity::Did::new(OWNER).unwrap()).delete_dac_actor_relationship("Record", &doc, "manager", READER).await.unwrap();
         assert!(node.runner().commit_txn_as(&manager, &handle).await.is_err());
         assert_eq!(visible(&node).await, 0);
         node.shutdown().await.unwrap();
@@ -282,11 +292,13 @@ fn failed_relationship_statement_does_not_leak_its_writes_or_events() {
         let tx = owner
             .clone()
             .with_txn(Some(handle.as_str().parse().unwrap()));
-        node.add_dac_actor_relationship_as(&tx, "Record", &doc, "reader", READER)
+        node.core()
+            .add_dac_actor_relationship(&tx, "Record", &doc, "reader", READER)
             .await
             .unwrap();
         assert!(node
-            .add_dac_actor_relationship_as(&tx, "Record", &doc, "missing", READER)
+            .core()
+            .add_dac_actor_relationship(&tx, "Record", &doc, "missing", READER)
             .await
             .is_err());
         assert!(updates.try_recv().is_err());
@@ -390,7 +402,8 @@ fn transaction_admission_matches_executed_lean_model() {
                 .with_txn(Some(handle.as_str().parse().unwrap()))
                 .with_authorization_expiration(expired.then_some(0));
             let accepted = node
-                .add_dac_actor_relationship_as(&tx, "Record", &doc, "reader", READER)
+                .core()
+                .add_dac_actor_relationship(&tx, "Record", &doc, "reader", READER)
                 .await
                 .is_ok();
             results.push(json!({
@@ -470,23 +483,27 @@ fn an_observation_in_a_transaction_sees_its_own_relationship_changes() {
     workers::block_on(async {
         let (node, doc) = fixture().await;
         let context = actor(OWNER);
-        node.add_dac_actor_relationship_as(&context, "Record", &doc, "reader", READER)
+        node.with_identity(identity::Did::new(OWNER).unwrap())
+            .add_dac_actor_relationship("Record", &doc, "reader", READER)
             .await
             .unwrap();
         let handle = node.runner().begin_txn_as(&context, false).await.unwrap();
         let tx = context
             .clone()
             .with_txn(Some(handle.as_str().parse().unwrap()));
-        node.delete_dac_actor_relationship_as(&tx, "Record", &doc, "reader", READER)
+        node.core()
+            .delete_dac_actor_relationship(&tx, "Record", &doc, "reader", READER)
             .await
             .unwrap();
 
         assert!(!node
-            .observe_dac_actor_relationship_as(&tx, "Record", &doc, "reader", READER)
+            .core()
+            .observe_dac_actor_relationship(&tx, "Record", &doc, "reader", READER)
             .await
             .unwrap());
         assert!(node
-            .observe_dac_actor_relationship_as(&context, "Record", &doc, "reader", READER)
+            .with_identity(identity::Did::new(OWNER).unwrap())
+            .observe_dac_actor_relationship("Record", &doc, "reader", READER)
             .await
             .unwrap());
         node.runner()
@@ -494,7 +511,8 @@ fn an_observation_in_a_transaction_sees_its_own_relationship_changes() {
             .await
             .unwrap();
         assert!(!node
-            .observe_dac_actor_relationship_as(&context, "Record", &doc, "reader", READER)
+            .with_identity(identity::Did::new(OWNER).unwrap())
+            .observe_dac_actor_relationship("Record", &doc, "reader", READER)
             .await
             .unwrap());
     })

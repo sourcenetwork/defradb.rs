@@ -9,6 +9,14 @@
 //! - `/acp-owed2/h/<policy><resource><object><relation><subject>`: the latest
 //!   sequence staged on one tuple, read and written only by staging, which it
 //!   keeps ordered.
+//! - `/acp-owed2/t/<policy><resource><object>`: the sequence of the latest
+//!   transfer staged on one object, written by a transfer's staging and read,
+//!   validated, by every other staging on the object, so a change and a
+//!   transfer staged on one object at once cannot both commit.
+//! - `/acp-owed2/g/<policy><resource><object>`: a marker every staging on one
+//!   object blind-merges and a transfer reads validated, so a change and a
+//!   transfer staged on one object at once cannot both commit. Settles leave
+//!   it alone.
 //! - `/acp-owed2/o/<policy><resource><object>`: the deletes owed on one
 //!   object whose subject is wider than one actor.
 //! - `/acp-owed2/s/<policy><resource><object><subject>`: what is owed on one
@@ -42,6 +50,8 @@ const QUEUE_PREFIX: &[u8] = b"/acp-owed2/q/";
 const LIVE_PREFIX: &[u8] = b"/acp-owed2/l/";
 const HEAD_PREFIX: &[u8] = b"/acp-owed2/h/";
 const OBJECT_PREFIX: &[u8] = b"/acp-owed2/o/";
+const TRANSFER_PREFIX: &[u8] = b"/acp-owed2/t/";
+const STAGED_PREFIX: &[u8] = b"/acp-owed2/g/";
 const SUBJECT_PREFIX: &[u8] = b"/acp-owed2/s/";
 const ACTOR_PREFIX: &[u8] = b"/acp-owed2/a/";
 const DISCARD_PREFIX: &[u8] = b"/acp-owed2/x/";
@@ -152,6 +162,17 @@ pub(super) fn subject_key(policy_id: &str, resource: &str, object: &str, did: &D
         &subject_part(&OwedSubject::Actor { did: did.clone() }),
     );
     key
+}
+
+/// The latest transfer staged on one object, which only staging reads and
+/// writes.
+pub(super) fn transfer_key(policy_id: &str, resource: &str, object: &str) -> Vec<u8> {
+    [TRANSFER_PREFIX, &object_parts(policy_id, resource, object)].concat()
+}
+
+/// The marker every staging on one object writes and a transfer reads.
+pub(super) fn staged_key(policy_id: &str, resource: &str, object: &str) -> Vec<u8> {
+    [STAGED_PREFIX, &object_parts(policy_id, resource, object)].concat()
 }
 
 pub(super) fn object_key(policy_id: &str, resource: &str, object: &str) -> Vec<u8> {

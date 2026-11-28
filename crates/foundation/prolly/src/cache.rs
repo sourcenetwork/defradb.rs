@@ -78,6 +78,11 @@ impl<S> Cached<S> {
         &self.store
     }
 
+    /// The store behind the cache, to publish what was put into it.
+    pub fn inner_mut(&mut self) -> &mut S {
+        &mut self.store
+    }
+
     fn lookup(&self, hash: &Hash) -> Option<Arc<Node>> {
         let mut held = self.held.borrow_mut();
         let hit = held.nodes.get_mut(hash).map(|slot| {
@@ -146,9 +151,5 @@ where
 
     async fn put(&mut self, node: Node) -> Result<Hash> {
         self.store.put(node).await
-    }
-
-    async fn flush(&mut self) -> Result<()> {
-        self.store.flush().await
     }
 }

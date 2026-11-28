@@ -17,5 +17,6 @@ mod peer_registered_identity;
 mod peer_sec_index;
 mod peer_share;
 mod peer_subscription;
+mod peer_two_hops;
 mod query;
 mod query_relation;

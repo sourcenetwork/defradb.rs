@@ -178,8 +178,7 @@ impl Node {
 
         let encrypted_index_adapter =
             crate::encrypted_index_adapter::EncryptedIndexAdapter::new_arc(
-                database.clone(),
-                query_setup.runner.clone(),
+                query_setup.registry.clone(),
             );
         server = server.with_encrypted_index_arc(encrypted_index_adapter);
         info!("Encrypted index HTTP endpoints enabled");

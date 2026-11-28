@@ -9,11 +9,16 @@ use db::{AutoCommitMutator, DB};
 use document::Document;
 use p2p::transport::PeerId;
 use query::mutator::DocMutator;
-use schema::{CollectionVersion, FieldDescription, FieldKind};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use storage::corekv::Store;
+
+const NOTE_SDL: &str = "type Note { body: String }";
+
+fn note_collection_id() -> String {
+    crate::common::schema::parsed(NOTE_SDL).collection_id
+}
 
 async fn fixture<S>(store: Arc<S>) -> (Arc<DB<S>>, Vec<(String, String)>, PeerId)
 where
@@ -21,22 +26,9 @@ where
 {
     let db = Arc::new(DB::from_arc(store).unwrap());
     db.set_network(edge::testing::edge());
-    db.create_collection(CollectionVersion::new(
-        "Note",
-        "v1",
-        "notes",
-        vec![
-            FieldDescription::new(
-                "1",
-                "_docID",
-                FieldKind::doc_id(),
-                schema::CType::LwwRegister,
-            ),
-            FieldDescription::new("2", "body", FieldKind::string(), schema::CType::LwwRegister),
-        ],
-    ))
-    .await
-    .unwrap();
+    db.add_collection(&defra_core::RequestContext::ambient(), NOTE_SDL)
+        .await
+        .unwrap();
     let mutator = AutoCommitMutator::new(db.clone());
     let schema = db.get_collection("Note").unwrap().unwrap().schema_arc();
     let mut docs = Vec::new();
@@ -87,7 +79,7 @@ where
     S: Store + 'static,
 {
     let info =
-        p2p::ReplicatorInfo::from_raw(peer.as_str().to_owned(), vec!["notes".into()], vec![]);
+        p2p::ReplicatorInfo::from_raw(peer.as_str().to_owned(), vec![note_collection_id()], vec![]);
     db.peerstore()
         .create_replicator(peer.as_str(), &info.to_bytes().unwrap())
         .await
@@ -138,7 +130,7 @@ fn exact_selection_ignores_subscription_filter_and_backoff() {
         let before = db.peerstore().get_retry_info(peer.as_str()).await.unwrap();
         let mut filters = p2p::ReplicationFilters::new();
         filters.insert(
-            "notes".into(),
+            note_collection_id(),
             p2p::ReplicationFilter::eq("body", serde_json::json!("excluded")),
         );
         let (sent, received) = regolith::sync::bounded(8);

@@ -1,7 +1,10 @@
 //! Each write collects into the batch signing session its request's context
 //! names, and a request outside that session collects nothing into it.
 
-use crate::common::{fixture::make_test_db_with_bus, schema::test_collection};
+use crate::common::{
+    fixture::make_test_db_with_bus,
+    schema::{parsed, test_collection, TEST_COLLECTION_SDL},
+};
 use db::AutoCommitMutator;
 use defra_core::{batch_signing, RequestContext};
 use document::{Document, NormalValue};
@@ -11,7 +14,9 @@ use query::mutator::DocMutator;
 fn creates_updates_and_deletes_collect_into_their_requests_session() {
     workers::block_on(async {
         let (db, _) = make_test_db_with_bus().await;
-        db.create_collection(test_collection()).await.unwrap();
+        db.add_collection(&defra_core::RequestContext::ambient(), TEST_COLLECTION_SDL)
+            .await
+            .unwrap();
         let mutator = AutoCommitMutator::new(db);
         let session = "every-write-collects";
         let context = RequestContext::default().with_batch_session(Some(session.to_string()));
@@ -106,6 +111,7 @@ impl acp::DocumentACP for BoundObserver {
         _policy_id: &str,
         _resource_name: &str,
         _doc_id: &str,
+        _relationships: &[acp::DerivedRelationship],
     ) -> acp::Result<()> {
         self.record();
         Ok(())
@@ -173,9 +179,11 @@ impl acp::DocumentACP for BoundObserver {
 fn a_create_registers_with_the_external_acp_using_its_requests_bearer() {
     workers::block_on(async {
         let (db, _) = make_test_db_with_bus().await;
-        let mut schema = test_collection();
-        schema.policy = Some(schema::PolicyDescription::new("bearer-policy", "TestDoc"));
-        db.create_collection(schema.clone()).await.unwrap();
+        let sdl = r#"type TestDoc @policy(id: "bearer-policy", resource: "TestDoc") { x: Int }"#;
+        let schema = parsed(sdl);
+        db.add_collection(&defra_core::RequestContext::ambient(), sdl)
+            .await
+            .unwrap();
         let observer = std::sync::Arc::new(BoundObserver::default());
         db.set_document_acp(std::sync::Arc::new(acp::ExternalDocumentAcp::new(
             observer.clone(),

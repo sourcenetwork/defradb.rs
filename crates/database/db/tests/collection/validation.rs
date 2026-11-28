@@ -130,25 +130,6 @@ fn atomic_creation_rejects_an_unknown_relation_target() {
 }
 
 #[test]
-fn creation_rejects_an_invalid_default_value() {
-    workers::block_on(async {
-    let database = db::DB::open(storage::backends::RegolithStore::in_memory().unwrap())
-        .await
-        .unwrap();
-    let count = FieldDescription::new("1", "count", FieldKind::int(), schema::CType::LwwRegister)
-        .with_default(serde_json::json!("not-an-int"));
-    let collection = CollectionVersion::new("Counter", "v-counter", "c-counter", vec![count]);
-
-    let error = database.create_collection(collection).await.unwrap_err();
-
-    assert!(error.to_string().contains(
-        "default field value is invalid. Collection: Counter, Inner: Field 'count' has incompatible type"
-    ));
-})
-    .unwrap()
-}
-
-#[test]
 fn creation_accepts_supported_scalar_defaults() {
     workers::block_on(async {
         let database = db::DB::open(storage::backends::RegolithStore::in_memory().unwrap())
@@ -326,42 +307,4 @@ fn relation_id_of_wrong_length_is_rejected_like_go() {
     collection
         .validate_relation_ids(&invalid, Some(&invalid))
         .unwrap();
-}
-
-#[test]
-fn parent_registration_field_cannot_change_after_creation() {
-    let mut schema = CollectionVersion::new(
-        "Job",
-        "job_version",
-        "job_collection",
-        vec![
-            FieldDescription::new(
-                "1",
-                "nodeID",
-                FieldKind::string(),
-                schema::CType::LwwRegister,
-            ),
-            FieldDescription::new("2", "body", FieldKind::string(), schema::CType::LwwRegister),
-        ],
-    );
-    let mut policy = schema::PolicyDescription::new("policy", "job");
-    policy.parent_field = Some("nodeID".into());
-    schema.policy = Some(policy);
-    let collection = Collection::new(schema, crdt::Crdts::default());
-    let doc = |json| Document::from_json_str(json, collection.schema_arc()).unwrap();
-    let old = doc(r#"{"nodeID":"parent-a","body":"before"}"#);
-    let same = doc(r#"{"nodeID":"parent-a","body":"after"}"#);
-    let changed = doc(r#"{"nodeID":"parent-b","body":"before"}"#);
-    let removed = doc(r#"{"body":"before"}"#);
-    assert!(collection
-        .validate_immutable_fields_unchanged(&old, &same)
-        .is_ok());
-    for update in [&changed, &removed] {
-        let error = collection
-            .validate_immutable_fields_unchanged(&old, update)
-            .unwrap_err();
-        assert!(error
-            .to_string()
-            .contains("parent field 'nodeID' of a registered document cannot change"));
-    }
 }

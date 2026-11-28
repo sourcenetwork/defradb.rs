@@ -231,6 +231,14 @@ impl QueryExecutor for PooledExecutor {
         self.inner.discard_txn_as(context, handle).await
     }
 
+    async fn txn_outcome_as(
+        &self,
+        context: &RequestContext,
+        handle: &TransactionHandle,
+    ) -> std::result::Result<crate::txn::TransactionOutcome, TransactionError> {
+        self.inner.txn_outcome_as(context, handle).await
+    }
+
     async fn add_collection_as(
         &self,
         context: &RequestContext,
@@ -294,45 +302,6 @@ impl QueryExecutor for PooledExecutor {
         TransactionError,
     > {
         self.inner.indexes_in_txn_as(context, collection).await
-    }
-
-    async fn add_encrypted_index_in_txn_as(
-        &self,
-        context: &RequestContext,
-        collection: &str,
-        field: &str,
-    ) -> std::result::Result<(), TransactionError> {
-        self.inner
-            .add_encrypted_index_in_txn_as(context, collection, field)
-            .await
-    }
-
-    async fn delete_encrypted_index_in_txn_as(
-        &self,
-        context: &RequestContext,
-        collection: &str,
-        field: &str,
-    ) -> std::result::Result<(), TransactionError> {
-        self.inner
-            .delete_encrypted_index_in_txn_as(context, collection, field)
-            .await
-    }
-
-    async fn encrypted_indexes_in_txn_as(
-        &self,
-        context: &RequestContext,
-        collection: &str,
-    ) -> std::result::Result<Vec<String>, TransactionError> {
-        self.inner
-            .encrypted_indexes_in_txn_as(context, collection)
-            .await
-    }
-
-    async fn all_encrypted_indexes_in_txn_as(
-        &self,
-        context: &RequestContext,
-    ) -> std::result::Result<Vec<(String, Vec<String>)>, TransactionError> {
-        self.inner.all_encrypted_indexes_in_txn_as(context).await
     }
 
     async fn set_active_collection_version_as(

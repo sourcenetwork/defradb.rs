@@ -1,4 +1,5 @@
 mod admission;
+mod bookkeeping;
 mod deferred;
 mod fixture;
 
@@ -7,6 +8,7 @@ use db::merge::merge_handler::DbMergeHandler;
 use defra_core::block::{Block, CompositeDeltaPayload, CrdtDelta};
 use defra_core::merge::{BlockMetadata, MergeHandler, MergeOutcome};
 use document::NormalValue;
+use fixture::{users_collection_id, users_version_id};
 use std::sync::Arc;
 use storage::RegolithStore;
 
@@ -294,7 +296,7 @@ fn shared_ancestors_are_applied_once_across_forks() {
             .await;
         let block = Block::new(
             CrdtDelta::Composite(CompositeDeltaPayload {
-                collection_version_id: "v1".into(),
+                collection_version_id: users_version_id().to_string(),
                 priority: 7,
                 status: 1,
             }),
@@ -396,7 +398,7 @@ fn document_and_collection_deliveries_share_history_progress() {
             .await;
         let root = history.root();
         let payload = defra_core::block::CollectionDeltaPayload {
-            collection_version_id: "v1".into(),
+            collection_version_id: users_version_id().to_string(),
             priority: 1,
         };
         let collection = Block::new(
@@ -415,7 +417,7 @@ fn document_and_collection_deliveries_share_history_progress() {
                     &collection.to_dag_cbor().unwrap(),
                     BlockMetadata::normal(
                         "",
-                        "col-users",
+                        users_collection_id(),
                         "history-peer",
                         Some("another-provider"),
                         false,
