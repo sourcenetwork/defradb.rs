@@ -2282,3 +2282,93 @@ async fn a_local_walk_releases_the_peer_reservation_while_it_reads() {
     ));
     fetch.join().await.unwrap();
 }
+
+#[nuclei::test(start_paused = true)]
+async fn a_clock_owned_fetch_defers_instead_of_waiting_for_a_peer_permit() {
+    let store = Arc::new(RegolithStore::in_memory().unwrap());
+    let blockstore = Arc::new(DefraBlockstore::new(store, true));
+    let child_data = encode_ipld(ipld!({ "child": 1 }));
+    let child_cid = make_cid(&child_data);
+    let root_data = encode_ipld(ipld!({ "child": child_cid }));
+    let root_cid = make_cid(&root_data);
+    blockstore.put(&root_cid, &root_data).await.unwrap();
+
+    let transport = TestTransport::new(
+        blockstore.clone(),
+        root_cid,
+        root_data,
+        RapidHashMap::new(),
+        RapidHashMap::from_iter([(child_cid, child_data)]),
+    );
+    let (event_tx, mut event_rx) = mpsc::channel(1);
+    let peer = PeerId::new("remote-peer".to_string());
+    let limiter = DagFetchLimiter::new(2);
+    let held = limiter
+        .try_reserve_peer(peer.as_str())
+        .expect("the peer's only permit starts free");
+    let manager = crate::sync::manager::SyncManager::new(
+        Arc::clone(&blockstore),
+        Arc::new(crate::sync::peer_state::PeerStateTracker::new()),
+        crate::sync::manager::SyncConfig::default(),
+    )
+    .0;
+    assert!(manager.insert_pending_dag_for_test(
+        root_cid,
+        crate::sync::manager::PendingDag {
+            doc_id: "doc".to_string(),
+            collection_id: "collection".to_string(),
+            head_priority: None,
+            creator: "creator".to_string(),
+            missing: RapidHashSet::from_iter([child_cid]),
+            source_peer: Some(peer.to_string()),
+            alternate_providers: Vec::new(),
+            is_explicit_replicator: false,
+            explicit_replay_authorization: None,
+            is_recovery_registered: false,
+            inserted_at: web_time::Instant::now(),
+            attempts: 0,
+            fetch_failures: 0,
+            last_fetch_error: None,
+            next_retry_at: Instant::now(),
+            key_arrival_pending: false,
+            dispatches: 0,
+            incomplete_attempts: 0,
+            merge_continuation: false,
+            storage_blocker: None,
+            origin: crate::sync::manager::pending::PendingOrigin::Push,
+            estimates: Default::default(),
+        },
+    ));
+    let context = DagFetchContext::new(
+        "doc".to_string(),
+        "collection".to_string(),
+        "creator".to_string(),
+        peer,
+    )
+    .with_pending_lease(manager.pending_dag_lease(root_cid));
+    let diagnostics = diagnostics();
+
+    let outcome = crate::rt::time::timeout(
+        Duration::from_secs(1),
+        poll_fetch_dag(
+            transport.clone(),
+            blockstore,
+            event_tx,
+            root_cid,
+            context,
+            limiter,
+            diagnostics.clone(),
+        ),
+    )
+    .await
+    .expect("a busy peer must not hold the pending-DAG slot");
+
+    assert_eq!(outcome, (FetchTaskEnd::Settled, AttemptSample::Skipped));
+    assert!(event_rx.recv().await.is_none());
+    assert!(transport.sync_batches().is_empty());
+    assert_eq!(
+        diagnostics.snapshot().pending_dag_fetch_deferred_contention,
+        1
+    );
+    drop(held);
+}

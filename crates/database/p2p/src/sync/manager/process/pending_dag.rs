@@ -702,6 +702,11 @@ impl<B: Blockstore + 'static> SyncManager<B> {
         self.continue_merge(root_cid, None);
     }
 
+    #[cfg(test)]
+    pub(crate) fn insert_pending_dag_for_test(&self, root_cid: Cid, dag: PendingDag) -> bool {
+        self.insert_pending_dag(root_cid, dag)
+    }
+
     pub(crate) fn continue_merge(
         &self,
         root_cid: &Cid,

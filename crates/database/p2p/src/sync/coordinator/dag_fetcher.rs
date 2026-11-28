@@ -143,9 +143,10 @@ pub(crate) enum FetchTaskEnd {
 /// takes a permit, and permits are released during backoff sleeps and before a
 /// complete DAG waits for room in the merge loop's channel. A clock-dispatched
 /// fetch arrives with its source peer's reservation; that reservation is also
-/// returned before the local walk. Every issued transport query is reaped via
-/// `cancel_sync` at the end of its poll window, so releasing a permit never
-/// leaves stalled fetch work running in the transport.
+/// returned before the local walk, and the attempt takes free permits without
+/// waiting while it holds the pending-DAG slot. Every issued transport query is
+/// reaped via `cancel_sync` at the end of its poll window, so releasing a permit
+/// never leaves stalled fetch work running in the transport.
 pub async fn poll_fetch_dag<B: Blockstore + 'static, T: P2PTransport>(
     transport: T,
     blockstore: Arc<B>,
@@ -264,7 +265,24 @@ pub async fn poll_fetch_dag<B: Blockstore + 'static, T: P2PTransport>(
                 None => None,
             };
             let reserved = context.take_peer_permit();
-            let Some(permits) = limiter.acquire(&context.source_peer, reserved).await else {
+            let permits = if context.is_clock_owned() {
+                match limiter.try_acquire(&context.source_peer, reserved) {
+                    Some(permits) => Some(permits),
+                    None => {
+                        diagnostics.record_pending_dag_fetch_deferred_contention();
+                        debug!(
+                            root_cid = %root_cid,
+                            doc_id = %context.doc_id,
+                            attempt = attempt,
+                            "DAG fetch permits are busy; releasing the slot to the per-root clock"
+                        );
+                        return (FetchTaskEnd::Settled, AttemptSample::Skipped);
+                    }
+                }
+            } else {
+                limiter.acquire(&context.source_peer, reserved).await
+            };
+            let Some(permits) = permits else {
                 debug!(
                     root_cid = %root_cid,
                     doc_id = %context.doc_id,

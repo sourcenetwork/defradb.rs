@@ -51,12 +51,12 @@ pub(super) const PROPERTIES: &[Property] = &[
     },
     Property {
         family: "Sync ownership transfer (head hint / receiver pull)",
-        name: "INV_NoPermitWhileWalking — a clock-dispatched fetch returns its peer reservation before walking local blocks, and another root can take that permit while the walk is slow",
+        name: "INV_NoPermitWhileWalking / INV_NoSlotWhileWaiting — a clock-dispatched fetch returns its peer reservation before walking local blocks, another root can take that permit while the walk is slow, and the first root defers rather than holding its slot when the permit is still busy",
         axis: Tla,
         anchor: "crates/database/p2p/src/sync/coordinator/dag_fetcher.rs poll_fetch_dag",
-        model_ref: "MC_MissingLinkWalkPermit_{Green,Red_HoldDuringWalk}.cfg",
+        model_ref: "MC_MissingLinkWalkPermit_{Green,Red_HoldDuringWalk,Red_WaitAfterWalk}.cfg",
         tiers: &[Boundary],
-        bound_by: "crates/database/p2p/src/sync/coordinator/dag_fetcher_tests.rs a_local_walk_releases_the_peer_reservation_while_it_reads",
+        bound_by: "crates/database/p2p/src/sync/coordinator/dag_fetcher_tests.rs a_local_walk_releases_the_peer_reservation_while_it_reads, a_clock_owned_fetch_defers_instead_of_waiting_for_a_peer_permit",
     },
     Property {
         family: "Sync ownership transfer (head hint / receiver pull)",
