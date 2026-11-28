@@ -46,6 +46,9 @@ pub(crate) enum WaitKey {
         field: String,
         value: Vec<u8>,
     },
+    /// A document's first composite, by its DocID: a peer's chunk waits for
+    /// its parent to arrive.
+    Document(String),
     /// The relationships of one object on a remote ACP provider: a change
     /// whose signer the provider refused waits for them to change.
     AcpObject {

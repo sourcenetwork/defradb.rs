@@ -167,6 +167,10 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                 context.block.encryption.is_some() || !state.linked_encryption_cids.is_empty();
             crate::chunk::guard::check_chunk_merge(old_doc.as_ref(), &doc, encrypted)
                 .map_err(|reason| MergeError::ChunkRejected(reason.to_string()))?;
+            if old_doc.is_none() {
+                self.check_chunk_signer(datastore, systemstore, context, collection, &doc)
+                    .await?;
+            }
         }
 
         let known_fields: rapidhash::RapidHashSet<&str> = collection

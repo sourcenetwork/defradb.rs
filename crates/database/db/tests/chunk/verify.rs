@@ -87,14 +87,14 @@ async fn verify(
 }
 
 #[test]
-fn a_chunk_block_is_unsigned_so_its_id_is_the_same_on_every_node() {
+fn a_protected_parents_chunk_block_is_signed_by_its_writer() {
     workers::block_on(async {
         let (db, created, _) = author().await;
         let blocks = DefraBlockstore::new(db.store().clone(), false);
         for chunk in &created.derived {
             let bytes = blocks.get(&chunk.commit_cid).await.unwrap().unwrap();
             let block = defra_core::Block::from_dag_cbor(&bytes).unwrap();
-            assert!(block.signature.is_none());
+            assert!(block.signature.is_some());
         }
     })
     .unwrap()
@@ -140,9 +140,10 @@ fn a_chunk_block_whose_parent_has_not_merged_is_refused_to_everyone() {
         let chunk = &created.derived[0];
         let bytes = source_blocks.get(&chunk.commit_cid).await.unwrap().unwrap();
         let block = defra_core::Block::from_dag_cbor(&bytes).unwrap();
-        for link in block.links.iter().flatten() {
-            let data = source_blocks.get(&link.link).await.unwrap().unwrap();
-            blockstore.put(&link.link, &data).await.unwrap();
+        let signed = block.links.iter().flatten().map(|link| link.link);
+        for cid in signed.chain(block.signature) {
+            let data = source_blocks.get(&cid).await.unwrap().unwrap();
+            blockstore.put(&cid, &data).await.unwrap();
         }
         blockstore.put(&chunk.commit_cid, &bytes).await.unwrap();
         let outcome = handler
@@ -161,7 +162,7 @@ fn a_chunk_block_whose_parent_has_not_merged_is_refused_to_everyone() {
             .unwrap();
         assert!(outcome.is_merged(), "{outcome:?}");
 
-        // The chunk's own blocks are unsigned, so its signed delete is what a caller fetches.
+        // A caller fetches the chunk's signed delete.
         sign_writes();
         let deleted = AutoCommitMutator::new(Arc::clone(&source))
             .delete("Article", &created.doc_id)

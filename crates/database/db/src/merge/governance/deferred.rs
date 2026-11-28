@@ -248,6 +248,14 @@ impl DeferredMerges {
             .any(|key| matches!(key, WaitKey::ImmutableField { .. }))
     }
 
+    /// Whether any deferred composite awaits a document, so a merge names
+    /// the document its CID would start.
+    pub(crate) fn awaits_documents(&self) -> bool {
+        self.waiters
+            .keys()
+            .any(|key| matches!(key, WaitKey::Document(_)))
+    }
+
     pub(crate) fn has_ready(&self) -> bool {
         !self.ready.is_empty()
     }

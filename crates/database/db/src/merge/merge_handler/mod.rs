@@ -6,6 +6,7 @@
 mod authorization;
 mod batch;
 mod block_reads;
+mod chunk_signer;
 mod collection;
 pub mod composite;
 mod composite_fields;

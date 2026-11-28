@@ -147,6 +147,7 @@ where
         mut doc: Document,
         hash: String,
         encrypt: bool,
+        sign: bool,
     ) -> Result<DerivedWrite> {
         let collection = &target.collection;
         let encryption = encrypt.then(|| EncryptionConfig {
@@ -185,8 +186,9 @@ where
             identity,
             None,
             encryption.as_ref(),
-            // Unsigned, so every node builds the same blocks and DocID for a chunk.
-            None,
+            // An unprotected parent's chunks are unsigned, so every node builds
+            // the same blocks and DocID for a chunk.
+            sign.then(|| self.context.signing()).flatten(),
             None,
             self.db.kms().as_ref(),
             self.prepared_inputs,

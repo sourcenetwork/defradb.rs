@@ -126,13 +126,19 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
     }
 
     /// Release composites waiting on a composite that just merged: on its CID,
-    /// and, when any deferred composite awaits a field value, on each
-    /// `@immutable` scalar LWW value it sets.
+    /// on the document it starts when it is a first composite, and, when any
+    /// deferred composite awaits a field value, on each `@immutable` scalar
+    /// LWW value it sets.
     pub(crate) async fn release_merged_composite(&self, cid: &Cid, block: Option<&Block>) {
         // Its own entry first: a judgement that deferred this composite may
         // have filed it after another accepted and merged it.
         self.deferred.forget(cid);
         let mut keys = vec![WaitKey::Composite(*cid)];
+        // A document's DocID is its first composite's CID: if this one is a
+        // first composite, its document has arrived.
+        if self.deferred.awaits_documents() {
+            keys.push(WaitKey::Document(document::DocID::new_v0(*cid).to_string()));
+        }
         if self.deferred.awaits_fields() {
             match self.immutable_field_keys(cid, block).await {
                 Ok(fields) => keys.extend(fields),
