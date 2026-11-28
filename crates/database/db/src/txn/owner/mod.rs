@@ -43,7 +43,7 @@ use workers::{Pool, Submit};
 use actor::Message;
 use table::{Entry, Table};
 
-use crate::txn::fence::{CommitFences, Fence, Landing};
+use crate::txn::fence::{CommitFences, CommitToken, Fence, Landing};
 
 pub(crate) use id::TxnId;
 
@@ -542,7 +542,7 @@ where
     pub(crate) async fn finish<R, L>(&self, id: TxnId, key: &K, last: L) -> Result<R, Unavailable>
     where
         R: MaybeSend + 'static,
-        L: FnOnce(T) -> LocalBoxFuture<'static, R> + MaybeSend + 'static,
+        L: FnOnce(T, CommitToken) -> LocalBoxFuture<'static, R> + MaybeSend + 'static,
     {
         let table = self.table(id);
         if !table.admits(id, key) {
@@ -556,9 +556,9 @@ where
         let fence_on_drop = FenceOnDrop(Some(Arc::clone(&fence)));
         let (reply, answer) = unbounded();
         let queued = entry.mailbox.try_send(Message::Finish {
-            last: Box::new(move |txn| {
+            last: Box::new(move |txn, token| {
                 Box::pin(async move {
-                    let _ = reply.try_send(last(txn).await);
+                    let _ = reply.try_send(last(txn, token).await);
                 })
             }),
             fence: Landing::new(fence),
@@ -586,7 +586,7 @@ where
     ) -> Result<R, Unavailable>
     where
         R: MaybeSend + 'static,
-        L: FnOnce(T) -> LocalBoxFuture<'static, R> + MaybeSend + 'static,
+        L: FnOnce(T, CommitToken) -> LocalBoxFuture<'static, R> + MaybeSend + 'static,
     {
         let table = self.table(id);
         if !table.admits(id, key) {
@@ -597,9 +597,9 @@ where
         let fence_on_drop = FenceOnDrop(Some(Arc::clone(&fence)));
         let (reply, answer) = unbounded();
         let queued = entry.mailbox.try_send(Message::Finish {
-            last: Box::new(move |txn| {
+            last: Box::new(move |txn, token| {
                 Box::pin(async move {
-                    let _ = reply.try_send(last(txn).await);
+                    let _ = reply.try_send(last(txn, token).await);
                 })
             }),
             fence: Landing::new(fence),
@@ -628,13 +628,13 @@ where
     ) -> Result<R, Unavailable>
     where
         R: MaybeSend + 'static,
-        L: FnOnce(T) -> LocalBoxFuture<'static, Ending<T, R>> + MaybeSend + 'static,
+        L: FnOnce(T, CommitToken) -> LocalBoxFuture<'static, Ending<T, R>> + MaybeSend + 'static,
     {
         let shared = Arc::downgrade(&self.shared);
         let keeper = key.clone();
-        self.finish(id, key, move |txn| {
+        self.finish(id, key, move |txn, token| {
             Box::pin(async move {
-                match last(txn).await {
+                match last(txn, token).await {
                     Ending::Ended(answer) => answer,
                     Ending::Kept(txn, answer) => {
                         reinstate(&shared, id, keeper, txn);

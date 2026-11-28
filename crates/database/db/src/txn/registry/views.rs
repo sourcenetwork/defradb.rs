@@ -31,7 +31,8 @@ impl<S: Store + 'static> DbTransactionRegistry<S> {
                 let txn = owned.alone()?;
                 db.check_node_access_in_txn(&request, txn.acpstore()?, NodePermission::ViewAdd)
                     .await?;
-                txn.set_statement_savepoint()?;
+                owned.begin_operation_statement()?;
+                let txn = owned.alone()?;
                 let view = StagedView {
                     collections,
                     document_acp,
@@ -40,7 +41,7 @@ impl<S: Store + 'static> DbTransactionRegistry<S> {
                     downsample,
                 };
                 let created = view.stage(&db, txn, &request).await;
-                finish_statement(txn, created)
+                finish_statement(owned, created)
             })
         })
         .await

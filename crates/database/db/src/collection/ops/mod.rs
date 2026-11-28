@@ -17,6 +17,7 @@ mod select;
 pub(crate) use select::select;
 mod truncate;
 mod version;
+pub(crate) use version::DeletedVersion;
 
 use crate::collection::name::CollectionName;
 use crate::collection::snapshot::CollectionSnapshot;

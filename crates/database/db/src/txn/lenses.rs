@@ -1,5 +1,5 @@
-use rapidhash::RapidHashMap;
-use regolith::sync::OnceCell;
+use rapidhash::{RapidHashMap, RapidHashSet};
+use regolith::sync::{Atom, OnceCell};
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -13,6 +13,7 @@ use lens::{LensConfig, LensDoc, LensDocResultStream, LensDocStream, TransformId,
 pub(crate) struct TxnLensStore {
     base: Arc<dyn TransformStore>,
     local: OnceCell<Arc<dyn TransformStore>>,
+    visible: Atom<RapidHashSet<TransformId>>,
 }
 
 impl TxnLensStore {
@@ -20,6 +21,7 @@ impl TxnLensStore {
         Self {
             base,
             local: OnceCell::new(),
+            visible: Atom::new(RapidHashSet::default()),
         }
     }
 
@@ -41,8 +43,32 @@ impl TxnLensStore {
     /// the committed store.
     fn holder(&self, id: &TransformId) -> &Arc<dyn TransformStore> {
         self.initialized_local()
-            .filter(|local| local.has_transform(id))
+            .filter(|local| self.visible.load_clone().contains(id) && local.has_transform(id))
             .unwrap_or(&self.base)
+    }
+
+    pub(crate) fn snapshot(&self) -> RapidHashSet<TransformId> {
+        self.visible.load_clone()
+    }
+
+    pub(crate) fn restore(&self, snapshot: RapidHashSet<TransformId>) {
+        self.visible.store(snapshot);
+    }
+
+    fn publish(&self, id: TransformId) {
+        self.visible.rcu(|ids| {
+            let mut next = ids.clone();
+            next.insert(id.clone());
+            next
+        });
+    }
+
+    fn withdraw(&self, id: &TransformId) {
+        self.visible.rcu(|ids| {
+            let mut next = ids.clone();
+            next.remove(id);
+            next
+        });
     }
 }
 
@@ -53,17 +79,28 @@ impl TransformStore for TxnLensStore {
     }
 
     async fn add(&self, config: LensConfig) -> lens::Result<TransformId> {
-        self.local().add(config).await
+        let id = self.local().add(config).await?;
+        self.publish(id.clone());
+        Ok(id)
     }
 
     async fn add_with_id(&self, id: TransformId, config: LensConfig) -> lens::Result<()> {
-        self.local().add_with_id(id, config).await
+        self.local().add_with_id(id.clone(), config).await?;
+        self.publish(id);
+        Ok(())
     }
 
     async fn list(&self) -> lens::Result<RapidHashMap<String, Vec<lens::LensModule>>> {
         let mut result = self.base.list().await?;
         if let Some(local) = self.initialized_local() {
-            result.extend(local.list().await?);
+            let visible = self.visible.load_clone();
+            result.extend(
+                local
+                    .list()
+                    .await?
+                    .into_iter()
+                    .filter(|(id, _)| visible.contains(&TransformId::new(id))),
+            );
         }
         Ok(result)
     }
@@ -91,12 +128,19 @@ impl TransformStore for TxnLensStore {
 
     fn has_transform(&self, id: &TransformId) -> bool {
         self.initialized_local()
-            .is_some_and(|local| local.has_transform(id))
+            .is_some_and(|local| self.visible.load_clone().contains(id) && local.has_transform(id))
             || self.base.has_transform(id)
     }
 
     async fn remove(&self, id: &TransformId) -> lens::Result<()> {
-        self.holder(id).remove(id).await
+        let local_holds = self
+            .initialized_local()
+            .is_some_and(|local| self.visible.load_clone().contains(id) && local.has_transform(id));
+        self.holder(id).remove(id).await?;
+        if local_holds {
+            self.withdraw(id);
+        }
+        Ok(())
     }
 }
 
@@ -191,6 +235,42 @@ mod tests {
                 store.remove(&missing).await,
                 Err(lens::Error::TransformNotFound(_))
             ));
+        })
+        .unwrap()
+    }
+
+    #[test]
+    fn a_snapshot_hides_lenses_registered_after_it() {
+        workers::block_on(async {
+            let base = Arc::new(lens::MemoryTransformStore::new());
+            let store = TxnLensStore::new(base);
+            let before = store.snapshot();
+
+            let kept = TransformId::new("kept");
+            store.add_with_id(kept.clone(), config()).await.unwrap();
+            let snapshot = store.snapshot();
+            let discarded = TransformId::new("discarded");
+            store
+                .add_with_id(discarded.clone(), config())
+                .await
+                .unwrap();
+
+            store.restore(snapshot);
+            assert!(store.has_transform(&kept));
+            assert!(!store.has_transform(&discarded));
+            assert_eq!(
+                store
+                    .list()
+                    .await
+                    .unwrap()
+                    .keys()
+                    .cloned()
+                    .collect::<Vec<_>>(),
+                vec![kept.to_string()]
+            );
+
+            store.restore(before);
+            assert!(!store.has_transform(&kept));
         })
         .unwrap()
     }

@@ -1,3 +1,4 @@
+use crate::common::failing_write_store::FailingWriteStore;
 use crate::common::owned::in_txn;
 use db::database::DB;
 use db::txn::registry::*;
@@ -10,6 +11,7 @@ use query::txn::txn_job;
 use query::txn::TransactionHandle;
 use query::txn::TransactionRegistry;
 use schema::CollectionVersion;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use storage::RegolithStore;
 
@@ -366,6 +368,53 @@ fn test_set_migration_in_txn_promotes_transform_on_commit() {
         );
     })
     .unwrap()
+}
+
+#[test]
+fn a_failed_patch_restores_the_transaction_lens_visibility() {
+    workers::block_on(async {
+        let armed = Arc::new(AtomicBool::new(false));
+        let refusing = Arc::clone(&armed);
+        let store =
+            FailingWriteStore::in_memory(Arc::new(move |key: &[u8], _value: Option<&[u8]>| {
+                if refusing.load(Ordering::SeqCst) && key.first() == Some(&b's') {
+                    return Err(storage::Error::Other("system write refused".into()));
+                }
+                Ok(())
+            }));
+        let db = Arc::new(DB::new(store).unwrap());
+        let context = defra_core::RequestContext::default();
+        db.add_collection(&context, USERS_SDL).await.unwrap();
+        let registry = DbTransactionRegistry::new(Arc::clone(&db));
+        let handle = registry.begin_as(&context, false).await.unwrap();
+
+        armed.store(true, Ordering::SeqCst);
+        let patched = registry
+            .patch_collection_in_txn_as(
+                &context,
+                handle.as_str(),
+                r#"[{"op":"add","path":"/Users/Fields/-","value":{"Name":"email","Kind":"String"}}]"#,
+                Some(LensConfig::new("users-v1", "users-v2", empty_wasm_module())),
+            )
+            .await;
+        armed.store(false, Ordering::SeqCst);
+        assert!(patched.is_err(), "the refused write fails the patch");
+        assert!(
+            registry
+                .list_lenses_in_txn(&handle)
+                .await
+                .unwrap()
+                .is_empty(),
+            "the failed patch left its lens visible in the transaction"
+        );
+
+        registry.commit(&handle).await.unwrap();
+        assert!(
+            db.lens_store().list().await.unwrap().is_empty(),
+            "the failed patch promoted its lens after commit"
+        );
+    })
+    .unwrap();
 }
 
 #[test]

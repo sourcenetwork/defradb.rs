@@ -299,6 +299,13 @@ With `type User { name: String @index(unique: true) age: Int }`, an explicit tra
 
 `GetCollections` and `ListLenses` inside the transaction that added a collection or lens return it; run in a different transaction they return nothing.
 
+# `defra.txn.definitions.patch`: A collection patch inside a transaction
+
+- **Parents:** ["go.txn.definitions"]
+- **Scenarios:** ["txn::patch_collection_scope::txn_patch_collection_is_seen_by_its_txn_alone_until_commit", "txn::patch_collection_scope::txn_patch_collection_discarded_leaves_no_trace", "txn::patch_collection_scope::txn_patch_collection_that_fails_leaves_its_txn_unchanged", "txn::patch_collection_scope::txn_patch_collection_that_fails_after_writing_leaves_its_txn_unchanged", "txn::patch_collection_scope::txn_patch_collection_conflicts_with_a_patch_committed_first", "txn::patch_collection_scope::txn_patch_collection_conflicts_with_another_definition_committed_first", "txn::patch_collection_scope::txn_patch_collection_without_nac_permission_is_refused", "txn::patch_collection_scope::txn_patch_collection_after_permission_revocation_conflicts"]
+
+`PatchCollection` with a transaction applies the patch in that transaction. Requests in the transaction see the patched definitions, a document it adds included; a request outside it fails on a field the patch added with `Cannot query field "email" on type "Users".` until the commit, and succeeds after it. A discarded transaction leaves no trace of its patch: the field stays unknown, the lenses it registered are not listed, and the same collection can be patched again as if the discarded patch never ran. A patch that fails in the transaction (`collection name can't be empty`) leaves nothing in it, and the transaction can still patch and commit. A lens registered by a patch that fails later is gone from the transaction too. A multi-collection patch that fails after storing its first collection (`relation name cannot be empty. Field: author`) rolls that first write back too. An identity without `patch-collection` NAC permission gets `not authorized to perform operation. Permission: patch-collection`. If that permission is revoked after the transaction begins, the patch's read conflicts: the commit fails with `transaction conflict. Please retry`. A transaction that patches a collection conflicts with any definition change (a patch or a new collection) committed before it: the first commit wins and the second fails with `transaction conflict. Please retry`.
+
 # `defra.txn.verify-signature.view`: Verification inside a transaction decides at its view
 
 - **Parents:** ["go.txn.verify-signature"]

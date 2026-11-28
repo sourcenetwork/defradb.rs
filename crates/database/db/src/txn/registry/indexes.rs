@@ -25,11 +25,12 @@ impl<S: Store + 'static> DbTransactionRegistry<S> {
             Box::pin(async move {
                 let txn = owned.alone()?;
                 check_access_in(&db, &acting, txn, NodePermission::IndexCreate).await?;
-                txn.set_statement_savepoint()?;
+                owned.begin_operation_statement()?;
+                let txn = owned.alone()?;
                 let created = db
                     .create_index_in(txn, &collection, name.as_deref(), fields, kind)
                     .await;
-                finish_statement(txn, created)
+                finish_statement(owned, created)
             })
         })
         .await
@@ -52,9 +53,10 @@ impl<S: Store + 'static> DbTransactionRegistry<S> {
             Box::pin(async move {
                 let txn = owned.alone()?;
                 check_access_in(&db, &acting, txn, NodePermission::IndexDelete).await?;
-                txn.set_statement_savepoint()?;
+                owned.begin_operation_statement()?;
+                let txn = owned.alone()?;
                 let dropped = db.drop_index_in(txn, &collection, &name).await;
-                finish_statement(txn, dropped)
+                finish_statement(owned, dropped)
             })
         })
         .await
@@ -122,9 +124,10 @@ impl<S: Store + 'static> DbTransactionRegistry<S> {
             Box::pin(async move {
                 let txn = owned.alone()?;
                 check_access_in(&db, &acting, txn, NodePermission::EncryptedIndexAdd).await?;
-                txn.set_statement_savepoint()?;
+                owned.begin_operation_statement()?;
+                let txn = owned.alone()?;
                 let added = db.add_encrypted_index_in(txn, &collection, &field).await;
-                finish_statement(txn, added)
+                finish_statement(owned, added)
             })
         })
         .await
@@ -159,9 +162,10 @@ impl<S: Store + 'static> DbTransactionRegistry<S> {
             Box::pin(async move {
                 let txn = owned.alone()?;
                 check_access_in(&db, &acting, txn, NodePermission::EncryptedIndexDelete).await?;
-                txn.set_statement_savepoint()?;
+                owned.begin_operation_statement()?;
+                let txn = owned.alone()?;
                 let deleted = db.delete_encrypted_index_in(txn, &collection, &field).await;
-                finish_statement(txn, deleted)
+                finish_statement(owned, deleted)
             })
         })
         .await

@@ -1,5 +1,4 @@
 use super::*;
-use lens::TransformStore;
 use storage::corekv::OnCommit;
 
 impl<S: Store> crate::database::DB<S> {
@@ -16,6 +15,7 @@ impl<S: Store> crate::database::DB<S> {
         old_schema: &CollectionVersion,
         is_active_explicitly_set: bool,
         migration: Option<lens::LensConfig>,
+        lens_store: std::sync::Arc<dyn lens::TransformStore>,
     ) -> Result<StoredVersion> {
         let old_version_id = old_schema.version_id.as_str();
         let actual_name = old_schema.name.as_str();
@@ -260,11 +260,10 @@ impl<S: Store> crate::database::DB<S> {
                 self.pool(),
             )
             .await?;
-            let txn_lens_store = crate::txn::lenses::TxnLensStore::new(self.lens_store().clone());
-            txn_lens_store
+            lens_store
                 .add_with_id(lens.id.clone(), config.clone())
                 .await?;
-            self.owe_lens_on_commit(txn, lens.id.clone(), config, txn_lens_store.registrations())?;
+            self.owe_lens_on_commit(txn, lens.id.clone(), config, lens_store.clone())?;
             new_schema.previous_version = Some(CollectionSource {
                 source_collection_id: old_version_id.to_string(),
                 transform: Some(lens.id.to_string()),
@@ -516,7 +515,11 @@ impl<S: Store> crate::database::DB<S> {
     /// The follow-up to a stored version once its transaction commits:
     /// register its lens, drop the pending migration it consumed, and rebuild
     /// the indexes an activation owes.
-    pub(crate) async fn after_version_stored(&self, stored: StoredVersion) {
+    pub(crate) async fn after_version_stored(
+        &self,
+        stored: StoredVersion,
+        commit: Option<&crate::txn::fence::CommitToken>,
+    ) {
         let StoredVersion {
             schema: new_schema,
             migration: committed_migration,
@@ -532,7 +535,7 @@ impl<S: Store> crate::database::DB<S> {
 
         // After switching active versions, rebuild the indexes the switch owes.
         if new_schema.is_active {
-            self.settle_owed_reindexes_after_commit().await;
+            self.settle_owed_reindexes_with_commit(commit).await;
         }
     }
 

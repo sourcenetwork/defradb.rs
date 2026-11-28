@@ -41,6 +41,7 @@ mod indexes;
 mod lenses;
 mod lifecycle;
 pub(crate) mod owned;
+mod patches;
 mod purge;
 mod schemas;
 mod views;
@@ -249,20 +250,12 @@ impl<S: Store + 'static> DbTransactionRegistry<S> {
 /// operation: kept when it succeeded, rolled back when it failed, so a
 /// failure part way leaves none of its writes, catalog changes or commit
 /// callbacks in the caller's transaction.
-fn finish_statement<S, T>(txn: &mut crate::txn::DbTxn<S>, outcome: Result<T>) -> Result<T>
+fn finish_statement<S, T>(owned: &mut OwnedTxn<S>, outcome: Result<T>) -> Result<T>
 where
     S: Store,
 {
-    match outcome {
-        Ok(value) => {
-            txn.release_statement_savepoint()?;
-            Ok(value)
-        }
-        Err(error) => {
-            txn.rollback_statement_savepoint()?;
-            Err(error)
-        }
-    }
+    owned.end_operation_statement(outcome.is_ok())?;
+    outcome
 }
 
 /// Who began a transaction, and so may use it: the request's identity, or

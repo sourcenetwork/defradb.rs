@@ -33,6 +33,9 @@
 \* or a new transaction) looks at the count first: zero means go at once;
 \* otherwise it waits for a wake and looks again. A commit whose caller never
 \* stops waiting never touches the count: the fast path costs one load.
+\* Post-commit work may exclude its own commit's fence, but still waits for
+\* every other fence; PostCommitFence.tla models that narrower reader. The
+\* implementation wakes on every lowering so the reduced threshold is seen.
 \*
 \* What must never happen:
 \*   1. a reader that began after a caller stopped waiting takes a snapshot
@@ -87,7 +90,7 @@
 \*   | OwnerWake         | compare_exchange(PENDING, DONE), on failure                 |
 \*   |                   | CommitFences::lower (fetch_sub; notify_waiters at zero)     |
 \*   | ReaderFast        | database/mod.rs DB::new_txn: CommitFences::any, one load    |
-\*   | ReaderArm, Check, | fence.rs CommitFences::cleared: Notify::notified (reads the |
+\*   | ReaderArm, Check, | fence.rs CommitFences::cleared_except(None): Notify::notified (reads the |
 \*   | Wait, Wake        | generation), the load, notified.await                       |
 \*   | gen               | regolith::sync::Notify's generation (notify_waiters)        |
 \*   | RaiseFirst        | raise before the caller's swap (RED: after it)              |

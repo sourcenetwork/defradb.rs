@@ -12,8 +12,9 @@
 //! one wins. A caller that stops waiting raises the count, then swaps to
 //! `ABANDONED`; if the owner was done first, it lowers the count back. The
 //! owner, finished with the commit however it ended, swaps to `DONE`; if the
-//! caller had left, it lowers the count. Whoever lowers the count to zero
-//! wakes every waiter, once. A commit whose caller never stops waiting never
+//! caller had left, it lowers the count. Whoever lowers the count wakes every
+//! waiter, so a waiter excluding its own fence also sees that the count has
+//! fallen to its threshold. A commit whose caller never stops waiting never
 //! touches the count, and a begin with nothing fenced costs one load.
 //!
 //! Orderings. All writes to the count are read-modify-writes, so a load that
@@ -28,8 +29,8 @@
 //!   commit too.
 //! * Each lowering releases and the begin's load acquires: a begin that
 //!   reads zero sees every commit whose fence was lowered.
-//! * A waiter reads the wake generation before its load, and a lowering to
-//!   zero moves the generation after its decrement, so a wake is never lost.
+//! * A waiter reads the wake generation before its load, and each lowering
+//!   moves the generation after its decrement, so a wake is never lost.
 //!
 //! The protocol is `proofs/tla/CommitFence.tla`; the swap law is
 //! `proofs/lean/CommitFence/Swap.lean`.
@@ -73,12 +74,15 @@ impl CommitFences {
         self.outstanding.0.load(Ordering::Acquire) != 0
     }
 
-    /// Waits until no commit whose caller stopped waiting is still landing.
-    pub(crate) async fn cleared(&self) {
+    /// Waits until every commit except `token`'s has landed. Post-commit work
+    /// uses this so a transaction it opens cannot wait on the fence held by
+    /// the commit that scheduled it.
+    pub(crate) async fn cleared_except(&self, token: Option<&CommitToken>) {
         loop {
             // Armed before the look, so a lowering to zero after it wakes us.
             let cleared = self.cleared.notified();
-            if !self.any() {
+            let own = token.map_or(0, CommitToken::counted);
+            if self.outstanding.0.load(Ordering::Acquire) <= own {
                 return;
             }
             cleared.await;
@@ -91,9 +95,8 @@ impl CommitFences {
     }
 
     fn lower(&self) {
-        if self.outstanding.0.fetch_sub(1, Ordering::Release) == 1 {
-            self.cleared.notify_waiters();
-        }
+        self.outstanding.0.fetch_sub(1, Ordering::Release);
+        self.cleared.notify_waiters();
     }
 }
 
@@ -108,6 +111,16 @@ impl Default for CommitFences {
 pub(crate) struct Fence {
     state: AtomicU8,
     fences: Arc<CommitFences>,
+}
+
+/// A commit's fence as post-commit work sees it.
+#[derive(Clone)]
+pub(crate) struct CommitToken(Arc<Fence>);
+
+impl CommitToken {
+    fn counted(&self) -> usize {
+        usize::from(self.0.state.load(Ordering::Acquire) == ABANDONED)
+    }
 }
 
 impl Fence {
@@ -165,6 +178,12 @@ impl Landing {
     pub(crate) fn abandoned(&self) -> bool {
         self.0.abandoned()
     }
+
+    /// The fence for work the transaction registered to run after its durable
+    /// commit.
+    pub(crate) fn token(&self) -> CommitToken {
+        CommitToken(Arc::clone(&self.0))
+    }
 }
 
 impl Drop for Landing {
@@ -208,7 +227,7 @@ mod tests {
         assert!(fences.any(), "the commit may still land");
         assert!(landing.abandoned());
         let mut cx = Context::from_waker(Waker::noop());
-        let mut waiting = pin!(fences.cleared());
+        let mut waiting = pin!(fences.cleared_except(None));
         assert!(waiting.as_mut().poll(&mut cx).is_pending());
         drop(landing);
         assert!(!fences.any());
@@ -245,13 +264,37 @@ mod tests {
         assert!(first.abandon());
         assert!(second.abandon());
         let mut cx = Context::from_waker(Waker::noop());
-        let mut waiting = pin!(fences.cleared());
+        let mut waiting = pin!(fences.cleared_except(None));
         assert!(waiting.as_mut().poll(&mut cx).is_pending());
         drop(first_landing);
         assert!(fences.any());
         assert!(waiting.as_mut().poll(&mut cx).is_pending());
         drop(second_landing);
         assert_eq!(waiting.as_mut().poll(&mut cx), Poll::Ready(()));
+    }
+
+    #[test]
+    fn post_commit_work_waits_for_other_fences_but_not_its_own() {
+        let fences = Arc::new(CommitFences::new());
+        let (own, own_landing) = handed_over(&fences);
+        let own_token = own_landing.token();
+        assert!(own.abandon());
+
+        let mut cx = Context::from_waker(Waker::noop());
+        let mut waiting = pin!(fences.cleared_except(Some(&own_token)));
+        assert_eq!(
+            waiting.as_mut().poll(&mut cx),
+            Poll::Ready(()),
+            "the commit whose post-commit work is running is durable"
+        );
+
+        let (other, other_landing) = handed_over(&fences);
+        assert!(other.abandon());
+        let mut waiting = pin!(fences.cleared_except(Some(&own_token)));
+        assert!(waiting.as_mut().poll(&mut cx).is_pending());
+        drop(other_landing);
+        assert_eq!(waiting.as_mut().poll(&mut cx), Poll::Ready(()));
+        drop(own_landing);
     }
 
     #[test]
