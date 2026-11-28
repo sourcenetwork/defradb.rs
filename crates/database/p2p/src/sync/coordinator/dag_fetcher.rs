@@ -138,13 +138,13 @@ pub(crate) enum FetchTaskEnd {
 /// next window boundary, keeping what it fetched (`FetchTaskEnd::Preempted`).
 /// The `AttemptSample` beside it feeds the root's estimators and nothing else.
 ///
-/// A limiter permit is held only for the duration of each attempt — it is
-/// released during backoff sleeps so a fetch stuck on dead providers does not
-/// starve other roots under fan-in pressure, and before a complete DAG waits
-/// for room in the merge loop's channel. A clock-dispatched fetch arrives
-/// with its source peer's permit, taken together with its slot, and waits
-/// only for a global one. Every issued transport query is reaped via
-/// `cancel_sync` at the end of its poll window, so releasing the permit never
+/// A limiter permit is held only for the duration of each network attempt: the
+/// local DAG walk that decides what to ask for runs before the first attempt
+/// takes a permit, and permits are released during backoff sleeps and before a
+/// complete DAG waits for room in the merge loop's channel. A clock-dispatched
+/// fetch arrives with its source peer's reservation; that reservation is also
+/// returned before the local walk. Every issued transport query is reaped via
+/// `cancel_sync` at the end of its poll window, so releasing a permit never
 /// leaves stalled fetch work running in the transport.
 pub async fn poll_fetch_dag<B: Blockstore + 'static, T: P2PTransport>(
     transport: T,
@@ -179,15 +179,14 @@ pub async fn poll_fetch_dag<B: Blockstore + 'static, T: P2PTransport>(
         "Starting DAG fetch (CAR-first, selective block fallback)"
     );
 
-    // A root may already have completed through another same-CID arrival
-    // between the clock claim and this task starting. Do not require a live
-    // provider for local terminal progress.
-    if let Ok(Some(root_data)) = blockstore.get(&root_cid).await {
-        if find_all_missing_links(blockstore.as_ref(), &root_data, diagnostics.as_ref())
-            .await
-            .is_ok_and(|missing| missing.is_empty())
-        {
-            drop(context.take_peer_permit());
+    // Local work decides what the first network attempt asks for. It must not
+    // hold the source peer's reservation or a global fetch permit: a slow disk
+    // walk would otherwise delay every other root from that peer.
+    drop(context.take_peer_permit());
+    if let Some((root_data, missing)) =
+        local_missing_links(blockstore.as_ref(), &root_cid, diagnostics.as_ref(), false).await
+    {
+        if missing.is_empty() {
             emit_dag_ready(&event_tx, root_cid, &context, &root_data).await;
             return (FetchTaskEnd::Settled, AttemptSample::Complete);
         }
@@ -245,6 +244,25 @@ pub async fn poll_fetch_dag<B: Blockstore + 'static, T: P2PTransport>(
 
         // A shed attempt repeats in place without consuming `attempt`.
         let outcome = loop {
+            // The opening walk for this network attempt is local work too. It
+            // runs before the permits, so a slow read never holds a peer or a
+            // global fetch slot. The old ordering had one opening walk at the
+            // top of poll_fetch_dag and one for every attempt here.
+            let prewalked_missing = match local_missing_links(
+                blockstore.as_ref(),
+                &root_cid,
+                diagnostics.as_ref(),
+                true,
+            )
+            .await
+            {
+                Some((root_data, missing)) if missing.is_empty() => {
+                    emit_dag_ready(&event_tx, root_cid, &context, &root_data).await;
+                    return (FetchTaskEnd::Settled, AttemptSample::Complete);
+                }
+                Some((_, missing)) => Some(missing),
+                None => None,
+            };
             let reserved = context.take_peer_permit();
             let Some(permits) = limiter.acquire(&context.source_peer, reserved).await else {
                 debug!(
@@ -262,8 +280,15 @@ pub async fn poll_fetch_dag<B: Blockstore + 'static, T: P2PTransport>(
             let started = Instant::now();
             let mut state = ProviderFetchState::new(&mut providers, health, diagnostics.as_ref())
                 .with_quantum(context.is_clock_owned());
-            let outcome =
-                fetch_dag_attempt(&transport, &blockstore, root_cid, &context, &mut state).await;
+            let outcome = fetch_dag_attempt(
+                &transport,
+                &blockstore,
+                root_cid,
+                &context,
+                &mut state,
+                Some(prewalked_missing.as_deref()),
+            )
+            .await;
             sample = attempt_sample(&outcome, started.elapsed(), providers.attempt_progressed());
             if !context.is_clock_owned() {
                 crate::model_trace!(PullEnd {
@@ -583,20 +608,26 @@ async fn fetch_dag_attempt<B: Blockstore + 'static, T: P2PTransport>(
     root_cid: Cid,
     context: &DagFetchContext,
     state: &mut ProviderFetchState<'_>,
+    prewalked_missing: Option<Option<&[Cid]>>,
 ) -> FetchAttemptOutcome {
     state.providers.begin_attempt();
-    let car_missing_watch = match blockstore.get(&root_cid).await {
-        Ok(Some(root_data)) => {
-            match find_all_missing_links(blockstore.as_ref(), &root_data, state.diagnostics).await {
-                Ok(missing) => Some(missing).filter(|missing| !missing.is_empty()),
-                Err(e) => {
-                    state.diagnostics.record_missing_link_walk_error();
-                    warn!(root_cid = %root_cid, error = %e, "find_all_missing_links failed; asking for the whole root");
-                    None
+    let car_missing_watch = match prewalked_missing {
+        Some(missing) => missing.map(<[Cid]>::to_vec),
+        None => match blockstore.get(&root_cid).await {
+            Ok(Some(root_data)) => {
+                match find_all_missing_links(blockstore.as_ref(), &root_data, state.diagnostics)
+                    .await
+                {
+                    Ok(missing) => Some(missing).filter(|missing| !missing.is_empty()),
+                    Err(e) => {
+                        state.diagnostics.record_missing_link_walk_error();
+                        warn!(root_cid = %root_cid, error = %e, "find_all_missing_links failed; asking for the whole root");
+                        None
+                    }
                 }
             }
-        }
-        _ => None,
+            _ => None,
+        },
     };
 
     // Sender demotion removes per-CID provider advertisements. Exercise the
@@ -847,6 +878,32 @@ async fn fetch_dag_attempt<B: Blockstore + 'static, T: P2PTransport>(
         FetchAttemptOutcome::Unservable
     } else {
         incomplete_or_shed(state.providers, remaining.len(), attempt_failures)
+    }
+}
+
+/// The root's stored bytes and the frontier a full local walk finds. A failed
+/// or absent read is `None`, which leaves the frontier unknown: the network
+/// attempt asks for the whole root and the readiness check after fetching will
+/// walk again.
+async fn local_missing_links<B>(
+    blockstore: &B,
+    root_cid: &Cid,
+    diagnostics: &SyncDiagnostics,
+    record_error: bool,
+) -> Option<(bytes::Bytes, Vec<Cid>)>
+where
+    B: Blockstore,
+{
+    let root_data = blockstore.get(root_cid).await.ok().flatten()?;
+    match find_all_missing_links(blockstore, &root_data, diagnostics).await {
+        Ok(missing) => Some((root_data, missing)),
+        Err(error) => {
+            if record_error {
+                diagnostics.record_missing_link_walk_error();
+                warn!(root_cid = %root_cid, error = %error, "Local DAG walk failed; asking for the whole root");
+            }
+            None
+        }
     }
 }
 

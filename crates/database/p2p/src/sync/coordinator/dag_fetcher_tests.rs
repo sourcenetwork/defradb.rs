@@ -2158,3 +2158,127 @@ async fn local_complete_fetch_releases_peer_permit_before_waiting_to_send() {
     ));
     fetch.join().await.unwrap();
 }
+
+/// A blockstore whose read of one child waits until the test releases it.
+struct DelayedChildRead {
+    inner: Arc<DefraBlockstore<RegolithStore>>,
+    child: Cid,
+    entered: Arc<regolith::sync::Notify>,
+    release: Arc<regolith::sync::Notify>,
+}
+
+#[async_trait]
+impl Blockstore for DelayedChildRead {
+    async fn get(&self, cid: &Cid) -> blockstore::Result<Option<bytes::Bytes>> {
+        if *cid == self.child {
+            self.entered.notify_one();
+            self.release.notified().await;
+        }
+        self.inner.get(cid).await
+    }
+
+    async fn put(&self, cid: &Cid, data: &[u8]) -> blockstore::Result<()> {
+        self.inner.put(cid, data).await
+    }
+
+    async fn put_many(&self, blocks: &[(&Cid, &[u8])]) -> blockstore::Result<()> {
+        self.inner.put_many(blocks).await
+    }
+
+    async fn has(&self, cid: &Cid) -> blockstore::Result<bool> {
+        self.inner.has(cid).await
+    }
+
+    async fn delete(&self, cid: &Cid) -> blockstore::Result<()> {
+        self.inner.delete(cid).await
+    }
+
+    async fn get_size(&self, cid: &Cid) -> blockstore::Result<Option<usize>> {
+        self.inner.get_size(cid).await
+    }
+
+    async fn all_cids(&self) -> blockstore::Result<Vec<Cid>> {
+        self.inner.all_cids().await
+    }
+
+    fn hash_on_read(&self, enabled: bool) {
+        self.inner.hash_on_read(enabled)
+    }
+
+    async fn is_merged(&self, cid: &Cid) -> blockstore::Result<bool> {
+        self.inner.is_merged(cid).await
+    }
+
+    async fn mark_as_merged(&self, cid: &Cid) -> blockstore::Result<()> {
+        self.inner.mark_as_merged(cid).await
+    }
+
+    async fn get_unmerged(&self) -> blockstore::Result<Vec<Cid>> {
+        self.inner.get_unmerged().await
+    }
+}
+
+#[nuclei::test]
+async fn a_local_walk_releases_the_peer_reservation_while_it_reads() {
+    let store = Arc::new(RegolithStore::in_memory().unwrap());
+    let blockstore = Arc::new(DefraBlockstore::new(store, true));
+    let child_data = encode_ipld(ipld!({ "child": 1 }));
+    let child_cid = make_cid(&child_data);
+    blockstore.put(&child_cid, &child_data).await.unwrap();
+    let root_data = encode_ipld(ipld!({ "child": child_cid }));
+    let root_cid = make_cid(&root_data);
+    blockstore.put(&root_cid, &root_data).await.unwrap();
+
+    let entered = Arc::new(regolith::sync::Notify::new());
+    let release = Arc::new(regolith::sync::Notify::new());
+    let walking = Arc::new(DelayedChildRead {
+        inner: Arc::clone(&blockstore),
+        child: child_cid,
+        entered: Arc::clone(&entered),
+        release: Arc::clone(&release),
+    });
+    let transport = TestTransport::new(
+        blockstore,
+        root_cid,
+        root_data,
+        RapidHashMap::new(),
+        RapidHashMap::new(),
+    );
+    let (event_tx, mut event_rx) = mpsc::channel(1);
+    let peer = PeerId::new("remote-peer".to_string());
+    let limiter = DagFetchLimiter::new(2);
+    let reserved = limiter.try_reserve_peer(peer.as_str()).unwrap();
+    let context = DagFetchContext::new(
+        "doc".to_string(),
+        "collection".to_string(),
+        "creator".to_string(),
+        peer.clone(),
+    )
+    .with_peer_permit(crate::sync::DagFetchPeerPermit::new(reserved));
+    let fetch = crate::rt::spawn(poll_fetch_dag(
+        transport,
+        walking,
+        event_tx,
+        root_cid,
+        context,
+        limiter.clone(),
+        diagnostics(),
+    ));
+
+    crate::rt::time::timeout(Duration::from_secs(5), entered.notified())
+        .await
+        .expect("the local walk must reach the delayed child");
+    let another = limiter
+        .try_reserve_peer(peer.as_str())
+        .expect("the local walk must not keep the peer reservation");
+    drop(another);
+    release.notify_one();
+
+    assert!(matches!(
+        crate::rt::time::timeout(Duration::from_secs(5), event_rx.recv())
+            .await
+            .expect("the local walk must finish"),
+        Some(SyncEvent::DagReady { root_cid: ready, .. }) if ready == root_cid
+    ));
+    fetch.join().await.unwrap();
+}

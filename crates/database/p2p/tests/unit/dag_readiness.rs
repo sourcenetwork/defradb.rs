@@ -333,7 +333,7 @@ async fn attempt(
     let context = context();
     let mut providers = ProviderRotation::new(context.providers());
     let mut state = ProviderFetchState::new(&mut providers, None, diagnostics);
-    fetch_dag_attempt(transport, blockstore, root, &context, &mut state).await
+    fetch_dag_attempt(transport, blockstore, root, &context, &mut state, None).await
 }
 
 /// Every walk inside the selective loop reads the child, and only the final
