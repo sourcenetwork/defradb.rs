@@ -5,6 +5,8 @@
 use defra_core::vector::Metric;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
+use crate::VectorIndexMaintenance;
+
 /// Describes a field within an index.
 /// Matches Go's IndexedFieldDescription.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -604,6 +606,14 @@ pub struct VectorIndexDescription {
     /// Present when `algorithm` is DISKANN.
     #[serde(rename = "DISKANN", default, skip_serializing_if = "Option::is_none")]
     pub diskann: Option<DiskAnnParams>,
+    /// When a write reaches the graph. Omitted on the wire for `SYNC`, as Go
+    /// stores it.
+    #[serde(
+        rename = "Maintenance",
+        default,
+        skip_serializing_if = "VectorIndexMaintenance::is_sync"
+    )]
+    pub maintenance: VectorIndexMaintenance,
 }
 
 /// DiskANN build and search parameters.
@@ -811,6 +821,7 @@ impl VectorIndexDescription {
             ivfflat: matches!(algorithm, VectorAlgorithm::IvfFlat).then(IvfFlatParams::default),
             ssg: matches!(algorithm, VectorAlgorithm::Ssg).then(SsgParams::default),
             diskann: matches!(algorithm, VectorAlgorithm::DiskAnn).then(DiskAnnParams::default),
+            maintenance: VectorIndexMaintenance::Sync,
         }
     }
 

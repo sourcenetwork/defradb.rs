@@ -4,6 +4,7 @@ use std::collections::BTreeMap;
 
 use net::http::Method;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use urlencoding::encode;
 
 use super::HttpClient;
@@ -19,7 +20,7 @@ struct GoIndexCreateRequest {
     #[serde(rename = "Unique", skip_serializing_if = "std::ops::Not::not")]
     unique: bool,
     #[serde(rename = "Vector", skip_serializing_if = "Option::is_none")]
-    vector: Option<schema::VectorIndexDescription>,
+    vector: Option<Value>,
     #[serde(
         rename = "BuildInBackground",
         skip_serializing_if = "std::ops::Not::not"
@@ -148,6 +149,49 @@ impl HttpClient {
         name: Option<&str>,
         unique: bool,
         vector: Option<schema::VectorIndexDescription>,
+        build_in_background: bool,
+    ) -> Result<IndexInfo> {
+        let vector = vector.map(serde_json::to_value).transpose()?;
+        self.index_create_vector_with_build_mode(
+            txn,
+            collection,
+            fields,
+            name,
+            unique,
+            vector,
+            build_in_background,
+        )
+        .await
+    }
+
+    /// [`Self::index_create`] with the vector configuration left as JSON, so a
+    /// caller can exercise the server's validation of its own wire shape.
+    pub async fn index_create_vector_value(
+        &self,
+        txn: Option<&str>,
+        collection: &str,
+        fields: &[String],
+        name: Option<&str>,
+        unique: bool,
+        vector: Option<Value>,
+    ) -> Result<IndexInfo> {
+        self.index_create_vector_with_build_mode(
+            txn, collection, fields, name, unique, vector, false,
+        )
+        .await
+    }
+
+    /// [`Self::index_create`] with the vector configuration left as JSON and
+    /// an explicit backfill mode.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn index_create_vector_with_build_mode(
+        &self,
+        txn: Option<&str>,
+        collection: &str,
+        fields: &[String],
+        name: Option<&str>,
+        unique: bool,
+        vector: Option<Value>,
         build_in_background: bool,
     ) -> Result<IndexInfo> {
         let request = GoIndexCreateRequest {

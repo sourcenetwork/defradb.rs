@@ -67,19 +67,20 @@ impl<S: Store + 'static> DB<S> {
                 ) {
                     continue;
                 }
-                let index = match VectorIndex::try_new(collection.resolved_root_id(), desc.clone())
-                {
-                    Ok(index) => index,
-                    Err(error) => {
-                        tracing::warn!(
-                            collection = %name,
-                            index = %desc.name,
-                            error = %error,
-                            "Skipping vector index the rebuild sweep cannot open"
-                        );
-                        continue;
-                    }
-                };
+                let mut index =
+                    match VectorIndex::try_new(collection.resolved_root_id(), desc.clone()) {
+                        Ok(index) => index,
+                        Err(error) => {
+                            tracing::warn!(
+                                collection = %name,
+                                index = %desc.name,
+                                error = %error,
+                                "Skipping vector index the rebuild sweep cannot open"
+                            );
+                            continue;
+                        }
+                    };
+                index.defer_through(self.deferred_drains.backlogs());
                 if vector.algorithm == VectorAlgorithm::DiskAnn {
                     self.merge_diskann(&name, &desc.name, &index).await;
                     continue;
@@ -111,8 +112,11 @@ impl<S: Store + 'static> DB<S> {
                         continue;
                     }
                 };
-                match index.rebuild_if_due(&mut datastore).await {
-                    Ok(true) => {
+                let rebuilt = index.rebuild_if_due(&mut datastore).await;
+                // Committing needs the transaction's last reference.
+                drop(datastore);
+                match rebuilt {
+                    Ok(Some(applied)) => {
                         if let Err(error) = txn.commit().await {
                             tracing::warn!(
                                 collection = %name,
@@ -120,9 +124,11 @@ impl<S: Store + 'static> DB<S> {
                                 error = %error,
                                 "Vector index rebuild failed to commit"
                             );
+                        } else if let Some(backlog) = index.backlog() {
+                            backlog.sub(applied as u64);
                         }
                     }
-                    Ok(false) => {
+                    Ok(None) => {
                         let _ = txn.discard();
                     }
                     Err(error) => {

@@ -1,6 +1,7 @@
 //! The writes of a deferred index (`crate::index::deferred`).
 
 use std::sync::atomic::Ordering;
+use std::sync::Arc;
 
 use datastore::NamespaceView;
 use document::NormalValue;
@@ -38,6 +39,38 @@ impl IndexManager {
             let (drains, target) = (drains.clone(), (self.collection_short_id, index.id));
             datastore
                 .on_commit(OnCommit::Sync(Box::new(move || drains.request(target))))
+                .await
+                .map_err(Error::Storage)?;
+        }
+        Ok(())
+    }
+
+    /// Asks, once the write commits, for a drain of each deferred vector
+    /// index it gave pending writes, and counts them in the index's backlog.
+    /// One callback per index however many documents the write touches; it
+    /// reads the attempt's final count when it runs.
+    pub(crate) async fn ask_vector_drains(&self, datastore: &NamespaceView) -> Result<()> {
+        let Some(drains) = self.drains.as_ref() else {
+            return Ok(());
+        };
+        for index in self.indexes.values() {
+            let IndexType::Vector(vector) = index else {
+                continue;
+            };
+            let Some(backlog) = vector.backlog() else {
+                continue;
+            };
+            let id = index.description().id;
+            if vector.owed().load(Ordering::Relaxed) == 0 || !self.first_owe(id) {
+                continue;
+            }
+            let (drains, target) = (drains.clone(), (self.collection_short_id, id));
+            let (backlog, owed) = (Arc::clone(backlog), Arc::clone(vector.owed()));
+            datastore
+                .on_commit(OnCommit::Sync(Box::new(move || {
+                    backlog.add(owed.load(Ordering::Relaxed));
+                    drains.request(target);
+                })))
                 .await
                 .map_err(Error::Storage)?;
         }

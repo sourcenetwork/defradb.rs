@@ -22,3 +22,17 @@ async fn concurrent_workloads_account_for_every_request_and_persist_their_writes
         assert!(result.latencies.iter().all(|latency| !latency.is_zero()));
     }
 }
+
+#[test]
+fn scenario_filter_rejects_an_unknown_name() {
+    let result = std::panic::catch_unwind(|| workload::selected(Some("create")));
+    assert!(result.is_err(), "a typo must not select no workload");
+}
+
+#[test]
+fn scenario_filter_keeps_only_named_workloads() {
+    let selected = workload::selected(Some("creates,counters"));
+    assert_eq!(selected.len(), 2);
+    assert_eq!(selected[0].name(), "creates");
+    assert_eq!(selected[1].name(), "counters");
+}

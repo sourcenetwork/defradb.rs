@@ -51,7 +51,11 @@ pub struct IndexNewArgs {
     /// changed later without dropping and recreating the index. The algorithm
     /// is chosen by which config block is given, or by "Algorithm"; HNSW is the
     /// default, and its tuning params (M, EfConstruction, EfSearch) default
-    /// when omitted.
+    /// when omitted. Maintenance is optional ("SYNC" by default, or
+    /// "DEFERRED"). SYNC updates the graph in the writing transaction.
+    /// DEFERRED records the change in a pending list and a background writer
+    /// updates the graph later; searches merge the pending list, so committed
+    /// writes are searchable right away.
     #[arg(long, value_name = "JSON")]
     pub vector: Option<String>,
 }

@@ -33,6 +33,7 @@ fn vector_index() -> Vec<IndexDescription> {
         ivfflat: None,
         ssg: None,
         diskann: None,
+        maintenance: Default::default(),
     })]
 }
 

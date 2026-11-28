@@ -19,6 +19,7 @@ use super::engine::ivf::flat::{IvfFlat, IvfFlatParams};
 use super::engine::ivf::pq::{IvfPq, IvfPqParams};
 use super::engine::ssg::{Ssg, SsgParams};
 use super::params::Params;
+use super::pending::{self, Backlog, PendingEntry, PendingOp};
 use super::store::KvNodeStore;
 use super::store::{NodeId, VectorNodeStore};
 use crate::index::error::{Error, Result};
@@ -27,9 +28,11 @@ use defra_core::vector::Metric;
 use std::sync::atomic::AtomicU64;
 use std::sync::Arc;
 
+mod deferred;
+
 /// The only epoch until something triggers a rebuild. The key layout carries
 /// the component so that day does not require migrating every entry.
-const LIVE_EPOCH: u32 = 0;
+pub const LIVE_EPOCH: u32 = 0;
 
 /// A collection's vector index.
 #[derive(Debug)]
@@ -46,6 +49,13 @@ pub struct VectorIndex {
     seed: u64,
     codes: Option<Arc<CodeCache>>,
     shared: Option<Arc<CodeCache>>,
+    /// For a deferred index whose pending writes a drain will apply: this
+    /// node's count of them. Without it a deferred index writes its graph
+    /// itself, since nothing would apply or bound the pending set.
+    backlog: Option<Arc<Backlog>>,
+    /// The pending writes this index made in the current attempt, added to
+    /// the backlog once it commits.
+    owed: Arc<AtomicU64>,
 }
 
 impl VectorIndex {
@@ -130,6 +140,8 @@ impl VectorIndex {
             metric,
             codes: None,
             shared: None,
+            backlog: None,
+            owed: Arc::default(),
         })
     }
 
@@ -164,7 +176,8 @@ impl VectorIndex {
         k: usize,
         effort: Option<usize>,
     ) -> Result<Vec<Neighbor>> {
-        self.engine(txn)?.search(query, k, effort).await
+        self.search_where(txn, query, k, effort, &super::engine::ann::AdmitAll)
+            .await
     }
 
     /// [`search`](Self::search), also answering how many index entries it
@@ -181,9 +194,25 @@ impl VectorIndex {
         T: Reader + Writer + MaybeSend,
         E: Element,
     {
+        let pending = self.pending_entries(txn).await?;
         let reads = AtomicU64::new(0);
         let store = self.store(txn).counting_reads(&reads);
-        let hits = self.engine_over(store)?.search(query, k, effort).await?;
+        let engine = self.engine_over(store)?;
+        let hits = if pending.is_empty() {
+            engine.search(query, k, effort).await?
+        } else {
+            pending::merge_pending(
+                &engine,
+                &pending,
+                self.metric,
+                query,
+                k,
+                effort,
+                &super::engine::ann::AdmitAll,
+            )
+            .await?
+        };
+        drop(engine);
         Ok((hits, reads.into_inner()))
     }
 
@@ -196,9 +225,12 @@ impl VectorIndex {
         effort: Option<usize>,
         admit: &A,
     ) -> Result<Vec<Neighbor>> {
-        self.engine(txn)?
-            .search_where(query, k, effort, admit)
-            .await
+        let pending = self.pending_entries(txn).await?;
+        let engine = self.engine(txn)?;
+        if pending.is_empty() {
+            return engine.search_where(query, k, effort, admit).await;
+        }
+        pending::merge_pending(&engine, &pending, self.metric, query, k, effort, admit).await
     }
 
     /// Returns the configured algorithm behind [`VectorIndexEngine`] rather
@@ -209,10 +241,6 @@ impl VectorIndex {
         txn: &'txn mut T,
     ) -> Result<impl VectorIndexEngine + 'txn> {
         self.engine_over(self.store(txn))
-    }
-
-    fn store<'txn, T>(&self, txn: &'txn mut T) -> KvNodeStore<'txn, T> {
-        KvNodeStore::new(txn, self.collection_short_id, self.desc.id, LIVE_EPOCH)
     }
 
     fn engine_over<'txn, T>(
@@ -271,18 +299,30 @@ impl VectorIndex {
 
     /// Rebuilds this index if its engine judges a rebuild due, on the caller's
     /// transaction. The background task's entry point for HNSW: it answers
-    /// whether the transaction did anything, so an idle sweep discards rather
-    /// than commits.
+    /// how many pending entries it applied, or `None` when it did nothing so an
+    /// idle sweep discards rather than commits. The caller subtracts the count
+    /// from the backlog only after the transaction commits.
     pub async fn rebuild_if_due<T: Reader + Writer + MaybeSend>(
         &self,
         txn: &mut T,
-    ) -> storage::corekv::Result<bool> {
-        let mut engine = self.engine(txn).map_err(into_storage)?;
-        if !engine.should_build().await.map_err(into_storage)? {
-            return Ok(false);
+    ) -> storage::corekv::Result<Option<usize>> {
+        if !self
+            .engine(txn)
+            .map_err(into_storage)?
+            .should_build()
+            .await
+            .map_err(into_storage)?
+        {
+            return Ok(None);
         }
-        engine.build().await.map_err(into_storage)?;
-        Ok(true)
+        // A rebuild clears the build it reads, pending entries included.
+        let applied = self.apply_all_pending(txn).await.map_err(into_storage)?;
+        self.engine(txn)
+            .map_err(into_storage)?
+            .build()
+            .await
+            .map_err(into_storage)?;
+        Ok(Some(applied))
     }
 
     /// The DiskANN merge this index is due, read on `txn`, or `None` when it
@@ -431,6 +471,22 @@ impl CollectionIndex for VectorIndex {
             return Ok(());
         };
         let id = NodeId(doc_short_id);
+        if self.defers_now() {
+            let vector = match indexable {
+                Indexable::Narrow(v) => self.metric.prepare(v),
+                Indexable::Wide(v) => self.metric.prepare(v),
+                Indexable::Integral(v) => self.metric.prepare(v),
+            };
+            let entry = PendingEntry {
+                id,
+                op: PendingOp::Upsert,
+                vector,
+            };
+            return self.defer(txn, entry).await.map_err(into_storage);
+        }
+        self.supersede_pending(txn, id)
+            .await
+            .map_err(into_storage)?;
         let mut engine = self.engine(txn).map_err(into_storage)?;
         match indexable {
             Indexable::Narrow(v) => engine.insert(id, v).await,
@@ -470,11 +526,28 @@ impl CollectionIndex for VectorIndex {
         &self,
         txn: &mut T,
         doc_short_id: u64,
-        _values: &[NormalValue],
+        values: &[NormalValue],
     ) -> storage::corekv::Result<()> {
+        let id = NodeId(doc_short_id);
+        if self.defers_now() {
+            // A document with no vector is not in the graph; a pending delete
+            // of it would only grow the set every search scores.
+            if !values.first().is_some_and(|value| !value.is_nil()) {
+                return Ok(());
+            }
+            let entry = PendingEntry {
+                id,
+                op: PendingOp::Delete,
+                vector: Vec::new(),
+            };
+            return self.defer(txn, entry).await.map_err(into_storage);
+        }
+        self.supersede_pending(txn, id)
+            .await
+            .map_err(into_storage)?;
         self.engine(txn)
             .map_err(into_storage)?
-            .delete(NodeId(doc_short_id))
+            .delete(id)
             .await
             .map(|_| ())
             .map_err(into_storage)

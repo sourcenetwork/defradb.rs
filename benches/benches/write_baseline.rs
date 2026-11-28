@@ -8,7 +8,9 @@
 //! `@chunk` field and emits the families with a `_chunked` suffix;
 //! DEFRA_BASELINE_EMBEDDING_URL also embeds it, with an `_embedded` suffix;
 //! DEFRA_BASELINE_PROJECTOR=empty installs a document projector that changes
-//! nothing. Raw samples and provenance go to stdout as JSON
+//! nothing. DEFRA_BASELINE_VECTOR=sync|deferred adds a 128-dimension HNSW
+//! vector to every create and emits the families with a `_vector_<mode>`
+//! suffix; DEFRA_BASELINE_SCENARIOS (comma-separated names) runs only those. Raw samples and provenance go to stdout as JSON
 //! lines; dashboard families use DEFRA_BENCH_OUT through the existing emitter.
 
 use defra_perf::emit::{Family, Group, Row, Trust};
@@ -110,6 +112,7 @@ fn main() {
                 "operations_per_writer": operations, "repetitions": repetitions,
             "shared_documents": workload::SHARED_DOCUMENTS,
                 "chunk_max_chars": workload::chunk_max_chars(),
+                "vector_maintenance": workload::vector_maintenance(),
                 "embedded": workload::embedding_url().is_some(),
                 "load_guard": guard,
             }
@@ -117,7 +120,8 @@ fn main() {
     );
     let server = common::server_edge();
     let edge = server.edge().clone();
-    for scenario in Scenario::ALL {
+    let only = std::env::var("DEFRA_BASELINE_SCENARIOS").ok();
+    for scenario in workload::selected(only.as_deref()) {
         let mut groups: Vec<Group> = Vec::new();
         for &count in &writers {
             let mut values: Vec<Vec<f64>> = Vec::new();
@@ -175,14 +179,18 @@ fn main() {
         for group in groups {
             family = family.group(group);
         }
-        let suffix = match (
+        let mut suffix = match (
             workload::chunk_max_chars().is_some(),
             workload::embedding_url().is_some(),
         ) {
             (true, true) => "_chunked_embedded",
             (true, false) => "_chunked",
             (false, _) => "",
-        };
+        }
+        .to_string();
+        if let Some(mode) = workload::vector_maintenance() {
+            suffix.push_str(&format!("_vector_{mode}"));
+        }
         family.emit(&format!("write_baseline_{}{suffix}", scenario.name()));
     }
     server.shutdown().unwrap();

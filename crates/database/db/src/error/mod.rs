@@ -225,6 +225,8 @@ impl From<crate::index::Error> for Error {
             other @ (crate::index::Error::VectorEntryPointNotFound { .. }
             | crate::index::Error::DiskAnnCodeLength { .. }
             | crate::index::Error::DiskAnnCodeSlots { .. }
+            | crate::index::Error::MalformedVectorPending { .. }
+            | crate::index::Error::UnknownVectorPendingOp { .. }
             | crate::index::Error::DeferredDrain { .. }
             | crate::index::Error::DeferredDrainDocument { .. }) => Error::Other(other.to_string()),
             other @ crate::index::Error::VectorDimensionMismatch { .. } => {

@@ -1013,6 +1013,7 @@ impl<'a> SdlParser<'a> {
                             }
                             _ => None,
                         },
+                        maintenance: config.maintenance.unwrap_or_default(),
                     }),
                 );
             }

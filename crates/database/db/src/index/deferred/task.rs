@@ -15,6 +15,7 @@ use super::drain::{drain_index, PlanSize};
 use super::{DrainRequests, IndexRef};
 use crate::database::DB;
 use crate::index::error::{Error, Result};
+use crate::index::vector::pending::{drain_vector_turn, VectorTurn};
 
 /// How many plans an index drains in one pass before the others get a turn.
 const TURN: usize = 4;
@@ -24,6 +25,14 @@ enum Turn {
     Idle,
     Drained,
     More,
+}
+
+/// What a deferred index owes: entries moved to a value its log names, or
+/// pending vectors applied to its graph.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Owed {
+    Entries,
+    Vectors,
 }
 
 /// Why the drain task woke.
@@ -160,11 +169,12 @@ where
     /// fails does not stop the others; the first failure is returned.
     pub async fn drain_deferred_indexes(&self) -> Result<()> {
         let mut failure = None;
-        for (name, target) in self.deferred_indexes()? {
+        for (name, target, owed) in self.deferred_indexes()? {
             match self
                 .drain_turn(
                     &name,
                     target,
+                    owed,
                     usize::MAX,
                     RapidHashSet::new(),
                     PlanSize::default(),
@@ -188,8 +198,8 @@ where
         failure.map_or(Ok(()), Err)
     }
 
-    /// Every deferred index, with its collection's name.
-    fn deferred_indexes(&self) -> Result<Vec<(String, IndexRef)>> {
+    /// Every deferred index, with its collection's name and what it owes.
+    fn deferred_indexes(&self) -> Result<Vec<(String, IndexRef, Owed)>> {
         let mut indexes = Vec::new();
         for name in self
             .list_collections()
@@ -204,7 +214,12 @@ where
             let short_id = collection.resolved_root_id();
             for index in collection.write_indexes() {
                 if crdt::deferred_index(index, collection.schema(), collection.crdts()) {
-                    indexes.push((name.clone(), (short_id, index.id)));
+                    indexes.push((name.clone(), (short_id, index.id), Owed::Entries));
+                } else if index
+                    .vector()
+                    .is_some_and(|vector| vector.maintenance.is_deferred())
+                {
+                    indexes.push((name.clone(), (short_id, index.id), Owed::Vectors));
                 }
             }
         }
@@ -219,6 +234,7 @@ where
         &self,
         name: &str,
         target: IndexRef,
+        owed: Owed,
         plans: usize,
         mut skip: RapidHashSet<u64>,
         size: PlanSize,
@@ -230,6 +246,21 @@ where
             carried: false,
             size,
         };
+        if owed == Owed::Vectors {
+            let turn = drain_vector_turn(self, name, target, plans)
+                .await
+                .map_err(|source| Error::DeferredDrain {
+                    collection: name.to_string(),
+                    index_id: target.1,
+                    source: Box::new(source),
+                })?;
+            report.turn = match turn {
+                VectorTurn { more: true, .. } => Turn::More,
+                VectorTurn { applied: 0, .. } => Turn::Idle,
+                VectorTurn { .. } => Turn::Drained,
+            };
+            return Ok(report);
+        }
         for _ in 0..plans {
             let drained = drain_index(self, name, target.1, &skip, report.size)
                 .await
@@ -271,7 +302,7 @@ where
             }
         };
         let mut worked = 0;
-        for (name, target) in indexes {
+        for (name, target, owed) in indexes {
             if !sweep && !requested.contains(&target) {
                 continue;
             }
@@ -282,7 +313,7 @@ where
             }
             let stuck = failures.stuck(target, sweep);
             match self
-                .drain_turn(&name, target, TURN, stuck, failures.size(target))
+                .drain_turn(&name, target, owed, TURN, stuck, failures.size(target))
                 .await
             {
                 Ok(report) => {

@@ -21,6 +21,30 @@ mod verify;
 const COLLECTION: &str = "Sample";
 pub const SHARED_DOCUMENTS: usize = 8;
 
+/// Dimensions of the `vec` field `DEFRA_BASELINE_VECTOR` adds.
+const VECTOR_DIMENSIONS: usize = 128;
+
+/// `DEFRA_BASELINE_VECTOR=sync|deferred` adds a `vec` field under an HNSW
+/// index with that maintenance mode, and every create writes a vector to it.
+pub fn vector_maintenance() -> Option<String> {
+    std::env::var("DEFRA_BASELINE_VECTOR").ok().map(|mode| {
+        assert!(
+            mode == "sync" || mode == "deferred",
+            "DEFRA_BASELINE_VECTOR is sync or deferred"
+        );
+        mode
+    })
+}
+
+/// A vector that differs per write, spread so the graph has real work.
+fn vector_literal(writer: usize, operation: usize) -> String {
+    let seed = (writer * 7919 + operation * 104_729 + 1) as f64;
+    let elements: Vec<String> = (0..VECTOR_DIMENSIONS)
+        .map(|i| format!("{:.5}", (seed * (i as f64 + 1.0) * 0.618_034).sin()))
+        .collect();
+    format!("[{}]", elements.join(", "))
+}
+
 /// `DEFRA_BASELINE_CHUNK_MAX_CHARS` makes `left` a `@chunk` field cut at that size.
 pub fn chunk_max_chars() -> Option<u32> {
     std::env::var("DEFRA_BASELINE_CHUNK_MAX_CHARS")
@@ -73,6 +97,9 @@ impl Scenario {
         let token = format!("writer-{writer}-operation-{operation}");
         match self {
             Self::Creates => {
+                let vector = vector_maintenance()
+                    .map(|_| format!(", vec: {}", vector_literal(writer, operation)))
+                    .unwrap_or_default();
                 // Each create embeds a text of its own, so the cache answers none of them.
                 let left = if embedding_url().is_some() {
                     token.as_str()
@@ -80,7 +107,7 @@ impl Scenario {
                     "same"
                 };
                 format!(
-                    r#"mutation {{ add_Sample(input: {{label: "{token}", left: "{left}", right: "same", count: 0}}) {{ _docID }} }}"#
+                    r#"mutation {{ add_Sample(input: {{label: "{token}", left: "{left}", right: "same", count: 0{vector}}}) {{ _docID }} }}"#
                 )
             }
             Self::SharedUpdates | Self::CountersIndexes | Self::Counters | Self::CounterIndex => {
@@ -103,6 +130,24 @@ impl Scenario {
             }
         }
     }
+}
+
+/// The scenarios selected by `DEFRA_BASELINE_SCENARIOS`, or all of them when
+/// it is unset. A misspelled name is an error rather than an empty run.
+pub fn selected(only: Option<&str>) -> Vec<Scenario> {
+    let Some(only) = only else {
+        return Scenario::ALL.to_vec();
+    };
+    for name in only.split(',') {
+        assert!(
+            Scenario::ALL.iter().any(|scenario| scenario.name() == name),
+            "DEFRA_BASELINE_SCENARIOS names unknown scenario {name:?}"
+        );
+    }
+    Scenario::ALL
+        .into_iter()
+        .filter(|scenario| only.split(',').any(|name| name == scenario.name()))
+        .collect()
 }
 
 #[allow(dead_code)] // Some fields are consumed only by the benchmark target.
@@ -140,6 +185,17 @@ impl Fixture {
         let chunk = chunk_max_chars()
             .map(|max_chars| format!("@chunk(maxChars: {max_chars})"))
             .unwrap_or_default();
+        let vector = vector_maintenance()
+            .map(|mode| {
+                let maintenance = match mode.as_str() {
+                    "deferred" => "maintenance: DEFERRED, ",
+                    _ => "",
+                };
+                format!(
+                    "vec: [Float32!] @index(vector: {{dimensions: {VECTOR_DIMENSIONS}, {maintenance}hnsw: {{metric: COSINE}}}})"
+                )
+            })
+            .unwrap_or_default();
         let embedded = embedding_url()
             .map(|url| {
                 format!(
@@ -154,6 +210,7 @@ impl Fixture {
                 {embedded}
                 right: String
                 count: Int @crdt(type: "pncounter")
+                {vector}
             }}"#
         );
         db.add_collection(&defra_core::RequestContext::ambient(), &sdl)
@@ -227,6 +284,28 @@ pub async fn run(
 ) -> Measurement {
     assert!(writers > 0 && operations > 0);
     let fixture = Fixture::new(scenario, edge).await;
+    // A node drains deferred indexes on a database worker as their commits
+    // ask; this harness has none, so a loop on the edge stands in for it.
+    let draining = Arc::new(std::sync::atomic::AtomicBool::new(true));
+    let drain_failures = Arc::new(std::sync::atomic::AtomicU64::new(0));
+    let drainer = vector_maintenance()
+        .filter(|mode| mode == "deferred")
+        .map(|_| {
+            let (db, edge_handle, draining, drain_failures) = (
+                fixture.db.clone(),
+                edge.clone(),
+                draining.clone(),
+                drain_failures.clone(),
+            );
+            edge.spawn(async move {
+                while draining.load(std::sync::atomic::Ordering::Relaxed) {
+                    if db.drain_deferred_indexes().await.is_err() {
+                        drain_failures.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    }
+                    edge_handle.sleep(Duration::from_millis(1)).await;
+                }
+            })
+        });
     let stats = fixture.store.transaction_stats_handle().unwrap();
     let storage_before = stats.snapshot();
     let retries_before = telemetry::conflict_metrics_snapshot();
@@ -301,6 +380,15 @@ pub async fn run(
         engine_exhaustions += engine_failed;
     }
     let elapsed = start.elapsed();
+    draining.store(false, std::sync::atomic::Ordering::Relaxed);
+    if let Some(drainer) = drainer {
+        drainer.await.unwrap();
+    }
+    assert_eq!(
+        drain_failures.load(std::sync::atomic::Ordering::Relaxed),
+        0,
+        "a deferred vector benchmark cannot report with a failing drain"
+    );
     let commits = successes.len() as u64;
     let retries_after = telemetry::conflict_metrics_snapshot();
     let measurement = Measurement {

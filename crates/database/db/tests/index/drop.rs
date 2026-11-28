@@ -431,6 +431,7 @@ fn drop_index_removes_everything_the_index_wrote() {
             ivfflat: None,
             ssg: None,
             diskann: None,
+            maintenance: Default::default(),
         };
         for (field, name, vector) in [
             ("title", "by_title", None),

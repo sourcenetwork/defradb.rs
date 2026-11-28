@@ -916,6 +916,15 @@ impl<S: Store> DB<S> {
     /// committed.
     pub fn evict_index_caches(&self, collection_short_id: u32, index_id: u32) {
         self.vector_codes.evict(collection_short_id, index_id);
+        self.deferred_drains
+            .backlogs()
+            .forget(collection_short_id, index_id);
+    }
+
+    /// The drains this database owes, and the pending counts of its deferred
+    /// vector indexes.
+    pub fn deferred_drains(&self) -> &crate::index::deferred::DrainRequests {
+        &self.deferred_drains
     }
 
     /// Execute a function within a transaction.

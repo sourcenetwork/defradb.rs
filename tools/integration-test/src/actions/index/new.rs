@@ -2,7 +2,7 @@ use crate::actions::shared::IndexSpec;
 use crate::clients::{CliRun, HttpRun};
 use crate::scenario::{Common, Failure, Op};
 use crate::test_case::State;
-use schema::IndexedFieldDescription;
+use schema::{IndexedFieldDescription, VectorIndexDescription};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::time::{Duration, Instant};
@@ -96,18 +96,16 @@ impl NewIndex {
                 .unwrap_or_default()
     }
 
-    /// The vector configuration this index requests, read the way the wire
-    /// reads it so the scenario cannot send a shape the API would reject.
-    fn vector_description(&self) -> Result<Option<schema::VectorIndexDescription>, Failure> {
-        match &self.index.vector {
-            None => Ok(None),
-            Some(config) => serde_json::from_value(config.clone())
-                .map(Some)
-                .map_err(|error| Failure::operation(error.to_string())),
-        }
+    fn vector_description(&self) -> Result<Option<VectorIndexDescription>, Failure> {
+        let Some(vector) = self.index.vector.as_ref() else {
+            return Ok(None);
+        };
+        serde_json::from_value(vector.clone())
+            .map(Some)
+            .map_err(|error| Failure::operation(error.to_string()))
     }
 
-    /// Fails on the arguments no client supports yet.
+    /// Fails arguments every client refuses before sending a request.
     fn check_arguments(&self) -> Result<(), Failure> {
         self.common.client_identity(Self::name_of())?;
         let ordered_unique = self
@@ -127,11 +125,21 @@ impl NewIndex {
                 "index request has more than one kind config".to_owned(),
             ));
         }
+        if self
+            .index
+            .vector
+            .as_ref()
+            .is_some_and(|vector| !vector.is_object())
+        {
+            return Err(Failure::operation(
+                "index.vector must be a JSON object".to_owned(),
+            ));
+        }
         Ok(())
     }
 
-    /// [`NewIndex::check_arguments`], plus the arguments the HTTP and CLI
-    /// clients cannot send: descending fields and a vector config.
+    /// [`NewIndex::check_arguments`], plus descending fields, which neither
+    /// remote client can send.
     fn check_remote_arguments(&self) -> Result<(), Failure> {
         self.check_arguments()?;
         let descending = self.index.fields.iter().any(|field| field.descending);
@@ -183,14 +191,14 @@ impl HttpRun for NewIndex {
             }
             let wait_for_build = !action.r#async && !in_txn;
             let build_in_background = action.r#async && !in_txn;
-            let vector = action.vector_description()?;
+            let vector = action.index.vector.clone();
             let created = state
                 .http_as(
                     action.common.node(),
                     action.common.identity_seed,
                     |client| async move {
                         client
-                            .index_create_with_build_mode(
+                            .index_create_vector_with_build_mode(
                                 txn.as_deref(),
                                 &target,
                                 &fields,
@@ -273,13 +281,14 @@ impl CliRun for NewIndex {
             // `index new` has no background flag, here or in Go's CLI.
             unsupported_argument(&[("async", action.r#async)])?;
             let fields = action.field_names().join(",");
-            // Held here so the borrowed flags below outlive the argument list.
-            let as_json = match action.vector_description()? {
-                Some(vector) => Some(serde_json::to_string(&vector).map_err(|error| {
-                    Failure::operation(format!("cannot send the vector config: {error}"))
-                })?),
-                None => None,
-            };
+            // Held here so the borrowed flag below outlives the argument list.
+            let as_json = action
+                .index
+                .vector
+                .as_ref()
+                .map(serde_json::to_string)
+                .transpose()
+                .map_err(|error| Failure::operation(error.to_string()))?;
             let mut args = vec![
                 "index",
                 "new",

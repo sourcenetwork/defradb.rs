@@ -682,6 +682,7 @@ impl<'a> SdlParser<'a> {
                     };
                     config.algorithm = Some(text.clone());
                 }
+                "maintenance" => config.maintenance = Some(read_maintenance(member_value)?),
                 block if block == schema::VectorAlgorithm::Flat.sdl_block() => {
                     let mut block = FlatConfig::default();
                     for (name, value) in vector_block(member, member_value)? {
@@ -1063,6 +1064,24 @@ fn read_metric(block: &str, value: &SchemaValue<'_>) -> Result<String> {
             "@index vector {block} metric must be a metric"
         ))),
     }
+}
+
+/// Go's GraphQL enum refuses an unknown mode with this text.
+fn read_maintenance(value: &SchemaValue<'_>) -> Result<schema::VectorIndexMaintenance> {
+    let SchemaValue::Enum(name) = value else {
+        return Err(QueryError::parse(
+            "@index vector maintenance must be SYNC or DEFERRED",
+        ));
+    };
+    schema::VectorIndexMaintenance::ALL
+        .iter()
+        .copied()
+        .find(|mode| mode.as_str() == name)
+        .ok_or_else(|| {
+            QueryError::parse(format!(
+                "In field \"maintenance\": Expected type \"VectorIndexMaintenance\", found {name}."
+            ))
+        })
 }
 
 fn read_block_u32(name: &str, value: &SchemaValue<'_>) -> Result<u32> {

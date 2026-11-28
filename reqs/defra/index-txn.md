@@ -350,6 +350,26 @@ With node access control enabled and owned by identity 1, an identity-only node 
 
 The wire ID is Go-compatible numeric `u64`. For compatibility, a bare numeric route whose high bits are zero is still accepted; it names the reserved legacy start `0`, which no new transaction uses. Every new ID is below 2^53, so a client that reads it as a JSON number, as JavaScript does, gets the same ID back.
 
+# `go.index.vector.maintenance`: When a vector index applies a write to its graph
+
+- **Parents:** ["go.index.vector"]
+
+`@index(vector: {maintenance: SYNC | DEFERRED})`, from Go's sourcenetwork/defradb#5326.
+
+# `go.index.vector.maintenance.mode`: Declaring the maintenance mode
+
+- **Parents:** ["go.index.vector.maintenance"]
+- **Scenarios:** ["index::vector_deferred::vector_index_create_with_deferred_maintenance_in_sdl_is_stored", "index::vector_deferred::vector_index_create_without_maintenance_defaults_to_sync", "index::vector_deferred::vector_index_create_with_explicit_sync_maintenance_is_stored_as_default", "index::vector_deferred::vector_index_create_with_unknown_maintenance_in_sdl_is_rejected", "index::vector_deferred::vector_index_create_with_deferred_maintenance_through_the_index_api", "index::vector_deferred::vector_index_create_with_unknown_maintenance_through_the_index_api_is_rejected"]
+
+`maintenance: DEFERRED` in `@index(vector: {...})`, or `"Maintenance": "DEFERRED"` in the vector config the index API and `defradb client index new --vector` take, is stored, and the listed index's `KindDescription` carries `"Maintenance": "DEFERRED"`. Without it, or with `SYNC` (`"SYNC"` or `""` on the wire), the index is synchronous and its `KindDescription` has no `Maintenance` member, so a description stored before the modes keeps its bytes. An unknown mode in SDL fails with `Expected type "VectorIndexMaintenance", found LAZY`; one in the index API's JSON with `vector index with unknown maintenance. Maintenance: LAZY`.
+
+# `go.index.vector.maintenance.deferred`: A deferred index's writes are searchable at once
+
+- **Parents:** ["go.index.vector.maintenance"]
+- **Scenarios:** ["index::vector_deferred::vector_index_deferred_add_update_delete_search_is_correct", "index::vector_deferred::vector_index_deferred_concurrent_writers_all_searchable", "index::vector_deferred::vector_index_deferred_writes_are_searchable_after_a_restart"]
+
+On a deferred vector index a created, updated or deleted document is reflected by the next similarity query (`order: {_alias: {sim: DESC}}, limit: k`): a new vector is ranked, an updated one ranks by its new value, and a deleted document is gone, before the graph has caught up. Concurrent writers do not conflict with each other on the index, and their documents are all found. Writes not yet applied when the node stops are found after it restarts, and are applied then.
+
 # `defra.index.owed_reindex.resume`: A migration's reindex that stops part way resumes
 
 - **Parents:** ["go.index.backfill"]

@@ -81,4 +81,5 @@ mod status;
 mod unique_writer;
 mod update_unique;
 mod update_unique_composite;
+mod vector_deferred;
 mod vector_fallback_warning;

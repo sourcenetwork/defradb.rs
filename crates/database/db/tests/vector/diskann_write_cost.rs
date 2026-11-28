@@ -75,6 +75,7 @@ fn description(dimensions: usize) -> IndexDescription {
         ivfflat: None,
         ssg: None,
         diskann: Some(schema::DiskAnnParams::default()),
+        maintenance: Default::default(),
     })
 }
 
