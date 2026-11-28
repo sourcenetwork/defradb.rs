@@ -83,29 +83,26 @@ pub(crate) fn plan_chunks(
     Ok(plans)
 }
 
-/// Marks the plans whose field the parent's earlier blocks encrypt, by
-/// document or by field, from `heads`, the parent's heads before this update.
-/// The update's new blocks inherit that encryption, so the chunks must too.
-/// A create has no earlier blocks, so its plans keep only the explicit config.
+/// Marks the plans whose field the parent's next block encrypts, by
+/// [`crate::block::builder::encrypts_field`]'s rule over `heads`, the parent's
+/// heads before this update. The update's new blocks are encrypted that way,
+/// so the chunks must be too. A create has no earlier blocks, so its plans
+/// keep only the explicit config.
 pub(crate) async fn inherit_encryption(
     plans: &mut [FieldChunks],
     blockstore: &datastore::NamespaceView,
     heads: &crate::block::builder::DocHeadsSnapshot,
 ) -> Result<()> {
-    let fields: Vec<String> = plans
-        .iter()
-        .filter(|plan| !plan.encrypt)
-        .map(|plan| plan.field.clone())
-        .collect();
-    if fields.is_empty() {
-        return Ok(());
-    }
-    let (encrypt_doc, encrypted) =
-        crate::block::builder::inherited_encryption_at(blockstore, heads, &fields)
-            .await
-            .map_err(QueryError::execution)?;
-    for plan in plans {
-        plan.encrypt |= encrypt_doc || encrypted.contains(&plan.field);
+    let mut doc_scope = crate::block::builder::DocScope::new(Some(heads), None);
+    for plan in plans.iter_mut().filter(|plan| !plan.encrypt) {
+        plan.encrypt = crate::block::builder::encrypts_field_at(
+            blockstore,
+            heads,
+            &mut doc_scope,
+            &plan.field,
+        )
+        .await
+        .map_err(QueryError::execution)?;
     }
     Ok(())
 }

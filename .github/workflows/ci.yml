@@ -278,16 +278,22 @@ jobs:
             commands: |
               cargo clippy -p cli --no-default-features --features release-full --all-targets -- -D warnings
               cargo clippy -p cli --no-default-features --all-targets -- -D warnings
-          - group: optional
+          # The optional checks run in three jobs, grouped by the features they share, so
+          # each build reuses its group's compilation and no job runs all thirteen in a row.
+          - group: optional-otel
             commands: |
               cargo clippy -p telemetry --features otlp --all-targets -- -D warnings
               cargo clippy -p cli --features otel --all-targets -- -D warnings
               cargo clippy -p defra-node --features otel --all-targets -- -D warnings
-              cargo clippy -p defra-node --features p2p --all-targets -- -D warnings
+          - group: optional-vera
+            commands: |
               cargo clippy -p vera-embedded --features node --all-targets -- -D warnings
               cargo clippy -p defra-node --features embedded-vera --all-targets -- -D warnings
               cargo clippy -p defra-node --features embedded-vera,p2p --all-targets -- -D warnings
               cargo clippy -p cli --features embedded-vera --all-targets -- -D warnings
+          - group: optional-p2p
+            commands: |
+              cargo clippy -p defra-node --features p2p --all-targets -- -D warnings
               cargo clippy -p db --features p2p --all-targets -- -D warnings
               cargo clippy -p cli --features iroh,model-trace --all-targets -- -D warnings
               cargo clippy -p p2p --features pinc-transport,iroh-transport --all-targets -- -D warnings
@@ -527,10 +533,15 @@ jobs:
           test "$FEATURE_TESTS" = success || { test "$FEATURE_TESTS" = skipped && test "$RUN_FEATURE_TESTS" = false; }
 
   feature-tests:
-    name: Feature tests
+    name: Feature tests (${{ matrix.group }})
     needs: ci-scope
     if: ${{ !cancelled() && !failure() && fromJson(needs.ci-scope.outputs.run).feature_tests }}
     runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/volume=80gb/env=v3/extras=s3-cache+git-cache+apt-cache
+    # Three jobs, grouped by the features they share, instead of nine runs in a row.
+    strategy:
+      fail-fast: false
+      matrix:
+        group: [telemetry-cli, vera, p2p]
     steps:
       - uses: runs-on/action@v2
       - uses: actions/checkout@v7
@@ -545,21 +556,24 @@ jobs:
         with:
           shared-key: integration-binaries
           save-if: false
-      - run: cargo nextest run --cargo-profile super-dev -p telemetry --features otlp
-      - run: cargo nextest run --cargo-profile super-dev -p cli --features otel --test telemetry_dedup
-      - run: cargo nextest run --cargo-profile super-dev -p defra-node --features p2p
-      - run: cargo nextest run --cargo-profile super-dev -p vera-embedded --features node --test hosted_node --test node_placement
-      - run: cargo nextest run --cargo-profile super-dev -p defra-node --features embedded-vera,http --test embedded_vera
-      # The vera binary's create gate scenario runs on an in-process Vera node and needs no verad
-      # and no CLI binary, so the nextest setup scripts are told not to build them.
-      - run: cargo nextest run --cargo-profile super-dev -p integration-test --test vera -E 'test(/^create_gate::/)'
-        env:
-          DEFRA_RUST_BINARY: /usr/bin/false
-          DEFRA_IROH_BINARY: /usr/bin/false
-          DEFRA_VERA_BINARY: /usr/bin/false
-      - run: cargo nextest run --cargo-profile super-dev -p defra-node --features embedded-vera,p2p --test embedded_vera_replication
-      - run: cargo nextest run --cargo-profile super-dev -p cli --features embedded-vera --test embedded_vera --test embedded_vera_config
-      - run: cargo nextest run --cargo-profile super-dev -p p2p --features pinc-transport,iroh-transport -E 'test(/pinc/)'
+      - if: matrix.group == 'telemetry-cli'
+        run: |
+          cargo nextest run --cargo-profile super-dev -p telemetry --features otlp
+          cargo nextest run --cargo-profile super-dev -p cli --features otel --test telemetry_dedup
+          cargo nextest run --cargo-profile super-dev -p cli --features embedded-vera --test embedded_vera --test embedded_vera_config
+      - if: matrix.group == 'vera'
+        run: |
+          cargo nextest run --cargo-profile super-dev -p vera-embedded --features node --test hosted_node --test node_placement
+          cargo nextest run --cargo-profile super-dev -p defra-node --features embedded-vera,http --test embedded_vera
+          # The create gate scenario runs on an in-process Vera node and needs no verad and no
+          # CLI binary, so the nextest setup scripts are told not to build them.
+          DEFRA_RUST_BINARY=/usr/bin/false DEFRA_IROH_BINARY=/usr/bin/false DEFRA_VERA_BINARY=/usr/bin/false \
+            cargo nextest run --cargo-profile super-dev -p integration-test --test vera -E 'test(/^create_gate::/)'
+          cargo nextest run --cargo-profile super-dev -p defra-node --features embedded-vera,p2p --test embedded_vera_replication
+      - if: matrix.group == 'p2p'
+        run: |
+          cargo nextest run --cargo-profile super-dev -p defra-node --features p2p
+          cargo nextest run --cargo-profile super-dev -p p2p --features pinc-transport,iroh-transport -E 'test(/pinc/)'
 
   wasm-check:
     name: WASM Build Check

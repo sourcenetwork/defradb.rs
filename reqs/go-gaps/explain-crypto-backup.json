@@ -638,13 +638,23 @@
     "verdict": "partial",
     "rust_tests": [
       "crates/database/db/tests/block/builder_write_encryption_tests.rs::update_without_config_inherits_encryption_from_previous_block",
-      "crates/database/db/tests/block/builder_write_encryption_tests.rs::update_without_config_inherits_composite_encryption",
+      "crates/database/db/tests/block/builder_write_encryption_tests.rs::composite_carries_no_encryption_link",
       "tools/integration-test/tests/legacy/encryption/document_policy.rs::unencrypted_document_new_field_stays_plaintext_test",
       "tools/integration-test/tests/legacy/encryption/document_policy.rs::document_policy_covers_new_field_test",
       "crates/database/db/tests/write/kms.rs::create_many_mints_one_kms_key_per_encrypted_field"
     ],
-    "evidence": "builder_write_encryption_tests.rs:107 asserts an updated LWW field block keeps its encryption link; :173 same for the composite block; document_policy.rs:74 asserts a `_commits` delta of an encrypt:true doc holds no plaintext; :114 asserts an unencrypted doc's delta stays plaintext; kms.rs:243 asserts two created docs mint 4 keys (one per doc per field)",
+    "evidence": "builder_write_encryption_tests.rs:107 asserts an updated LWW field block keeps its encryption link; composite_carries_no_encryption_link asserts the create and update composites of an encrypt:true doc link no encryption block, as Go's; document_policy.rs:74 asserts a `_commits` delta of an encrypt:true doc holds no plaintext; :114 asserts an unencrypted doc's delta stays plaintext; kms.rs:243 asserts two created docs mint 4 keys (one per doc per field)",
     "note": "Unverified: `_commits { delta }` ciphertext on create through GraphQL (only the update-added field is checked end to end), pcounter deltas encrypted, `_C` delta nil, relation ID deltas not plaintext, and two docs with the same value producing different ciphertext (only key count is checked, at the db layer)."
+  },
+  {
+    "id": "go.encryption.doc.doc_id",
+    "verdict": "covered",
+    "rust_tests": [
+      "tools/integration-test/tests/testo/encryption/doc_id.rs::doc_encryption_doc_id_matches_go",
+      "tools/integration-test/tests/testo/encryption/doc_id.rs::doc_encryption_update_and_delete_composites_match_go"
+    ],
+    "evidence": "doc_id.rs asserts Go's literal docID bae-e1226eb9-e7dc-5185-986b-6236af58b1ed and the `age`, `name` and `_C` commit CIDs for john21Doc created with encrypt:true, and the `_C` CIDs after an update (height 2) and a delete (height 3) of it, all measured from a Go integration test at 307364d9d with Go's test key and nonce (#2742).",
+    "note": "Run in-process. rust-http and cli talk to the same in-process Rust nodes, which use Go's test key and nonce (tools/integration-test/src/nodes.rs). Under go-http the Go release binary encrypts with random keys, so the literal cannot match there (#2519)."
   },
   {
     "id": "go.encryption.doc.query",
