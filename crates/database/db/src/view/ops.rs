@@ -309,7 +309,7 @@ impl<S: Store> crate::database::DB<S> {
         let query_str = format!(
             "query {{ {} {{ {} }} }}",
             collection.name,
-            self.build_view_fields_from_source(&query_source.query)?
+            super::selection::cache_selection(collection, &query_source.query)?
         );
 
         // Execute the view query
@@ -318,7 +318,7 @@ impl<S: Store> crate::database::DB<S> {
 
         // Build query runner with modified collection (is_materialized=false)
         let query_runner = query::QueryRunner::new(fetcher, modified_collections)
-            .with_lens_store(self.lens_store.clone());
+            .with_lens_store(self.lens_store().clone());
 
         let results = query_runner
             .execute_query(&query_str)
@@ -359,54 +359,6 @@ impl<S: Store> crate::database::DB<S> {
 
         write_txn.commit().await?;
         Ok(())
-    }
-
-    /// Build a field list for the view query from the stored Select JSON.
-    fn build_view_fields_from_source(&self, query: &serde_json::Value) -> Result<String> {
-        let source_fields = query
-            .get("Fields")
-            .and_then(|v| v.as_array())
-            .ok_or_else(|| {
-                Error::Other("view QuerySource.Query missing 'Fields' array".to_string())
-            })?;
-
-        let mut fields = Vec::new();
-        for field_json in source_fields {
-            let field_name = field_json
-                .get("Name")
-                .and_then(|v| v.as_str())
-                .unwrap_or_default();
-
-            let alias = field_json.get("Alias").and_then(|v| v.as_str());
-
-            if let Some(inner_fields) = field_json.get("Fields").and_then(|v| v.as_array()) {
-                // Nested relation
-                let mut inner_field_strs: Vec<String> = Vec::new();
-                for inner in inner_fields {
-                    let name = inner
-                        .get("Name")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or_default();
-                    let inner_alias = inner.get("Alias").and_then(|v| v.as_str());
-                    if let Some(a) = inner_alias {
-                        inner_field_strs.push(format!("{}: {}", a, name));
-                    } else {
-                        inner_field_strs.push(name.to_string());
-                    }
-                }
-                fields.push(format!(
-                    "{} {{ {} }}",
-                    field_name,
-                    inner_field_strs.join(" ")
-                ));
-            } else if let Some(a) = alias {
-                fields.push(format!("{}: {}", a, field_name));
-            } else {
-                fields.push(field_name.to_string());
-            }
-        }
-
-        Ok(fields.join(" "))
     }
 
     /// Get all active collections as CollectionVersion objects (internal helper).

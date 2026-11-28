@@ -10,6 +10,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use testo::prelude::*;
 
+/// Go's `indexBackfillBatchSize`. A watermark gate holds the build after its
+/// first batch, so the corpus sizes its collections against this batch.
+const GO_BACKFILL_BATCH_DOCS: usize = 100;
+
 /// A Rust receiver's admission limits: its pending-DAG map and its per-peer
 /// rate bucket (tokens, and tokens refilled per second).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -22,6 +26,17 @@ pub struct AdmissionSpec {
     /// the default.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub deferral_peer_bytes: Option<u64>,
+}
+
+/// A Rust node's connection manager: it trims to `low_water` once it holds
+/// more than `high_water` connections, sparing those younger than
+/// `grace_period_ms`.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConnectionManagerSpec {
+    pub low_water: u32,
+    pub high_water: u32,
+    pub grace_period_ms: u64,
 }
 
 /// Starts a node. Without options it is a plain in-process node; every option below is one of the corpus's ways to start one.
@@ -66,6 +81,11 @@ pub struct NewNode {
     /// many milliseconds.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub commit_timeout_ms: Option<u64>,
+    /// A node in a process of its own, which `Kill` and `CrashCommit` end:
+    /// a plain Rust node under rust-http and cli, Go's node under go-http.
+    /// It keeps its data in `databaseDir`, which it needs.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub own_process: bool,
     /// Kept so corpus scenarios that set it still parse. It changes nothing:
     /// every node gets Go's `NodeIdentity(i)` and runs identity-only unless
     /// it signs.
@@ -76,6 +96,9 @@ pub struct NewNode {
     /// A Rust node with the given admission limits.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub admission: Option<AdmissionSpec>,
+    /// A Rust node with this connection manager.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub connection_manager: Option<ConnectionManagerSpec>,
     /// A Rust node whose network is iroh rather than libp2p.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub iroh: bool,
@@ -98,6 +121,10 @@ pub struct NewNode {
     /// node runs P2P and where it listens.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub go_config: Option<String>,
+    /// A Rust node started on a data directory that already holds the
+    /// Badger datastore Go DefraDB keeps there.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub go_datastore: bool,
     #[serde(default, skip_serializing_if = "Value::is_null")]
     pub expected_data: Value,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -121,6 +148,9 @@ impl Op for NewNode {
 
     fn run_mut(&self, state: &mut State) -> Result<Value, Failure> {
         self.common.plain(Self::name())?;
+        if self.is_document_acp_test {
+            return self.start_shared_vera(state);
+        }
         let mut probe = self.clone();
         probe.common = Common::default();
         probe.expected_data = Value::Null;
@@ -128,11 +158,13 @@ impl Op for NewNode {
         probe.network = false;
         probe.database_dir = None;
         probe.admission = None;
+        probe.connection_manager = None;
         probe.resolv_conf = None;
         probe.iroh = false;
         probe.registered_identity = false;
         probe.without_node_identity = false;
         probe.go_config = None;
+        probe.go_datastore = false;
         probe.node_identity_seed = None;
         probe.enable_signing = false;
         probe.key_type = None;
@@ -147,6 +179,7 @@ impl Op for NewNode {
         probe.commit_gate = false;
         probe.commit_timeout_ms = None;
         probe.max_txn_retries = None;
+        probe.own_process = false;
         if probe != Self::default() {
             let options = serde_json::to_string(&probe).unwrap_or_default();
             return Err(Failure::unsupported(format!("{} {options}", Self::name())));
@@ -174,14 +207,20 @@ impl Op for NewNode {
                 state.client_type()
             )));
         }
+        self.check_own_process(state.client_type())?;
         let max_txn_retries = self.max_txn_retries(state.client_type())?;
         let registered_identity = self.registered_identity(state.client_type())?;
-        let dir = match self.database_dir {
-            Some(_) => Some(Arc::new(tempfile::tempdir().map_err(|e| {
+        let dir = match self.database_dir.is_some() || self.go_datastore {
+            true => Some(Arc::new(tempfile::tempdir().map_err(|e| {
                 Failure::operation(format!("could not make the node's directory: {e}"))
             })?)),
-            None => None,
+            false => None,
         };
+        if let (true, Some(dir)) = (self.go_datastore, &dir) {
+            std::fs::write(dir.path().join("MANIFEST"), GO_BADGER_MANIFEST).map_err(|e| {
+                Failure::operation(format!("could not write the Go datastore's MANIFEST: {e}"))
+            })?;
+        }
         let (network, listen) = match &self.go_config {
             Some(body) => go_config_network(body)?,
             None => (self.network, Vec::new()),
@@ -191,7 +230,9 @@ impl Op for NewNode {
             dir,
             listen,
             go_config: self.go_config.is_some(),
+            go_datastore: self.go_datastore,
             admission: self.admission.clone(),
+            connection_manager: self.connection_manager.clone(),
             resolv_conf: self.resolv_conf(state.client_type())?,
             iroh_network: self.iroh,
             node_identity,
@@ -201,18 +242,30 @@ impl Op for NewNode {
             txn_ttl,
             se_key: self.searchable_encryption_key()?,
             index_gate,
+            backfill_batch_docs: (self.index_gate == Some(IndexGate::Watermark))
+                .then_some(GO_BACKFILL_BATCH_DOCS),
             commit_gate: self
                 .commit_gate
                 .then(crate::commit_gate::TestCommitGate::default)
                 .map(Arc::new),
             commit_timeout: self.commit_timeout_ms.map(Duration::from_millis),
             max_txn_retries,
+            vera: Self::shared_vera(state)?,
+            own_process: self.own_process,
             ..Default::default()
         };
-        state.start_node(self.common.node(), spec);
+        state.try_start_node(self.common.node(), spec)?;
         Ok(json!({}))
     }
 }
+
+/// The `MANIFEST` Go DefraDB's Badger store holds once a new rootdir has
+/// started: Badger's magic text `Bdgr`, its format version 8, and the first
+/// change set.
+const GO_BADGER_MANIFEST: [u8; 32] = [
+    0x42, 0x64, 0x67, 0x72, 0x00, 0x00, 0x00, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x08, 0xb1, 0xdb, 0xb0, 0x99, 0x0a, 0x06, 0x08, 0x01, 0x20, 0x01, 0x30, 0x01,
+];
 
 /// Loads a Go-written `config.yaml` through the CLI's loader, as `defradb
 /// --rootdir <dir>` does, and answers whether the node runs P2P and the
@@ -233,6 +286,53 @@ fn go_config_network(body: &str) -> Result<(bool, Vec<String>), Failure> {
 }
 
 impl NewNode {
+    /// Starts the Vera node the test's later nodes share for document ACP,
+    /// as Go's `setupRemoteDAC` starts its Vera service. It is no DefraDB
+    /// node, so it takes no node index and no other option.
+    fn start_shared_vera(&self, state: &mut State) -> Result<Value, Failure> {
+        let alone = Self {
+            is_document_acp_test: true,
+            common: self.common.clone(),
+            ..Self::default()
+        };
+        let mut probe = self.clone();
+        probe.expected_data = Value::Null;
+        probe.expected_error = None;
+        if probe != alone {
+            let options = serde_json::to_string(self).unwrap_or_default();
+            return Err(Failure::unsupported(format!("{} {options}", Self::name())));
+        }
+        if state.client_type() == ClientType::GoHttp {
+            return Err(Failure::unsupported(format!(
+                "{} argument isDocumentAcpTest under GoHttp: Go's remote document ACP is a \
+                 SourceHub chain, which the harness does not run, and Go speaks no vera.rs",
+                Self::name()
+            )));
+        }
+        if state.vera.is_some() {
+            return Err(Failure::operation(format!(
+                "{} argument isDocumentAcpTest: the test already started its Vera node",
+                Self::name()
+            )));
+        }
+        let vera = crate::shared_vera::SharedVera::start(&crate::client_type::network_edge())
+            .map_err(Failure::operation)?;
+        state.vera = Some(Arc::new(vera));
+        Ok(json!({}))
+    }
+
+    /// The test's shared Vera node, with a directory of the node's own for
+    /// its Vera worker, when the test started one.
+    fn shared_vera(state: &State) -> Result<Option<crate::shared_vera::NodeVera>, Failure> {
+        let Some(vera) = &state.vera else {
+            return Ok(None);
+        };
+        let home = tempfile::tempdir().map_err(|e| {
+            Failure::operation(format!("could not make the Vera worker's directory: {e}"))
+        })?;
+        Ok(Some((vera.clone(), Arc::new(home))))
+    }
+
     /// A key of the node's own when the scenario turns searchable encryption
     /// on, as Go's harness generates one per node.
     fn searchable_encryption_key(&self) -> Result<Option<[u8; 32]>, Failure> {
@@ -315,6 +415,44 @@ impl NewNode {
             )));
         }
         Ok(true)
+    }
+
+    /// A node in its own process is a Go node or a plain Rust node reached
+    /// by URL, and keeps its data in a directory.
+    fn check_own_process(&self, client: ClientType) -> Result<(), Failure> {
+        if !self.own_process {
+            return Ok(());
+        }
+        if client == ClientType::InProcess {
+            return Err(Failure::unsupported(format!(
+                "{} argument ownProcess under {client:?}: the in-process client calls a node in \
+                 this process",
+                Self::name()
+            )));
+        }
+        let plain = NewNode {
+            own_process: true,
+            database_dir: self.database_dir.clone(),
+            common: self.common.clone(),
+            expected_data: self.expected_data.clone(),
+            expected_error: self.expected_error.clone(),
+            ..Default::default()
+        };
+        if client != ClientType::GoHttp && *self != plain {
+            return Err(Failure::unsupported(format!(
+                "{} argument ownProcess with other options under {client:?}: a Rust node in its \
+                 own process starts with none",
+                Self::name()
+            )));
+        }
+        if self.database_dir.is_none() {
+            return Err(Failure::operation(format!(
+                "{} argument ownProcess without databaseDir: the node keeps its data across a \
+                 kill in a directory",
+                Self::name()
+            )));
+        }
+        Ok(())
     }
 
     /// How many times the node re-runs a transaction that lost a race. Go's

@@ -1,7 +1,6 @@
 //! Tests for issue #859: collection patching, schema migration, and
 //! introspection exposed through [`Node`].
 
-use defra_core::RequestContext;
 use defra_node::Node;
 use defra_node::Result;
 #[cfg(feature = "wasmtime-runtime")]
@@ -24,8 +23,7 @@ const EMPTY_WASM: &[u8] = &[0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00];
 
 /// Apply `patch` to `User` through the node and return its active version.
 async fn patch_user(node: &Node, patch: &str) -> Result<CollectionVersion> {
-    node.patch_collection_as(&RequestContext::ambient(), patch, None)
-        .await?;
+    node.anonymous().patch_collection(patch, None).await?;
     Ok(node
         .get_collection("User")?
         .expect("User exists after a patch"))
@@ -210,7 +208,8 @@ fn set_active_collection_version_round_trips_to_original() -> Result<()> {
             patched.version_id,
         );
 
-        node.set_active_collection_version_as(&RequestContext::ambient(), &original_version)
+        node.anonymous()
+            .set_active_collection_version(&original_version)
             .await?;
         assert_eq!(
             node.get_collection("User")?
@@ -245,9 +244,7 @@ fn set_migration_registers_lens_between_versions() -> Result<()> {
         let config = LensConfig::new(&original_version, &patched.version_id, module);
 
         let config = serde_json::to_value(config).expect("a lens config serializes");
-        let transform_id = node
-            .set_migration_as(&RequestContext::ambient(), &config)
-            .await?;
+        let transform_id = node.anonymous().set_migration(&config).await?;
         assert!(
             !transform_id.is_empty(),
             "transform id should be a non-empty CID"

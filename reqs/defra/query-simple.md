@@ -1,9 +1,9 @@
 # `go.query.simple.select.unknown-field`: Selecting an undefined field is rejected
 
 - **Parents:** ["go.query.simple.select"]
-- **Scenarios:** ["query.simple.with-similarity-on-query-should-error", "query.simple.with-undefined-field"]
+- **Scenarios:** ["query.simple.with-similarity-on-query-should-error", "query.simple.with-undefined-field", "query.simple.with-commits-field-on-collection", "query.simple.with-undefined-object-field"]
 
-Selecting a field the type does not define fails validation with `Cannot query field "ThisFieldDoesNotExists" on type "Users".`; `query { SIMILARITY }` at the root fails with `Cannot query field "SIMILARITY" on type "Query".`.
+Selecting a field the type does not define fails validation with `Cannot query field "ThisFieldDoesNotExists" on type "Users".`; `query { SIMILARITY }` at the root fails with `Cannot query field "SIMILARITY" on type "Query".`. A field the type does not define given a sub-selection fails the same way, naming the field and the type: `Book { _commits { cid } }` fails with `Cannot query field "_commits" on type "Book".` (a document's commits are its `_version` field), and `Book { author { name } }` on a `Book` with no `author` fails with `Cannot query field "author" on type "Book".`.
 
 # `go.query.simple.select.collection-isolation`: A collection query sees only its own documents
 
@@ -36,9 +36,9 @@ Selecting `__typename` (also under an alias such as `t1: __typename`) returns `"
 # `go.query.simple.filter.equality.eq`: `_eq` on a non-null value
 
 - **Parents:** ["go.query.simple.filter.equality"]
-- **Scenarios:** ["query.simple.with_filter.filter-float-eq-value", "query.simple.with_filter.filter-int-eq", "query.simple.with_filter.filter-select-different-field", "query.simple.with_filter.filter-select-same-field", "query.simple.with_filter.filter-string-eq", "query.simple.with_filter.filter-string-no-match", "query.simple.with_filter.with-date-time-equals-filter-block", "query.simple.with_filter.with-eq-op-on-blob-field-should-filter", "query.simple.with_filter.with-nil-date-time-equals-and-non-nil-filter-block-should-succeed"]
+- **Scenarios:** ["query.simple.with_filter.filter-float-eq-value", "query.simple.with_filter.filter-int-eq", "query.simple.with_filter.filter-select-different-field", "query.simple.with_filter.filter-select-same-field", "query.simple.with_filter.filter-string-eq", "query.simple.with_filter.filter-string-no-match", "query.simple.with_filter.with-date-time-equals-filter-block", "query.simple.with_filter.with-eq-op-on-blob-field-should-filter", "query.simple.with_filter.with-nil-date-time-equals-and-non-nil-filter-block-should-succeed", "explain::default::filter_applied_once::filter_with_order_and_limit_returns_only_matching_documents"]
 
-`filter: {Age: {_eq: 21}}` (and the same on Float, String, DateTime and Blob hex such as `"00FF99AA"`) returns only documents whose field equals the value; documents with the field unset never match, the filtered field need not be selected, and no match returns an empty list.
+`filter: {Age: {_eq: 21}}` (and the same on Float, String, DateTime and Blob hex such as `"00FF99AA"`) returns only documents whose field equals the value; documents with the field unset never match, the filtered field need not be selected, and no match returns an empty list. Adding an `order` and a `limit` keeps the result to the matching documents only.
 
 # `go.query.simple.filter.equality.eq-null`: `_eq: null` matches unset fields
 
@@ -493,7 +493,7 @@ Within `_version`, `links` and `heads` can be selected several times under diffe
 - **Parents:** ["go.query.simple.similarity"]
 - **Scenarios:** ["query.simple.query-simple-with-similarity-on-vector-index-excludes-deleted-doc", "query.simple.query-simple-with-similarity-on-vector-index-is-magnitude-invariant", "query.simple.query-simple-with-similarity-on-vector-index-reflects-updated-vector", "query.simple.query-simple-with-similarity-on-vector-index-respects-offset", "query.simple.query-simple-with-similarity-on-vector-index-returns-k-nearest"]
 
-On a field with `@index(vector: {dimensions: 3, hnsw: {metric: COSINE}})`, `User(order: {_alias: {sim: DESC}}, limit: k, offset: m)` with `sim: SIMILARITY(vector: {...})` returns the k nearest documents after skipping m, reading only those through the index (`@explain(type: execute)` shows 1 index fetch and k doc fetches). Updated vectors are re-ranked, deleted documents are excluded, and similarity ignores magnitude (`[10,0,0]` and `[1,0,0]` both score 1).
+On a field with `@index(vector: {dimensions: 3, hnsw: {metric: COSINE}})`, `User(order: {_alias: {sim: DESC}}, limit: k, offset: m)` with `sim: SIMILARITY(vector: {...})` returns the k nearest documents after skipping m, reading only those through the index (`@explain(type: execute)` shows a positive index-fetch count and k doc fetches; Go reports 1, defradb.rs the index entries the search read, see `defra.explain.execute.vector_index_fetches`). Updated vectors are re-ranked, deleted documents are excluded, and similarity ignores magnitude (`[10,0,0]` and `[1,0,0]` both score 1).
 
 # `defra.query.simple.similarity.filtered_vector_warning`: A non-empty filter exhausts a vector query
 

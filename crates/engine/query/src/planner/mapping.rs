@@ -66,7 +66,7 @@ impl Planner {
                         continue;
                     }
                     if collection.field_by_name(&field.name).is_none() {
-                        return Err(QueryError::unknown_field(&field.name));
+                        return Err(QueryError::undefined_field(&field.name, &collection.name));
                     }
                     let index = mapping.next_index();
                     mapping.add(index, &field.name);
@@ -161,7 +161,7 @@ impl Planner {
                     } else {
                         let schema_field = collection.field_by_name(&field.name);
                         if schema_field.is_none() {
-                            return Err(QueryError::unknown_field(&field.name));
+                            return Err(QueryError::undefined_field(&field.name, &collection.name));
                         }
                         collection
                             .fields

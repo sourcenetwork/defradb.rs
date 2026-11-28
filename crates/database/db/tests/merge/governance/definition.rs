@@ -84,7 +84,6 @@ fn governed_policy() -> PolicyDescription {
     PolicyDescription {
         id: "policy-grants".to_string(),
         resource_name: "grants".to_string(),
-        parent_field: None,
     }
 }
 
@@ -105,30 +104,10 @@ impl Node {
 
     /// Define `Grants` locally, with a policy and an `@immutable` `writer`.
     async fn define_grants(&self) {
-        let mut writer = FieldDescription::new(
-            "2",
-            "writer",
-            FieldKind::string(),
-            schema::CType::LwwRegister,
-        );
-        writer.immutable = true;
         self.db
-            .create_collection(
-                CollectionVersion::new(
-                    "Grants",
-                    "col-grants",
-                    "col-grants",
-                    vec![
-                        FieldDescription::new(
-                            "1",
-                            "_docID",
-                            FieldKind::doc_id(),
-                            schema::CType::LwwRegister,
-                        ),
-                        writer,
-                    ],
-                )
-                .with_policy(governed_policy()),
+            .add_collection(
+                &defra_core::RequestContext::ambient(),
+                r#"type Grants @policy(id: "policy-grants", resource: "grants") { writer: String @immutable }"#,
             )
             .await
             .unwrap();
@@ -138,29 +117,13 @@ impl Node {
     /// `writer` and no policy. An ungoverned identity commits to none of it,
     /// so no delta carries any of it either.
     async fn define_ungoverned_grants(&self) {
-        let mut writer = FieldDescription::new(
-            "2",
-            "writer",
-            FieldKind::string(),
-            schema::CType::LwwRegister,
-        );
-        writer.immutable = true;
-        let mut version = CollectionVersion::new(
-            "Grants",
-            "col-grants",
-            "col-grants",
-            vec![
-                FieldDescription::new(
-                    "1",
-                    "_docID",
-                    FieldKind::doc_id(),
-                    schema::CType::LwwRegister,
-                ),
-                writer,
-            ],
-        );
-        version.is_branchable = true;
-        self.db.create_collection(version).await.unwrap();
+        self.db
+            .add_collection(
+                &defra_core::RequestContext::ambient(),
+                "type Grants @branchable { writer: String @immutable }",
+            )
+            .await
+            .unwrap();
     }
 
     /// What the collection named `Grants` commits to, as this node reads it.
@@ -337,12 +300,13 @@ fn a_synced_definition_under_the_same_root_without_the_flags_does_not_displace()
 fn a_definition_block_reproduces_its_identity_on_a_fresh_node() {
     workers::block_on(async {
         let author = Node::bare().await;
-        let defined = query::parse_sdl(
-            r#"type Ledgers @governed(root: "root-a") { writer: String @immutable }"#,
-        )
-        .unwrap()
-        .remove(0);
-        author.db.create_collection(defined.clone()).await.unwrap();
+        let defined_sdl = r#"type Ledgers @governed(root: "root-a") { writer: String @immutable }"#;
+        let defined = query::parse_sdl(defined_sdl).unwrap().remove(0);
+        author
+            .db
+            .add_collection(&defra_core::RequestContext::ambient(), defined_sdl)
+            .await
+            .unwrap();
         let authored = author.db.get_collection("Ledgers").unwrap().unwrap();
         let version_id = authored.schema().version_id.clone();
         let cid: Cid = version_id.parse().expect("the version ID names the block");
@@ -413,16 +377,13 @@ fn a_synced_definition_does_not_strip_an_ungoverned_collection() {
 fn a_policied_definition_block_reproduces_its_identity_on_a_fresh_node() {
     workers::block_on(async {
     let author = Node::bare().await;
-    let defined = query::parse_sdl(
-        r#"type Ledgers @governed(root: "root-a") @policy(id: "p1", resource: "ledgers") { writer: String @immutable }"#,
-    )
-    .unwrap()
-    .remove(0);
+    let defined_sdl = r#"type Ledgers @governed(root: "root-a") @policy(id: "p1", resource: "ledgers") { writer: String @immutable }"#;
+        let defined = query::parse_sdl(defined_sdl).unwrap().remove(0);
     assert_ne!(
         defined.version_id, defined.collection_id,
         "a policy moves the version ID away from the collection ID"
     );
-    author.db.create_collection(defined.clone()).await.unwrap();
+    author.db.add_collection(&defra_core::RequestContext::ambient(), defined_sdl).await.unwrap();
     let authored = author.db.get_collection("Ledgers").unwrap().unwrap();
     let version_id = authored.schema().version_id.clone();
     let cid: Cid = version_id.parse().expect("the version ID names the block");
@@ -486,8 +447,13 @@ const POLICIED_LEDGERS: &str = r#"type Ledgers @governed(root: "root-a") @policy
 fn a_synced_version_bound_to_a_policy_this_node_does_not_hold_cannot_be_activated() {
     workers::block_on(async {
         let author = Node::bare().await;
-        let defined = query::parse_sdl(POLICIED_LEDGERS).unwrap().remove(0);
-        author.db.create_collection(defined.clone()).await.unwrap();
+        let defined_sdl = POLICIED_LEDGERS;
+        let defined = query::parse_sdl(defined_sdl).unwrap().remove(0);
+        author
+            .db
+            .add_collection(&defra_core::RequestContext::ambient(), defined_sdl)
+            .await
+            .unwrap();
 
         let fresh = Node::bare().await;
         sync_definition(&author, &fresh, &defined.version_id).await;
@@ -518,7 +484,6 @@ fn an_ungoverned_policy_link_does_not_move_the_collection_id() {
         let policy_cid = schema::generate_policy_cid(&PolicyDescription {
             id: "p1".to_string(),
             resource_name: "ledgers".to_string(),
-            parent_field: None,
         })
         .unwrap();
         let block = Block::new(
@@ -570,10 +535,12 @@ fn a_held_version_is_not_rebuilt_from_its_own_block() {
             || MergeGovernance::new(["Grants"]).with_validator(Arc::new(AcceptEverything));
         let version_id = {
             let node = Node::open(RegolithStore::open(&path).unwrap(), governance(), false).await;
-            let defined = query::parse_sdl(r#"type Ledgers { writer: String @immutable }"#)
-                .unwrap()
-                .remove(0);
-            node.db.create_collection(defined.clone()).await.unwrap();
+            let defined_sdl = r#"type Ledgers { writer: String @immutable }"#;
+            let defined = query::parse_sdl(defined_sdl).unwrap().remove(0);
+            node.db
+                .add_collection(&defra_core::RequestContext::ambient(), defined_sdl)
+                .await
+                .unwrap();
             sync_definition(&node, &node, &defined.version_id).await;
             let held = node.db.get_collection("Ledgers").unwrap().unwrap();
             assert!(held.schema().is_active, "the cache lost the active flag");

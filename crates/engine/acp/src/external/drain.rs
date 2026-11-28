@@ -50,7 +50,7 @@ where
         };
         let alone = match journal.outcome(&flight).await {
             RequestOutcome::Applied => {
-                return Ok(Some(self.settle_applied(journal, change).await?));
+                return Ok(Some(self.settle_applied(change).await?));
             }
             RequestOutcome::Unavailable { reason } => {
                 unavailable(change, &reason);
@@ -130,7 +130,7 @@ where
             RequestOutcome::Applied => {
                 let mut steps = Vec::with_capacity(changes.len());
                 for change in &changes {
-                    steps.push(self.settle_applied(journal, change).await?);
+                    steps.push(self.settle_applied(change).await?);
                 }
                 Ok(steps)
             }
@@ -226,8 +226,9 @@ where
     }
 
     /// Whether `change` may share a request with `members`: its object owes
-    /// no registration, and every earlier unsettled change of its tuple is
-    /// one of them.
+    /// no registration, every earlier unsettled change of its tuple is one
+    /// of them, and the order around a transfer on its object holds it
+    /// behind none but them ([`super::transfer_order::held_by_transfer`]).
     async fn joins_request(
         &self,
         change: &OwedChange,
@@ -241,10 +242,11 @@ where
         {
             return Ok(false);
         }
-        Ok(match self.oldest_on(tuple).await? {
+        let head = match self.oldest_on(tuple).await? {
             Some(oldest) => oldest.seq == change.seq || members.contains(&oldest.seq),
             None => false,
-        })
+        };
+        Ok(head && self.holder_on_object(change, members).await?.is_none())
     }
 
     /// Store `flight` with the changes `seqs` in one transaction.
@@ -255,8 +257,7 @@ where
     }
 
     /// Delete the record of `change`, which took effect on the provider.
-    async fn settle_applied(&self, journal: &dyn OwedJournal, change: &OwedChange) -> Result<Step> {
-        journal.applied(change);
+    async fn settle_applied(&self, change: &OwedChange) -> Result<Step> {
         Ok(if self.write(change.seq, Write::Settle).await? {
             let tuple = &change.tuple;
             self.object_changed(&tuple.policy_id, &tuple.resource, &tuple.object);

@@ -63,7 +63,10 @@ mod tests {
         let cid = sha256_cid(data);
         let tampered = b"evil world!!";
         let err = verify_block_cid(&cid, tampered).unwrap_err();
-        assert!(matches!(err, Error::CidVerificationFailed { .. }));
+        assert!(
+            matches!(err, Error::CidVerificationFailed { cid: ref got } if *got == cid.to_string()),
+            "got {err:?}"
+        );
     }
 
     #[test]

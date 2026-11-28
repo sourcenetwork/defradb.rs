@@ -14,6 +14,10 @@ use libp2p::{
     },
     Multiaddr, PeerId, StreamProtocol,
 };
+use rapidhash::RapidHashSet;
+
+use super::redial_hold::RedialHold;
+use crate::rt::time::Instant;
 
 /// Kademlia query parallelism. Matches Go's `dht.Concurrency(10)`
 /// (`go-p2p/host.go:44`). rust-libp2p defaults to `ALPHA_VALUE` = 3.
@@ -78,6 +82,12 @@ impl DefraKademliaEvent {
 pub struct DefraKademlia {
     network: KademliaNetwork,
     inner: kad::Behaviour<MemoryStore>,
+    redial_hold: RedialHold,
+    /// Dials this Kademlia asked the swarm for that have not reached
+    /// `handle_pending_outbound_connection` or failed before it.
+    own_dials: RapidHashSet<ConnectionId>,
+    /// How many of its own dials this Kademlia refused as held.
+    held_refusals: u64,
 }
 
 impl DefraKademlia {
@@ -103,9 +113,53 @@ impl DefraKademlia {
             KademliaNetwork::Wan => inner.set_mode(None),
         }
 
-        Self { network, inner }
+        Self {
+            network,
+            inner,
+            redial_hold: RedialHold::default(),
+            own_dials: RapidHashSet::default(),
+            held_refusals: 0,
+        }
+    }
+
+    /// Refuse this Kademlia's own dial to a held peer.
+    ///
+    /// The swarm calls this only once the dial passed its peer condition, so
+    /// a dial already in progress to the peer, from anyone, still reports
+    /// `DialPeerConditionFalse` and the queries waiting on the peer keep
+    /// waiting for it. A refused dial reaches Kademlia as `Denied`: the query
+    /// that wanted the peer moves on to the next one, and the peer stays in
+    /// the routing table. Other behaviours' dials are never refused.
+    fn refuse_held_dial(
+        &mut self,
+        connection_id: ConnectionId,
+        maybe_peer: Option<PeerId>,
+    ) -> Result<(), ConnectionDenied> {
+        if !self.own_dials.remove(&connection_id) {
+            return Ok(());
+        }
+        let Some(peer_id) = maybe_peer else {
+            return Ok(());
+        };
+        if !self.redial_hold.is_held(&peer_id, Instant::now()) {
+            return Ok(());
+        }
+        self.held_refusals += 1;
+        tracing::debug!(
+            peer_id = %peer_id,
+            refused = self.held_refusals,
+            held = self.redial_hold.len(),
+            evicted = self.redial_hold.evicted(),
+            "Kademlia redial held"
+        );
+        Err(ConnectionDenied::new(HeldRedial))
     }
 }
+
+/// Why a Kademlia dial to a just-disconnected peer was not made.
+#[derive(Debug, thiserror::Error)]
+#[error("peer disconnected less than 10s ago; Kademlia redial held")]
+struct HeldRedial;
 
 // Deref is only for ergonomic access to kad methods; swarm dispatch uses the
 // explicit NetworkBehaviour impl below.
@@ -159,6 +213,7 @@ impl NetworkBehaviour for DefraKademlia {
         addresses: &[Multiaddr],
         effective_role: Endpoint,
     ) -> Result<Vec<Multiaddr>, ConnectionDenied> {
+        self.refuse_held_dial(connection_id, maybe_peer)?;
         self.inner.handle_pending_outbound_connection(
             connection_id,
             maybe_peer,
@@ -185,6 +240,15 @@ impl NetworkBehaviour for DefraKademlia {
     }
 
     fn on_swarm_event(&mut self, event: FromSwarm) {
+        match &event {
+            FromSwarm::ConnectionClosed(closed) if closed.remaining_established == 0 => {
+                self.redial_hold.hold(closed.peer_id, Instant::now());
+            }
+            FromSwarm::DialFailure(failure) => {
+                self.own_dials.remove(&failure.connection_id);
+            }
+            _ => {}
+        }
         self.inner.on_swarm_event(event);
     }
 
@@ -202,12 +266,17 @@ impl NetworkBehaviour for DefraKademlia {
         &mut self,
         cx: &mut Context<'_>,
     ) -> Poll<ToSwarm<Self::ToSwarm, THandlerInEvent<Self>>> {
-        self.inner.poll(cx).map(|event| {
-            event.map_out(|event| match self.network {
-                KademliaNetwork::Lan => DefraKademliaEvent::Lan(event),
-                KademliaNetwork::Wan => DefraKademliaEvent::Wan(event),
-            })
-        })
+        let event = match self.inner.poll(cx) {
+            Poll::Ready(event) => event,
+            Poll::Pending => return Poll::Pending,
+        };
+        if let ToSwarm::Dial { opts } = &event {
+            self.own_dials.insert(opts.connection_id());
+        }
+        Poll::Ready(event.map_out(|event| match self.network {
+            KademliaNetwork::Lan => DefraKademliaEvent::Lan(event),
+            KademliaNetwork::Wan => DefraKademliaEvent::Wan(event),
+        }))
     }
 }
 
@@ -323,3 +392,7 @@ pub fn validate_pk_namespaced_record(
 
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "dual_kademlia_tests.rs"]
+mod tests;

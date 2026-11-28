@@ -15,6 +15,8 @@
 //! module its items. A name that is only used there does not resolve.
 
 mod declarations;
+pub mod pinned;
+pub mod prose;
 
 use std::collections::HashMap;
 use std::fs;

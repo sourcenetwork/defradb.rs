@@ -84,7 +84,8 @@
 \* finalizes fewer blocks than the read may ask, and the node answers busy
 \* few enough times that the read's patience is never spent.
 \*
-\* Code this models (defradb.rs, light client at backbone rev 5ca42c8):
+\* Code this models (defradb.rs, and the light client at the backbone rev
+\* Cargo.lock pins):
 \*   crates/engine/vera/src/vera_rs/provider/verified.rs   verified, ATTEMPTS, overtaken,
 \*       verified_within, Pace, WallPace, JITTER, BUSY_PATIENCE, BUSY_PAUSE, busy, stale
 \*   crates/building-blocks/inputs/src/retry.rs                     Jitter::pause (a pause drawn
@@ -92,22 +93,27 @@
 \*   crates/engine/vera/src/vera_rs/provider.rs            create_policy, query_policy,
 \*       query_object_owner, verify_access, create_access_decision (each read
 \*       goes through `verified`)
-\*   acp-light-client src/lib.rs                    verify_access, read_object_owner,
+\*   acp-light-client:src/lib.rs                    verify_access, read_object_owner,
 \*       read_key (minimum = fresh_state height), verify_access_decision
-\*   acp-light-client src/header_sync.rs            run_header_loop (root moves),
+\*   acp-light-client:src/header_sync.rs            run_header_loop (root moves),
 \*       HeaderChain::accept_response (the refusal)
-\*   acp-light-client src/term.rs                   certify, adopt (a term's certificate
-\*       drops the head it voids; the next root may be at a lower height)
+\*   acp-light-client:src/term.rs                   certify, observe_revision,
+\*       adopt (a term's certificate drops the head it voids; the next root may
+\*       be at a lower height)
 \*
 \* Correspondence table (model -> Rust):
-\*   root, Advance        header_sync.rs run_header_loop / observe_revision: the
-\*                        newest authenticated module_state_root moves on; term.rs
-\*                        adopt: a term that voids the head moves it on too
-\*   Ask                  lib.rs: `fresh_state()?.height` is the minimum, the
-\*                        proof request leaves (one call of `read` in verified)
+\*   root, Advance        acp-light-client:src/header_sync.rs run_header_loop
+\*                        through acp-light-client:src/term.rs observe_revision:
+\*                        the newest authenticated module_state_root moves on;
+\*                        acp-light-client:src/term.rs adopt: a term that voids
+\*                        the head moves it on too
+\*   Ask                  acp-light-client:src/lib.rs read_key:
+\*                        `fresh_state()?.height` is the minimum the proof request
+\*                        leaves (one call of `read` in verified)
 \*   readAt               the revision the proof server answers at (>= minimum)
-\*   Return, CheckRoot    header_sync.rs accept_response: `current.module_state_root
-\*                        == root` else the refusal; lib.rs verify_access_decision
+\*   Return, CheckRoot    acp-light-client:src/header_sync.rs accept_response:
+\*                        `current.module_state_root == root` else the refusal;
+\*                        acp-light-client:src/lib.rs verify_access_decision
 \*                        compares the record's root with fresh_state the same way
 \*   Retry, attempt       verified.rs `verified_within`: an `overtaken` error with
 \*                        asks left asks again; any other outcome is returned
@@ -131,7 +137,8 @@
 \*                        shorter one
 \*   fresh, GoStale       HeaderChain::fresh_state: the newest revision within the age
 \*                        bound; a starved host lets it age past the bound
-\*   CheckFresh           acp-light-client freshness.rs: a read at a stale head is refused
+\*   CheckFresh           acp-light-client:src/freshness.rs ObservedState::check: a
+\*                        read at a stale head is refused
 \*   AskStale, Woken,     verified.rs `verified_within`: a `stale` refusal waits on
 \*   WaitOut, WaitFresh   `Pace::fresh` (WallPace: HeaderChain::wait_for_height for the
 \*                        next revision) for what is left of the patience, then asks again

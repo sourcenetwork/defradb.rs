@@ -9,7 +9,6 @@ use acp::{DocumentACP as _, RemotePolicies as _};
 use db::block::builder::{
     ClientDeleteSignatures, ClientUpdateSignatures, ClientUpdateSnapshot, VerifiedClientMutation,
 };
-use defra_core::RequestContext;
 use defra_node::{
     EmbeddedVeraActor, Node, QueryRequest, QueryResponse, SignerCredential, VeraActor, VeraConfig,
 };
@@ -49,7 +48,7 @@ async fn edit(
     doc: &str,
     snapshot: &ClientUpdateSnapshot,
     edit: Edit,
-) -> (defra_node::TransactionHandle, QueryResponse) {
+) -> (defra_core::TxnId, QueryResponse) {
     let schema = node.get_collection("Users").unwrap().unwrap();
     let crdts = storage::Crdts::default();
     let (graph, request) = match edit {
@@ -90,11 +89,11 @@ async fn edit(
             (graph, request)
         }
     };
-    let txn = node.begin_transaction(false).await.unwrap();
+    let txn = node.new_txn(false).await.map(|txn| txn.detach()).unwrap();
     let response = node
-        .execute_verified_mutation_in_txn(
+        .with_transaction(txn)
+        .execute_verified_mutation(
             request.with_identity(Some(signer.did.clone())),
-            &txn,
             &graph,
             SignerCredential::None,
         )
@@ -103,16 +102,16 @@ async fn edit(
 }
 
 /// The staged edit was admitted, and commits.
-async fn admitted(node: &Node, (txn, response): (defra_node::TransactionHandle, QueryResponse)) {
+async fn admitted(node: &Node, (txn, response): (defra_core::TxnId, QueryResponse)) {
     assert!(!response.has_errors(), "{:?}", response.errors);
-    node.commit_transaction(&txn).await.expect("commit");
+    node.with_transaction(txn).commit().await.expect("commit");
 }
 
 /// The edit was refused before it wrote anything: there is nothing to
 /// commit.
-async fn refused(node: &Node, (txn, response): (defra_node::TransactionHandle, QueryResponse)) {
+async fn refused(node: &Node, (txn, response): (defra_core::TxnId, QueryResponse)) {
     assert!(response.has_errors(), "an edit was admitted");
-    assert!(node.commit_transaction(&txn).await.is_err());
+    assert!(node.with_transaction(txn).commit().await.is_err());
 }
 
 /// `user`'s document called `name`, created under a delegation bound to its
@@ -127,7 +126,11 @@ async fn registered(on: &Deployed, user: &User, name: &str, nonce: u8) -> String
         })
         .await;
     assert!(!response.has_errors(), "{:?}", response.errors);
-    on.node.commit_transaction(&txn).await.expect("commit");
+    on.node
+        .with_transaction(txn)
+        .commit()
+        .await
+        .expect("commit");
     assert_eq!(
         on.owner_on_chain(&doc).await.as_deref(),
         Some(user.did.as_str())
@@ -183,10 +186,10 @@ fn a_verified_update_and_delete_are_admitted_on_the_chains_permission() {
         // The delete carried no credential, so the node cannot archive the
         // object as its owner: the archive is owed until the owner authorizes
         // it, and the object stays owned on the chain meanwhile.
-        let caller = RequestContext::default().with_identity(Some(user.did.to_string()));
         let owed = on
             .node
-            .owed_acp_as(&caller, user.did.as_str())
+            .with_identity(identity::Did::new(user.did.to_string()).unwrap())
+            .owed_acp(user.did.as_str())
             .await
             .expect("report");
         assert_eq!(owed.len(), 1, "{owed:?}");
@@ -209,8 +212,8 @@ fn a_verified_update_and_delete_are_admitted_on_the_chains_permission() {
         let archiving = on.bound(&user, &doc, PolicyAction::ArchiveObject, 2).await;
         assert_eq!(
             on.node
-                .reauthorize_owed_acp_as(
-                    &caller,
+                .with_identity(identity::Did::new(user.did.to_string()).unwrap())
+                .reauthorize_owed_acp(
                     &owed[0].reference(),
                     SignerCredential::RequestBound(archiving)
                 )
@@ -221,7 +224,8 @@ fn a_verified_update_and_delete_are_admitted_on_the_chains_permission() {
         assert_eq!(on.owner_on_chain(&doc).await, None);
         assert!(on
             .node
-            .owed_acp_as(&caller, user.did.as_str())
+            .with_identity(identity::Did::new(user.did.to_string()).unwrap())
+            .owed_acp(user.did.as_str())
             .await
             .expect("report")
             .is_empty());
@@ -242,14 +246,15 @@ fn a_writer_whose_grant_was_revoked_on_chain_is_refused() {
         let delegation = caller_delegation(&user.delegations, &on.audience, LIFETIME)
             .await
             .expect("delegation");
-        let owner = RequestContext::default()
-            .with_identity(Some(user.did.to_string()))
-            .with_bearer(Some(user.did.to_string()), Some(delegation));
+        let owner = on
+            .node
+            .with_identity(user.did.clone())
+            .with_bearer(delegation);
         // The writer also reads, so after the revocation it still sees the
         // document: what refuses it is the permission to update.
         for relation in ["writer", "reader"] {
-            on.node
-                .add_dac_actor_relationship_as(&owner, "Users", &doc, relation, writer.did.as_str())
+            owner
+                .add_dac_actor_relationship("Users", &doc, relation, writer.did.as_str())
                 .await
                 .expect("grant");
         }
@@ -265,8 +270,8 @@ fn a_writer_whose_grant_was_revoked_on_chain_is_refused() {
             ["written"]
         );
 
-        on.node
-            .delete_dac_actor_relationship_as(&owner, "Users", &doc, "writer", writer.did.as_str())
+        owner
+            .delete_dac_actor_relationship("Users", &doc, "writer", writer.did.as_str())
             .await
             .expect("revocation");
         let vera = on.node.vera_acp().expect("vera.rs document ACP").clone();
@@ -361,7 +366,11 @@ fn a_verified_update_is_refused_when_the_chain_cannot_be_reached() {
             })
             .await;
         assert!(!response.has_errors(), "{:?}", response.errors);
-        on.node.commit_transaction(&txn).await.expect("commit");
+        on.node
+            .with_transaction(txn)
+            .commit()
+            .await
+            .expect("commit");
         assert_eq!(
             on.owner_on_chain(&doc).await.as_deref(),
             Some(user.did.as_str())

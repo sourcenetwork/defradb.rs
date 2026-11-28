@@ -280,10 +280,18 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
         // fence any later ACK against a newer update to the same scope.
         // Each peer's registration stands alone: a removed, re-added or
         // failing replicator must not cost the other peers their obligation.
+        // They are asked for together, so the recorder commits them at once
+        // and the write waits for one device sync, not one per replicator
+        // (#3471, RetryRegistrationFence.tla).
         let mut jobs = self.push_jobs(&push).await?;
+        let generations = futures::future::join_all(
+            jobs.iter()
+                .map(|job| report_observed_head(&self.runtime.failure_tx, job)),
+        )
+        .await;
         let mut unregistered = Vec::new();
-        for job in &mut jobs {
-            let Some(generation) = report_observed_head(&self.runtime.failure_tx, job).await else {
+        for (job, generation) in jobs.iter_mut().zip(generations) {
+            let Some(generation) = generation else {
                 crate::model_trace!(RegFail {
                     doc: &push.doc_id,
                     receiver: job.peer_id.as_str(),

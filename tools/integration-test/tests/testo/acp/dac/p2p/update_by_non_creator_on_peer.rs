@@ -12,6 +12,7 @@ use serde_json::json;
 
 #[test]
 #[mantra_macros::req_test("go.acp.dac.p2p.non-creator-update")]
+#[mantra_macros::req_test("defra.cli.identity.vera_delegation")]
 fn acp_p2_p_non_creator_updates_indexed_field_on_peer_node_succeeds() {
     TestCase {
         id: integration_test::scenario_id!(),

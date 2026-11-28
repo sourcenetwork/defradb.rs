@@ -5,21 +5,30 @@
 \* What must never happen: a block that changed its document has no row, a
 \* block has two rows, a block that changed nothing has a row, a page skips a
 \* row, or a reader is handed a row of a document it may not read or of one
-\* its page saw as deleted. Deleting unregisters a document, and the access
-\* check alone would then call it public.
+\* its page saw as deleted. A purge unregisters a document, and the access
+\* check alone would then call it public. (A delete keeps the registration,
+\* DeletedHistory.tla, so a deleted document stays denied; Delete below
+\* stands for the removal that unregisters: a purge.)
 \* The access provider either reads in the page's transaction, or stands
 \* outside it and answers from the state of the moment it is asked. A
-\* provider outside loses a document's registration in a step of its own,
+\* provider bound to the page's transaction uses a snapshot binding with no
+\* read validation: the page decides nothing its transaction writes, so a
+\* delete or purge that commits elsewhere never fails that transaction.
+\* A provider outside loses a document's registration in a step of its own,
 \* which this node takes only after its delete has committed.
 \* Not prevented: a provider shared with other nodes can lose a registration
 \* with no delete on this node, when a peer deleted the document and this
 \* node has not merged that yet. The document is still alive here, and this
 \* page returns its rows as every other query on this node returns the
 \* document. Red_Unordered walks that trace.
+\* The arrival journal's page passes its rows through the same gate: an
+\* arrival row is the row of a document's first block, so what this model
+\* promises about which rows a reader is handed holds for it too.
 \* Not modeled: the reader's errors for a cursor beyond the head and for a
 \* missing row; a page here always finds every row it scans.
 \* Rust owners: crates/database/db/src/event/updates.rs (record, read, rows),
-\* crates/database/db/src/event/updates/gate.rs (Gate::decide, Gate::confirm),
+\* crates/database/db/src/event/arrivals.rs (read),
+\* crates/database/db/src/event/gate.rs (Gate::decide, Gate::confirm),
 \* crates/database/db/src/txn/mod.rs (DbTxn::later),
 \* crates/database/db/src/write/update.rs (write_blocks),
 \* crates/database/db/src/merge/merge_handler/composite_persist.rs (persist_merged_document)
@@ -121,9 +130,9 @@ Retry(u) ==
   /\ UNCHANGED <<stored, changed, deleted, unregistered>>
   /\ UNCHANGED <<past, page>>
 
-\* A document is deleted on this node. A provider that reads in the node's
-\* transactions loses the registration in that same commit; a provider
-\* outside keeps it until Unregister.
+\* A document is removed on this node (purged; see the header). A provider
+\* that reads in the node's transactions loses the registration in that same
+\* commit; a provider outside keeps it until Unregister.
 Delete(d) ==
   /\ d \in Docs \ deleted
   /\ deleted' = deleted \cup {d}

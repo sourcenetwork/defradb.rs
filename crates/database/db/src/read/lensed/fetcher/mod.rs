@@ -521,11 +521,11 @@ impl<S: Store + 'static> DocFetcher for LensedDocFetcher<S> {
     async fn get_document_arrivals(
         &self,
         options: &query::fetcher::DocumentArrivalOptions,
+        reader: &query::fetcher::DocumentReader<'_>,
     ) -> query::error::Result<query::fetcher::DocumentArrivalPage> {
-        let txn = &*self.shared_txn()?;
-        crate::event::arrivals::read(txn, options)
+        crate::event::arrivals::read(Some(&self.db), &*self.shared_txn()?, options, reader)
             .await
-            .map_err(|e| query::error::QueryError::execution(e.to_string()))
+            .map_err(crate::event::updates::query_error)
     }
 
     async fn get_document_updates(
@@ -647,7 +647,7 @@ impl<S: Store + 'static> DocFetcher for LensedDocFetcher<S> {
         query_vector: &[f64],
         k: usize,
         effort: Option<usize>,
-    ) -> query::error::Result<Vec<u64>> {
+    ) -> query::error::Result<query::fetcher::VectorCandidates> {
         let (collection, datastore, _) = crate::collection::loader::get_collection_with_lazy_load(
             &*self.shared_txn()?,
             collection_name,

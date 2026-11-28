@@ -2,12 +2,13 @@
 //! document value, its only stored copy. Increments of one counter, and an
 //! increment racing an update of another field, never conflict.
 
+use crate::common::schema::parsed;
 use db::{AutoCommitMutator, LensedAutoCommitFetcher, DB};
 use document::{DocID, Document, NormalValue};
 use query::mutator::DocMutator;
 use query::runner::DocFetcher;
 use rapidhash::RapidHashSet;
-use schema::{CType, CollectionVersion, FieldDescription, FieldKind};
+use schema::{CType, CollectionVersion};
 use std::sync::Arc;
 use storage::corekv::{IterOptions, Store};
 use storage::RegolithStore;
@@ -15,27 +16,21 @@ use storage::RegolithStore;
 const WRITERS: i64 = 64;
 const LABELS: usize = 4;
 
-/// The collection, its `count` a counter of `kind`.
+/// The tally collection, its counter a `kind` CRDT.
+fn tally_sdl(kind: CType) -> String {
+    let crdt = match kind {
+        CType::PnCounter => "pncounter",
+        CType::PCounter => "pcounter",
+        other => panic!("no counter CRDT named {other:?}"),
+    };
+    let labels: String = (0..LABELS)
+        .map(|label| format!(" label{label}: String"))
+        .collect();
+    format!(r#"type Tally {{ count: Int @crdt(type: "{crdt}"){labels} }}"#)
+}
+
 fn tally(kind: CType) -> CollectionVersion {
-    let mut fields = vec![
-        FieldDescription::new(
-            "1",
-            "_docID",
-            FieldKind::doc_id(),
-            schema::CType::LwwRegister,
-        ),
-        FieldDescription::new("2", "count", FieldKind::int(), schema::CType::LwwRegister)
-            .with_crdt_type(kind),
-    ];
-    for label in 0..LABELS {
-        fields.push(FieldDescription::new(
-            (3 + label).to_string(),
-            format!("label{label}"),
-            FieldKind::string(),
-            schema::CType::LwwRegister,
-        ));
-    }
-    CollectionVersion::new("Tally", "tally-v1", "col-tally", fields)
+    parsed(&tally_sdl(kind))
 }
 
 async fn open() -> (Arc<RegolithStore>, Arc<DB<RegolithStore>>, DocID) {
@@ -46,7 +41,9 @@ async fn open() -> (Arc<RegolithStore>, Arc<DB<RegolithStore>>, DocID) {
 async fn open_with(kind: CType) -> (Arc<RegolithStore>, Arc<DB<RegolithStore>>, DocID) {
     let store = Arc::new(RegolithStore::in_memory().unwrap());
     let db = Arc::new(DB::from_arc(store.clone()).unwrap());
-    db.create_collection(tally(kind)).await.unwrap();
+    db.add_collection(&defra_core::RequestContext::ambient(), &tally_sdl(kind))
+        .await
+        .unwrap();
     let doc_id = AutoCommitMutator::new(db.clone())
         .create(
             "Tally",

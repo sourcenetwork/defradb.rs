@@ -44,11 +44,11 @@ fn doc_id_restrictions_fill_vector_pages_after_offset() {
     let expected = &expected["Note"].as_array().unwrap()[2..6];
     for in_transaction in [false, true] {
         let response = if in_transaction {
-            let handle = node.begin_transaction(true).await.unwrap();
+            let handle = node.new_txn(true).await.map(|txn| txn.detach()).unwrap();
             let result = node
-                .execute_request_in_txn(QueryRequest::new(&query), &handle)
+                .with_transaction(handle).execute_request(QueryRequest::new(&query))
                 .await;
-            node.discard_transaction(&handle).await.unwrap();
+            node.with_transaction(handle).discard().await.unwrap();
             result
         } else {
             node.execute(&query).await
@@ -67,14 +67,15 @@ fn protected_similarity_pages_count_only_authorized_documents() {
     let node = Node::builder().build().await.unwrap();
     let owner = "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK";
     let reader = "did:key:z6MkfXG2FkNy3u7Eg3jm8e2YQpGz7Z1JqWgHDAP1hLk9r2bR";
-    let policy = node
-        .add_dac_policy_as(
-            &defra_core::RequestContext::ambient().with_identity(Some(owner.to_owned())),
+    let owner_node = node.with_identity(identity::Did::new(owner.to_owned()).unwrap());
+    let policy = owner_node
+        .add_dac_policy(
             "name: Notes\nresources:\n  - name: notes\n    relations:\n      - name: reader\n    permissions:\n      - name: read\n        expr: reader\n      - name: update\n      - name: delete\n",
+            None,
         )
         .await
         .unwrap();
-    node.add_collection(&format!(
+    node.with_identity(identity::Did::new(owner.to_owned()).unwrap()).add_collection(&format!(
         "type Note @policy(id: \"{policy}\", resource: \"notes\") {{
             title: String
             embedding: [Float32!] @index(vector: {{dimensions: 2, flat: {{metric: DOT}}}})
@@ -96,9 +97,9 @@ fn protected_similarity_pages_count_only_authorized_documents() {
         let request =
             QueryRequest::new(query).with_identity(Some(identity::Did::new(reader).unwrap()));
         let response = if in_transaction {
-            let handle = node.begin_transaction(true).await.unwrap();
-            let result = node.execute_request_in_txn(request, &handle).await;
-            node.discard_transaction(&handle).await.unwrap();
+            let handle = node.new_txn(true).await.map(|txn| txn.detach()).unwrap();
+            let result = node.with_transaction(handle).execute_request(request).await;
+            node.with_transaction(handle).discard().await.unwrap();
             result
         } else {
             node.execute_request(request).await
@@ -215,8 +216,8 @@ fn total(explain: &Value, counter: &str) -> u64 {
     }
 }
 
-/// `indexFetches` counts a vector-index hit as one. A full-scan fallback leaves
-/// it at zero, which is exactly the regression being guarded.
+/// `indexFetches` sums every vector-index entry read, including the metadata
+/// lookups that find an empty index before the scan falls back.
 fn index_fetches(explain: &Value) -> u64 {
     total(explain, "indexFetches")
 }
@@ -340,15 +341,17 @@ fn similarity_reaches_the_index_inside_a_transaction() {
         seed(&node).await;
 
         let handle = node
-            .begin_transaction(true)
+            .new_txn(true)
             .await
+            .map(|txn| txn.detach())
             .expect("begin read transaction");
         let query = format!(
             "query @explain(type: execute) {}",
             similarity_query(&vector_for(3), 5, None)
         );
         let response = node
-            .execute_request_in_txn(QueryRequest::new(&query), &handle)
+            .with_transaction(handle)
+            .execute_request(QueryRequest::new(&query))
             .await;
         assert!(
             !response.has_errors(),
@@ -622,11 +625,10 @@ fn every_combination_agrees_with_an_exhaustive_scan() {
 
                     let data = if in_transaction {
                         let handle = node
-                            .begin_transaction(true)
-                            .await
+                            .new_txn(true).await.map(|txn| txn.detach())
                             .unwrap_or_else(|e| panic!("{case}: begin txn: {e}"));
                         let response = node
-                            .execute_request_in_txn(QueryRequest::new(&query), &handle)
+                            .with_transaction(handle).execute_request(QueryRequest::new(&query))
                             .await;
                         assert!(!response.has_errors(), "{case}: {:?}", response.errors);
                         response.data.unwrap_or(Value::Null)
@@ -760,8 +762,7 @@ fn an_unsupported_metric_is_refused_when_the_schema_is_written() {
 fn a_relation_filter_above_the_scan_still_fills_the_page() {
     workers::block_on(async {
     let node = Node::builder().build().await.unwrap();
-    node.add_collection(
-        "type Owner { name: String  notes: [Note] }
+    node.add_collection("type Owner { name: String  notes: [Note] }
          type Note { title: String  owner: Owner  embedding: [Float32!] @index(vector: {dimensions: 4, hnsw: {metric: DOT}}) }",
     )
     .await
@@ -816,13 +817,14 @@ fn a_relation_filter_above_the_scan_still_fills_the_page() {
     .unwrap()
 }
 
-/// An empty index must not be reported as having served the scan.
+/// An empty index must not be named as serving the scan, but its lookup counts.
 ///
 /// With no candidates the scan falls through to reading the collection, so
 /// naming a vector index in the explain output would describe a search that
-/// never happened.
+/// never served a page. The advisory metadata read and its ordinary-metadata
+/// fallback are still reads, matching the counter's storage-level meaning.
 #[test]
-fn an_empty_index_is_not_reported_as_serving_the_scan() {
+fn an_empty_index_lookup_is_counted_but_does_not_serve_the_scan() {
     workers::block_on(async {
         let node = node_with("").await;
 
@@ -841,8 +843,8 @@ fn an_empty_index_is_not_reported_as_serving_the_scan() {
         );
         assert_eq!(
             index_fetches(&explain),
-            0,
-            "nor counted as a fetch\n{explain:#}"
+            2,
+            "both metadata reads are counted even though the index served no page\n{explain:#}"
         );
     })
     .unwrap()

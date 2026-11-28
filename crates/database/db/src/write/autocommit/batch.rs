@@ -353,7 +353,7 @@ where
                 crate::LensedDocFetcher::lent(
                     self.db.clone(),
                     &txn,
-                    self.db.lens_store.clone(),
+                    self.db.lens_store().clone(),
                     Default::default(),
                 )
                 .with_prepared_inputs(self.prepared_inputs.clone()),
@@ -466,6 +466,12 @@ impl<S: Store + 'static> DocMutator for BatchMutator<S> {
         collection_name: &str,
         mut doc: Document,
     ) -> query::error::Result<CreateResult> {
+        // Numbered before anything can miss, so a create keeps its number when one before it misses.
+        let ordinal =
+            (self.prepared_inputs.is_some() && prepared_identity(&doc).is_none()).then(|| {
+                self.creates
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+            });
         self.check_attempt_node_access(context, acp::nac::NodePermission::DocumentUpdate)
             .await?;
 
@@ -498,9 +504,9 @@ impl<S: Store + 'static> DocMutator for BatchMutator<S> {
         let identity = match (&self.prepared_inputs, prepared_identity(&doc)) {
             (_, Some(identity)) => identity,
             (Some(memo), None) => {
-                let ordinal = self
-                    .creates
-                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                let ordinal = ordinal.ok_or_else(|| {
+                    query::error::QueryError::execution("create has no ordinal in its batch")
+                })?;
                 let identity =
                     pipeline::memo_identity(&self.db, &collection, memo, ordinal).await?;
                 pipeline::seed_identity(&self.db, &mut doc, identity);
@@ -602,7 +608,7 @@ impl<S: Store + 'static> DocMutator for BatchMutator<S> {
         self.validate_collection_for_write(&collection).await?;
         ensure_collection_is_active(&self.db, collection_name, &collection)?;
         crate::chunk::user_writes::ensure_user_writable(collection.schema())?;
-        let chunk_plans = crate::chunk::sync::plan_chunks(
+        let mut chunk_plans = crate::chunk::sync::plan_chunks(
             collection.schema(),
             &doc,
             Some(&modified_fields),
@@ -664,6 +670,7 @@ impl<S: Store + 'static> DocMutator for BatchMutator<S> {
             doc_id: &doc_id_text,
         };
         let heads = super::helpers::load_update_heads(&datastore, doc_short_id).await?;
+        crate::chunk::sync::inherit_encryption(&mut chunk_plans, &blockstore, &heads).await?;
         update_pipeline::write_local(
             &self.db,
             &stores,
@@ -785,7 +792,7 @@ impl<S: Store + 'static> DocMutator for BatchMutator<S> {
         if !existed {
             return Ok(DeleteResult::new(canonical_doc_id, existed));
         }
-        crate::write::autocommit::helpers::unregister_deleted_doc(
+        crate::write::autocommit::helpers::archive_deleted_doc(
             self.db.document_acp(),
             &systemstore,
             &collection,

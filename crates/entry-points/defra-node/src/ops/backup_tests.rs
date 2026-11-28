@@ -89,6 +89,7 @@ fn the_driver_runs_off_the_workers_and_saves_a_collection_in_one_write() {
             seen: Arc::clone(&seen),
         };
         let stats = node
+            .core()
             .import_admitted(RequestContext::default(), watching, USERS)
             .await
             .unwrap();
@@ -189,6 +190,7 @@ fn shutdown_drains_a_running_import_with_its_writes_and_aliases() {
         let finished = AtomicBool::new(false);
         let import = async {
             let outcome = node
+                .core()
                 .import_admitted(RequestContext::default(), paused, ONE_USER)
                 .await;
             finished.store(true, Ordering::SeqCst);
@@ -229,6 +231,7 @@ fn an_import_after_shutdown_begins_is_refused_before_it_writes() {
             seen: Arc::clone(&seen),
         };
         let refused = node
+            .core()
             .import_admitted(RequestContext::default(), watching, ONE_USER)
             .await;
         assert!(
@@ -285,7 +288,8 @@ fn a_saved_batch_gets_its_aliases_when_the_caller_stops_waiting() {
             inner: host(&node),
             signals: Arc::clone(&signals),
         };
-        let import = pin!(node.import_admitted(RequestContext::default(), abandoned, ONE_USER));
+        let core = node.core();
+        let import = pin!(core.import_admitted(RequestContext::default(), abandoned, ONE_USER));
         let creating = pin!(signals.creating.wait());
         let stopped = futures::future::select(import, creating).await;
         assert!(
@@ -300,7 +304,7 @@ fn a_saved_batch_gets_its_aliases_when_the_caller_stops_waiting() {
             .await
             .expect("the saved document's file ID is registered after its caller stopped waiting");
         let again = node
-            .import_backup_as(&RequestContext::default(), SAME_FILE_ID)
+            .anonymous().import_backup(SAME_FILE_ID)
             .await;
         assert!(
             matches!(&again, Err(error) if error.to_string().contains("a document with the given ID already exists")),

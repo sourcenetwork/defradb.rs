@@ -113,7 +113,7 @@ async fn a_grant_still_in_flight_cannot_land_after_the_revocation_that_follows_i
             .await
             .expect("node");
         // What the Vera node holds, read by a provider that keeps no answer.
-        let chain = VeraDocumentACP::without_access_cache(Arc::new(
+        let chain = VeraDocumentACP::new(Arc::new(
             vera_node
                 .in_process(embedded::worker(&root.path().join("reader")))
                 .await
@@ -156,21 +156,14 @@ async fn a_grant_still_in_flight_cannot_land_after_the_revocation_that_follows_i
                 .await
                 .expect("access decision")
         };
-        let acting = defra_core::RequestContext::default().with_identity(Some(owner.to_string()));
 
         // The grant: its submission is held, and the commit stops waiting.
         let before = channel.arrived.load(Ordering::SeqCst);
         channel.stall.store(true, Ordering::SeqCst);
-        let transaction = node.begin_transaction_guard(false).await.unwrap();
-        let staged = node
-            .add_dac_actor_relationship_change_for_in_txn(
-                transaction.handle(),
-                &acting,
-                "Users",
-                &doc,
-                "reader",
-                reader.as_str(),
-            )
+        let transaction = node.new_txn(false).await.unwrap();
+        let staged = transaction
+            .acting_for(owner.clone())
+            .change_dac_actor_relationship("Users", &doc, "reader", reader.as_str(), false)
             .await
             .expect("staged grant");
         assert!(
@@ -183,17 +176,12 @@ async fn a_grant_still_in_flight_cannot_land_after_the_revocation_that_follows_i
 
         // The revocation of the same relationship, committed while the grant
         // is in flight. Nothing reaches the Vera node for it.
-        let transaction = node.begin_transaction_guard(false).await.unwrap();
-        node.delete_dac_actor_relationship_change_for_in_txn(
-            transaction.handle(),
-            &acting,
-            "Users",
-            &doc,
-            "reader",
-            reader.as_str(),
-        )
-        .await
-        .expect("staged revocation");
+        let transaction = node.new_txn(false).await.unwrap();
+        transaction
+            .acting_for(owner.clone())
+            .change_dac_actor_relationship("Users", &doc, "reader", reader.as_str(), true)
+            .await
+            .expect("staged revocation");
         transaction.commit().await.expect("commit");
         assert_eq!(
             channel.arrived.load(Ordering::SeqCst),
@@ -208,7 +196,8 @@ async fn a_grant_still_in_flight_cannot_land_after_the_revocation_that_follows_i
         // each, both end settled, with nothing owed or discarded left.
         channel.released.set();
         let owed = || async {
-            node.owed_acp_as(&acting, owner.as_str())
+            node.with_identity(owner.clone())
+                .owed_acp(owner.as_str())
                 .await
                 .expect("what is owed")
         };

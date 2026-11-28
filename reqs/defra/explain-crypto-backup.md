@@ -1,9 +1,11 @@
 # `go.explain.errors`: Invalid explain requests are rejected by GraphQL validation
 
 - **Parents:** ["go.explain"]
-- **Scenarios:** ["explain.debug.debug-explain-mutation-request-with-delete-having-no-sub-selection", "explain.debug.debug-explain-request-where-parent-is-ordered-by-its-related-child", "explain.default.default-explain-mutation-request-with-delete-having-no-sub-selection", "explain.default.default-explain-on-wrong-field-directive-bad-usage", "explain.default.default-explain-request-where-parent-is-ordered-by-its-related-child", "explain.default.invalid-explain-request-type-returns-error", "explain.execute.execute-explain-request-where-parent-field-is-ordered-by-child-field"]
+- **Scenarios:** ["explain.debug.debug-explain-mutation-request-with-delete-having-no-sub-selection", "explain.debug.debug-explain-request-where-parent-is-ordered-by-its-related-child", "explain.default.default-explain-mutation-request-with-delete-having-no-sub-selection", "explain.default.default-explain-on-wrong-field-directive-bad-usage", "explain.default.default-explain-request-where-parent-is-ordered-by-its-related-child", "explain.default.invalid-explain-request-type-returns-error", "explain.execute.execute-explain-request-where-parent-field-is-ordered-by-child-field", "explain::simple::with_invalid_request::execute_explain_reports_a_run_time_failure_in_execution_errors"]
 
 `@explain` on a field instead of the operation fails with `Directive "explain" may not be used on FIELD.`; `@explain(type: invalid)` fails with `Argument "type" has invalid value invalid.\nExpected type "ExplainType", found invalid.`; an explained `delete_Author(docID: [...])` with no sub-selection fails with `Field "delete_Author" of type "[Author]" must have a sub selection.`; ordering a parent by a one-to-many child (`order: {articles: {name: ASC}}`) fails with `Argument "order" has invalid value {articles: {name: ASC}}.\nIn field "articles": Unknown field.` in default, debug and execute modes.
+
+An explained request is validated exactly as the request would be when run, in every explain type, and fails with the same top-level error instead of returning a plan (or, for `execute`, an `executionErrors` entry): an unknown filter field such as `Book(filter: {author: {name: {_like: "%vid%"}}})` fails with `Argument "filter" has invalid value {author: {name: {_like: "%vid%"}}}.\nIn field "author": Unknown field.`, also as an explained `update_Book` filter; an unknown filter operator fails with `In field "genre": In field "_eqq": Unknown field.`; selecting a field the collection does not define fails with `Cannot query field "author" on type "Book".`; a sub-selection on a scalar fails with `Field "title" of type "String!" must not have a sub selection.`; and an aggregate argument naming no field of the type, such as `COUNT(missing: {})` on `Publisher`, fails with `Unknown argument "missing" on field "COUNT" of type "Publisher".`. An `execute` explain reports in `executionErrors` only a failure of a request that passed validation and then ran: `Users(filter: {Custom: {_gt: false}})` on a `JSON` field validates and then fails while its plan scans, returning `executionSuccess: false`, an empty `operationNode`, and `unexpected type. Property: condition, Actual: bool` as the only `executionErrors` entry.
 
 # `go.explain.execute.scan`: Scan counters
 
@@ -62,6 +64,13 @@ With `@index` on `age`, filtering `age: {_eq: 30}` over three docs reports `scan
 
 The Rust execution explain includes `indexName` on an index-backed `scanNode`. A direct foreign-key lookup names the index it uses; otherwise the child scan retains its index name. This is a deliberate Rust-only addition to the Go execute-explain shape.
 
+# `defra.explain.execute.vector_index_fetches`: A routed vector search counts the index entries it reads
+
+- **Parents:** ["defra"]
+- **Scenarios:** ["explain.execute.vector_index_fetches.hnsw_search_counts_its_reads", "explain.execute.vector_index_fetches.flat_search_counts_its_reads", "explain.execute.vector_index_fetches.ivfflat_search_counts_its_reads", "explain.execute.vector_index_fetches.ivfpq_search_counts_its_reads", "explain.execute.vector_index_fetches.ssg_search_counts_its_reads", "explain.execute.vector_index_fetches.diskann_search_counts_its_reads", "query.simple.query-simple-with-similarity-on-vector-index-returns-k-nearest"]
+
+For a query routed to a vector index (`User(order: {_alias: {sim: DESC}}, limit: k)` selecting `sim: SIMILARITY(vector: {...})` on a field with `@index(vector: ...)`), `@explain(type: execute)` reports on the routed `scanNode` an `indexFetches` equal to the number of vector-index entries the search read from storage (graph nodes, inverted-list entries, codebooks, the index's metadata and pending entries), summed over every widening pass, the way a scalar index counts each entry it reads. With eight indexed documents and `limit: 2` it is at least 2 for every algorithm (`hnsw`, `flat`, `ivfflat`, `ivfpq`, `ssg`, `diskann`), and a larger page that needs more widening passes reports the reads from every pass. An empty index's failed advisory-metadata read and ordinary-metadata fallback count two fetches even though the scan falls back and does not name the index as serving the page. Go reports 1 for the whole search; the count is a measurement only and changes no query result. Plan explain (default and `simple`) does not report `indexFetches`.
+
 # `go.explain.execute.orphan`: Orphan node counters
 
 - **Parents:** ["go.explain.execute"]
@@ -108,9 +117,9 @@ With `@exhaustive` and ordering by a relation field, the `orphanNode` reports `i
 # `go.explain.default.filter`: Filter pushdown into the scan
 
 - **Parents:** ["go.explain.default"]
-- **Scenarios:** ["explain.default.default-explain-request-with-greater-than-filter", "explain.default.default-explain-request-with-integer-equal-filter", "explain.default.default-explain-request-with-json-equal-filter-succeeds", "explain.default.default-explain-request-with-logical-compound-and-filter", "explain.default.default-explain-request-with-logical-compound-or-filter", "explain.default.default-explain-request-with-match-inside-list", "explain.default.default-explain-request-with-string-equal-filter"]
+- **Scenarios:** ["explain.default.default-explain-request-with-greater-than-filter", "explain.default.default-explain-request-with-integer-equal-filter", "explain.default.default-explain-request-with-json-equal-filter-succeeds", "explain.default.default-explain-request-with-logical-compound-and-filter", "explain.default.default-explain-request-with-logical-compound-or-filter", "explain.default.default-explain-request-with-match-inside-list", "explain.default.default-explain-request-with-string-equal-filter", "explain::default::filter_applied_once::explain_filter_with_order_and_limit_is_applied_only_at_the_scan"]
 
-A collection `filter` (string or integer `_eq`, `_gt`, `_and`, `_or`, `_in`, a JSON `_eq` on an object) appears verbatim as the `filter` attribute of the `scanNode`, with the collection prefix in `prefixes`.
+A collection `filter` (string or integer `_eq`, `_gt`, `_and`, `_or`, `_in`, a JSON `_eq` on an object) appears verbatim as the `filter` attribute of the `scanNode`, with the collection prefix in `prefixes`. The filter is applied once, at the scan: the `selectNode` above it shows `filter: null`, also when the request adds an `order` and a `limit`.
 
 # `go.explain.default.docid`: DocID selection
 
@@ -122,9 +131,9 @@ A collection `filter` (string or integer `_eq`, `_gt`, `_and`, `_or`, `_in`, a J
 # `go.explain.default.index`: Indexed filter and order plans
 
 - **Parents:** ["go.explain.default"]
-- **Scenarios:** ["explain.default.default-explain-with-index-on-filter", "explain.default.default-explain-with-index-on-order", "explain.default.default-explain-with-index-on-subquery-nested-relation-order", "explain.simple.simple-explain-with-index-on-filter", "explain.simple.simple-explain-with-index-on-order", "explain.simple.simple-explain-with-index-on-subquery-nested-relation-order", "explain::default::with_index_shape::indexed_scan_explains_the_selected_index", "explain::default::with_index_shape::go_indexed_scan_explains_the_selected_index", "explain::default::with_index_shape::explain_relation_filter_uses_the_indexed_child_scan"]
+- **Scenarios:** ["explain.default.default-explain-with-index-on-filter", "explain.default.default-explain-with-index-on-order", "explain.default.default-explain-with-index-on-subquery-nested-relation-order", "explain.simple.simple-explain-with-index-on-filter", "explain.simple.simple-explain-with-index-on-order", "explain.simple.simple-explain-with-index-on-subquery-nested-relation-order", "explain::default::with_index_shape::indexed_scan_explains_the_selected_index", "explain::default::with_index_shape::go_indexed_scan_explains_the_selected_index", "explain::default::with_index_shape::explain_relation_filter_uses_the_indexed_child_scan", "explain::default::with_index_shape::simple_indexed_scan_reports_no_index_fetches", "explain::default::with_index_shape::go_simple_indexed_scan_reports_no_index_fetches"]
 
-On a collection with `@index` on `age`, filtering on or ordering by `age` explains as `selectTopNode > selectNode > scanNode` with no `orderNode`. The plan scan names the collection and shows the selecting filter and root prefix. Rust also includes the selected index and index fields; Go omits those fields. Ordering a child by an indexed field of a related collection with `limit: 2` puts a `limitNode` but no `orderNode` in the child plan. Holds for default and `simple` types.
+On a collection with `@index` on `age`, filtering on or ordering by `age` explains as `selectTopNode > selectNode > scanNode` with no `orderNode`. The plan scan names the collection and shows the selecting filter and root prefix. Rust also includes the selected index (`indexName`, `indexLimit`, `indexOffset`); Go omits those fields. Neither reports `indexFetches`, a runtime count only `execute` explain shows. Ordering a child by an indexed field of a related collection with `limit: 2` puts a `limitNode` but no `orderNode` in the child plan. Holds for default and `simple` types.
 
 # `go.explain.default.group.selection`: Group node attributes for filters and docIDs
 
@@ -337,6 +346,13 @@ Two peers whose `@branchable` collection versions have diverged each create an e
 
 A collection patch that adds, removes or modifies `/Users/EncryptedIndexes` fails with `collection encrypted indexes cannot be mutated`.
 
+# `defra.searchable_encryption.index.one_answer`: Every client manages encrypted indexes through the same checks
+
+- **Parents:** ["go.searchable_encryption.index"]
+- **Scenarios:** ["searchable_encryption::missing_collection::encrypted_index_on_a_missing_collection_is_refused_in_and_outside_a_transaction", "searchable_encryption::missing_collection::a_transaction_cannot_list_encrypted_indexes_for_a_deleted_collection", "searchable_encryption::caller_identity::an_anonymous_caller_cannot_use_the_signing_nodes_identity_in_a_transaction"]
+
+`NewEncryptedIndex`, `ListEncryptedIndexes`, `ListAllEncryptedIndexes` and `DeleteEncryptedIndex` answer the same through the embedded node, FFI, the CLI, the embedded node's HTTP server and the HTTP server `defradb start` runs. In a transaction each runs there, with node access checked in it for the request's caller identity, never the signing node's transaction-owner identity; with none, the caller must hold `get-collection` and then the operation's own permission (`new-encrypted-index`, `list-encrypted-index`, `delete-encrypted-index`), or `list-all-encrypted-index` alone for every collection's listing, and a change commits in a transaction of its own. An anonymous caller inside a transaction owned by the signing node is refused with `not authorized to perform operation. Permission: get-collection` for `NewEncryptedIndex`, `ListEncryptedIndexes` and `DeleteEncryptedIndex`, and with `not authorized to perform operation. Permission: list-all-encrypted-index` for `ListAllEncryptedIndexes`. A collection the node does not hold fails with `collection not found. Name: <name>` (Go's `collection not found`, naming the collection), inside a transaction and outside one alike, including a collection deleted after a transaction opened; and a transaction that is not open fails with `transaction not found`.
+
 # `defra.signature`: Block signing
 
 - **Parents:** ["defra"]
@@ -356,6 +372,33 @@ A node that holds a node identity but was started without signing (`--no-signing
 - **Scenarios:** ["signature::caller_key::signature_in_process_write_signs_with_the_callers_key", "signature::caller_key::signature_in_process_write_without_identity_signs_with_the_node_key", "signature::caller_key::signature_in_process_field_and_delete_blocks_sign_with_the_callers_key", "signature::caller_key::signature_in_process_graphql_update_signs_with_the_callers_key", "signature::caller_key::signature_in_process_branchable_collection_block_signs_with_the_callers_key", "signature::caller_key::signature_in_process_backup_import_signs_with_the_callers_key"]
 
 An in-process (embedded) write whose request carries the acting client identity's own local secp256k1 key signs its blocks with that key whenever the write signs: the priority-1 field blocks, the `_C` block, and a `@branchable` collection's collection-level block, as Go's in-process client does with a `FullIdentity`. Verifying such a block against that identity's public key succeeds, and against the node's key fails with `signature was created by a different key`. The same holds for the `_C` block of a later update by that identity (through the document API and a GraphQL mutation), the `_C` block of a delete by that identity, and the priority-1 field blocks and `_C` block of a backup import by that identity, as Go's import of a document with a `FullIdentity` signs them. A write whose request carries no identity and no key signs with the node key: verifying its blocks against the node's key succeeds.
+
+# `defra.signature.client_session`: The HTTP client-signing session signs each block once
+
+- **Parents:** ["defra.signature"]
+
+A client that keeps its own Ed25519 key creates, updates or deletes one document over the `/api/v0/graphql/client-sign` WebSocket: it sends the mutation, the server asks it to sign the blocks the mutation writes, and the server commits them with the client's signatures. The server, not only the client, holds the session to the blocks it asked for.
+
+# `defra.signature.client_session.waves`: Each signing wave is numbered and answered once
+
+- **Parents:** ["defra.signature.client_session"]
+- **Scenarios:** ["signature::client_session::a_client_that_signs_each_wave_once_creates_the_document"]
+
+The server asks for signatures in waves, `{"wave": <n>, "blocks": [<hex>, …]}`, numbered from 1 within the session; a create asks for its field blocks, then its `_C` block. The client answers each wave once with `{"wave": <n>, "signatures": [<hex>, …]}`, one signature per block in the wave's order. A client that answers every wave this way gets the mutation's response, and the document it created reads back. The server never asks twice for a block the client already signed in the session: a wave that would, or that names one block twice, fails the mutation with `block <i> of signing wave <n> was already signed in this session`.
+
+# `defra.signature.client_session.resigned`: A wave answered twice is refused
+
+- **Parents:** ["defra.signature.client_session"]
+- **Scenarios:** ["signature::client_session::a_client_that_answers_a_wave_twice_is_refused"]
+
+An answer naming a wave the client already answered fails the session with `signing wave <n> was already signed`: the server signs nothing more in that session, so the mutation's response carries the error and nothing is written. Whether the repeated answer arrives between waves or in place of the next wave's answer, the error is the same. A repeat of the last wave's answer (a create's `_C` wave, or the one wave of an update or a delete) arrives when the server asks for no further wave, so it is refused but cannot fail the mutation: the mutation commits with the blocks already signed and its response carries no error.
+
+# `defra.signature.client_session.outside_graph`: An answer outside the approved graph is refused
+
+- **Parents:** ["defra.signature.client_session"]
+- **Scenarios:** ["signature::client_session::a_client_that_answers_an_unrequested_wave_is_refused", "signature::client_session::a_client_that_signs_a_block_outside_the_graph_is_refused"]
+
+An answer naming a wave the server never asked for fails the session with `signing wave <n> is outside the approved graph`. A signature that does not verify over the block the server asked for in that position fails it with `signature <i> of signing wave <n> does not sign a block of the approved graph`; an answer with a different number of signatures than the wave has blocks fails it with `signing wave <n> has <k> blocks but the answer has <m> signatures`, and one that is not `{"wave", "signatures"}` with `signing answer is malformed: <reason>`. Once refused, the session signs nothing more, so the mutation's response carries the error and nothing is written. An answer that arrives after the last wave was signed is refused the same way but cannot change a block that is already signed.
 
 # `go.signature.verify.acp`: Verification gated by access control
 

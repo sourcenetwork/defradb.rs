@@ -22,7 +22,7 @@ pub(crate) async fn search_vector_index(
     query_vector: &[f64],
     k: usize,
     effort: Option<usize>,
-) -> query::error::Result<Vec<u64>> {
+) -> query::error::Result<query::fetcher::VectorCandidates> {
     let execution = query::error::QueryError::execution;
 
     let desc = collection
@@ -38,8 +38,11 @@ pub(crate) async fn search_vector_index(
 
     let mut view = datastore.clone();
     index
-        .search(&mut view, query_vector, k, effort)
+        .search_counted(&mut view, query_vector, k, effort)
         .await
-        .map(|hits| hits.into_iter().map(|hit| hit.id.0).collect())
+        .map(|(hits, index_reads)| query::fetcher::VectorCandidates {
+            short_ids: hits.into_iter().map(|hit| hit.id.0).collect(),
+            index_reads,
+        })
         .map_err(|e| execution(format!("vector search: {e}")))
 }

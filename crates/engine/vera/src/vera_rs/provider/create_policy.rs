@@ -144,7 +144,7 @@ impl VeraRsProvider {
                 .ok_or_else(|| ProviderError::Query(format!("policy {id} absent")))?,
         )
         .map_err(|e| ProviderError::Query(format!("policy record: {e}")))?;
-        if record.policy.id != id || record.derived_id() != id {
+        if record.policy.id.as_str() != id || record.derived_id() != id {
             return Err(ProviderError::Query(format!(
                 "policy {id} is stored under another ID"
             )));

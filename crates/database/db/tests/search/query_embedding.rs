@@ -96,9 +96,12 @@ fn hybrid_search_selects_endpoint_without_forwarding_node_credentials() {
         use query::QueryExecutor;
 
         let db = Arc::new(DB::new(storage::RegolithStore::in_memory().unwrap()).unwrap());
-        for schema in query::parse_sdl("type Docs { text: String vector: [Float!] }").unwrap() {
-            db.create_collection(schema).await.unwrap();
-        }
+        db.add_collection(
+            &defra_core::RequestContext::ambient(),
+            "type Docs { text: String vector: [Float!] }",
+        )
+        .await
+        .unwrap();
         let runner = query::QueryRunner::with_arc_registry_and_provider(
             LensedAutoCommitFetcher::new(db.clone()),
             DbCollectionProvider::new_arc(db.clone()),

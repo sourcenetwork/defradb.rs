@@ -61,7 +61,8 @@ use super::{storage_error, ExternalDocumentAcp};
 use crate::error::{Error, Result};
 use crate::outbox::record::of_this_run;
 use crate::outbox::{
-    InFlight, OwedAuthority, OwedChange, OwedState, OwedSubject, OwedTuple, StagedCount, Submission,
+    InFlight, OwedAuthority, OwedChange, OwedOp, OwedState, OwedSubject, OwedTuple, StagedCount,
+    Submission,
 };
 use crate::pending::PendingRegistration;
 use crate::recovery::RecoveryLedger;
@@ -427,19 +428,27 @@ where
         Ok(passed)
     }
 
-    /// `change` as committed now, when it is staged, not in flight and the
-    /// oldest unsettled change of its tuple.
+    /// `change` as committed now, when it is staged, not in flight, the
+    /// oldest unsettled change of its tuple, and not held back by the order
+    /// around a transfer on its object
+    /// ([`super::transfer_order::held_by_transfer`]).
     pub(super) async fn submittable(&self, change: &OwedChange) -> Result<Option<OwedChange>> {
         let txn = self.begin(true).await?;
         let changes = self.owed_changes(&txn.acpstore(), StagedCount::new());
         let current = changes.get(change.seq).await;
         let tuple = changes.tuple(&change.tuple).await;
+        let earlier = super::transfer_order::earlier_on_object(&changes, change).await;
         drop(changes);
         txn.discard()
             .map_err(|error| Error::Storage(error.to_string()))?;
         let head = tuple?.is_some_and(|state| state.oldest == change.seq);
+        let held = super::transfer_order::held_by_transfer(
+            change.op == OwedOp::Transfer,
+            &earlier?,
+            &RapidHashSet::new(),
+        );
         Ok(current?.filter(|current| {
-            head && current.state == OwedState::Staged && current.in_flight.is_none()
+            head && !held && current.state == OwedState::Staged && current.in_flight.is_none()
         }))
     }
 
@@ -520,6 +529,7 @@ where
     /// it, and say what became of it.
     pub(super) async fn conclude(&self, change: &OwedChange, answer: Submission) -> Result<Step> {
         let attempts = change.attempts.saturating_add(1);
+        let answer = self.confirmed_transfer(change, answer, attempts).await;
         // Not a refusal: the provider was asked nothing.
         let unsupported = matches!(answer, Submission::Unsupported { .. });
         let (write, step) = match answer {
@@ -592,6 +602,43 @@ where
         } else {
             Step::Left
         })
+    }
+
+    /// What `answer`, a refusal of `change`, comes to when `change` is a
+    /// transfer whose new owner the provider already names: the transfer
+    /// took effect, sent before by a request whose outcome this node did
+    /// not keep (a provider without a journal, after a crash), and the
+    /// provider refuses the second one because its actor owns nothing any
+    /// more. It is applied, never reported refused
+    /// (`proofs/tla/OwnerTransfer.tla`, `OwnerConfirms`).
+    async fn confirmed_transfer(
+        &self,
+        change: &OwedChange,
+        answer: Submission,
+        attempts: u32,
+    ) -> Submission {
+        let declines = match &answer {
+            Submission::Refused { .. } => true,
+            Submission::Failed { .. } => attempts >= MAX_FAILED_SUBMISSIONS,
+            _ => false,
+        };
+        let tuple = &change.tuple;
+        let (true, Some(new_owner)) =
+            (declines && change.op == OwedOp::Transfer, tuple.new_owner())
+        else {
+            return answer;
+        };
+        match self
+            .provider
+            .get_doc_owner(&tuple.policy_id, &tuple.resource, &tuple.object)
+            .await
+        {
+            Ok(Some(owner)) if self.provider.canonical_actor(&owner) == *new_owner => {
+                Submission::Applied
+            }
+            Err(Error::ProviderUnavailable(reason)) => Submission::Unavailable { reason },
+            _ => answer,
+        }
     }
 
     /// The delegation that lets the node send the registration `owed` when

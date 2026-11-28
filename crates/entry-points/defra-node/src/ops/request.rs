@@ -1,92 +1,16 @@
 //! Requests that carry their own context: the caller acting, and the
 //! explicit transaction they run in.
 
-use std::sync::Arc;
-
-use defra_core::{RequestContext, TxnId};
+use defra_core::RequestContext;
 use identity::Did;
-use query::{QueryRequest, QueryResponse, TransactionError, TransactionHandle};
-use schema::CollectionVersion;
+use query::{QueryRequest, QueryResponse, TransactionError};
 
 use defra_core::signing::SigningConfig;
 
 use crate::embedded_signer::{self, EmbeddedSignerError};
-use crate::{refused_transaction, Error, Node, Result};
+use crate::{Error, Node, Result};
 
 impl Node {
-    pub async fn restore_shared_transport_collection_as(
-        &self,
-        context: &RequestContext,
-        sdl: &str,
-        selection: acp::TransportSentinelQuery,
-    ) -> Result<Vec<CollectionVersion>> {
-        if context.identity() != Some(selection.device.as_str()) || context.txn().is_some() {
-            return Err(acp::Error::PermissionDenied("shared transport restoration requires its device identity and no caller transaction".into()).into());
-        }
-        if self.database().document_acp().is_none() {
-            return Err(acp::Error::PermissionDenied(
-                "shared transport restoration requires document access control".into(),
-            )
-            .into());
-        }
-        let created = self
-            .add_collection_as(
-                &context
-                    .clone()
-                    .with_shared_transport_sentinel(selection.clone()),
-                sdl,
-            )
-            .await?;
-        if created.len() != 1 || created[0].collection_id != selection.child {
-            return Err(acp::Error::PermissionDenied(
-                "restored collection identity does not match the proof".into(),
-            )
-            .into());
-        }
-        if !self
-            .document_acp()
-            .verify_transport_sentinel(&selection)
-            .await?
-        {
-            return Err(acp::Error::PermissionDenied(
-                "shared transport sentinel is no longer admitted".into(),
-            )
-            .into());
-        }
-        Ok(created)
-    }
-    /// Parse `sdl`, check it and create every collection it defines, or none,
-    /// in the transaction `context` carries if it carries one.
-    pub async fn add_collection_as(
-        &self,
-        context: &RequestContext,
-        sdl: &str,
-    ) -> Result<Vec<CollectionVersion>> {
-        let caller = self.admitted_caller(context)?;
-        if context.txn().is_some() {
-            return self
-                .runner()
-                .add_collection_as(&caller, sdl)
-                .await
-                .map_err(transaction_error);
-        }
-        let (ops, sdl) = (Arc::clone(&self.schema_ops), sdl.to_owned());
-        let context = caller;
-        self.on_pool(move || async move { ops.add_collection(&context, &sdl).await })
-            .await
-    }
-
-    /// Run `request` as the identity `context` names, in the transaction it
-    /// carries if it carries one. Errors in the request are in the response.
-    pub async fn execute_request_as(
-        &self,
-        context: &RequestContext,
-        request: QueryRequest,
-    ) -> Result<QueryResponse> {
-        let identity = acting_identity(context)?;
-        Ok(self.run_as_identity(context, identity, request).await)
-    }
-
     /// Run `request` in all of `context` as `identity`, in the transaction
     /// `context` carries if it carries one.
     pub(crate) async fn run_as_identity(
@@ -96,46 +20,7 @@ impl Node {
         request: QueryRequest,
     ) -> QueryResponse {
         let request = request_in(context, identity, request);
-        match context.txn() {
-            Some(id) => self.execute_request_in_txn(request, &handle(id)).await,
-            None => self.execute_request(request).await,
-        }
-    }
-
-    /// Begin an explicit transaction for the caller `context` names. Requests
-    /// whose context carries the returned ID run in it. Begun as a request,
-    /// as [`Node::begin_transaction`] is.
-    pub async fn txn_begin(&self, context: &RequestContext, read_only: bool) -> Result<TxnId> {
-        let owned = self
-            .begin_owned_transaction(self.txn_owner(context), read_only)
-            .await
-            .map_err(transaction_error)?;
-        let handle = owned.handle().map_err(transaction_error)?;
-        let id = handle.parse().map_err(|_| {
-            Error::Transaction(TransactionError::Operation(format!(
-                "transaction ID '{handle}' is not a number"
-            )))
-        })?;
-        owned.into_handle().map_err(transaction_error)?;
-        Ok(id)
-    }
-
-    /// Make the writes of transaction `id` durable and end it, admitted as
-    /// [`Node::commit_transaction`] admits it.
-    pub async fn txn_commit(&self, context: &RequestContext, id: TxnId) -> Result<()> {
-        let (runner, caller) = (Arc::clone(self.runner()), self.txn_owner(context));
-        self.as_request(async move { runner.commit_txn_as(&caller, &handle(id)).await })
-            .await
-            .unwrap_or_else(|error| Err(refused_transaction(error, "committed")))
-            .map_err(transaction_error)
-    }
-
-    /// Drop the writes of transaction `id` and end it.
-    pub async fn txn_discard(&self, context: &RequestContext, id: TxnId) -> Result<()> {
-        self.runner()
-            .discard_txn_as(&self.txn_owner(context), &handle(id))
-            .await
-            .map_err(transaction_error)
+        self.core().execute_request_in(request, context.txn()).await
     }
 
     /// Node access control for `permission`, for the operations that check
@@ -146,7 +31,10 @@ impl Node {
         context: &RequestContext,
         permission: acp::nac::NodePermission,
     ) -> Result<()> {
-        let (database, context) = (Arc::clone(self.database()), self.admitted_caller(context)?);
+        let (database, context) = (
+            std::sync::Arc::clone(self.database()),
+            self.admitted_caller(context)?,
+        );
         self.on_pool(move || async move {
             Ok(database.check_node_access_as(&context, permission).await?)
         })
@@ -178,10 +66,10 @@ impl Node {
 
     /// Who owns the transaction `context` begins or ends: the identity it
     /// names, or else the node's principal, which a request that names none
-    /// runs under inside a transaction ([`Node::execute_request_in_txn`]): the
+    /// runs under inside a transaction ([`crate::TxnNode::execute_request`]): the
     /// node on a node that acts as its identity, no one on an identity-only
     /// node.
-    fn txn_owner(&self, context: &RequestContext) -> RequestContext {
+    pub(crate) fn txn_owner(&self, context: &RequestContext) -> RequestContext {
         match context.identity() {
             Some(_) => context.clone(),
             None => self.node_context().with_txn(context.txn()),
@@ -191,7 +79,7 @@ impl Node {
 
 /// `request` running in all of `context` (its DAC bypass, encryption, signing,
 /// batch session, transaction) as `identity`.
-pub(super) fn request_in(
+pub(crate) fn request_in(
     context: &RequestContext,
     identity: Option<Did>,
     request: QueryRequest,
@@ -211,16 +99,15 @@ pub(crate) fn acting_identity(context: &RequestContext) -> Result<Option<Did>> {
         .map_err(Error::InvalidActingIdentity)
 }
 
-fn handle(id: TxnId) -> TransactionHandle {
-    TransactionHandle::new(id.to_string())
-}
-
 /// A transaction failure with Go's words: only a missing transaction has its
-/// own text.
+/// own text, and a refused field type keeps its code.
 pub(crate) fn transaction_error(error: TransactionError) -> Error {
     match error {
         TransactionError::NotFound(_) => Error::TransactionNotFound,
-        TransactionError::Conflict(_) => Error::TransactionConflict,
+        conflict @ TransactionError::Conflict(_) => Error::TransactionConflict(conflict),
+        TransactionError::UnsupportedFieldType(refusals) => {
+            Error::AddCollection(db::AddCollectionError::UnsupportedFieldType(refusals))
+        }
         other => Error::Transaction(other),
     }
 }
@@ -236,12 +123,12 @@ mod tests {
         let context = RequestContext::ambient()
             .with_dac_bypass(true)
             .with_batch_session(Some("session".to_owned()))
-            .with_txn(Some(TxnId(3)));
+            .with_txn(Some(TxnId { start: 0, route: 3 }));
 
         let request = request_in(&context, None, QueryRequest::new("{ User { name } }"));
 
         assert!(request.context.dac_bypass());
         assert_eq!(request.context.batch_session(), Some("session"));
-        assert_eq!(request.context.txn(), Some(TxnId(3)));
+        assert_eq!(request.context.txn(), Some(TxnId { start: 0, route: 3 }));
     }
 }

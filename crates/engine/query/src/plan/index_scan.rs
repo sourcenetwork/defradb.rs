@@ -336,10 +336,6 @@ impl PlanNode for IndexScanNode {
             serde_json::json!(self.index_params.offset),
         );
         obj.insert(
-            "indexFetches".to_string(),
-            serde_json::json!(self.index_fetches),
-        );
-        obj.insert(
             "filter".to_string(),
             filter.map_or_else(
                 || serde_json::Value::Null,
@@ -528,7 +524,6 @@ mod tests {
                     "indexName": "idx_test",
                     "indexLimit": serde_json::Value::Null,
                     "indexOffset": 0,
-                    "indexFetches": 0,
                     "filter": {"name": {"_like": "%vid%"}},
                     "prefixes": ["/2"],
                 }
@@ -591,7 +586,7 @@ mod tests {
         assert_eq!(explain["scanNode"]["indexName"], "idx_test");
         assert_eq!(explain["scanNode"]["indexLimit"], serde_json::Value::Null);
         assert_eq!(explain["scanNode"]["indexOffset"], 0);
-        assert_eq!(explain["scanNode"]["indexFetches"], 0);
+        assert!(explain["scanNode"].get("indexFetches").is_none());
     }
 
     #[test]

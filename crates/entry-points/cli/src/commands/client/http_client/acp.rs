@@ -87,6 +87,17 @@ impl HttpClient {
         Ok(result)
     }
 
+    /// The node's remote ACP light client status, `GET /api/v0/acp/status`,
+    /// asked once: a node that cannot answer has no remote ACP to report.
+    pub async fn acp_status(&self) -> Result<acp::LightClientStatus> {
+        let url = format!("{}/api/v0/acp/status", self.base_url);
+        let response = self.send_with_retries("GET", &url, None, 0).await?;
+        if !response.status().is_success() {
+            return Err(Self::extract_error(response).await);
+        }
+        Ok(response.json().await?)
+    }
+
     pub async fn acp_get_policy(&self, policy_id: &str) -> Result<AcpPolicy> {
         let url = format!("{}/api/v0/acp/policy/{}", self.base_url, encode(policy_id));
         self.request_json("GET", &url, None).await

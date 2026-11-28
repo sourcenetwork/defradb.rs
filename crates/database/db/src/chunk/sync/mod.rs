@@ -6,8 +6,10 @@
 //! `proofs/tla/ParentChunks.tla` checks that this keeps them consistent.
 
 mod lookup;
+mod prefetch;
 mod write;
 
+pub(crate) use prefetch::embedding_requests;
 pub(crate) use write::chunk_document;
 
 use std::sync::Arc;
@@ -81,6 +83,33 @@ pub(crate) fn plan_chunks(
     Ok(plans)
 }
 
+/// Marks the plans whose field the parent's earlier blocks encrypt, by
+/// document or by field, from `heads`, the parent's heads before this update.
+/// The update's new blocks inherit that encryption, so the chunks must too.
+/// A create has no earlier blocks, so its plans keep only the explicit config.
+pub(crate) async fn inherit_encryption(
+    plans: &mut [FieldChunks],
+    blockstore: &datastore::NamespaceView,
+    heads: &crate::block::builder::DocHeadsSnapshot,
+) -> Result<()> {
+    let fields: Vec<String> = plans
+        .iter()
+        .filter(|plan| !plan.encrypt)
+        .map(|plan| plan.field.clone())
+        .collect();
+    if fields.is_empty() {
+        return Ok(());
+    }
+    let (encrypt_doc, encrypted) =
+        crate::block::builder::inherited_encryption_at(blockstore, heads, &fields)
+            .await
+            .map_err(QueryError::execution)?;
+    for plan in plans {
+        plan.encrypt |= encrypt_doc || encrypted.contains(&plan.field);
+    }
+    Ok(())
+}
+
 /// What a chunk write needs from the parent's write.
 pub(crate) struct ChunkWrites<'a, S>
 where
@@ -113,31 +142,46 @@ where
         self
     }
 
-    /// Creates the chunk documents in `plans` that don't exist yet. An existing
-    /// chunk is never rewritten, since the same hash means the same content.
-    /// A new parent can have some already: they may arrive by P2P before it.
+    /// Creates the chunk documents in `plans` that don't exist yet, encrypted
+    /// as each plan says (see [`inherit_encryption`]) and with their vectors
+    /// from the memo. A new parent can have some already: they may arrive by
+    /// P2P before it. On any miss nothing is written and every miss is noted
+    /// for one wave.
     pub(crate) async fn create_missing(
         &self,
         parent_doc_id: &str,
         plans: Vec<FieldChunks>,
     ) -> Result<Vec<DerivedWrite>> {
-        let mut written = Vec::new();
+        let mut missing = Vec::new();
+        let mut first_miss = None;
         for plan in plans {
             let target = self.open(&plan.chunk_collection).await?;
-            // An update keeps the text encrypted when earlier writes did, even
-            // without the flag, so its chunks must be too.
-            let encrypt = plan.encrypt || self.parent_encrypts(parent_doc_id, &plan.field).await?;
-            // One scan per field: a lookup per chunk would cost a pass over the
-            // transaction's writes each time.
             let planned: RapidHashSet<&str> =
                 plan.chunks.iter().map(|(_, hash)| hash.as_str()).collect();
+            // TODO(https://github.com/sourcenetwork/defradb.rs/issues/3381): reuse trusts the vector of a chunk any peer sent.
             let existing = target.existing_of(parent_doc_id, &planned).await?;
+            let mut docs = Vec::new();
             for (text, hash) in plan.chunks {
                 if existing.contains(&hash) {
                     continue;
                 }
+                let mut doc = Self::chunk_document(&target, parent_doc_id, text, hash.clone())?;
+                if let Some(miss) = self.embed(&target, &mut doc)? {
+                    first_miss.get_or_insert(miss);
+                }
+                docs.push((doc, hash));
+            }
+            missing.push((target, plan.encrypt, docs));
+        }
+        // TODO(https://github.com/sourcenetwork/defradb.rs/issues/3380): one deadline bounds the whole wave.
+        if let Some(miss) = first_miss {
+            return Err(QueryError::NeedsInput(miss));
+        }
+        let mut written = Vec::new();
+        for (target, encrypt, docs) in missing {
+            for (doc, hash) in docs {
                 written.push(
-                    self.create(&target, parent_doc_id, text, hash, encrypt)
+                    self.create(&target, parent_doc_id, doc, hash, encrypt)
                         .await?,
                 );
             }

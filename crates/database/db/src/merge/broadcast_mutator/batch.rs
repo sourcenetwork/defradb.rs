@@ -490,6 +490,16 @@ impl<S: Store + 'static, B: Blockstore + 'static, T: P2PTransport> DocMutator
             .await
     }
 
+    async fn chunk_embedding_requests(
+        &self,
+        collection_name: &str,
+        docs: &[Document],
+    ) -> query::error::Result<Vec<query::prepared::PreparedInputRequest>> {
+        self.inner
+            .chunk_embedding_requests(collection_name, docs)
+            .await
+    }
+
     fn set_document_acp(&self, acp: Arc<dyn acp::DocumentACP>) {
         self.inner.set_document_acp(acp);
     }

@@ -186,6 +186,22 @@ pub trait TransactionRegistry: MaybeSendSync + 'static {
         context.mirror(self.discard(handle)).await
     }
 
+    /// The outcome of the transaction `handle` names for the request `context`
+    /// serves: `open` while it can still be used, `committing` while a
+    /// queued commit is in progress, `committed` or `aborted` once that
+    /// outcome is known, and `unknown` when the caller does not own it or the
+    /// ID names no transaction of this node start.
+    async fn outcome_as(
+        &self,
+        context: &RequestContext,
+        handle: &TransactionHandle,
+    ) -> std::result::Result<TransactionOutcome, TransactionError> {
+        let _ = (context, handle);
+        Err(TransactionError::not_supported(
+            "transaction outcomes are not supported in this configuration",
+        ))
+    }
+
     /// Create the collections `sdl` defines in the transaction `context`
     /// carries. They are visible to requests in it, and to others once it
     /// commits.
@@ -275,59 +291,6 @@ pub trait TransactionRegistry: MaybeSendSync + 'static {
         let _ = (context, collection);
         Err(TransactionError::not_supported(
             "index reads inside a transaction are not supported in this configuration",
-        ))
-    }
-
-    /// Add an equality encrypted index on `field` of `collection` in the
-    /// transaction `context` carries.
-    async fn add_encrypted_index_in_txn_as(
-        &self,
-        context: &RequestContext,
-        collection: &str,
-        field: &str,
-    ) -> std::result::Result<(), TransactionError> {
-        let _ = (context, collection, field);
-        Err(TransactionError::not_supported(
-            "encrypted index operations inside a transaction are not supported in this configuration",
-        ))
-    }
-
-    /// Delete the encrypted index on `field` of `collection` in the
-    /// transaction `context` carries.
-    async fn delete_encrypted_index_in_txn_as(
-        &self,
-        context: &RequestContext,
-        collection: &str,
-        field: &str,
-    ) -> std::result::Result<(), TransactionError> {
-        let _ = (context, collection, field);
-        Err(TransactionError::not_supported(
-            "encrypted index operations inside a transaction are not supported in this configuration",
-        ))
-    }
-
-    /// The fields of `collection` with an encrypted index, as the transaction
-    /// `context` carries sees them.
-    async fn encrypted_indexes_in_txn_as(
-        &self,
-        context: &RequestContext,
-        collection: &str,
-    ) -> std::result::Result<Vec<String>, TransactionError> {
-        let _ = (context, collection);
-        Err(TransactionError::not_supported(
-            "encrypted index operations inside a transaction are not supported in this configuration",
-        ))
-    }
-
-    /// Every collection's encrypted index fields, by collection name, as the
-    /// transaction `context` carries sees them.
-    async fn all_encrypted_indexes_in_txn_as(
-        &self,
-        context: &RequestContext,
-    ) -> std::result::Result<Vec<(String, Vec<String>)>, TransactionError> {
-        let _ = context;
-        Err(TransactionError::not_supported(
-            "encrypted index operations inside a transaction are not supported in this configuration",
         ))
     }
 
@@ -596,6 +559,31 @@ pub trait TransactionRegistry: MaybeSendSync + 'static {
     /// requests already queued for it. Must be idempotent and work without
     /// an async runtime (a guard's destructor calls it).
     fn abandon(&self, handle: &TransactionHandle);
+}
+
+/// The client-visible state of an explicit transaction's finalization.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TransactionOutcome {
+    /// No commit was queued.
+    Open,
+    /// A commit was queued and may still land.
+    Committing,
+    /// The commit landed.
+    Committed,
+    /// The transaction ended without a commit.
+    Aborted,
+}
+
+impl TransactionOutcome {
+    /// The wire name the outcome query returns.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Open => "open",
+            Self::Committing => "committing",
+            Self::Committed => "committed",
+            Self::Aborted => "aborted",
+        }
+    }
 }
 
 /// A no-op transaction registry that doesn't support transactions.

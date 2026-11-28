@@ -30,7 +30,7 @@ pub(super) const PROPERTIES: &[Property] = &[
         family: "Schema-evolution operations in the core",
         name: "INV_NoEffectWithoutPermission / INV_TxnNeverAutocommits / INV_PatchInTxnChangesNothing",
         axis: Tla,
-        anchor: "crates/database/db/src/txn/registry/lifecycle.rs get_collections_as, patch_collection_as, set_active_collection_version_as, set_migration_as, add_lens_as, list_lenses_as; crates/entry-points/defra-node/src/ops/collection.rs; crates/surfaces/http/src/handlers/{collections,lens}.rs",
+        anchor: "crates/database/db/src/txn/registry/lifecycle.rs get_collections_as, patch_collection_as, set_active_collection_version_as, set_migration_as, add_lens_as, list_lenses_as; crates/entry-points/defra-node/src/node_core/collection.rs; crates/surfaces/http/src/handlers/{collections,lens}.rs",
         model_ref: "MC_CoreDispatch_{Green,Red_NoNac,Red_IgnoreTxn}.cfg",
         tiers: &[Boundary],
         bound_by: "",
@@ -70,6 +70,67 @@ pub(super) const PROPERTIES: &[Property] = &[
         model_ref: "DocStoreTarget (lake build)",
         tiers: &[Boundary],
         bound_by: "",
+    },
+    Property {
+        // HTTP build mode does not change the requested index kind.
+        family: "Schema-evolution operations in the core",
+        name: "INV_KindPreserved / INV_SyncWaits",
+        axis: Tla,
+        anchor: "crates/surfaces/http/src/handlers/index/go_api.rs go_create_index; crates/surfaces/http/src/index_adapter.rs IndexAdapter::create_index; crates/database/db/src/index/create.rs create_index, start_index",
+        model_ref: "MC_HttpIndexBuild_{Green,Green_Sync,Red_Vector,Red_Early}.cfg",
+        tiers: &[Boundary],
+        bound_by: "tools/integration-test/tests/testo/index/async_backfill_migration.rs async_backfill_restart_after_non_zero_watermark_resumes_to_ready",
+    },
+    Property {
+        // The vector config and background selection are independent.
+        family: "Schema-evolution operations in the core",
+        name: "IndexBuildMode.kind_independent / background_ordered / background_vector",
+        axis: Lean,
+        anchor: "crates/surfaces/http/src/handlers/index/go_api.rs go_create_index; crates/surfaces/http/src/index_adapter.rs IndexAdapter::create_index",
+        model_ref: "IndexBuildMode (lake build)",
+        tiers: &[Boundary],
+        bound_by: "crates/surfaces/http/src/handlers/index/go_api.rs background_build_and_vector_configuration_are_independent",
+    },
+    Property {
+        // A backfill page never indexes more documents than the configured batch.
+        family: "Schema-evolution operations in the core",
+        name: "INV_BatchBound / INV_SizeBound / INV_Indexed",
+        axis: Tla,
+        anchor: "crates/database/db/src/index/backfill.rs DB::backfill_batches; crates/database/db/src/index/pages.rs DB::run_page, PageAttempt::run",
+        model_ref: "MC_BackfillPageSize_{Green,Green_Large,Red_Uncapped}.cfg",
+        tiers: &[Boundary],
+        bound_by: "crates/database/db/tests/index/create.rs create_index_honors_a_smaller_backfill_batch",
+    },
+    Property {
+        // Doubling and halving keep a backfill page within the batch limit.
+        family: "Schema-evolution operations in the core",
+        name: "BackfillPageSize.grow_le_limit / grow_le_pageItems / shrink_le_limit / shrink_pos",
+        axis: Lean,
+        anchor: "crates/database/db/src/index/backfill.rs DB::backfill_batches; crates/database/db/src/index/pages.rs DB::run_page, PageAttempt::run",
+        model_ref: "BackfillPageSize (lake build)",
+        tiers: &[Boundary],
+        bound_by: "crates/database/db/tests/index/create.rs create_index_honors_a_smaller_backfill_batch",
+    },
+    Property {
+        // A partially transformed document remains at its source version so
+        // a lens registered later still runs.
+        family: "Schema-evolution operations in the core",
+        name: "INV_NoPartialStamp",
+        axis: Tla,
+        anchor: "crates/database/db/src/definition/lens.rs migration_path_transforms; crates/database/db/src/definition/migration/helpers.rs migrate_to_active; crates/database/db/src/definition/migration/reindex/page.rs ReindexPage::walk",
+        model_ref: "MC_PartialLensPath_{Green,Red_Partial}.cfg",
+        tiers: &[Boundary],
+        bound_by: "tools/integration-test/tests/testo/issues/t_3044.rs",
+    },
+    Property {
+        // The completeness guard holds only when every hop has a lens.
+        family: "Schema-evolution operations in the core",
+        name: "PartialLensPath.partial_not_materialized / empty_not_materialized / missing_hop_not_materialized / filled_hop_materialized",
+        axis: Lean,
+        anchor: "crates/database/db/src/definition/lens.rs migration_path_transforms; crates/database/db/src/definition/migration/reindex/page.rs ReindexPage::walk",
+        model_ref: "PartialLensPath (lake build)",
+        tiers: &[Boundary],
+        bound_by: "tools/integration-test/tests/testo/issues/t_3044.rs",
     },
     Property {
         // Removing a transform must not invert native documents.
@@ -196,5 +257,35 @@ pub(super) const PROPERTIES: &[Property] = &[
         model_ref: "MigratedCounterMerge (lake build)",
         tiers: &[Contract],
         bound_by: "tools/integration-test/tests/testo/issues/t_2916.rs an_old_version_counter_update_merges_through_a_lens_once, an_old_version_counter_update_merges_through_a_forward_only_lens, an_old_version_counter_update_adds_to_a_counter_a_forward_only_lens_wrote, an_old_version_counter_update_keeps_the_fields_the_lens_wrote, an_old_version_counter_update_lands_on_a_document_stored_at_the_source_version",
+    },
+    Property {
+        // #2802: a rebuild a migration's unique clash stops writes its
+        // failure onto the owed record of its own token and drops its
+        // progress; owing again starts without one, a finishing rebuild
+        // removes only its own record, writers skip the failed index, and a
+        // retry removes the failure and clears before it walks. The index
+        // listing shows that failure as an errored backfill.
+        family: "Schema-evolution operations in the core",
+        name: "INV_FailureIsCurrent / INV_SettledNotFailed / INV_FailedRefusesNoWrite / INV_SettledIsExact",
+        axis: Tla,
+        anchor: "crates/database/db/src/definition/migration/reindex/owed.rs owe_reindex, owe_full_reindex, record_failure, retry_failed, owed_status, owed_failure, clear_owed_reindex; crates/database/db/src/definition/migration/reindex/page.rs ReindexPage::step; crates/database/db/src/definition/migration/reindex/mod.rs DB::reindex_in_pages; crates/database/db/src/definition/migration/reindex/failure.rs DB::record_failure; crates/database/db/src/collection/index_status.rs IndexStatuses::takes_writes, IndexStatuses::rebuilds; crates/database/db/src/collection/mod.rs Collection::with_reindex_owed, Collection::with_current_index_actions; crates/database/db/src/database/action.rs index_listing_executions",
+        model_ref: "MC_ReindexFailureListing_{Green,Red_NoTokenCheck,Red_KeepFailureOnOwe,Red_NoFinishTokenCheck,Red_KeepProgressOnStop,Red_KeepFailureOnRetry,Red_WritersIgnoreFailure}.cfg",
+        tiers: &[Boundary],
+        bound_by: "tools/integration-test/tests/testo/collection_version/migrations/query/with_unique_index.rs migration_giving_two_documents_one_unique_value_fails_the_index, switching_back_after_a_unique_clash_rebuilds_the_index",
+    },
+    Property {
+        // #2802: the owed record's failure operations: owing lists nothing, a
+        // failure under the record's token lists, one under another token
+        // changes nothing, clearing lists nothing and under another token
+        // changes nothing, a listed failure always sits on an owed record,
+        // writers skip exactly the failed index, and a retry under the
+        // record's token has them maintain every index again.
+        family: "Schema-evolution operations in the core",
+        name: "ReindexFailureListing.owe_lists_nothing / record_own_token_lists / record_other_token_unchanged / clear_own_token_lists_nothing / clear_other_token_unchanged / failed_index_takes_no_writes / other_index_takes_writes / retry_own_token_takes_writes / retry_keeps_token / owe_takes_writes / listed_needs_record",
+        axis: Lean,
+        anchor: "crates/database/db/src/definition/migration/reindex/owed.rs record_failure, retry_failed, owed_status, owed_failure, clear_owed_reindex; crates/database/db/src/collection/index_status.rs IndexStatuses::takes_writes",
+        model_ref: "ReindexFailureListing (lake build)",
+        tiers: &[Boundary],
+        bound_by: "tools/integration-test/tests/testo/collection_version/migrations/query/with_unique_index.rs migration_giving_two_documents_one_unique_value_fails_the_index",
     },
 ];

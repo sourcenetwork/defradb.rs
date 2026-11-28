@@ -121,7 +121,8 @@ impl Peer {
             Provider::Shared { rpc, trust } => (shared(&spec, *rpc, trust).await, None),
         };
         let policy = seed().id().expect("policy ID");
-        node.get_dac_policy_as(&defra_core::RequestContext::default(), &policy)
+        node.anonymous()
+            .get_dac_policy(&policy)
             .await
             .expect("policy read")
             .expect("seeded policy");

@@ -8,7 +8,6 @@ use db::{AutoCommitMutator, DbCollectionProvider, LensedAutoCommitFetcher, DB};
 use kovan_map::HopscotchMap;
 use query::{QueryExecutor, QueryRequest};
 use rapidhash::fast::RandomState;
-use schema::{CollectionVersion, FieldDescription, FieldKind, VectorEmbeddingDescription};
 use serde_json::{json, Value};
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -92,37 +91,16 @@ fn a_batch_of_hundreds_of_embedded_encrypted_creates_commits() {
             keys: HopscotchMap::with_hasher(RandomState::default()),
         });
         db.set_kms(kms.clone());
-        let mut collection = CollectionVersion::new(
-            "Texts",
-            "texts-v1",
-            "col-texts",
-            vec![
-                FieldDescription::new(
-                    "1",
-                    "_docID",
-                    FieldKind::doc_id(),
-                    schema::CType::LwwRegister,
-                ),
-                FieldDescription::new("2", "text", FieldKind::string(), schema::CType::LwwRegister),
-                FieldDescription::new(
-                    "3",
-                    "vector",
-                    FieldKind::float64_array(),
-                    schema::CType::LwwRegister,
-                ),
-            ],
+        let sdl = format!(
+            r#"type Texts {{
+                text: String
+                vector: [Float32!] @embedding(fields: ["text"], provider: "openai", model: "test-model", url: "{}")
+            }}"#,
+            server.url()
         );
-        collection
-            .vector_embeddings
-            .push(VectorEmbeddingDescription {
-                field_name: "vector".to_string(),
-                fields: vec!["text".to_string()],
-                model: "test-model".to_string(),
-                provider: "openai".to_string(),
-                template: String::new(),
-                url: server.url(),
-            });
-        db.create_collection(collection).await.unwrap();
+        db.add_collection(&defra_core::RequestContext::ambient(), &sdl)
+            .await
+            .unwrap();
 
         let runner = query::QueryRunner::with_provider(
             LensedAutoCommitFetcher::new(Arc::clone(&db)),

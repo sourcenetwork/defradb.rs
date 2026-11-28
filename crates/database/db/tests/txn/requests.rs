@@ -26,9 +26,12 @@ type Runner =
 
 async fn users_db() -> Arc<DB<RegolithStore>> {
     let db = Arc::new(DB::new(RegolithStore::in_memory().unwrap()).unwrap());
-    for schema in query::parse_sdl("type Users { name: String }").unwrap() {
-        db.create_collection(schema).await.unwrap();
-    }
+    db.add_collection(
+        &defra_core::RequestContext::ambient(),
+        "type Users { name: String }",
+    )
+    .await
+    .unwrap();
     db
 }
 

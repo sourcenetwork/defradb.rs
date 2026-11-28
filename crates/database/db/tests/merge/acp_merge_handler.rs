@@ -9,7 +9,6 @@ use defra_core::merge::BlockMetadata;
 use defra_core::merge::MergeOutcome;
 use identity::Did;
 use schema::CollectionVersion;
-use schema::PolicyDescription;
 use std::sync::Arc;
 
 const OWNER: &str = "did:key:z6Mkowner";
@@ -17,8 +16,15 @@ const ATTACKER: &str = "did:key:z6Mkattacker";
 const NODE: &str = "did:key:z6Mknode";
 
 fn protected_collection() -> CollectionVersion {
-    CollectionVersion::new("Users", "v1", "col1", vec![])
-        .with_policy(PolicyDescription::new("policy-1", "users"))
+    crate::common::schema::parsed(
+        r#"type Users @policy(id: "policy-1", resource: "users") { name: String }"#,
+    )
+}
+
+fn protected_collection_id() -> &'static str {
+    static ID: regolith::sync::Lazy<String> =
+        regolith::sync::Lazy::new(|| protected_collection().collection_id);
+    &ID
 }
 
 fn hook(strict: bool) -> AcpCompositeMergeHook {
@@ -37,7 +43,7 @@ fn hook_with_acp(strict: bool, acp: Arc<LocalDocumentACP>) -> AcpCompositeMergeH
 
 async fn registered_acp() -> Arc<LocalDocumentACP> {
     let acp = Arc::new(LocalDocumentACP::new(Arc::new(MemoryAcpStore::new())));
-    acp.register_doc_object(&Did::new(OWNER).unwrap(), "policy-1", "users", "doc1")
+    acp.register_doc_object(&Did::new(OWNER).unwrap(), "policy-1", "users", "doc1", &[])
         .await
         .unwrap();
     acp
@@ -89,7 +95,13 @@ fn local_acp_allows_unregistered_encrypted_document() {
             .on_encrypted_link(
                 "doc1",
                 &protected_collection(),
-                &BlockMetadata::normal("doc1", "col1", "creator", Some("peer"), false),
+                &BlockMetadata::normal(
+                    "doc1",
+                    protected_collection_id(),
+                    "creator",
+                    Some("peer"),
+                    false,
+                ),
             )
             .await
             .unwrap();
@@ -106,7 +118,13 @@ fn strict_acp_retries_unregistered_encrypted_document() {
             .on_encrypted_link(
                 "doc1",
                 &protected_collection(),
-                &BlockMetadata::normal("doc1", "col1", "creator", Some("peer"), false),
+                &BlockMetadata::normal(
+                    "doc1",
+                    protected_collection_id(),
+                    "creator",
+                    Some("peer"),
+                    false,
+                ),
             )
             .await
             .unwrap();
@@ -261,13 +279,27 @@ fn strict_acp_registers_owner_only_for_a_did_creator() {
     let hook = hook(true);
     let collection = protected_collection();
 
-    let peer_id = BlockMetadata::normal("doc1", "col1", "12D3KooWPeer", Some("peer"), false);
+    let peer_id = BlockMetadata::normal(
+        "doc1",
+        protected_collection_id(),
+        "12D3KooWPeer",
+        Some("peer"),
+        false,
+    );
     assert!(hook
-        .post_commit_action("doc1", &collection, &peer_id)
+        .post_commit_action("doc1", &collection, &peer_id, Vec::new())
         .is_none());
 
-    let did = BlockMetadata::normal("doc1", "col1", "did:key:z6MkOwner", Some("peer"), false);
-    assert!(hook.post_commit_action("doc1", &collection, &did).is_some());
+    let did = BlockMetadata::normal(
+        "doc1",
+        protected_collection_id(),
+        "did:key:z6MkOwner",
+        Some("peer"),
+        false,
+    );
+    assert!(hook
+        .post_commit_action("doc1", &collection, &did, Vec::new())
+        .is_some());
 }
 
 // These tests exercise strict merge semantics without a running Vera:
@@ -297,7 +329,13 @@ fn strict_acp_requires_the_signers_permission_even_for_the_local_node() {
             hook.on_protected_composite(
                 "doc1",
                 &protected_collection(),
-                &BlockMetadata::normal("doc1", "col1", OWNER, Some("peer"), false),
+                &BlockMetadata::normal(
+                    "doc1",
+                    protected_collection_id(),
+                    OWNER,
+                    Some("peer"),
+                    false
+                ),
             )
             .await
             .unwrap(),
@@ -355,7 +393,13 @@ fn strict_acp_writer_permission_does_not_replace_receiver_read_permission() {
             hook.on_protected_composite(
                 "doc1",
                 &protected_collection(),
-                &BlockMetadata::normal("doc1", "col1", OWNER, Some("peer"), false),
+                &BlockMetadata::normal(
+                    "doc1",
+                    protected_collection_id(),
+                    OWNER,
+                    Some("peer"),
+                    false
+                ),
             )
             .await
             .unwrap(),
@@ -363,6 +407,104 @@ fn strict_acp_writer_permission_does_not_replace_receiver_read_permission() {
                 "replicated protected document is not yet readable by local node"
             ))
         );
+    })
+    .unwrap()
+}
+
+/// A provider that keeps the relationships each registration carries.
+#[derive(Default)]
+struct Recording {
+    registered: regolith::sync::SegQueue<(String, Vec<acp::DerivedRelationship>)>,
+}
+
+impl Recording {
+    /// The registrations made since the last call, in order.
+    fn take_registered(&self) -> Vec<(String, Vec<acp::DerivedRelationship>)> {
+        std::iter::from_fn(|| self.registered.pop()).collect()
+    }
+}
+
+#[async_trait::async_trait]
+impl DocumentACP for Recording {
+    async fn register_doc_object(
+        &self,
+        identity: &Did,
+        _: &str,
+        _: &str,
+        _: &str,
+        relationships: &[acp::DerivedRelationship],
+    ) -> acp::Result<()> {
+        self.registered
+            .push((identity.to_string(), relationships.to_vec()));
+        Ok(())
+    }
+
+    async fn is_doc_registered(&self, _: &str, _: &str, _: &str) -> acp::Result<bool> {
+        Ok(false)
+    }
+
+    async fn check_doc_access(
+        &self,
+        _: &Identity,
+        _: acp::DocumentPermission,
+        _: &str,
+        _: &str,
+        _: &str,
+    ) -> acp::Result<bool> {
+        Ok(false)
+    }
+
+    async fn add_actor_relationship(
+        &self,
+        _: &Did,
+        _: &Did,
+        _: &str,
+        _: &str,
+        _: &str,
+        _: &str,
+        _: &[String],
+    ) -> acp::Result<bool> {
+        Ok(false)
+    }
+
+    async fn delete_actor_relationship(
+        &self,
+        _: &Did,
+        _: &Did,
+        _: &str,
+        _: &str,
+        _: &str,
+        _: &str,
+        _: &[String],
+    ) -> acp::Result<bool> {
+        Ok(false)
+    }
+
+    async fn unregister_doc_object(&self, _: &str, _: &str, _: &str) -> acp::Result<()> {
+        Ok(())
+    }
+}
+
+#[test]
+fn strict_acp_registers_a_replicated_document_with_its_derived_relationships() {
+    workers::block_on(async {
+        let acp = Arc::new(Recording::default());
+        let hook =
+            AcpCompositeMergeHook::new(Some(Identity::Authenticated(Did::new(NODE).unwrap())));
+        hook.set_document_acp(acp.clone());
+        hook.set_strict_replicated_doc_access(true);
+        let derived = vec![acp::DerivedRelationship {
+            relation: "author".into(),
+            target_resource: "author".into(),
+            target_doc_id: "bae-mike".into(),
+        }];
+        let creator = BlockMetadata::normal("doc1", "col1", OWNER, Some("peer"), false);
+        hook.post_commit_action("doc1", &protected_collection(), &creator, derived.clone())
+            .expect("a registration")
+            .run()
+            .await
+            .expect("registered");
+        assert_eq!(acp.take_registered(), vec![(OWNER.to_owned(), derived)]);
     })
     .unwrap()
 }

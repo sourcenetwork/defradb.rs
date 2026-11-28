@@ -24,8 +24,8 @@ fn a_writers_delete_archives_the_object_as_its_owner_and_a_reader_may_not_delete
         let node = node(directory.path()).await;
         let vera = node.vera_acp().expect("vera.rs document ACP").clone();
         let owner = identity::Did::new(vera.self_did().expect("actor DID")).unwrap();
-        let reader = identity::Did::new(STRANGER).unwrap();
-        let writer = identity::Did::new(WRITER).unwrap();
+        let reader = identity::Did::new(STRANGER.to_string()).unwrap();
+        let writer = identity::Did::new(WRITER.to_string()).unwrap();
         let policy = vera
             .add_policy(owner.as_str(), POLICY, None)
             .await
@@ -35,15 +35,10 @@ fn a_writers_delete_archives_the_object_as_its_owner_and_a_reader_may_not_delete
             .expect("collection");
         let doc = created(node.execute_request(create_user("doomed", &owner)).await);
         for (relation, target) in [("reader", &reader), ("writer", &writer)] {
-            node.add_dac_actor_relationship(
-                owner.as_str(),
-                "Users",
-                &doc,
-                relation,
-                target.as_str(),
-            )
-            .await
-            .expect("grant");
+            node.with_identity(identity::Did::new(owner.as_str()).unwrap())
+                .add_dac_actor_relationship("Users", &doc, relation, target.as_str())
+                .await
+                .expect("grant");
         }
         assert!(chain_reads(&node, &reader, &policy, &doc).await);
 

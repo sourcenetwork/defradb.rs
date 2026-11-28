@@ -264,6 +264,13 @@ A migration configured in a transaction applies to queries in that transaction, 
 
 An `update_` mutation on a document written at an older version returns migrated values, and a migration registered after the document was updated still applies.
 
+# `defra.collection_version.migrations.transform_with_version`: A visible version's transform is never missing
+
+- **Parents:** ["go.collection_version.migrations"]
+- **Scenarios:** ["collection_version::migrations::query::with_concurrent_update::collection_migration_updates_during_a_lens_patch_find_the_transform", "collection_version::migrations::query::with_txn_concurrent_read::collection_migration_reads_during_a_txn_migration_commit_find_the_transform"]
+
+A collection version whose `PreviousVersion.Transform` names a lens, committed by `PATCH /api/v0/collections` with a lens or by a migration set in an explicit transaction, has its transform available to every request that sees the version, from the moment the commit lands: reads, `update_` mutations, deferred index drains and P2P merges that read the version from storage or from the collection cache while the patch or commit is still returning migrate documents through the lens, and none fails with `transform not found: <lens id>` or `lens migration failed for document <docID>: transform not found: <lens id>`. A commit that fails leaves its lens unknown.
+
 # `go.collection_version.define.scalar_kinds`: Every scalar kind is accepted and introspected
 
 - **Parents:** ["go.collection_version.define"]
@@ -278,6 +285,38 @@ Fields of kind `Blob`, `JSON`, `Float32`, `Float64`, `Float` and every other sup
 - **Scenarios:** ["collection_version.simple-errors-given-duplicate-collection", "collection_version.simple-errors-given-duplicate-collection-in-same-sdl", "collection_version.simple-errors-given-duplicate-collection-in-same-sdlmultiple", "collection_version.simple-errors-given-non-null-many-relation-field", "collection_version.simple-errors-given-type-with-invalid-field-type", "collection_version.simple-errors-given-type-with-invalid-field-type-multiple", "collection_version.with-missing-type-errors"]
 
 Adding a collection whose name already exists (in the store or twice in one SDL) fails with `collection already exists` (one `collection already exists. Name: Users` line per duplicate); an unknown field type fails with `no type found for given name. Field: name, Kind: NotAType` (one line per bad field); a non-null list relation such as `[Dogs!]` fails with `NonNull variants for type are not supported. Type: Dogs`; a field with no type fails with `field type not specified. Object: User, Field: name`.
+
+# `go.collection_version.define.field_type_forms`: Which field type declarations are accepted
+
+- **Parents:** ["go.collection_version.define"]
+- **Scenarios:** ["collection_version::field_type_forms::every_scalar_and_a_relation_is_accepted_nillable", "collection_version::field_type_forms::every_scalar_but_id_is_accepted_non_null", "collection_version::field_type_forms::lists_of_array_scalars_and_relations_are_accepted", "collection_version::field_type_forms::lists_of_non_null_array_scalars_are_accepted", "collection_version::field_type_forms::a_non_null_id_is_refused", "collection_version::field_type_forms::a_non_null_relation_is_refused", "collection_version::field_type_forms::a_non_null_scalar_list_is_refused", "collection_version::field_type_forms::a_non_null_list_of_non_null_scalars_is_refused", "collection_version::field_type_forms::a_non_null_relation_list_is_refused", "collection_version::field_type_forms::a_list_of_non_null_ids_is_refused", "collection_version::field_type_forms::a_list_of_non_null_blobs_is_refused", "collection_version::field_type_forms::a_list_of_non_null_json_is_refused", "collection_version::field_type_forms::a_list_of_non_null_relations_is_refused", "collection_version::field_type_forms::a_list_of_ids_is_refused", "collection_version::field_type_forms::a_list_of_blobs_is_refused", "collection_version::field_type_forms::a_list_of_json_is_refused", "collection_version::field_type_forms::a_nested_list_is_refused", "collection_version::field_type_forms::a_refusal_in_a_transaction_keeps_its_code", "collection_version::field_type_forms::an_unknown_type_beside_a_refused_list_keeps_the_code"]
+
+A field declared in SDL takes one of these forms; `Author` stands for any collection (a relation):
+
+| Type | `T` | `T!` | `[T]` | `[T!]` | `[T]!`, `[T!]!` |
+|------|-----|------|-------|--------|-----------------|
+| `String`, `Int`, `Float`, `Float64`, `Float32`, `Boolean`, `DateTime` | accepted | accepted | accepted | accepted | refused (1) |
+| `JSON`, `Blob` | accepted | accepted | refused (3) | refused (2) | refused (1) |
+| `ID` | accepted | refused (1) | refused (3) | refused (2) | refused (1) |
+| `Author` | accepted | refused (1) | accepted | refused (2) | refused (1) |
+
+A list of lists (`[[Int]]`, with or without `!`) is refused with (4), and with (1) when the outer list is non-null. Each refusal fails with Go's text, for a field `value` on `User`:
+
+1. `NonNull fields are not currently supported`
+2. `NonNull variants for type are not supported. Type: ID` (the element type)
+3. `no type found for given name. Field: value, Kind: [ID]` (the element type)
+4. `nested list types are not supported. Object: User, Field: value`
+
+A field of an unknown type beside a list refused with (3) adds its own line (`no type found for given name. Field: a, Kind: NotAType`); the lines are sorted, one per field. A refusal inside an explicit transaction has the same text.
+
+Accepting a form the table refuses, refusing one it accepts, or changing a refusal's text or code (`defra.collection_version.define.field_type_code`) is a breaking change.
+
+# `defra.collection_version.define.field_type_code`: A refused field type declaration carries a code
+
+- **Parents:** ["go.collection_version.define"]
+- **Scenarios:** ["collection_version::field_type_forms::a_non_null_id_is_refused", "collection_version::field_type_forms::a_non_null_relation_is_refused", "collection_version::field_type_forms::a_non_null_scalar_list_is_refused", "collection_version::field_type_forms::a_non_null_list_of_non_null_scalars_is_refused", "collection_version::field_type_forms::a_non_null_relation_list_is_refused", "collection_version::field_type_forms::a_list_of_non_null_ids_is_refused", "collection_version::field_type_forms::a_list_of_non_null_blobs_is_refused", "collection_version::field_type_forms::a_list_of_non_null_json_is_refused", "collection_version::field_type_forms::a_list_of_non_null_relations_is_refused", "collection_version::field_type_forms::a_list_of_ids_is_refused", "collection_version::field_type_forms::a_list_of_blobs_is_refused", "collection_version::field_type_forms::a_list_of_json_is_refused", "collection_version::field_type_forms::a_nested_list_is_refused", "collection_version::field_type_forms::a_refusal_in_a_transaction_keeps_its_code", "collection_version::field_type_forms::an_unknown_type_beside_a_refused_list_keeps_the_code"]
+
+Every refusal in `go.collection_version.define.field_type_forms` reaches an in-process or HTTP client of a Rust node with the code `UNSUPPORTED_FIELD_TYPE` beside Go's text, in autocommit and inside an explicit transaction alike: the in-process error's `code()` (`AddCollectionError::UnsupportedFieldType`), and the `code` member of the HTTP error body (`{"error": "NonNull fields are not currently supported", "code": "UNSUPPORTED_FIELD_TYPE"}`, status 400). An SDL whose fields include such a refusal keeps the code when other fields have unknown types; an SDL whose only bad fields have unknown types fails with no code. `defradb client collection add` prints Go's text alone (`Error: server returned error: <message>`): the refusal is no GraphQL error, and only `client query` prints a GraphQL error's code (`defra.cli.query.error_code`). A Go node sends no code.
 
 # `go.collection_version.define.embeddings`: `@embedding` vector field definitions
 
@@ -384,3 +423,25 @@ Truncating a collection removes only its own documents and index entries: anothe
 - **Scenarios:** ["collection_version::updates::remove::removed_transform_reindex::remove_source_transform_reindexes_an_indexed_collection", "collection_version::updates::remove::removed_transform_reindex::removing_transform_preserves_old_and_new_documents", "collection_version::updates::remove::removed_transform_reindex::removing_an_inactive_versions_transform_reindexes_the_active_version"]
 
 Removing a collection's source transform by patch (`{"op": "remove", "path": "/Users/PreviousVersion/Transform"}`) reindexes its indexed fields from the stored values, so a filter on an indexed field returns the values reads return, not values the removed transform produced: with `Users { name: String @index }` holding `{name: "Shahzad"}` and a patch whose `set-default` lens sets `name` to `"Fred"`, removing the transform makes `Users(filter: {name: {_eq: "Shahzad"}})` return that document. A document created at the active version keeps its value: with `age: Int @index`, an `increment` lens adding 5, `{name: "old", age: 20}` written before the lens and `{name: "new", age: 40}` after it, removing the transform makes a filter on `age: 20` return `old` and one on `age: 40` return `new`. The transform removed may be an inactive version's that the active version's history passes through: with the `increment` lens on the version that added `level`, and a later version adding `rank` without a lens, removing the `level` version's transform by its version ID makes a filter on `age: 20` return `old`. A value already materialized through the removed transform is retained, because its stored version alone does not tell it from a document created at the active version and a lens need not be reversible.
+
+# `defra.collection_version.migrations.query.index.unique_clash`: A migration that gives two documents one unique value
+
+- **Parents:** ["go.collection_version.migrations.query.index"]
+- **Scenarios:** ["collection_version::migrations::query::with_unique_index::migration_giving_two_documents_one_unique_value_fails_the_index", "collection_version::migrations::query::with_unique_index::switching_back_after_a_unique_clash_rebuilds_the_index", "collection_version::migrations::query::with_unique_index::migration_keeping_unique_values_distinct_keeps_the_index"]
+
+A migration whose lens gives two documents the same value of a unique index still commits, and the index lists as a failed build: with `Users { name: String, age: Int @index(unique: true) }` holding `{name: "Andy", age: 20}` and `{name: "John", age: 30}`, a patch whose `set-default` lens sets `age` to 5 makes the listing of `Users_age_ASC` show `Action` 3 (index backfill), `Status` 2 (errored) and the `Reason` `can not index a doc's field(s) that violates unique index. DocID: <docID>, age: 5`. Reads return the migrated values (`Users(filter: {age: {_eq: 5}})` returns both documents) by scanning (0 index fetches), and the failed index is not maintained by writes, as Go abandons a failed index, so it refuses no write: `{name: "Fred", age: 5}` and then `{name: "Gina", age: 5}` can both be created, the index still lists as failed, and `age: 5` returns all four documents. Switching the active version back to the first one while the index lists as failed rebuilds the index from the old values: it lists as completed (`Status` 3, empty `Reason`) and `Users(filter: {age: {_eq: 20}})` returns `Andy` through 1 index fetch. A migration that keeps the values distinct (an `increment` lens adding 5) leaves the index completed and used (`age: 25` returns `Andy` through 1 index fetch).
+
+# `defra.view.unique_clash`: A lensed view whose items share a unique value
+
+- **Parents:** ["go.view"]
+- **Scenarios:** ["view::simple::with_unique_index::view_materialized_transform_giving_two_items_one_unique_value", "view::simple::with_unique_index::view_transform_giving_two_items_one_unique_value"]
+
+A view's items are not indexed, so a unique index a view declares refuses nothing: with `User { name: String }` holding `John` and `Fred`, a view `UserView { name: String, age: Int @index(unique: true) }` over `User { name }` whose `set-default` lens sets `age` to 23 returns both items for `UserView(filter: {age: {_eq: 23}})`, whether or not the view is materialized, and `RefreshViews` succeeds. A materialized view's cache holds every field the view declares, including fields only its lens produces, so the materialized view returns `age: 23` for both items as the non-materialized one does.
+
+# `defra.wasm.collection_objects`: The wasm client returns Go-shaped collection version objects
+
+- **Parents:** ["go.collection_version"]
+- **Scenarios:** ["collection_js_tests::a_plain_collection_is_gos_js_object", "collection_js_tests::relation_kinds_are_gos_object_kinds", "collection_js_tests::every_optional_value_is_gos_encoding", "collection_js_tests::index_kinds_are_gos_kind_descriptions", "collection_js_tests::every_vector_algorithm_keeps_its_parameters", "client::tests::test_get_collections_returns_gos_js_collection_objects"]
+- **Scope:** "wasm client only; this requirement is exempt from testo because no testo client runs the published browser client, and the serializer and real JavaScript object are checked by crate tests"
+
+The browser client's `getCollections()` returns data-only `client.CollectionVersion` objects with the JavaScript shape Go produces by `json.Marshal` on the untagged struct. This is deliberately different from Go's `getCollections()`, which returns collection handles with methods. The wasm client returns the same version-object shape Go uses in `addCollection` and `version` responses. Its keys are, in this order: `Name`, `VersionID`, `CollectionID`, `CollectionSet`, `Query`, `PreviousVersion`, `Fields`, `Indexes`, `EncryptedIndexes`, `Policy`, `IsActive`, `IsMaterialized`, `IsBranchable`, `IsEmbeddedOnly`, `IsPlaceholder`, `VectorEmbeddings`, and no others. An unset `CollectionSet`, `Query`, `PreviousVersion` or `Policy` is `null`, never missing or `undefined`. Each entry of `Fields` has the keys `FieldID`, `Name`, `Kind`, `Typ`, `RelationName`, `IsPrimary`, `DefaultValue`, `Size`, in that order. `Kind` is the scalar kind's number (`Int` is `4`, `String` is `11`, `[Float32!]` is `9`) or, for a relation, `{"Array": false, "CollectionID": "<id>"}` or `{"RelativeID": "<id>", "Array": true}`. `Typ` is the CRDT type's number (`0` none, `1` lww, `4` pncounter, `5` pcounter), not its name. `RelationName` and `DefaultValue` are `null` when unset. Integer defaults use JavaScript Number with the same rounding as parsing the Go JSON response, including integers outside the safe-integer range. Each entry of `Indexes` is `{Name, ID, Fields, Kind, KindDescription, Unique}`, with `Kind` `0` and `KindDescription` `{Unique}` for an ordered index, and `Kind` `1` and `KindDescription` `{Fields, Algorithm, Metric, Dimensions}` plus the selected algorithm's `HNSW`, `IVFPQ`, `IVFFLAT`, `SSG` or `DISKANN` block for a vector index. Unselected algorithm blocks are absent, and `Fields` there is the list of field names. `Policy` is `{ID, ResourceName}`, `CollectionSet` `{CollectionSetID, RelativeID}`, `PreviousVersion` `{SourceCollectionID, Transform}`, `Query` `{Query, Transform}`, each `Transform` `null` when unset. A wasm client is not a testo client, so the shape is checked by the crate's native unit tests over the serializer and a browser test over the JavaScript object.

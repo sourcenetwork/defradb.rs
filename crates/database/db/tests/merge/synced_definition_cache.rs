@@ -16,7 +16,7 @@ use defra_core::block::{
 };
 use defra_core::merge::{BlockMetadata, MergeHandler, MergeOutcome};
 use document::NormalValue;
-use schema::{CType, CollectionVersion, FieldDescription, FieldKind, PolicyDescription};
+use schema::{CType, PolicyDescription};
 use storage::RegolithStore;
 
 /// Go's `IntToFieldKind` numeric kind for a nillable string.
@@ -28,8 +28,14 @@ fn policy() -> PolicyDescription {
     PolicyDescription {
         id: "policy-agents".to_string(),
         resource_name: "agents".to_string(),
-        parent_field: None,
     }
+}
+
+const AGENT_SDL: &str =
+    r#"type Agent @policy(id: "policy-agents", resource: "agents") { did: String @immutable }"#;
+
+fn agent_collection_id() -> String {
+    crate::common::schema::parsed(AGENT_SDL).collection_id
 }
 
 /// A node holding `Agent` with a policy and an `@immutable` field.
@@ -40,28 +46,9 @@ async fn node() -> (
 ) {
     let store = Arc::new(RegolithStore::in_memory().unwrap());
     let db = Arc::new(DB::from_arc(store.clone()).unwrap());
-    let mut did =
-        FieldDescription::new("2", "did", FieldKind::string(), schema::CType::LwwRegister);
-    did.immutable = true;
-    db.create_collection(
-        CollectionVersion::new(
-            "Agent",
-            "col-agent",
-            "col-agent",
-            vec![
-                FieldDescription::new(
-                    "1",
-                    "_docID",
-                    FieldKind::doc_id(),
-                    schema::CType::LwwRegister,
-                ),
-                did,
-            ],
-        )
-        .with_policy(policy()),
-    )
-    .await
-    .unwrap();
+    db.add_collection(&defra_core::RequestContext::ambient(), AGENT_SDL)
+        .await
+        .unwrap();
     let blockstore = Arc::new(DefraBlockstore::new(store, false));
     let handler = DbMergeHandler::new(db.clone(), blockstore.clone());
     (db, handler, blockstore)
@@ -139,7 +126,7 @@ fn a_synced_definition_does_not_displace_a_collection_of_the_same_name() {
         let (db, handler, blockstore) = node().await;
         assert_eq!(
             commitments(&db),
-            (Some(policy()), true, "col-agent".to_string()),
+            (Some(policy()), true, agent_collection_id()),
             "the local definition holds its policy and its immutable field"
         );
 
@@ -152,7 +139,7 @@ fn a_synced_definition_does_not_displace_a_collection_of_the_same_name() {
 
         assert_eq!(
             commitments(&db),
-            (Some(policy()), true, "col-agent".to_string()),
+            (Some(policy()), true, agent_collection_id()),
             "a definition delta carries no policy and no @immutable flag, so a \
          rebuilt record must not take the local one's place"
         );
@@ -272,14 +259,12 @@ fn a_patched_definition_keeps_what_the_delta_cannot_carry() {
     workers::block_on(async {
         let store = Arc::new(RegolithStore::in_memory().unwrap());
         let db = Arc::new(DB::from_arc(store.clone()).unwrap());
-        let defined = query::parse_sdl(
-            r#"type Agent @policy(id: "p1", resource: "agents") @branchable {
+        let defined_sdl = r#"type Agent @policy(id: "p1", resource: "agents") @branchable {
             did: String @immutable @index
-        }"#,
-        )
-        .unwrap()
-        .remove(0);
-        db.create_collection(defined).await.unwrap();
+        }"#;
+        db.add_collection(&defra_core::RequestContext::ambient(), defined_sdl)
+            .await
+            .unwrap();
         let blockstore = Arc::new(DefraBlockstore::new(store, false));
         let handler = DbMergeHandler::new(db.clone(), blockstore.clone());
 
@@ -360,20 +345,33 @@ fn a_patched_definition_does_not_unmake_a_view() {
     workers::block_on(async {
         let store = Arc::new(RegolithStore::in_memory().unwrap());
         let db = Arc::new(DB::from_arc(store.clone()).unwrap());
-        let mut view = CollectionVersion::new(
-            "Tally",
-            "col-tally",
-            "col-tally",
-            vec![FieldDescription::new(
-                "1",
-                "_docID",
-                FieldKind::doc_id(),
-                schema::CType::LwwRegister,
-            )],
-        );
-        view.query = Some(schema::QuerySource::new(serde_json::json!({})));
-        view.is_materialized = false;
-        db.create_collection(view).await.unwrap();
+        // A view over `Users`, built as `AddView` builds one: its SDL, then
+        // the query it reads.
+        db.add_collection(
+            &defra_core::RequestContext::ambient(),
+            "type Users { name: String }",
+        )
+        .await
+        .unwrap();
+        let mut view = query::parse_sdl("type Tally @materialized(if: false) { name: String }")
+            .unwrap()
+            .remove(0);
+        let select = query::parse_query_with_limits(
+            "query { Users { name } }",
+            None,
+            query::QueryLimits::default(),
+        )
+        .unwrap()
+        .remove(0);
+        view.query = Some(schema::QuerySource::new(query::select_to_go_json(&select)));
+        db.create_view_collections_as(
+            &defra_core::RequestContext::ambient(),
+            vec![view],
+            None,
+            None,
+        )
+        .await
+        .unwrap();
         let blockstore = Arc::new(DefraBlockstore::new(store, false));
         let handler = DbMergeHandler::new(db.clone(), blockstore.clone());
 

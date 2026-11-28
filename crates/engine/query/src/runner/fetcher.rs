@@ -119,7 +119,7 @@ impl DocFetcher for FetcherWrapper {
         query_vector: &[f64],
         k: usize,
         effort: Option<usize>,
-    ) -> Result<Vec<u64>> {
+    ) -> Result<crate::fetcher::VectorCandidates> {
         self.get_fetcher()
             .vector_search(collection_name, index_id, query_vector, k, effort)
             .await
@@ -261,8 +261,11 @@ impl DocFetcher for FetcherWrapper {
     async fn get_document_arrivals(
         &self,
         options: &crate::fetcher::DocumentArrivalOptions,
+        reader: &crate::fetcher::DocumentReader<'_>,
     ) -> Result<crate::fetcher::DocumentArrivalPage> {
-        self.get_fetcher().get_document_arrivals(options).await
+        self.get_fetcher()
+            .get_document_arrivals(options, reader)
+            .await
     }
 
     async fn get_document_updates(
