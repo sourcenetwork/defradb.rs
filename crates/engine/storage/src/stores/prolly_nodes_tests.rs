@@ -3,13 +3,10 @@ use std::sync::Arc;
 
 use prolly::{diff, tree::DEFAULT_TARGET, Cached, Hash, Item, MemStore, Tree};
 
-use super::{LiveRoots, LiveRootsFuture, ProllyNodes, ReclaimPage, NODES_PER_SWEEP};
+use super::{read_roots, LiveRoots, LiveRootsFuture, ProllyNodes, ReclaimPage, NODES_PER_SWEEP};
 use crate::backends::RegolithStore;
 use crate::corekv::Dropable as _;
-use crate::corekv::{
-    engine_retry_options, transact, RetryAttemptFn, RetryAttemptFuture, RetryAttemptValue,
-    RetryTxn, Store,
-};
+use crate::corekv::{engine_retry_options, RetryTxn, Store};
 
 /// The cache's budget: far below the tree's size.
 const BUDGET: usize = 64 * 1024;
@@ -50,61 +47,11 @@ pub(super) async fn node_keys(store: &RegolithStore) -> Vec<Vec<u8>> {
     keys
 }
 
-/// The key the tests keep their live roots under: no family's, so Ordinary.
-const ROOTS_KEY: &[u8] = b"x/prolly-test-roots";
-
-/// The root write of a tree's writer: it sets the roots key.
-pub(super) struct Publish {
-    pub(super) roots: Vec<u8>,
-}
-
-impl RetryAttemptFn for Publish {
-    fn run<'a>(&'a mut self, txn: &'a mut dyn RetryTxn) -> RetryAttemptFuture<'a> {
-        Box::pin(async move {
-            txn.set(ROOTS_KEY, &self.roots).await?;
-            Ok(Box::new(()) as RetryAttemptValue)
-        })
-    }
-}
-
-fn root_write(roots: &[Hash]) -> Box<Publish> {
-    Box::new(Publish {
-        roots: roots.iter().flat_map(|root| root.0).collect(),
-    })
-}
-
-/// Publishes `roots` in the transaction that writes every node `nodes` holds.
 pub(super) async fn publish<S>(nodes: &mut ProllyNodes<S>, roots: &[Hash])
 where
     S: Store + 'static,
 {
-    nodes.publish::<()>(root_write(roots)).await.unwrap();
-}
-
-/// Publishes `roots` alone, as a writer that put none of their nodes.
-async fn publish_roots(store: &RegolithStore, roots: &[Hash]) {
-    transact::<_, ()>(store, engine_retry_options(5), None, root_write(roots))
-        .await
-        .unwrap();
-}
-
-async fn stored_roots(txn: &mut dyn RetryTxn) -> crate::corekv::Result<Vec<Hash>> {
-    let stored = txn.get(ROOTS_KEY).await?.unwrap_or_default();
-    stored
-        .chunks(32)
-        .map(|root| {
-            Hash::from_slice(root).map_err(|error| crate::corekv::Error::Other(error.to_string()))
-        })
-        .collect()
-}
-
-/// The roots under `ROOTS_KEY`.
-pub(super) struct StoredRoots;
-
-impl LiveRoots for StoredRoots {
-    fn read<'txn>(&'txn self, txn: &'txn mut dyn RetryTxn) -> LiveRootsFuture<'txn> {
-        Box::pin(stored_roots(txn))
-    }
+    nodes.publish(roots).await.unwrap();
 }
 
 /// The roots under `ROOTS_KEY`, with a writer that publishes once, right
@@ -118,9 +65,10 @@ struct PublishedAfterTheRead {
 impl LiveRoots for PublishedAfterTheRead {
     fn read<'txn>(&'txn self, txn: &'txn mut dyn RetryTxn) -> LiveRootsFuture<'txn> {
         Box::pin(async move {
-            let roots = stored_roots(txn).await?;
+            let roots = read_roots(txn).await?;
             if self.reads.fetch_add(1, Ordering::SeqCst) == 0 {
-                publish_roots(&self.store, &[self.root]).await;
+                let mut writer = ProllyNodes::new(Arc::clone(&self.store), engine_retry_options(5));
+                publish(&mut writer, &[self.root]).await;
             }
             Ok(roots)
         })
@@ -128,7 +76,7 @@ impl LiveRoots for PublishedAfterTheRead {
 }
 
 pub(super) async fn sweep(store: &RegolithStore) -> ReclaimPage {
-    ProllyNodes::reclaim(store, Arc::new(StoredRoots), None, NODES_PER_SWEEP)
+    ProllyNodes::reclaim(store, None, NODES_PER_SWEEP)
         .await
         .unwrap()
 }
@@ -195,6 +143,7 @@ fn a_root_published_while_a_page_is_swept_keeps_the_old_nodes_it_names() {
         let first = Tree::build(&mut regolith, DEFAULT_TARGET, (0..5_000).map(entry))
             .await
             .unwrap();
+        publish(&mut regolith, &[first.root().unwrap()]).await;
         let mut tree = first;
         tree.remove(&mut regolith, &entry(2_499).0).await.unwrap();
         let edited = tree;
@@ -212,9 +161,10 @@ fn a_root_published_while_a_page_is_swept_keeps_the_old_nodes_it_names() {
             reads: AtomicUsize::new(0),
         });
 
-        let report = ProllyNodes::reclaim(&*store, Arc::clone(&roots), None, NODES_PER_SWEEP)
-            .await
-            .unwrap();
+        let report =
+            ProllyNodes::reclaim_with_roots(&*store, Arc::clone(&roots), None, NODES_PER_SWEEP)
+                .await
+                .unwrap();
         assert_eq!(
             roots.reads.load(Ordering::SeqCst),
             2,
@@ -239,14 +189,11 @@ fn a_sweep_walks_one_bounded_page_at_a_time() {
         publish(&mut regolith, &[tree.root().unwrap()]).await;
         let total = node_keys(&store).await.len();
         let limit = total / 3;
-        let roots = Arc::new(StoredRoots);
         let mut start = None;
         let mut scanned = 0;
         let mut pages = 0;
         loop {
-            let report = ProllyNodes::reclaim(&*store, Arc::clone(&roots), start, limit)
-                .await
-                .unwrap();
+            let report = ProllyNodes::reclaim(&*store, start, limit).await.unwrap();
             assert!(report.scanned <= limit);
             assert_eq!(report.deleted, 0);
             scanned += report.scanned;
@@ -267,19 +214,17 @@ fn a_sweep_with_no_live_roots_reclaims_every_node_page_by_page() {
     workers::block_on(async {
         let store = Arc::new(RegolithStore::in_memory().unwrap());
         let mut regolith = ProllyNodes::new(Arc::clone(&store), engine_retry_options(5));
-        Tree::build(&mut regolith, DEFAULT_TARGET, (0..5_000).map(entry))
+        let tree = Tree::build(&mut regolith, DEFAULT_TARGET, (0..5_000).map(entry))
             .await
             .unwrap();
+        publish(&mut regolith, &[tree.root().unwrap()]).await;
         publish(&mut regolith, &[]).await;
         let total = node_keys(&store).await.len();
         let limit = total / 3;
-        let roots = Arc::new(StoredRoots);
         let mut start = None;
         let mut deleted = 0;
         loop {
-            let report = ProllyNodes::reclaim(&*store, Arc::clone(&roots), start, limit)
-                .await
-                .unwrap();
+            let report = ProllyNodes::reclaim(&*store, start, limit).await.unwrap();
             assert!(report.scanned <= limit);
             deleted += report.deleted;
             start = report.next_start;

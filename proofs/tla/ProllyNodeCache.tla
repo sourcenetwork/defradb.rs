@@ -7,7 +7,7 @@
 \* crates/foundation/prolly/src/cache.rs).
 \*
 \* What can happen: the worker puts a node, which waits in memory (pending).
-\* Publishing a root writes every pending node and the root in one regolith
+\* Publishing a root writes its reachable pending nodes and the root in one regolith
 \* transaction (`ProllyNodes::publish`), which commits or fails; nothing else
 \* writes a node. The worker reads any node it put, and the process can
 \* crash, losing everything in memory. A read that misses the
@@ -31,7 +31,7 @@ CONSTANTS
   Evict,            \* the cache evicts once over budget
   SkipHuge,         \* a node larger than the budget is never cached
   KeepOnFail,       \* a failed write leaves the nodes pending
-  NodesWithRoot,    \* the transaction that publishes a root writes every pending node
+  NodesWithRoot,    \* the transaction that publishes a root writes the nodes the root names
   RefuseAfterFail   \* a build whose put failed refuses to finish
 
 \* The nodes: a, b and c are one byte each, h is three bytes; the budget is two.
@@ -86,21 +86,21 @@ Put(n) ==
   /\ UNCHANGED <<stored, cache, published, found, dropped, lastRead>>
   /\ UNCHANGED buildVars
 
-\* The transaction that publishes node n as a root commits
-\* (`ProllyNodes::publish`): with NodesWithRoot it stores every pending node
-\* in the same commit, and only now is the pending set cleared. Without the
-\* guard the root goes out alone and its nodes stay in memory.
+\* Each root here is a leaf. A publication stores that leaf and discards
+\* pending nodes outside it (`ProllyNodes::publish`).
 Publish(n) ==
-  \* The root is a node the worker put.
-  /\ n \in put
+  \* The leaf must be available to the transaction.
+  /\ n \in pending \/ n \in stored
   \* The root key now names it.
   /\ published' = published \cup {n}
-  \* The pending nodes land in the same commit, or, without the guard, wait on.
-  /\ stored' = IF NodesWithRoot THEN stored \cup pending ELSE stored
-  \* Committed nodes are no longer pending.
+  \* The leaf lands in the same commit as the root when the guard holds.
+  /\ stored' = IF NodesWithRoot THEN stored \cup {n} ELSE stored
+  \* A successful publication discards pending bytes for abandoned roots.
   /\ pending' = IF NodesWithRoot THEN {} ELSE pending
+  \* Stop expecting reads to find the discarded leaves after publication.
+  /\ put' = IF NodesWithRoot THEN stored' ELSE put
   \* Nothing else changes.
-  /\ UNCHANGED <<put, cache, found, dropped, lastRead>>
+  /\ UNCHANGED <<cache, found, dropped, lastRead>>
   /\ UNCHANGED buildVars
 
 \* The publishing transaction fails, or the publish is dropped before it

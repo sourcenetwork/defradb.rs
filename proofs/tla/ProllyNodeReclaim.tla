@@ -5,8 +5,8 @@
 \* `ReclaimNodes::run` and `mark_roots` in
 \* crates/engine/storage/src/stores/prolly_nodes.rs), which `reclaim_every`
 \* in crates/engine/storage/src/stores/prolly_nodes/schedule.rs runs one page
-\* per period, and one writer of a prolly tree, whose root the worker reads
-\* through `LiveRoots::read`.
+\* per period, and one writer of a prolly tree. Publication and sweeping
+\* use the same stored root list (`read_roots`).
 \*
 \* What can happen: the worker scans a page of stored node keys. Then, in one
 \* transaction, it reads the live root, marks every node that root names, and
@@ -21,14 +21,13 @@
 \* What must never happen: a node the live root names is missing from the
 \* store (SweepKeepsLiveRoots).
 \*
-\* What this model trusts. `LiveRoots::read` returns the root of every live
-\* tree and reads it with a validated read, and regolith refuses the commit of
-\* a transaction whose validated read changed. A node write is blind: it
-\* conflicts with nothing and the later commit wins. The writer's puts that
-\* wait in memory are not in the store, so the model leaves them out until
-\* the publish commits them. The PutAlone configuration is the writer this
-\* replaced: a tree edit that flushed its nodes in a transaction of their own
-\* before the root was published.
+\* The root list uses an ordinary key. Regolith refuses a delete whose
+\* validated root read changed. A node write is blind: the later commit wins.
+\* Publication keeps already-live subtrees through a validated root-list read.
+\* Any other subtree it uses is staged with the new root, even when its bytes
+\* already exist in storage. Here "kept" stands for an already-live subtree
+\* and "back" for a subtree the writer stages again.
+\* PutAlone commits staged nodes separately before publishing their root.
 EXTENDS Naturals, FiniteSets
 
 \* The guards. Each RED configuration turns one off.

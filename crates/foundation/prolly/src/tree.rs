@@ -138,9 +138,7 @@ where
 
 /// Stores `items` as the root of `level`, after dropping every root above it
 /// that holds a single child, so the root is the lowest level that is one
-/// chunk (`ProllyTree.collapse`); `None` when there are no items. It writes
-/// nothing durable: the store's owner commits the nodes put with the root
-/// that names them (`proofs/tla/ProllyNodeReclaim.tla`).
+/// chunk (`ProllyTree.collapse`); `None` when there are no items.
 pub(crate) async fn collapse<S>(store: &mut S, level: u8, items: Vec<Item>) -> Result<Option<Hash>>
 where
     S: Store,
