@@ -91,6 +91,7 @@ where
         query_limits,
         max_txn_retries,
         chunk_size,
+        vector_memory_budget,
         node_acp_enabled,
         node_acp_owner,
         query_timeout,
@@ -178,6 +179,9 @@ where
     }
     if let Some(size) = chunk_size {
         db_options = db_options.with_chunk_size(size);
+    }
+    if let Some(bytes) = vector_memory_budget {
+        db_options = db_options.with_vector_memory_budget(bytes);
     }
     if let Some(filter) = replication_filter {
         db_options = db_options.with_replication_filter(filter.0);

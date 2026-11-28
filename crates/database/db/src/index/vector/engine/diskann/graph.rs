@@ -6,7 +6,6 @@ use std::sync::Arc;
 
 use rapidhash::{HashMapExt, HashSetExt, RapidHashMap, RapidHashSet};
 
-use super::cache::Codes;
 use super::codec::{self, GraphState, Record, Trained};
 use super::pending_cache::{Copy, Segment, Tag, MAX_PENDING_CACHE_BYTES};
 use super::DiskAnn;
@@ -111,7 +110,8 @@ impl<S: VectorNodeStore> DiskAnn<S> {
         Ok(code)
     }
 
-    /// Reloads the cache when a merge has run since it was loaded.
+    /// Reloads the cache when a merge has run since it was loaded, unless
+    /// another search is already reloading it.
     async fn refresh_codes(&self, generation: u64) -> Result<()> {
         let Some(cache) = &self.codes else {
             return Ok(());
@@ -119,13 +119,15 @@ impl<S: VectorNodeStore> DiskAnn<S> {
         if !self.params.resident_codes || cache.is_current(generation) {
             return Ok(());
         }
-        let mut codes = Codes::default();
+        let Some(mut reload) = cache.begin_reload(generation) else {
+            return Ok(());
+        };
         self.store()
-            .iterate_aux(codec::CODE, b"", |key, code| {
-                codes.insert(codec::id_from_key(key)?, code)
+            .iterate_aux_while(codec::CODE, b"", |key, code| {
+                reload.insert(codec::id_from_key(key)?, code)
             })
             .await?;
-        cache.replace(generation, codes);
+        reload.finish();
         Ok(())
     }
 
@@ -390,7 +392,7 @@ impl<S: VectorNodeStore> DiskAnn<S> {
                     if let Some(added) = self.read_pending_log(m, tag.position, head).await? {
                         let next = Arc::new(copy.caught_up(head, added));
                         next.for_each_latest_through(head, m, latest);
-                        cache.publish(next);
+                        codes.publish_pending(next);
                         return Ok(());
                     }
                 }
@@ -408,7 +410,7 @@ impl<S: VectorNodeStore> DiskAnn<S> {
             generation,
             position: head,
         };
-        cache.publish(Arc::new(Copy::loaded(tag, segment)));
+        codes.publish_pending(Arc::new(Copy::loaded(tag, segment)));
         Ok(())
     }
 

@@ -307,6 +307,25 @@ impl<T: Reader + Writer + MaybeSend> VectorNodeStore for KvNodeStore<'_, T> {
         Ok(())
     }
 
+    async fn iterate_aux_while<F>(&self, kind: u8, key_prefix: &[u8], mut visit: F) -> Result<()>
+    where
+        F: FnMut(&[u8], &[u8]) -> Result<ControlFlow<()>> + MaybeSend,
+    {
+        let prefix = self.aux_key(kind, key_prefix);
+        let strip = self.aux_key(kind, &[]).len() + 1;
+        let mut iter = self
+            .txn
+            .iterator(IterOptions::default().with_prefix(prefix))
+            .await?;
+        while let Some(pair) = iter.next().await? {
+            let key = pair.key.get(strip..).unwrap_or_default();
+            if visit(key, &pair.value)?.is_break() {
+                break;
+            }
+        }
+        Ok(())
+    }
+
     /// The head is read like any log key, never validated.
     async fn pending_log_head(&self) -> Result<u64> {
         self.read();

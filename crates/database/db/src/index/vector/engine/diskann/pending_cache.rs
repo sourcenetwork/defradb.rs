@@ -23,8 +23,9 @@ use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Arc;
 
 use rapidhash::{HashSetExt, RapidHashMap, RapidHashSet};
-use regolith::sync::Atom;
+use regolith::sync::{Atom, OnceCell};
 
+use crate::index::vector::budget::{Charge, MemoryBudget};
 use crate::index::vector::store::NodeId;
 
 /// The most a copy holds. A pending list bigger than this is scanned, as it
@@ -133,6 +134,8 @@ pub struct Copy {
     tag: Option<Tag>,
     segments: Vec<Arc<Segment>>,
     bytes: usize,
+    /// The room this copy holds in the node's budget while it is current.
+    charge: OnceCell<Charge>,
     /// The pending list at `tag` was past [`MAX_PENDING_CACHE_BYTES`]: nothing
     /// is held, and searches at that generation scan without copying.
     oversized: bool,
@@ -146,6 +149,7 @@ impl Copy {
             tag: Some(tag),
             segments: vec![Arc::new(segment)],
             bytes,
+            charge: OnceCell::new(),
             oversized: false,
         }
     }
@@ -186,12 +190,25 @@ impl Copy {
             tag: self.tag.map(|tag| Tag { position, ..tag }),
             segments,
             bytes,
+            charge: OnceCell::new(),
             oversized: false,
         }
     }
 
     pub fn is_oversized(&self) -> bool {
         self.oversized
+    }
+
+    /// The bytes this copy charges to the node's budget.
+    pub fn resident_bytes(&self) -> usize {
+        self.bytes
+    }
+
+    /// Gives back the room this copy holds.
+    fn release(&self) {
+        if let Some(charge) = self.charge.get() {
+            charge.release();
+        }
     }
 
     /// Whether `entries` more inserts of `code_len`-byte codes still fit
@@ -247,21 +264,88 @@ impl Copy {
 }
 
 /// The copy one index's searches share.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct PendingCache {
     current: Atom<Arc<Copy>>,
+    budget: Arc<MemoryBudget>,
+    /// One copy is being published or cleared. Other publishers leave their
+    /// copy to a later search rather than overlap budget transfers.
+    updating: AtomicBool,
+}
+
+pub(super) struct PendingUpdate<'a>(&'a AtomicBool);
+
+impl Drop for PendingUpdate<'_> {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::Release);
+    }
+}
+
+/// A cache nothing is refused from, for an index used outside a node.
+impl Default for PendingCache {
+    fn default() -> Self {
+        Self::with_budget(MemoryBudget::unlimited())
+    }
 }
 
 impl PendingCache {
+    /// A cache whose copies are charged to `budget`.
+    pub fn with_budget(budget: Arc<MemoryBudget>) -> Self {
+        Self {
+            current: Atom::default(),
+            budget,
+            updating: AtomicBool::new(false),
+        }
+    }
+
+    pub(super) fn begin_update(&self) -> Option<PendingUpdate<'_>> {
+        self.updating
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .ok()
+            .map(|_| PendingUpdate(&self.updating))
+    }
+
     pub fn load(&self) -> Arc<Copy> {
         self.current.load().clone()
     }
 
+    /// Drops the current copy and gives its room back.
+    pub fn clear(&self) {
+        let Some(_update) = self.begin_update() else {
+            return;
+        };
+        self.clear_current();
+    }
+
+    /// Drops the current copy while `_update` excludes a concurrent publish.
+    pub(super) fn clear_current(&self) {
+        let old = self.current.swap(Arc::new(Copy::default()));
+        old.release();
+    }
+
     /// Publishes `next` if it is newer than the current copy: a later
     /// generation, or the same one caught up further. A copy past
-    /// [`MAX_PENDING_CACHE_BYTES`] is published as an oversized marker instead,
-    /// so searches at its generation scan without building a copy to discard.
+    /// [`MAX_PENDING_CACHE_BYTES`] is published as an oversized marker, so
+    /// searches at its generation scan without building a copy to discard. A
+    /// copy that fits the cap but not the budget is not published, leaving the
+    /// current copy and a later search free to try again once room frees.
     pub fn publish(&self, next: Arc<Copy>) {
+        self.publish_if(next, || true);
+    }
+
+    /// [`publish`](Self::publish) when `allowed` passes while publication is
+    /// exclusive. A code reload and this check therefore cannot overlap: a
+    /// reload either owns the update first or sees the published copy.
+    pub fn publish_if<F>(&self, next: Arc<Copy>, allowed: F)
+    where
+        F: FnOnce() -> bool,
+    {
+        let Some(_update) = self.begin_update() else {
+            return;
+        };
+        if !allowed() {
+            return;
+        }
         let Some(tag) = next.tag else {
             return;
         };
@@ -274,14 +358,31 @@ impl PendingCache {
                 ..Copy::default()
             })
         };
-        self.current.rcu(|current| match current.tag {
-            Some(held)
-                if held.generation > tag.generation
-                    || (held.generation == tag.generation && held.position >= tag.position) =>
-            {
-                current.clone()
+        let current = self.current.load();
+        if matches!(current.tag, Some(held)
+            if held.generation > tag.generation
+                || (held.generation == tag.generation && held.position >= tag.position))
+        {
+            return;
+        }
+        let released = current.charge.get().map_or(0, Charge::bytes);
+        if !self.budget.replace(released, next.bytes as u64) {
+            return;
+        }
+        let reserved = Charge::reserved(&self.budget, next.bytes as u64);
+        let _ = next.charge.set(reserved);
+        match self.current.compare_and_swap(&current, next.clone()) {
+            Ok(_) => {
+                if let Some(charge) = current.charge.get() {
+                    charge.renounce();
+                }
             }
-            _ => next.clone(),
-        });
+            Err(_) => {
+                if let Some(charge) = next.charge.get() {
+                    charge.release();
+                }
+                self.budget.restore(released);
+            }
+        }
     }
 }

@@ -7,6 +7,12 @@ A node started with libp2p networking starts, listens and answers requests when 
 
 Which nameservers the node then uses (the host's accepted lines, or Go's `127.0.0.1:53` and `[::1]:53` fallback, never a public DNS service) is internal to the libp2p transport and no client can observe it, so it is a unit-level contract: the module docs of `crates/database/p2p/src/host/transport/resolver.rs`, its unit tests, and `proofs/lean/DnsResolverFallback.lean`.
 
+# `defra.node.vector_memory_budget`: A node-level budget caps what vector indexes keep in memory
+
+- **Parents:** ["go.node"]
+- **Scenarios:** ["node::vector_memory_budget::a_node_with_no_vector_memory_returns_the_nearest_documents"]
+
+`defradb start --vector-memory-budget <bytes>`, the `datastore.vector_memory_budget` key of `config.yaml`, and `NodeBuilder::with_vector_memory_budget` set how many bytes the node's vector indexes may keep in memory between searches, all indexes on the node together: DiskANN's resident codes, the codes a search reads on a miss, and the copies of pending lists. Unset, the budget is `268435456` (256 MiB). This is a steady-state bound: a reload can briefly overlap its old and new generation while in-flight searches finish. What does not fit is read from storage when a search needs it, so a smaller budget makes searches slower, mostly at the tail, and never changes what they return: under any budget, `0` included, a similarity query returns the same documents in the same order with the same scores. Room is first-come: a partial load is retried when its generation is refreshed or the index is evicted, not because another index later frees room. The node logs the first refusal, and exports `defradb.vector.memory.used`, `.limit` and `.refusals` through telemetry. Go has no such setting at the pinned v1.2.0 (sourcenetwork/defradb#5074 is still open), so the key and its default are the Rust node's own, and there is no per-index override.
 # `defra.node.ffi_peer_keyring`: A C host keeps the node's peer key in its own keyring
 
 - **Parents:** ["defra"]

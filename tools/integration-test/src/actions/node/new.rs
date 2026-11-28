@@ -64,6 +64,10 @@ pub struct NewNode {
     /// many times, in place of its default retry budget.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_txn_retries: Option<u32>,
+    /// A Rust node whose vector indexes may keep this many bytes in memory
+    /// between searches, in place of the default budget.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vector_memory_budget: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub database_dir: Option<String>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
@@ -179,6 +183,7 @@ impl Op for NewNode {
         probe.commit_gate = false;
         probe.commit_timeout_ms = None;
         probe.max_txn_retries = None;
+        probe.vector_memory_budget = None;
         probe.own_process = false;
         if probe != Self::default() {
             let options = serde_json::to_string(&probe).unwrap_or_default();
@@ -209,6 +214,7 @@ impl Op for NewNode {
         }
         self.check_own_process(state.client_type())?;
         let max_txn_retries = self.max_txn_retries(state.client_type())?;
+        let vector_memory_budget = self.vector_memory_budget(state.client_type())?;
         let registered_identity = self.registered_identity(state.client_type())?;
         let dir = match self.database_dir.is_some() || self.go_datastore {
             true => Some(Arc::new(tempfile::tempdir().map_err(|e| {
@@ -250,6 +256,7 @@ impl Op for NewNode {
                 .map(Arc::new),
             commit_timeout: self.commit_timeout_ms.map(Duration::from_millis),
             max_txn_retries,
+            vector_memory_budget,
             vera: Self::shared_vera(state)?,
             own_process: self.own_process,
             ..Default::default()
@@ -465,6 +472,18 @@ impl NewNode {
             )));
         }
         Ok(self.max_txn_retries)
+    }
+
+    /// The bytes the node's vector indexes may keep in memory between
+    /// searches. Go has no such setting, so a Go node cannot take it.
+    fn vector_memory_budget(&self, client: ClientType) -> Result<Option<u64>, Failure> {
+        if self.vector_memory_budget.is_some() && client == ClientType::GoHttp {
+            return Err(Failure::unsupported(format!(
+                "{} argument vectorMemoryBudget under {client:?}",
+                Self::name()
+            )));
+        }
+        Ok(self.vector_memory_budget)
     }
 
     /// How long an idle explicit transaction lives and how often the node

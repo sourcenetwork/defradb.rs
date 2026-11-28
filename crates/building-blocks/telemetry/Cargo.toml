@@ -71,5 +71,8 @@ opentelemetry-otlp = { version = "0.33", default-features = false, features = ["
 opentelemetry-semantic-conventions = { version = "0.33", optional = true }
 tracing-opentelemetry = { version = "0.34", optional = true }
 
+[dev-dependencies]
+opentelemetry_sdk = { version = "0.33", default-features = false, features = ["experimental_metrics_custom_reader"] }
+
 [lints]
 workspace = true

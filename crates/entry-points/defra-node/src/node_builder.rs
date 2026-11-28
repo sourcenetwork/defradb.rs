@@ -224,6 +224,13 @@ impl NodeBuilder {
         self
     }
 
+    /// Set the bytes vector indexes may keep in memory between searches,
+    /// across every index on the node.
+    pub fn with_vector_memory_budget(mut self, bytes: u64) -> Self {
+        self.config.vector_memory_budget = Some(bytes);
+        self
+    }
+
     /// Set the fallback OpenAI-compatible embedding base URL.
     pub fn with_embedding_url(mut self, url: impl Into<String>) -> Self {
         self.embedding_url = Some(url.into());

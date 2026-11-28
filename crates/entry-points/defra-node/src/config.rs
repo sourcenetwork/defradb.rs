@@ -470,6 +470,9 @@ pub struct NodeConfig {
     pub max_txn_retries: Option<u32>,
     /// Bytes per block chunk; `None` keeps the database default.
     pub chunk_size: Option<usize>,
+    /// Bytes vector indexes may keep in memory between searches, across
+    /// every index on the node; `None` keeps the database default.
+    pub vector_memory_budget: Option<u64>,
     /// Enable node access control at startup, owned by the node identity
     /// unless `node_acp_owner` names another.
     pub node_acp_enabled: bool,

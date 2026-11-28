@@ -87,6 +87,7 @@ impl Node {
 
         let mut db_options = db::DbOptions::new()
             .with_max_txn_retries(config.datastore.max_txn_retries)
+            .with_vector_memory_budget(config.datastore.vector_memory_budget)
             .with_pool(pool.clone());
         if let Some(identity) = node_identity.as_ref() {
             db_options = db_options.with_node_identity_arc(identity.clone());

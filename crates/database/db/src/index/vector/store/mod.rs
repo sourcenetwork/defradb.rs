@@ -122,6 +122,21 @@ pub trait VectorNodeStore: MaybeSendSync {
     where
         F: FnMut(&[u8], &[u8]) -> Result<()> + MaybeSend;
 
+    /// Visits entries until `visit` asks to stop.
+    async fn iterate_aux_while<F>(&self, kind: u8, key_prefix: &[u8], mut visit: F) -> Result<()>
+    where
+        F: FnMut(&[u8], &[u8]) -> Result<ControlFlow<()>> + MaybeSend,
+    {
+        let mut stopped = false;
+        self.iterate_aux(kind, key_prefix, |key, value| {
+            if !stopped && visit(key, value)?.is_break() {
+                stopped = true;
+            }
+            Ok(())
+        })
+        .await
+    }
+
     /// The newest committed position of this build's pending log in the
     /// transaction's snapshot; 0 before the first append.
     async fn pending_log_head(&self) -> Result<u64>;
