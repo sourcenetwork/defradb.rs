@@ -406,11 +406,8 @@ pub async fn add_doc_relationship(
     headers: HeaderMap,
     Json(body): Json<DocRelationshipRequest>,
 ) -> Result<Json<DocRelationshipResponse>, HttpError> {
-    require_permission(&state, &identity, NodePermission::DacRelationAdd).await?;
-
     let requestor = identity.did();
 
-    validate_add_doc_relationship(&body)?;
     let context = super::txn_header::call_context(&identity, &headers)?;
     let doc_acp = relationship_operations(&state, &context)?;
     Ok(Json(
@@ -422,10 +419,10 @@ pub async fn add_doc_relationship(
 ///
 /// POST /api/v0/acp/document/relationships
 ///
-/// The request and response arrays have matching order. All entries are validated
-/// before the first write. A backend error stops processing without rolling back
-/// earlier entries. In a named transaction the caller may discard those entries
-/// with the rest of the transaction.
+/// The request and response arrays have matching order. All entries are
+/// structurally validated before the first write. A backend refusal stops
+/// processing without rolling back earlier entries; in a named transaction the
+/// caller may discard all of them with the transaction.
 pub async fn add_doc_relationships(
     State(state): State<AppState>,
     identity: ExtractIdentity,
@@ -433,7 +430,6 @@ pub async fn add_doc_relationships(
     Json(bodies): Json<Vec<DocRelationshipRequest>>,
 ) -> Result<Json<Vec<DocRelationshipResponse>>, HttpError> {
     require_permission(&state, &identity, NodePermission::DacRelationAdd).await?;
-
     let requestor = identity.did();
 
     for body in &bodies {
@@ -541,28 +537,7 @@ pub async fn remove_doc_relationship(
     headers: HeaderMap,
     Json(body): Json<DocRelationshipRequest>,
 ) -> Result<Json<DocRelationshipDeleteResponse>, HttpError> {
-    require_permission(&state, &identity, NodePermission::DacRelationDelete).await?;
-
     let requestor = identity.did();
-
-    if body.collection.is_empty() {
-        return Err(HttpError::BadRequest(
-            "collection name can't be empty".into(),
-        ));
-    }
-    if body.target_actor.is_empty() || body.doc_id.is_empty() || body.relation.is_empty() {
-        return Err(HttpError::BadRequest(
-            "missing a required argument needed to delete doc actor relationship.".into(),
-        ));
-    }
-
-    if body.relation == "owner" {
-        return Err(HttpError::BadRequest(
-            "failed to delete document actor relationship with acp: \
-             OPERATION_FORBIDDEN: cannot delete owner relation"
-                .into(),
-        ));
-    }
 
     let context = super::txn_header::call_context(&identity, &headers)?;
     let doc_acp = relationship_operations(&state, &context)?;
@@ -588,7 +563,7 @@ pub async fn remove_doc_relationship(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::mock::{MockDocumentAcpOperations, MockQueryExecutor};
+    use crate::mock::{MockDocumentAcpOperations, MockNodeAcpOperations, MockQueryExecutor};
     use crate::router::{AppStateBuilder, DocumentAcpOperations};
     use query::executor::QueryExecutor;
     use std::sync::Arc;
@@ -720,7 +695,7 @@ mod tests {
     }
 
     #[nuclei::test]
-    async fn add_doc_relationships_validates_every_item_before_writing() {
+    async fn add_doc_relationships_delegates_every_item_in_order() {
         let doc_acp = Arc::new(MockDocumentAcpOperations::new());
         let state = AppStateBuilder::new(
             Arc::new(MockQueryExecutor::new()) as Arc<dyn QueryExecutor>,
@@ -730,20 +705,6 @@ mod tests {
         .build();
         let requestor = identity::Did::new("did:key:requestor").unwrap();
         let identity = ExtractIdentity::from_did(Some(requestor));
-
-        let result = add_doc_relationships(
-            State(state.clone()),
-            identity.clone(),
-            HeaderMap::new(),
-            Json(vec![
-                doc_relationship("reader", "did:key:first"),
-                doc_relationship("owner", "did:key:second"),
-            ]),
-        )
-        .await;
-
-        assert!(matches!(result, Err(HttpError::BadRequest(_))));
-        assert_eq!(doc_acp.add_count(), 0);
 
         let Json(results) = add_doc_relationships(
             State(state),
@@ -760,6 +721,54 @@ mod tests {
         assert_eq!(results.len(), 2);
         assert!(results.iter().all(|result| !result.existed_already));
         assert_eq!(doc_acp.add_count(), 2);
+    }
+
+    #[nuclei::test]
+    async fn add_doc_relationships_checks_permission_before_validation() {
+        let owner = identity::Did::new("did:key:owner").unwrap();
+        let state = AppStateBuilder::new(
+            Arc::new(MockQueryExecutor::new()) as Arc<dyn QueryExecutor>,
+            edge::testing::edge(),
+        )
+        .with_nac(Arc::new(MockNodeAcpOperations::enabled_with_owner(owner)))
+        .build();
+        let identity =
+            ExtractIdentity::from_did(Some(identity::Did::new("did:key:requestor").unwrap()));
+        let result = add_doc_relationships(
+            State(state),
+            identity,
+            HeaderMap::new(),
+            Json(vec![doc_relationship("owner", "did:key:second")]),
+        )
+        .await;
+        assert!(matches!(result, Err(HttpError::Unauthorized(_))));
+    }
+
+    #[nuclei::test]
+    async fn add_doc_relationships_validates_every_item_before_writing() {
+        let doc_acp = Arc::new(MockDocumentAcpOperations::new());
+        let state = AppStateBuilder::new(
+            Arc::new(MockQueryExecutor::new()) as Arc<dyn QueryExecutor>,
+            edge::testing::edge(),
+        )
+        .with_doc_acp(Arc::clone(&doc_acp) as Arc<dyn DocumentAcpOperations>)
+        .build();
+        let identity =
+            ExtractIdentity::from_did(Some(identity::Did::new("did:key:requestor").unwrap()));
+
+        let result = add_doc_relationships(
+            State(state),
+            identity,
+            HeaderMap::new(),
+            Json(vec![
+                doc_relationship("reader", "did:key:first"),
+                doc_relationship("owner", "did:key:second"),
+            ]),
+        )
+        .await;
+
+        assert!(matches!(result, Err(HttpError::BadRequest(_))));
+        assert_eq!(doc_acp.add_count(), 0);
     }
 
     #[nuclei::test]

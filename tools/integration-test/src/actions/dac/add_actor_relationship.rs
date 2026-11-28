@@ -20,6 +20,9 @@ pub struct AddDACActorRelationship {
     pub target_identity_node: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub target_identity_seed: Option<u64>,
+    /// The transaction by the order it began, from the test's transaction list.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub txn: Option<usize>,
     #[serde(default, skip_serializing_if = "Value::is_null")]
     pub expected_data: Value,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -76,6 +79,7 @@ impl AddDACActorRelationship {
             doc_id: self.doc_id.as_str(),
             relation: &self.relation,
             target,
+            txn: self.txn,
         })
     }
 }

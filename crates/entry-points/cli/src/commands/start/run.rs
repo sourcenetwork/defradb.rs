@@ -247,6 +247,12 @@ impl Node {
             let _ = timeout(std::time::Duration::from_secs(1), task).await;
         }
 
+        if let Some(task) = self.owed_drainer.take() {
+            info!("Stopping ACP owed-change drainer...");
+            task.abort();
+            let _ = timeout(std::time::Duration::from_secs(1), task).await;
+        }
+
         // Shutdown P2P tasks first, then the handle
         if let Some(tasks) = self.p2p_tasks.take() {
             info!("Stopping P2P background tasks...");

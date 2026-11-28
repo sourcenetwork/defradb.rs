@@ -175,13 +175,7 @@ fn unbound_document_authorization_fails_without_writing() {
         let unbound = std::sync::Arc::new(acp::LocalDocumentACP::new(std::sync::Arc::new(
             acp::MemoryAcpStore::new(),
         )));
-        let ops = super::acp_ops::DbAcpOps::new(
-            node.database.clone(),
-            node.txn_registry.clone(),
-            unbound,
-            node.event_bus.clone(),
-            node.runner.clone(),
-        );
+        let ops = super::acp_ops::DbAcpOps::new(node.txn_registry.clone(), unbound);
         let owner = actor(OWNER);
         let handle = node.runner().begin_txn_as(&owner, false).await.unwrap();
         let tx = owner
@@ -221,6 +215,14 @@ fn revoking_node_relationship_authority_conflicts_with_pending_grant() {
                 )
                 .await
                 .map_err(crate::Error::NacInit)?;
+            manager
+                .add_permission_grant(
+                    &nac_owner_copy,
+                    &writer_copy,
+                    acp::NodePermission::CollectionGet,
+                )
+                .await
+                .map_err(crate::Error::NacInit)?;
             // The reader whose view the test checks reads documents.
             manager
                 .add_permission_grant(
@@ -253,6 +255,54 @@ fn revoking_node_relationship_authority_conflicts_with_pending_grant() {
         .unwrap();
         assert!(node.runner().commit_txn_as(&owner, &handle).await.is_err());
         assert_eq!(visible(&node).await, 0);
+        node.shutdown().await.unwrap();
+    })
+    .unwrap();
+}
+
+#[test]
+fn a_transaction_checks_get_collection_as_the_autocommit_route_does() {
+    workers::block_on(async {
+        let (node, doc) = fixture().await;
+        let nac = node.nac_manager().clone();
+        let nac_owner = Did::new(NAC_OWNER).unwrap();
+        let writer = Did::new(OWNER).unwrap();
+        node.on_acp(move || async move {
+            nac.enable(&nac_owner)
+                .await
+                .map_err(crate::Error::NacInit)?;
+            nac.add_permission_grant(&nac_owner, &writer, acp::NodePermission::DacRelationAdd)
+                .await
+                .map_err(crate::Error::NacInit)?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+
+        let owner = actor(OWNER);
+        let autocommit = node
+            .with_identity(Did::new(OWNER).unwrap())
+            .add_dac_actor_relationship("Record", &doc, "reader", READER)
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(
+            autocommit.contains("Permission: get-collection"),
+            "autocommit refused for another reason: {autocommit}"
+        );
+
+        let handle = node.runner().begin_txn_as(&owner, false).await.unwrap();
+        let tx = owner
+            .clone()
+            .with_txn(Some(handle.as_str().parse().unwrap()));
+        let in_txn = node
+            .core()
+            .add_dac_actor_relationship(&tx, "Record", &doc, "reader", READER)
+            .await
+            .unwrap_err()
+            .to_string();
+        assert_eq!(in_txn, autocommit);
+        node.runner().discard_txn_as(&owner, &handle).await.unwrap();
         node.shutdown().await.unwrap();
     })
     .unwrap();
@@ -426,13 +476,7 @@ fn transaction_admission_matches_executed_lean_model() {
             acp::MemoryAcpStore::new(),
         )));
         let unbound_stages_owed = acp::DocumentACP::stages_relationship_changes(&*unbound);
-        let ops = super::acp_ops::DbAcpOps::new(
-            node.database.clone(),
-            node.txn_registry.clone(),
-            unbound,
-            node.event_bus.clone(),
-            node.runner.clone(),
-        );
+        let ops = super::acp_ops::DbAcpOps::new(node.txn_registry.clone(), unbound);
         let handle = node.runner().begin_txn_as(&owner, false).await.unwrap();
         let tx = owner
             .clone()

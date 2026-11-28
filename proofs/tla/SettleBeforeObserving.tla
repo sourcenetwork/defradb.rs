@@ -45,7 +45,7 @@
 \* DocumentMutationContext::projected_actor_relationship keys that input by
 \* the tuple's latest staged change (ops::tuple_head). The oldest change at
 \* rest is ops::tuple_rest; the drainer and its back-off are
-\* crates/entry-points/defra-node/src/owed_drainer.rs, with
+\* crates/engine/acp/src/external/drainer.rs, with
 \* MAX_FAILED_SUBMISSIONS in crates/engine/acp/src/external/settle.rs.
 \* Only the standard operators on numbers are used.
 EXTENDS Naturals

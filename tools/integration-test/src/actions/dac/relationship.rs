@@ -47,29 +47,64 @@ pub(super) struct Relationship<'a> {
     pub doc_id: &'a str,
     pub relation: &'a str,
     pub target: String,
+    pub txn: Option<usize>,
 }
 
 impl Relationship<'_> {
+    fn txn(&self, state: &State) -> Result<Option<String>, Failure> {
+        self.txn
+            .map(|index| {
+                state
+                    .txns
+                    .get(index)
+                    .map(|id| id.to_string())
+                    .ok_or_else(|| Failure::operation(format!("no transaction {index}")))
+            })
+            .transpose()
+    }
+
     pub fn in_process(&self, state: &State) -> Result<Value, Failure> {
         let identity = self.common.acting_identity(self.op, state)?;
         let node = state.node_on(self.common.node())?;
+        let (collection, doc_id, relation) = (self.collection, self.doc_id, self.relation);
         let scoped = state
             .scope_as_on(self.common.node(), None, identity)
             .scoped(&node);
-        let (collection, doc_id, relation) = (self.collection, self.doc_id, self.relation);
-        let found = match self.change {
-            Change::Add => state.block_on(scoped.add_dac_actor_relationship(
-                collection,
-                doc_id,
-                relation,
-                &self.target,
-            )),
-            Change::Delete => state.block_on(scoped.delete_dac_actor_relationship(
-                collection,
-                doc_id,
-                relation,
-                &self.target,
-            )),
+        let found = if let Some(index) = self.txn {
+            let id = state
+                .txns
+                .get(index)
+                .ok_or_else(|| Failure::operation(format!("no transaction {index}")))?;
+            let scoped = scoped.with_transaction(id);
+            match self.change {
+                Change::Add => state.block_on(scoped.add_dac_actor_relationship(
+                    collection,
+                    doc_id,
+                    relation,
+                    &self.target,
+                )),
+                Change::Delete => state.block_on(scoped.delete_dac_actor_relationship(
+                    collection,
+                    doc_id,
+                    relation,
+                    &self.target,
+                )),
+            }
+        } else {
+            match self.change {
+                Change::Add => state.block_on(scoped.add_dac_actor_relationship(
+                    collection,
+                    doc_id,
+                    relation,
+                    &self.target,
+                )),
+                Change::Delete => state.block_on(scoped.delete_dac_actor_relationship(
+                    collection,
+                    doc_id,
+                    relation,
+                    &self.target,
+                )),
+            }
         }
         .map_err(|e| Failure::operation(e.to_string()))?;
         Ok(json!({ self.change.key(): found }))
@@ -78,6 +113,7 @@ impl Relationship<'_> {
     pub fn http(&self, state: &State) -> Result<Value, Failure> {
         let identity = self.common.acting_identity(self.op, state)?;
         let change = self.change;
+        let txn = self.txn(state)?;
         let (collection, doc_id) = (self.collection.to_owned(), self.doc_id.to_owned());
         let (relation, target) = (self.relation.to_owned(), self.target.clone());
         let printed = state
@@ -85,12 +121,24 @@ impl Relationship<'_> {
                 match change {
                     Change::Add => {
                         client
-                            .acp_doc_relationship_add(&collection, &doc_id, &relation, &target)
+                            .acp_doc_relationship_add(
+                                &collection,
+                                &doc_id,
+                                &relation,
+                                &target,
+                                txn.as_deref(),
+                            )
                             .await
                     }
                     Change::Delete => {
                         client
-                            .acp_doc_relationship_delete(&collection, &doc_id, &relation, &target)
+                            .acp_doc_relationship_delete(
+                                &collection,
+                                &doc_id,
+                                &relation,
+                                &target,
+                                txn.as_deref(),
+                            )
                             .await
                     }
                 }
@@ -101,7 +149,8 @@ impl Relationship<'_> {
 
     pub fn cli(&self, state: &State) -> Result<Value, Failure> {
         let identity = self.common.acting_identity(self.op, state)?;
-        let args = [
+        let txn = self.txn(state)?;
+        let mut args = vec![
             "acp",
             "document",
             "relationship",
@@ -115,6 +164,9 @@ impl Relationship<'_> {
             "--actor",
             self.target.as_str(),
         ];
+        if let Some(txn) = txn.as_deref() {
+            args.extend(["--tx", txn]);
+        }
         let printed = state
             .defra_client_as(self.common.node(), None, identity, &args)
             .map_err(Failure::operation)?;

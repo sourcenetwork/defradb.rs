@@ -24,7 +24,6 @@ pub(super) struct HttpServerArgs<'a> {
     pub(super) manage_requester: Option<Arc<dyn defra_p2p_adapter::ManageRequester>>,
     pub(super) nac_adapter: Option<Arc<defra_http::nac_adapter::NacAdapter>>,
     pub(super) acp_setup: &'a DocumentAcpSetup,
-    pub(super) zanzibar_store: Arc<dyn acp::ZanzibarStore>,
     pub(super) user_did: Option<&'a Did>,
     pub(super) node_identity_did: Option<String>,
     pub(super) edge: edge::Edge,
@@ -41,7 +40,6 @@ impl Node {
             manage_requester,
             nac_adapter,
             acp_setup,
-            zanzibar_store,
             user_did,
             node_identity_did,
             edge,
@@ -130,9 +128,8 @@ impl Node {
 
         if config.acp.document_type != AcpDocumentType::None {
             let doc_acp_adapter = crate::doc_acp_adapter::DocumentAcpAdapter::new_arc(
-                database.clone(),
+                query_setup.registry.clone(),
                 acp_setup.document_acp.clone(),
-                zanzibar_store,
             );
             server = server.with_doc_acp_arc(doc_acp_adapter);
             info!("Document ACP HTTP endpoints enabled");

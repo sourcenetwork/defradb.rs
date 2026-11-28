@@ -1,4 +1,5 @@
-//! Adapter to bridge document-level ACP operations to HTTP's DocumentAcpOperations trait.
+//! HTTP's DocumentAcpOperations over the core's document relationship
+//! operations. A request in a transaction runs in it.
 
 use std::borrow::Cow;
 use std::sync::Arc;
@@ -6,98 +7,76 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use defra_core::RequestContext;
 
-use defra_http::router::DocumentAcpOperations;
+use defra_http::router::{DocRelationshipChange, DocumentAcpOperations};
 use storage::corekv::Store;
 
-/// Adapter that implements DocumentAcpOperations using the database and ACP store.
-pub struct DocumentAcpAdapter<S: Store> {
-    database: Arc<db::DB<S>>,
-    acp: Arc<dyn acp::DocumentACP>,
-    store: Arc<dyn acp::ZanzibarStore>,
+/// The core's document relationship operations, serving one request once
+/// bound to it.
+pub struct DocumentAcpAdapter<S>
+where
+    S: Store + 'static,
+{
+    relationships: db::DocumentRelationships<S>,
     /// The request this adapter serves, for one bound to it.
     context: Option<RequestContext>,
 }
 
-impl<S: Store + 'static> DocumentAcpAdapter<S> {
-    /// Create a new adapter.
+impl<S> DocumentAcpAdapter<S>
+where
+    S: Store + 'static,
+{
+    /// An adapter over `registry`, deciding through `acp`.
     pub fn new(
-        database: Arc<db::DB<S>>,
+        registry: Arc<db::DbTransactionRegistry<S>>,
         acp: Arc<dyn acp::DocumentACP>,
-        store: Arc<dyn acp::ZanzibarStore>,
     ) -> Self {
         Self {
-            database,
-            acp,
-            store,
+            relationships: db::DocumentRelationships::new(registry, acp),
             context: None,
         }
+    }
+
+    /// Create an Arc-wrapped adapter.
+    pub fn new_arc(
+        registry: Arc<db::DbTransactionRegistry<S>>,
+        acp: Arc<dyn acp::DocumentACP>,
+    ) -> Arc<dyn DocumentAcpOperations> {
+        Arc::new(Self::new(registry, acp))
     }
 
     fn context(&self) -> Cow<'_, RequestContext> {
         RequestContext::bound_or_ambient(self.context.as_ref())
     }
+}
 
-    /// Create an Arc-wrapped adapter.
-    pub fn new_arc(
-        database: Arc<db::DB<S>>,
-        acp: Arc<dyn acp::DocumentACP>,
-        store: Arc<dyn acp::ZanzibarStore>,
-    ) -> Arc<dyn DocumentAcpOperations> {
-        Arc::new(Self::new(database, acp, store))
-    }
+/// The core reads an empty identity as none.
+fn identity(requestor: Option<&identity::Did>) -> String {
+    requestor.map(ToString::to_string).unwrap_or_default()
+}
 
-    /// Look up policy info for a collection by name.
-    fn get_policy_info(&self, collection: &str) -> Result<(String, String), String> {
-        let col = self
-            .database
-            .get_collection(collection)
-            .map_err(|e| format!("{}", e))?
-            .ok_or_else(|| format!("collection '{}' not found", collection))?;
-
-        let policy = col
-            .schema()
-            .policy
-            .as_ref()
-            .ok_or_else(|| format!("collection '{}' has no ACP policy", collection))?;
-
-        Ok((policy.id.clone(), policy.resource_name.clone()))
-    }
-
-    /// Validate the relation exists in the policy and compute managing relations.
-    async fn validate_and_get_managing_relations(
-        &self,
-        policy_id: &str,
-        resource_name: &str,
-        relation: &str,
-    ) -> Result<Vec<String>, String> {
-        let policy = self
-            .store
-            .get_policy(policy_id)
-            .await
-            .map_err(|e| format!("failed to get policy: {}", e))?
-            .ok_or_else(|| format!("policy '{}' not found", policy_id))?;
-
-        let resource = policy
-            .get_resource(resource_name)
-            .ok_or_else(|| format!("resource '{}' not found in policy", resource_name))?;
-
-        if resource.get_relation(relation).is_none() {
-            return Err(format!(
-                "relation '{}' not found in policy resource '{}'",
-                relation, resource_name
-            ));
-        }
-
-        Ok(policy
-            .get_managers_for_relation(resource_name, relation)
-            .into_iter()
-            .map(|s| s.to_string())
-            .collect())
+fn relationship<'a>(
+    target: &'a str,
+    collection: &'a str,
+    doc_id: &'a str,
+    relation: &'a str,
+) -> db::DocRelationship<'a> {
+    db::DocRelationship {
+        collection,
+        doc_id,
+        relation,
+        target,
     }
 }
 
+fn text(error: db::DocAcpError) -> String {
+    error.to_string()
+}
+
 #[async_trait]
-impl<S: Store + 'static> DocumentAcpOperations for DocumentAcpAdapter<S> {
+impl<S> DocumentAcpOperations for DocumentAcpAdapter<S>
+where
+    S: Store + 'static,
+{
     /// A delegation authenticates the caller the node's document ACP
     /// verifies it for, as on an in-process node, so a caller whose key this
     /// server does not hold acts under its own delegation.
@@ -105,16 +84,51 @@ impl<S: Store + 'static> DocumentAcpOperations for DocumentAcpAdapter<S> {
         &self,
         token: &str,
     ) -> Option<Result<acp::AuthenticatedCaller, String>> {
-        self.acp.caller_of_delegation(token)
+        self.relationships.caller_of_delegation(token)
+    }
+
+    fn supports_transactional_relationships(&self) -> bool {
+        self.relationships.changes_in_transactions()
     }
 
     fn bind_request(&self, context: &RequestContext) -> Option<Arc<dyn DocumentAcpOperations>> {
         Some(Arc::new(Self {
-            database: Arc::clone(&self.database),
-            acp: Arc::clone(&self.acp),
-            store: Arc::clone(&self.store),
+            relationships: self.relationships.clone(),
             context: Some(context.clone()),
         }))
+    }
+
+    async fn change_doc_relationship(
+        &self,
+        requestor: Option<&identity::Did>,
+        target_actor: &str,
+        collection: &str,
+        doc_id: &str,
+        relation: &str,
+        delete: bool,
+    ) -> Result<DocRelationshipChange, String> {
+        let change = self
+            .relationships
+            .change_as(
+                &self.context(),
+                &identity(requestor),
+                relationship(target_actor, collection, doc_id, relation),
+                delete,
+            )
+            .await
+            .map_err(text)?;
+        Ok(match change {
+            db::RelationshipChange::Applied { existed } => {
+                DocRelationshipChange::Applied { existed }
+            }
+            db::RelationshipChange::Staged {
+                seq,
+                authority_checked,
+            } => DocRelationshipChange::Staged {
+                seq,
+                authority_checked,
+            },
+        })
     }
 
     async fn check_doc_access(
@@ -125,16 +139,17 @@ impl<S: Store + 'static> DocumentAcpOperations for DocumentAcpAdapter<S> {
         resource_name: &str,
         doc_id: &str,
     ) -> Result<bool, String> {
-        self.acp
-            .check_doc_access(
-                &acp::Identity::Authenticated(actor.clone()),
+        self.relationships
+            .check_doc_access_as(
+                &self.context(),
+                actor,
                 permission,
                 policy_id,
                 resource_name,
                 doc_id,
             )
             .await
-            .map_err(|e| format!("{}", e))
+            .map_err(text)
     }
 
     async fn add_doc_relationship(
@@ -145,53 +160,46 @@ impl<S: Store + 'static> DocumentAcpOperations for DocumentAcpAdapter<S> {
         doc_id: &str,
         relation: &str,
     ) -> Result<bool, String> {
-        if self.context().txn().is_some() {
-            return Err(
-                "transaction-bound document relationships are unavailable on this server".into(),
-            );
-        }
-        self.database
-            .check_node_access_as(&self.context(), acp::nac::NodePermission::DacRelationAdd)
-            .await
-            .map_err(|e| format!("{}", e))?;
-        // Go counts a missing requestor as a missing required argument.
-        let Some(requestor) = requestor else {
-            return Err("missing a required argument needed to add doc actor relationship.".into());
-        };
-
-        if relation == "owner" {
-            return Err("OPERATION_FORBIDDEN: cannot add owner relation".into());
-        }
-
-        let (policy_id, resource_name) = self.get_policy_info(collection)?;
-
-        // Parse the target into a structured subject once, at the edge: an actor
-        // DID, all-actors `*`, a cross-object edge, or a userset. The structured
-        // subject is carried straight into the API, never re-stringified.
-        let target = acp::parse_target_subject(target_actor)
-            .map_err(|e| format!("invalid target: {}", e))?;
-
-        let managing = self
-            .validate_and_get_managing_relations(&policy_id, &resource_name, relation)
-            .await?;
-
-        let added = self
-            .acp
-            .add_relationship(
-                requestor,
-                target,
-                &policy_id,
-                &resource_name,
-                doc_id,
-                relation,
-                &managing,
+        self.relationships
+            .add_as(
+                &self.context(),
+                &identity(requestor),
+                relationship(target_actor, collection, doc_id, relation),
             )
             .await
-            .map_err(|e| format!("{}", e))?;
+            // The core answers whether it existed already; the trait, whether it is new.
+            .map(|existed| !existed)
+            .map_err(text)
+    }
 
-        // Local ACP relationships are node-local (matches Go): a grant is not
-        // propagated to peers. Cross-node access control is Vera's role.
-        Ok(added)
+    async fn observe_doc_actor_relationship(
+        &self,
+        requestor: &identity::Did,
+        collection: &str,
+        doc_id: &str,
+        relation: &str,
+        target: &str,
+    ) -> Result<bool, String> {
+        self.relationships
+            .observe_as(
+                &self.context(),
+                requestor.as_str(),
+                relationship(target, collection, doc_id, relation),
+            )
+            .await
+            .map_err(text)
+    }
+
+    async fn list_doc_relationships(
+        &self,
+        requestor: &identity::Did,
+        collection: &str,
+        doc_id: &str,
+    ) -> Result<Vec<acp::DocumentRelationship>, String> {
+        self.relationships
+            .list_as(&self.context(), requestor.as_str(), collection, doc_id)
+            .await
+            .map_err(text)
     }
 
     async fn delete_doc_relationship(
@@ -202,59 +210,13 @@ impl<S: Store + 'static> DocumentAcpOperations for DocumentAcpAdapter<S> {
         doc_id: &str,
         relation: &str,
     ) -> Result<bool, String> {
-        if self.context().txn().is_some() {
-            return Err(
-                "transaction-bound document relationships are unavailable on this server".into(),
-            );
-        }
-        self.database
-            .check_node_access_as(&self.context(), acp::nac::NodePermission::DacRelationDelete)
-            .await
-            .map_err(|e| format!("{}", e))?;
-        // Go counts a missing requestor as a missing required argument.
-        let Some(requestor) = requestor else {
-            return Err(
-                "missing a required argument needed to delete doc actor relationship.".into(),
-            );
-        };
-
-        if relation == "owner" {
-            return Err("OPERATION_FORBIDDEN: cannot delete owner relation".into());
-        }
-
-        let (policy_id, resource_name) = self.get_policy_info(collection)?;
-
-        // Parse the target into a structured subject once, at the edge: an actor
-        // DID, all-actors `*`, a cross-object edge, or a userset. A revoke must
-        // accept every subject a grant accepts, or a cross-object edge could be
-        // granted but never removed.
-        let target = acp::parse_target_subject(target_actor)
-            .map_err(|e| format!("invalid target: {}", e))?;
-
-        let managing = self
-            .validate_and_get_managing_relations(&policy_id, &resource_name, relation)
-            .await?;
-
-        let deleted = self
-            .acp
-            .delete_relationship(
-                requestor,
-                target,
-                &policy_id,
-                &resource_name,
-                doc_id,
-                relation,
-                &managing,
+        self.relationships
+            .delete_as(
+                &self.context(),
+                &identity(requestor),
+                relationship(target_actor, collection, doc_id, relation),
             )
             .await
-            .map_err(|e| format!("{}", e))?;
-
-        // Local ACP relationships are node-local (matches Go): a revoke is not
-        // propagated to peers. Cross-node access control is Vera's role.
-        Ok(deleted)
+            .map_err(text)
     }
 }
-
-#[cfg(test)]
-#[path = "../tests/unit/doc_acp_adapter.rs"]
-mod tests;

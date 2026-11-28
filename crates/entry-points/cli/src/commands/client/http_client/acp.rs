@@ -109,15 +109,29 @@ impl HttpClient {
         doc_id: &str,
         relation: &str,
         actor: &str,
+        txn: Option<&str>,
     ) -> Result<JsonValue> {
-        let url = format!("{}/api/v0/acp/document/relationship", self.base_url);
         let body = serde_json::to_string(&serde_json::json!({
             "collection": collection,
             "docID": doc_id,
             "relation": relation,
             "actor": actor,
         }))?;
-        self.request_json("POST", &url, Some(&body)).await
+        if txn.is_none() {
+            let url = format!("{}/api/v0/acp/document/relationship", self.base_url);
+            return self.request_json("POST", &url, Some(&body)).await;
+        }
+        Ok(self
+            .send(
+                net::http::Method::POST,
+                "acp/document/relationship",
+                &[],
+                Some(body),
+                txn,
+            )
+            .await?
+            .json()
+            .await?)
     }
 
     pub async fn acp_doc_relationship_delete(
@@ -126,15 +140,29 @@ impl HttpClient {
         doc_id: &str,
         relation: &str,
         actor: &str,
+        txn: Option<&str>,
     ) -> Result<JsonValue> {
-        let url = format!("{}/api/v0/acp/document/relationship", self.base_url);
         let body = serde_json::to_string(&serde_json::json!({
             "collection": collection,
             "docID": doc_id,
             "relation": relation,
             "actor": actor,
         }))?;
-        self.request_json("DELETE", &url, Some(&body)).await
+        if txn.is_none() {
+            let url = format!("{}/api/v0/acp/document/relationship", self.base_url);
+            return self.request_json("DELETE", &url, Some(&body)).await;
+        }
+        Ok(self
+            .send(
+                net::http::Method::DELETE,
+                "acp/document/relationship",
+                &[],
+                Some(body),
+                txn,
+            )
+            .await?
+            .json()
+            .await?)
     }
 
     pub async fn nac_add_relationship(&self, relation: &str, actor: &str) -> Result<JsonValue> {

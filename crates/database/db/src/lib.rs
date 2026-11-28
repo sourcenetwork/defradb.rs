@@ -79,7 +79,10 @@ pub use crate::search::{
     embed_text, hybrid_search_dense, require_query_success, DenseHybridSearchHit,
     DenseHybridSearchRequest, DenseHybridSearchResponse,
 };
-pub use access::dac::{DacPolicies, DacPolicyError};
+pub use access::dac::{
+    settle_owed_changes, DacPolicies, DacPolicyError, DocAcpError, DocRelationship,
+    DocumentRelationships, RelationshipChange, OWED_SETTLE_DEADLINE,
+};
 pub use access::kms::{
     DbBlockDocIDResolver, DbDocCollectionLookup, DbEncBlockStore, DbNodeAcpRead,
 };

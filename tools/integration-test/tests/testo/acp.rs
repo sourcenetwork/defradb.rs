@@ -92,6 +92,7 @@ mod dac {
     mod remote_dac_cli;
     mod relationship {
         mod doc_actor {
+            mod checks;
             mod add {
                 mod invalid;
                 mod with_delete;

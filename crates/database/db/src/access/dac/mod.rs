@@ -1,7 +1,9 @@
 //! DAC policies: adding one (Go's `AddDACPolicy`), reading them, and checking
-//! a collection's policy against them. One entry point per operation, which
-//! every edge calls.
+//! a collection's policy against them; and the document actor relationships
+//! those policies define. One entry point per operation, which every edge
+//! calls.
 
+mod client;
 mod error;
 mod policies;
 
@@ -15,6 +17,10 @@ use storage::corekv::Store;
 
 use crate::database::DB;
 
+pub use client::{
+    settle_owed_changes, DocAcpError, DocRelationship, DocumentRelationships, RelationshipChange,
+    OWED_SETTLE_DEADLINE,
+};
 pub use error::DacPolicyError;
 pub use policies::DacPolicies;
 
