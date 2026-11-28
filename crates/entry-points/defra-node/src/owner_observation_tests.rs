@@ -132,7 +132,7 @@ fn owner_observation_keeps_the_row_snapshot_after_external_registration_changes(
         let moved = doc.clone();
         node.on_acp(move || async move {
             acp.unregister_doc_object(&policy, "rows", &moved).await?;
-            acp.register_doc_object(&Did::new(B).unwrap(), &policy, "rows", &moved)
+            acp.register_doc_object(&Did::new(B).unwrap(), &policy, "rows", &moved, &[])
                 .await?;
             Ok(())
         })
@@ -251,7 +251,7 @@ fn owner_observation_does_not_treat_a_deleted_document_as_a_live_member() {
         let acp = node.document_acp();
         let stale = doc.clone();
         node.on_acp(move || async move {
-            acp.register_doc_object(&Did::new(A).unwrap(), &policy, "rows", &stale)
+            acp.register_doc_object(&Did::new(A).unwrap(), &policy, "rows", &stale, &[])
                 .await?;
             Ok(())
         })
@@ -573,13 +573,13 @@ fn unified_access_matches_lean_and_validates_authority_at_commit() {
         let policy_to_restore = policy.clone();
         let id_to_restore = doc.clone();
         let owner_to_restore = owner.clone();
-        node.on_acp(move || async move { acp.register_doc_object(&Did::new(&owner_to_restore).unwrap(), &policy_to_restore, "rows", &id_to_restore).await?; Ok(()) }).await.unwrap();
+        node.on_acp(move || async move { acp.register_doc_object(&Did::new(&owner_to_restore).unwrap(), &policy_to_restore, "rows", &id_to_restore, &[]).await?; Ok(()) }).await.unwrap();
         let response = node.execute_request(query::QueryRequest::new(format!("mutation {{ delete_Users(docID: \"{doc}\") {{ _docID }} }}"))).await;
         assert!(!response.has_errors(), "{:?}", response.errors);
         let acp = node.document_acp();
         let id_to_restore = doc.clone();
         let owner_to_restore = owner.clone();
-        node.on_acp(move || async move { acp.register_doc_object(&Did::new(&owner_to_restore).unwrap(), &policy, "rows", &id_to_restore).await?; Ok(()) }).await.unwrap();
+        node.on_acp(move || async move { acp.register_doc_object(&Did::new(&owner_to_restore).unwrap(), &policy, "rows", &id_to_restore, &[]).await?; Ok(()) }).await.unwrap();
         let txn = node.new_txn(false).await.map(|txn| txn.detach()).unwrap();
         assert_eq!(node.with_transaction(txn).observe_document_access("Users", &ids, subject, named()).await.unwrap(), [missing, missing]);
         node.with_transaction(txn).discard().await.unwrap();

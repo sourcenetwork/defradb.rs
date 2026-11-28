@@ -118,7 +118,19 @@
 \*   recording it in the create transaction crates/database/db/src/write/autocommit/
 \*                                          helpers.rs register_created_doc;
 \*   creator-only until settled             crates/engine/acp/src/external.rs
-\*                                          ExternalDocumentAcp::check_doc_access;
+\*                                          ExternalDocumentAcp::check_doc_access,
+\*                                          for a collection that does not gate
+\*                                          creates. A gated one is hidden from
+\*                                          its creator too until settled, a
+\*                                          refusal of its create is final and
+\*                                          never resent, and a replica refused
+\*                                          as a create is parked after a bound:
+\*                                          proofs/tla/CreateGate.tla models
+\*                                          those (PendingRegistration::hidden,
+\*                                          create_refused, note_failure,
+\*                                          parked_create). Hidden is narrower
+\*                                          than creator-only, so
+\*                                          INV_OwedDocumentNarrow holds for it;
 \*   register, then clear                   settle, clear in crates/engine/acp/src/
 \*                                          external/registration.rs;
 \*   settling after the commit              DbTxn::owe_acp_registration in
@@ -251,7 +263,9 @@
 \*       creator read, by the owed-registration rule, a document the
 \*       provider now gives to the new owner alone, until the record is
 \*       cleared. INV_NoWidening holds only under this assumption once the
-\*       owner can change.
+\*       owner can change. A transfer this node owes itself is never sent
+\*       while the registration is held, and denies the creator from its
+\*       commit: OwnerTransfer.tla.
 \* Assumed without a switch:
 \*   * one request sent twice is executed once (the worker journal and the
 \*     provider's sequence, PendingSubmission.tla). A second effect here is a

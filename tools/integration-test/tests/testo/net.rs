@@ -3,6 +3,7 @@ mod connection_manager;
 mod disjoint_groups;
 mod gossip_admission;
 mod iroh_large_update;
+mod peerless_writes;
 mod stream_protocols;
 mod info {
     mod connect_peers;
@@ -85,8 +86,10 @@ mod simple {
     }
 }
 mod sync {
+    mod documents_complete;
     mod exact_fetch;
     mod fetch_slots;
+    mod missing_link_walks;
     mod branchable_collection {
         mod complex_network;
         mod simple;

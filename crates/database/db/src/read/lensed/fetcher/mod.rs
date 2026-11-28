@@ -647,7 +647,7 @@ impl<S: Store + 'static> DocFetcher for LensedDocFetcher<S> {
         query_vector: &[f64],
         k: usize,
         effort: Option<usize>,
-    ) -> query::error::Result<Vec<u64>> {
+    ) -> query::error::Result<query::fetcher::VectorCandidates> {
         let (collection, datastore, _) = crate::collection::loader::get_collection_with_lazy_load(
             &*self.shared_txn()?,
             collection_name,

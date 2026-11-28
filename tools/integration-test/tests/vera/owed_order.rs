@@ -113,7 +113,7 @@ async fn a_grant_still_in_flight_cannot_land_after_the_revocation_that_follows_i
             .await
             .expect("node");
         // What the Vera node holds, read by a provider that keeps no answer.
-        let chain = VeraDocumentACP::without_access_cache(Arc::new(
+        let chain = VeraDocumentACP::new(Arc::new(
             vera_node
                 .in_process(embedded::worker(&root.path().join("reader")))
                 .await

@@ -14,6 +14,7 @@ impl acp::DocumentACP for FakeDac {
         _: &str,
         _: &str,
         _: &str,
+        _relationships: &[acp::DerivedRelationship],
     ) -> acp::Result<()> {
         Ok(())
     }
@@ -78,6 +79,7 @@ impl acp::DocumentACP for BranchableDac {
         _: &str,
         _: &str,
         _: &str,
+        _relationships: &[acp::DerivedRelationship],
     ) -> acp::Result<()> {
         Ok(())
     }

@@ -550,6 +550,13 @@ jobs:
       - run: cargo nextest run --cargo-profile super-dev -p defra-node --features p2p
       - run: cargo nextest run --cargo-profile super-dev -p vera-embedded --features node --test hosted_node --test node_placement
       - run: cargo nextest run --cargo-profile super-dev -p defra-node --features embedded-vera,http --test embedded_vera
+      # The vera binary's create gate scenario runs on an in-process Vera node and needs no verad
+      # and no CLI binary, so the nextest setup scripts are told not to build them.
+      - run: cargo nextest run --cargo-profile super-dev -p integration-test --test vera -E 'test(/^create_gate::/)'
+        env:
+          DEFRA_RUST_BINARY: /usr/bin/false
+          DEFRA_IROH_BINARY: /usr/bin/false
+          DEFRA_VERA_BINARY: /usr/bin/false
       - run: cargo nextest run --cargo-profile super-dev -p defra-node --features embedded-vera,p2p --test embedded_vera_replication
       - run: cargo nextest run --cargo-profile super-dev -p cli --features embedded-vera --test embedded_vera --test embedded_vera_config
       - run: cargo nextest run --cargo-profile super-dev -p p2p --features pinc-transport,iroh-transport -E 'test(/pinc/)'
@@ -655,7 +662,7 @@ jobs:
           cargo nextest run --no-fail-fast --run-ignored all \
             -p query -p p2p -p db -p defra-http -p defra-node -p acp -p conformance \
             --features p2p/iroh-transport \
-            --lib --test storage_failure --test block --test merge --test projection_scope --test parent_registration --test lean_conformance \
+            --lib --test storage_failure --test block --test merge --test projection_scope --test lean_conformance \
             -E '
               binary_id(query::storage_failure)
               | binary_id(p2p) & (
@@ -677,7 +684,6 @@ jobs:
                 | test(=genesis_access::genesis_reader_matches_executed_lean_model))
               | binary_id(defra-node) & test(owner_observation_tests)
               | binary_id(acp::projection_scope)
-              | binary_id(acp::parent_registration)
               | binary_id(conformance)
               | binary_id(conformance::lean_conformance)'
 
@@ -1008,9 +1014,10 @@ jobs:
       # A failing scenario shows its in-process nodes' P2P trace.
       DEFRA_TEST_TRACE: p2p=debug,defra_p2p_adapter=debug,warn
       TESTO_FILTER: binary(testo)
-      # Not run anywhere: p2p_interop_bench, whose one test is an ignored
+      # Not run here: p2p_interop_bench, whose one test is an ignored
       # benchmark that prints latencies, and vera, whose cluster needs the
-      # verad validator binary from vera.rs, which CI does not build.
+      # verad validator binary from vera.rs, which CI does not build; the
+      # feature tests run vera's create_gate scenarios, which need none.
       # c_rust_to_go_outage_replay (#2089) flips between runs: the Go receiver
       # sometimes misses the protected document written while it was down. A
       # known-failure entry would fail every run it passes, so the test is left
@@ -1251,8 +1258,10 @@ jobs:
       # The queue rebase-merges (#3325), so each commit of a pull request lands on
       # main as it is. A pull request with one commit lands it under its title. A
       # batch carries several pull requests, one commit each, and each commit names
-      # the one it carries as "<title> (#N)". Only the subjects are checked: the
-      # batch's reviewer approves what each commit carries.
+      # the one it carries as "<title> (#N)". A carried pull request is either still
+      # open or already merged into the batch's own branch. A commit ending in the
+      # batch's own number is a fix the batch makes. Only the subjects are checked:
+      # the batch's reviewer approves what each commit carries.
       - id: commits
         if: github.event_name == 'pull_request'
         uses: actions/github-script@v9
@@ -1275,10 +1284,12 @@ jobs:
                 if (!m) { problems.push(`${c.sha.slice(0, 9)} "${got}" names no pull request; squash to one commit, or end each subject with (#N)`); continue; }
                 const [, title, n] = m;
                 const number = Number(n);
-                if (number === pr.number || seen.has(number)) { problems.push(`${c.sha.slice(0, 9)} repeats #${n}`); continue; }
+                if (number === pr.number) continue;
+                if (seen.has(number)) { problems.push(`${c.sha.slice(0, 9)} repeats #${n}`); continue; }
                 seen.add(number);
                 const carried = await github.rest.pulls.get({ ...context.repo, pull_number: number }).then((r) => r.data, () => null);
-                if (!carried || carried.state !== 'open') { problems.push(`#${n} is not an open pull request`); continue; }
+                const intoBatch = carried && carried.merged && carried.base.ref === pr.head.ref;
+                if (!carried || !(carried.state === 'open' || intoBatch)) { problems.push(`#${n} is neither open nor merged into ${pr.head.ref}`); continue; }
                 if (carried.title !== title) problems.push(`${c.sha.slice(0, 9)} title "${title}" is not #${n}'s "${carried.title}"`);
               }
             }

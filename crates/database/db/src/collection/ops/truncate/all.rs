@@ -35,6 +35,9 @@ impl<S: Store> crate::database::DB<S> {
         }
         self.truncate_deferred_indexes(collection).await?;
         self.truncate_collection_metadata(collection).await?;
+        // The rows name blocks this truncate deleted; a reader holding a
+        // cursor before them is told to resync instead.
+        crate::event::update_retention::drop_rows(self, collection.resolved_root_id()).await?;
         Ok(doc_ids.len())
     }
 

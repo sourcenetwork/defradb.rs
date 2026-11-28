@@ -660,12 +660,13 @@ impl VeraProvider for VeraRsProvider {
         policy_id: &str,
         resource: &str,
         object_id: &str,
+        relationships: &[acp::DerivedRelationship],
     ) -> Result<(), ProviderError> {
         let command = crate::PolicyCommand {
             policy_id,
             resource,
             object_id,
-            action: crate::PolicyAction::RegisterObject,
+            action: crate::PolicyAction::register(relationships),
         };
         let send_tx_start = Instant::now();
         self.send_command(bearer_token, &command).await?;
@@ -676,29 +677,6 @@ impl VeraProvider for VeraRsProvider {
         );
 
         Ok(())
-    }
-
-    async fn register_under_parent(
-        &self,
-        bearer_token: &str,
-        policy_id: &str,
-        resource: &str,
-        object_id: &str,
-        parent: &acp::RegistrationParent,
-    ) -> Result<(), ProviderError> {
-        self.send_command(
-            bearer_token,
-            &crate::PolicyCommand {
-                policy_id,
-                resource,
-                object_id,
-                action: crate::PolicyAction::RegisterUnderParent {
-                    resource: &parent.resource,
-                    object_id: &parent.object_id,
-                },
-            },
-        )
-        .await
     }
 
     async fn register_objects(
@@ -727,6 +705,23 @@ impl VeraProvider for VeraRsProvider {
         let command = policy_cmd::archive_object(resource, object_id);
         self.send_policy_cmd(bearer_token, policy_id, &command)
             .await
+    }
+
+    async fn transfer_object(
+        &self,
+        bearer_token: &str,
+        policy_id: &str,
+        resource: &str,
+        object_id: &str,
+        new_owner: &str,
+    ) -> Result<(), ProviderError> {
+        let command = crate::PolicyCommand {
+            policy_id,
+            resource,
+            object_id,
+            action: crate::PolicyAction::TransferObject { new_owner },
+        };
+        self.send_command(bearer_token, &command).await
     }
 
     async fn set_relationship(
@@ -900,7 +895,7 @@ impl VeraProvider for VeraRsProvider {
         };
         let record: PolicyRecord = serde_json::from_slice(bytes)
             .map_err(|e| ProviderError::Query(format!("policy JSON: {e}")))?;
-        if record.policy.id != id {
+        if record.policy.id.as_str() != id {
             return Err(ProviderError::Query(
                 "policy record identity mismatch".into(),
             ));

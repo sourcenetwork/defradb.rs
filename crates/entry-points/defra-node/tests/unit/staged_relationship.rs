@@ -78,6 +78,12 @@ pub(super) struct Remote {
     /// Objects whose access checks fail as unavailable while every other
     /// call answers.
     pub(super) unchecked: Map<String, ()>,
+    /// The provider refuses every transfer of an object's ownership.
+    pub(super) refuse_transfers: AtomicBool,
+    /// The next transfer takes effect and its answer is lost.
+    pub(super) lose_transfer_answer: AtomicBool,
+    /// Transfers that took effect.
+    pub(super) transfers: std::sync::atomic::AtomicU32,
 }
 
 /// The words a delegation bound to one request names `command` by.
@@ -95,10 +101,9 @@ fn named(command: &PolicyCommand<'_>) -> String {
     let object = command.object_id;
     match &command.action {
         PolicyAction::RegisterObject => format!("register {object}"),
-        PolicyAction::RegisterUnderParent {
-            resource,
-            object_id,
-        } => format!("register {object} under {resource}:{object_id}"),
+        PolicyAction::RegisterObjectWithRelationships { relationships } => {
+            format!("register {object} with {}", relationships.len())
+        }
         PolicyAction::SetRelationship {
             relation,
             subject: on,
@@ -108,6 +113,7 @@ fn named(command: &PolicyCommand<'_>) -> String {
             subject: on,
         } => format!("delete {object} {relation} {}", subject(on)),
         PolicyAction::ArchiveObject => format!("archive {object}"),
+        PolicyAction::TransferObject { new_owner } => format!("transfer {object} to {new_owner}"),
     }
 }
 
@@ -139,6 +145,9 @@ impl Remote {
             hold_registrations: AtomicBool::new(false),
             registrations_released: regolith::sync::Event::new(),
             unchecked: map(),
+            refuse_transfers: AtomicBool::new(false),
+            lose_transfer_answer: AtomicBool::new(false),
+            transfers: std::sync::atomic::AtomicU32::new(0),
         })
     }
 
@@ -372,6 +381,7 @@ impl VeraProvider for Remote {
         policy_id: &str,
         resource: &str,
         object_id: &str,
+        _relationships: &[acp::DerivedRelationship],
     ) -> Result<(), ProviderError> {
         self.reachable()?;
         self.executes(
@@ -398,6 +408,47 @@ impl VeraProvider for Remote {
         _resource: &str,
         _object_id: &str,
     ) -> Result<(), ProviderError> {
+        Ok(())
+    }
+
+    /// Only the owner gives an object away; the write is told as
+    /// `owner <new owner>`.
+    async fn transfer_object(
+        &self,
+        bearer_token: &str,
+        policy_id: &str,
+        resource: &str,
+        object_id: &str,
+        new_owner: &str,
+    ) -> Result<(), ProviderError> {
+        self.reachable()?;
+        if self.cut_off.contains_key(object_id) {
+            return Err(ProviderError::Unavailable(format!(
+                "stub provider is cut off from {object_id}"
+            )));
+        }
+        self.executes(
+            bearer_token,
+            &PolicyCommand {
+                policy_id,
+                resource,
+                object_id,
+                action: PolicyAction::TransferObject { new_owner },
+            },
+        )?;
+        if self.refuse_transfers.load(Ordering::SeqCst)
+            || self.owners.get(object_id).as_deref() != Some(Self::actor(bearer_token))
+        {
+            return Err(ProviderError::Transaction("submission was rejected".into()));
+        }
+        self.writes
+            .push((true, object_id.to_string(), format!("owner {new_owner}")));
+        self.owners
+            .insert(object_id.to_string(), new_owner.to_string());
+        self.transfers.fetch_add(1, Ordering::SeqCst);
+        if self.lose_transfer_answer.swap(false, Ordering::SeqCst) {
+            return Err(ProviderError::Unavailable("the answer was lost".into()));
+        }
         Ok(())
     }
 
@@ -601,7 +652,7 @@ pub(super) async fn provision(node: &Node) {
 }
 
 /// A node with a policy-bound collection, on local ACP or on `remote`.
-async fn node_on(remote: Option<&Arc<Remote>>) -> Node {
+pub(super) async fn node_on(remote: Option<&Arc<Remote>>) -> Node {
     let node = start(&node_identity(), remote, None).await;
     provision(&node).await;
     node
@@ -611,7 +662,7 @@ fn as_identity(query: impl Into<String>, did: &str) -> query::QueryRequest {
     query::QueryRequest::new(query).with_identity(Some(Did::new(did).unwrap()))
 }
 
-fn created(response: query::QueryResponse) -> String {
+pub(super) fn created(response: query::QueryResponse) -> String {
     assert!(!response.has_errors(), "{:?}", response.errors);
     response.data.unwrap()["add_Record"][0]["_docID"]
         .as_str()
@@ -619,7 +670,7 @@ fn created(response: query::QueryResponse) -> String {
         .to_owned()
 }
 
-fn create(name: &str) -> query::QueryRequest {
+pub(super) fn create(name: &str) -> query::QueryRequest {
     as_identity(
         format!("mutation {{ add_Record(input: {{name: \"{name}\"}}) {{ _docID }} }}"),
         OWNER,
@@ -636,7 +687,7 @@ fn names(response: query::QueryResponse) -> Vec<String> {
         .collect()
 }
 
-async fn reads(node: &Node, did: &str) -> Vec<String> {
+pub(super) async fn reads(node: &Node, did: &str) -> Vec<String> {
     names(
         node.execute_request(as_identity("{ Record { name } }", did))
             .await,

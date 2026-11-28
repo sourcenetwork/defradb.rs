@@ -82,7 +82,7 @@ impl<S: Store + 'static> DbTransactionRegistry<S> {
                     .get_collection(&collection)
                     .await?
                     .ok_or_else(|| Error::CollectionNotFound(collection.clone()))?;
-                let actions = crate::database::action::index_action_executions(
+                let actions = crate::database::action::index_listing_executions(
                     &txn.systemstore()?,
                     found.collection_id(),
                 )
@@ -101,10 +101,24 @@ impl<S: Store + 'static> DbTransactionRegistry<S> {
         collection: &str,
         field: &str,
     ) -> Result<()> {
+        self.add_encrypted_index_in_txn_for(context, context, txn_id, collection, field)
+            .await
+    }
+
+    /// [`Self::add_encrypted_index_in_txn`] where `owner` admits the turn and
+    /// `context` is the caller whose node access is checked.
+    pub async fn add_encrypted_index_in_txn_for(
+        &self,
+        owner: &RequestContext,
+        context: &RequestContext,
+        txn_id: &str,
+        collection: &str,
+        field: &str,
+    ) -> Result<()> {
         let db = self.db.clone();
         let acting = context.clone();
         let (collection, field) = (collection.to_owned(), field.to_owned());
-        self.in_txn(context, txn_id, move |owned| {
+        self.in_txn_for(owner, context, txn_id, move |owned| {
             Box::pin(async move {
                 let txn = owned.alone()?;
                 check_access_in(&db, &acting, txn, NodePermission::EncryptedIndexAdd).await?;
@@ -124,10 +138,24 @@ impl<S: Store + 'static> DbTransactionRegistry<S> {
         collection: &str,
         field: &str,
     ) -> Result<()> {
+        self.delete_encrypted_index_in_txn_for(context, context, txn_id, collection, field)
+            .await
+    }
+
+    /// [`Self::delete_encrypted_index_in_txn`] where `owner` admits the turn
+    /// and `context` is the caller whose node access is checked.
+    pub async fn delete_encrypted_index_in_txn_for(
+        &self,
+        owner: &RequestContext,
+        context: &RequestContext,
+        txn_id: &str,
+        collection: &str,
+        field: &str,
+    ) -> Result<()> {
         let db = self.db.clone();
         let acting = context.clone();
         let (collection, field) = (collection.to_owned(), field.to_owned());
-        self.in_txn(context, txn_id, move |owned| {
+        self.in_txn_for(owner, context, txn_id, move |owned| {
             Box::pin(async move {
                 let txn = owned.alone()?;
                 check_access_in(&db, &acting, txn, NodePermission::EncryptedIndexDelete).await?;
@@ -147,10 +175,23 @@ impl<S: Store + 'static> DbTransactionRegistry<S> {
         txn_id: &str,
         collection: &str,
     ) -> Result<Vec<String>> {
+        self.encrypted_indexes_in_txn_for(context, context, txn_id, collection)
+            .await
+    }
+
+    /// [`Self::encrypted_indexes_in_txn`] where `owner` admits the turn and
+    /// `context` is the caller whose node access is checked.
+    pub async fn encrypted_indexes_in_txn_for(
+        &self,
+        owner: &RequestContext,
+        context: &RequestContext,
+        txn_id: &str,
+        collection: &str,
+    ) -> Result<Vec<String>> {
         let db = self.db.clone();
         let acting = context.clone();
         let collection = collection.to_owned();
-        self.in_txn(context, txn_id, move |owned| {
+        self.in_txn_for(owner, context, txn_id, move |owned| {
             Box::pin(async move {
                 let txn = owned.alone()?;
                 check_access_in(&db, &acting, txn, NodePermission::EncryptedIndexList).await?;
@@ -169,9 +210,21 @@ impl<S: Store + 'static> DbTransactionRegistry<S> {
         context: &RequestContext,
         txn_id: &str,
     ) -> Result<Vec<(String, Vec<String>)>> {
+        self.all_encrypted_indexes_in_txn_for(context, context, txn_id)
+            .await
+    }
+
+    /// [`Self::all_encrypted_indexes_in_txn`] where `owner` admits the turn
+    /// and `context` is the caller whose node access is checked.
+    pub async fn all_encrypted_indexes_in_txn_for(
+        &self,
+        owner: &RequestContext,
+        context: &RequestContext,
+        txn_id: &str,
+    ) -> Result<Vec<(String, Vec<String>)>> {
         let db = self.db.clone();
         let acting = context.clone();
-        self.in_txn(context, txn_id, move |owned| {
+        self.in_txn_for(owner, context, txn_id, move |owned| {
             Box::pin(async move {
                 let txn = owned.alone()?;
                 db.check_node_access_in_txn(

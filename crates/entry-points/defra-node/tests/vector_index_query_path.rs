@@ -216,8 +216,8 @@ fn total(explain: &Value, counter: &str) -> u64 {
     }
 }
 
-/// `indexFetches` counts a vector-index hit as one. A full-scan fallback leaves
-/// it at zero, which is exactly the regression being guarded.
+/// `indexFetches` sums every vector-index entry read, including the metadata
+/// lookups that find an empty index before the scan falls back.
 fn index_fetches(explain: &Value) -> u64 {
     total(explain, "indexFetches")
 }
@@ -817,13 +817,14 @@ fn a_relation_filter_above_the_scan_still_fills_the_page() {
     .unwrap()
 }
 
-/// An empty index must not be reported as having served the scan.
+/// An empty index must not be named as serving the scan, but its lookup counts.
 ///
 /// With no candidates the scan falls through to reading the collection, so
 /// naming a vector index in the explain output would describe a search that
-/// never happened.
+/// never served a page. The advisory metadata read and its ordinary-metadata
+/// fallback are still reads, matching the counter's storage-level meaning.
 #[test]
-fn an_empty_index_is_not_reported_as_serving_the_scan() {
+fn an_empty_index_lookup_is_counted_but_does_not_serve_the_scan() {
     workers::block_on(async {
         let node = node_with("").await;
 
@@ -842,8 +843,8 @@ fn an_empty_index_is_not_reported_as_serving_the_scan() {
         );
         assert_eq!(
             index_fetches(&explain),
-            0,
-            "nor counted as a fetch\n{explain:#}"
+            2,
+            "both metadata reads are counted even though the index served no page\n{explain:#}"
         );
     })
     .unwrap()

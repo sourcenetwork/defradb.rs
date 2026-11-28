@@ -389,8 +389,9 @@ impl EncryptedIndexOperations for HttpNodeOps {
         collection: &str,
         field_name: &str,
     ) -> Result<EncryptedIndexInfo, String> {
+        let context = self.context();
         self.ops
-            .add_encrypted_index(&self.context(), collection, field_name)
+            .add_encrypted_index(&context, &context, collection, field_name)
             .await
             .map(|listing| info(collection, listing))
             .map_err(text)
@@ -404,13 +405,13 @@ impl EncryptedIndexOperations for HttpNodeOps {
         match collection {
             Some(name) => self
                 .ops
-                .list_encrypted_indexes(&context, name)
+                .list_encrypted_indexes(&context, &context, name)
                 .await
                 .map(|all| all.into_iter().map(|one| info(name, one)).collect())
                 .map_err(text),
             None => self
                 .ops
-                .list_all_encrypted_indexes(&context)
+                .list_all_encrypted_indexes(&context, &context)
                 .await
                 .map(|all| {
                     all.into_iter()
@@ -428,8 +429,9 @@ impl EncryptedIndexOperations for HttpNodeOps {
         collection: &str,
         field_name: &str,
     ) -> Result<(), String> {
+        let context = self.context();
         self.ops
-            .delete_encrypted_index(&self.context(), collection, field_name)
+            .delete_encrypted_index(&context, &context, collection, field_name)
             .await
             .map_err(text)
     }

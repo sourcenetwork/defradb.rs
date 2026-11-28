@@ -31,33 +31,50 @@ pub struct GoCompat {
     pub tag: &'static str,
 }
 
+/// Length Go DefraDB truncates the commit hash to in its version strings.
+const COMMIT_HASH_LENGTH: usize = 8;
+
 /// Complete version information for defradb.
+///
+/// The JSON carries every key Go DefraDB's `version --format json` prints except
+/// `go`, in Go's order (`release`, `commit`, `commitDate`, `httpAPI`,
+/// `docIDVersions`, `netProtocol`), and then defradb.rs's own.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct VersionInfo {
-    pub version: &'static str,
+    pub release: &'static str,
     pub commit: &'static str,
     pub commit_date: &'static str,
     #[serde(rename = "httpAPI")]
     pub http_api: &'static str,
+    #[serde(rename = "docIDVersions")]
     pub doc_id_versions: &'static str,
     pub net_protocol: &'static str,
+    /// `release` under the key defradb.rs printed before it printed Go's.
+    pub version: &'static str,
+    /// `docIDVersions` under the key defradb.rs printed before it printed Go's.
+    #[serde(rename = "docIdVersions")]
+    pub doc_id_versions_rs: &'static str,
     pub rust: String,
     pub go_compat: GoCompat,
 }
 
 impl VersionInfo {
     pub fn new() -> Self {
+        let release = env!("CARGO_PKG_VERSION");
+        let doc_id_versions = "1";
         Self {
-            version: env!("CARGO_PKG_VERSION"),
+            release,
             commit: env!("GIT_COMMIT"),
             commit_date: env!("BUILD_DATE"),
-            http_api: "v0",
-            doc_id_versions: "1",
+            http_api: "v1",
+            doc_id_versions,
             net_protocol: "/defra/0.0.1",
+            version: release,
+            doc_id_versions_rs: doc_id_versions,
             rust: format!(
                 "{} {}/{}",
-                env!("CARGO_PKG_RUST_VERSION"),
+                env!("RUSTC_VERSION"),
                 std::env::consts::OS,
                 std::env::consts::ARCH,
             ),
@@ -69,45 +86,55 @@ impl VersionInfo {
         }
     }
 
-    /// Short one-liner: `defradb 0.5.0`
-    pub fn short(&self) -> String {
-        format!("defradb {}", self.version)
+    fn commit_hash(&self) -> &'static str {
+        let end = self
+            .commit
+            .char_indices()
+            .nth(COMMIT_HASH_LENGTH)
+            .map_or(self.commit.len(), |(index, _)| index);
+        &self.commit[..end]
     }
 
-    /// Single-line descriptive build string, used as the OTLP
-    /// `service.version` resource attribute. Mirrors the shape of Go
-    /// DefraDB's version string (`defradb <ver> (<commit8> <date>) built
-    /// with ...`) so a collector grouping on `service.version` sees the
-    /// same cardinality/format across the two implementations. The commit
-    /// is truncated to 8 chars to match Go.
-    pub fn descriptive(&self) -> String {
-        let commit8: String = self.commit.chars().take(8).collect();
+    /// `defradb version`: `defradb <release> (<commit8> <date>) built with Rust <rustc> <os>/<arch>`,
+    /// Go DefraDB's line with Rust in place of Go.
+    pub fn short(&self) -> String {
         format!(
-            "defradb {} ({} {}) built with {}",
-            self.version, commit8, self.commit_date, self.rust
+            "defradb {} ({} {}) built with Rust {}",
+            self.release,
+            self.commit_hash(),
+            self.commit_date,
+            self.rust
         )
     }
 
-    /// Full human-readable text output.
+    /// `defradb version --full`: Go DefraDB's lines, `* Rust:` in place of
+    /// `* Go:`, then the Go baseline this build is compatible with.
     pub fn full(&self) -> String {
-        let mut out = format!(
-            "defradb {} ({} {})\n",
-            self.version, self.commit, self.commit_date
-        );
-        out.push_str(&format!("* HTTP API: {}\n", self.http_api));
-        out.push_str(&format!("* P2P multicodec: {}\n", self.net_protocol));
-        out.push_str(&format!("* DocID versions: {}\n", self.doc_id_versions));
-        out.push_str(&format!("* Rust: {}\n", self.rust));
         let tag_suffix = if self.go_compat.tag.is_empty() {
             String::new()
         } else {
             format!(", {}", self.go_compat.tag)
         };
-        out.push_str(&format!(
-            "* Go compat: {} ({}{})",
-            self.go_compat.commit, self.go_compat.branch, tag_suffix
-        ));
-        out
+        format!(
+            "defradb {} ({} {})\n\
+             * HTTP API: {}\n\
+             * P2P multicodec: {}\n\
+             * DocID versions: {}\n\
+             * Rust: {}\n\
+             * Commit: {}\n\
+             * Go compat: {} ({}{})",
+            self.release,
+            self.commit_hash(),
+            self.commit_date,
+            self.http_api,
+            self.net_protocol,
+            self.doc_id_versions,
+            self.rust,
+            self.commit,
+            self.go_compat.commit,
+            self.go_compat.branch,
+            tag_suffix
+        )
     }
 }
 
@@ -124,50 +151,82 @@ mod tests {
     #[test]
     fn version_info_fields_are_populated() {
         let info = VersionInfo::new();
-        assert!(!info.version.is_empty());
+        assert!(!info.release.is_empty());
         assert!(!info.commit.is_empty());
         assert!(!info.rust.is_empty());
-        assert_eq!(info.http_api, "v0");
+        assert_eq!(info.http_api, "v1");
         assert_eq!(info.doc_id_versions, "1");
         assert_eq!(info.net_protocol, "/defra/0.0.1");
+        assert_eq!(info.version, info.release);
+        assert_eq!(info.doc_id_versions_rs, info.doc_id_versions);
     }
 
     #[test]
-    fn short_format() {
+    fn short_matches_go_shape() {
         let info = VersionInfo::new();
-        assert!(info.short().starts_with("defradb "));
+        let commit8: String = info.commit.chars().take(8).collect();
+        assert_eq!(
+            info.short(),
+            format!(
+                "defradb {} ({commit8} {}) built with Rust {}",
+                info.release, info.commit_date, info.rust
+            )
+        );
     }
 
     #[test]
-    fn descriptive_format_matches_go_shape() {
-        let info = VersionInfo::new();
-        let d = info.descriptive();
-        // `defradb <ver> (<commit8> <date>) built with <rust>`
-        assert!(d.starts_with(&format!("defradb {} (", info.version)));
-        assert!(d.contains(") built with "));
-        assert!(d.ends_with(&info.rust));
-    }
-
-    #[test]
-    fn full_format_contains_all_sections() {
+    fn full_opens_with_go_lines() {
         let info = VersionInfo::new();
         let full = info.full();
-        assert!(full.contains("HTTP API:"));
-        assert!(full.contains("P2P multicodec:"));
-        assert!(full.contains("DocID versions:"));
-        assert!(full.contains("Rust:"));
-        assert!(full.contains("Go compat:"));
+        let lines: Vec<&str> = full.lines().collect();
+        let commit8: String = info.commit.chars().take(8).collect();
+        assert_eq!(
+            lines[0],
+            format!("defradb {} ({commit8} {})", info.release, info.commit_date)
+        );
+        assert_eq!(lines[1], "* HTTP API: v1");
+        assert_eq!(lines[2], "* P2P multicodec: /defra/0.0.1");
+        assert_eq!(lines[3], "* DocID versions: 1");
+        assert_eq!(lines[4], format!("* Rust: {}", info.rust));
+        assert_eq!(lines[5], format!("* Commit: {}", info.commit));
+        assert!(lines[6].starts_with(&format!("* Go compat: {GO_COMPAT_COMMIT} (")));
     }
 
     #[test]
-    fn json_uses_camel_case_keys() {
+    fn json_carries_go_keys_in_go_order_then_rust_keys() {
         let info = VersionInfo::new();
         let json = serde_json::to_string(&info).unwrap();
-        assert!(json.contains("\"commitDate\""));
-        assert!(json.contains("\"httpAPI\""));
-        assert!(json.contains("\"docIdVersions\""));
-        assert!(json.contains("\"netProtocol\""));
-        assert!(json.contains("\"goCompat\""));
+        let keys = [
+            "\"release\"",
+            "\"commit\"",
+            "\"commitDate\"",
+            "\"httpAPI\"",
+            "\"docIDVersions\"",
+            "\"netProtocol\"",
+            "\"version\"",
+            "\"docIdVersions\"",
+            "\"rust\"",
+            "\"goCompat\"",
+        ];
+        let positions: Vec<usize> = keys
+            .iter()
+            .map(|key| json.find(key).unwrap_or_else(|| panic!("{key} in {json}")))
+            .collect();
+        assert!(positions.is_sorted(), "{json}");
+    }
+
+    #[test]
+    fn commit_hash_is_go_length() {
+        let info = VersionInfo {
+            commit: "e152b5cab0123456789",
+            ..VersionInfo::new()
+        };
+        assert_eq!(info.commit_hash(), "e152b5ca");
+        let short = VersionInfo {
+            commit: "unknown",
+            ..VersionInfo::new()
+        };
+        assert_eq!(short.commit_hash(), "unknown");
     }
 
     #[test]

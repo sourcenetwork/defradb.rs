@@ -11,6 +11,7 @@ use defra_node::{Node, ScopedNode, TxnNode};
 #[derive(Clone)]
 pub struct NodeScope {
     pub did: Option<::identity::Did>,
+    pub bearer: Option<String>,
     pub signing: Option<SigningConfig>,
     pub txn: Option<TxnId>,
 }
@@ -23,7 +24,9 @@ impl NodeScope {
             Some(did) => node.with_identity(did.clone()),
             None => node.anonymous(),
         };
-        scoped.with_signing(self.signing.clone())
+        scoped
+            .with_bearer(self.bearer.clone())
+            .with_signing(self.signing.clone())
     }
 
     /// `node` acting as the scope's caller, in its transaction when it names
@@ -124,6 +127,7 @@ impl Scoped<'_> {
             name: Option<&str>,
             fields: Vec<schema::IndexedFieldDescription>,
             unique: bool,
+            vector: Option<schema::VectorIndexDescription>,
         ) -> defra_node::Result<schema::IndexDescription>;
         fn list_indexes(collection: &str) -> defra_node::Result<Vec<defra_node::IndexListing>>;
         fn delete_index(collection: &str, name: &str) -> defra_node::Result<()>;

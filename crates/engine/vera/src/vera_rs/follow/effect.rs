@@ -5,15 +5,15 @@
 //! actor's delegation, the policy and the command as JSON. A registration or
 //! a relationship change read from one can be owed again through the outbox,
 //! under the actor that issued the delegation, and so can an archive (its
-//! document was deleted), which the outbox owes as any change. A created
+//! document was deleted) or a transfer of a document's ownership, which the
+//! outbox owes as any change. A created
 //! policy widens nothing; one that is lost leaves the documents under it
 //! unreadable.
 
 use alloy_sol_types::SolCall;
 use serde::{Deserialize, Serialize};
-use vera_acp::Subject;
 use vera_domain::NativeTx;
-use vera_modules::acp::types::PolicyCmd;
+use vera_modules::acp::types::{PolicyCmd, Relationship, Subject};
 
 use super::super::abi::IAcp;
 use super::super::did_spelling;
@@ -26,6 +26,10 @@ pub(crate) enum Lost {
         policy_id: String,
         resource: String,
         object: String,
+        /// The relationships it was registered with
+        /// (`RegisterObjectWithRelationships`).
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        relationships: Vec<acp::DerivedRelationship>,
         /// The delegation it was sent under.
         token: String,
     },
@@ -42,6 +46,14 @@ pub(crate) enum Lost {
         policy_id: String,
         resource: String,
         object: String,
+        token: String,
+    },
+    /// A transfer of the object to `new_owner`, in DefraDB's spelling.
+    Transfer {
+        policy_id: String,
+        resource: String,
+        object: String,
+        new_owner: String,
         token: String,
     },
 }
@@ -103,6 +115,12 @@ impl Lost {
                 resource,
                 object,
                 ..
+            }
+            | Self::Transfer {
+                policy_id,
+                resource,
+                object,
+                ..
             } => (policy_id, resource, object),
         }
     }
@@ -111,7 +129,8 @@ impl Lost {
         match self {
             Self::Registration { token, .. }
             | Self::Relationship { token, .. }
-            | Self::Archive { token, .. } => token,
+            | Self::Archive { token, .. }
+            | Self::Transfer { token, .. } => token,
         }
     }
 }
@@ -129,14 +148,37 @@ impl Effect {
                     policy_id,
                     resource: object.resource,
                     object: object.id,
+                    relationships: Vec::new(),
                     token,
                 }))
+            }
+            PolicyCmd::RegisterObjectWithRelationships {
+                object,
+                relationships,
+            } => {
+                let relationships = relationships.iter().map(derived).collect::<Option<_>>()?;
+                return Some(Effect::Owed(Lost::Registration {
+                    policy_id,
+                    resource: object.resource,
+                    object: object.id,
+                    relationships,
+                    token,
+                }));
             }
             PolicyCmd::ArchiveObject(object) => {
                 return Some(Effect::Owed(Lost::Archive {
                     policy_id,
                     resource: object.resource,
                     object: object.id,
+                    token,
+                }))
+            }
+            PolicyCmd::TransferObject { object, new_owner } => {
+                return Some(Effect::Owed(Lost::Transfer {
+                    policy_id,
+                    resource: object.resource,
+                    object: object.id,
+                    new_owner: did_spelling::defra(new_owner.0.as_str()).into_owned(),
                     token,
                 }))
             }
@@ -148,9 +190,9 @@ impl Effect {
         Some(Effect::Owed(Lost::Relationship {
             add,
             policy_id,
-            resource: relationship.resource,
-            object: relationship.object_id,
-            relation: relationship.relation,
+            resource: relationship.object.resource.to_string(),
+            object: relationship.object.id.to_string(),
+            relation: relationship.relation.to_string(),
             subject,
             token,
         }))
@@ -212,25 +254,35 @@ pub(crate) fn effect_of(wire: &[u8]) -> Effect {
     Effect::from_call(&tx.calldata).unwrap_or(Effect::Other)
 }
 
+/// A relationship a registration carried, as the registration is owed again
+/// with it: on another object (`<target_resource>:<target_doc_id>`).
+fn derived(relationship: &Relationship) -> Option<acp::DerivedRelationship> {
+    match &relationship.subject {
+        Subject::Object(target) => Some(acp::DerivedRelationship {
+            relation: relationship.relation.to_string(),
+            target_resource: target.resource.to_string(),
+            target_doc_id: target.id.to_string(),
+        }),
+        _ => None,
+    }
+}
+
 fn subject(subject: &Subject) -> Option<LostSubject> {
     Some(match subject {
-        Subject::Entity(did) => LostSubject::Actor {
-            did: did_spelling::defra(did.as_str()).into_owned(),
+        Subject::Actor(actor) => LostSubject::Actor {
+            did: did_spelling::defra(actor.id.as_str()).into_owned(),
         },
-        Subject::Wildcard => LostSubject::Wildcard,
-        Subject::EntitySet {
-            resource,
-            object_id,
-            relation,
-        } => LostSubject::EntitySet {
-            resource: resource.clone(),
-            object: object_id.clone(),
-            relation: relation.clone(),
+        Subject::AllActors => LostSubject::Wildcard,
+        Subject::ActorSet(set) => LostSubject::EntitySet {
+            resource: set.object.resource.to_string(),
+            object: set.object.id.to_string(),
+            relation: set.relation.to_string(),
         },
-        Subject::TypedWildcard { resource } => LostSubject::TypedWildcard {
-            resource: resource.clone(),
+        Subject::Object(object) => LostSubject::EntitySet {
+            resource: object.resource.to_string(),
+            object: object.id.to_string(),
+            relation: String::new(),
         },
-        _ => return None,
     })
 }
 

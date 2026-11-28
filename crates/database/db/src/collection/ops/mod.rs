@@ -11,7 +11,7 @@ mod chunk_versions;
 mod create;
 mod delete;
 mod lookup;
-mod purge;
+pub(crate) mod purge;
 mod resolve;
 mod select;
 pub(crate) use select::select;

@@ -86,6 +86,7 @@ defra-p2p-adapter = { path = "../../surfaces/p2p-adapter", default-features = fa
 web-sys = { version = "0.3", features = ["Headers", "Request", "RequestInit", "Response", "Window"] }
 
 [dev-dependencies]
+mantra-macros = "0.9"
 wasm-bindgen-test = "0.3"
 gloo-timers = { version = "0.4", features = ["futures"] }
 # The browser benchmark reports through the same contract the native suite

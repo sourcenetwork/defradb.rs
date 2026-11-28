@@ -7,8 +7,8 @@
 
 use alloy_primitives::Bytes;
 use alloy_sol_types::SolCall as _;
-use vera_acp::{Relationship, Subject};
-use vera_modules::acp::types::{Object, PolicyCmd};
+use vera_modules::acp::relationship_values;
+use vera_modules::acp::types::{Actor, Object, PolicyCmd, Relationship, Subject};
 
 use crate::abi::IAcp;
 use crate::{
@@ -19,7 +19,7 @@ use crate::{
 /// The command `command` is sent as.
 pub fn typed(command: &PolicyCommand<'_>) -> Result<PolicyCmd, CommandError> {
     let relationship = |relation: &str, subject: &PolicySubject<'_>| {
-        Ok::<_, CommandError>(Relationship::new(
+        Ok::<_, CommandError>(relationship_values::relationship(
             command.resource,
             command.object_id,
             relation,
@@ -30,13 +30,15 @@ pub fn typed(command: &PolicyCommand<'_>) -> Result<PolicyCmd, CommandError> {
         PolicyAction::RegisterObject => {
             PolicyCmd::RegisterObject(object(command.resource, command.object_id))
         }
-        PolicyAction::RegisterUnderParent {
-            resource,
-            object_id,
-        } => PolicyCmd::RegisterUnderParent {
-            object: object(command.resource, command.object_id),
-            parent: object(resource, object_id),
-        },
+        PolicyAction::RegisterObjectWithRelationships { relationships } => {
+            PolicyCmd::RegisterObjectWithRelationships {
+                object: object(command.resource, command.object_id),
+                relationships: relationships
+                    .iter()
+                    .map(|derived| derived_relationship(command, derived))
+                    .collect(),
+            }
+        }
         PolicyAction::SetRelationship { relation, subject } => {
             PolicyCmd::SetRelationship(relationship(relation, subject)?)
         }
@@ -44,6 +46,13 @@ pub fn typed(command: &PolicyCommand<'_>) -> Result<PolicyCmd, CommandError> {
             PolicyCmd::DeleteRelationship(relationship(relation, subject)?)
         }
         PolicyAction::ArchiveObject => archive_object(command.resource, command.object_id),
+        PolicyAction::TransferObject { new_owner } => PolicyCmd::TransferObject {
+            object: object(command.resource, command.object_id),
+            new_owner: did_spelling::wire(new_owner)
+                .parse()
+                .map(Actor)
+                .map_err(|e| CommandError::Subject(format!("{e}")))?,
+        },
     })
 }
 
@@ -69,6 +78,20 @@ pub fn calldata(
         cmd: encode(command)?.into(),
     };
     Ok(call.abi_encode().into())
+}
+
+/// `derived` on the object `command` registers:
+/// `<resource>:<object>#<relation>@<target_resource>:<target_doc_id>`.
+fn derived_relationship(
+    command: &PolicyCommand<'_>,
+    derived: &acp::DerivedRelationship,
+) -> Relationship {
+    relationship_values::relationship(
+        command.resource,
+        command.object_id,
+        &derived.relation,
+        relationship_values::object_subject(&derived.target_resource, &derived.target_doc_id),
+    )
 }
 
 fn object(resource: &str, object_id: &str) -> Object {
@@ -100,16 +123,27 @@ fn defra_subject(subject: &PolicySubject<'_>) -> Result<zanzibar::Subject, Comma
 /// no command for is refused here, before anything is sent.
 fn chain_subject(subject: &zanzibar::Subject) -> Result<Subject, CommandError> {
     match subject {
-        zanzibar::Subject::Entity(did) => did_spelling::wire(did.as_str())
-            .parse()
-            .map(Subject::Entity)
-            .map_err(|e| CommandError::Subject(e.to_string())),
+        zanzibar::Subject::Entity(did) => {
+            vera_identity::Did::new(did_spelling::wire(did.as_str()).into_owned())
+                .map_err(|e| CommandError::Subject(e.to_string()))
+                .and_then(|did| {
+                    relationship_values::actor_subject(&did)
+                        .map_err(|e| CommandError::Subject(e.to_string()))
+                })
+        }
         zanzibar::Subject::EntitySet {
             resource,
             object_id,
             relation,
-        } => Ok(Subject::entity_set(resource, object_id, relation)),
-        zanzibar::Subject::Wildcard => Ok(Subject::Wildcard),
+        } if relation.is_empty() => Ok(relationship_values::object_subject(resource, object_id)),
+        zanzibar::Subject::EntitySet {
+            resource,
+            object_id,
+            relation,
+        } => Ok(relationship_values::actor_set(
+            resource, object_id, relation,
+        )),
+        zanzibar::Subject::Wildcard => Ok(Subject::AllActors),
         other => Err(CommandError::Subject(format!(
             "vera.rs takes no command for {other}"
         ))),

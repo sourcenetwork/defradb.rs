@@ -21,7 +21,7 @@ path = "tests/vera/main.rs"
 [dependencies]
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 commonware-codec = "=2026.10.0"
-defra-harness = { git = "https://github.com/sourcenetwork/backbone.git", rev = "25da44c835b810e854caa938d5c55052da8525e7" }
+defra-harness = { git = "https://github.com/sourcenetwork/backbone.git", rev = "3421379115d69fd8bed8536943d5397ac6eb5ace" }
 crypto = { path = "../../crates/foundation/crypto" }
 document = { path = "../../crates/building-blocks/document" }
 blockstore = { path = "../../crates/engine/blockstore" }
@@ -29,6 +29,7 @@ edge = { path = "../../crates/foundation/edge", features = ["testing"] }
 nuclei.workspace = true
 net = { path = "../../crates/building-blocks/net" }
 serde_json = "1.0"
+bs58.workspace = true
 graphql-parser.workspace = true
 futures.workspace = true
 paste = "1.0"
@@ -69,6 +70,19 @@ ciborium = { workspace = true }
 # Holds a stopped Go node's P2P port with SO_REUSEPORT until it restarts.
 socket2 = { version = "0.6", features = ["all"] }
 identity = { path = "../../crates/building-blocks/identity" }
+# The Vera node a remote-DAC scenario's nodes share, its tuning, the keyring
+# each node's worker signs with, and the delegation audience a client
+# identity signs its Vera delegation for.
+vera-embedded = { path = "../../crates/engine/vera-embedded", features = ["node"] }
+vera = { path = "../../crates/engine/vera" }
+keyring = { path = "../../crates/foundation/keyring" }
+acp = { path = "../../crates/engine/acp" }
+# A node in its own process writes its store through a crash-injecting env.
+storage = { path = "../../crates/engine/storage" }
+
+[target.'cfg(unix)'.dependencies]
+# A node in its own process kills itself with SIGKILL at a crash point.
+libc = "0.2"
 
 [features]
 generator = ["serde_json/preserve_order"]
@@ -82,17 +96,12 @@ required-features = ["generator"]
 
 [dev-dependencies]
 query = { path = "../../crates/engine/query", features = ["testing"] }
-vera-harness = { git = "https://github.com/sourcenetwork/vera.rs", rev = "fc0bd8e47019a5f3175239884ab4ae935f3b973f" }
+vera-harness = { git = "https://github.com/sourcenetwork/vera.rs", rev = "faf4a4f094c1b4f5786bce0cbeb6567966e27999" }
 mantra-macros = "0.9"
-keyring = { path = "../../crates/foundation/keyring" }
 vera-client = "0.2.0"
 vera-domain = "0.2.0"
 vera-modules = "0.2.0"
 alloy-sol-types.workspace = true
-acp = { path = "../../crates/engine/acp" }
-vera = { path = "../../crates/engine/vera" }
-# The Vera node the in-process provider tests host themselves.
-vera-embedded = { path = "../../crates/engine/vera-embedded", features = ["node"] }
 libc = "0.2"
 serial_test = "4"
 

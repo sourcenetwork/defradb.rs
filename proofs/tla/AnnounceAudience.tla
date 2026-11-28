@@ -35,7 +35,8 @@
 \*   |                    | the peer is subscribed by then, else InsufficientPeers     |
 \*   | Retry              | db merge/broadcast_mutator/broadcast.rs                    |
 \*   |                    | broadcast_with_creator publishes once: no Retry in GREEN;  |
-\*   |                    | RED is the retry loop that function replaced               |
+\*   |                    | RED is the retry loop that function replaced; it reports    |
+\*   |                    | Success for every no-topic-peer result, partial or both     |
 \*   | Connect, Subscribe | TransportEvent PeerConnected, then PeerSubscribed          |
 \*
 \* Gaps, explained:
@@ -45,6 +46,14 @@
 \*     coalescing window's accepted cost, and this model has no second peer.
 \*   * Unsubscribing and disconnecting are left out: they only shrink who
 \*     receives, so they cannot break INV_GoAudience.
+\*   * How a publish result is classified is left out: the model has one
+\*     topic and no per-topic outcome. Broadcaster::broadcast_update
+\*     classify_publishes marks a topic with no subscriber in
+\*     `*_is_no_topic_peer` for each of the three combinations (both,
+\*     collection only, document only), and broadcast_with_creator reports
+\*     Success for each. That decides what is logged and reported, never who
+\*     receives the write, so it cannot break INV_GoAudience; the
+\*     broadcaster's unit tests cover it.
 
 CONSTANTS SkipWhenAlone, AloneMeansUnsubscribed, RetryWhileConnected
 \* The three guards. GREEN: TRUE, TRUE, FALSE. Each RED configuration flips one.

@@ -2,7 +2,7 @@
 
 use axum::{extract::State, Json};
 
-use super::map_p2p_internal;
+use super::sync_refused;
 use crate::error::{peer_refused, HttpError};
 use crate::identity_extractor::ExtractIdentity;
 use crate::nac_guard::require_permission;
@@ -74,9 +74,9 @@ pub async fn sync_branchable(
 
     let p2p = bound(state.require_p2p()?, &identity.context());
 
-    p2p.sync_branchable_collection(&body.collection_id)
+    peer::sync_branchable_collection(&*p2p, &body.collection_id)
         .await
-        .map_err(map_p2p_internal)?;
+        .map_err(sync_refused)?;
 
     Ok(Json(()))
 }
@@ -97,9 +97,9 @@ pub async fn sync_versions(
 
     let p2p = bound(state.require_p2p()?, &identity.context());
 
-    p2p.sync_collection_versions(body.version_ids)
+    peer::sync_collection_versions(&*p2p, &body.version_ids)
         .await
-        .map_err(map_p2p_internal)?;
+        .map_err(sync_refused)?;
 
     Ok(Json(()))
 }

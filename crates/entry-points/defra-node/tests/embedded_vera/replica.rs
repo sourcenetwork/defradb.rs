@@ -281,7 +281,7 @@ fn replica_membership_requires_the_configured_owner_and_an_admitted_receiver() {
             .replica_group_member(&group, &signer)
             .await
             .is_err());
-        vera.register_doc_object(&owner, &group.policy, &group.resource, &group.object)
+        vera.register_doc_object(&owner, &group.policy, &group.resource, &group.object, &[])
             .await
             .unwrap();
         assert!(provider

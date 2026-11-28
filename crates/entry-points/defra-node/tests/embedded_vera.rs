@@ -32,6 +32,8 @@ mod projection;
 mod archive;
 #[path = "embedded_vera/registration_batch.rs"]
 mod registration_batch;
+#[path = "embedded_vera/transfer.rs"]
+mod transfer;
 
 #[path = "embedded_vera/replica.rs"]
 mod replica;
@@ -192,7 +194,7 @@ fn a_node_decides_document_access_through_its_own_vera_node_across_a_restart() {
             .expect("policy");
         first
             .document_acp()
-            .register_doc_object(&owner, &policy, "users", "first")
+            .register_doc_object(&owner, &policy, "users", "first", &[])
             .await
             .expect("registration");
         assert!(reads(&first, &owner, &policy).await);
@@ -248,7 +250,7 @@ fn a_node_acts_for_a_signer_of_another_key_type() {
                 .await
                 .expect("policy");
             node.document_acp()
-                .register_doc_object(&owner, &policy, "users", "first")
+                .register_doc_object(&owner, &policy, "users", "first", &[])
                 .await
                 .expect("registration");
             assert!(
@@ -368,7 +370,7 @@ fn a_node_adopts_a_policy_its_vera_node_was_seeded_with() {
         assert!(refused.to_string().contains("node's actor"), "{refused}");
         first
             .document_acp()
-            .register_doc_object(&owner, &adopted, "users", "first")
+            .register_doc_object(&owner, &adopted, "users", "first", &[])
             .await
             .expect("registration");
         assert!(reads(&first, &owner, &adopted).await);
@@ -449,7 +451,7 @@ fn a_second_node_shares_the_first_nodes_vera_deployment() {
 
         first
             .document_acp()
-            .register_doc_object(&owner, &policy, "users", "first")
+            .register_doc_object(&owner, &policy, "users", "first", &[])
             .await
             .expect("registration");
         assert!(reads(&second, &owner, &policy).await);
@@ -457,7 +459,7 @@ fn a_second_node_shares_the_first_nodes_vera_deployment() {
 
         second
             .document_acp()
-            .register_doc_object(&peer, &policy, "users", "second")
+            .register_doc_object(&peer, &policy, "users", "second", &[])
             .await
             .expect("registration by the second node");
         let seen = first

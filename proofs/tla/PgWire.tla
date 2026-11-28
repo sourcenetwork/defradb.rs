@@ -130,12 +130,13 @@
 \*     short messages, which the socket's send buffer takes at once. A write
 \*     that fails ends the task with its error, which only ends it sooner.
 \*   * A message already buffered is read even when the deadline has passed:
-\*     nuclei's Timeout polls its future before its timer (time/timeout.rs).
+\*     nuclei's Timeout polls its future before its timer
+\*     (nuclei:src/time/timeout.rs).
 \*     Here the read and the timeout are both allowed at the deadline, and
 \*     time stops there until the task leaves that wait. In the Rust a client
 \*     that keeps the buffer full gets at most one cooperative budget (128
-\*     socket reads, nuclei coop.rs) before the read answers Pending and the
-\*     timer is seen.
+\*     socket reads, nuclei:src/coop.rs BUDGET) before the read answers
+\*     Pending and the timer is seen.
 \*   * The client's framing is honest: before its startup message it sends
 \*     only the opening packets, and typed messages only after it. A
 \*     malformed packet makes Connection::next return an error, and the loop

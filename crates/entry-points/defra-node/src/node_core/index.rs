@@ -42,7 +42,7 @@ impl NodeCore<'_> {
             .await
     }
 
-    /// [`Self::create_index`] of an ordered index, returning once it is defined: it is
+    /// [`Self::create_index`], returning once the index is defined: it is
     /// listed as building until its backfill completes. Go's
     /// `Collection.NewIndex`.
     pub(crate) async fn start_index(
@@ -52,8 +52,9 @@ impl NodeCore<'_> {
         name: Option<&str>,
         fields: Vec<IndexedFieldDescription>,
         unique: bool,
+        vector: Option<VectorIndexDescription>,
     ) -> Result<IndexDescription> {
-        self.new_index(context, collection, name, fields, unique, None, false)
+        self.new_index(context, collection, name, fields, unique, vector, false)
             .await
     }
 
