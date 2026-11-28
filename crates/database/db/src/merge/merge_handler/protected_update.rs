@@ -33,6 +33,25 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
         collection: &CollectionVersion,
         view: Option<datastore::NamespaceView>,
     ) -> std::result::Result<Option<Refusal>, MergeError> {
+        if block.heads.as_deref().is_none_or(<[Cid]>::is_empty) {
+            return Ok(None);
+        }
+        self.check_signed_update(cid, block, payload.status, doc_id, collection, view)
+            .await
+    }
+
+    /// Judge `block` by its own signature as a change with `status` to
+    /// `doc_id` of `collection`. A peer's chunk is judged this way as an
+    /// update to its parent.
+    pub(crate) async fn check_signed_update(
+        &self,
+        cid: &Cid,
+        block: &Block,
+        status: u8,
+        doc_id: &str,
+        collection: &CollectionVersion,
+        view: Option<datastore::NamespaceView>,
+    ) -> std::result::Result<Option<Refusal>, MergeError> {
         let Some(hook) = self.composite_merge_hook() else {
             return Ok(None);
         };
@@ -42,8 +61,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
         }
         let scoped = view.and_then(|view| hook.bind_transaction(view));
         let hook = scoped.as_ref().unwrap_or(hook);
-        let is_genesis = block.heads.as_deref().is_none_or(<[Cid]>::is_empty);
-        if collection.policy.is_none() || is_genesis || !hook.guards_protected_updates() {
+        if collection.policy.is_none() || !hook.guards_protected_updates() {
             return Ok(None);
         }
 
@@ -53,8 +71,8 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                 doc_id,
                 collection,
                 CompositeFrame {
-                    is_genesis,
-                    status: payload.status,
+                    is_genesis: false,
+                    status,
                     signer: signer.as_ref(),
                 },
             )

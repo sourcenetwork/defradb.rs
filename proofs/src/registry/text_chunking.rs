@@ -109,6 +109,15 @@ pub(super) const PROPERTIES: &[Property] = &[
     },
     Property {
         family: "Text chunking",
+        name: "INV_NoRogueChunk / INV_WriterChunkKept / INV_EachChunkOnce: a peer's chunk of a protected parent merges only from a signer who may update the parent, including the local transaction and the remote provider's documented edge staleness, the writer's own chunk is never refused, and no chunk is held twice",
+        axis: Tla,
+        anchor: "crates/database/db/src/merge/merge_handler/chunk_signer.rs check_chunk_signer, prepare_chunk_merge, parent_held, parent_state, linked_parent; crates/database/db/src/collection/crud.rs Collection::read_hint; crates/database/db/src/merge/governance/judge.rs release_merged_composite; crates/database/db/src/merge/merge_handler/protected_update.rs check_signed_update; crates/database/db/src/merge/merge_handler/composite_persist.rs persist_merged_document; crates/database/db/src/chunk/sync/mod.rs plan_chunks; crates/database/db/src/chunk/sync/write.rs ChunkWrites::create; crates/database/db/src/chunk/rebuild.rs build_missing",
+        model_ref: "MC_ChunkSigner_Green.cfg / MC_ChunkSigner_Green_Remote.cfg / MC_ChunkSigner_Red_NoParentCheck.cfg / MC_ChunkSigner_Red_Unsigned.cfg / MC_ChunkSigner_Red_NoParentWait.cfg / MC_ChunkSigner_Red_OutsideTxn.cfg / MC_ChunkSigner_Red_Rebuild.cfg",
+        tiers: &[Boundary],
+        bound_by: "tools/integration-test/tests/testo/chunk/replicate_protected.rs a_peer_chunk_merges_only_from_a_signer_who_may_update_the_parent, a_chunk_that_arrives_before_its_parent_merges_when_the_parent_arrives, an_encrypted_protected_chunk_merges_after_its_parent",
+    },
+    Property {
+        family: "Text chunking",
         name: "INV_NoModelCallInTxn / INV_ListedChunkHasVector / INV_VectorIsItsText / INV_UnchangedChunkNoCall / INV_OneWave",
         axis: Tla,
         anchor: "crates/database/db/src/chunk/sync/mod.rs ChunkWrites::create_missing; crates/database/db/src/chunk/sync/write.rs ChunkWrites::embed; crates/database/db/src/search/embedding.rs set_embedding_from_inputs, prepared_embedding_request; crates/engine/query/src/prepared.rs PreparedInputMemo::get_or_want, PreparedInputMemo::answer_wave, FirstMiss; crates/engine/query/src/mutator.rs DocMutator::create_many_as; crates/engine/query/src/plan/mutation/update.rs UpdateNode::next; crates/database/db/src/write/autocommit/one_op.rs CreateWork::run, AutoCommitMutator::in_batch; crates/engine/query/src/runner/turn.rs QueryRunner::drive; crates/engine/query/src/runner/executor.rs QueryRunner::resolve_retry_input, QueryRunner::execute; crates/engine/query/src/runner/mutation.rs QueryRunner::execute_mutation_with_identity_and_vars; crates/engine/query/src/runner/prepare.rs QueryRunner::prepare_mutations; crates/database/db/src/chunk/sync/prefetch.rs embedding_requests",

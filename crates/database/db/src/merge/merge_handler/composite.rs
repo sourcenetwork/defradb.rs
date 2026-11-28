@@ -343,6 +343,21 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                                 });
                             }
                         }
+                        if let Some(preparation) = self
+                            .prepare_chunk_merge(
+                                super::chunk_signer::ChunkFrame {
+                                    cid,
+                                    block,
+                                    payload,
+                                    metadata,
+                                    doc_id,
+                                },
+                                collection.schema(),
+                            )
+                            .await?
+                        {
+                            return Ok(preparation);
+                        }
                     }
                 }
                 Judgement::Accept => {}

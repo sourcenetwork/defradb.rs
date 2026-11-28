@@ -69,8 +69,11 @@
 \*                                                     chunks of the current text; ChunkFollow.tla)
 \*   crates/database/p2p/src/sync/coordinator/broadcast.rs  SyncCoordinator::push_jobs (a chunk's
 \*                                                     push follows its article's; ChunkFollow.tla)
-\*   crates/database/db/src/chunk/sync/write.rs       ChunkWrites::create (unsigned chunk blocks)
+\*   crates/database/db/src/chunk/sync/write.rs       ChunkWrites::create (an unprotected parent's chunk blocks are unsigned)
 \*   crates/database/db/src/block/builder/write.rs    compute_document_blocks (the DocID is the first block's CID)
+\* The article here has no policy. A protected article's chunks are signed by
+\* their writer, never built by a merge, and merge only from a signer who may
+\* update the article: ChunkSigner.tla's.
 \* The deleted-parent guard, the read-time hash check and races with a reader are
 \* ChunkRead.tla's. An encrypted chunk's hash can't be checked at merge, so a
 \* forged encrypted chunk is not modelled here. An encrypted chunk's ID is its

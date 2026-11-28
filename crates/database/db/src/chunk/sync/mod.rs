@@ -45,6 +45,9 @@ pub(crate) struct FieldChunks {
     chunk_collection: String,
     chunks: Vec<(String, String)>,
     encrypt: bool,
+    /// The parent is protected, so its writer signs the chunks: a peer
+    /// merges a chunk only from a signer who may update the parent.
+    sign: bool,
 }
 
 /// Splits every chunked field this write sets to a text.
@@ -78,6 +81,7 @@ pub(crate) fn plan_chunks(
                 .map(|chunk| (chunk.text.clone(), chunk.hash.clone()))
                 .collect(),
             encrypt: encryption.is_some_and(|config| config.should_encrypt_field(field)),
+            sign: schema.policy.is_some(),
         });
     }
     Ok(plans)
@@ -158,7 +162,6 @@ where
             let target = self.open(&plan.chunk_collection).await?;
             let planned: RapidHashSet<&str> =
                 plan.chunks.iter().map(|(_, hash)| hash.as_str()).collect();
-            // TODO(https://github.com/sourcenetwork/defradb.rs/issues/3381): reuse trusts the vector of a chunk any peer sent.
             let existing = target.existing_of(parent_doc_id, &planned).await?;
             let mut docs = Vec::new();
             for (text, hash) in plan.chunks {
@@ -171,17 +174,17 @@ where
                 }
                 docs.push((doc, hash));
             }
-            missing.push((target, plan.encrypt, docs));
+            missing.push((target, plan.encrypt, plan.sign, docs));
         }
         // TODO(https://github.com/sourcenetwork/defradb.rs/issues/3380): one deadline bounds the whole wave.
         if let Some(miss) = first_miss {
             return Err(QueryError::NeedsInput(miss));
         }
         let mut written = Vec::new();
-        for (target, encrypt, docs) in missing {
+        for (target, encrypt, sign, docs) in missing {
             for (doc, hash) in docs {
                 written.push(
-                    self.create(&target, parent_doc_id, doc, hash, encrypt)
+                    self.create(&target, parent_doc_id, doc, hash, encrypt, sign)
                         .await?,
                 );
             }

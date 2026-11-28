@@ -188,7 +188,7 @@ With `@chunk(maxChars: 160)` and a 40-paragraph body, changing one word in parag
 - **Parents:** ["defra.chunk.write"]
 - **Scenarios:** ["chunk::write_signed::a_signing_node_keeps_the_chunks_of_the_first_update", "chunk::write_signed::a_signing_node_keeps_the_chunks_of_an_array_create", "chunk::write_signed::a_signing_node_keeps_the_chunks_of_an_upsert_create"]
 
-On a node that signs its blocks, creating an `Article` with a six-paragraph body gives a signed `body` block. Updating the body to four paragraphs then leaves exactly the four chunks of the new text, and the `text` block of a chunk is not signed, so every node gives the chunk of one text the same `_docID`. The same update leaves exactly the new chunks for each article of a two-article `add_Article` and for an article an `upsert_Article` created.
+On a node that signs its blocks, creating an `Article` with a six-paragraph body gives a signed `body` block. Updating the body to four paragraphs then leaves exactly the four chunks of the new text, and the `text` block of a chunk of this unprotected parent is not signed, so every node gives the chunk of one text the same `_docID`. The same update leaves exactly the new chunks for each article of a two-article `add_Article` and for an article an `upsert_Article` created.
 
 # `defra.chunk.write.concurrent`: Concurrent writes leave the chunks of the winning text
 
@@ -251,12 +251,19 @@ A replicator set up for `Article` alone gives the second node exactly the same c
 
 Two unconnected nodes add the same article. One updates its body to three paragraphs about `north`, the other to three about `south`. After they connect and each syncs the article from the other, both show the `south` body and exactly its chunks. A node that syncs a newer body it has no chunks for shows that body and exactly its chunks.
 
-# `defra.chunk.replicate.signed`: Signing peers that write the same text show each chunk once
+# `defra.chunk.replicate.signed`: Signing peers that write the same unprotected text show each chunk once
 
 - **Parents:** ["defra.chunk.replicate"]
 - **Scenarios:** ["chunk::replicate_signed::signing_peers_that_write_the_same_text_show_each_chunk_once"]
 
-Two nodes that sign their blocks share an article. While disconnected, both update its body to the same three paragraphs. After they reconnect and the second syncs the article and the first node's chunk documents, the second shows the body and exactly its three chunks, each once.
+Two nodes that sign their blocks share an unprotected article. While disconnected, both update its body to the same three paragraphs. After they reconnect and the second syncs the article and the first node's chunk documents, the second shows the body and exactly its three chunks, each once. The chunks of an unprotected parent are unsigned, so equal text has one DocID. The chunks of a protected parent are signed, so two different writers who sign equal text each produce a chunk document, one per signer.
+
+# `defra.chunk.replicate.protected`: A peer's chunk of a protected parent merges only from a signer who may update the parent
+
+- **Parents:** ["defra.chunk.replicate"]
+- **Scenarios:** ["chunk::replicate_protected::a_peer_chunk_merges_only_from_a_signer_who_may_update_the_parent", "chunk::replicate_protected::a_chunk_that_arrives_before_its_parent_merges_when_the_parent_arrives", "chunk::replicate_protected::an_encrypted_protected_chunk_merges_after_its_parent"]
+
+A chunk of a parent under a policy is an update of that parent. The writer signs the chunks of a protected parent, and a peer builds none of them itself: they come from the writer. A merge stores a peer's new chunk of a protected parent only once the parent has arrived (until then it is skipped with `the chunk's parent has not arrived` and merged again when the parent arrives), and only when the chunk's signer may update the parent there; otherwise the chunk is refused for good with `chunk rejected: its signer may not update its parent: signer <did> lacks update permission on protected document <parent docID>`, or `signer unsigned lacks ...` for an unsigned chunk. A node started with signing disabled is an intentional exception: its protected chunks are unsigned and peers refuse them because they name no signer who may update the parent. Protected chunk replication requires signing to be enabled. An encrypted chunk needs its parent first, because the KMS authorizes its decryption key through the parent; once the parent is present, the chunk's decrypted source ID resolves the parent and the signer check is the same. Alice's article on `db0`, synced to `db1`, shows Alice the same chunks there. When Bob, whom only `db1` lets update the article, rewrites it there and `db0` syncs the article and Bob's chunk documents, `db0` keeps Alice's text and chunks and holds no `_commits` of Bob's chunks.
 
 # `defra.chunk.replicate.doc_sync`: A document sync brings the parent's chunks
 

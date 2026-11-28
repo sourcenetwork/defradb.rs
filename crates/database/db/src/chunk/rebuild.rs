@@ -50,6 +50,10 @@ where
     S: Store,
 {
     let schema = parent.collection.schema();
+    // A protected parent's chunks come signed from its writer, as encrypted ones do.
+    if schema.policy.is_some() {
+        return Ok(Vec::new());
+    }
     let blockstore = datastore.sibling(Namespace::Blockstore);
     let headstore = datastore.sibling(Namespace::Headstore);
     let mut built = Vec::new();
