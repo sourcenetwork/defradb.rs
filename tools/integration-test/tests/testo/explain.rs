@@ -111,6 +111,7 @@ mod execute {
     mod type_join;
     mod update;
     mod upsert;
+    mod vector_index_fetches;
     mod with_average;
     mod with_count;
     mod with_index;

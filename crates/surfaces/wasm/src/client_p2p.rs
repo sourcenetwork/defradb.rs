@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use defra_p2p_adapter::{peer, P2PError, P2POperations};
+use defra_p2p_adapter::{peer, P2POperations};
 use wasm_bindgen::prelude::*;
 
 use crate::bindings::{config_from_js, from_js, to_js};
@@ -45,8 +45,7 @@ impl DefraClient {
     #[wasm_bindgen(js_name = peerInfo)]
     pub async fn peer_info(&self) -> std::result::Result<JsValue, JsValue> {
         let ops = self.p2p_ops()?;
-        let id = ops.local_peer_id().await.map_err(p2p_error)?;
-        let addresses = ops.listen_addresses().await.map_err(p2p_error)?;
+        let (id, addresses) = peer::peer_info_with_id(&**ops).await.map_err(core_error)?;
         Ok(to_js(
             &serde_json::json!({ "id": id, "addresses": addresses }),
         )?)
@@ -103,11 +102,13 @@ impl DefraClient {
         )
     }
 
-    /// Every replicator this peer pushes to.
+    /// Every replicator this peer pushes to, as Go's `client.Replicator`.
     #[wasm_bindgen]
     pub async fn replicators(&self) -> std::result::Result<JsValue, JsValue> {
-        let replicators = self.p2p_ops()?.get_replicators().await.map_err(p2p_error)?;
-        Ok(to_js(&replicators)?)
+        let replicators = peer::list_replicators(&**self.p2p_ops()?)
+            .await
+            .map_err(core_error)?;
+        replicators_to_js(&replicators).map_err(Into::into)
     }
 
     /// Follow writes other peers announce on these collections.
@@ -186,12 +187,12 @@ fn collection_names(collections: JsValue) -> Result<Vec<String>> {
     from_js(collections)
 }
 
-fn p2p_error(error: P2PError) -> WasmError {
+fn core_error(error: peer::Error) -> WasmError {
     WasmError::P2P(error.to_string())
 }
 
-fn core_error(error: peer::Error) -> WasmError {
-    WasmError::P2P(error.to_string())
+fn replicators_to_js(replicators: &[peer::Replicator]) -> Result<JsValue> {
+    to_js(&replicators)
 }
 
 #[cfg(test)]
@@ -275,6 +276,27 @@ mod tests {
         assert!(client.peer_info().await.is_err());
         assert!(client.connect_peer("anything").await.is_err());
         client.close().await.unwrap();
+    }
+
+    #[wasm_bindgen_test]
+    fn replicators_keep_go_field_names() {
+        let replicators = [peer::Replicator {
+            id: "peer".to_owned(),
+            addresses: vec!["/ip4/127.0.0.1/tcp/1".to_owned()],
+            collection_ids: vec!["collection".to_owned()],
+            status: 0,
+            last_status_change: "2026-11-27T00:00:00Z".to_owned(),
+            filters: serde_json::Map::new(),
+        }];
+        let value: serde_json::Value =
+            serde_wasm_bindgen::from_value(replicators_to_js(&replicators).unwrap()).unwrap();
+
+        assert_eq!(value[0]["ID"], "peer");
+        assert_eq!(value[0]["Addresses"][0], "/ip4/127.0.0.1/tcp/1");
+        assert_eq!(value[0]["CollectionIDs"][0], "collection");
+        assert_eq!(value[0]["Status"], 0);
+        assert_eq!(value[0]["LastStatusChange"], "2026-11-27T00:00:00Z");
+        assert!(value[0].get("Filters").is_none());
     }
 
     #[wasm_bindgen_test]

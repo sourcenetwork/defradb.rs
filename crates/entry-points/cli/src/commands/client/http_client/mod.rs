@@ -26,6 +26,7 @@ mod graphql;
 mod index;
 mod p2p;
 mod peer;
+mod server_error;
 mod transaction;
 mod types;
 mod view;
@@ -315,34 +316,16 @@ impl HttpClient {
         }))
     }
 
-    /// Extract error details from a failed response and return an error: a
-    /// unique refusal (`"code": "UNIQUE_CONSTRAINT_VIOLATION"`) as the typed
-    /// document refusal, any other `{"error": …}` text unchanged, as Go's
-    /// client returns it, or the status and raw body when the body is not
-    /// that shape.
+    /// Extract error details from a failed response and return an error: the
+    /// server's `{"error": …}` text unchanged, as Go's client returns it, or
+    /// the status and raw body when the body is not that shape.
     async fn extract_error(response: Response) -> Error {
         let status = response.status();
         let body = response
             .text()
             .await
             .unwrap_or_else(|e| format!("[failed to read body: {}]", e));
-        match serde_json::from_str::<types::ErrorResponse>(&body) {
-            Ok(parsed)
-                if parsed.code.as_deref()
-                    == Some(query::executor::UNIQUE_CONSTRAINT_VIOLATION_ERROR_CODE) =>
-            {
-                query::documents::Error::UniqueViolation(parsed.error).into()
-            }
-            Ok(types::ErrorResponse {
-                error,
-                code: Some(code),
-            }) => Error::ServerRefused {
-                message: error,
-                code,
-            },
-            Ok(parsed) => Error::Server(parsed.error),
-            Err(_) => Error::Server(format!("HTTP {}: {}", status, body.trim())),
-        }
+        server_error::server_error(status, &body)
     }
 
     /// Helper for POST requests with plain text body

@@ -36,11 +36,11 @@
 \*   manager/mod.rs  IndexManager::next_index_id and index_id_floor (a new
 \*                index never gets a retired id)
 \*   backfill.rs  BackfillPage::index (validated definition read per page),
-\*                DB::backfill_index, FailBackfillAttempt (a failure is recorded
-\*                only while the index is still defined),
-\*                DB::resume_index_backfills (restart, which
-\*                DB::start_resumed_index_backfills runs as its own task once
-\*                the database is open)
+\*                DB::backfill_index, DB::resume_index_backfills (restart,
+\*                which DB::start_resumed_index_backfills runs as its own task
+\*                once the database is open)
+\*   settle.rs    FailBackfillAttempt (a failure is recorded only while the
+\*                index is still defined)
 EXTENDS Naturals, FiniteSets
 
 CONSTANTS

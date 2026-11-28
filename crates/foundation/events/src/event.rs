@@ -190,6 +190,9 @@ pub struct AcpOwedChangeRefusedData {
     pub subject: String,
     /// `true` for a delete, `false` for an add.
     pub delete: bool,
+    /// `true` for a transfer of the object to another owner: `relation` is
+    /// `owner`, `subject` the new owner, and `actor` the owner it stays with.
+    pub transfer: bool,
     /// The provider's words.
     pub reason: String,
     /// Whether the change stays parked as refused; `false` when it was
@@ -237,7 +240,9 @@ pub struct AcpCacheInvalidatedData {
 /// One submission reported by a Vera takeover reconciliation.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AcpTakeoverSubmission {
-    /// `registration`, `relationship`, `policy-creation`, or `archive`.
+    /// `registration`, `relationship`, `policy-creation`, `archive`, or
+    /// `transfer`, whose `relation` is `owner` and whose `subject` is the
+    /// new owner.
     pub kind: String,
     pub policy_id: String,
     pub resource: String,

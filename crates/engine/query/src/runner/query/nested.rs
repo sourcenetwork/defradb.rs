@@ -49,11 +49,6 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
         let collection = self.get_collection(&select.collection_name).await?;
         super::super::plan::validate_select(select, &collection)?;
 
-        let restore = has_one_to_one_relation_select(select, &collection).then(|| {
-            let previous = fetcher.scans_validated();
-            fetcher.set_scans_validated(true);
-            RestoreScanValidation { fetcher, previous }
-        });
         let float32_targets = super::relation_aggregate::float32_relation_targets(
             select,
             &collection,
@@ -167,7 +162,6 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
         let (results, plan_exec_info, cursor_page_info) =
             plan_drive::close_after(plan.as_mut(), outcome).await?;
         profile.plan_close_elapsed = plan_close_start.elapsed();
-        drop(restore);
 
         // Post-process relation-based aggregates
         // For aggregates like _count(books: {}), compute the value from joined data
@@ -406,33 +400,6 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
         }
 
         results
-    }
-}
-
-/// Restores the scan-validation setting a one-to-one relation join enabled,
-/// including if its execution future is dropped while suspended.
-struct RestoreScanValidation<'a> {
-    fetcher: &'a dyn DocFetcher,
-    previous: bool,
-}
-
-/// Whether this select joins a one-to-one relation. Those joins read the
-/// relation-linked documents their result depends on, so Go's SSI semantics
-/// validate that scan range while the join runs.
-fn has_one_to_one_relation_select(select: &Select, collection: &CollectionVersion) -> bool {
-    select.fields.iter().any(|field| {
-        let Requestable::Select(nested) = field else {
-            return false;
-        };
-        collection
-            .field_by_name(&nested.field.name)
-            .is_some_and(|field| field.kind.is_relation() && !field.kind.is_array())
-    })
-}
-
-impl Drop for RestoreScanValidation<'_> {
-    fn drop(&mut self) {
-        self.fetcher.set_scans_validated(self.previous);
     }
 }
 

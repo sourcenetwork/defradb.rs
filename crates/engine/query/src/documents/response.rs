@@ -2,8 +2,9 @@ use super::{Error, Result};
 use serde_json::Value;
 
 use crate::executor::{
-    QueryResponse, SECONDARY_RELATION_ERROR_CODE, TXN_CONFLICT_ERROR_CODE,
-    UNIQUE_CONSTRAINT_VIOLATION_ERROR_CODE, UNKNOWN_MUTATION_COLLECTION_ERROR_CODE,
+    QueryResponse, DOCUMENT_ALREADY_EXISTS_ERROR_CODE, DOCUMENT_DELETED_ERROR_CODE,
+    SECONDARY_RELATION_ERROR_CODE, TXN_CONFLICT_ERROR_CODE, UNIQUE_CONSTRAINT_VIOLATION_ERROR_CODE,
+    UNKNOWN_MUTATION_COLLECTION_ERROR_CODE,
 };
 
 /// The `_docID` of each document mutation `op` on `collection` returned, or
@@ -60,6 +61,10 @@ fn refused(response: &QueryResponse) -> Result<()> {
                 Error::SecondaryRelation(quoted_field(&error.message))
             }
             Some(UNKNOWN_MUTATION_COLLECTION_ERROR_CODE) => Error::CollectionNotFound,
+            Some(DOCUMENT_ALREADY_EXISTS_ERROR_CODE) => {
+                Error::AlreadyExists(named_doc_id(&error.message))
+            }
+            Some(DOCUMENT_DELETED_ERROR_CODE) => Error::Deleted(named_doc_id(&error.message)),
             _ => Error::Request(error.message.clone()),
         }),
     }
@@ -87,6 +92,15 @@ pub(super) fn saved_doc_ids(response: QueryResponse, count: usize) -> Result<Vec
                 .ok_or(Error::DocumentNotFound)
         })
         .collect()
+}
+
+/// The ID a collision refusal names after `DocID: `, so the typed error
+/// prints the same text.
+fn named_doc_id(message: &str) -> String {
+    message
+        .rsplit_once("DocID: ")
+        .map(|(_, id)| id.to_owned())
+        .unwrap_or_default()
 }
 
 /// The field a GraphQL input error names in `In field "<name>"`.

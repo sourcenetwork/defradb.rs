@@ -101,15 +101,15 @@ it exactly or check a scaled-down instance of it.
 `constants::every_constant_agrees` fails when the code, a restating model or the
 table disagree.
 
-### Realized status — all 21 families bound
+### Realized status — all 22 families bound
 
 **19 behavioral tests** (driven against fresh `target/debug/defradb`, each break-tested
-for non-vacuity), **2 Lean-axis contract bindings**, **7 honest Boundaries** (one,
+for non-vacuity), **2 Lean-axis contract bindings**, **8 honest Boundaries** (one,
 Transaction & merge-queue concurrency, is now both — a Behavioral no-loss/no-double-apply
 storm leg plus a Boundary internal-serialization leg). One
 of these (`partition::convergence_concurrent_same_doc_writes_merge`) found a real
 Rust-specific CRDT convergence bug — divergent materialization on identical DAGs
-after a restart — which is now **fixed** in `crates/database/db (merge)/.../field_state.rs`
+after a restart — which is now **fixed** in `crates/database/db/src/merge/merge_handler/field_state.rs`
 (`reseed_from_document` re-seeds the datastore LWW from the authoritative
 headstore); go↔go vs rust↔rust parity (`parity.rs`) localized it to Rust.
 
@@ -122,6 +122,7 @@ headstore); go↔go vs rust↔rust parity (`parity.rs`) localized it to Rust.
 | ACP soundness + revocation + commits | Behavioral + Contract | `acp.rs`; `RelationExpression` vocab |
 | Storage transaction validation | Behavioral | `ssi.rs` (real `409 Conflict` on write-skew) |
 | Client transaction isolation | Behavioral + Contract + Boundary | `unique_isolation.rs` (explicit, autocommit and no-index races on the conformance binary, `target/debug/defradb` unless `DEFRA_CONFORMANCE_BINARY` names another); testo `txn::unique_isolation` and `index::unique_refusal_code` (in-process and Rust HTTP clients, not that binary) and `db` `write::conflict_reasons` races; `UniqueRefusal` vocab; regolith's validation of the entry read stays Boundary ([guarantees](../docs/book/src/txn/guarantees.md)) |
+| Transaction collection cache | Boundary | `CollectionCacheLayers.lean`; `crates/database/db/tests/collection/cache.rs` |
 | Management-channel auth (NAC gate) | Behavioral | `nac.rs` |
 | NAC lifecycle priv-escalation | Behavioral | `nac_lifecycle.rs` |
 | Transaction & merge-queue concurrency | Behavioral + Boundary | `partition::{convergence_concurrent_pncounter_signed_deltas_sum,convergence_restart_pncounter_signed_deltas_sum,convergence_concurrent_pncounter_same_doc_merge_storm}` (PNCounter exact signed sum across live, restart, and storm); `partition::convergence_concurrent_same_doc_merge_storm` (no-loss/no-double-apply exact-sum oracle); `partition::{convergence_concurrent_mixed_lww_and_counter_fields_merge,convergence_restart_mixed_lww_and_counter_fields_merge,convergence_mixed_lww_and_counter_3node_full_mesh}` (mixed Counter×LWW exact-state); `MC_MixedFieldMaterialization_{Red_WholeDoc,Green}`; engine OCC and the txn-registry sweep stay Boundary |
@@ -148,6 +149,7 @@ headstore); go↔go vs rust↔rust parity (`parity.rs`) localized it to Rust.
 | Per-operation signing choice | Boundary | `SigningOverride`; unit tests on each edge and `signature::per_op_signing` (testo) |
 | Backup import write path | Boundary | `BackupImportWritePath.tla`, `BackupImportSigner`; unit tests on each edge and `backup::signed_import`, `backup::import_creator`, `backup::duplicate_alias`, `backup::failed_import` (testo); the drain's deadline is not modelled |
 | vera.rs policy creation | Boundary | over abstract IDs: that vera.rs's SHA-256 derivation separates definitions, nonces and creators is vera.rs's and acp's property (their vectors); in-process node tests in `crates/engine/vera-embedded/tests/policy_ids.rs` |
+| Policy relation binding identity | Boundary | over a field definition's entries, not its bytes; that the CBOR encoder writes an entry list the same way every time is the encoder's; pinned identities in `crates/engine/query/src/sdl_parse/identity_tests.rs`, unit tests in `crates/foundation/schema/tests/policy_binding_tests.rs` |
 | Policy nonce text | Boundary | over digit values; that a character reads back as its digit value in either case is the character table's; unit tests in `crates/engine/acp/tests/policy_nonce_tests.rs` |
 
 ```bash
@@ -288,8 +290,10 @@ same revision as Cargo.lock rather than copied into this repository. DefraDB's
 once keys and reopen through the adapter.
 
 `RetryPreparedInputs.tla` models exact-context provider answers resolved outside
-an attempt and reused after a commit conflict; its RED cases run provider work
-inside an attempt or clear the memo and repeat provider work. It does not establish that every remote ACP/Vera/KMS/decrypt call
+an attempt, kept from request preparation, and reused after a commit conflict;
+its RED cases run provider work inside an attempt, clear the memo and repeat
+provider work, or drop the answer preparation got so the first attempt ends
+asking for it. It does not establish that every remote ACP/Vera/KMS/decrypt call
 is lifted out of retry attempts. `RetryMarkerGeneration.tla` models generation
 compare-delete and the peer-incarnation fence on clear across forget/re-add,
 and the sweep over several scopes: a tick reads one probe and at most one page
@@ -315,9 +319,11 @@ Core directly and retains the sibling, pruning, abort and old-snapshot cases.
 It checks that a delayed registration cannot cross forget/re-add or replace a
 newer pending marker. Its negative variants remove the incarnation or ordering
 check. It also models the fan-out caller that registers a committed head with
-each replicator. `INV_FanOutPeerLocal` requires that a gone, re-incarnated,
-covered or failed peer is decided on its own, and that every registered peer
-is queued. `Red_FanOutAbort` aborts the fan-out on the first rejection. This
+every replicator at once and queues once all are decided. `INV_FanOutPeerLocal`
+requires that a gone, re-incarnated, covered or failed peer is decided on its
+own, and that every registered peer is queued. `Red_FanOutAbort` aborts the
+fan-out on the first rejection; `Red_NoJoin` queues before every registration
+is decided. This
 finite model does not verify the Rust implementation.
 
 `RetrySchedule.tla` models the one retry clock a sender keeps per peer. An

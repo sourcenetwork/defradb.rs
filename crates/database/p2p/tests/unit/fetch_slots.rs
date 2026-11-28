@@ -31,7 +31,9 @@ async fn slots_report_the_state_holding_each_root() {
     );
 
     assert!(shutdown.reserve_pending_dag_fetch(scheduled));
-    assert!(shutdown.spawn_pending_dag_fetch(running, std::future::pending()));
+    assert!(shutdown
+        .spawn_pending_dag_fetch(running, std::future::pending())
+        .is_some());
     let mut roots = vec![slot(scheduled, "scheduled"), slot(running, "running")];
     roots.sort_by(|a, b| a.root_cid.cmp(&b.root_cid));
     assert_eq!(

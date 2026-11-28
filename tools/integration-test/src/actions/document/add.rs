@@ -3,7 +3,6 @@ use crate::scenario::Text;
 use crate::scenario::{Common, Failure, Op};
 use crate::test_case::State;
 use query::documents::{AddOptions, Error as DocumentsError};
-use query::executor::UNIQUE_CONSTRAINT_VIOLATION_ERROR_CODE;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use testo::prelude::*;
@@ -37,9 +36,7 @@ pub struct AddDoc {
     pub expected_data: Value,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expected_error: Option<String>,
-    /// The code the refusal matching `expected_error` carries. Go's clients
-    /// and the CLI keep no code, so a case that sets it runs under the
-    /// in-process and Rust HTTP clients only.
+    /// The stable code the error must carry; see [`Op::expected_error_code`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expected_error_code: Option<String>,
     #[serde(flatten)]
@@ -65,29 +62,22 @@ impl Op for AddDoc {
 
     fn run(&self, state: &State) -> Result<Value, Failure> {
         let identity = self.check_arguments(state)?;
-        let (node, context, options) = (
+        let (node, scope, options) = (
             state.node_on(self.common.node())?,
-            state.context_on(self.common.node(), self.txn, identity, self.enable_signing),
+            state.scope_on(self.common.node(), self.txn, identity, self.enable_signing),
             self.options(),
         );
-        let failed = |e: defra_node::Error| {
-            let code = match &e {
-                defra_node::Error::Documents(refusal) => refusal_code(refusal),
-                _ => None,
-            };
-            Failure::operation(e.to_string()).with_code(code)
-        };
+        let failed = |e: defra_node::Error| Failure::coded(e.to_string(), e.code());
         if let Some(docs) = &self.docs {
             let ids = state
-                .block_on(node.add_docs(&context, &self.collection, docs, &options))
+                .block_on(scope.on(&node).add_docs(&self.collection, docs, &options))
                 .map_err(failed)?;
             return Ok(json!({ "docIDs": ids }));
         }
         let doc = self.doc();
         let id = match self.upsert {
             true => state
-                .block_on(node.save_doc(
-                    &context,
+                .block_on(scope.on(&node).save_doc(
                     &self.collection,
                     self.doc_id.as_ref().map(Text::as_str),
                     &doc,
@@ -96,7 +86,7 @@ impl Op for AddDoc {
                 .map_err(failed)?,
             false => first(
                 state
-                    .block_on(node.add_docs(&context, &self.collection, &[doc], &options))
+                    .block_on(scope.on(&node).add_docs(&self.collection, &[doc], &options))
                     .map_err(failed)?,
             )?,
         };
@@ -123,14 +113,6 @@ impl AddDoc {
     }
 }
 
-/// The code a client keeps for a typed document refusal.
-fn refusal_code(refusal: &DocumentsError) -> Option<&'static str> {
-    match refusal {
-        DocumentsError::UniqueViolation(_) => Some(UNIQUE_CONSTRAINT_VIOLATION_ERROR_CODE),
-        _ => None,
-    }
-}
-
 /// The ID of the one document an add returned.
 fn first(ids: Vec<String>) -> Result<String, Failure> {
     ids.into_iter()
@@ -152,13 +134,7 @@ impl HttpRun for AddDoc {
             let identity = action.check_arguments(state)?;
             let (txn, options) = (state.txn_id(action.txn), action.options());
             let collection = action.collection.clone();
-            let failed = |e: cli::error::Error| {
-                let code = match &e {
-                    cli::error::Error::Documents(refusal) => refusal_code(refusal),
-                    _ => None,
-                };
-                Failure::operation(e.to_string()).with_code(code)
-            };
+            let failed = |e: cli::error::Error| Failure::coded(e.to_string(), e.code());
             if let Some(docs) = action.docs.clone() {
                 let ids = state
                     .http_as(action.common.node(), identity, |client| async move {

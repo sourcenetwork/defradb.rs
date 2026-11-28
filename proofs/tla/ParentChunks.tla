@@ -29,7 +29,8 @@
 \* Code it models (crates/database/db/src/chunk/sync):
 \*   mod.rs      plan_chunks (the chunks a write's text needs), ChunkWrites::create_missing,
 \*               ChunkWrites::delete_all (missing chunks, and the cascade on delete)
-\*   lookup.rs   ChunkCollection::existing_of (which planned chunks exist, in one scan)
+\*   lookup.rs   ChunkCollection::existing_of (which planned chunks exist: one scan of
+\*               the parent's chunk index, including writes staged in the transaction)
 \*   crates/database/db/src/write/autocommit/one_op.rs AutoCommitMutator::in_batch (a single write runs as one batch)
 \*   crates/database/db/src/write/autocommit/batch.rs  BatchMutator::update_as, delete_as (call the hook)
 \*   crates/database/db/src/write/doc.rs               DbDocMutator update and delete (call the hook)

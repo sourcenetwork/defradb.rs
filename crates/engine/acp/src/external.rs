@@ -61,6 +61,10 @@ mod registration;
 mod registration_batch;
 mod replica;
 mod settle;
+mod transfer_order;
+#[cfg(test)]
+#[path = "external/transfer_tests.rs"]
+mod transfer_tests;
 mod voided;
 
 pub use drain::MAX_CHANGES_PER_REQUEST;
@@ -254,9 +258,12 @@ where
         }
     }
 
-    /// Whether an archive is owed, unsettled, on an object.
-    async fn archive_owed(
+    /// Whether what is owed, unsettled, on an object denies `identity`
+    /// whatever else is asked: the object's archive, or a transfer of the
+    /// object away from it.
+    async fn denied_outright(
         &self,
+        identity: &Identity,
         policy_id: &str,
         resource_name: &str,
         object_id: &str,
@@ -265,13 +272,13 @@ where
         let denial = owed_denial(
             &txn,
             &*self.provider,
-            &Identity::Anonymous,
+            identity,
             policy_id,
             resource_name,
             object_id,
         )
         .await?;
-        Ok(matches!(denial, OwedDenial::Archived))
+        Ok(matches!(denial, OwedDenial::Archived | OwedDenial::Always))
     }
 
     /// Wait until nothing is owed on `tuple`, woken whenever a record of
@@ -705,6 +712,7 @@ where
         policy_id: &str,
         resource_name: &str,
         doc_id: &str,
+        relationships: &[crate::DerivedRelationship],
     ) -> Result<()> {
         let fact = RecoveryFact::registered(
             policy_id,
@@ -714,45 +722,15 @@ where
         );
         self.recorded(
             fact,
-            self.provider
-                .register_doc_object(identity, policy_id, resource_name, doc_id),
+            self.provider.register_doc_object(
+                identity,
+                policy_id,
+                resource_name,
+                doc_id,
+                relationships,
+            ),
         )
         .await
-    }
-
-    async fn registration_parent(
-        &self,
-        policy_id: &str,
-        child: &str,
-        id: &str,
-    ) -> Result<crate::RegistrationParent> {
-        self.provider
-            .registration_parent(policy_id, child, id)
-            .await
-    }
-
-    async fn registration_parent_rule(
-        &self,
-        policy_id: &str,
-        child: &str,
-        id: &str,
-    ) -> Result<(crate::RegistrationParent, String)> {
-        self.provider
-            .registration_parent_rule(policy_id, child, id)
-            .await
-    }
-
-    async fn register_under_parent(
-        &self,
-        identity: &Did,
-        policy_id: &str,
-        resource: &str,
-        object_id: &str,
-        parent: &crate::RegistrationParent,
-    ) -> Result<()> {
-        self.provider
-            .register_under_parent(identity, policy_id, resource, object_id, parent)
-            .await
     }
 
     async fn register_object(
@@ -782,13 +760,7 @@ where
         resource_name: &str,
         doc_id: &str,
     ) -> Result<bool> {
-        if let Some(owed) = self.owed(policy_id, resource_name, doc_id).await? {
-            if owed.parent.is_some() {
-                // Returning false could expose this row through a branchable collection.
-                return Err(Error::ProviderUnavailable(
-                    "parent admission is awaiting confirmation".into(),
-                ));
-            }
+        if self.owed(policy_id, resource_name, doc_id).await?.is_some() {
             return Ok(true);
         }
         self.provider
@@ -803,7 +775,7 @@ where
         doc_id: &str,
     ) -> Result<Option<Did>> {
         if let Some(owed) = self.owed(policy_id, resource_name, doc_id).await? {
-            return Ok(owed.parent.is_none().then_some(owed.creator));
+            return Ok((!owed.hidden()).then_some(owed.creator));
         }
         self.provider
             .get_doc_owner(policy_id, resource_name, doc_id)
@@ -819,14 +791,23 @@ where
         doc_id: &str,
     ) -> Result<bool> {
         self.owed_layout().await?;
-        // A deleted document's owed archive denies before a registration
-        // still owed to its creator could grant it anything.
-        if self.archive_owed(policy_id, resource_name, doc_id).await? {
+        // A deleted document's owed archive, and a transfer owed away from
+        // the identity, deny before a registration still owed to its
+        // creator could grant it anything.
+        if self
+            .denied_outright(identity, policy_id, resource_name, doc_id)
+            .await?
+        {
             return Ok(false);
         }
         if let Some(owed) = self.owed(policy_id, resource_name, doc_id).await? {
-            return Ok(owed.parent.is_none()
-                && matches!(identity, Identity::Authenticated(did) if *did == owed.creator));
+            // A document in a gated collection is not valid until the
+            // provider holds its registration, and one whose creator may not
+            // create it never is: hidden from everyone, its creator included.
+            if owed.hidden() {
+                return Ok(false);
+            }
+            return Ok(matches!(identity, Identity::Authenticated(did) if *did == owed.creator));
         }
         if self
             .revoked(identity, policy_id, resource_name, doc_id)

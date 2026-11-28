@@ -2,15 +2,13 @@
 # Explicit transaction link reads validate their own decision only
 
 The story, in plain words. A local unique-index save turns scan validation on
-for the one lookup it decides on, then puts the setting back. A one-to-one
-relation join does the same for the scan range its result depends on. Either
-read can refuse a second link after the first took the value, but neither can
-leave the whole transaction validating every later scan.
+for the one lookup it decides on, then puts the setting back. That read can
+refuse a second link after the first took the value, but it cannot leave the
+whole transaction validating every later scan. A query's one-to-one join
+decides nothing, so it is never validated (`RelationJoinRead.tla`).
 
-Rust owners: `crates/database/db/src/index/manager/unique.rs`
-(`save_local_unique_validated`) and
-`crates/engine/query/src/runner/query/nested.rs`
-(`has_one_to_one_relation_select`).
+Rust owner: `crates/database/db/src/index/manager/unique.rs`
+(`save_local_unique_validated`).
 -/
 
 namespace RelationLinkConflict

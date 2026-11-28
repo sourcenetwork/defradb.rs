@@ -20,6 +20,7 @@ mod dag_sync;
 mod dispatch_queue;
 pub(crate) mod doc_sync_ids;
 mod event_dispatcher;
+mod failure_recorder_stats;
 mod head_provider;
 mod head_scope;
 mod manager;
@@ -45,6 +46,8 @@ pub use collection_store::{
 pub use coordinator::IrohSyncCoordinator;
 #[cfg(feature = "libp2p-transport")]
 pub use coordinator::Libp2pSyncCoordinator;
+#[cfg(all(feature = "pinc-transport", not(target_arch = "wasm32")))]
+pub use coordinator::PincSyncCoordinator;
 pub use coordinator::{
     CreateReplicatorResult, FollowedDocuments, HeadHintCarAuthority, HeadHintCarGrant,
     LoadReplicatorsResult, PeerDetails, PendingDagFetchSlot, PendingDagFetchSlots, PendingFetch,
@@ -58,18 +61,22 @@ pub use dispatch_queue::{
 pub(crate) use event_dispatcher::classify_p2p_event;
 pub(crate) use event_dispatcher::DispatchDiagnostics;
 pub use event_dispatcher::{DispatchAdmission, DispatchClass, DispatchEvent, DispatchSnapshot};
+pub use failure_recorder_stats::{
+    FailureRecorderSnapshot, FailureRecorderStats, FAILURE_RECORDER_LANES,
+    FAILURE_RECORDER_LANE_CAPACITY,
+};
 pub use head_provider::{DocumentHeadProvider, NoOpHeadProvider};
 #[cfg(any(feature = "libp2p-transport", feature = "iroh-transport"))]
 pub(crate) use manager::record_gossip_decode_failure_sample;
 pub use manager::{
     default_rate_limit_backoff, DagFetchPeerPermit, GossipDecodeFailureSample, GossipTransport,
-    SyncConfig, SyncDiagnostics, SyncDiagnosticsSnapshot, SyncEvent, SyncEventReceiver,
-    SyncManager, DEFAULT_BROADCAST_PENDING_BYTES, DEFAULT_BROADCAST_WAIT_DEADLINE,
-    DEFAULT_MAX_ACTIVE_PUSHES_PER_PEER, DEFAULT_MAX_CONCURRENT_DAG_FETCHES,
-    DEFAULT_MAX_CONCURRENT_PUSH_TASKS, DEFAULT_MAX_DOC_SYNC_REQUEST_DOC_IDS,
-    DEFAULT_MAX_PENDING_DAGS, DEFAULT_PUSH_QUEUE_BYTE_CAPACITY, DEFAULT_PUSH_QUEUE_CAPACITY,
-    DEFAULT_PUSH_SEND_TIMEOUT, DEFAULT_RATE_LIMIT_BACKOFF_SECS, DEFAULT_RATE_LIMIT_BURST,
-    DEFAULT_RATE_LIMIT_RATE,
+    MissingLinkWalkSnapshot, SyncConfig, SyncDiagnostics, SyncDiagnosticsSnapshot, SyncEvent,
+    SyncEventReceiver, SyncManager, DEFAULT_BROADCAST_PENDING_BYTES,
+    DEFAULT_BROADCAST_WAIT_DEADLINE, DEFAULT_MAX_ACTIVE_PUSHES_PER_PEER,
+    DEFAULT_MAX_CONCURRENT_DAG_FETCHES, DEFAULT_MAX_CONCURRENT_PUSH_TASKS,
+    DEFAULT_MAX_DOC_SYNC_REQUEST_DOC_IDS, DEFAULT_MAX_PENDING_DAGS,
+    DEFAULT_PUSH_QUEUE_BYTE_CAPACITY, DEFAULT_PUSH_QUEUE_CAPACITY, DEFAULT_PUSH_SEND_TIMEOUT,
+    DEFAULT_RATE_LIMIT_BACKOFF_SECS, DEFAULT_RATE_LIMIT_BURST, DEFAULT_RATE_LIMIT_RATE,
 };
 pub use merge::{
     BlockMetadata, MergeBlock, MergeErrorDisposition, MergeHandler, MergeOutcome,

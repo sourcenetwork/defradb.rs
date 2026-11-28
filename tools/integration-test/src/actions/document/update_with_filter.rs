@@ -39,12 +39,12 @@ impl Op for UpdateWithFilter {
     fn run(&self, state: &State) -> Result<Value, Failure> {
         let identity = self.common.client_identity(Self::name())?;
         state
-            .block_on(state.node_on(self.common.node())?.update_with_filter(
-                &state.context_on(self.common.node(), self.txn, identity, None),
-                &self.collection,
-                &self.filter.to_core(),
-                &self.updater,
-            ))
+            .block_on(
+                state
+                    .scope_on(self.common.node(), self.txn, identity, None)
+                    .on(&*state.node_on(self.common.node())?)
+                    .update_with_filter(&self.collection, &self.filter.to_core(), &self.updater),
+            )
             .map(|result| json!({ "count": result.count, "docIDs": result.doc_ids }))
             .map_err(|e| Failure::operation(e.to_string()))
     }

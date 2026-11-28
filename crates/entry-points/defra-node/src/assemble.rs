@@ -97,6 +97,7 @@ where
         introspection_cache,
         replication_filter,
         index_build_gate,
+        backfill_batch_docs,
         commit_gate,
     } = config;
     let introspection_cache = introspection_cache.unwrap_or(true);
@@ -136,6 +137,8 @@ where
         TransportConfig::Libp2p(libp2p) => drop(libp2p.sync.retry_schedule()?),
         #[cfg(feature = "p2p")]
         TransportConfig::Iroh(iroh) => drop(iroh.sync.retry_schedule()?),
+        #[cfg(feature = "pinc")]
+        TransportConfig::Pinc(pinc) => drop(pinc.sync.retry_schedule()?),
         TransportConfig::None => {}
     }
 
@@ -181,6 +184,9 @@ where
     }
     if let Some(gate) = index_build_gate {
         db_options = db_options.with_index_build_gate(gate.0);
+    }
+    if let Some(docs) = backfill_batch_docs {
+        db_options = db_options.with_backfill_batch_docs(docs);
     }
     if let Some(gate) = commit_gate {
         db_options = db_options.with_commit_gate(gate.0);
@@ -332,6 +338,21 @@ where
                 start_peer_key.as_ref(),
                 network.sibling(),
                 extras.stream_protocols,
+            )
+            .await
+            .map(Some),
+            #[cfg(feature = "pinc")]
+            (TransportConfig::Pinc(pinc), Some(network)) => crate::pinc_runtime::setup_pinc(
+                store.clone(),
+                database.clone(),
+                event_bus.clone(),
+                pinc,
+                node_p2p_identity.clone(),
+                document_acp.clone(),
+                strict_replicated_doc_access,
+                peer_keyring.as_ref(),
+                start_peer_key.as_ref(),
+                network.sibling(),
             )
             .await
             .map(Some),

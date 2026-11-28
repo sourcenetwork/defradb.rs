@@ -101,7 +101,7 @@ fn a_foreign_creators_row_is_registered_by_the_receiving_node_and_its_changes_fo
             .add_policy(actor.as_str(), POLICY, None)
             .await
             .expect("policy");
-        node.add_collection(&defra_core::RequestContext::ambient(), &users(&policy))
+        node.add_collection(&users(&policy))
             .await
             .expect("collection");
 
@@ -281,7 +281,7 @@ fn replica_membership_requires_the_configured_owner_and_an_admitted_receiver() {
             .replica_group_member(&group, &signer)
             .await
             .is_err());
-        vera.register_doc_object(&owner, &group.policy, &group.resource, &group.object)
+        vera.register_doc_object(&owner, &group.policy, &group.resource, &group.object, &[])
             .await
             .unwrap();
         assert!(provider

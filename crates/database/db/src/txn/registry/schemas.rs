@@ -42,6 +42,7 @@ impl<S: Store + 'static> DbTransactionRegistry<S> {
         self.in_txn(context, txn_id, move |owned| {
             Box::pin(async move {
                 let txn_lens_store = owned.lens_store();
+                let lens_registrations = owned.lens_registrations();
                 let caches = owned.caches();
                 let txn = owned.alone()?;
 
@@ -59,6 +60,12 @@ impl<S: Store + 'static> DbTransactionRegistry<S> {
                 // derived from its schema.
                 caches.invalidate();
 
+                db.owe_lens_on_commit(
+                    txn,
+                    transform_id.clone(),
+                    config.clone(),
+                    lens_registrations,
+                )?;
                 let db = db.clone();
                 let cache_db = db.clone();
                 let cache_destination = updated_destination;
@@ -74,7 +81,13 @@ impl<S: Store + 'static> DbTransactionRegistry<S> {
                                 cached.schema().version_id == cache_destination.version_id
                             });
                         if matches_destination {
-                            cache.put_named(&cache_destination.name, cache_collection.clone());
+                            cache.put_named(
+                                &cache_destination.name,
+                                cache_collection.with_current_index_actions(
+                                    old.by_id(cache_collection.collection_id()),
+                                    &[],
+                                ),
+                            );
                         }
                         cache
                     });
@@ -121,15 +134,21 @@ impl<S: Store + 'static> DbTransactionRegistry<S> {
                 let txn = owned.alone()?;
 
                 let existing = db.get_all_collection_versions_with_txn(txn).await?;
-                let mut known_types: rapidhash::RapidHashSet<String> = db
-                    .list_collections()
-                    .map_err(|e| Error::Other(format!("failed to list collections: {}", e)))?
-                    .into_iter()
-                    .collect();
-                known_types.extend(existing.iter().map(|c| c.name.clone()));
+                // A name is the collection its active version in this
+                // transaction names, then the cached one, then any other.
+                let named = |active: bool| {
+                    existing
+                        .iter()
+                        .filter(move |version| version.is_active == active)
+                        .map(|version| (version.name.clone(), version.collection_id.clone()))
+                };
+                let mut known_collections: rapidhash::RapidHashMap<String, String> =
+                    named(false).collect();
+                known_collections.extend(db.known_collections());
+                known_collections.extend(named(true));
 
                 let collections = db
-                    .prepare_new_collections(&sdl, known_types)
+                    .prepare_new_collections(&sdl, known_collections)
                     .await
                     .map_err(to_error)?;
                 schema::definition_validation::validate_new_collections_with_existing(
@@ -166,13 +185,7 @@ impl<S: Store + 'static> DbTransactionRegistry<S> {
                     for schema in &schemas_for_cache {
                         let _ = db.unforbid_collection_id(&schema.collection_id);
                     }
-                    db.collections.rcu(|old| {
-                        let mut cache = old.clone();
-                        for collection in &collections_for_cache {
-                            cache.put(collection.clone());
-                        }
-                        cache
-                    });
+                    db.collections.publish_many(collections_for_cache);
                 })))?;
 
                 Ok(finalized)

@@ -77,7 +77,7 @@ impl Home {
         let vera = node.vera_acp().expect("vera.rs document ACP").clone();
         let admin = vera.self_did().expect("actor DID");
         let policy = vera.add_policy(&admin, POLICY, None).await.expect("policy");
-        node.add_collection(&defra_core::RequestContext::ambient(), &users(&policy))
+        node.add_collection(&users(&policy))
             .await
             .expect("collection");
         let audience = vera
@@ -179,9 +179,9 @@ impl Home {
     }
 
     async fn owed_by(&self, did: &identity::Did) -> usize {
-        let context = defra_core::RequestContext::default().with_identity(Some(did.to_string()));
         self.node
-            .owed_acp_as(&context, did.as_str())
+            .with_identity(identity::Did::new(did.to_string()).unwrap())
+            .owed_acp(did.as_str())
             .await
             .unwrap()
             .len()
@@ -277,7 +277,7 @@ fn a_refused_or_discarded_grant_owes_nothing() {
         assert_eq!(home.finish(&auth, &tx, false).await, 200);
         assert_eq!(home.owed_by(&owner.did).await, 0);
 
-        let stranger_did = identity::Did::new(STRANGER).unwrap();
+        let stranger_did = identity::Did::new(STRANGER.to_string()).unwrap();
         assert!(!chain_reads(&home.node, &stranger_did, &home.policy, &doc).await);
         home.node.shutdown().await.expect("shutdown");
     })

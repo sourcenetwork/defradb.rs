@@ -4,8 +4,8 @@
 Compile-time version/build metadata. Exposes `VersionInfo` (semver, git commit/date
 from `build.rs`, HTTP API version, DocID version, P2P multicodec, Rust toolchain) plus
 `GoCompat` constants tracking the upstream Go commit/branch/tag last synced. Provides
-formatting helpers: `short()`, `descriptive()` (OTLP `service.version`), `full()`, and
-serde camelCase JSON serialization.
+formatting helpers: `short()` (also the OTLP `service.version`), `full()`, and serde
+camelCase JSON serialization.
 
 ## State machines
 None. No lifecycle enums, no transitions, no concurrency. Values are baked at build

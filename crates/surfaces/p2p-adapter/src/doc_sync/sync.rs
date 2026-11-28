@@ -15,6 +15,10 @@ use crate::{P2PError, P2PErrorExt as _};
 /// merge is deliberate on a fire-and-forget transport, which cannot tell a
 /// quiet peer from a lost request; where a send confirms a reply, silence with
 /// nothing merged is reported as a timeout instead.
+///
+/// `Ok` returned before the timeouts means every asked document merged. `Ok`
+/// after the idle or overall timeout means only that the sync stopped
+/// waiting.
 pub(crate) async fn sync_documents<D>(
     dispatch: Arc<D>,
     event_bus: &dyn events::Bus,
@@ -33,18 +37,22 @@ where
     }
 
     let mut sub = event_bus.subscribe(&[events::EventName::MergeComplete]);
-    let total_expected = connected_peers.len() * doc_ids.len();
-    let mut total_received = 0;
+    // A merge is reported more than once (by the merge handler and by the
+    // replication loop), and again when another peer sends a head already
+    // held, so completion is the set of asked documents seen merged, not a
+    // count of reports (proofs/tla/DocSyncCompletion.tla). A document whose
+    // every advertised head is merged here already is reported when its reply
+    // arrives (`SyncEvent::HeadsAlreadyMerged`), so it does not hold the sync.
+    let doc_set: RapidHashSet<String> = doc_ids.iter().cloned().collect();
+    let mut merged = RapidHashSet::<String>::default();
     let mut last_unanswered = 0;
     let mut dispatched = false;
     let idle_timeout = std::time::Duration::from_secs(3);
     let start = web_time::Instant::now();
-    let doc_set: RapidHashSet<String> = doc_ids.iter().cloned().collect();
 
     for _attempt in 0..3 {
-        // Completion first: an empty `doc_ids` makes `total_expected` zero, and
-        // asking for nothing is not a timeout.
-        if total_received >= total_expected {
+        // Completion first: asking for nothing is not a timeout.
+        if merged.len() >= doc_set.len() {
             break;
         }
         // Go builds an already-expired context from a zero or negative timeout
@@ -96,7 +104,7 @@ where
         // nothing to contribute — e.g. source-side explicit sync while
         // collection replication delivers the doc out of band.
         let mut last_merge = web_time::Instant::now();
-        while total_received < total_expected && start.elapsed() < overall_timeout {
+        while merged.len() < doc_set.len() && start.elapsed() < overall_timeout {
             if last_merge.elapsed() > idle_timeout {
                 break;
             }
@@ -105,7 +113,7 @@ where
                 Ok(Some(msg)) => {
                     if let Some(data) = msg.as_merge_complete() {
                         if doc_set.contains(&data.doc_id) {
-                            total_received += 1;
+                            merged.insert(data.doc_id.clone());
                             last_merge = web_time::Instant::now();
                         }
                     }
@@ -122,7 +130,7 @@ where
     // back (`sync_doc.go:155-158`). Only a transport whose send confirms a
     // reply can tell that from a send that merely left the machine, so libp2p
     // keeps returning `Ok` here rather than inventing a timeout it cannot see.
-    if D::SEND_CONFIRMS_REPLY && last_unanswered > 0 && total_received == 0 {
+    if D::SEND_CONFIRMS_REPLY && last_unanswered > 0 && merged.is_empty() {
         return Err(P2PError::transport("timeout while syncing doc"));
     }
     Ok(())
@@ -218,7 +226,9 @@ mod tests {
     use std::sync::Arc;
     use std::time::Duration;
 
-    use crate::doc_sync::test_support::{FailingDispatch, MixedDispatch, SlowDispatch};
+    use crate::doc_sync::test_support::{
+        merge_report, FailingDispatch, MixedDispatch, ReportingDispatch, SlowDispatch,
+    };
 
     /// #1299: with peers present and every send failing, the sync must report
     /// an error rather than success. The attempt count is asserted first — it
@@ -352,6 +362,45 @@ mod tests {
         )
         .await
         .expect("libp2p cannot tell silence from a failed send");
+    }
+
+    /// #3468: a merge reported twice does not stand for a second document, so
+    /// the sync waits for each document it asked for. The doubled report is
+    /// published from inside the send, so the sync has subscribed by then.
+    #[nuclei::test]
+    async fn a_merge_reported_twice_counts_as_one_document() {
+        use events::Bus as _;
+        use futures::future::{select, Either};
+
+        let bus = Arc::new(events::ChannelBus::default());
+        let dispatch = Arc::new(ReportingDispatch::new(
+            Arc::clone(&bus),
+            &["bae-first", "bae-first"],
+        ));
+        let network = p2p::network::Network::on(edge::testing::edge());
+        let mut sync = Box::pin(super::sync_documents(
+            Arc::clone(&dispatch),
+            bus.as_ref(),
+            &network,
+            vec!["bae-first".to_string(), "bae-second".to_string()],
+            Duration::from_secs(30),
+            1,
+        ));
+        // Shorter than the sync's 3 s idle timeout: only its completion rule
+        // could end it inside either window.
+        let window = || Box::pin(edge::testing::edge().sleep(Duration::from_secs(1)));
+
+        let early = select(sync.as_mut(), window()).await;
+        assert!(
+            matches!(early, Either::Right(_)),
+            "the sync returned while bae-second had not merged"
+        );
+
+        bus.publish(merge_report("bae-second"));
+        match select(sync, window()).await {
+            Either::Left((result, _)) => result.expect("both documents merged"),
+            Either::Right(_) => panic!("the sync kept waiting after both documents merged"),
+        }
     }
 
     /// #1314 review: `timeout: "0"` is valid Go input. With peers and

@@ -1,7 +1,7 @@
 //! Request context for threading caller identity through KMS calls.
 //!
 //! Rust defradb does not use Go-style `context.Context`; identity is
-//! explicit parameter at every call site (see `crates/database/db/src/block_verify.rs`
+//! explicit parameter at every call site (see `crates/database/db/src/block/verify.rs`
 //! and `crates/engine/query/src/runner/version.rs`). `RequestContext` exists
 //! only so the KMS surface has room to grow (tracing IDs, future
 //! attestation metadata) without re-threading every call site.

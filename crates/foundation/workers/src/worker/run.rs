@@ -24,8 +24,21 @@ struct HookState {
 }
 
 impl HookState {
-    /// Polls the hook; the completions it delivered.
+    /// Polls the hook on its own, under its own heartbeat, and leaves the
+    /// worker between polls; the completions it delivered.
     fn poll(&mut self, local: &Local) -> usize {
+        if self.hook.is_none() {
+            return 0;
+        }
+        local.begin_hook(local.own_now());
+        let completed = self.poll_begun(local);
+        local.end_beat();
+        completed
+    }
+
+    /// Polls the hook whose heartbeat a task poll already handed over, so
+    /// its time is never charged to that task; the completions it delivered.
+    fn poll_begun(&mut self, local: &Local) -> usize {
         let Some(hook) = self.hook.as_mut() else {
             return 0;
         };
@@ -117,14 +130,15 @@ impl Worker {
             let Some(key) = local.shared.signal.pop() else {
                 break;
             };
-            if local.poll(key) {
+            if local.poll(key, self.hook.hook.is_some()) {
                 polled += 1;
-                done += self.hook.poll(local);
+                done += self.hook.poll_begun(local);
             }
         }
         if polled == 0 {
             done += self.hook.poll(local);
         }
+        local.end_beat();
         done += polled;
         if !local.timers.borrow().is_empty() {
             let now = local.now();
@@ -132,7 +146,6 @@ impl Worker {
             done += self.woken.len();
             self.woken.drain(..).for_each(Waker::wake);
         }
-        local.shared.heartbeat.idle();
         done
     }
 

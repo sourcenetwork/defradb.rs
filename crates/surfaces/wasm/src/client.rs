@@ -22,9 +22,8 @@ use storage::RegolithStore;
 type WasmRunner =
     QueryRunner<LensedAutoCommitFetcher<RegolithStore>, DbTransactionRegistry<RegolithStore>>;
 
-use crate::bindings::{
-    config_from_js, to_js, ClientConfig, CollectionInfo, ExecRequestOptions, FieldInfo,
-};
+use crate::bindings::{config_from_js, to_js, ClientConfig, ExecRequestOptions};
+use crate::collection_js::collections_to_js;
 use crate::document_changes::DocumentChanges;
 use crate::error::{Result, WasmError};
 use crate::identity::ClientIdentity;
@@ -225,9 +224,11 @@ impl DefraClient {
             .auth_token(audience)?)
     }
 
-    /// Get information about all registered collections.
+    /// Get the version object for every registered collection.
     ///
-    /// Returns an array of collection info objects.
+    /// This data-only client returns snapshots with Go's
+    /// `CollectionVersion` JavaScript shape. Go's `getCollections` instead
+    /// returns collection handles with methods.
     #[wasm_bindgen(js_name = getCollections)]
     pub fn get_collections(&self) -> std::result::Result<JsValue, JsValue> {
         self.get_collections_impl().map_err(|e| e.into())
@@ -520,22 +521,16 @@ impl DefraClient {
             .list_collections()
             .map_err(|e| WasmError::Storage(format!("Failed to list collections: {}", e)))?;
 
-        // Get each collection's info
         let mut collections = Vec::new();
         for name in names {
             if let Some(col) = db.get_collection(&name).map_err(|e| {
                 WasmError::Storage(format!("Failed to get collection '{}': {}", name, e))
             })? {
-                let schema = col.schema();
-                collections.push(CollectionInfo {
-                    name: schema.name.clone(),
-                    collection_version_id: schema.version_id.clone(),
-                    fields: schema.fields.iter().map(FieldInfo::from).collect(),
-                });
+                collections.push(col);
             }
         }
 
-        to_js(&collections)
+        collections_to_js(collections.iter().map(|col| col.schema()))
     }
 
     async fn close_impl(&mut self) -> Result<()> {
@@ -1084,16 +1079,16 @@ mod tests {
             .await
             .unwrap();
         let result = client.get_collections().unwrap();
-        let collections: Vec<CollectionInfo> = serde_wasm_bindgen::from_value(result).unwrap();
+        let collections: Vec<serde_json::Value> = serde_wasm_bindgen::from_value(result).unwrap();
         // A fresh DB should have no user-defined collections (may have system ones)
         let user_types: Vec<_> = collections
             .iter()
-            .filter(|c| !c.name.starts_with('_'))
+            .filter(|c| !c["Name"].as_str().unwrap().starts_with('_'))
             .collect();
         assert!(
             user_types.is_empty(),
             "Fresh DB should have no user collections, found: {:?}",
-            user_types.iter().map(|c| &c.name).collect::<Vec<_>>()
+            user_types.iter().map(|c| &c["Name"]).collect::<Vec<_>>()
         );
     }
 
@@ -1107,10 +1102,99 @@ mod tests {
         client.add_collection(sdl).await.unwrap();
 
         let result = client.get_collections().unwrap();
-        let collections: Vec<CollectionInfo> = serde_wasm_bindgen::from_value(result).unwrap();
-        let user_col = collections.iter().find(|c| c.name == "User");
+        let collections: Vec<serde_json::Value> = serde_wasm_bindgen::from_value(result).unwrap();
+        let user_col = collections.iter().find(|c| c["Name"] == "User");
         assert!(user_col.is_some(), "User collection should exist");
-        assert!(user_col.unwrap().fields.len() >= 2);
+        assert!(user_col.unwrap()["Fields"].as_array().unwrap().len() >= 2);
+    }
+
+    #[mantra_macros::req_test("defra.wasm.collection_objects")]
+    #[wasm_bindgen_test]
+    async fn test_get_collections_returns_gos_js_collection_objects() {
+        let mut client = DefraClient::create(test_config("test_go_collection_objects"))
+            .await
+            .unwrap();
+        client
+            .add_collection(
+                "type User {
+                    name: String
+                    points: Int @crdt(type: pcounter)
+                    high: Int @default(value: 9007199254740993)
+                    low: Int @default(value: -9007199254740993)
+                }",
+            )
+            .await
+            .unwrap();
+
+        let result = client.get_collections().unwrap();
+        let user = js_sys::Array::from(&result)
+            .iter()
+            .find(|c| {
+                js_sys::Reflect::get(c, &"Name".into())
+                    .unwrap()
+                    .as_string()
+                    .as_deref()
+                    == Some("User")
+            })
+            .unwrap();
+        let keys: Vec<String> = js_sys::Object::keys(&user.clone().into())
+            .iter()
+            .map(|key| key.as_string().unwrap())
+            .collect();
+        assert_eq!(
+            keys,
+            [
+                "Name",
+                "VersionID",
+                "CollectionID",
+                "CollectionSet",
+                "Query",
+                "PreviousVersion",
+                "Fields",
+                "Indexes",
+                "EncryptedIndexes",
+                "Policy",
+                "IsActive",
+                "IsMaterialized",
+                "IsBranchable",
+                "IsEmbeddedOnly",
+                "IsPlaceholder",
+                "VectorEmbeddings",
+            ]
+        );
+        assert!(js_sys::Reflect::get(&user, &"Policy".into())
+            .unwrap()
+            .is_null());
+
+        let fields = js_sys::Reflect::get(&user, &"Fields".into()).unwrap();
+        let fields = js_sys::Array::from(&fields);
+        for (name, expected) in [
+            ("high", 9_007_199_254_740_992.0),
+            ("low", -9_007_199_254_740_992.0),
+        ] {
+            let field = fields
+                .iter()
+                .find(|field| {
+                    js_sys::Reflect::get(field, &"Name".into())
+                        .unwrap()
+                        .as_string()
+                        .as_deref()
+                        == Some(name)
+                })
+                .unwrap();
+            let value = js_sys::Reflect::get(&field, &"DefaultValue".into()).unwrap();
+            assert_eq!(value.as_f64(), Some(expected));
+        }
+
+        let user: serde_json::Value = serde_wasm_bindgen::from_value(user).unwrap();
+        let points = user["Fields"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|field| field["Name"] == "points")
+            .unwrap();
+        assert_eq!(points["Kind"], 4);
+        assert_eq!(points["Typ"], 5);
     }
 
     #[wasm_bindgen_test]
@@ -1149,14 +1233,12 @@ mod tests {
                 .contains("relation name is not unique within collection"));
         }
 
-        let collections: Vec<CollectionInfo> =
+        let collections: Vec<serde_json::Value> =
             serde_wasm_bindgen::from_value(client.get_collections().unwrap()).unwrap();
-        assert!(
-            collections
-                .iter()
-                .all(|collection| collection.name != "ZeroPrimary"
-                    && collection.name != "BothPrimary")
-        );
+        assert!(collections
+            .iter()
+            .all(|collection| collection["Name"] != "ZeroPrimary"
+                && collection["Name"] != "BothPrimary"));
     }
 
     #[wasm_bindgen_test]
@@ -1187,8 +1269,11 @@ mod tests {
             .unwrap();
 
         let result = client.get_collections().unwrap();
-        let collections: Vec<CollectionInfo> = serde_wasm_bindgen::from_value(result).unwrap();
-        let names: Vec<&str> = collections.iter().map(|c| c.name.as_str()).collect();
+        let collections: Vec<serde_json::Value> = serde_wasm_bindgen::from_value(result).unwrap();
+        let names: Vec<&str> = collections
+            .iter()
+            .map(|c| c["Name"].as_str().unwrap())
+            .collect();
         assert!(names.contains(&"Book"), "Book collection should exist");
         assert!(names.contains(&"Author"), "Author collection should exist");
     }

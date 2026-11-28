@@ -192,14 +192,12 @@ where
     let (telemetry_handle, tracer) = if config.telemetry_disabled || !enable_telemetry {
         (telemetry::TelemetryHandle::noop(), None)
     } else {
-        // Source a Go-style descriptive build string for service.version
-        // (`defradb <ver> (<commit8> <date>) built with ...`) so OTLP
+        // service.version is the line `defradb version` prints
+        // (`defradb <ver> (<commit8> <date>) built with ...`), so OTLP
         // receivers grouping on service.version see the same shape Go emits,
         // not the telemetry crate's bare semver.
-        let telemetry_config = telemetry::TelemetryConfig::new(
-            "DefraDB",
-            defra_version::VersionInfo::new().descriptive(),
-        );
+        let telemetry_config =
+            telemetry::TelemetryConfig::new("DefraDB", defra_version::VersionInfo::new().short());
         match telemetry::init(telemetry_config, edge.clone()) {
             Ok((handle, tracer)) => (handle, Some(tracer)),
             Err(err) => {

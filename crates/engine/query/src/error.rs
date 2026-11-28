@@ -188,6 +188,15 @@ pub enum QueryError {
     #[error("{0}")]
     InvalidArgument(String),
 
+    /// A create's document ID, derived from its genesis block, is already
+    /// stored. Go's text; the ID is the create's own.
+    #[error("a document with the given ID already exists. DocID: {0}")]
+    DocumentAlreadyExists(String),
+
+    /// A create or save named a document that has been deleted. Go's text.
+    #[error("a document with the given ID has been deleted. DocID: {0}")]
+    DocumentDeleted(String),
+
     /// A subscription sent as a plain request: it is served only over SSE.
     #[error("parse error: {}", crate::subscription::SUBSCRIPTION_NEEDS_SSE)]
     SubscriptionNeedsSse,
@@ -333,7 +342,9 @@ impl QueryError {
             | Self::InvalidMutationInput(_)
             | Self::PermissionDenied(_)
             | Self::DelegationOutsideWindow { .. }
-            | Self::Introspection(_) => true,
+            | Self::Introspection(_)
+            | Self::DocumentAlreadyExists(_)
+            | Self::DocumentDeleted(_) => true,
             Self::Storage(_)
             | Self::TransactionConflict(_)
             | Self::TransactionRetryExhausted(_)
@@ -353,6 +364,20 @@ impl QueryError {
         }
     }
 
+    /// The stable code of a document refusal: what `extensions.code` and the
+    /// documents API carry beside Go's text.
+    pub fn code(&self) -> Option<&'static str> {
+        match self {
+            Self::DocumentAlreadyExists(_) => {
+                Some(crate::executor::DOCUMENT_ALREADY_EXISTS_ERROR_CODE)
+            }
+            Self::DocumentDeleted(_) => Some(crate::executor::DOCUMENT_DELETED_ERROR_CODE),
+            _ => None,
+        }
+    }
+}
+
+impl QueryError {
     /// Retain verification diagnostics without exposing them through a query response.
     pub fn commit_access_check_failed(error: Self) -> Self {
         Self::CommitAccessCheckFailed(Box::new(error))
@@ -382,6 +407,14 @@ impl QueryError {
     /// Create an unknown field error
     pub fn unknown_field(name: impl Into<String>) -> Self {
         Self::UnknownField(name.into())
+    }
+
+    /// A selection names a field its type does not define, in graphql-go's
+    /// FieldsOnCorrectType words.
+    pub fn undefined_field(field: &str, type_name: &str) -> Self {
+        Self::UnknownField(format!(
+            "Cannot query field \"{field}\" on type \"{type_name}\"."
+        ))
     }
 
     /// Create a sub-selection-on-scalar error

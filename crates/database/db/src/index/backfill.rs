@@ -15,7 +15,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use datastore::NamespaceView;
-use defra_core::{Action, ActionStatus};
+use defra_core::{Action, ActionExecution, ActionStatus};
 use document::Document;
 use lens::{TargetedHistoryLink, TransformStore};
 use schema::IndexDescription;
@@ -23,7 +23,7 @@ use storage::corekv::{Key, Store};
 use storage::keys::systemstore::ActionProgressKey;
 
 use crate::collection::Collection;
-use crate::database::action::{action_executions, stage_action_failure, ActionExecutionLease};
+use crate::database::action::{action_executions, ActionExecutionLease};
 use crate::database::spawn::spawn_task;
 use crate::definition::lens::build_collection_history;
 use crate::definition::loader::get_collections_by_collection_id;
@@ -33,6 +33,7 @@ use crate::definition::migration::helpers::{
 use crate::error::{Error, Result};
 use crate::index::manager::DocumentSource;
 use crate::index::pages::{Page, PAGE_ITEMS};
+use crate::index::settle::{FailBackfillAttempt, FinishIndexAttempt};
 use crate::index::{BatchIndexResult, IndexManager};
 use crate::{BackfillSource, DB};
 
@@ -70,6 +71,22 @@ impl BackfillPlan {
         }
     }
 
+    pub(super) fn collection_name(&self) -> &str {
+        &self.collection_name
+    }
+
+    pub(super) fn collection_id(&self) -> &str {
+        &self.collection_id
+    }
+
+    pub(super) fn index_id(&self) -> u32 {
+        self.index_id
+    }
+
+    pub(super) fn index_name(&self) -> &str {
+        &self.index_name
+    }
+
     pub(crate) fn progress_key(&self) -> ActionProgressKey {
         ActionProgressKey::new(
             &self.collection_id,
@@ -96,13 +113,16 @@ pub fn decode_progress(bytes: &[u8]) -> Option<(u64, u64)> {
 }
 
 impl<S: Store> DB<S> {
-    /// Run `plan` to the end and settle its action either way.
+    /// Run `plan` to the end and settle its action either way. The commit
+    /// that settles it publishes the index's new state to the collection
+    /// cache before it returns, so the planner uses a built index from then
+    /// on and writers stop maintaining a failed one.
     pub(crate) async fn backfill_index(
         &self,
         lease: ActionExecutionLease,
         plan: BackfillPlan,
     ) -> Result<()> {
-        match self.backfill_batches(&plan).await {
+        match self.backfill_batches(&plan, &lease).await {
             Ok(indexed) => {
                 tracing::info!(
                     collection_id = %plan.collection_id,
@@ -110,7 +130,6 @@ impl<S: Store> DB<S> {
                     indexed,
                     "index backfill completed"
                 );
-                self.complete_action(lease).await?;
             }
             // Stopped by the close: the action stays in progress, as after a
             // crash, and the next open resumes it from its watermark.
@@ -124,14 +143,13 @@ impl<S: Store> DB<S> {
             }
             Err(error) => {
                 let reason = error.to_string();
-                if self.record_backfill_failure(&plan, &reason).await? {
+                if self.record_backfill_failure(&plan, &reason, &lease).await? {
                     tracing::error!(
                         collection_id = %plan.collection_id,
                         index_id = plan.index_id,
                         %error,
                         "index backfill failed"
                     );
-                    self.publish_failed_action(&lease, &reason);
                 } else {
                     tracing::info!(
                         collection_id = %plan.collection_id,
@@ -141,7 +159,7 @@ impl<S: Store> DB<S> {
                 }
             }
         }
-        self.reload_cache().await
+        Ok(())
     }
 
     /// Write a backfill's failure on its record, unless its index is gone.
@@ -149,11 +167,25 @@ impl<S: Store> DB<S> {
     /// a failure written after it would show a failed backfill for an index
     /// that no longer exists. The definition is read in the same transaction
     /// as the write, so a drop committing first makes the attempt run again.
-    async fn record_backfill_failure(&self, plan: &BackfillPlan, reason: &str) -> Result<bool> {
+    async fn record_backfill_failure(
+        &self,
+        plan: &BackfillPlan,
+        reason: &str,
+        lease: &ActionExecutionLease,
+    ) -> Result<bool> {
         let attempt = FailBackfillAttempt {
             plan: plan.clone(),
             reason: reason.to_string(),
             crdts: self.crdts().clone(),
+            cache: Arc::clone(&self.collections),
+            event_bus: self.event_bus().cloned(),
+            execution: ActionExecution {
+                collection_id: lease.collection_id().to_string(),
+                action: lease.action(),
+                subject: lease.subject().to_string(),
+                status: ActionStatus::ERRORED,
+                reason: reason.to_string(),
+            },
         };
         match self
             .store()
@@ -284,10 +316,15 @@ impl<S: Store> DB<S> {
         Ok(())
     }
 
-    async fn backfill_batches(&self, plan: &BackfillPlan) -> Result<usize> {
+    async fn backfill_batches(
+        &self,
+        plan: &BackfillPlan,
+        lease: &ActionExecutionLease,
+    ) -> Result<usize> {
         let mut last = plan.last;
         let mut indexed = 0;
-        let mut max_docs = self.options().backfill_batch_docs();
+        let limit = self.options().backfill_batch_docs();
+        let mut max_docs = limit;
         loop {
             if let Some(gate) = &self.options().index_build_gate {
                 // A close stops the wait, as Go's gate honours its context:
@@ -301,6 +338,8 @@ impl<S: Store> DB<S> {
                 }
             }
             let batch = self.backfill_batch(plan, last, &mut max_docs).await?;
+            // A commit doubles the page; the configured batch still bounds it.
+            max_docs = max_docs.min(limit);
             indexed += batch.indexed;
             if let Some(id) = batch.last_doc_short_id {
                 last = id;
@@ -313,6 +352,15 @@ impl<S: Store> DB<S> {
         let attempt = FinishIndexAttempt {
             collection: self.require_collection(&plan.collection_name)?,
             plan: plan.clone(),
+            cache: Arc::clone(&self.collections),
+            event_bus: self.event_bus().cloned(),
+            execution: ActionExecution {
+                collection_id: lease.collection_id().to_string(),
+                action: lease.action(),
+                subject: lease.subject().to_string(),
+                status: ActionStatus::COMPLETED,
+                reason: String::new(),
+            },
         };
         match self
             .store()
@@ -340,111 +388,10 @@ impl<S: Store> DB<S> {
             collection: self.require_collection(&plan.collection_name)?,
             plan: plan.clone(),
             last,
-            lens_store: Arc::clone(&self.lens_store),
+            lens_store: Arc::clone(self.lens_store()),
             drains: self.deferred_drains.clone(),
         };
         self.run_page(page, max_docs).await
-    }
-}
-
-/// Publish the completed index against the same definition snapshot as its build.
-struct FinishIndexAttempt {
-    collection: Collection,
-    plan: BackfillPlan,
-}
-
-impl storage::corekv::RetryAttemptFn for FinishIndexAttempt {
-    fn run<'a>(
-        &'a mut self,
-        retry: &'a mut dyn storage::corekv::RetryTxn,
-    ) -> storage::corekv::RetryAttemptFuture<'a> {
-        Box::pin(async move {
-            let io = retry.begin_attempt_io()?;
-            let txn =
-                datastore::BasicTxn::from_retry_attempt_io(io, 0, self.collection.crdts().clone());
-            let datastore = txn.datastore();
-            let systemstore = txn.systemstore();
-            let built: Result<()> = async move {
-                let collection = crate::collection::loader::load_collection_for_write_attempt(
-                    &systemstore,
-                    self.collection.name(),
-                    &self.collection,
-                )
-                .await?;
-                ensure_backfill_index_unchanged(&self.plan, &collection)?;
-                let manager = IndexManager::from_collection(
-                    collection.schema().resolved_root_id(),
-                    collection.schema(),
-                    collection.crdts(),
-                )?;
-                manager
-                    .build_index(&datastore, &self.plan.index_name)
-                    .await?;
-                Ok(())
-            }
-            .await;
-            built.map_err(|error| storage::corekv::RetryAttemptError::Abort(Box::new(error)))?;
-            let (io, callbacks) = txn.into_retry_attempt()?;
-            retry.finish_attempt_io(io, callbacks)?;
-            Ok(Box::new(()) as storage::corekv::RetryAttemptValue)
-        })
-    }
-}
-
-/// Settle a failed backfill against the definition the attempt reads.
-struct FailBackfillAttempt {
-    plan: BackfillPlan,
-    reason: String,
-    crdts: storage::Crdts,
-}
-
-impl storage::corekv::RetryAttemptFn for FailBackfillAttempt {
-    fn run<'a>(
-        &'a mut self,
-        retry: &'a mut dyn storage::corekv::RetryTxn,
-    ) -> storage::corekv::RetryAttemptFuture<'a> {
-        Box::pin(async move {
-            let io = retry.begin_attempt_io()?;
-            let txn = datastore::BasicTxn::from_retry_attempt_io(io, 0, self.crdts.clone());
-            let systemstore = txn.systemstore();
-            let recorded: Result<bool> = async {
-                let collection = crate::collection::loader::load_collection_from_systemstore(
-                    &systemstore,
-                    &self.plan.collection_name,
-                )
-                .await
-                .map_err(|error| Error::Other(error.to_string()))?;
-                let defined = collection.is_some_and(|collection| {
-                    collection
-                        .schema()
-                        .indexes
-                        .iter()
-                        .any(|index| index.id == self.plan.index_id)
-                });
-                if defined {
-                    stage_action_failure(
-                        &systemstore,
-                        &self.plan.collection_id,
-                        Action::BACKFILL_INDEX,
-                        &self.plan.index_id.to_string(),
-                        &self.reason,
-                    )
-                    .await?;
-                    systemstore
-                        .delete(&self.plan.progress_key().bytes())
-                        .await
-                        .map_err(Error::Storage)?;
-                }
-                Ok(defined)
-            }
-            .await;
-            let recorded = recorded
-                .map_err(|error| storage::corekv::RetryAttemptError::Abort(Box::new(error)))?;
-            drop(systemstore);
-            let (io, callbacks) = txn.into_retry_attempt()?;
-            retry.finish_attempt_io(io, callbacks)?;
-            Ok(Box::new(recorded) as storage::corekv::RetryAttemptValue)
-        })
     }
 }
 
@@ -518,7 +465,16 @@ impl BackfillPage {
     }
 }
 
-fn ensure_backfill_index_unchanged(expected: &BackfillPlan, current: &Collection) -> Result<()> {
+pub(super) fn ensure_backfill_index_unchanged(
+    expected: &BackfillPlan,
+    current: &Collection,
+) -> Result<()> {
+    if current.collection_id() != expected.collection_id() {
+        return Err(Error::Other(format!(
+            "collection '{}' was replaced during backfill",
+            expected.collection_name()
+        )));
+    }
     let index_name = &expected.index_name;
     let current_index = current
         .get_index(index_name)

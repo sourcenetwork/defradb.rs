@@ -320,8 +320,11 @@ where
         event_bus.clone(),
         edge,
     );
-    let failure_recorder_task =
-        defra_p2p_adapter::spawn_failure_recorder(retry_peers.clone(), failure_rx);
+    let failure_recorder_task = defra_p2p_adapter::spawn_failure_recorder(
+        retry_peers.clone(),
+        failure_rx,
+        coordinator.failure_recorder_stats(),
+    );
 
     let doc_pusher_impl = Arc::new(
         DbTransportDocPusher::new(

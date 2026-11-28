@@ -62,6 +62,14 @@ pub enum HttpError {
     /// A bad request whose refusal has a stable code a client classifies it by.
     #[error("{message}")]
     Refused { message: String, code: &'static str },
+
+    /// A create whose document ID is stored: Go's 409, with its code.
+    #[error("{0}")]
+    DocumentAlreadyExists(String),
+
+    /// A create or upsert of a deleted document: Go's 400, with its code.
+    #[error("{0}")]
+    DocumentDeleted(String),
 }
 
 /// Error response body matching Go DefraDB format.
@@ -93,6 +101,8 @@ impl IntoResponse for HttpError {
             HttpError::NotImplemented(msg) => (StatusCode::NOT_IMPLEMENTED, msg.clone()),
             HttpError::QueryExecution(msg) => (StatusCode::BAD_REQUEST, msg.clone()),
             HttpError::Refused { message, .. } => (StatusCode::BAD_REQUEST, message.clone()),
+            HttpError::DocumentAlreadyExists(msg) => (StatusCode::CONFLICT, msg.clone()),
+            HttpError::DocumentDeleted(msg) => (StatusCode::BAD_REQUEST, msg.clone()),
         };
 
         let code = match self {
@@ -101,6 +111,10 @@ impl IntoResponse for HttpError {
             Self::UniqueViolation(_) => {
                 Some(query::executor::UNIQUE_CONSTRAINT_VIOLATION_ERROR_CODE)
             }
+            Self::DocumentAlreadyExists(_) => {
+                Some(query::executor::DOCUMENT_ALREADY_EXISTS_ERROR_CODE)
+            }
+            Self::DocumentDeleted(_) => Some(query::executor::DOCUMENT_DELETED_ERROR_CODE),
             _ => None,
         };
         (
@@ -273,6 +287,8 @@ fn http_error_from_query_error(err: &QueryError) -> HttpError {
         | QueryError::AcpCheckFailed { .. }
         | QueryError::AcpRegistrationCheckFailed { .. } => HttpError::Unauthorized(message),
         QueryError::Execution(message) => http_error_from_backend_message(message.clone()),
+        QueryError::DocumentAlreadyExists(_) => HttpError::DocumentAlreadyExists(message),
+        QueryError::DocumentDeleted(_) => HttpError::DocumentDeleted(message),
         _ => HttpError::BadRequest(message),
     }
 }
@@ -701,5 +717,67 @@ mod storage_failure_tests {
         let (status, body) = wire(HttpError::Conflict("collection already exists".into()));
         assert_eq!(status, StatusCode::CONFLICT);
         assert!(body.get("code").is_none(), "{body}");
+    }
+}
+
+#[cfg(test)]
+mod document_collision_tests {
+    use super::*;
+
+    const ID: &str = "bae-e761da93-66da-577d-a503-54047c4cf3ea";
+
+    fn answer(error: HttpError) -> (StatusCode, serde_json::Value) {
+        let response = error.into_response();
+        let status = response.status();
+        let body = workers::block_on(async {
+            axum::body::to_bytes(response.into_body(), 4096)
+                .await
+                .unwrap()
+        })
+        .unwrap();
+        (status, serde_json::from_slice(&body).unwrap())
+    }
+
+    #[test]
+    fn an_existing_document_is_a_409_with_its_code_and_go_text() {
+        let error = DbError::Query(QueryError::DocumentAlreadyExists(ID.into()));
+        let (status, body) = answer(HttpError::from(error));
+        assert_eq!(status, StatusCode::CONFLICT);
+        assert_eq!(
+            body["error"],
+            format!("a document with the given ID already exists. DocID: {ID}")
+        );
+        assert_eq!(
+            body["code"],
+            query::executor::DOCUMENT_ALREADY_EXISTS_ERROR_CODE
+        );
+    }
+
+    #[test]
+    fn a_deleted_document_is_a_400_with_its_code_and_go_text() {
+        let error = DbError::Query(QueryError::DocumentDeleted(ID.into()));
+        let (status, body) = answer(HttpError::from(error));
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(
+            body["error"],
+            format!("a document with the given ID has been deleted. DocID: {ID}")
+        );
+        assert_eq!(body["code"], query::executor::DOCUMENT_DELETED_ERROR_CODE);
+    }
+
+    /// The statuses the uncoded text got before the typed refusals, which the
+    /// typed ones keep.
+    #[test]
+    fn the_untyped_texts_kept_the_same_statuses() {
+        let existing = format!("a document with the given ID already exists. DocID: {ID}");
+        let deleted = format!("a document with the given ID has been deleted. DocID: {ID}");
+        assert_eq!(
+            answer(http_error_from_backend_message(existing)).0,
+            StatusCode::CONFLICT
+        );
+        assert_eq!(
+            answer(http_error_from_backend_message(deleted)).0,
+            StatusCode::BAD_REQUEST
+        );
     }
 }

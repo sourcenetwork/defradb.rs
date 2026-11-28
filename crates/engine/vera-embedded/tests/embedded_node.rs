@@ -120,7 +120,7 @@ async fn a_provider_creates_and_reads_back_a_policy_through_the_embedded_node() 
         .await
         .expect("delegation");
     provider
-        .register_object(&delegation, &policy, "document", "first")
+        .register_object(&delegation, &policy, "document", "first", &[])
         .await
         .expect("registration");
     assert_eq!(

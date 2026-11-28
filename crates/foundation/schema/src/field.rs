@@ -60,6 +60,19 @@ pub struct FieldDescription {
     /// Whether the field is write-once after document creation.
     #[serde(rename = "Immutable", default, skip_serializing_if = "is_false")]
     pub immutable: bool,
+
+    /// The policy relation this field's value is bound to, from
+    /// `@policy(relation:)` on a single-object relation field.
+    ///
+    /// Carried by the relation's `_xID` field, which holds the related
+    /// document's ID, as `@immutable` is. Omitted when absent, so a field
+    /// without a binding serializes as it did before bindings existed.
+    #[serde(
+        rename = "PolicyRelation",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub policy_relation: Option<String>,
 }
 
 impl FieldDescription {
@@ -80,6 +93,7 @@ impl FieldDescription {
             default_value: None,
             size: 0, // 0 means no constraint (matches Go)
             immutable: false,
+            policy_relation: None,
         }
     }
 
@@ -119,6 +133,12 @@ impl FieldDescription {
         self
     }
 
+    /// Bind the field to the policy relation `relation`.
+    pub fn with_policy_relation(mut self, relation: impl Into<String>) -> Self {
+        self.policy_relation = Some(relation.into());
+        self
+    }
+
     /// Returns true if this is a secondary (non-primary) relation field.
     ///
     /// Secondary relation fields are local-only and do not get saved in the blockstore.
@@ -147,6 +167,12 @@ impl FieldDescription {
         }
 
         if self.immutable {
+            if self.is_secondary_relation() {
+                return Err(SchemaError::InvalidImmutableField {
+                    field_name: self.name.clone(),
+                    reason: "only the primary side of a relation can be immutable".to_string(),
+                });
+            }
             if self.crdt_type != CType::LwwRegister {
                 return Err(SchemaError::InvalidImmutableField {
                     field_name: self.name.clone(),
@@ -157,6 +183,22 @@ impl FieldDescription {
                 return Err(SchemaError::InvalidImmutableField {
                     field_name: self.name.clone(),
                     reason: "only scalar fields can be immutable".to_string(),
+                });
+            }
+        }
+
+        if let Some(relation) = &self.policy_relation {
+            let reason = if relation.trim().is_empty() {
+                Some("the relation name must not be empty")
+            } else if self.relation_name.is_none() || self.kind != FieldKind::doc_id() {
+                Some("only a single-object relation field can be bound to a policy relation")
+            } else {
+                None
+            };
+            if let Some(reason) = reason {
+                return Err(SchemaError::InvalidPolicyRelation {
+                    field_name: self.name.clone(),
+                    reason: reason.to_string(),
                 });
             }
         }

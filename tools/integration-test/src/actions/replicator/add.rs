@@ -67,8 +67,7 @@ impl Op for AddReplicator {
         test_node
             .replicator_completed(
                 || {
-                    state.block_on(node.add_replicator_as(
-                        &state.context_as(None, identity),
+                    state.block_on(state.scope_as(None, identity).scoped(&node).add_replicator(
                         &addresses,
                         &self.collections,
                         self.filters(),

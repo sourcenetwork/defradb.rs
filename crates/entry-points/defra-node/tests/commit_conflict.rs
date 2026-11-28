@@ -8,7 +8,7 @@ use query::TransactionError;
 fn losing_commit_reports_a_typed_conflict() {
     workers::block_on(async {
     let node = Node::builder().build().await.unwrap();
-    node.add_collection(&defra_core::RequestContext::ambient(), "type Users { name: String }")
+    node.add_collection("type Users { name: String }")
         .await
         .unwrap();
     let created = node
@@ -19,23 +19,26 @@ fn losing_commit_reports_a_typed_conflict() {
         .unwrap()
         .to_string();
 
-    let first = node.begin_transaction(false).await.unwrap();
-    let second = node.begin_transaction(false).await.unwrap();
+    let first = node.new_txn(false).await.map(|txn| txn.detach()).unwrap();
+    let second = node.new_txn(false).await.map(|txn| txn.detach()).unwrap();
     for (handle, name) in [(&first, "Bob"), (&second, "Carol")] {
         let response = node
-            .execute_request_in_txn(
-                QueryRequest::new(format!(
+            .with_transaction(*handle).execute_request(QueryRequest::new(format!(
                     r#"mutation {{ update_Users(docID: "{doc_id}", input: {{name: "{name}"}}) {{ name }} }}"#
-                )),
-                handle,
-            )
+                )))
             .await;
         assert!(!response.has_errors(), "{:?}", response.errors);
     }
 
-    node.commit_transaction(&first).await.unwrap();
-    let error = node.commit_transaction(&second).await.unwrap_err();
-    assert!(matches!(error, TransactionError::Conflict(_)), "{error:?}");
+    node.with_transaction(first).commit().await.unwrap();
+    let error = node.with_transaction(second).commit().await.unwrap_err();
+    assert!(
+        matches!(
+            error,
+            defra_node::Error::TransactionConflict(TransactionError::Conflict(_))
+        ),
+        "{error:?}"
+    );
     assert!(error.is_retryable());
     assert!(error.to_string().contains("transaction conflict"));
 })

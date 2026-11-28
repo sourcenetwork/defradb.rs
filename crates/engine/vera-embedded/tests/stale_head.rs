@@ -133,7 +133,7 @@ async fn a_read_at_a_starved_head_waits_for_the_next_revision() {
     let owner = provider.self_did().unwrap();
     let delegation = provider.create_bearer_token(&owner).await.unwrap();
     provider
-        .register_object(&delegation, &policy, "document", "first")
+        .register_object(&delegation, &policy, "document", "first", &[])
         .await
         .expect("registration");
 

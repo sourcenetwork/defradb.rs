@@ -243,11 +243,11 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
             LensedDocFetcher::new_projected(
                 Arc::clone(&self.db),
                 txn,
-                self.db.lens_store.clone(),
+                self.db.lens_store().clone(),
                 dependencies.clone(),
             )
         } else {
-            LensedDocFetcher::new(Arc::clone(&self.db), txn, self.db.lens_store.clone())
+            LensedDocFetcher::new(Arc::clone(&self.db), txn, self.db.lens_store().clone())
         };
         let docs = fetcher
             .get_by_ids(

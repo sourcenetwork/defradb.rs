@@ -59,6 +59,9 @@ pub mod bindings;
 pub mod client;
 #[cfg(target_arch = "wasm32")]
 mod client_p2p;
+pub mod collection_js;
+#[cfg(test)]
+mod collection_js_tests;
 #[cfg(target_arch = "wasm32")]
 mod document_changes;
 pub mod error;

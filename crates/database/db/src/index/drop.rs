@@ -123,7 +123,9 @@ where
     }
 
     /// Take the index out of the definition this attempt reads, delete its
-    /// backfill record and write the drop record, all in `txn`.
+    /// backfill record and write the drop record, all in `txn`, whose commit
+    /// publishes the new definition to the collection cache before it
+    /// returns, so a create right after the drop works from it.
     pub(super) async fn stage_index_drop(
         &self,
         txn: &DbTxn<S>,
@@ -146,6 +148,7 @@ where
                 index: index_name.to_string(),
             })?;
         let index = schema.indexes.remove(position);
+        let index_id = index.id;
         retire_index_id(&txn.datastore()?, schema.resolved_root_id(), index.id).await?;
         let data = serde_json::to_vec(&schema).map_err(|error| {
             Error::collection_schema_json(
@@ -189,12 +192,8 @@ where
 
         let cached = Collection::load_index_actions(schema, &systemstore).await?;
         let cache = Arc::clone(&self.collections);
-        txn.on_commit(OnCommit::Ordered(Box::new(move || {
-            cache.rcu(|old| {
-                let mut cache = old.clone();
-                cache.put(cached.clone());
-                cache
-            });
+        txn.on_commit(OnCommit::OrderedAndWait(Box::new(move || {
+            cache.publish(cached, &[(index_id, None)]);
         })))?;
         Ok(DroppedIndex {
             lease,

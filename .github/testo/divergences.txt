@@ -37,10 +37,35 @@ testo index::query_with_relation_tie_order::ties_follow_the_second_condition_wit
 # With `_in` on an indexed field Go ignores `order` on that field and returns the rows as the filter lists them; Rust applies it.
 testo index::composite_in_order::in_on_descending_first_field_ordered_ascending_follows_the_order
 testo index::composite_in_order::in_on_descending_first_field_ordered_descending_follows_the_order
+# Go's develop builds an index range from one bound of a two-sided filter, picked by map order, so it fetches past the other
+# bound (6 to 8 fetches for 4 rows, 2 or 3 for an empty range); Rust fetches only the range. Go fixed it on shinzo-develop in
+# sourcenetwork/defradb#5341, not yet on develop (#2527).
+testo index::range_filter::a_closed_range_limits_index_fetches
+testo index::range_filter::an_open_descending_range_limits_index_fetches
+testo index::range_filter::an_empty_range_limits_index_fetches
 # Rust re-runs an encrypted index change that loses a race, so concurrent changes on different fields all land; Go answers
 # the loser with "transaction conflict. Please retry".
 testo txn::new_encrypted_index_concurrent::a_concurrent_encrypted_index_delete_and_adds_all_land
 testo txn::new_encrypted_index_concurrent::concurrent_encrypted_index_adds_all_land
+# A query's one-to-one join reads the related documents as a query read, which decides nothing, so Rust does not check it at
+# commit and both transactions commit; Go answers the second "transaction conflict. Please retry".
+testo mutation::add::field_kinds::one_to_one_to_one::with_txn::transactional_creation_and_linking_of_relational_documents_backward
+# A query's read of a unique index entry (an equality filter, or a one-to-one relation's inverse side) decides nothing, so Rust
+# does not check it at commit; Go does and answers "transaction conflict. Please retry" when another writer adds that entry.
+testo mutation::add::field_kinds::one_to_one_to_one::with_txn::transactional_creation_and_linking_of_relational_documents_forward
+testo txn::unique_filter_read::a_nil_writers_unique_filter_read_does_not_fail_the_commit
+testo txn::unique_filter_read::a_unique_eq_filter_read_does_not_fail_the_commit
+testo txn::unique_filter_read::a_unique_in_filter_read_does_not_fail_the_commit
+# Rust refuses a second unnamed index on the same field (#3320); Go creates it as `User_name_ASC_2`.
+testo index::new_duplicate::index_new_same_generated_index_twice_is_refused
+# Rust refuses an index that repeats a listed one under another name (#3320); Go creates the copy.
+testo index::new_duplicate::index_new_named_copy_of_existing_index_is_refused
+# Rust refuses an index that repeats one declared by `@index` (#3320); Go creates it as `User_name_ASC_2`.
+testo index::new_duplicate::index_new_copy_of_sdl_index_is_refused
+# Rust refuses a second unique index on the same field (#3320); Go creates the copy.
+testo index::new_duplicate::index_new_same_unique_index_twice_is_refused
+# Rust refuses a vector index the collection already has, even with its HNSW defaults spelled out (#3320); Go creates the copy.
+testo index::new_duplicate::index_new_same_vector_index_twice_is_refused
 # Ordered by an indexed field of the publisher, which holds the relation, Go returns a null `_publisherID`; Rust returns the ID.
 testo query::relation_order_with_filter::selected_relation_id::indexed
 testo query::relation_order_with_filter::selected_relation_id_unfiltered::indexed
@@ -48,3 +73,13 @@ testo query::relation_order_with_filter::selected_relation_id_unfiltered_with_li
 testo query::relation_order_with_filter::selected_relation_id_with_limit::indexed
 # Without an index, Go's badger validates the filter scan and aborts the second explicit commit of an equal value with "transaction conflict. Please retry"; Rust's scan is a query read that decides nothing (AGENTS.md § Reads and writes), so both commit.
 testo txn::unique_isolation::without_an_index_both_commit
+# An execute explain whose plan fails while it runs: Go reports the error as two `executionErrors` entries; Rust reports it once.
+testo explain::simple::with_invalid_request::execute_explain_reports_a_run_time_failure_in_execution_errors
+# Rust counts the vector-index entries read; Go reports one fetch for the whole vector search
+# until https://github.com/sourcenetwork/defradb/issues/5080 lands.
+testo explain::execute::vector_index_fetches::hnsw_search_counts_its_reads
+testo explain::execute::vector_index_fetches::flat_search_counts_its_reads
+testo explain::execute::vector_index_fetches::ivfflat_search_counts_its_reads
+testo explain::execute::vector_index_fetches::ivfpq_search_counts_its_reads
+testo explain::execute::vector_index_fetches::ssg_search_counts_its_reads
+testo explain::execute::vector_index_fetches::diskann_search_counts_its_reads

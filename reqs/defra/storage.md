@@ -84,6 +84,24 @@ A collection patch that removes a field named by an index, full-text index, or v
 
 An index created while documents of its collection are updated is built: its backfill completes, the listing shows no failed backfill, and a filter on the indexed field fetches through the index, for a value an update wrote during the build as for an untouched one. The backfill identifies its index by ID in the definition it reads from the store, so a node whose collection cache is behind the committed index definition still completes it and never fails with `index '<name>' disappeared during backfill`.
 
+# `defra.index.ddl_under_writes`: An index dropped or created under writes is used once built
+
+- **Parents:** ["defra.index"]
+- **Scenarios:** ["index::ddl_under_writes::an_index_dropped_and_created_again_under_updates_is_built_and_used", "index::ddl_under_writes::indexes_created_together_under_updates_are_built", "index::ddl_under_writes::activating_a_version_publishes_its_indexes", "db::index::publication::an_index_created_while_a_commit_hook_holds_events_is_used", "db::index::publication::an_index_dropped_while_a_commit_hook_holds_events_can_be_created_again", "db::index::under_writes::an_index_recreated_while_updates_run_is_built", "db::index::under_writes::a_second_index_created_while_updates_run_is_built", "db::index::under_writes::two_indexes_created_together_are_built"]
+
+An index created, or dropped and created again under the same name, while documents of its collection are updated behaves as it does with no writes running. A drop or a create returns only once the node's own view of the collection has the change, so a create right after a drop succeeds and is never refused with `cached schema differs from persisted version '<version>'`. When the backfill completes, the listing shows the index's execution as completed and a filter on the indexed field fetches through the index from then on, without a restart. A backfill that fails is covered by `defra.index.backfill_failed`.
+
+Activating a collection version exposes that version's index definitions. A schema patch that adds a one-to-one relation index exposes the index as soon as the patch commits. A refresh racing a completed backfill keeps the completed index available. A backfill cannot settle an index belonging to a different collection that took the same name.
+
+Reconciling an already built index returns its definition without consuming an index ID. New IDs are above existing and retired IDs. Exhausting the available IDs reports `the index ID sequence exceeded u32`.
+
+# `defra.index.backfill_failed`: A failed backfill stops maintaining its index
+
+- **Parents:** ["defra.index"]
+- **Scenarios:** ["index::failed_backfill::a_failed_unique_backfill_stops_maintaining_the_index"]
+
+A unique index whose backfill fails because existing documents share a value stays in the listing with status `2` and the backfill's `can not index` reason. Writers stop maintaining it: another document with that same value is accepted without a restart, and queries scan the collection instead of fetching through the failed index.
+
 # `defra.collection`: Collection-wide operations
 
 - **Parents:** ["defra"]
@@ -347,6 +365,26 @@ The bound is `commit_timeout_ms`, in milliseconds, on the HTTP server, and it is
 
 The CLI's `client tx commit` sends a commit once and never retries it, so it reports the bound's answer, `commit outcome unknown after <bound> milliseconds`, rather than a later attempt's "not found".
 
+# `defra.txn.crash_recovery`: A node killed during a commit recovers whole transactions
+
+- **Parents:** ["defra.txn"]
+
+A node whose process is killed with SIGKILL during or right after a commit, then started again on the same data directory, recovers every transaction whole.
+
+# `defra.txn.crash_recovery.all_or_nothing`: A commit cut by a crash leaves all its writes or none
+
+- **Parents:** ["defra.txn.crash_recovery"]
+- **Scenarios:** ["txn::crash::a_commit_killed_before_its_log_write_leaves_nothing", "txn::crash::a_commit_killed_mid_log_write_leaves_nothing", "txn::crash::a_commit_killed_after_its_log_sync_keeps_everything"]
+
+An explicit transaction that creates two documents in a collection with an index, whose node's process is killed with SIGKILL during its commit, has after the restart either both documents, through the collection and through the index, or neither. If the commit has not become durable when the process is killed, it leaves neither, and the restarted node takes a new write and keeps it across a second kill. If the commit has become durable but its answer has not been sent when the process is killed, it leaves both. This covers process termination with the operating system's page cache retained; it does not claim power-loss durability beyond the configured durability mode.
+
+# `defra.txn.crash_recovery.committed`: A commit answered success survives a crash
+
+- **Parents:** ["defra.txn.crash_recovery"]
+- **Scenarios:** ["txn::crash::a_commit_answered_success_survives_a_kill"]
+
+An explicit transaction whose commit answered success has all its writes after its node is killed with SIGKILL straight after the answer and started again on the same directory. A Go node keeps them too.
+
 # `defra.txn.no_neighbour_conflict`: Updating one document does not conflict with its neighbour
 
 - **Parents:** ["defra.txn"]
@@ -361,11 +399,18 @@ A transaction that reads document alice and updates her `age` to 10 commits succ
 
 A transaction runs `update_Snap(input: {status: "claimed"}) { content }` and gets `content: "init"`; another writer sets `content` to `"changed"` and commits first. The transaction still commits, and the document reads `status: "claimed"`, `content: "changed"`. What an update returns is read, not decided on, so it is not validated at commit. Go conflicts here.
 
-# `defra.document`: Building documents from client values
+# `defra.txn.relation_join_read`: A query's one-to-one join does not fail its transaction's commit
+
+- **Parents:** ["defra.txn"]
+- **Scenarios:** ["txn::relation_join_read::a_one_to_one_join_read_does_not_fail_the_commit", "txn::relation_join_read::a_writer_of_the_same_link_still_loses_the_commit", "mutation::add::field_kinds::one_to_one_to_one::with_txn::transactional_creation_and_linking_of_relational_documents_backward"]
+
+With `Book { name: String publisher: Publisher @primary }` and `Publisher { name: String published: Book }` and publishers Website and Online, an explicit transaction adds `{name: "Mine", _publisherID: <Website>}` and runs `Book { name publisher { name } }`, which returns only its own book. An autocommit `add_Book` of `{name: "Theirs", _publisherID: <Online>}` then succeeds, and committing the transaction succeeds too: the join's read of the books decides nothing, so it is not checked at commit. `Book { name publisher { name } }` then returns both books. If the autocommit book links Website instead, committing the transaction fails with `transaction conflict. Please retry` and only the autocommit book is stored: the transaction's own check that Website was free is still validated. The same holds for two explicit transactions that each add a book for a different publisher and then query books: both commit. Go fails the second of those commits with `transaction conflict. Please retry`; that is a deliberate divergence.
+
+# `defra.document`: Documents
 
 - **Parents:** ["defra"]
 
-How client values become document fields.
+What a document is, how it is named (`defra.document.id`, in `document-id.md`), and how client values become its fields, beyond what Go's tests check.
 
 # `defra.document.typed_nillable_arrays`: Typed lists fill nillable-element arrays
 
@@ -381,6 +426,13 @@ A `[String]` field given a string list (`["bafyA", "bafyB", "bafyC"]`) and a `[D
 
 Adding `type Foo { name: String } type FooBar { name: String }` to a fresh node gives `Foo` the same version ID on every run, `bafyreigj37qgcjknekn3jqcmpai5ut6gqsfvjgczmu5iopkeeznjojbqri`, even though `Foo` is a name prefix of `FooBar`.
 
+# `defra.collection.id_added_alone`: A collection added on its own has the ID it has in a batch
+
+- **Parents:** ["defra.collection"]
+- **Scenarios:** ["collection::id_added_alone::a_collection_added_after_its_target_has_the_id_of_one_call", "collection::id_added_alone::a_chain_added_one_collection_per_call_relates_by_collection_id", "collection::id_added_alone::an_indexed_relation_to_a_stored_collection_indexes_its_id_field"]
+
+`AddCollection` with `type Book { title: String author: Author }`, sent after `type Author { name: String }` was added by an earlier call, gives `Book` the definition it has when both types are sent in one call: collection and version ID `bafyreieifr5ciohlbzxlrqy4laqdz7nsmnuxzqya44i2d22isyr7nyomja`, and an `author` field whose kind is the relation to `Author`'s collection ID, `bafyreibvcavbxqwimz5vdxe5q5href63g3skc6ytg45hm4fqh6wsx57wmq`. Either way `BookMutationInputArg.author` is the scalar `ID`, introspection answers, and a `Book` created with an `Author`'s docID is read back with its author. In a chain added one collection per call (`Country`, then `City { country: Country }`, then `Street { city: City }`), each relation's kind carries the collection ID `GetCollections` reports for its target. An `@index` on the relation is the index it is in one call as well: `type Book { title: String author: Author @index }` added after `Author` gives `Book`'s definition one index, named `Book__authorID_ASC`, over the field `_authorID` ascending.
+
 # `defra.replication_filter.receive_gate`: A refused push is not fetched or stored
 
 - **Parents:** ["defra.replication_filter"]
@@ -395,12 +447,26 @@ A node with a replication filter also asks it in the P2P receive path. On arriva
 
 Gossip has no reply and no retry, so a gossip head a node refuses for its per-peer rate limit or its pending-DAG capacity is kept as a durable pending record that takes no slot, and is fetched once a slot frees: a burst over both limits loses no document. These records are bounded by bytes, per source peer (`gossip_deferral_peer_bytes`) and in all (`gossip_deferral_total_bytes`). Past a budget the head is dropped, and the node reports a `p2p-gossip-head-dropped` event naming the peer and the root, so the application can resync it.
 
+# `defra.p2p.cid_check`: A block that does not hash to its CID is refused on every arrival path
+
+- **Parents:** ["defra"]
+- **Scenarios:** ["net::cid_check::a_pushed_block_not_matching_its_cid_stores_no_document", "p2p::sync::coordinator::access_tests::cid_check::a_pushed_head_not_matching_its_cid_is_refused", "p2p::sync::coordinator::access_tests::cid_check::the_receive_gate_leaves_a_head_not_matching_its_cid_to_the_ingest", "p2p::sync::coordinator::access_tests::cid_check::a_synced_block_not_matching_its_cid_is_refused", "p2p::sync::coordinator::access_tests::cid_check::a_fetched_car_with_a_block_not_matching_its_cid_is_refused", "p2p::sync::manager::process::gossip_deferral::tests::a_deferred_gossip_head_not_matching_its_cid_is_refused"]
+
+A block the node admits for processing whose bytes do not hash to the CID it names is refused before anything of it is stored, whichever way it arrives: a PushLog (gossip, pubsub or a replicator's direct push), a gossip head kept for later, a block fetched by block sync, or a fetched CAR, which is refused whole. An admitted push is answered with `block CID verification failed for <cid>: content hash does not match`, and no document is stored from it. The receive gate does not judge such a head, so a push it would refuse is still answered with that error rather than as a handled skip. A CAR refused this way leaves its document waiting for another provider. A push or gossip head the node sheds before processing it (at pending-DAG or byte-budget capacity) is not checked.
+
 # `defra.p2p.iroh_large_update`: An update too large for gossip still replicates over iroh
 
 - **Parents:** ["defra"]
 - **Scenarios:** ["net::iroh_large_update::a_document_too_large_for_gossip_replicates_over_iroh", "net::iroh_large_update::an_update_too_large_for_gossip_replicates_over_iroh"]
 
 Over iroh, a create or an update whose head block is larger than one gossip broadcast holds (4,023 bytes of payload) reaches the same peers a small one would, every subscriber of the collection connected to the writer: a document of a 160-field collection, created with every field set or updated in every field on one node, is queried with the same values on the other. Such an update goes to every connected peer as a direct PushLog request instead of a broadcast; a peer that does not subscribe declines it, and the write's broadcast reports any subscriber that did not take it.
+
+# `defra.p2p.peerless_broadcast`: A write no peer subscribes to is not logged as a failure
+
+- **Parents:** ["defra"]
+- **Scenarios:** ["net::peerless_writes::writes_on_a_networked_node_with_no_peer_succeed", "net::peerless_writes::writes_reach_a_peer_subscribed_to_the_collection_topic_alone", "p2p::peerless_broadcast::rust_p2p_writes_without_peers_log_no_broadcast_error", "p2p::peerless_broadcast::rust_p2p_write_announced_on_the_collection_topic_alone_logs_no_broadcast_error"]
+
+A node with P2P on announces each committed write on its document and collection topics. A topic no peer subscribes to reaches no one, which is not a failure: in all three combinations the write succeeds, nothing is logged at WARN or ERROR for it, and the node reports its broadcast as a success. When no peer subscribes to either topic, as on a node with no peers, the node logs only `No peer subscribed to the write's topics; nothing to announce` at DEBUG, as Go publishes such a write silently. When a peer subscribes to the collection topic but none to the document's, the usual case until a peer subscribes to that document, the write is announced on the collection topic and the node logs `No peer subscribed to the document topic; announced on the collection topic` at DEBUG, not a WARN. When a peer subscribes to the document topic but none to the collection's, the write is announced on the document topic and the node logs `No peer subscribed to the collection topic; announced on the document topic` at DEBUG, not a WARN. A publish that fails for any other reason, such as a transport error or a peer subscribed to a topic that the publish did not reach, is still logged at WARN or ERROR. The testo scenario checks that creates, a batched create and an update succeed and read back on such a node and that a second node subscribed only to the collection topic receives them; the legacy test reads the node's own log, which testo nodes do not write, for a writer with no peer and for one whose only peer subscribes to the collection topic alone.
 
 # `defra.commits`: Commit history queries beyond Go
 

@@ -42,12 +42,9 @@ fn shutdown_ends_an_open_graphql_subscription_without_waiting_out_the_drain() {
                 .build()
                 .await
                 .unwrap();
-            node.add_collection(
-                &defra_core::RequestContext::ambient(),
-                "type User { name: String }",
-            )
-            .await
-            .unwrap();
+            node.add_collection("type User { name: String }")
+                .await
+                .unwrap();
             node
         })
         .unwrap();

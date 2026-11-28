@@ -9,9 +9,8 @@
 \*     handler, the replication loop), which also reaches storage.
 \* Requests (signed queries, HTTP requests, an accepted connection's included)
 \* arrive while the node admits them. So do in-process writes: an unsigned
-\* Node::execute_request, Node::execute_as and the commit of an explicit
-\* transaction (Node::commit_transaction, NodeTransaction::commit,
-\* Node::txn_commit). A write commits, then registers the durable head marker
+\* Node::execute_request, ScopedNode::execute and the commit of an explicit
+\* transaction (TxnNode::commit). A write commits, then registers the durable head marker
 \* that owes its head to the replicators; that registration needs P2P not yet
 \* shutting down. A caller may also leave an explicit transaction open: an
 \* HTTP client gone mid-transaction, or a commit refused at shutdown, whose
@@ -87,14 +86,13 @@
 \*                   in crates/entry-points/defra-node/tests/commit_during_shutdown.rs, and
 \*                   crates/surfaces/http/tests/request_admission.rs;
 \*   CommitsAdmitted crates/entry-points/defra-node/src/lib.rs Node::as_request, through
-\*                   which begin_transaction (and with it
-\*                   begin_transaction_guard), commit_transaction (and
-\*                   NodeTransaction::commit), execute_as and the unsigned
+\*                   which Node::new_txn, TxnNode::commit, NodeCore::execute_as
+\*                   and the unsigned
 \*                   execute_prepared_request run as tasks of the request
 \*                   scope, as signed queries do with no task deadline (see
 \*                   SignedRequestDrain), and with them the ops API's
-\*                   Node::txn_begin and Node::txn_commit
-\*                   (crates/entry-points/defra-node/src/ops/request.rs). The raw runner()
+\*                   NodeCore::begin and NodeCore::commit
+\*                   (crates/entry-points/defra-node/src/node_core/transaction.rs). The raw runner()
 \*                   is outside the promise, as are the ops that write no
 \*                   document head (truncate_collection_as purges, and the
 \*                   schema and lens ops);
