@@ -76,32 +76,33 @@ where
                     }
                 }
                 write(store, &registry::admission_key(root), &metadata.sender_peer).await?;
-                write(
-                    store,
-                    &stack_key(0),
-                    &Frame {
-                        cid: root.to_string(),
-                        next: 0,
-                    },
-                )
-                .await?;
-                store
-                    .set(&node_key(root), &[0])
-                    .await
-                    .map_err(storage_error)?;
-                Progress {
+                let mut progress = Progress {
                     nodes: 1,
                     context,
                     generation,
                     last_active_unix: now_unix(),
                     sender_peer: metadata.sender_peer.map(str::to_owned),
-                    keys: 2,
+                    keys: 0,
                     keys_known: true,
+                    bytes: 0,
+                    bytes_known: true,
                     ..Progress::default()
-                }
+                };
+                put_bookkeeping(
+                    store,
+                    &stack_key(0),
+                    Frame {
+                        cid: root.to_string(),
+                        next: 0,
+                    },
+                    &mut progress,
+                )
+                .await?;
+                put_bookkeeping_bytes(store, &node_key(root), &[0], &mut progress).await?;
+                progress
             }
         };
-        if !progress.keys_known {
+        if !progress.keys_known || !progress.bytes_known {
             progress.outcome = Some(Completion::Restart);
         }
         if progress.context != context {
@@ -140,6 +141,7 @@ where
             let mut frame: Frame = read(store, &stack_key(progress.top))
                 .await?
                 .ok_or_else(|| storage_error("missing history frame"))?;
+            let frame_value_len = serde_json::to_vec(&frame).map_err(storage_error)?.len();
             let cid: Cid = frame.cid.parse().map_err(storage_error)?;
             let block = if cid == *root {
                 root_block.clone()
@@ -210,11 +212,12 @@ where
                     // The headstore records an applied node, so its mark
                     // goes with its frame: finished history retains nothing.
                     store.delete(&node_key(&cid)).await.map_err(storage_error)?;
+                    forget_bookkeeping(&node_key(&cid), 1, &mut progress);
                     store
                         .delete(&stack_key(progress.top))
                         .await
                         .map_err(storage_error)?;
-                    progress.keys = progress.keys.saturating_sub(2);
+                    forget_bookkeeping(&stack_key(progress.top), frame_value_len, &mut progress);
                     if progress.top == 0 {
                         progress.outcome = Some(Completion::Merged);
                         break;
@@ -227,7 +230,14 @@ where
                 match store.get(&node_key(parent)).await.map_err(storage_error)? {
                     Some(value) if value.as_ref() == [1] => {
                         frame.next += 1;
-                        write(store, &stack_key(progress.top), &frame).await?;
+                        rewrite_bookkeeping(
+                            store,
+                            &stack_key(progress.top),
+                            &frame,
+                            frame_value_len,
+                            &mut progress,
+                        )
+                        .await?;
                         continue;
                     }
                     Some(_) => {
@@ -238,7 +248,14 @@ where
                     None => {}
                 }
                 frame.next += 1;
-                write(store, &stack_key(progress.top), &frame).await?;
+                rewrite_bookkeeping(
+                    store,
+                    &stack_key(progress.top),
+                    &frame,
+                    frame_value_len,
+                    &mut progress,
+                )
+                .await?;
                 progress.nodes = progress
                     .nodes
                     .checked_add(1)
@@ -247,20 +264,17 @@ where
                     .top
                     .checked_add(1)
                     .ok_or_else(|| storage_error("history stack overflow"))?;
-                write(
+                put_bookkeeping(
                     store,
                     &stack_key(progress.top),
-                    &Frame {
+                    Frame {
                         cid: parent.to_string(),
                         next: 0,
                     },
+                    &mut progress,
                 )
                 .await?;
-                store
-                    .set(&node_key(parent), &[0])
-                    .await
-                    .map_err(storage_error)?;
-                progress.keys = progress.keys.saturating_add(2);
+                put_bookkeeping_bytes(store, &node_key(parent), &[0], &mut progress).await?;
                 continue;
             }
             let doc = progress
@@ -321,7 +335,7 @@ where
             }
             if Self::composite_was_applied(store, headstore, &cid, payload, doc).await? {
                 store.delete(&node_key(&cid)).await.map_err(storage_error)?;
-                progress.keys = progress.keys.saturating_sub(1);
+                forget_bookkeeping(&node_key(&cid), 1, &mut progress);
             } else {
                 store
                     .set(&node_key(&cid), &[1])
@@ -332,7 +346,7 @@ where
                 .delete(&stack_key(progress.top))
                 .await
                 .map_err(storage_error)?;
-            progress.keys = progress.keys.saturating_sub(1);
+            forget_bookkeeping(&stack_key(progress.top), frame_value_len, &mut progress);
             if progress.top == 0 {
                 progress.outcome = Completion::from_outcome(outcome);
                 break;
