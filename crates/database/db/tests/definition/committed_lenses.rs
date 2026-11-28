@@ -13,6 +13,7 @@ use storage::corekv::Key;
 use storage::keys::systemstore::LensConfigKey;
 use storage::RegolithStore;
 
+use crate::common::gated_lens_store::GatedStore;
 use crate::common::refusing_lens_store::RefusingStore;
 
 /// A database with a `Users` collection whose lens store refuses registration.
@@ -195,6 +196,116 @@ fn a_lens_added_in_a_transaction_is_durable_with_its_commit() {
         );
         txn.discard().unwrap();
         assert_owed_until_used(&db, &store, &id).await;
+    })
+    .unwrap()
+}
+
+/// The transform a patched version names, once the version is visible.
+fn visible_transform(db: &DB<RegolithStore>) -> TransformId {
+    let collection = db.require_collection("Users").unwrap();
+    let transform = collection
+        .schema()
+        .previous_version
+        .as_ref()
+        .and_then(|source| source.transform.clone())
+        .expect("the patched version names its transform");
+    TransformId::new(transform)
+}
+
+/// A request that sees a patched version finds its transform even while the
+/// registration after the commit has not finished: the lens is owed from the
+/// moment the version is published.
+#[test]
+#[mantra_macros::req_test("defra.collection_version.migrations.transform_with_version")]
+fn a_patched_version_finds_its_transform_before_registration_finishes() {
+    workers::block_on(async {
+        let store = GatedStore::new();
+        let mut raw = DB::new(RegolithStore::in_memory().unwrap()).unwrap();
+        raw.set_lens_store(store.clone());
+        raw.add_collection(
+            &defra_core::RequestContext::ambient(),
+            "type Users { name: String }",
+        )
+        .await
+        .unwrap();
+        let db = Arc::new(raw);
+
+        let context = defra_core::RequestContext::ambient();
+        let patch = db.patch_collection(
+            &context,
+            r#"[{"op":"add","path":"/Users/Fields/-","value":{"Name":"age","Kind":"Int"}}]"#,
+            Some(config("", "")),
+        );
+        let concurrent = async {
+            store.entered.wait().await;
+            let id = visible_transform(&db);
+            assert!(!store.inner.has_transform(&id), "registration is held");
+            let docs = run(&db, &id)
+                .await
+                .expect("a request that sees the version finds its transform");
+            assert_eq!(docs.len(), 1);
+            store.release();
+        };
+        let (patched, ()) = futures::join!(patch, concurrent);
+        patched.unwrap();
+        assert!(store.inner.has_transform(&visible_transform(&db)));
+    })
+    .unwrap()
+}
+
+/// The same holds for a migration set in an explicit transaction.
+#[test]
+#[mantra_macros::req_test("defra.collection_version.migrations.transform_with_version")]
+fn a_transaction_migration_finds_its_transform_before_registration_finishes() {
+    workers::block_on(async {
+        let store = GatedStore::new();
+        let mut raw = DB::new(RegolithStore::in_memory().unwrap()).unwrap();
+        raw.set_lens_store(store.clone());
+        raw.add_collection(
+            &defra_core::RequestContext::ambient(),
+            "type Users { name: String }",
+        )
+        .await
+        .unwrap();
+        let db = Arc::new(raw);
+        let v1 = db
+            .require_collection("Users")
+            .unwrap()
+            .version_id()
+            .to_string();
+        db.patch_collection(
+            &defra_core::RequestContext::ambient(),
+            r#"[{"op":"add","path":"/Users/Fields/-","value":{"Name":"age","Kind":"Int"}}]"#,
+            None,
+        )
+        .await
+        .unwrap();
+        let v2 = db
+            .require_collection("Users")
+            .unwrap()
+            .version_id()
+            .to_string();
+        let registry = DbTransactionRegistry::new(db.clone());
+        let txn_id = registry.begin(false).await.unwrap();
+        let id = registry
+            .set_migration_in_txn(&txn_id, config(&v1, &v2), None)
+            .await
+            .unwrap();
+
+        let commit = registry.commit(&txn_id);
+        let concurrent = async {
+            store.entered.wait().await;
+            assert_eq!(visible_transform(&db), id);
+            assert!(!store.inner.has_transform(&id), "registration is held");
+            let docs = run(&db, &id)
+                .await
+                .expect("a request that sees the migration finds its transform");
+            assert_eq!(docs.len(), 1);
+            store.release();
+        };
+        let (committed, ()) = futures::join!(commit, concurrent);
+        committed.unwrap();
+        assert!(store.inner.has_transform(&id));
     })
     .unwrap()
 }

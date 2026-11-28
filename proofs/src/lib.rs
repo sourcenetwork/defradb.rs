@@ -14,7 +14,8 @@
 //! (`cargo run -p conformance --example families`), and
 //! `matrix::every_family_names_its_crates` makes each new family name the
 //! crates its models cover, so a model cannot land without a conformance
-//! hook. [`anchor`] resolves every registry anchor against the tree, and
+//! hook. [`anchor`] resolves every registry anchor, and every source file the
+//! models and docs name, against the tree or the pinned dependency source;
 //! [`constants`] holds the P2P constants the models depend on to the code
 //! that sets them.
 

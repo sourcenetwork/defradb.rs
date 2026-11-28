@@ -76,7 +76,7 @@ pub unsafe fn defra_p2p_collection_sync_branchable(
             identity_ptr,
             NodePermission::P2pSyncBranchableCollection,
             limit,
-            |ops| async move { ops.sync_branchable_collection(&collection_id).await },
+            |ops| async move { peer::sync_branchable_collection(&*ops, &collection_id).await },
         ))
     }
 }
@@ -103,7 +103,7 @@ pub unsafe fn defra_p2p_collection_sync_versions(
             identity_ptr,
             NodePermission::P2pSyncCollectionVersions,
             limit,
-            |ops| async move { ops.sync_collection_versions(version_ids).await },
+            |ops| async move { peer::sync_collection_versions(&*ops, &version_ids).await },
         ))
     }
 }

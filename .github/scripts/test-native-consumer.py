@@ -350,11 +350,12 @@ class Tests(unittest.TestCase):
         runner.private = self.root
         runner.summary = self.root / 'summary.json'
         runner.sources, runner.binaries = {}, {}
-        runner.sdk_revision = 'a' * 40
+        runner.sdk_revision, runner.profile = 'a' * 40, 'release-fast'
         runner.records = [{'phase': 'reader-update', 'command': ['private-key'], 'log': 'private-path',
                            'exit_code': 0, 'seconds': 1.5, 'passed': 1}]
         runner.save()
-        self.assertEqual(json.loads(runner.summary.read_text()), {'sources': {}, 'sdk_revision': 'a' * 40, 'phases': [
+        self.assertEqual(json.loads(runner.summary.read_text()), {'sources': {}, 'sdk_revision': 'a' * 40,
+                         'profile': 'release-fast', 'phases': [
             {'phase': 'reader-update', 'exit_code': 0, 'seconds': 1.5, 'passed': 1}]})
 
     def test_real_runner_records_failure_without_streaming_raw_log(self):
@@ -362,7 +363,7 @@ class Tests(unittest.TestCase):
         runner.root = runner.private = self.root
         runner.summary = self.root / 'summary.json'
         runner.env, runner.sources, runner.binaries, runner.records = {}, {}, {}, []
-        runner.sdk_revision = 'a' * 40
+        runner.sdk_revision, runner.profile = 'a' * 40, 'release'
         with patch.object(runner, 'guard'), patch.object(driver.subprocess, 'Popen') as popen, \
                 patch.object(driver, 'stop_group'), patch('builtins.print') as output:
             popen.return_value.wait.return_value = 7
@@ -377,7 +378,7 @@ class Tests(unittest.TestCase):
         runner.root = runner.private = self.root
         runner.summary = self.root / 'summary.json'
         runner.env, runner.sources, runner.binaries, runner.records = {}, {}, {}, []
-        runner.sdk_revision = 'a' * 40
+        runner.sdk_revision, runner.profile = 'a' * 40, 'release'
 
         def process(*args, **kwargs):
             kwargs['stdout'].write("thread 'policy' panicked at /private/poll.rs:47:9:\nsecret-value\n")
@@ -426,6 +427,7 @@ class Tests(unittest.TestCase):
                 self.target.mkdir()
                 self.env, self.calls = {}, []
                 self.cache_dir = None
+                self.profile = 'release-fast'
             def restore_runtime(self):
                 return False
             def cache_runtime(self):
@@ -450,14 +452,18 @@ class Tests(unittest.TestCase):
         self.assertEqual(runs['compile-native'][3]['VERAD_BINARY'], '/staged/verad')
         tests = [c for c in runner.calls if c[0] == 'test']
         self.assertEqual(len(tests), 26)
-        self.assertEqual(len(tests[0][4]), 108)
+        self.assertEqual(len(tests[0][4]), 110)
         self.assertEqual({c[1] for c in tests[1:]}, {phase for phase, _ in driver.LIVE_CASES})
         for _, _, _, selectors, expected in tests[1:]:
             self.assertEqual(selectors, [expected[0], '--exact'])
             self.assertNotIn('--ignored', selectors)
         for _, phase, args, _ in runs.values():
-            if not phase.startswith('fetch-'):
+            if phase == 'build-vera':
                 self.assertIn('--release', args)
+            elif not phase.startswith('fetch-'):
+                self.assertEqual(args[args.index('--profile') + 1], 'release-fast')
+                self.assertNotIn('--release', args)
+            if not phase.startswith('fetch-'):
                 self.assertIn('--frozen', args)
         self.assertFalse(runner.target.exists())
 

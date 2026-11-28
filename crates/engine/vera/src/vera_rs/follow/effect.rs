@@ -5,7 +5,8 @@
 //! actor's delegation, the policy and the command as JSON. A registration or
 //! a relationship change read from one can be owed again through the outbox,
 //! under the actor that issued the delegation, and so can an archive (its
-//! document was deleted), which the outbox owes as any change. A created
+//! document was deleted) or a transfer of a document's ownership, which the
+//! outbox owes as any change. A created
 //! policy widens nothing; one that is lost leaves the documents under it
 //! unreadable.
 
@@ -45,6 +46,14 @@ pub(crate) enum Lost {
         policy_id: String,
         resource: String,
         object: String,
+        token: String,
+    },
+    /// A transfer of the object to `new_owner`, in DefraDB's spelling.
+    Transfer {
+        policy_id: String,
+        resource: String,
+        object: String,
+        new_owner: String,
         token: String,
     },
 }
@@ -106,6 +115,12 @@ impl Lost {
                 resource,
                 object,
                 ..
+            }
+            | Self::Transfer {
+                policy_id,
+                resource,
+                object,
+                ..
             } => (policy_id, resource, object),
         }
     }
@@ -114,7 +129,8 @@ impl Lost {
         match self {
             Self::Registration { token, .. }
             | Self::Relationship { token, .. }
-            | Self::Archive { token, .. } => token,
+            | Self::Archive { token, .. }
+            | Self::Transfer { token, .. } => token,
         }
     }
 }
@@ -154,6 +170,15 @@ impl Effect {
                     policy_id,
                     resource: object.resource,
                     object: object.id,
+                    token,
+                }))
+            }
+            PolicyCmd::TransferObject { object, new_owner } => {
+                return Some(Effect::Owed(Lost::Transfer {
+                    policy_id,
+                    resource: object.resource,
+                    object: object.id,
+                    new_owner: did_spelling::defra(new_owner.0.as_str()).into_owned(),
                     token,
                 }))
             }

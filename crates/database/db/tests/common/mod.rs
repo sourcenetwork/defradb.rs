@@ -8,6 +8,7 @@ pub mod arrivals;
 pub mod counting_store;
 pub mod failing_write_store;
 pub mod fixture;
+pub mod gated_lens_store;
 pub mod guard_events;
 pub mod http;
 pub mod owned;

@@ -35,7 +35,7 @@ jobs:
               ? [[/./, 'ci:macos']]
               : [
                   [/^Feature checks /, 'ci:feature-checks'],
-                  [/^Feature tests$/, 'ci:feature-tests'],
+                  [/^Feature tests( |$)/, 'ci:feature-tests'],
                   [/^WASM Build Check$/, 'ci:wasm'],
                   [/^Lean Conformance$/, 'ci:lean'],
                   [/^Conformance/, 'ci:conformance'],

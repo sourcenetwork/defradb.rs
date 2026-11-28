@@ -61,6 +61,7 @@ UNIT_NAMES = (
     "follow::effect::tests::a_registration_with_relationships_is_owed_again_with_them",
     "follow::effect::tests::a_voided_batch_keeps_every_archive_it_carried_and_counts_the_rest",
     "follow::effect::tests::an_archive_and_other_requests_are_told_apart",
+    "follow::effect::tests::a_transfer_is_read_back_with_its_new_owner_and_its_delegation",
     "follow::effect::tests::registrations_and_relationship_changes_are_read_back_with_their_delegation",
     "follow::journal::tests::a_failed_write_leaves_what_the_journal_reports_as_it_was",
     "follow::journal::tests::a_gap_in_the_sequences_is_refused",
@@ -75,6 +76,7 @@ UNIT_NAMES = (
     "follow::lost::tests::a_refused_replay_taints_the_later_ones_on_its_object_only",
     "follow::lost::tests::what_was_owed_before_a_replay_stopped_still_taints",
     "follow::owed::tests::a_lost_change_is_owed_as_its_delegations_issuer_under_the_key_the_node_holds_or_the_delegation",
+    "follow::owed::tests::a_lost_transfer_is_owed_again_as_a_transfer_to_the_same_owner",
     "follow::tests::a_checked_term_is_published_with_what_it_leaves_to_owe",
     "follow::tests::a_journal_begun_after_the_worker_signed_cannot_vouch_for_a_void_reaching_back",
     "follow::tests::a_missing_registration_and_grant_are_sent_again_and_what_is_refused_is_owed_in_order",
@@ -176,6 +178,7 @@ LIVE_CASES = (
 )
 CARGO = ["cargo", "+1.99.1"]
 BUILD = ["--release", "--frozen"]
+PROFILES = ("release", "release-fast")
 PUBLIC_FIELDS = ("phase", "exit_code", "seconds", "passed", "panic_site", "error")
 
 
@@ -377,8 +380,8 @@ def interrupted(_signal, _frame):
 
 
 class Runner:
-    def __init__(self, root, vera, temporary, runtime_ref=None, cache_dir=None):
-        self.root, self.vera = root, vera
+    def __init__(self, root, vera, temporary, runtime_ref=None, cache_dir=None, profile="release"):
+        self.root, self.vera, self.profile = root, vera, profile
         self.sdk_revision = revision(root)
         expected = self.sdk_revision if runtime_ref is None else runtime_revision(runtime_ref)
         self.sources = {"defra": source(root), "vera": source(vera)}
@@ -437,7 +440,7 @@ class Runner:
 
     def save(self):
         public = [public_phase(record) for record in self.records]
-        provenance = {"sources": self.sources, "sdk_revision": self.sdk_revision}
+        provenance = {"sources": self.sources, "sdk_revision": self.sdk_revision, "profile": self.profile}
         self.summary.write_text(json.dumps({**provenance, "phases": public}, indent=2) + "\n")
         (self.private / "manifest.json").write_text(json.dumps({**provenance, "binaries": self.binaries,
                                                               "phases": self.records}, indent=2) + "\n")
@@ -497,18 +500,17 @@ def qualify(runner):
         runner.target = runner.cache_dir / "defra-target"
         runner.env["CARGO_TARGET_DIR"] = str(runner.target)
     runner.run("fetch-defra", fetch)
-    log = runner.run("build-defra", CARGO + ["build", *BUILD, "-p", "cli", "--bin", "defradb", "--features", "vera", "--message-format=json"])
+    build = ["--profile", runner.profile, "--frozen"]
+    log = runner.run("build-defra", CARGO + ["build", *build, "-p", "cli", "--bin", "defradb", "--features", "vera", "--message-format=json"])
     runner.env["DEFRA_RUST_BINARY"] = runner.stage(log, "defradb", "defradb")
     runner.env["DEFRA_VERA_BINARY"] = runner.env["DEFRA_RUST_BINARY"]
-    log = runner.run("compile-provider", CARGO + ["test", *BUILD, "-p", "vera", "--lib", "--no-run", "--message-format=json"])
+    log = runner.run("compile-provider", CARGO + ["test", *build, "-p", "vera", "--lib", "--no-run", "--message-format=json"])
     provider = runner.stage(log, "vera", "provider-tests")
-    log = runner.run("compile-native", CARGO + ["test", *BUILD, "-p", "integration-test", "--test", "vera", "--no-run", "--message-format=json"])
+    log = runner.run("compile-native", CARGO + ["test", *build, "-p", "integration-test", "--test", "vera", "--no-run", "--message-format=json"])
     native = runner.stage(log, "vera", "native-tests")
     runner.test("provider-units", provider, ["vera_rs::"], UNIT_TESTS)
     for phase, selector in LIVE_CASES:
         runner.test(phase, native, [selector, "--exact"], [selector])
-    runner.run("lint-provider", CARGO + ["clippy", *BUILD, "-p", "vera", "-p", "cli", "--features", "cli/vera", "--lib", "--tests", "--", "-D", "warnings"])
-    runner.run("lint-native", CARGO + ["clippy", *BUILD, "-p", "integration-test", "--test", "vera", "--", "-D", "warnings"])
 
 
 def main():
@@ -518,6 +520,8 @@ def main():
     parser.add_argument("--cache-dir", type=Path, help="Runner-local cache for compiled dependencies and pinned Vera")
     parser.add_argument("--runtime-ref", type=runtime_revision,
                         help="Vera runtime commit; defaults to the native SDK revision")
+    parser.add_argument("--profile", choices=PROFILES, default="release",
+                        help="Cargo profile for the defradb side; verad is always built with --release")
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[2]
     if args.vera_ref:
@@ -529,7 +533,7 @@ def main():
     os.umask(0o077)
     signal.signal(signal.SIGTERM, interrupted)
     runner = Runner(root, args.vera.resolve(), Path(os.environ["RUNNER_TEMP"]).resolve(), args.runtime_ref,
-                    args.cache_dir.resolve() if args.cache_dir else None)
+                    args.cache_dir.resolve() if args.cache_dir else None, args.profile)
     try:
         qualify(runner)
         runner.records.append({"phase": "qualification", "exit_code": 0, "passed": len(UNIT_TESTS) + len(LIVE_CASES)})

@@ -16,17 +16,18 @@ use crate::{error::Result, hash::Hash, node::Node};
 /// A node is named by the hash of its bytes, so the node under a hash never
 /// changes: a copy kept anywhere is never stale.
 ///
+/// A tree operation only puts nodes; it never makes them durable itself. A
+/// store that persists them commits them in the transaction that publishes
+/// the root naming them (`ProllyNodes::publish` in the storage crate), so no
+/// node is stored apart from a root, and no root apart from its nodes.
+///
 /// The futures need not be `Send`: a tree is read and written on one worker.
 pub trait Store {
     /// The node stored under `hash`, if any. A node `put` and not yet
-    /// `flush`ed is found too.
+    /// committed is found too.
     fn get(&self, hash: &Hash) -> impl Future<Output = Result<Option<Arc<Node>>>>;
-    /// Stores `node` under its hash and returns the hash. It is durable once
-    /// `flush` returns.
+    /// Stores `node` under its hash and returns the hash.
     fn put(&mut self, node: Node) -> impl Future<Output = Result<Hash>>;
-    /// Makes every node put so far durable. Every tree operation that writes
-    /// calls it before it returns a root, so a root names only stored nodes.
-    fn flush(&mut self) -> impl Future<Output = Result<()>>;
 }
 
 /// A store in memory.
@@ -63,9 +64,5 @@ impl Store for MemStore {
         let hash = node.hash();
         self.nodes.entry(hash).or_insert_with(|| Arc::new(node));
         Ok(hash)
-    }
-
-    async fn flush(&mut self) -> Result<()> {
-        Ok(())
     }
 }

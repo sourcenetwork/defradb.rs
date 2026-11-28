@@ -28,7 +28,6 @@ otlp = [
     "dep:tracing-opentelemetry",
     "opentelemetry_sdk/trace",
     "opentelemetry_sdk/metrics",
-    "opentelemetry_sdk/experimental_metrics_custom_reader",
     "opentelemetry-otlp/trace",
     "opentelemetry-otlp/metrics",
     # `internal-logs` is a default feature of both crates that
@@ -71,6 +70,9 @@ opentelemetry-otlp = { version = "0.33", default-features = false, features = ["
 # matching Go's `resource.WithSchemaURL(semconv.SchemaURL)`.
 opentelemetry-semantic-conventions = { version = "0.33", optional = true }
 tracing-opentelemetry = { version = "0.34", optional = true }
+
+[dev-dependencies]
+opentelemetry_sdk = { version = "0.33", default-features = false, features = ["experimental_metrics_custom_reader"] }
 
 [lints]
 workspace = true

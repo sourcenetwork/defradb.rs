@@ -7,6 +7,7 @@ mod block;
 mod collection;
 mod dac;
 mod dac_relationship;
+mod dac_transfer;
 mod document;
 mod encrypted_index;
 mod execute;

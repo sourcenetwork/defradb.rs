@@ -64,6 +64,23 @@ impl IndexStatuses {
         }
     }
 
+    /// Statuses with `actions` and the collection's reindex marker.
+    pub(crate) fn from_parts(
+        actions: RapidHashMap<u32, ActionStatus>,
+        reindex_owed: bool,
+        failed_rebuild: Option<u32>,
+    ) -> Self {
+        Self {
+            actions,
+            reindex_owed,
+            failed_rebuild,
+        }
+    }
+
+    pub(crate) fn failed_rebuild(&self) -> Option<u32> {
+        self.failed_rebuild
+    }
+
     /// Whether writers maintain `index`.
     pub(crate) fn takes_writes(&self, index: &IndexDescription) -> bool {
         self.rebuilds(index) && self.failed_rebuild != Some(index.id)

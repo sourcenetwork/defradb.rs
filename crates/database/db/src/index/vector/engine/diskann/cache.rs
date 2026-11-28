@@ -258,6 +258,12 @@ impl CodeCache {
         }
     }
 
+    /// Whether [`get`](Self::get) would find a code, without copying it.
+    pub fn contains(&self, id: NodeId) -> bool {
+        let loaded = self.loaded.load();
+        loaded.codes.index.contains_key(&id) || loaded.misses.contains_key(&id)
+    }
+
     /// Keeps a code read on a miss, where the budget has room for it and no
     /// reload is waiting for that room.
     pub fn insert(&self, id: NodeId, code: Vec<u8>) {

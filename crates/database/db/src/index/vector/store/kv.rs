@@ -5,6 +5,7 @@
 //! structural replacements retain validated reads.
 
 use std::ops::ControlFlow;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use bytes::Bytes;
 use defra_core::thread_bounds::MaybeSend;
@@ -25,6 +26,7 @@ pub struct KvNodeStore<'txn, T> {
     collection_short_id: u32,
     index_id: u32,
     epoch: u32,
+    reads: Option<&'txn AtomicU64>,
 }
 
 impl<'txn, T> KvNodeStore<'txn, T> {
@@ -34,6 +36,21 @@ impl<'txn, T> KvNodeStore<'txn, T> {
             collection_short_id,
             index_id,
             epoch,
+            reads: None,
+        }
+    }
+
+    /// Adds one to `reads` for every entry this store reads from the
+    /// transaction: a point read, or an entry a scan yields. Writes and this
+    /// transaction's own unflushed appends are not reads.
+    pub fn counting_reads(mut self, reads: &'txn AtomicU64) -> Self {
+        self.reads = Some(reads);
+        self
+    }
+
+    fn read(&self) {
+        if let Some(reads) = self.reads {
+            reads.fetch_add(1, Ordering::Relaxed);
         }
     }
 
@@ -83,6 +100,7 @@ const CLEAR_BATCH: usize = 1024;
 #[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
 impl<T: Reader + Writer + MaybeSend> VectorNodeStore for KvNodeStore<'_, T> {
     async fn get_node(&self, id: NodeId) -> Result<Option<Node>> {
+        self.read();
         match self.txn.get(&self.node_key(id)).await? {
             Some(bytes) => Ok(Some(decode_node(&bytes)?)),
             None => Ok(None),
@@ -90,6 +108,7 @@ impl<T: Reader + Writer + MaybeSend> VectorNodeStore for KvNodeStore<'_, T> {
     }
 
     async fn get_node_advisory(&self, id: NodeId) -> Result<Option<Node>> {
+        self.read();
         self.txn
             .get_parts(&self.node_key(id), &[])
             .await?
@@ -98,6 +117,7 @@ impl<T: Reader + Writer + MaybeSend> VectorNodeStore for KvNodeStore<'_, T> {
     }
 
     async fn get_node_for_links(&self, id: NodeId) -> Result<Option<Node>> {
+        self.read();
         self.txn
             .get_parts(&self.node_key(id), &[0])
             .await?
@@ -124,6 +144,7 @@ impl<T: Reader + Writer + MaybeSend> VectorNodeStore for KvNodeStore<'_, T> {
     }
 
     async fn get_meta(&self) -> Result<Option<Meta>> {
+        self.read();
         match self.txn.get(&self.meta_key()).await? {
             Some(bytes) => Ok(Some(decode_meta(&bytes)?)),
             None => Ok(None),
@@ -131,6 +152,7 @@ impl<T: Reader + Writer + MaybeSend> VectorNodeStore for KvNodeStore<'_, T> {
     }
 
     async fn get_meta_advisory(&self) -> Result<Option<Meta>> {
+        self.read();
         match self.txn.get_parts(&self.meta_key(), &[]).await? {
             Some(bytes) => Ok(Some(decode_meta(&bytes)?)),
             // Creating the first entry point is an ordinary one-winner decision.
@@ -165,6 +187,7 @@ impl<T: Reader + Writer + MaybeSend> VectorNodeStore for KvNodeStore<'_, T> {
             .iterator(IterOptions::default().with_prefix(self.node_prefix()))
             .await?;
         while let Some(pair) = iter.next().await? {
+            self.read();
             let node = decode_node(&pair.value)?;
             if node.deleted {
                 continue;
@@ -199,6 +222,7 @@ impl<T: Reader + Writer + MaybeSend> VectorNodeStore for KvNodeStore<'_, T> {
                     .iterator(IterOptions::default().with_prefix(self.epoch_prefix()))
                     .await?;
                 while let Some(pair) = iter.next().await? {
+                    self.read();
                     batch.push(pair.key);
                     if batch.len() >= CLEAR_BATCH {
                         break;
@@ -222,6 +246,7 @@ impl<T: Reader + Writer + MaybeSend> VectorNodeStore for KvNodeStore<'_, T> {
     }
 
     async fn get_aux(&self, kind: u8, key: &[u8]) -> Result<Option<Bytes>> {
+        self.read();
         Ok(self.txn.get(&self.aux_key(kind, key)).await?)
     }
 
@@ -247,6 +272,7 @@ impl<T: Reader + Writer + MaybeSend> VectorNodeStore for KvNodeStore<'_, T> {
             .await?;
         let mut count = 0;
         while let Some(pair) = iter.next().await? {
+            self.read();
             let node = decode_node(&pair.value)?;
             if node.deleted {
                 continue;
@@ -274,6 +300,7 @@ impl<T: Reader + Writer + MaybeSend> VectorNodeStore for KvNodeStore<'_, T> {
             .iterator(IterOptions::default().with_prefix(prefix))
             .await?;
         while let Some(pair) = iter.next().await? {
+            self.read();
             let key = pair.key.get(strip..).unwrap_or_default();
             visit(key, &pair.value)?;
         }
@@ -301,6 +328,7 @@ impl<T: Reader + Writer + MaybeSend> VectorNodeStore for KvNodeStore<'_, T> {
 
     /// The head is read like any log key, never validated.
     async fn pending_log_head(&self) -> Result<u64> {
+        self.read();
         self.txn
             .get(self.pending_log_keys().head_key())
             .await?
@@ -318,6 +346,7 @@ impl<T: Reader + Writer + MaybeSend> VectorNodeStore for KvNodeStore<'_, T> {
     }
 
     async fn pending_log_entry(&self, position: u64) -> Result<Option<Bytes>> {
+        self.read();
         Ok(self
             .txn
             .get(&self.pending_log_keys().entry_key(position))
@@ -336,6 +365,7 @@ impl<T: Reader + Writer + MaybeSend> VectorNodeStore for KvNodeStore<'_, T> {
             .iterator(IterOptions::default().with_prefix(log.entry_prefix().to_vec()))
             .await?;
         while let Some(pair) = iter.next().await? {
+            self.read();
             let position = entry_position(&log, &pair.key)?;
             if visit(position, &pair.value)?.is_break() {
                 break;

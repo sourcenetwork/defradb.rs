@@ -6,3 +6,4 @@ mod identity_only;
 mod openapi_document;
 mod resolver;
 mod vector_memory_budget;
+mod version;

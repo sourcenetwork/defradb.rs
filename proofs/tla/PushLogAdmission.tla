@@ -323,7 +323,7 @@ HubAdmitDurableOnly(h) ==
   /\ UNCHANGED merged
   \* and nothing merges yet.
 
-\* The store's receipt-ordered events go out (storage/backends/regolith/event_order.rs):
+\* The store's receipt-ordered events go out (storage/src/backends/regolith/event_order.rs):
 \* the view learns of a registration (PersistedView::registered).
 Publish(h) ==
   /\ h \in pending

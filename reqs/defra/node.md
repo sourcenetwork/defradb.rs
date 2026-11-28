@@ -13,6 +13,32 @@ Which nameservers the node then uses (the host's accepted lines, or Go's `127.0.
 - **Scenarios:** ["node::vector_memory_budget::a_node_with_no_vector_memory_returns_the_nearest_documents"]
 
 `defradb start --vector-memory-budget <bytes>`, the `datastore.vector_memory_budget` key of `config.yaml`, and `NodeBuilder::with_vector_memory_budget` set how many bytes the node's vector indexes may keep in memory between searches, all indexes on the node together: DiskANN's resident codes, the codes a search reads on a miss, and the copies of pending lists. Unset, the budget is `268435456` (256 MiB). This is a steady-state bound: a reload can briefly overlap its old and new generation while in-flight searches finish. What does not fit is read from storage when a search needs it, so a smaller budget makes searches slower, mostly at the tail, and never changes what they return: under any budget, `0` included, a similarity query returns the same documents in the same order with the same scores. Room is first-come: a partial load is retried when its generation is refreshed or the index is evicted, not because another index later frees room. The node logs the first refusal, and exports `defradb.vector.memory.used`, `.limit` and `.refusals` through telemetry. Go has no such setting at the pinned v1.2.0 (sourcenetwork/defradb#5074 is still open), so the key and its default are the Rust node's own, and there is no per-index override.
+# `defra.node.ffi_peer_keyring`: A C host keeps the node's peer key in its own keyring
+
+- **Parents:** ["defra"]
+
+A host that embeds the node through the C API (a Swift or Kotlin app) passes a keyring it owns, such as the Keychain or the Android Keystore, in the `peer_keyring_get`, `peer_keyring_set` and `peer_keyring_context` fields of `DefraNodeInitOptions`. The node keeps its peer key there, under the name `peer-key`, instead of in plaintext in its store. Choosing and securing the keystore is the host's job. It is a C API surface with no HTTP, CLI or Go equivalent, so no testo client reaches it and its scenarios are the `ffi` crate's tests.
+
+# `defra.node.ffi_peer_keyring.identity`: The node's peer identity is the key in the host keyring
+
+- **Parents:** ["defra.node.ffi_peer_keyring"]
+- **Scenarios:** ["peer_keyring::tests::node::a_node_keeps_its_peer_key_in_the_host_keyring"]
+
+On its first start with a host keyring the node generates an Ed25519 peer key and stores it once, 64 bytes (seed and public key) under `peer-key`. Every later start with the same keyring reads it back and has the same peer ID, writing nothing, and that peer ID is the one a node started with that key as `p2p_private_key` has.
+
+# `defra.node.ffi_peer_keyring.fail_closed`: A keyring failure stops the node and never falls back to plaintext
+
+- **Parents:** ["defra.node.ffi_peer_keyring"]
+- **Scenarios:** ["peer_keyring::tests::node::a_keyring_failure_stops_the_node", "peer_keyring::tests::node::a_plaintext_peer_key_is_refused"]
+
+A get callback that returns any status other than `0` or `DEFRA_KEYRING_NOT_FOUND` (`1`) fails `defra_node_new` with `failed to read peer key from keyring: system keyring error: host keyring get of 'peer-key' failed with status <status>`, and nothing is written to the store. A store that already holds a plaintext peer key is refused with `plaintext peerstore /p2p/local-peer-key requires explicit keyring migration`, and the keyring is left untouched. The C API has no migration entry point: such a store must keep starting without a keyring or move its data to a new path. A store started with a keyring is refused without one: `this database requires its application-owned peer keyring`.
+
+# `defra.node.ffi_peer_keyring.callbacks`: The host's callbacks and what their answers mean
+
+- **Parents:** ["defra.node.ffi_peer_keyring"]
+- **Scenarios:** ["peer_keyring::tests::keys_round_trip_through_the_host_callbacks", "peer_keyring::tests::a_host_failure_is_an_error_never_a_missing_key", "peer_keyring::tests::the_callbacks_are_set_together", "peer_keyring::tests::node::a_node_refuses_part_of_a_keyring"]
+
+The two callbacks are set together or not at all; setting only one fails `defra_node_new` with `peer_keyring_get and peer_keyring_set must be set together`. Each returns `0` on success. Get writes the key into a buffer of `DEFRA_KEYRING_MAX_KEY_LEN` (4096) bytes and reports its length; a longer key is an error (`host keyring key '<name>' is <n> bytes, more than the 4096 a key may hold`). Get returns `DEFRA_KEYRING_NOT_FOUND` only for a missing key; any other non-zero status is a failure (`host keyring <get|set> of '<name>' failed with status <status>`), never a missing key. The key the node reads back is zeroed when it is dropped. The callbacks run on a network edge thread, so they must be quick and nonblocking, must not prompt, and an Android host must attach that thread to its JVM before reaching the Keystore.
 
 # `defra.node.start.go_datastore`: A Go DefraDB datastore is refused at start with what to do
 

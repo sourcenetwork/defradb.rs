@@ -8,6 +8,7 @@ use defra_core::RequestContext;
 use identity::Did;
 
 pub(crate) mod transactional;
+pub(crate) mod transfer;
 
 #[async_trait::async_trait]
 pub(crate) trait AcpOps: Send + Sync {
@@ -35,6 +36,19 @@ pub(crate) trait AcpOps: Send + Sync {
             "transaction-bound relationship delegation is unavailable",
         )
         .into())
+    }
+    /// A trusted embedder gives a document to another owner as the actor it
+    /// authenticated, while the node owns the transaction.
+    async fn transfer_dac_owner_for_in_txn(
+        &self,
+        _transaction_context: &RequestContext,
+        _actor_context: &RequestContext,
+        _transfer: transfer::Transfer<'_>,
+    ) -> Result<()> {
+        Err(
+            query::QueryError::execution("transaction-bound ownership transfer is unavailable")
+                .into(),
+        )
     }
     /// A relationship change as the authenticated caller, in the transaction
     /// `context` names when it names one, saying whether it was applied or
@@ -490,6 +504,16 @@ impl<S: storage::corekv::Store + 'static> AcpOps for DbAcpOps<S> {
             }
         }
     }
+    async fn transfer_dac_owner_for_in_txn(
+        &self,
+        transaction_context: &RequestContext,
+        actor_context: &RequestContext,
+        transfer: transfer::Transfer<'_>,
+    ) -> Result<()> {
+        self.transfer_in_txn(transaction_context, actor_context, transfer)
+            .await
+    }
+
     async fn change_dac_relationship_for_in_txn(
         &self,
         transaction_context: &RequestContext,

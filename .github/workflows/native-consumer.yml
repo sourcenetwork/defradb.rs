@@ -4,6 +4,10 @@ on:
   pull_request:
   push:
     branches: [main]
+  # Warms the release-fast Rust cache on main, the only branch whose cache every pull request
+  # restores. The Rust cache saves from main and from manual runs, each into its own branch's scope.
+  schedule:
+    - cron: '17 6 * * *'
   workflow_dispatch:
     inputs:
       vera_revision:
@@ -11,12 +15,19 @@ on:
         type: string
         required: false
         default: ''
+      profile:
+        description: Cargo profile the defradb side is built with
+        type: choice
+        options: [release, release-fast]
+        default: release
 
 permissions:
   contents: read
 
+# One group per event, so a nightly or manual run on main never cancels a main push's
+# fat-LTO qualification (or the reverse).
 concurrency:
-  group: native-consumer-${{ github.ref }}
+  group: native-consumer-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -84,6 +95,8 @@ jobs:
     timeout-minutes: 90
     env:
       VERA_RUNTIME_REVISION: ${{ inputs.vera_revision || 'faf4a4f094c1b4f5786bce0cbeb6567966e27999' }}
+      # Pull requests and the nightly warm-up build thin LTO; main pushes qualify the fat-LTO release.
+      PROFILE: ${{ inputs.profile || ((github.event_name == 'pull_request' || github.event_name == 'schedule') && 'release-fast' || 'release') }}
     steps:
       # Routes actions/cache and rust-cache to RunsOn's S3 cache.
       - uses: runs-on/action@v2
@@ -105,13 +118,12 @@ jobs:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@1.99.1
         with:
-          components: clippy
           targets: wasm32-unknown-unknown
       - run: .github/scripts/install-linux-ci-deps.sh
       - uses: Swatinem/rust-cache@v2
         with:
-          shared-key: native-consumer-1.99.1
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+          shared-key: native-consumer-1.99.1-${{ env.PROFILE }}
+          save-if: ${{ github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch' }}
           cache-on-failure: true
           cache-targets: true
           cache-workspace-crates: true
@@ -123,7 +135,7 @@ jobs:
           path: .native/consumer-cache/vera-runtime
           key: native-consumer-vera-ubuntu24-rust1.99.1-${{ steps.vera.outputs.revision }}-${{ hashFiles('.github/scripts/native-consumer.py') }}
       - name: Qualify native provider and replicated authorization
-        run: python3 .github/scripts/native-consumer.py --vera .native/vera --runtime-ref "$VERA_RUNTIME_REVISION" --cache-dir "$GITHUB_WORKSPACE/.native/consumer-cache"
+        run: python3 .github/scripts/native-consumer.py --vera .native/vera --runtime-ref "$VERA_RUNTIME_REVISION" --cache-dir "$GITHUB_WORKSPACE/.native/consumer-cache" --profile "$PROFILE"
       - name: Save successfully built Vera runtime
         if: always() && steps.runtime.outputs.cache-hit != 'true' && hashFiles('.native/consumer-cache/vera-runtime/manifest.json') != ''
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0

@@ -343,6 +343,11 @@ impl OwedChanges {
         ops::tuple_state(&self.active_view()?, tuple).await
     }
 
+    /// The sequences unsettled on one object, in queue order.
+    pub async fn live_on(&self, policy_id: &str, resource: &str, object: &str) -> Result<Vec<u64>> {
+        ops::live_on(&self.active_view()?, policy_id, resource, object).await
+    }
+
     /// How many changes are unsettled on one object.
     pub async fn unsettled_on(&self, policy_id: &str, resource: &str, object: &str) -> Result<u64> {
         ops::unsettled_on(&self.active_view()?, policy_id, resource, object).await

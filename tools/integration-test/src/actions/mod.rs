@@ -189,6 +189,7 @@ client_actions! {
         GetNodeIdentity,
         ListAllEncryptedIndexes,
         NewNode,
+        NodeVersion,
         HoldCommit,
         Kill,
         ReleaseCommit,

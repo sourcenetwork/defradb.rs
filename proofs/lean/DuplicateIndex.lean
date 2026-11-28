@@ -20,7 +20,7 @@ also never happen: a request refused although nothing listed matches it
 (nothing valid is rejected).
 
 Rust: `crates/database/db/src/index/duplicate.rs` `refuse_duplicate_index`,
-called from `crates/database/db/src/index/create.rs` `define_index` and
+called from `crates/database/db/src/index/create.rs` `DefineIndexAttempt::run` and
 `crates/database/db/src/index/in_txn.rs` `create_index_in`, the index creation
 requests; the node's `ensure_ordinary_index` reconcile API does not run it.
 The definition is abstracted as any type with decidable equality, and the

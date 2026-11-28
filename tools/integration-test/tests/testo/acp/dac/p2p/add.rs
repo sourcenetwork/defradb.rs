@@ -12,6 +12,7 @@ use serde_json::json;
 
 #[test]
 #[mantra_macros::req_test("go.acp.dac.p2p.remote-dac")]
+#[mantra_macros::req_test("defra.cli.identity.vera_delegation")]
 fn acp_p2_p_add_private_document_and_sync_after_adding_relationship_remote_dac() {
     TestCase {
         id: integration_test::scenario_id!(),

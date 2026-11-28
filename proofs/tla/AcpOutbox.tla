@@ -263,7 +263,9 @@
 \*       creator read, by the owed-registration rule, a document the
 \*       provider now gives to the new owner alone, until the record is
 \*       cleared. INV_NoWidening holds only under this assumption once the
-\*       owner can change.
+\*       owner can change. A transfer this node owes itself is never sent
+\*       while the registration is held, and denies the creator from its
+\*       commit: OwnerTransfer.tla.
 \* Assumed without a switch:
 \*   * one request sent twice is executed once (the worker journal and the
 \*     provider's sequence, PendingSubmission.tla). A second effect here is a

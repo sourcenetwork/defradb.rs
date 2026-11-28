@@ -35,6 +35,7 @@
 //! The schema accepts cosine alone, as it does for IVF_PQ: Euclidean is sound
 //! here but its recall has never been measured.
 
+mod back_edges;
 mod build;
 mod cache;
 pub mod codec;

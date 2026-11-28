@@ -110,7 +110,7 @@ impl<S: Store + 'static> DocFetcher for DbDocFetcher<S> {
         query_vector: &[f64],
         k: usize,
         effort: Option<usize>,
-    ) -> query::error::Result<Vec<u64>> {
+    ) -> query::error::Result<query::fetcher::VectorCandidates> {
         let (collection, datastore, _) =
             get_collection_with_lazy_load(&*self.shared_txn()?, collection_name).await?;
         let codes = self.shared_txn()?.vector_codes().clone();
