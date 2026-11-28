@@ -45,7 +45,10 @@ fn the_compat_runtime_runs_every_thread_on_the_whole_edge_set() {
         !names.iter().any(|name| name.starts_with("async-compat")),
         "no runtime outside the edge: {names:?}"
     );
-    let other = workers::EdgeCores::reserve_on(&workers::topology::Topology::detect());
+    let other = workers::EdgeCores::reserve_on(
+        &workers::topology::Topology::detect(),
+        &workers::Placement::default(),
+    );
     assert!(other.cpus().intersection(&held).is_empty(), "held alone");
     drop(other);
     runtime.shutdown().unwrap();

@@ -37,6 +37,7 @@ pub(super) fn detect() -> Option<Topology> {
         }],
         source: Source::Sysctl,
         cpu_quota: None,
+        narrowed: false,
     })
 }
 

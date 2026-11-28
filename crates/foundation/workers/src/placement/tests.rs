@@ -3,6 +3,7 @@ use crate::topology::{Node, Source};
 
 /// A Linux-numbered machine: `nodes` nodes of `domains` L3 domains of `cores`
 /// cores, `smt` siblings each; core `c`'s siblings are `c`, `c + total`, ...
+/// The process may run on all of it: its CPU set is not narrowed.
 pub(super) fn machine(nodes: usize, domains: usize, cores: usize, smt: usize) -> Topology {
     let total = nodes * domains * cores;
     let mut next = 0;
@@ -30,6 +31,7 @@ pub(super) fn machine(nodes: usize, domains: usize, cores: usize, smt: usize) ->
         nodes,
         source: Source::Fallback,
         cpu_quota: None,
+        narrowed: false,
     }
 }
 

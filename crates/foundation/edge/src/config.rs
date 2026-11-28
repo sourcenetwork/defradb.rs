@@ -14,8 +14,15 @@ pub type ThreadStart = Arc<dyn Fn() + Send + Sync + 'static>;
 pub struct EdgeConfig {
     /// Threads that run network tasks. `None`: one per CPU of a quarter of
     /// the cores, held for them alone so no worker pool plans on them
-    /// ([`workers::EdgeCores`]); a count: that many threads, unpinned.
+    /// ([`workers::EdgeCores`]), unless `placement` pins nothing; a count:
+    /// that many threads, unpinned.
     pub threads: Option<NonZeroUsize>,
+    /// Whether threads sized from the machine (`threads: None`) pin to cores
+    /// of their own: as a worker pool placed this way would
+    /// ([`workers::Placement`]). The default pins on Linux; `Unpinned` runs
+    /// them unpinned, holding nothing; `Auto` pins only within a CPU set
+    /// narrowed for the process. Give it the worker pool's placement.
+    pub placement: workers::Placement,
     /// The name every runtime thread carries.
     pub thread_name: String,
     /// How long a waiter waits on a completion before it gets
@@ -34,6 +41,7 @@ impl Default for EdgeConfig {
     fn default() -> Self {
         Self {
             threads: None,
+            placement: workers::Placement::default(),
             thread_name: "defra-edge".to_string(),
             deadline: Duration::from_secs(300),
             drain: Duration::from_secs(30),
@@ -47,6 +55,7 @@ impl fmt::Debug for EdgeConfig {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("EdgeConfig")
             .field("threads", &self.threads)
+            .field("placement", &self.placement)
             .field("thread_name", &self.thread_name)
             .field("deadline", &self.deadline)
             .field("drain", &self.drain)

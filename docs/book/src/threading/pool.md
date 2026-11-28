@@ -16,6 +16,21 @@ blocking threads) running a round:
 3. poll its hook, which is the [regolith](https://sourcenetwork.github.io/regolith/) `IoQueue` machinery,
 4. fire timers from its deadline queue (periodic jobs, the idle sweep).
 
+`--worker-placement` (`DEFRA_WORKER_PLACEMENT`, `workers.placement`) places the workers
+and the network runtime's threads alike. Pinning is the default (`spread` on Linux), with
+the network runtime on cores of its own. The CPU ledger that keeps pools apart is the
+process's own, so processes that share a host plan the same cores and pin the same
+threads to them. Several processes on one set of CPUs run `unpinned`, which pins neither
+workers nor network threads and holds no CPU.
+
+`auto` is an opt-in for an embedder or a test harness: it pins as `spread` when the
+process may run on only part of the host's online CPUs (a container cpuset, `taskset`,
+systemd `CPUAffinity`), and runs unpinned otherwise. A narrowed set does not mean the CPUs
+are this process's alone: containers given the same `--cpuset-cpus`, units under one
+systemd slice with `AllowedCPUs=`, or every process on a host booted with `isolcpus=`
+share one, and under `auto` each of them pins the same threads to the same CPUs in it.
+Those processes run `unpinned` too.
+
 Tasks are spawned with `spawn_local` and never migrate: a waker from any thread puts
 the task back on *its* worker's run queue. Data-path futures need not be `Send`.
 

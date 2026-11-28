@@ -16,9 +16,9 @@
 //! its plan says so (marked oversubscribed, with a note the start-up report
 //! logs as a warning). With no CPU free at all, `Auto` is one unpinned
 //! worker. A shared pool's CPUs are counted in the ledger too, so no later
-//! pool takes them as free.
+//! pool takes them as free. A pool that pins nothing holds nothing.
 
-use super::{interleave, plan, set_aside, Plan, Seat};
+use super::{interleave, pins, plan, set_aside, Plan, Seat};
 use crate::config::{Config, Placement, Workers};
 use crate::ledger::{Hold, Ledger};
 use crate::topology::{CpuSet, Topology};
@@ -37,7 +37,7 @@ pub(crate) struct Reserved<'a> {
 /// Plans a pool of `config` on the CPUs of `machine` that no pool in
 /// `ledger` holds, and holds them.
 pub(crate) fn reserve<'a>(machine: &Topology, config: &Config, ledger: Ledger<'a>) -> Reserved<'a> {
-    if config.placement == Placement::Unpinned {
+    if !pins(machine, &config.placement) {
         return Reserved {
             plan: plan(machine, config),
             hold: None,

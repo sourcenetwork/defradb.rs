@@ -40,18 +40,56 @@ pub enum Workers {
 /// gone. Where the OS cannot pin (macOS), the hold still divides the
 /// machine's cores between pools for sizing, and the OS decides where each
 /// thread runs.
+///
+/// The ledger is the process's own: processes sharing a host cannot see
+/// each other's holds, so each plans the same cores and pins the same
+/// threads to them. A process that shares its CPUs with other processes
+/// using this pool runs [`Unpinned`](Placement::Unpinned).
+///
+/// The same placement decides whether a network runtime sized from the
+/// machine pins ([`EdgeCores::reserve`](crate::EdgeCores::reserve)), so the
+/// workers and the network threads follow one decision.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Placement {
+    /// [`Spread`](Placement::Spread) when the process may run on only part
+    /// of the host's online CPUs ([`Topology::narrowed`]: a container
+    /// cpuset, `taskset`, systemd's `CPUAffinity`), pinned within that set;
+    /// [`Unpinned`](Placement::Unpinned) when it may run on all of them. An
+    /// opt-in, never the default.
+    ///
+    /// A narrowed set is not proof the CPUs are this process's alone:
+    /// containers started with the same `--cpuset-cpus`, units under one
+    /// systemd slice with `AllowedCPUs=`, or every process on a host booted
+    /// with `isolcpus=` share one, and each of them pins the same threads to
+    /// the same CPUs in it. Processes sharing a set run `Unpinned`.
+    ///
+    /// [`Topology::narrowed`]: crate::topology::Topology::narrowed
+    Auto,
     /// Not pinned: the OS places them, beside whatever runs, and the pool
-    /// holds no CPU. The default on macOS, which cannot pin.
+    /// holds no CPU. Priorities and memory policy still apply. The default
+    /// on macOS, which cannot pin, and the setting for processes that share
+    /// their CPUs.
     Unpinned,
     /// Pinned, alternating NUMA nodes, and L3 domains within a node, so load
-    /// reaches every memory controller and cache first. The default on Linux.
+    /// reaches every memory controller and cache first. The default on
+    /// Linux.
     Spread,
     /// Pinned, filling one node (and one L3 domain) before the next.
     Pack,
     /// Pinned to these sets, one per worker; the worker count is their number.
     Custom(Vec<CpuSet>),
+}
+
+impl Default for Placement {
+    /// [`Spread`](Placement::Spread) on Linux, [`Unpinned`](Placement::Unpinned)
+    /// elsewhere.
+    fn default() -> Self {
+        if cfg!(target_os = "linux") {
+            Placement::Spread
+        } else {
+            Placement::Unpinned
+        }
+    }
 }
 
 /// Whether workers use SMT siblings.
@@ -171,11 +209,7 @@ impl Default for Config {
     fn default() -> Self {
         Config {
             workers: Workers::Auto,
-            placement: if cfg!(target_os = "linux") {
-                Placement::Spread
-            } else {
-                Placement::Unpinned
-            },
+            placement: Placement::default(),
             smt: Smt::PhysicalOnly,
             memory_policy: MemoryPolicy::Local,
             memory_lock: MemoryLock::Off,
@@ -319,6 +353,10 @@ mod tests {
     fn the_default_is_valid_and_workers_rank_first() {
         let config = Config::default();
         config.validate().unwrap();
+        #[cfg(target_os = "linux")]
+        assert_eq!(config.placement, Placement::Spread);
+        #[cfg(not(target_os = "linux"))]
+        assert_eq!(config.placement, Placement::Unpinned);
         #[cfg(target_os = "linux")]
         assert_eq!(
             config.priorities.of(ThreadClass::Worker),

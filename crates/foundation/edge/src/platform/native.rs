@@ -223,7 +223,7 @@ type Started = std::sync::mpsc::SyncSender<Result<Arc<Shared>, EdgeError>>;
 fn own(config: EdgeConfig, gate: Arc<Gate>, control: Arc<Control>, started: Started) {
     let cores = Arc::new(match config.threads {
         Some(threads) => workers::EdgeCores::unpinned(threads),
-        None => workers::EdgeCores::reserve(),
+        None => workers::EdgeCores::reserve(&config.placement),
     });
     crate::compat::start_timer();
     let compat = match crate::compat::runtime(&config, &cores) {

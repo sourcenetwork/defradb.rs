@@ -69,12 +69,18 @@ pub fn owned_runtime() -> Runtime {
     Runtime(nuclei::Runtime::new().expect("a nuclei runtime"))
 }
 
-/// The network runtime a node starts, on the edge cores the ledger gives it,
-/// for a benchmark that stands in for the server: its clients spawn through
-/// the [`edge::Edge`] it hands out, as the server's connections do. Start it
-/// before any worker pool, so the pool plans on the cores the edge leaves.
-pub fn server_edge() -> edge::EdgeRuntime {
-    edge::EdgeRuntime::start(edge::EdgeConfig::default()).expect("the network edge starts")
+/// The network runtime a node starts, placed as its worker pool is: on the
+/// edge cores the ledger gives it where `placement` pins, unpinned where it
+/// does not. For a benchmark that stands in for the server: its clients
+/// spawn through the [`edge::Edge`] it hands out, as the server's
+/// connections do. Start it before any worker pool, so the pool plans on the
+/// cores the edge leaves.
+pub fn server_edge(placement: workers::Placement) -> edge::EdgeRuntime {
+    edge::EdgeRuntime::start(edge::EdgeConfig {
+        placement,
+        ..edge::EdgeConfig::default()
+    })
+    .expect("the network edge starts")
 }
 
 /// The positive count the environment variable `name` holds, else `default`.

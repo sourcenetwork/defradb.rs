@@ -4,12 +4,19 @@
 //! while one is held. The edge claims them the way a pool claims alone,
 //! under the same cap on lost claims; it never shares, and with no claim won
 //! its threads run unpinned and it holds nothing.
+//!
+//! Whether it claims at all follows the [`Placement`] it is given, as the
+//! pool's does ([`pins`]): the default and every forced placement claim;
+//! `Unpinned` never does, and `Auto` only where the process may run on part
+//! of the host's online CPUs. A runtime that does not claim runs unpinned
+//! and holds nothing.
 
 use std::num::NonZeroUsize;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use super::core_order;
 use super::reserve::ATTEMPTS;
+use super::{core_order, pins};
+use crate::config::Placement;
 use crate::ledger::{Hold, Ledger};
 use crate::os;
 use crate::topology::{CoreKind, CpuSet, Topology};
@@ -52,11 +59,13 @@ impl EdgeCores {
     /// The cores of a network runtime sized from this machine, held for it
     /// alone, with the calling thread pinned to them: call it on the thread
     /// that starts the runtime's threads, which inherit the pin. Unpinned,
-    /// holding nothing, when no cores are free, when they would leave none
-    /// for a worker, or when the OS refuses the pin.
-    pub fn reserve() -> EdgeCores {
+    /// holding nothing, when `placement` does not pin on this machine, when
+    /// no cores are free, when they would leave none for a worker, or when
+    /// the OS refuses the pin. Pass the worker pool's placement, so the
+    /// network threads and the workers follow one decision.
+    pub fn reserve(placement: &Placement) -> EdgeCores {
         let machine = Topology::detect();
-        let cores = Self::reserve_on(&machine);
+        let cores = Self::reserve_on(&machine, placement);
         if cores.cpus.is_empty() || cores.pin_current_thread() {
             return cores;
         }
@@ -64,7 +73,10 @@ impl EdgeCores {
     }
 
     /// [`reserve`](Self::reserve) on `machine`, without pinning the caller.
-    pub fn reserve_on(machine: &Topology) -> EdgeCores {
+    pub fn reserve_on(machine: &Topology, placement: &Placement) -> EdgeCores {
+        if !pins(machine, placement) {
+            return Self::sized(machine);
+        }
         let ledger = Ledger::process();
         let allowed = machine.allowed();
         for _ in 0..ATTEMPTS {

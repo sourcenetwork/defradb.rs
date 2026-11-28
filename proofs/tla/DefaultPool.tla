@@ -203,7 +203,7 @@
 \*     holder ever writes the cell, so nothing can change it in between.
 \*   * Pool::start is one step: the only effects this mechanism sees are the
 \*     new pool and its publication. Its threads run no caller code before
-\*     they report (the default has no hook: config/mod.rs:197 through
+\*     they report (the default has no hook: config/mod.rs:232 through
 \*     Config::named, default.rs:58-63), so a start never waits on a thread
 \*     that waits for the start.
 \*   * After a publish, waiters get through two ways: the permits the publish

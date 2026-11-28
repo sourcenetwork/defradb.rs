@@ -5,7 +5,7 @@
 //! | Setting | Accepted |
 //! |---|---|
 //! | [`Workers`] | `auto`, or a count of at least 1 |
-//! | [`Placement`] | `unpinned`, `spread`, `pack`, or CPU lists split by `;` (`0-3;4-7`) |
+//! | [`Placement`] | `auto`, `unpinned`, `spread`, `pack`, or CPU lists split by `;` (`0-3;4-7`) |
 //! | [`Smt`] | `physical`, `all` |
 //! | [`MemoryPolicy`] | `off`, `local`, `bind:<nodes>` (`bind:0,1`) |
 //! | [`MemoryLock`] | `off`, `current`, `future`, each `future` form with `+on-fault` |
@@ -42,6 +42,7 @@ impl FromStr for Placement {
 
     fn from_str(value: &str) -> Result<Self, Error> {
         match value.trim() {
+            "auto" => Ok(Placement::Auto),
             "unpinned" => Ok(Placement::Unpinned),
             "spread" => Ok(Placement::Spread),
             "pack" => Ok(Placement::Pack),
@@ -54,7 +55,7 @@ impl FromStr for Placement {
                     invalid(
                         "placement",
                         value,
-                        "unpinned, spread, pack, or CPU lists split by ';'",
+                        "auto, unpinned, spread, pack, or CPU lists split by ';'",
                     )
                 }),
         }
@@ -171,6 +172,7 @@ mod tests {
         assert!("0".parse::<Workers>().is_err());
         assert!("many".parse::<Workers>().is_err());
 
+        assert_eq!("auto".parse::<Placement>(), Ok(Placement::Auto));
         assert_eq!("spread".parse::<Placement>(), Ok(Placement::Spread));
         assert_eq!("pack".parse::<Placement>(), Ok(Placement::Pack));
         assert_eq!("unpinned".parse::<Placement>(), Ok(Placement::Unpinned));

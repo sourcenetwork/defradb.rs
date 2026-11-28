@@ -433,7 +433,16 @@ fn a_one_worker_pool_serves_every_target_and_measures_its_own_polls() {
         std::thread::sleep(Duration::from_millis(20));
     });
     assert_eq!(blocked, Ok(()));
-    assert!(pool.stats().workers[0].long_polls >= 1);
+    // The answer leaves during the poll; the worker counts the poll as long
+    // only once it returns, which may be after the caller has woken.
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    while pool.stats().workers[0].long_polls == 0 {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the long poll was never counted"
+        );
+        std::thread::park_timeout(Duration::from_millis(1));
+    }
     pool.shutdown_blocking().unwrap();
 }
 
@@ -633,6 +642,58 @@ fn every_worker_runs_pinned_where_the_plan_put_it() {
         0
     );
     pool.shutdown_blocking().unwrap();
+}
+
+/// The `Auto` opt-in pins only a pool started on a thread whose CPU set
+/// leaves out an online CPU, and then within that set.
+#[cfg(target_os = "linux")]
+#[test]
+fn auto_pins_only_within_a_cpu_set_narrowed_for_it() {
+    let allowed = crate::os::current_affinity().unwrap();
+    if allowed.len() < 2 {
+        return;
+    }
+    let start = |narrow: bool| {
+        std::thread::spawn(move || {
+            let mut cpus = crate::os::current_affinity().unwrap();
+            if narrow {
+                let last = cpus.iter().last().unwrap();
+                cpus.remove_all(&std::iter::once(last).collect());
+                crate::os::set_current_affinity(&cpus).unwrap();
+            }
+            let narrowed = Topology::detect().narrowed;
+            let pool = Pool::start(Config {
+                placement: Placement::Auto,
+                ..small(2)
+            })
+            .unwrap();
+            let report = pool.report().clone();
+            pool.shutdown_blocking().unwrap();
+            (narrowed, cpus, report)
+        })
+        .join()
+        .unwrap()
+    };
+    let (narrowed, _, shared) = start(false);
+    if !narrowed {
+        assert!(
+            shared
+                .workers
+                .iter()
+                .all(|worker| worker.placement.pinning.granted == "unpinned"),
+            "a process on every online CPU pins nothing: {shared}"
+        );
+    }
+    let (narrowed, cpus, given) = start(true);
+    assert!(narrowed);
+    for worker in &given.workers {
+        let pinning = &worker.placement.pinning;
+        let pinned = CpuSet::parse(pinning.granted.trim_start_matches("CPUs ")).unwrap();
+        assert!(
+            !pinned.is_empty() && pinned.iter().all(|cpu| cpus.contains(cpu)),
+            "pinned within {cpus}: {given}"
+        );
+    }
 }
 
 #[cfg(target_os = "linux")]

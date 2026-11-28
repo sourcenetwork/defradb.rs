@@ -9,6 +9,12 @@
 //! DEFRA_BASELINE_READERS (comma-separated), DEFRA_BASELINE_OPERATIONS and
 //! DEFRA_BASELINE_REPETITIONS. Raw samples and provenance go to stdout as JSON
 //! lines; dashboard families use DEFRA_BENCH_OUT through the existing emitter.
+//!
+//! Each workload runs twice, with the pool and the network runtime placed
+//! alike: first by default (`read_baseline_<workload>`), then with the `auto`
+//! opt-in (`read_baseline_auto_<workload>`). On a host that gives the process
+//! every CPU, `auto` runs both unpinned, so the second pass measures what a
+//! process sharing its host gives up.
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -81,8 +87,12 @@ struct Fixture {
 }
 
 impl Fixture {
-    async fn new(edge: edge::Edge) -> Self {
-        let pool = storage::start_pool(workers::Config::default(), None).unwrap();
+    async fn new(edge: edge::Edge, placement: workers::Placement) -> Self {
+        let config = workers::Config {
+            placement,
+            ..workers::Config::default()
+        };
+        let pool = storage::start_pool(config, None).unwrap();
         let directory = tempfile::tempdir().unwrap();
         let store = Arc::new(
             RegolithStore::open_with_options(
@@ -271,14 +281,49 @@ fn main() {
             }
         })
     );
-    let server = common::server_edge();
+    let placements = [
+        ("read_baseline", "", workers::Placement::default()),
+        (
+            "read_baseline_auto",
+            ", auto placement",
+            workers::Placement::Auto,
+        ),
+    ];
+    for (prefix, label, placement) in placements {
+        measure(
+            prefix,
+            label,
+            placement,
+            &readers,
+            operations,
+            repetitions,
+            guard.passed,
+        );
+    }
+}
+
+/// Every workload at every reader count, with the pool and the network
+/// runtime placed as `placement`, emitted as `<prefix>_<workload>`. Both are
+/// stopped, and their CPUs given back, before it returns.
+fn measure(
+    prefix: &str,
+    label: &str,
+    placement: workers::Placement,
+    readers: &[usize],
+    operations: usize,
+    repetitions: usize,
+    quiet: bool,
+) {
+    let server = common::server_edge(placement.clone());
     let edge = server.edge().clone();
-    let fixture = edge.block_on(Fixture::new(edge.clone())).unwrap();
+    let fixture = edge
+        .block_on(Fixture::new(edge.clone(), placement.clone()))
+        .unwrap();
     for shape in Shape::ALL {
         edge.block_on(run(&fixture, &edge, shape, 1, DOCUMENTS))
             .unwrap();
         let mut groups: Vec<Group> = Vec::new();
-        for &count in &readers {
+        for &count in readers {
             let mut values: Vec<Vec<f64>> = Vec::new();
             for repetition in 0..repetitions {
                 let sample = edge
@@ -303,7 +348,8 @@ fn main() {
                     "{}",
                     serde_json::json!({
                         "baseline_sample": {
-                            "workload": shape.name(), "readers": count, "repetition": repetition,
+                            "workload": shape.name(), "placement": format!("{placement:?}"),
+                            "readers": count, "repetition": repetition,
                             "requests": sample.latencies.len(),
                             "elapsed_seconds": sample.elapsed.as_secs_f64(),
                             "metrics": metrics.iter().map(|(name, _, _, value)| (*name, *value)).collect::<std::collections::BTreeMap<_, _>>(),
@@ -324,14 +370,14 @@ fn main() {
             }
         }
         let mut family = Family::new(
-            format!("Concurrent reads: {}", shape.name()),
-            format!("On-disk store on the worker pool, {DOCUMENTS} documents, warmed; {operations} requests per reader; {repetitions} repetitions. Requests go through the HTTP router as a server builds it, without sockets, signing or ACP. Pool tasks count every task the pool started per read."),
+            format!("Concurrent reads: {}{label}", shape.name()),
+            format!("On-disk store on the worker pool, {DOCUMENTS} documents, warmed; {operations} requests per reader; {repetitions} repetitions; the pool and the network runtime placed as {placement:?}. Requests go through the HTTP router as a server builds it, without sockets, signing or ACP. Pool tasks count every task the pool started per read."),
         )
-        .trust(if guard.passed { Trust::Clean } else { Trust::Contaminated });
+        .trust(if quiet { Trust::Clean } else { Trust::Contaminated });
         for group in groups {
             family = family.group(group);
         }
-        family.emit(&format!("read_baseline_{}", shape.name()));
+        family.emit(&format!("{prefix}_{}", shape.name()));
     }
     edge.block_on(fixture.store.close()).unwrap().unwrap();
     fixture.pool.shutdown_blocking().unwrap();

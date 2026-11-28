@@ -1,5 +1,5 @@
 use workers::topology::{Core, CoreKind, CpuSet, Node, Source, Topology};
-use workers::{edge_cores, EdgeCores};
+use workers::{edge_cores, EdgeCores, Placement};
 #[cfg(target_os = "linux")]
 use workers::{Config, Pool, Priorities};
 
@@ -27,8 +27,12 @@ fn machine(base: usize, nodes: usize, cores: usize, smt: usize) -> Topology {
         nodes,
         source: Source::Fallback,
         cpu_quota: None,
+        narrowed: false,
     }
 }
+
+/// Placed as on Linux by default: the edge claims cores of its own.
+const SPREAD: &Placement = &Placement::Spread;
 
 fn set(list: &str) -> CpuSet {
     CpuSet::parse(list).unwrap()
@@ -50,7 +54,7 @@ fn edge_cores_are_a_quarter_of_the_usable_cores_at_least_one_per_node() {
 #[test]
 fn a_reservation_holds_whole_cores_from_the_far_end_and_gives_them_back() {
     let host = machine(1000, 1, 9, 2);
-    let first = EdgeCores::reserve_on(&host);
+    let first = EdgeCores::reserve_on(&host, SPREAD);
     assert!(first.is_pinned());
     assert_eq!(
         first.cpus(),
@@ -59,7 +63,7 @@ fn a_reservation_holds_whole_cores_from_the_far_end_and_gives_them_back() {
     );
     assert_eq!(first.threads(), 4, "one thread per CPU held");
 
-    let second = EdgeCores::reserve_on(&host);
+    let second = EdgeCores::reserve_on(&host, SPREAD);
     assert_eq!(
         second.cpus(),
         &set("1006,1015"),
@@ -68,7 +72,7 @@ fn a_reservation_holds_whole_cores_from_the_far_end_and_gives_them_back() {
     assert!(second.cpus().intersection(first.cpus()).is_empty());
 
     drop((first, second));
-    let third = EdgeCores::reserve_on(&host);
+    let third = EdgeCores::reserve_on(&host, SPREAD);
     assert_eq!(
         third.cpus(),
         &set("1007-1008,1016-1017"),
@@ -81,14 +85,14 @@ fn efficiency_cores_are_taken_first() {
     let mut host = machine(2000, 1, 6, 1);
     host.nodes[0].cores[1].kind = CoreKind::Efficiency;
     host.nodes[0].cores[2].kind = CoreKind::Efficiency;
-    let cores = EdgeCores::reserve_on(&host);
+    let cores = EdgeCores::reserve_on(&host, SPREAD);
     assert_eq!(cores.cpus(), &set("2002"));
 }
 
 #[test]
 fn every_node_gets_an_edge_core() {
     let host = machine(3000, 2, 3, 1);
-    let cores = EdgeCores::reserve_on(&host);
+    let cores = EdgeCores::reserve_on(&host, SPREAD);
     let nodes: Vec<_> = cores
         .cpus()
         .iter()
@@ -101,10 +105,64 @@ fn every_node_gets_an_edge_core() {
 #[test]
 fn a_machine_with_no_core_to_spare_runs_unpinned_holding_nothing() {
     let host = machine(4000, 1, 1, 2);
-    let cores = EdgeCores::reserve_on(&host);
+    let cores = EdgeCores::reserve_on(&host, SPREAD);
     assert!(!cores.is_pinned());
     assert_eq!(cores.threads(), 2, "one per CPU of its would-be cores");
     assert!(!cores.pin_current_thread());
+}
+
+#[test]
+fn the_edge_pins_as_a_pool_placed_the_same_would() {
+    let custom = Placement::Custom(vec![set("5000")]);
+    let table = [
+        (Placement::Auto, false, false),
+        (Placement::Auto, true, true),
+        (Placement::Unpinned, false, false),
+        (Placement::Unpinned, true, false),
+        (Placement::Spread, false, true),
+        (Placement::Spread, true, true),
+        (Placement::Pack, false, true),
+        (Placement::Pack, true, true),
+        (custom.clone(), false, true),
+        (custom, true, true),
+    ];
+    for (placement, narrowed, pins) in table {
+        let host = Topology {
+            narrowed,
+            ..machine(5000, 1, 9, 2)
+        };
+        let cores = EdgeCores::reserve_on(&host, &placement);
+        assert_eq!(
+            cores.is_pinned(),
+            pins,
+            "{placement:?}, narrowed {narrowed}: {}",
+            cores.cpus()
+        );
+    }
+}
+
+#[test]
+fn an_edge_that_does_not_pin_holds_nothing() {
+    for (placement, narrowed) in [(Placement::Unpinned, true), (Placement::Auto, false)] {
+        let host = Topology {
+            narrowed,
+            ..machine(6000, 1, 9, 2)
+        };
+        let cores = EdgeCores::reserve_on(&host, &placement);
+        assert!(cores.cpus().is_empty(), "{placement:?}: {}", cores.cpus());
+        assert_eq!(
+            cores.threads(),
+            4,
+            "as many threads as its 2 cores have CPUs"
+        );
+        assert!(!cores.pin_current_thread());
+        let pinned = EdgeCores::reserve_on(&host, SPREAD);
+        assert_eq!(
+            pinned.cpus(),
+            &set("6007-6008,6016-6017"),
+            "{placement:?} held nothing: the far-end cores are still free"
+        );
+    }
 }
 
 #[test]
@@ -117,7 +175,7 @@ fn an_explicit_count_runs_unpinned() {
 #[test]
 fn a_pool_plans_its_workers_around_the_edge_and_sets_nothing_aside_for_it() {
     let host = Topology::detect();
-    let edge = EdgeCores::reserve_on(&host);
+    let edge = EdgeCores::reserve_on(&host, SPREAD);
     if !edge.is_pinned() {
         return;
     }
