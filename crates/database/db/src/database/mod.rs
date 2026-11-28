@@ -396,9 +396,7 @@ impl<S: Store> DB<S> {
     where
         S: 'static,
     {
-        let db = Self::with_options(store, options)?;
-        db.finish_open().await?;
-        Ok(db)
+        Self::with_options(store, options)?.opened().await
     }
 
     /// Create a new database from an Arc-wrapped store.
@@ -483,9 +481,33 @@ impl<S: Store> DB<S> {
     where
         S: 'static,
     {
-        let db = Self::from_arc_with_options(store, options)?;
-        db.finish_open().await?;
-        Ok(db)
+        Self::from_arc_with_options(store, options)?.opened().await
+    }
+
+    /// Runs [`Self::finish_open`] on the database's worker pool, where its
+    /// reads and commits belong, and hands the database back.
+    async fn opened(self) -> Result<Self>
+    where
+        S: 'static,
+    {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let pool = self.options.pool.clone();
+            workers::run_on(
+                pool.as_ref(),
+                workers::Target::LeastLoaded,
+                move || async move { self.finish_open().await.map(|()| self) },
+            )
+            .await
+            .map_err(Error::OpenOffPool)?
+        }
+        // A browser's one worker is the page's thread: the open runs where
+        // it is asked for.
+        #[cfg(target_arch = "wasm32")]
+        {
+            self.finish_open().await?;
+            Ok(self)
+        }
     }
 
     /// The startup sequence every open path runs once the store is attached.

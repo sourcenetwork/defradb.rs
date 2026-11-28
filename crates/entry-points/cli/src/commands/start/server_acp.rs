@@ -133,15 +133,20 @@ impl Node {
             Arc::new(acp::PersistentZanzibarStore::from_store(store)),
             nac_config,
         ));
-        manager
-            .initialize(user_did)
-            .await
-            .map_err(|e| Error::InvalidConfig(format!("failed to initialize NAC: {}", e)))?;
+        // NAC's state is read and written on the database's worker pool.
+        let on_pool = Arc::clone(&manager);
+        let owner = user_did.cloned();
+        let status = workers::run_on(pool, workers::Target::LeastLoaded, move || async move {
+            on_pool.initialize(owner.as_ref()).await?;
+            Ok::<_, db::nac::Error>(on_pool.status().await)
+        })
+        .await
+        .map_err(|e| Error::InvalidConfig(format!("failed to initialize NAC: {}", e)))?
+        .map_err(|e| Error::InvalidConfig(format!("failed to initialize NAC: {}", e)))?;
         // The defra-node predicate: a store never configured gets no NAC
         // routes, so `/acp/node/enable` cannot hand an open node to its first
         // caller.
-        let configured =
-            config.acp.node_enable || manager.status().await != acp::nac::NacStatus::NotConfigured;
+        let configured = config.acp.node_enable || status != acp::nac::NacStatus::NotConfigured;
 
         Ok(NacSetup {
             adapter: Arc::new(

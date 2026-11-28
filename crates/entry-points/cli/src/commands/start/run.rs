@@ -264,7 +264,6 @@ impl Node {
                     } = *tasks;
                     coordinator.shutdown().await;
 
-                    // Abort all tasks - they will stop when the channel closes
                     replication_task.stop();
                     host_task.stop();
                     failure_recorder_task.abort();
@@ -275,6 +274,10 @@ impl Node {
 
                     let _ = timeout(grace, replication_task.stopped()).await;
                     let _ = timeout(grace, host_task.stopped()).await;
+                    // A stopped host cannot receive its shutdown command.
+                    if let Some(handle) = &self.p2p_handle {
+                        let _ = handle.shutdown().await;
+                    }
                 }
                 #[cfg(feature = "iroh")]
                 super::node::P2PTasks::Iroh {
@@ -302,12 +305,6 @@ impl Node {
             }
 
             info!("P2P background tasks stopped");
-        }
-
-        if let Some(handle) = &self.p2p_handle {
-            if let Err(e) = handle.shutdown().await {
-                warn!("P2P shutdown encountered an issue: {}", e);
-            }
         }
 
         // The servers and P2P have stopped, so nothing asks for an access

@@ -98,17 +98,40 @@ pub(crate) struct Endpoint {
 }
 
 /// The embedding source, with the client its requests go out on, or why
-/// there is none.
+/// there is none. The client is built by the first request, on the network
+/// runtime its round trip runs on: building one reads the system's root
+/// certificates, which blocks, so a write that only asks for the service
+/// never builds it on a database worker.
 pub(crate) struct Embeddings {
-    client: Result<Client, EmbeddingCallError>,
+    edge: Option<edge::Edge>,
+    client: regolith::sync::OnceCell<Result<Client, EmbeddingCallError>>,
 }
 
 impl Embeddings {
     /// Requests on `edge`'s connections.
     pub(crate) fn on(edge: &edge::Edge) -> Self {
         Self {
-            client: Ok(inputs::embeddings::client(edge)),
+            edge: Some(edge.clone()),
+            client: regolith::sync::OnceCell::new(),
         }
+    }
+
+    /// Requests on the process's on-demand network runtime.
+    fn on_demand() -> Self {
+        Self {
+            edge: None,
+            client: regolith::sync::OnceCell::new(),
+        }
+    }
+
+    fn client(&self) -> Result<&Client, EmbeddingCallError> {
+        self.client
+            .get_or_init_racy(|| match &self.edge {
+                Some(edge) => Ok(inputs::embeddings::client(edge)),
+                None => inputs::embeddings::shared_client(),
+            })
+            .as_ref()
+            .map_err(Clone::clone)
     }
 }
 
@@ -149,7 +172,7 @@ impl inputs::Source for Embeddings {
         keys: &'a [Embedding],
     ) -> MaybeBoxFuture<'a, inputs::Answers<Arc<[f64]>, EmbeddingCallError>> {
         Box::pin(async move {
-            let client = self.client.as_ref().map_err(Clone::clone)?;
+            let client = self.client()?;
             let texts: Vec<&str> = keys.iter().map(|key| key.input.text.as_str()).collect();
             let vectors = call_embeddings(
                 client,
@@ -205,10 +228,11 @@ pub(crate) fn shared() -> inputs::Service<Embeddings> {
 }
 
 fn on_demand() -> inputs::Service<Embeddings> {
-    let embeddings = Embeddings {
-        client: inputs::embeddings::shared_client(),
-    };
-    inputs::Service::new(embeddings, config(), inputs::Runtime::on_demand())
+    inputs::Service::new(
+        Embeddings::on_demand(),
+        config(),
+        inputs::Runtime::on_demand(),
+    )
 }
 
 /// Why a service could not embed a text, as the embedding call reports it.
