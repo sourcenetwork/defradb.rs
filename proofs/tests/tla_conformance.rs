@@ -60,3 +60,6 @@ mod model_trace;
 
 #[path = "behavioral/delivery.rs"]
 mod delivery;
+
+#[path = "behavioral/unique_isolation.rs"]
+mod unique_isolation;

@@ -121,6 +121,7 @@ headstore); go↔go vs rust↔rust parity (`parity.rs`) localized it to Rust.
 | Sync ownership transfer | Boundary + external integration | deterministic full-DAG/head-hint A/B fence; `p2p_admission_restart`; `p2p_backlog` (outbound push backlog with a SIGSTOPped replicator); marker migration/storage tests; mixed Go/Rust PushLog fixture. These run in repository CI, not this conformance binary's `tests/behavioral/` harness. |
 | ACP soundness + revocation + commits | Behavioral + Contract | `acp.rs`; `RelationExpression` vocab |
 | Storage transaction validation | Behavioral | `ssi.rs` (real `409 Conflict` on write-skew) |
+| Client transaction isolation | Behavioral + Contract + Boundary | `unique_isolation.rs` (explicit, autocommit and no-index races on the conformance binary, `target/debug/defradb` unless `DEFRA_CONFORMANCE_BINARY` names another); testo `txn::unique_isolation` and `index::unique_refusal_code` (in-process and Rust HTTP clients, not that binary) and `db` `write::conflict_reasons` races; `UniqueRefusal` vocab; regolith's validation of the entry read stays Boundary ([guarantees](../docs/book/src/txn/guarantees.md)) |
 | Transaction collection cache | Boundary | `CollectionCacheLayers.lean`; `crates/database/db/tests/collection/cache.rs` |
 | Management-channel auth (NAC gate) | Behavioral | `nac.rs` |
 | NAC lifecycle priv-escalation | Behavioral | `nac_lifecycle.rs` |
@@ -280,7 +281,7 @@ Document arrivals use the pinned engine's `Transaction::append`, with the docume
 arrival marker as `once_key`. `crates/database/db/src/event/arrivals.rs` never allocates a
 position itself; rows and their cursor positions appear only after commit. The
 binding in `src/registry/commit_ordered_document_arrivals.rs` is to
-[CommitOrderedAppend.tla](https://github.com/sourcenetwork/regolith/blob/e844baefe838f3af76403afd46c4b42f1a0b98a5/proofs/tla/CommitOrderedAppend.tla).
+[CommitOrderedAppend.tla](https://github.com/sourcenetwork/regolith/blob/055589006356738a31ee3b0e965d8e2a9c5bc057/proofs/tla/CommitOrderedAppend.tla).
 Its GREEN Groups/Pipeline/Faults configurations cover dense numbering, commit
 order, at-most-once keys and snapshot prefixes. Counter, OnceFromView and
 AssignBeforeValidation are negative controls. The engine's model is kept at the
@@ -341,6 +342,6 @@ abstract and which marker a bounded pass reaches first is out of scope.
 The adapter-owned `Ssi.tla` and `SsiRange.tla` families and their eight TLC
 configurations are retired. They modeled the removed `ConflictTracker`, including
 its old document-scan carve-out. The real point-read write-skew regression remains
-bound to regolith's pinned `DefraLevel.tla` as an engine boundary; it does not
+bound to regolith's pinned DefraLevel configurations (`RepeatableRead.tla`, `MC_DefraLevel_*`) as an engine boundary; it does not
 claim that every DefraLevel read class provides serializable scans. Historical
 survey material describes the retired implementation and is retained as such.

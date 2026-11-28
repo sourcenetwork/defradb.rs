@@ -4,7 +4,8 @@
 //! - a delete that lost to another delete of the document is a no-op;
 //! - an update that lost to a delete reports the document not found;
 //! - an update of a field another update changed writes again on top of it;
-//! - a create that lost a unique-index race reports the violation;
+//! - a create that lost a unique-index race reports the typed violation, and
+//!   every round of a free-running race has one winner and one such refusal;
 //! - a compare-and-set that lost reports the conflict with its reason.
 //!
 //! Each test pauses the first engine attempt of one write after it has read
@@ -297,13 +298,55 @@ fn a_create_that_loses_a_unique_index_race_reports_the_violation() {
 
         winner.unwrap();
         let error = loser.expect_err("the unique value was taken before this create committed");
-        assert!(
-            error
-                .to_string()
-                .contains(storage::corekv::UNIQUE_CONSTRAINT_VIOLATION_MESSAGE),
-            "{error}"
-        );
+        assert_unique_violation(&error);
         lost_once(&fixture.reasons());
+    })
+    .unwrap()
+}
+
+/// The refusal a unique index gives: typed, with the index's message.
+fn assert_unique_violation(error: &query::error::QueryError) {
+    let query::error::QueryError::UniqueViolation(message) = error else {
+        panic!("a lost unique race is a unique violation, got {error:?}");
+    };
+    assert!(
+        message.contains(storage::corekv::UNIQUE_CONSTRAINT_VIOLATION_MESSAGE),
+        "{message}"
+    );
+}
+
+/// Two autocommit creates of one unique value, free-running on the worker
+/// pool, round after round: each round exactly one commits and the other is
+/// refused as a unique violation, whichever order the engine picks.
+#[test]
+fn every_round_of_a_free_unique_race_has_one_winner_and_one_typed_refusal() {
+    const ROUNDS: i64 = 32;
+    workers::block_on(async {
+        let sdl =
+            r#"type Patch { left: Int @index(name: "unique_left", unique: true) right: Int }"#;
+        let collection = parsed(sdl);
+        let fixture = Fixture::new(sdl).await;
+        for round in 0..ROUNDS {
+            let spawn = |right: i64| {
+                let mutator = fixture.mutator();
+                let doc = Document::from_json_str(
+                    &format!(r#"{{"left": {round}, "right": {right}}}"#),
+                    collection.clone(),
+                )
+                .unwrap();
+                workers::spawn(
+                    Some(crate::common::worker_io::pool()),
+                    "test",
+                    move || async move { mutator.create("Patch", doc).await },
+                )
+                .unwrap()
+            };
+            let (first, second) = (spawn(1), spawn(2));
+            let outcomes = [first.await.unwrap(), second.await.unwrap()];
+            let refused: Vec<_> = outcomes.iter().filter_map(|o| o.as_ref().err()).collect();
+            assert_eq!(refused.len(), 1, "round {round}: refused {refused:?}");
+            assert_unique_violation(refused[0]);
+        }
     })
     .unwrap()
 }

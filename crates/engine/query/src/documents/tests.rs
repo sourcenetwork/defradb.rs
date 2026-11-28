@@ -1,6 +1,21 @@
 use super::request::{add, delete_with_filter, input, update_with_filter};
-use super::{AddOptions, Filter};
+use super::{AddOptions, Error, Filter};
+use crate::error::QueryError;
+use crate::executor::{QueryResponse, QueryResponseError};
 use serde_json::json;
+
+#[test]
+fn a_write_a_unique_index_refused_comes_back_as_a_unique_violation() {
+    let message = "can not index a doc's field(s) that violates unique index. DocID: bae-1";
+    let response = QueryResponse::error(QueryResponseError::from_query_error(
+        QueryError::UniqueViolation(message.into()),
+    ));
+
+    assert_eq!(
+        super::response::doc_ids(response, "add", "User"),
+        Err(Error::UniqueViolation(message.into()))
+    );
+}
 #[test]
 fn test_json_to_graphql_null() {
     assert_eq!(input(&json!(null)).unwrap(), "null");

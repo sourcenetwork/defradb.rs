@@ -111,3 +111,41 @@ fn lean_arbitration_constants_match_rust() {
         "Lean Arbitration constants drifted from p2p::sync::arbitration"
     );
 }
+
+/// `proofs/lean/UniqueRefusal.lean` `contract`: each refusal a lost unique
+/// race can get, with its message and code, then the kind each commit mode's
+/// loser gets. The unique kind's code is the one the live mapping attaches;
+/// an explicit commit's refusal is its message alone.
+fn unique_refusal_contract() -> Vec<String> {
+    use query::error::QueryError;
+    use query::executor::{QueryResponseError, TXN_CONFLICT_MESSAGE};
+    let unique = storage::corekv::UNIQUE_CONSTRAINT_VIOLATION_MESSAGE;
+    let refused = QueryResponseError::from_query_error(QueryError::UniqueViolation(unique.into()));
+    vec![
+        format!("TxnConflict|{TXN_CONFLICT_MESSAGE}|"),
+        format!(
+            "UniqueViolation|{}|{}",
+            refused.message,
+            refused.code().unwrap_or_default()
+        ),
+        "Explicit->TxnConflict".to_owned(),
+        "Autocommit->UniqueViolation".to_owned(),
+    ]
+}
+
+#[test]
+fn lean_refusal_vocab_matches_rust() {
+    if !lake_available() {
+        eprintln!("skipping lean_refusal_vocab_matches_rust: `lake` (Lean) not on PATH");
+        return;
+    }
+    let snapshot: ContractSnapshot = load_contract().expect("load Lean conformance contract");
+    let vocab = snapshot
+        .vocab("UniqueRefusal")
+        .expect("UniqueRefusal vocabulary present in Lean contract");
+    assert_eq!(
+        vocab.values,
+        unique_refusal_contract(),
+        "Lean UniqueRefusal drifted from query's refusal messages and codes"
+    );
+}

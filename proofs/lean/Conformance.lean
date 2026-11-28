@@ -1,5 +1,7 @@
 -- The estimators' constants, `Arbitration.contract`.
 import Arbitration.Constants
+-- The unique race refusals, `UniqueRefusal.contract`.
+import UniqueRefusal
 
 /-!
 # Conformance contract generator
@@ -68,7 +70,8 @@ structure Vocabulary where
 def vocabularies : List Vocabulary :=
   [ { domain := "MergeResult",          values := mergeOutcomes.map MergeOutcome.toDefraDB }
   , { domain := "RelationExpression",   values := relExprs.map RelExpr.toDefraDB }
-  , { domain := "ArbitrationConstants", values := Arbitration.contract } ]
+  , { domain := "ArbitrationConstants", values := Arbitration.contract }
+  , { domain := "UniqueRefusal",        values := UniqueRefusal.contract } ]
 
 /-! ## Minimal JSON encoding (no mathlib) -/
 

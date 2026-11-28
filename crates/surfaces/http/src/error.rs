@@ -28,6 +28,10 @@ pub enum HttpError {
     #[error("{TXN_CONFLICT_MESSAGE}")]
     TransactionConflict,
 
+    /// A unique index refused the write: a 409 carrying the unique code.
+    #[error("conflict: {0}")]
+    UniqueViolation(String),
+
     #[error("unprocessable entity: {0}")]
     UnprocessableEntity(String),
 
@@ -81,7 +85,9 @@ impl IntoResponse for HttpError {
         let (status, message) = match &self {
             HttpError::BadRequest(msg) => (StatusCode::BAD_REQUEST, msg.clone()),
             HttpError::NotFound(msg) => (StatusCode::NOT_FOUND, msg.clone()),
-            HttpError::Conflict(msg) => (StatusCode::CONFLICT, msg.clone()),
+            HttpError::Conflict(msg) | HttpError::UniqueViolation(msg) => {
+                (StatusCode::CONFLICT, msg.clone())
+            }
             HttpError::TransactionConflict => {
                 (StatusCode::CONFLICT, TXN_CONFLICT_MESSAGE.to_owned())
             }
@@ -102,6 +108,9 @@ impl IntoResponse for HttpError {
         let code = match self {
             Self::StorageFull(_) => Some(query::executor::STORAGE_FULL_ERROR_CODE),
             Self::Refused { code, .. } => Some(code),
+            Self::UniqueViolation(_) => {
+                Some(query::executor::UNIQUE_CONSTRAINT_VIOLATION_ERROR_CODE)
+            }
             Self::DocumentAlreadyExists(_) => {
                 Some(query::executor::DOCUMENT_ALREADY_EXISTS_ERROR_CODE)
             }
@@ -268,9 +277,10 @@ fn http_error_from_query_error(err: &QueryError) -> HttpError {
         QueryError::Storage(source) if source.is_storage_full() => HttpError::StorageFull(message),
         QueryError::Storage(source) if source.is_txn_conflict() => HttpError::TransactionConflict,
         QueryError::Storage(source) if source.is_unique_constraint_violation() => {
-            HttpError::Conflict(message)
+            HttpError::UniqueViolation(message)
         }
         QueryError::TransactionConflict(_) => HttpError::TransactionConflict,
+        QueryError::UniqueViolation(_) => HttpError::UniqueViolation(message),
         QueryError::PermissionDenied(_)
         | QueryError::AcpRegistrationFailed { .. }
         | QueryError::AcpCheckFailed { .. }
@@ -294,7 +304,7 @@ fn http_status_from_db_error(err: &DbError) -> HttpError {
         error if error.is_storage_full() => HttpError::StorageFull(message),
         DbError::CollectionAlreadyExists(_) => HttpError::Conflict(message),
         DbError::Storage(source) if source.is_txn_conflict() => HttpError::TransactionConflict,
-        error if error.is_unique_constraint_violation() => HttpError::Conflict(message),
+        error if error.is_unique_constraint_violation() => HttpError::UniqueViolation(message),
         DbError::InvalidPatch(_)
         | DbError::InvalidDocument(_)
         | DbError::InvalidCollectionName(_)
@@ -663,12 +673,49 @@ mod storage_failure_tests {
         ));
     }
 
+    /// The status, `error` and `code` an error answers with.
+    fn wire(error: HttpError) -> (StatusCode, serde_json::Value) {
+        workers::block_on(async {
+            let response = error.into_response();
+            let status = response.status();
+            let bytes = axum::body::to_bytes(response.into_body(), 4096)
+                .await
+                .unwrap();
+            (status, serde_json::from_slice(&bytes).unwrap())
+        })
+        .unwrap()
+    }
+
+    const VIOLATION: &str = "can not index a doc's field(s) that violates unique index";
+
     #[test]
-    fn a_unique_violation_naming_its_writer_is_a_conflict() {
-        let error = DbError::UniqueViolation(
-            "can not index a doc's field(s) that violates unique index".into(),
+    fn a_unique_violation_naming_its_writer_is_a_conflict_with_its_code() {
+        let (status, body) = wire(HttpError::from(DbError::UniqueViolation(VIOLATION.into())));
+        assert_eq!(status, StatusCode::CONFLICT);
+        assert_eq!(body["error"], VIOLATION);
+        assert_eq!(
+            body["code"],
+            query::executor::UNIQUE_CONSTRAINT_VIOLATION_ERROR_CODE
         );
-        assert!(matches!(HttpError::from(error), HttpError::Conflict(_)));
+    }
+
+    #[test]
+    fn a_query_unique_violation_is_a_conflict_with_its_code() {
+        let error = DbError::Query(QueryError::UniqueViolation(VIOLATION.into()));
+        let (status, body) = wire(HttpError::from(error));
+        assert_eq!(status, StatusCode::CONFLICT);
+        assert_eq!(body["error"], VIOLATION);
+        assert_eq!(
+            body["code"],
+            query::executor::UNIQUE_CONSTRAINT_VIOLATION_ERROR_CODE
+        );
+    }
+
+    #[test]
+    fn a_collection_conflict_carries_no_code() {
+        let (status, body) = wire(HttpError::Conflict("collection already exists".into()));
+        assert_eq!(status, StatusCode::CONFLICT);
+        assert!(body.get("code").is_none(), "{body}");
     }
 }
 
