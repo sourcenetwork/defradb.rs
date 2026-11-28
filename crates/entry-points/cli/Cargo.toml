@@ -125,7 +125,7 @@ mimalloc.workspace = true
 
 # Raises the open-file soft limit at `start` (commands::start::fd_limit).
 [target.'cfg(unix)'.dependencies]
-rlimit = "0.11"
+rlimit = "0.12"
 
 # Reads `kern.maxfilesperproc`, the per-process ceiling `setrlimit` is
 # capped by on these systems (commands::start::fd_limit).
