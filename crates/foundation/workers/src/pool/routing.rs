@@ -60,7 +60,7 @@ fn random() -> u64 {
 }
 
 fn stuck(worker: &WorkerShared) -> bool {
-    worker.stuck.load(Ordering::Relaxed)
+    worker.is_stuck()
 }
 
 impl PoolShared {

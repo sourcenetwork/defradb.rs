@@ -173,7 +173,7 @@ impl<S: Store> DB<S> {
         }
 
         let transform_id = lens.id.clone();
-        self.lens_store
+        self.lens_store()
             .add_with_id(transform_id.clone(), config)
             .await
             .map_err(|e| Error::Lens(e.to_string()))?;
@@ -254,7 +254,13 @@ impl<S: Store> DB<S> {
                         .get(collection_name.as_str())
                         .is_some_and(|cached| cached.schema().version_id == dest_version_id);
                     if matches_dest {
-                        cache.put_named(collection_name.as_str(), cached_collection.clone());
+                        cache.put_named(
+                            collection_name.as_str(),
+                            cached_collection.with_current_index_actions(
+                                old.by_id(cached_collection.collection_id()),
+                                &[],
+                            ),
+                        );
                     }
                     cache
                 });
@@ -297,7 +303,7 @@ impl<S: Store> DB<S> {
     ) -> Result<TransformId> {
         self.check_node_access_as(context, acp::nac::NodePermission::MigrationSet)
             .await?;
-        self.set_migration_in_txn_with_store(txn, self.lens_store.clone(), config)
+        self.set_migration_in_txn_with_store(txn, self.lens_store().clone(), config)
             .await
             .map(|outcome| outcome.transform_id)
     }

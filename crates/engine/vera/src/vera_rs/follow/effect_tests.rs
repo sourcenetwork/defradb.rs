@@ -119,3 +119,21 @@ fn a_registration_with_relationships_is_owed_again_with_them() {
         "a registration without relationships keeps its encoding: {encoded}"
     );
 }
+
+#[test]
+fn a_transfer_is_read_back_with_its_new_owner_and_its_delegation() {
+    assert_eq!(
+        effect_of(&wire(
+            0,
+            "bae-1",
+            PolicyAction::TransferObject { new_owner: READER }
+        )),
+        Effect::Owed(Lost::Transfer {
+            policy_id: POLICY.into(),
+            resource: "users".into(),
+            object: "bae-1".into(),
+            new_owner: READER.into(),
+            token: token(OWNER),
+        })
+    );
+}

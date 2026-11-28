@@ -290,6 +290,26 @@ mod libp2p {
         close(node);
     }
 
+    /// A sync the network refuses answers with the refusal's text alone, as
+    /// Go's and every other client's does.
+    #[test]
+    fn a_refused_sync_reads_as_the_other_clients_do() {
+        let node = p2p_node();
+        let created = add_collection(node, "type User { name: String }");
+        let collection_id = cstr(created[0]["CollectionID"].as_str().unwrap_or_default());
+        let no_timeout = cstr("");
+        let error = err(unsafe {
+            defra_p2p_collection_sync_branchable(
+                node,
+                collection_id.as_ptr(),
+                no_timeout.as_ptr(),
+                0,
+            )
+        });
+        assert_eq!(error, "collection is not branchable");
+        close(node);
+    }
+
     #[test]
     fn peers_connect_and_disconnect() {
         let first = p2p_node();

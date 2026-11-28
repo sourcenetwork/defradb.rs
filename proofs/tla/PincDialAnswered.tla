@@ -33,8 +33,9 @@
 \*   |--------------|-------------------------------------------------------------|
 \*   | Dial, Hear   | crates/database/p2p/src/pinc/endpoint.rs Node::connection:           |
 \*   |              | Endpoint::connect, then Connection::answered, under         |
-\*   |              | CONNECT_TIMEOUT; pinc's Connection::answered and            |
-\*   |              | Event::Answered (crates/pinc/src/conn.rs)                   |
+\*   |              | CONNECT_TIMEOUT; pinc's Connection::answered               |
+\*   |              | (pinc:src/conn.rs) and Event::Answered                     |
+\*   |              | (pinc-core:src/api.rs)                                      |
 \*   | connected    | Node::peers, filled by Node::connected (after the answer),  |
 \*   |              | read by Command::ConnectedPeers                             |
 \*   | Learn        | Node::serve_connection ends, Node::disconnected             |

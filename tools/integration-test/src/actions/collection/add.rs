@@ -64,7 +64,7 @@ impl Op for AddCollection {
         let identity = self.common.client_identity(Self::name())?;
         let (node, scope) = (
             state.node_on(self.common.node())?,
-            state.scope_as(self.txn, identity),
+            state.scope_as_on(self.common.node(), self.txn, identity),
         );
         state
             .block_on(async { scope.on(&node).add_collection(self.sdl.as_str()).await })

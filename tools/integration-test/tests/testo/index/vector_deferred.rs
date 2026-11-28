@@ -217,6 +217,38 @@ fn vector_index_create_with_deferred_maintenance_through_the_index_api() {
 
 #[test]
 #[mantra_macros::req_test("go.index.vector.maintenance.mode")]
+fn vector_index_create_async_with_deferred_maintenance() {
+    TestCase {
+        id: integration_test::scenario_id!(),
+        client_types: Some(&[ClientType::InProcess]),
+        actions: vec![
+            AddCollection {
+                sdl: "type User { name: String vector: [Float32!] }".into(),
+                ..Default::default()
+            }
+            .into(),
+            NewIndex {
+                collection: "User".into(),
+                index: IndexSpec {
+                    fields: vec![IndexField {
+                        name: "vector".into(),
+                        descending: false,
+                    }],
+                    vector: Some(vector_config("DEFERRED")),
+                    ..Default::default()
+                },
+                r#async: true,
+                ..Default::default()
+            }
+            .into(),
+        ],
+        ..Default::default()
+    }
+    .execute();
+}
+
+#[test]
+#[mantra_macros::req_test("go.index.vector.maintenance.mode")]
 fn vector_index_create_with_unknown_maintenance_through_the_index_api_is_rejected() {
     TestCase {
         id: integration_test::scenario_id!(),

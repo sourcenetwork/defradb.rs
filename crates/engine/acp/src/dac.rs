@@ -96,6 +96,15 @@ pub trait DocumentACP: MaybeSendSync {
         None
     }
 
+    /// Bind local authorization to a transaction snapshot for a read that
+    /// decides nothing the transaction writes. Such reads never validate.
+    fn bind_read_transaction(
+        &self,
+        view: datastore::NamespaceView,
+    ) -> Option<std::sync::Arc<dyn DocumentACP>> {
+        self.bind_transaction(view)
+    }
+
     /// Whether this provider has a transaction stage the relationship
     /// changes it makes as owed ([`transaction_outbox`](Self::transaction_outbox)
     /// gives a place for them), rather than applying them in it or not at all.
@@ -225,6 +234,25 @@ pub trait DocumentACP: MaybeSendSync {
     ) -> Result<()> {
         let _ = (actor, policy_id, resource_name, doc_id);
         Err(Error::UnsupportedArchive)
+    }
+
+    /// Give one object to `new_owner` as `actor`, its owner: the provider
+    /// names `new_owner` as the owner, and `actor` keeps nothing by
+    /// ownership; every other relationship on the object stays. A provider
+    /// that joins the transaction makes the change in it; an external one
+    /// is sent it for an owed transfer ([`crate::OwedOp::Transfer`]). An
+    /// actor that does not own the object is refused with
+    /// [`Error::NotOwner`]. The default takes none.
+    async fn transfer_doc_object(
+        &self,
+        actor: &Did,
+        policy_id: &str,
+        resource_name: &str,
+        doc_id: &str,
+        new_owner: &Did,
+    ) -> Result<()> {
+        let _ = (actor, policy_id, resource_name, doc_id, new_owner);
+        Err(Error::UnsupportedTransfer)
     }
 
     /// What lets the node submit a relationship change as `actor` after the
@@ -763,7 +791,13 @@ pub trait DocumentACP: MaybeSendSync {
         .await
     }
 
-    /// Remove provider-local registration state when a document is deleted.
+    /// Remove provider-local registration state for a document: its owner
+    /// and every relationship on it.
+    ///
+    /// A delete calls this only on a provider that reads a missing object as
+    /// denied ([`Self::unregistered_documents_are_public`] false): elsewhere
+    /// the object keeps deciding who reads the history the node retains, and
+    /// is removed only when a purge removes that history.
     ///
     /// Providers backed by shared authorization state may keep the object
     /// registered after a local document tombstone: a replica's delete can be

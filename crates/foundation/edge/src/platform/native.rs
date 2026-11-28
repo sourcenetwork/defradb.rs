@@ -267,7 +267,7 @@ fn own(config: EdgeConfig, gate: Arc<Gate>, control: Arc<Control>, started: Star
     compat.shutdown_timeout(config.stop);
 
     if drained.is_complete() {
-        tracing::info!("network runtime stopped");
+        tracing::debug!("network runtime stopped");
     } else {
         tracing::warn!(
             remaining = drained.remaining,

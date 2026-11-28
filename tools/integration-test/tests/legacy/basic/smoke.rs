@@ -15,10 +15,12 @@ async fn version_json_has_all_fields() {
         let json: serde_json::Value =
             serde_json::from_slice(&output.stdout).expect("invalid JSON from defra version");
 
+        assert!(json["release"].is_string());
         assert!(json["version"].is_string());
         assert!(json["commit"].is_string());
         assert!(json["commitDate"].is_string());
-        assert_eq!(json["httpAPI"], "v0");
+        assert_eq!(json["httpAPI"], "v1");
+        assert_eq!(json["docIDVersions"], "1");
         assert_eq!(json["docIdVersions"], "1");
         assert_eq!(json["netProtocol"], "/defra/0.0.1");
         assert!(json["rust"].is_string());

@@ -100,11 +100,6 @@ impl NewIndex {
         let Some(vector) = self.index.vector.as_ref() else {
             return Ok(None);
         };
-        if !vector.is_object() {
-            return Err(Failure::operation(
-                "index.vector must be a JSON object".to_owned(),
-            ));
-        }
         serde_json::from_value(vector.clone())
             .map(Some)
             .map_err(|error| Failure::operation(error.to_string()))
@@ -128,11 +123,6 @@ impl NewIndex {
         if self.index.ordered.is_some() && self.index.vector.is_some() {
             return Err(Failure::operation(
                 "index request has more than one kind config".to_owned(),
-            ));
-        }
-        if self.index.vector.is_some() && self.r#async {
-            return Err(Failure::unsupported(
-                "NewIndex argument vector with async".to_owned(),
             ));
         }
         if self

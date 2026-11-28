@@ -180,6 +180,42 @@ impl VectorIndex {
             .await
     }
 
+    /// [`search`](Self::search), also answering how many index entries it
+    /// read from the transaction, which an execute explain reports as
+    /// `indexFetches`.
+    pub async fn search_counted<T, E>(
+        &self,
+        txn: &mut T,
+        query: &[E],
+        k: usize,
+        effort: Option<usize>,
+    ) -> Result<(Vec<Neighbor>, u64)>
+    where
+        T: Reader + Writer + MaybeSend,
+        E: Element,
+    {
+        let pending = self.pending_entries(txn).await?;
+        let reads = AtomicU64::new(0);
+        let store = self.store(txn).counting_reads(&reads);
+        let engine = self.engine_over(store)?;
+        let hits = if pending.is_empty() {
+            engine.search(query, k, effort).await?
+        } else {
+            pending::merge_pending(
+                &engine,
+                &pending,
+                self.metric,
+                query,
+                k,
+                effort,
+                &super::engine::ann::AdmitAll,
+            )
+            .await?
+        };
+        drop(engine);
+        Ok((hits, reads.into_inner()))
+    }
+
     /// [`search`](Self::search) restricted to the documents `admit` accepts.
     pub async fn search_where<T: Reader + Writer + MaybeSend, E: Element, A: Admit>(
         &self,
@@ -204,7 +240,16 @@ impl VectorIndex {
         &self,
         txn: &'txn mut T,
     ) -> Result<impl VectorIndexEngine + 'txn> {
-        let store = self.store(txn);
+        self.engine_over(self.store(txn))
+    }
+
+    fn engine_over<'txn, T>(
+        &self,
+        store: KvNodeStore<'txn, T>,
+    ) -> Result<impl VectorIndexEngine + 'txn>
+    where
+        T: Reader + Writer + MaybeSend,
+    {
         Ok(match self.vector.algorithm {
             VectorAlgorithm::Hnsw => {
                 Engine::Hnsw(Hnsw::new(store, self.metric, self.params, self.seed))

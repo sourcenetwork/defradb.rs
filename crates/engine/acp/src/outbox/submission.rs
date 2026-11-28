@@ -48,11 +48,13 @@ impl Submission {
             ) => Self::Refused {
                 reason: error.to_string(),
             },
-            Err(error @ (Error::UnsupportedSubject(_) | Error::UnsupportedArchive)) => {
-                Self::Unsupported {
-                    reason: error.to_string(),
-                }
-            }
+            Err(
+                error @ (Error::UnsupportedSubject(_)
+                | Error::UnsupportedArchive
+                | Error::UnsupportedTransfer),
+            ) => Self::Unsupported {
+                reason: error.to_string(),
+            },
             Err(
                 error @ (Error::OwedAuthorityUnavailable { .. }
                 | Error::DelegationOutsideWindow { .. }),
@@ -117,6 +119,21 @@ where
             )
             .await
             .map(|()| true),
+        OwedOp::Transfer => {
+            let new_owner = tuple
+                .new_owner()
+                .ok_or_else(|| Error::UnsupportedSubject(subject.to_string()))?;
+            provider
+                .transfer_doc_object(
+                    &change.actor,
+                    &tuple.policy_id,
+                    &tuple.resource,
+                    &tuple.object,
+                    new_owner,
+                )
+                .await
+                .map(|()| true)
+        }
         OwedOp::Delete => {
             provider
                 .delete_relationship(

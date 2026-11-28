@@ -32,6 +32,8 @@ mod projection;
 mod archive;
 #[path = "embedded_vera/registration_batch.rs"]
 mod registration_batch;
+#[path = "embedded_vera/transfer.rs"]
+mod transfer;
 
 #[path = "embedded_vera/replica.rs"]
 mod replica;

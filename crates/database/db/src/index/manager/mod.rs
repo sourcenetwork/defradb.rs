@@ -459,15 +459,8 @@ impl IndexManager {
         }
     }
 
-    /// Get the next available index ID for this collection.
-    ///
-    /// # Concurrency
-    ///
-    /// This method assumes single-writer semantics provided by the transaction layer.
-    /// The read-modify-write sequence is NOT atomic. Concurrent calls from different
-    /// transactions could generate duplicate IDs. Callers must ensure exclusive access
-    /// to index creation within a collection, either through transaction isolation or
-    /// external synchronization.
+    /// Advance the same persisted floor a drop uses. Regolith validates the
+    /// floor and the collection definition in the transaction that adds the index.
     async fn next_index_id(&self, datastore: &NamespaceView) -> Result<u32> {
         let counter = index_id_floor(datastore, self.collection_short_id).await?;
         // The schema is the authority on which ids exist: a counter advanced
@@ -480,7 +473,10 @@ impl IndexManager {
             .max()
             .unwrap_or(0);
 
-        let next_id = counter.max(highest) + 1;
+        let next_id = counter
+            .max(highest)
+            .checked_add(1)
+            .ok_or_else(|| Error::Other("the index ID sequence exceeded u32".into()))?;
         datastore
             .set(
                 &IndexIDSequenceKey::new(self.collection_short_id.to_string()).bytes(),

@@ -78,7 +78,7 @@
 \* record_adopted_replica, owed_on_replica, yield_replica_if_held_elsewhere,
 \* settle_replica_unit; crates/engine/acp/src/external/registration.rs
 \* register_and_clear; crates/database/db/src/write/autocommit/helpers.rs
-\* unregister_deleted_doc.
+\* archive_deleted_doc.
 EXTENDS Naturals, FiniteSets
 
 \* Each RED configuration plants exactly one bug by naming it here.

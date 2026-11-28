@@ -140,7 +140,8 @@ impl DocFetcher for WideningFetcher {
         true
     }
 
-    /// Nearest-first ids, capped at the corpus so the scan sees exhaustion.
+    /// Nearest-first ids, capped at the corpus so the scan sees exhaustion,
+    /// reading one index entry per id asked for.
     async fn vector_search(
         &self,
         _collection: &str,
@@ -148,10 +149,13 @@ impl DocFetcher for WideningFetcher {
         _query_vector: &[f64],
         k: usize,
         _effort: Option<usize>,
-    ) -> Result<Vec<u64>> {
+    ) -> Result<query::fetcher::VectorCandidates> {
         self.max_requested.fetch_max(k, Ordering::Relaxed);
         self.searches.fetch_add(1, Ordering::Relaxed);
-        Ok((1..=self.indexed.min(k as u64)).collect())
+        Ok(query::fetcher::VectorCandidates {
+            short_ids: (1..=self.indexed.min(k as u64)).collect(),
+            index_reads: k as u64,
+        })
     }
 }
 
@@ -214,7 +218,7 @@ fn a_single_batch_closes_its_stream() {
         assert_eq!(drain(&mut node).await, 4);
         assert_eq!(fetcher.opened.load(Ordering::Relaxed), 1);
         assert_eq!(fetcher.closed.load(Ordering::Relaxed), 1);
-        assert_eq!(node.explain_execute_inner()["indexFetches"], 1);
+        assert_eq!(node.explain_execute_inner()["indexFetches"], 4);
     })
     .unwrap()
 }
@@ -243,7 +247,8 @@ fn widening_has_a_fixed_budget_and_falls_back_without_losing_matches() {
         for _ in 0..2 {
             assert_eq!(drain(&mut node).await, 1);
             assert_eq!(fetcher.max_requested.load(Ordering::Relaxed), 4096);
-            assert_eq!(node.explain_execute_inner()["indexFetches"], 11);
+            // Eleven passes, k = 4, 8, ..., 4096, each read k entries.
+            assert_eq!(node.explain_execute_inner()["indexFetches"], 8188);
         }
         assert_eq!(
             fetcher.opened.load(Ordering::Relaxed),

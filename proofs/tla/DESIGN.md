@@ -28,19 +28,19 @@ the subscription/replication layer.
 
 `gents:` anchors were re-verified against the renamed consumer repository,
 `source-inc/gents` `main`, on 2026-07-27; table rows whose anchors no longer
-exist there are marked *historical*. Unprefixed consumer fragments in the
-narrative sections below the table are the 2026-06-02 snapshot. The
+exist there are marked *historical*. Short consumer fragments
+(`gents:watcher.rs`, not `gents:crates/...`) are the 2026-06-02 snapshot. The
 immutability gap this design surfaced has since been closed — see *Post-design
 status (2026-07-27)* below the table.
 
 | Fact | Source | Status |
 |---|---|---|
-| `AgentRequest` is `@branchable`; multi-writer (requester creates, claimer updates `status`/`lifecycle_state`/`claimed_at`) | `gents:crates/gents-schemas/schemas/agent/agent_request.graphql:1`; `lifecycle/claim.rs:258` | ✅ branching is real |
+| `AgentRequest` is `@branchable`; multi-writer (requester creates, claimer updates `status`/`lifecycle_state`/`claimed_at`) | `gents:crates/gents-schemas/schemas/agent/agent_request.graphql:1`; `gents:lifecycle/claim.rs:258` | ✅ branching is real |
 | `agent_did` is the **sole** P2P relevance/filter key | `gents:crates/gents/src/watcher/query.rs:73` | ✅ confirmed |
-| Filtering today is **read/claim-time**, not P2P-level; every agent subscribes collection-wide | `watcher/query.rs`, `gents:crates/gents/src/trigger_engine/subscription_source.rs:25` (`subscribe_updates`), `gents:crates/gents-desktop-core/src/client/schema.rs:36` (`subscribe_all_collections`) | ✅ the noise problem |
-| `agent_did` set **only at create time** in production (`create_AgentRequest`); the sole post-create mutation is a **test** helper | *historical (2026-06-02):* `toolset/delegate.rs:88,91` (create); `override_child_agent_did` (test-only) — both since removed from `main` | ⚠️ write-once **by convention, not enforced** (2026-06-02; since enforced — see *Post-design status*) |
+| Filtering today is **read/claim-time**, not P2P-level; every agent subscribes collection-wide | `gents:watcher/query.rs`, `gents:crates/gents/src/trigger_engine/subscription_source.rs:25` (`subscribe_updates`), `gents:crates/gents-desktop-core/src/client/schema.rs:36` (`subscribe_all_collections`) | ✅ the noise problem |
+| `agent_did` set **only at create time** in production (`create_AgentRequest`); the sole post-create mutation is a **test** helper | *historical (2026-06-02):* `gents:toolset/delegate.rs:88,91` (create); `override_child_agent_did` (test-only) — both since removed from `main` | ⚠️ write-once **by convention, not enforced** (2026-06-02; since enforced — see *Post-design status*) |
 | **No** schema/ACP immutability constraint on `agent_did` (just `String @index`) | `agent_request.graphql:3` | ⚠️ assumption is unguaranteed (2026-06-02; since closed — that line is now `String @index @immutable`, see *Post-design status*) |
-| Multiple agent instances can share one `agent_did`; claim safety is **CRDT CAS** (`update where status=pending`), not FIFO/lock | `watcher.rs:102`, `lifecycle/claim.rs:258-310` | ✅ eventual-consistent claim |
+| Multiple agent instances can share one `agent_did`; claim safety is **CRDT CAS** (`update where status=pending`), not FIFO/lock | `gents:watcher.rs:102`, `gents:lifecycle/claim.rs:258-310` | ✅ eventual-consistent claim |
 | Cross-request refs (`caused_by_parent_request_id`, `retry_parent_request`, `retry_root_request`, `superseded_by_request`) are bare `String @index` scalars, **not** `@relation` | `gents:crates/gents-schemas/schemas/agent/agent_request.graphql:7-9,33` | ✅ scalar FKs |
 | Merge handler **never** dereferences a cross-doc ref; relations resolved only at query time; dangling ref → graceful "absent" | Rust `crates/database/db/src/merge/merge_handler/mod.rs:69`; Go `internal/db/merge.go:343`; `client/document.go:238` (format-only validation) | ✅ no merge dependency |
 | Delta-DAG is **per-document**; `Heads` links within-document; no cross-doc causal edges | Go `internal/core/block/block.go`; Rust `merge_handler/` | ✅ confirmed |
@@ -77,8 +77,8 @@ Two load-bearing claims were adversarially verified:
 
 **Rev 2.1 — two follow-up verifications on the immutability question:**
 - **No production reassignment exists (verified).** Every "move to another agent"
-  — delegation (`toolset/delegate.rs:77`), subagent spawn
-  (`tool_call_lifecycle/subagent_request.rs:88`), retry/supersede, failover
+  — delegation (`gents:toolset/delegate.rs:77`), subagent spawn
+  (`gents:tool_call_lifecycle/subagent_request.rs:88`), retry/supersede, failover
   (re-claim under the *same* DID via CAS) — creates a **new request document**
   linked by `caused_by_parent_request_id`/`retry_parent_request`, never an
   in-place `agent_did` change. `override_child_agent_did` is a test fixture only.

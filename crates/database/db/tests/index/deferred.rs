@@ -17,6 +17,7 @@ mod drop_history;
 mod plan_size;
 mod requests;
 mod upgrade;
+mod whole_key_records;
 
 const COLLECTION: &str = "Tallies";
 

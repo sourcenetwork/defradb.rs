@@ -114,6 +114,44 @@ impl<'n> ActingFor<'n> {
             .await
     }
 
+    /// Give document `doc_id` to `new_owner`; the actor must own it, and
+    /// every other relationship on the document stays.
+    ///
+    /// With local document ACP the owner tuple is replaced in the
+    /// transaction. With a remote provider (Vera) the transfer is owed in the
+    /// transaction and sent after the commit, behind the document's
+    /// registration and every change staged on it before: those are applied
+    /// with the actor's authority as the owner. A transfer and another change
+    /// on the document staged in transactions open at once cannot both
+    /// commit: the second to commit fails with a conflict. It is not atomic
+    /// with the commit. From the commit until the provider holds the transfer
+    /// the actor is denied on the document on this node, and the new owner
+    /// is let in only once the provider names it; a change the actor stages
+    /// on the document after the transfer is refused. When the provider
+    /// refuses the transfer, the commit stands and the document stays the
+    /// actor's on the provider; the refusal is kept with the owed change,
+    /// reported like any refused owed change (the scope's `owed_acp` and
+    /// `await_owed_acp`, and the `acp-owed-change-refused` event), and denies
+    /// the actor until it abandons it. Giving the document to its owner
+    /// changes nothing.
+    pub async fn transfer_dac_object_owner(
+        &self,
+        collection: &str,
+        doc_id: &str,
+        new_owner: &str,
+    ) -> Result<()> {
+        self.node
+            .core()
+            .transfer_dac_object_owner_for(
+                self.id,
+                &self.actor.context(self.node),
+                collection,
+                doc_id,
+                new_owner,
+            )
+            .await
+    }
+
     /// Stage a native source grant for the actor. An exactly present add or
     /// exactly absent delete returns `false` without authority; a changing
     /// edge needs the actor's authority.

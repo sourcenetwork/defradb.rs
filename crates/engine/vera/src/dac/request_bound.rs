@@ -134,6 +134,14 @@ pub(super) fn with_policy_command<T>(
                 OwedOp::Add => PolicyAction::SetRelationship { relation, subject },
                 OwedOp::Delete => PolicyAction::DeleteRelationship { relation, subject },
                 OwedOp::Archive => PolicyAction::ArchiveObject,
+                // A transfer names one actor, its new owner; any other
+                // subject names no DID, which no command takes.
+                OwedOp::Transfer => PolicyAction::TransferObject {
+                    new_owner: match subject {
+                        PolicySubject::Actor(SubjectRef::Actor(did)) => did.as_str(),
+                        _ => "",
+                    },
+                },
             };
             let sent = |action| PolicyCommand {
                 policy_id: &tuple.policy_id,
