@@ -280,9 +280,8 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
         // fence any later ACK against a newer update to the same scope.
         // Each peer's registration stands alone: a removed, re-added or
         // failing replicator must not cost the other peers their obligation.
-        // They are asked for together, so the recorder commits them at once
-        // and the write waits for one device sync, not one per replicator
-        // (#3471, RetryRegistrationFence.tla).
+        // Submitting them together lets the recorder commit them concurrently
+        // and share WAL syncs across peers (#3471).
         let mut jobs = self.push_jobs(&push).await?;
         let generations = futures::future::join_all(
             jobs.iter()

@@ -1838,7 +1838,7 @@ pub(crate) mod tests {
         assert!(snapshot.dispatcher_waits_total >= 1, "{snapshot:?}");
         assert!(snapshot.lane_depth_high_water >= FAILURE_RECORDER_LANE_CAPACITY as u64);
         assert!(snapshot.lane_depth.iter().all(|depth| *depth == 0));
-        assert!(snapshot.largest_run <= FAILURE_RECORDER_LANE_CAPACITY as u64);
+        assert!((2..=FAILURE_RECORDER_LANE_CAPACITY as u64).contains(&snapshot.largest_run));
         assert_eq!(snapshot.failed_runs_total, 0);
     }
 

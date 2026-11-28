@@ -9,15 +9,13 @@
 //! nothing of it is written and each record runs as its own single call, in
 //! order, so an error costs only the record whose own call fails.
 
-use super::{
-    decode_retry_marker_generation, Peerstore, PeerstoreRetryAttempt, RegisterScopeMarkerAttempt,
-    ReplayMarkerWrite,
-};
+use std::ops::RangeInclusive;
+
+use super::{Peerstore, PeerstoreRetryAttempt, RegisterScopeMarkerAttempt, ReplayMarkerWrite};
 use crate::corekv::{
-    Error, Key, Reader, Result, RetryAttemptFn, RetryAttemptFuture, RetryAttemptValue, RetryTxn,
-    Store,
+    Error, Result, RetryAttemptError, RetryAttemptFn, RetryAttemptFuture, RetryAttemptValue,
+    RetryTxn, Store,
 };
-use crate::keys::peerstore::{ReplicatorIncarnationKey, ReplicatorKey};
 
 /// One record of a peer's scope, applied in the order given.
 #[derive(Debug, Clone)]
@@ -55,28 +53,55 @@ pub struct ScopeRun {
     /// Each record's outcome, in the order given: what its single call
     /// returns.
     pub outcomes: Vec<Result<ScopeOutcome>>,
-    /// Why the shared transaction failed, when it did; every record then ran
-    /// as its own single call.
+    /// The error preparing or committing the shared transaction, if any.
+    /// The outcomes then come from individual transactions.
     pub shared_error: Option<Error>,
 }
 
-/// Where a record's outcome comes from: decided before the transaction, or
-/// the value of its step.
-enum Slot {
-    Decided(ScopeOutcome),
-    Observe { step: usize, generation: u64 },
-    Complete { step: usize },
-}
-
 enum Step {
+    NoMarker,
     Register(RegisterScopeMarkerAttempt),
     Complete(PeerstoreRetryAttempt),
 }
 
-/// What a step returned.
-enum StepValue {
-    Register(ReplayMarkerWrite),
-    Complete(bool),
+impl Step {
+    async fn apply(
+        &mut self,
+        txn: &mut dyn RetryTxn,
+    ) -> std::result::Result<ScopeOutcome, RetryAttemptError> {
+        match self {
+            Self::NoMarker => Ok(ScopeOutcome::Observed(None)),
+            Self::Register(attempt) => {
+                let written = downcast(attempt.run(txn).await?)?;
+                Ok(Self::observed(written, attempt.generation))
+            }
+            Self::Complete(attempt) => {
+                Ok(ScopeOutcome::Completed(downcast(attempt.run(txn).await?)?))
+            }
+        }
+    }
+
+    fn observed(written: ReplayMarkerWrite, generation: u64) -> ScopeOutcome {
+        ScopeOutcome::Observed(match written {
+            ReplayMarkerWrite::Superseded => Some(generation),
+            written => written.generation(),
+        })
+    }
+}
+
+impl RetryAttemptFn for Step {
+    fn run<'attempt>(
+        &'attempt mut self,
+        txn: &'attempt mut dyn RetryTxn,
+    ) -> RetryAttemptFuture<'attempt> {
+        Box::pin(async move { Ok(Box::new(self.apply(txn).await?) as RetryAttemptValue) })
+    }
+}
+
+struct ScopeObservations {
+    generations: RangeInclusive<u64>,
+    incarnation: Option<u64>,
+    initial: Vec<u8>,
 }
 
 struct ScopeBatchAttempt {
@@ -88,15 +113,7 @@ impl RetryAttemptFn for ScopeBatchAttempt {
         Box::pin(async move {
             let mut values = Vec::with_capacity(self.steps.len());
             for step in &mut self.steps {
-                let value = match step {
-                    Step::Register(attempt) => {
-                        StepValue::Register(downcast(attempt.run(&mut *txn).await?)?)
-                    }
-                    Step::Complete(attempt) => {
-                        StepValue::Complete(downcast(attempt.run(&mut *txn).await?)?)
-                    }
-                };
-                values.push(value);
+                values.push(step.apply(txn).await?);
             }
             Ok(Box::new(values) as RetryAttemptValue)
         })
@@ -118,18 +135,65 @@ impl<S: Store> Peerstore<S> {
     /// each one's outcome in the same order. Each record does what its single
     /// call does; only the commit is shared. When the shared transaction
     /// fails (a storage error, or its conflict retries run out) it writes
-    /// nothing, and each record then runs as its own single call, in order:
-    /// every outcome is the one its single call would have returned.
+    /// nothing. Each prepared record then runs in its own transaction in
+    /// order, retaining any incarnation and generation it already captured.
     pub async fn record_scopes(&self, peer_id: &str, records: &[ScopeRecord]) -> ScopeRun {
-        match self.record_scopes_together(peer_id, records).await {
+        let observations = match self.prepare_scope_observations(peer_id, records).await {
+            Ok(observations) => observations,
+            Err(error) => {
+                let mut outcomes = Vec::with_capacity(records.len());
+                for record in records {
+                    outcomes.push(self.record_scope(peer_id, record).await);
+                }
+                return ScopeRun {
+                    outcomes,
+                    shared_error: Some(error),
+                };
+            }
+        };
+        self.record_prepared_steps(peer_id, records, observations)
+            .await
+    }
+
+    async fn record_prepared_steps(
+        &self,
+        peer_id: &str,
+        records: &[ScopeRecord],
+        observations: ScopeObservations,
+    ) -> ScopeRun {
+        let mut generations = observations.generations.clone();
+        let steps: Vec<_> = records
+            .iter()
+            .map(|record| self.scope_step(peer_id, record, &observations, &mut generations))
+            .collect();
+        if steps.iter().all(|step| matches!(step, Step::NoMarker)) {
+            return ScopeRun {
+                outcomes: steps
+                    .iter()
+                    .map(|_| Ok(ScopeOutcome::Observed(None)))
+                    .collect(),
+                shared_error: None,
+            };
+        }
+        let shared = self
+            .transact_conflicts::<Vec<ScopeOutcome>>(Box::new(ScopeBatchAttempt { steps }))
+            .await;
+        match shared {
             Ok(outcomes) => ScopeRun {
                 outcomes: outcomes.into_iter().map(Ok).collect(),
                 shared_error: None,
             },
             Err(error) => {
+                // Reuse the original incarnation and generations after rollback.
+                let mut generations = observations.generations.clone();
                 let mut outcomes = Vec::with_capacity(records.len());
                 for record in records {
-                    outcomes.push(self.record_scope(peer_id, record).await);
+                    let outcome =
+                        match self.scope_step(peer_id, record, &observations, &mut generations) {
+                            Step::NoMarker => Ok(ScopeOutcome::Observed(None)),
+                            step => self.transact_conflicts(Box::new(step)).await,
+                        };
+                    outcomes.push(outcome);
                 }
                 ScopeRun {
                     outcomes,
@@ -169,12 +233,11 @@ impl<S: Store> Peerstore<S> {
         }
     }
 
-    /// Every record of a run on one transaction.
-    async fn record_scopes_together(
+    async fn prepare_scope_observations(
         &self,
         peer_id: &str,
         records: &[ScopeRecord],
-    ) -> Result<Vec<ScopeOutcome>> {
+    ) -> Result<ScopeObservations> {
         let observed = records
             .iter()
             .filter(|record| {
@@ -182,127 +245,79 @@ impl<S: Store> Peerstore<S> {
                     if !(doc_id.is_empty() && collection_id.is_empty()))
             })
             .count();
-        let mut generations = if observed == 0 {
-            0..0
+        let (generations, incarnation) = if observed == 0 {
+            (0..=0, None)
         } else {
             let range = self
                 .store
                 .allocate(b"/rep/retry/marker-generation", observed as u64)
                 .await?;
-            // A single registration's generation is the end of a range of
-            // one, so a run takes the values just above each start.
-            (range.start + 1)..(range.end + 1)
-        };
-        let incarnation = if observed == 0 {
-            None
-        } else {
-            self.peer_incarnation(peer_id).await?
+            // A single registration's generation is the end of a range of one.
+            (
+                (range.start + 1)..=range.end,
+                self.get_replicator_incarnation(peer_id).await?,
+            )
         };
         let initial = super::super::RetryInfo::new_initial()
             .to_bytes()
             .map_err(Error::Other)?;
 
-        let mut slots = Vec::with_capacity(records.len());
-        let mut steps = Vec::with_capacity(records.len());
-        for record in records {
-            match record {
-                ScopeRecord::Observe {
-                    doc_id,
-                    collection_id,
-                } => {
-                    if doc_id.is_empty() && collection_id.is_empty() {
-                        slots.push(Slot::Decided(ScopeOutcome::Observed(None)));
-                        continue;
-                    }
-                    let generation = generations
-                        .next()
-                        .ok_or_else(|| Error::Other("too few marker generations".into()))?;
-                    let Some(expected_incarnation) = incarnation else {
-                        slots.push(Slot::Decided(ScopeOutcome::Observed(None)));
-                        continue;
-                    };
-                    slots.push(Slot::Observe {
-                        step: steps.len(),
-                        generation,
-                    });
-                    steps.push(Step::Register(RegisterScopeMarkerAttempt {
-                        peer_id: peer_id.to_owned(),
-                        expected_incarnation,
-                        doc_id: doc_id.clone(),
-                        collection_id: collection_id.clone(),
-                        retry_info_bytes: initial.clone(),
-                        retry_schedule: self.retry_schedule.clone(),
-                        generation,
-                    }));
-                }
-                ScopeRecord::Complete {
-                    doc_id,
-                    collection_id,
-                    is_collection,
-                    expected_generation,
-                    acked_heads,
-                } => {
-                    slots.push(Slot::Complete { step: steps.len() });
-                    steps.push(Step::Complete(self.complete_marker_attempt(
-                        peer_id,
-                        doc_id,
-                        collection_id,
-                        *is_collection,
-                        *expected_generation,
-                        acked_heads,
-                    )));
-                }
-            }
-        }
-
-        let values: Vec<StepValue> = if steps.is_empty() {
-            Vec::new()
-        } else {
-            self.transact_conflicts(Box::new(ScopeBatchAttempt { steps }))
-                .await?
-        };
-        slots
-            .into_iter()
-            .map(|slot| match slot {
-                Slot::Decided(outcome) => Ok(outcome),
-                // A newer marker already owes this head, as
-                // register_scope_marker_at reports it.
-                Slot::Observe { step, generation } => match values.get(step) {
-                    Some(StepValue::Register(ReplayMarkerWrite::Superseded)) => {
-                        Ok(ScopeOutcome::Observed(Some(generation)))
-                    }
-                    Some(StepValue::Register(written)) => {
-                        Ok(ScopeOutcome::Observed(written.generation()))
-                    }
-                    _ => Err(Error::Other("a scope record has no value".into())),
-                },
-                Slot::Complete { step } => match values.get(step) {
-                    Some(StepValue::Complete(completed)) => Ok(ScopeOutcome::Completed(*completed)),
-                    _ => Err(Error::Other("a scope record has no value".into())),
-                },
-            })
-            .collect()
+        Ok(ScopeObservations {
+            generations,
+            incarnation,
+            initial,
+        })
     }
 
-    /// The peer's incarnation if it is configured, read at one snapshot as
-    /// [`Self::register_scope_marker_at`] reads it.
-    async fn peer_incarnation(&self, peer_id: &str) -> Result<Option<u64>> {
-        let txn = self.store.new_txn(true).await?;
-        if txn
-            .get(&ReplicatorKey::new(peer_id).bytes())
-            .await?
-            .is_none()
-        {
-            return Ok(None);
-        }
-        match txn
-            .get(&ReplicatorIncarnationKey::new(peer_id).bytes())
-            .await?
-        {
-            Some(bytes) => decode_retry_marker_generation(&bytes)
-                .map(Some)
-                .ok_or_else(|| Error::Other("invalid peer incarnation".into())),
-            None => Ok(Some(0)),
+    fn scope_step(
+        &self,
+        peer_id: &str,
+        record: &ScopeRecord,
+        observations: &ScopeObservations,
+        generations: &mut RangeInclusive<u64>,
+    ) -> Step {
+        match record {
+            ScopeRecord::Observe {
+                doc_id,
+                collection_id,
+            } => {
+                let Some(expected_incarnation) = observations.incarnation else {
+                    return Step::NoMarker;
+                };
+                if doc_id.is_empty() && collection_id.is_empty() {
+                    return Step::NoMarker;
+                }
+                let generation = generations
+                    .next()
+                    .expect("one generation per scoped observation");
+                Step::Register(RegisterScopeMarkerAttempt {
+                    peer_id: peer_id.to_owned(),
+                    expected_incarnation,
+                    doc_id: doc_id.clone(),
+                    collection_id: collection_id.clone(),
+                    retry_info_bytes: observations.initial.clone(),
+                    retry_schedule: self.retry_schedule.clone(),
+                    generation,
+                })
+            }
+            ScopeRecord::Complete {
+                doc_id,
+                collection_id,
+                is_collection,
+                expected_generation,
+                acked_heads,
+            } => Step::Complete(self.complete_marker_attempt(
+                peer_id,
+                doc_id,
+                collection_id,
+                *is_collection,
+                *expected_generation,
+                acked_heads,
+            )),
         }
     }
 }
+
+#[cfg(test)]
+#[path = "../peerstore_scope_batch_tests.rs"]
+mod tests;

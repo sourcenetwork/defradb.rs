@@ -66,6 +66,8 @@ ASSUME ValidateRowRead \in BOOLEAN
 Scopes == {1, 2}
 \* The schedule row's key, distinct from every scope's marker key.
 Row == 0
+\* Outside a transaction, no marker snapshot is retained.
+NoMarkers == [s \in Scopes |-> FALSE]
 \* Every durable key the model tracks: the markers and the row.
 Keys == Scopes \cup {Row}
 
@@ -90,7 +92,7 @@ vars == <<marker, row, running, seenM, seenR, dirty>>
 Init == /\ marker = [s \in Scopes |-> FALSE]                \* no marker
         /\ row = FALSE                                       \* no row
         /\ running = [a \in Actors |-> FALSE]                \* nobody running
-        /\ seenM = [a \in Actors |-> [s \in Scopes |-> FALSE]] \* empty snapshots
+        /\ seenM = [a \in Actors |-> NoMarkers] \* empty snapshots
         /\ seenR = [a \in Actors |-> FALSE]                  \* no row seen
         /\ dirty = [a \in Actors |-> {}]                     \* nothing moved
 
@@ -137,15 +139,19 @@ Commit(a) == /\ running[a]                                 \* it is running
              /\ row' = IF Row \in Writes(a) THEN a.kind = "reg" ELSE row \* a registration writes the row, the others delete it
              /\ running' = [running EXCEPT ![a] = FALSE]   \* it is done
              /\ dirty' = [b \in Actors |->                 \* tell everyone still running
-                            IF b # a /\ running[b] THEN dirty[b] \cup Writes(a) ELSE dirty[b]]
-             /\ UNCHANGED <<seenM, seenR>>                 \* snapshots do not move
+                            IF b # a /\ running[b] THEN dirty[b] \cup Writes(a) ELSE {}]
+             /\ seenM' = [seenM EXCEPT ![a] = NoMarkers]  \* release the completed snapshot
+             /\ seenR' = [seenR EXCEPT ![a] = FALSE]      \* release the completed row read
 
 \* Actor a's commit finds a validated key written since it began: regolith
 \* reports a conflict and nothing lands. The code runs it again (a new Begin).
 Abort(a) == /\ running[a]                                  \* it is running
             /\ Validates(a) \cap dirty[a] # {}             \* a validated key moved
             /\ running' = [running EXCEPT ![a] = FALSE]    \* it ends, writing nothing
-            /\ UNCHANGED <<marker, row, seenM, seenR, dirty>> \* nothing durable changes
+            /\ seenM' = [seenM EXCEPT ![a] = NoMarkers]   \* release the aborted snapshot
+            /\ seenR' = [seenR EXCEPT ![a] = FALSE]       \* release the aborted row read
+            /\ dirty' = [dirty EXCEPT ![a] = {}]          \* discard conflict tracking for this attempt
+            /\ UNCHANGED <<marker, row>>                 \* nothing durable changes
 
 \* Any actor can take its next step.
 Next == \E a \in Actors : Begin(a) \/ Commit(a) \/ Abort(a)

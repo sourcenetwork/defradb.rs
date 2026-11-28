@@ -1,8 +1,12 @@
 //! A run of one peer's scope records shares one commit and does what the
 //! records' single calls do, in order (#3471).
 
+use std::sync::Arc;
+
 use super::*;
 use crate::backends::RegolithStore;
+use crate::corekv::{Key, Writer};
+use crate::keys::peerstore::ReplicatorRetryIDKey;
 
 const PEER: &str = "peer";
 const COLLECTION: &str = "collection";
@@ -234,7 +238,7 @@ fn an_error_costs_only_its_own_record() {
         assert!(run.shared_error.is_some(), "the shared transaction fails");
         let [observed, completed] = <[_; 2]>::try_from(run.outcomes).unwrap();
         assert!(
-            matches!(observed, Ok(ScopeOutcome::Observed(Some(generation))) if generation > old),
+            matches!(observed, Ok(ScopeOutcome::Observed(Some(generation))) if generation == old + 1),
             "doc-c registers as its single call does: {observed:?}"
         );
         assert!(
@@ -242,6 +246,45 @@ fn an_error_costs_only_its_own_record() {
             "doc-a's ack fails as its single call does"
         );
         assert_eq!(marker_docs(&peerstore).await, ["doc-a", "doc-c"]);
+    })
+    .unwrap()
+}
+
+#[test]
+fn a_failed_run_does_not_rebind_a_registration_to_a_replacement_peer() {
+    workers::block_on(async {
+        let peerstore = peerstore().await;
+        let records = [observe("doc-a"), complete("doc-b", 1)];
+        let observations = peerstore
+            .prepare_scope_observations(PEER, &records)
+            .await
+            .unwrap();
+        peerstore.delete_replicator(PEER).await.unwrap();
+        peerstore
+            .create_replicator(PEER, b"replacement")
+            .await
+            .unwrap();
+
+        let mut txn = peerstore.store.new_txn(false).await.unwrap();
+        txn.set(
+            &ReplicatorRetryIDKey::new(PEER).bytes(),
+            b"not a retry schedule",
+        )
+        .await
+        .unwrap();
+        txn.commit().await.unwrap();
+
+        let run = peerstore
+            .record_prepared_steps(PEER, &records, observations)
+            .await;
+        assert!(
+            run.shared_error.is_some(),
+            "the ack fails the shared transaction"
+        );
+        let [observed, completed] = <[_; 2]>::try_from(run.outcomes).unwrap();
+        assert_eq!(observed.unwrap(), ScopeOutcome::Observed(None));
+        assert!(completed.is_err());
+        assert!(marker_docs(&peerstore).await.is_empty());
     })
     .unwrap()
 }
