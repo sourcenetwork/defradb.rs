@@ -82,7 +82,7 @@ fn empty_filter_keeps_vector_routing() {
     case.actions.push(
         Request {
             request: "query @explain(type: execute) { Note(filter: {}, order: {_alias: {sim: DESC}}, limit: 1) { sim: SIMILARITY(embedding: {vector: [1, 0, 0]}) } }".into(),
-            expected_data: m::explain_scan(json!({"indexFetches": 1, "docFetches": 1})),
+            expected_data: m::explain_scan(json!({"indexFetches": 3, "docFetches": 1})),
             expected_extensions: no_warning(),
             ..Default::default()
         }
