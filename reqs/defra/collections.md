@@ -410,6 +410,16 @@ A document re-added after truncate gets the same docID and the same head CID as 
 
 A truncate limited to certain documents removes only those (idempotently on retry), matches large integers exactly (2^53 vs 2^53+1), works through plain and unique secondary indexes, and frees a unique value so a document with it can be created again.
 
+# `defra.collection.truncate.filter_branchable`: A filtered truncate of a branchable collection keeps its history
+
+- **Parents:** ["go.collection.truncate"]
+- **Scenarios:** ["collection::truncate::branchable_filter::filtered_truncate_of_a_branchable_collection_removes_only_the_matches", "collection::truncate::branchable_filter::filtered_truncate_of_a_branchable_collection_keeps_its_history", "collection::truncate::branchable_filter::a_document_truncated_from_a_branchable_collection_can_be_added_again", "collection::truncate::branchable_filter::a_peer_update_restores_a_document_truncated_from_a_branchable_collection", "collection::truncate::branchable_filter::a_fresh_peer_sync_restores_a_document_truncated_from_a_branchable_collection", "db::collection::purge::purge_keeps_a_branchable_collections_history"]
+- **Scope:** "all clients except go-http, which follows `.github/testo/divergences.txt`: Go's parity pin refuses it with `filtered truncate is not supported for branchable collections`"
+
+A filtered truncate of a `@branchable` collection is not refused. It removes the matching documents as a purge does (`defra.purge.history`): with `Users @branchable { name: String @index(unique: true) }` holding John and Jane, truncating with `{name: {_eq: "John"}}` leaves only Jane. Every block of John's history stays stored, since the collection DAG links it, and no longer names John as an owner; both collection blocks stay listed. `_commits` lists six blocks before the truncate and four after: John's field and composite blocks are no longer listed, as no document holds them. Querying `_commits(cid: <John's composite CID>)` finds the kept block, while `_commits(docID: <John>)` is empty. John can be added again with the same DocID because the unique value was freed, and `_commits(docID: <John>)` lists his field and composite blocks again.
+
+A peer that still holds John may update him after the truncate. Pulling the article back from that peer restores John with both fields and the new age rather than leaving a partial document with a null field. A fresh peer that syncs the branchable collection also gets John back whole from that history.
+
 # `defra.collection.truncate.other_collections`: Truncate leaves other collections intact
 
 - **Parents:** ["go.collection.truncate"]

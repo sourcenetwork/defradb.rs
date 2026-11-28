@@ -481,12 +481,13 @@ where
 /// A branchable collection's DAG links every version of its documents, so a
 /// purge there keeps the document's whole history and only drops its owner
 /// edges: `_commits` of the collection stays whole and a peer syncing it
-/// finds every block.
+/// finds every block. A filtered truncate purges its matches the same way.
 #[test]
 #[mantra_macros::req_test("defra.purge.history")]
+#[mantra_macros::req_test("defra.collection.truncate.filter_branchable")]
 fn purge_keeps_a_branchable_collections_history() {
     workers::block_on(async {
-        for in_txn in [false, true] {
+        for mode in ["purge", "purge in a transaction", "filtered truncate"] {
             let db = branchable_users().await;
             let alice = create(&db, "Alice", 40).await;
             set_age(&db, &alice, 41).await;
@@ -495,12 +496,36 @@ fn purge_keeps_a_branchable_collections_history() {
             assert_eq!(linked.len(), 2, "one collection block per version");
             assert!(linked.is_subset(&blocks));
 
-            let purged = match in_txn {
-                false => db
+            let purged = match mode {
+                "purge" => db
                     .purge_by_doc_ids("Users", std::slice::from_ref(&alice), None)
                     .await
+                    .map(Some)
                     .unwrap(),
-                true => {
+                "filtered truncate" => {
+                    let mut conditions = serde_json::Map::new();
+                    conditions.insert("name".into(), serde_json::json!({ "_eq": "Alice" }));
+                    db.truncate_collection_as(
+                        &defra_core::RequestContext::ambient(),
+                        "Users",
+                        Some(&query::documents::Filter::Conditions(conditions)),
+                    )
+                    .await
+                    .unwrap();
+                    let txn = db.new_txn(true).await.unwrap();
+                    assert!(
+                        db::docid::map::get_doc_ref(
+                            &txn.systemstore().unwrap(),
+                            &alice.to_string()
+                        )
+                        .await
+                        .unwrap()
+                        .is_none(),
+                        "the truncated document no longer resolves ({mode})"
+                    );
+                    None
+                }
+                _ => {
                     let registry = db::txn::registry::DbTransactionRegistry::new(db.clone());
                     let handle = registry.begin(false).await.unwrap();
                     let context = defra_core::RequestContext::default()
@@ -510,15 +535,17 @@ fn purge_keeps_a_branchable_collections_history() {
                         .await
                         .unwrap();
                     registry.commit(&handle).await.unwrap();
-                    purged
+                    Some(purged)
                 }
             };
 
-            assert_eq!(purged, 1);
+            if let Some(purged) = purged {
+                assert_eq!(purged, 1);
+            }
             for cid in &blocks {
                 assert!(
                     held(&db, cid).await,
-                    "{cid} is linked by the collection DAG (txn {in_txn})"
+                    "{cid} is linked by the collection DAG ({mode})"
                 );
                 assert!(
                     owners(&db, cid).await.is_empty(),
