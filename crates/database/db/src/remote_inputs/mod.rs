@@ -13,7 +13,10 @@
 mod embeddings;
 mod signatures;
 
-pub(crate) use embeddings::{embedding_error, shared as shared_embeddings, Embedding, Embeddings};
+pub(crate) use embeddings::{
+    embedding_error, shared as shared_embeddings, Embedding, Embeddings,
+    FLIGHTS_PER_GROUP as EMBEDDING_FLIGHTS, MAX_BATCH as EMBEDDING_BATCH_SIZE,
+};
 pub(crate) use signatures::{RemoteSignatures, Signature, Signer};
 
 use regolith::sync::OnceCell;

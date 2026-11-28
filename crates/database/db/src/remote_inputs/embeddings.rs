@@ -6,7 +6,7 @@
 //! A wave's texts for one (provider, URL, model) share one request where the
 //! API takes an array (OpenAI-compatible), up to the batch cap; where it does
 //! not (Ollama's `prompt` form) they go one request each, concurrently. A
-//! wave takes one round trip of time, whatever its size.
+//! batch has its own deadline.
 //!
 //! A model replaced under the same name keeps serving the old vectors from
 //! the cache until their time to live ends.
@@ -112,6 +112,9 @@ impl Embeddings {
     }
 }
 
+pub(crate) const MAX_BATCH: usize = 256;
+pub(crate) const FLIGHTS_PER_GROUP: usize = 4;
+
 pub(super) fn config() -> inputs::Config {
     inputs::Config {
         // Past one request's own timeout, so a retry fits.
@@ -121,8 +124,8 @@ pub(super) fn config() -> inputs::Config {
         max_backoff: Duration::from_secs(5),
         // OpenAI takes up to 2048 inputs per request; a smaller batch keeps
         // one request's answer to a few megabytes.
-        max_batch: 256,
-        flights_per_group: 4,
+        max_batch: MAX_BATCH,
+        flights_per_group: FLIGHTS_PER_GROUP,
         max_in_flight: 32,
         cache_bytes: 16 << 20,
         ttl: Some(Duration::from_secs(600)),

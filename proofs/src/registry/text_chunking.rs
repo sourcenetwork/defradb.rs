@@ -116,4 +116,22 @@ pub(super) const PROPERTIES: &[Property] = &[
         tiers: &[Boundary],
         bound_by: "",
     },
+    Property {
+        family: "Text chunking",
+        name: "INV_Bounded / INV_Fresh / INV_Retained",
+        axis: Tla,
+        anchor: "crates/database/db/src/write/prepare/embedding_batches.rs resolve_embeddings, resolve_embedding_batch; crates/building-blocks/inputs/src/service.rs Service::get_many",
+        model_ref: "MC_ChunkEmbeddingBatches_Green.cfg / MC_ChunkEmbeddingBatches_Red_Unbounded.cfg / MC_ChunkEmbeddingBatches_Red_SharedDeadline.cfg / MC_ChunkEmbeddingBatches_Red_DropAnswers.cfg",
+        tiers: &[Boundary],
+        bound_by: "tools/integration-test/tests/testo/chunk/embed_batches.rs a_large_edit_embeds_all_its_chunks_in_bounded_batches, a_failed_batch_leaves_the_article_and_chunks_unchanged",
+    },
+    Property {
+        family: "Text chunking",
+        name: "keeps_first / stores_answer / failure_keeps_memo / preserves_other",
+        axis: Lean,
+        anchor: "crates/database/db/src/write/prepare/embedding_batches.rs resolve_embedding_batch; crates/engine/query/src/prepared.rs PreparedInputMemo::insert",
+        model_ref: "ChunkEmbeddingBatches (lake build)",
+        tiers: &[Boundary],
+        bound_by: "crates/database/db/tests/chunk/embedding.rs a_failed_wave_keeps_an_answer_larger_than_the_cache",
+    },
 ];

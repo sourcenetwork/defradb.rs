@@ -13,8 +13,9 @@
 \* attempt commits: the texts and the new chunks with their vectors, unless a
 \* commit from another request got in first, in which case it runs again. If
 \* some vector is missing the attempt ends without writing, the request asks
-\* the model for every missing vector at once (one wave, outside any
-\* transaction), and the attempt runs again. A request that creates its
+\* for every missing vector in one wave outside any transaction, and the
+\* attempt runs again. ChunkEmbeddingBatches separately checks the deadlines
+\* and answers within that wave. A request that creates its
 \* articles may ask the model for all their chunks before its first attempt,
 \* also outside any transaction, so it needs no wave at all.
 \*

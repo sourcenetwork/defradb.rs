@@ -15,6 +15,7 @@ mod declare_string_only;
 mod declare_underscore_name;
 mod declare_unknown_argument;
 mod embed_backup;
+mod embed_batches;
 mod embed_chunks;
 mod embed_declare;
 mod embed_failure;

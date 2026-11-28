@@ -445,3 +445,79 @@ fn a_chunk_write_without_prepared_inputs_is_refused() {
     })
     .unwrap()
 }
+
+#[test]
+fn a_failed_wave_keeps_an_answer_larger_than_the_cache() {
+    use query::prepared::{PreparedInputKind, PreparedInputMemo, PreparedInputRequest};
+
+    workers::block_on(async {
+        let fail_small = Arc::new(std::sync::atomic::AtomicBool::new(true));
+        let successful_calls = Arc::new(AtomicUsize::new(0));
+        let server = HttpServer::start(&["/embeddings"], {
+            let fail_small = Arc::clone(&fail_small);
+            let successful_calls = Arc::clone(&successful_calls);
+            move |request| {
+                let input = &request.body["input"];
+                let texts: Vec<_> = match input.as_str() {
+                    Some(text) => vec![text],
+                    None => input
+                        .as_array()
+                        .unwrap()
+                        .iter()
+                        .map(|v| v.as_str().unwrap())
+                        .collect(),
+                };
+                let mut data = Vec::new();
+                for (index, text) in texts.into_iter().enumerate() {
+                    if text == "large" {
+                        successful_calls.fetch_add(1, Ordering::Relaxed);
+                        let entries = (16 << 20) / std::mem::size_of::<f64>();
+                        data.push(json!({ "index": index, "embedding": vec![0u8; entries] }));
+                    } else if !fail_small.load(Ordering::Relaxed) {
+                        data.push(json!({ "index": index, "embedding": [1] }));
+                    }
+                }
+                json!({ "data": data })
+            }
+        });
+        let (db, _bus) = make_test_db_with_bus().await;
+        let make_request = |text: &str| {
+            PreparedInputRequest::new(
+                PreparedInputKind::Embedding,
+                serde_json::to_vec(&json!({
+                    "provider": "openai", "url": server.url(), "model": "test",
+                    "api_key": "", "text": text,
+                }))
+                .unwrap(),
+            )
+        };
+        let missing = make_request("missing");
+        let large = make_request("large");
+        let memo = PreparedInputMemo::default();
+        let mutator = AutoCommitMutator::new(db)
+            .with_prepared_inputs(memo.clone())
+            .unwrap();
+        memo.want(large.clone());
+        let error = memo
+            .answer_wave(&missing, |wave| mutator.resolve_prepared_inputs(wave))
+            .await
+            .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("embedding response missing /data/0/embedding"),
+            "{error}"
+        );
+        assert!(memo.get(&missing).is_none());
+        assert!(memo.get(&large).is_some());
+
+        fail_small.store(false, Ordering::Relaxed);
+        mutator
+            .resolve_prepared_inputs(vec![missing.clone(), large])
+            .await
+            .unwrap();
+        assert!(memo.get(&missing).is_some());
+        assert_eq!(successful_calls.load(Ordering::Relaxed), 1);
+    })
+    .unwrap();
+}

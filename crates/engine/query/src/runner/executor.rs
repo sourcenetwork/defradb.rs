@@ -834,8 +834,16 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
                 )
                 .await
         };
-        let (own_answers, delegated_answers) =
-            futures::future::try_join(own_answers, delegated_answers).await?;
+        // Let started embedding batches finish recording their answers on a sibling error.
+        let (own_answers, delegated_answers) = if delegated
+            .iter()
+            .any(|(_, request)| request.kind() == crate::prepared::PreparedInputKind::Embedding)
+        {
+            let (own, delegated) = futures::join!(own_answers, delegated_answers);
+            (own?, delegated?)
+        } else {
+            futures::future::try_join(own_answers, delegated_answers).await?
+        };
         let mut answers: Vec<Option<std::sync::Arc<[u8]>>> = vec![None; wave.len()];
         for ((index, _), answer) in own
             .iter()

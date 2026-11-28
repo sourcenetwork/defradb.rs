@@ -173,7 +173,6 @@ where
             }
             missing.push((target, plan.encrypt, docs));
         }
-        // TODO(https://github.com/sourcenetwork/defradb.rs/issues/3380): one deadline bounds the whole wave.
         if let Some(miss) = first_miss {
             return Err(QueryError::NeedsInput(miss));
         }

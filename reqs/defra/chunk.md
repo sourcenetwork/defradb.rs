@@ -429,3 +429,10 @@ Adding an article with `body` encrypted asks the model for each chunk once, and 
 - **Scenarios:** ["chunk::embed_writes::an_upsert_embeds_the_chunks_it_creates"]
 
 An `upsert_Article` that finds no article creates one, asks the model for each of its chunks once, and every chunk holds its vector.
+
+# `defra.chunk.embed.batches`: Large writes resolve chunk embeddings in bounded batches
+
+- **Parents:** ["defra.chunk.embed"]
+- **Scenarios:** ["chunk::embed_batches::a_large_edit_embeds_all_its_chunks_in_bounded_batches", "chunk::embed_batches::a_failed_batch_leaves_the_article_and_chunks_unchanged"]
+
+A write with more than 256 different chunk texts sends at most 256 texts in each OpenAI-compatible request. Each batch has its own 75-second service deadline, so earlier batches do not consume later batches' time. Successful answers are kept for the write by exact request, including when another answer fails or the shared cache cannot hold them. If any batch fails, the write leaves the parent and its chunks as they were. A provider response of 500 is reported as `embedding error: embedding provider returned 500 Internal Server Error`.
