@@ -15,6 +15,8 @@ pub(super) struct DocumentAcpSetup {
     pub(super) document_acp: Arc<dyn acp::DocumentACP>,
     /// The node's DAC policies, installed on the database.
     pub(super) dac_policies: Arc<db::DacPolicies>,
+    #[cfg(feature = "vera")]
+    pub(super) external_gate: Option<Arc<acp::ExternalDocumentAcp<storage::DynStore>>>,
     /// The Vera node started for document ACP; shutdown stops it.
     #[cfg(feature = "embedded-vera")]
     pub(super) embedded_vera: Option<vera_embedded::HostedNode>,
@@ -110,6 +112,8 @@ impl Node {
         Ok(DocumentAcpSetup {
             document_acp,
             dac_policies: Arc::new(db::DacPolicies::local(zanzibar_store)),
+            #[cfg(feature = "vera")]
+            external_gate: None,
             #[cfg(feature = "embedded-vera")]
             embedded_vera: None,
         })
@@ -281,8 +285,9 @@ pub(super) fn vera_setup(
     let recovery: std::sync::Weak<dyn acp::RecoverySource> = recovery;
     vera::VeraProvider::set_recovery_source(provider.as_ref(), recovery);
     DocumentAcpSetup {
-        document_acp: gate,
+        document_acp: gate.clone(),
         dac_policies: Arc::new(dac_policies),
+        external_gate: Some(gate),
         #[cfg(feature = "embedded-vera")]
         embedded_vera: None,
     }

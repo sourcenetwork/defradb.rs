@@ -68,6 +68,9 @@ pub struct PendingRegistration {
     /// it is never sent again. Set only beside a refused state.
     #[serde(default, skip_serializing_if = "is_plain")]
     pub create_refused: bool,
+    /// The local row created with this registration, if cleanup may remove it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub local_create_short_id: Option<u64>,
     /// What lets the node send the registration as `creator`: its own key
     /// for that DID, or the delegation the create carried, as presented.
     /// `None` when the create carried nothing the provider takes: the
@@ -113,6 +116,7 @@ impl PendingRegistration {
             relationships: Vec::new(),
             gated: false,
             create_refused: false,
+            local_create_short_id: None,
             authority: None,
             request_bound: false,
             txn: None,
@@ -162,6 +166,23 @@ impl PendingRegistration {
     pub fn gated(mut self, gated: bool) -> Self {
         self.gated = gated;
         self
+    }
+
+    /// Tie a gated registration to the row created in the same transaction.
+    #[must_use]
+    pub fn with_local_create(mut self, doc_short_id: u64) -> Self {
+        if self.gated {
+            self.local_create_short_id = Some(doc_short_id);
+        }
+        self
+    }
+
+    /// Whether the local create awaits cleanup after its final refusal.
+    pub fn needs_create_cleanup(&self) -> bool {
+        self.gated
+            && self.replica_of.is_none()
+            && self.create_refused()
+            && self.local_create_short_id.is_some()
     }
 
     /// Whether the provider refused this registration because its creator
@@ -250,6 +271,7 @@ impl PendingRegistration {
             && self.resource_name == other.resource_name
             && self.doc_id == other.doc_id
             && self.relationships == other.relationships
+            && self.local_create_short_id == other.local_create_short_id
             && self.txn == other.txn
             && self.epoch == other.epoch
     }

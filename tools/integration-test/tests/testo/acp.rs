@@ -40,6 +40,7 @@ mod dac {
         mod local_gate;
         mod not_encrypted;
         mod policy_section;
+        mod refused_cleanup;
     }
     mod delete_with_index;
     mod index {

@@ -48,6 +48,8 @@ pub(super) struct ServerSetup {
     pub downsample_task: Option<workers::Background>,
     pub vector_rebuild_task: Option<workers::Background>,
     pub deferred_index_task: Option<workers::Background>,
+    #[cfg(feature = "vera")]
+    pub refused_create_cleanup: Option<workers::Background>,
     pub txn_cleanup_task: Option<workers::Background>,
     pub http_server: defra_http::Server,
     pub http_scope: edge::Scope,
@@ -72,6 +74,8 @@ pub struct Node {
     pub(super) downsample_task: Option<workers::Background>,
     pub(super) vector_rebuild_task: Option<workers::Background>,
     pub(super) deferred_index_task: Option<workers::Background>,
+    #[cfg(feature = "vera")]
+    pub(super) refused_create_cleanup: Option<workers::Background>,
     pub(super) txn_cleanup_task: Option<workers::Background>,
     pub(super) http_server: Option<defra_http::Server>,
     /// A listener the caller bound for the HTTP server, served in place of
@@ -412,6 +416,8 @@ impl Node {
             downsample_task: servers.downsample_task,
             vector_rebuild_task: servers.vector_rebuild_task,
             deferred_index_task: servers.deferred_index_task,
+            #[cfg(feature = "vera")]
+            refused_create_cleanup: servers.refused_create_cleanup,
             txn_cleanup_task: servers.txn_cleanup_task,
             http_server: Some(servers.http_server),
             http_listener: None,

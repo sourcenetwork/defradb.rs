@@ -124,6 +124,8 @@ where
     /// Told when a transaction that staged changes has committed: wakes the
     /// node's drainer, or leaves it a permit when it is busy.
     wake: Arc<regolith::sync::Notify>,
+    /// Wakes the node when a final local create refusal is recorded.
+    create_cleanup: Arc<regolith::sync::Notify>,
     /// Told of every owed change the provider refuses for good.
     refusals: Arc<regolith::sync::OnceCell<Arc<dyn crate::OwedRefusalListener>>>,
     /// The request `provider` serves and carries the credentials of, when
@@ -157,6 +159,7 @@ where
             settling: Arc::default(),
             changed: Arc::new(regolith::sync::Notify::new()),
             wake: Arc::new(regolith::sync::Notify::new()),
+            create_cleanup: Arc::default(),
             refusals: Arc::default(),
             serving: None,
             watcher: Arc::default(),
@@ -395,6 +398,31 @@ where
         }
     }
 
+    /// Wait for a committed refusal, including one recorded before the wait.
+    pub async fn refused_create_committed(&self) {
+        self.create_cleanup.notified().await;
+    }
+
+    /// Read one bounded page of owed registrations and return the next cursor.
+    /// The caller can process final refusals after this snapshot closes.
+    pub async fn refused_create_page(
+        &self,
+        start: Option<&[u8]>,
+    ) -> Result<(Vec<PendingRegistration>, Option<Vec<u8>>)> {
+        let page = self.owed_page(start.unwrap_or(PENDING_PREFIX)).await?;
+        let next = page.last().map(|last| {
+            let mut key = last.key();
+            key.push(0);
+            key
+        });
+        Ok((
+            page.into_iter()
+                .filter(PendingRegistration::needs_create_cleanup)
+                .collect(),
+            next,
+        ))
+    }
+
     /// Refuse while the store owes changes in the layout before the owed
     /// counts were split: this version neither submits them nor denies by
     /// them, so a revocation among them would stop denying unseen. Every
@@ -466,6 +494,7 @@ where
             settling: Arc::clone(&self.settling),
             changed: Arc::clone(&self.changed),
             wake: Arc::clone(&self.wake),
+            create_cleanup: Arc::clone(&self.create_cleanup),
             refusals: Arc::clone(&self.refusals),
             serving: Some(context.clone()),
             root: Arc::clone(&self.root),

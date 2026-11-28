@@ -269,6 +269,7 @@ pub(crate) async fn register_created_doc(
                         )
                         .with_relationships(relationships)
                         .gated(gate.gated)
+                        .with_local_create(doc_short_id)
                         .with_authority(authority, context.bearer_names_request())
                         .in_transaction(context.txn().map(|txn| txn.route)),
                     )
