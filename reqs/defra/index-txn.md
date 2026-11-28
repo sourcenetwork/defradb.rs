@@ -145,6 +145,13 @@ Scalar and relation conditions at the top level apply as an AND; `_and`, `_or` a
 
 When a parent-side foreign key is indexed and the query filters through it, a relation already joined into the parent plan, such as a selected publisher, survives the FK lookups and is rendered with the matching parent, together with the relations nested under it (the publisher's owner). A list relation, such as the book's reviews, survives the same way with all its children. A filter on that other relation still applies: a parent whose publisher fails it, or none of whose reviews pass it, is not returned.
 
+# `defra.index.relation.group-aggregate`: A relation aggregate over an indexed FK keeps its group
+
+- **Parents:** ["go.index.relation"]
+- **Scenarios:** ["index::regressions::relation_aggregation_through_an_indexed_fk_matches_the_unindexed_query"]
+
+Grouping by an indexed relation ID, filtering that ID with `_eq`, selecting the joined relation, and summing a field over `GROUP` returns the same group and sum with or without the index.
+
 # `go.index.relation.sub-filter`: Child sub-filters through indexes
 
 - **Parents:** ["go.index.relation"]
@@ -214,6 +221,13 @@ After an update adds, removes or reorders array elements, `_any` filters return 
 - **Scenarios:** ["index.array-composite-index-delete-with2-consecutive-array-fields-succeed", "index.array-composite-index-update-with2-array-fields-succeed", "index.array-composite-index-with-any-none-all-succeed", "index.array-composite-index-with-filter-on-indexed-array-using-all-should-use-index", "index.array-composite-index-with-filter-on-indexed-array-using-any-should-use-index", "index.array-composite-index-with-filter-on-indexed-array-using-none-should-use-index", "index.array-composite-index-with2-consecutive-array-fields-succeed", "index.array-composite-index-with2-separate-array-fields-succeed"]
 
 Composite indexes with two array fields (adjacent or separated by a scalar) serve `_any`, `_all` and `_none` filters and stay correct after updates and deletes.
+
+# `defra.index.array.composite-none`: `_none` on a later composite field is residual
+
+- **Parents:** ["go.index.array.composite"]
+- **Scenarios:** ["index::regressions::none_on_the_second_composite_field_matches_the_unindexed_query"]
+
+With a composite index whose first field is filtered by `_eq` and whose second array field is filtered by `_none`, the first field narrows the index scan and the `_none` condition is applied as a residual filter. The result is the same with or without the index.
 
 # `go.index.json.scalar-ops`: Comparison filters on JSON paths
 
