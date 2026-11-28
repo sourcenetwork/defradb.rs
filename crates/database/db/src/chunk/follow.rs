@@ -4,6 +4,7 @@ use document::{DocID, NormalValue};
 use storage::corekv::Store;
 
 use crate::chunk::hash::distinct;
+use crate::chunk::owner::ChunkOwner;
 use crate::chunk::split::split;
 use crate::chunk::sync::ChunkCollection;
 use crate::database::DB;
@@ -47,17 +48,30 @@ where
         let Some(text) = doc.get(&chunked.field_name).and_then(NormalValue::as_str) else {
             continue;
         };
+        let owner = ChunkOwner {
+            collection: parent.name(),
+            field: &chunked.field_name,
+            doc_id,
+        };
         let config = crate::chunk::chunk_config(parent.name(), chunked)?;
         let chunks = split(text, &config);
-        let target = ChunkCollection::open(txn, &chunked.collection(parent.name())).await?;
+        let target = ChunkCollection::open(txn, &chunked.collection(parent.name()))
+            .await
+            .map_err(|error| owner.name_in(error))?;
         for chunk in distinct(&chunks) {
-            for short_id in target.chunks_with(doc_id, &chunk.hash).await? {
+            let short_ids = target
+                .chunks_with(doc_id, &chunk.hash)
+                .await
+                .map_err(|error| owner.name_in(error))?;
+            for short_id in short_ids {
                 match crate::docid::map::get_doc_id(&systemstore, short_id).await? {
                     Some(chunk_id) => ids.push(chunk_id),
                     None => tracing::warn!(
                         chunks = %target.collection.name(),
                         doc_short_id = short_id,
-                        "chunk index names a document with no DocID"
+                        parent = owner.doc_id,
+                        field = owner.field,
+                        "chunk index names a document with no DocID; leaving it"
                     ),
                 }
             }

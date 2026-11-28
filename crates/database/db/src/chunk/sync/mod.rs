@@ -19,12 +19,13 @@ use defra_core::RequestContext;
 use document::{Document, NormalValue};
 use query::error::{QueryError, Result};
 use query::mutator::DerivedWrite;
-use query::prepared::PreparedInputMemo;
+use query::prepared::{PreparedInputMemo, PreparedInputRequest};
 use rapidhash::RapidHashSet;
 use schema::CollectionVersion;
 use storage::corekv::Store;
 
 use crate::chunk::hash::distinct;
+use crate::chunk::owner::ChunkOwner;
 use crate::chunk::split::split;
 use crate::collection::Collection;
 use crate::database::DB;
@@ -41,6 +42,7 @@ fn json(doc: &Document) -> Option<serde_json::Value> {
 
 /// The chunk documents one field's new text needs.
 pub(crate) struct FieldChunks {
+    collection: String,
     field: String,
     chunk_collection: String,
     chunks: Vec<(String, String)>,
@@ -71,6 +73,7 @@ pub(crate) fn plan_chunks(
             .map_err(|error| QueryError::execution(error.to_string()))?;
         let chunks = split(text, &config);
         plans.push(FieldChunks {
+            collection: schema.name.clone(),
             field: field.to_string(),
             chunk_collection: chunked.collection(&schema.name),
             chunks: distinct(&chunks)
@@ -152,41 +155,81 @@ where
         parent_doc_id: &str,
         plans: Vec<FieldChunks>,
     ) -> Result<Vec<DerivedWrite>> {
-        let mut missing = Vec::new();
+        let mut fields = Vec::new();
         let mut first_miss = None;
         for plan in plans {
-            let target = self.open(&plan.chunk_collection).await?;
-            let planned: RapidHashSet<&str> =
-                plan.chunks.iter().map(|(_, hash)| hash.as_str()).collect();
-            // TODO(https://github.com/sourcenetwork/defradb.rs/issues/3381): reuse trusts the vector of a chunk any peer sent.
-            let existing = target.existing_of(parent_doc_id, &planned).await?;
-            let mut docs = Vec::new();
-            for (text, hash) in plan.chunks {
-                if existing.contains(&hash) {
-                    continue;
-                }
-                let mut doc = Self::chunk_document(&target, parent_doc_id, text, hash.clone())?;
-                if let Some(miss) = self.embed(&target, &mut doc)? {
-                    first_miss.get_or_insert(miss);
-                }
-                docs.push((doc, hash));
-            }
-            missing.push((target, plan.encrypt, docs));
+            let FieldChunks {
+                collection,
+                field,
+                chunk_collection,
+                chunks,
+                encrypt,
+            } = plan;
+            let owner = ChunkOwner {
+                collection: &collection,
+                field: &field,
+                doc_id: parent_doc_id,
+            };
+            let (target, encrypt, docs) = self
+                .prepare_field(&owner, &chunk_collection, chunks, encrypt, &mut first_miss)
+                .await
+                .map_err(|error| owner.name_in(error))?;
+            fields.push((collection, field, target, encrypt, docs));
         }
         // TODO(https://github.com/sourcenetwork/defradb.rs/issues/3380): one deadline bounds the whole wave.
         if let Some(miss) = first_miss {
             return Err(QueryError::NeedsInput(miss));
         }
         let mut written = Vec::new();
-        for (target, encrypt, docs) in missing {
+        for (collection, field, target, encrypt, docs) in fields {
+            let owner = ChunkOwner {
+                collection: &collection,
+                field: &field,
+                doc_id: parent_doc_id,
+            };
             for (doc, hash) in docs {
-                written.push(
-                    self.create(&target, parent_doc_id, doc, hash, encrypt)
-                        .await?,
-                );
+                let write = self
+                    .create(&target, parent_doc_id, doc, hash, encrypt)
+                    .await
+                    .map_err(|error| owner.name_in(error))?;
+                written.push(write);
             }
         }
         Ok(written)
+    }
+
+    /// The chunk documents of one field that don't exist yet, with their
+    /// vectors from the memo. The first vector the memo lacks goes to
+    /// `first_miss`; every miss is noted in the memo.
+    async fn prepare_field(
+        &self,
+        owner: &ChunkOwner<'_>,
+        chunk_collection: &str,
+        chunks: Vec<(String, String)>,
+        encrypt: bool,
+        first_miss: &mut Option<PreparedInputRequest>,
+    ) -> Result<(ChunkCollection, bool, Vec<(Document, String)>)> {
+        let target = self.open(chunk_collection).await?;
+        // An update keeps the text encrypted when earlier writes did, even
+        // without the flag, so its chunks must be too.
+        let encrypt = encrypt || self.parent_encrypts(owner.doc_id, owner.field).await?;
+        // One scan per field: a lookup per chunk would cost a pass over the
+        // transaction's writes each time.
+        let planned: RapidHashSet<&str> = chunks.iter().map(|(_, hash)| hash.as_str()).collect();
+        // TODO(https://github.com/sourcenetwork/defradb.rs/issues/3381): reuse trusts the vector of a chunk any peer sent.
+        let existing = target.existing_of(owner.doc_id, &planned).await?;
+        let mut docs = Vec::new();
+        for (text, hash) in chunks {
+            if existing.contains(&hash) {
+                continue;
+            }
+            let mut doc = Self::chunk_document(&target, owner.doc_id, text, hash.clone())?;
+            if let Some(miss) = self.embed(&target, &mut doc)? {
+                first_miss.get_or_insert(miss);
+            }
+            docs.push((doc, hash));
+        }
+        Ok((target, encrypt, docs))
     }
 
     /// Deletes all chunk documents of `parent_doc_id`, old ones included.
@@ -197,13 +240,30 @@ where
     ) -> Result<Vec<DerivedWrite>> {
         let mut written = Vec::new();
         for chunked in &parent.chunked_fields {
-            let target = self.open(&chunked.collection(&parent.name)).await?;
-            for doc_short_id in target.chunks_of(parent_doc_id).await? {
-                if let Some(write) = self.delete(&target, doc_short_id).await? {
-                    written.push(write);
-                }
-            }
+            let owner = ChunkOwner {
+                collection: &parent.name,
+                field: &chunked.field_name,
+                doc_id: parent_doc_id,
+            };
+            self.delete_field(&owner, &chunked.collection(&parent.name), &mut written)
+                .await
+                .map_err(|error| owner.name_in(error))?;
         }
         Ok(written)
+    }
+
+    async fn delete_field(
+        &self,
+        owner: &ChunkOwner<'_>,
+        chunk_collection: &str,
+        written: &mut Vec<DerivedWrite>,
+    ) -> Result<()> {
+        let target = self.open(chunk_collection).await?;
+        for doc_short_id in target.chunks_of(owner.doc_id).await? {
+            if let Some(write) = self.delete(&target, owner, doc_short_id).await? {
+                written.push(write);
+            }
+        }
+        Ok(())
     }
 }
