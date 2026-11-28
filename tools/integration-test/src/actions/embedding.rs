@@ -33,7 +33,8 @@ pub fn embedding_of(text: &str) -> Vec<f64> {
 /// embeds under the model name it was asked with.
 struct Model {
     url: String,
-    embedded: Atom<Vec<(String, String)>>,
+    embedded: Atom<Vec<(String, Vec<String>)>>,
+    reject_text: Atom<Vec<(String, String)>>,
     /// The model names that answer every request with a server error.
     failing: Atom<Vec<String>>,
     runs: AtomicU64,
@@ -53,6 +54,7 @@ fn model() -> &'static Model {
         Model {
             url,
             embedded: Atom::new(Vec::new()),
+            reject_text: Atom::new(Vec::new()),
             failing: Atom::new(Vec::new()),
             runs: AtomicU64::new(0),
         }
@@ -83,7 +85,15 @@ fn answer(mut stream: TcpStream) {
         Value::String(text) => vec![text.clone()],
         other => serde_json::from_value(other.clone()).unwrap_or_default(),
     };
-    if model().failing.load_clone().contains(&name) {
+    if model().failing.load_clone().contains(&name)
+        || model()
+            .reject_text
+            .load_clone()
+            .iter()
+            .any(|(target, needle)| {
+                *target == name && texts.iter().any(|text| text.contains(needle))
+            })
+    {
         let _ = write!(
             stream,
             "HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
@@ -92,7 +102,7 @@ fn answer(mut stream: TcpStream) {
     }
     model().embedded.rcu(|embedded| {
         let mut embedded = embedded.clone();
-        embedded.extend(texts.iter().map(|text| (name.clone(), text.clone())));
+        embedded.push((name.clone(), texts.clone()));
         embedded
     });
     let data: Vec<Value> = texts
@@ -115,6 +125,10 @@ fn answer(mut stream: TcpStream) {
 pub struct EmbeddingModel {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub failing: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reject_text: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected_max_batch: Option<usize>,
     #[serde(default, skip_serializing_if = "Value::is_null")]
     pub expected_data: Value,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -166,18 +180,35 @@ impl Op for EmbeddingModel {
                 names
             });
         }
+        if let Some(needle) = &self.reject_text {
+            model.reject_text.rcu(|rules| {
+                let mut rules = rules.clone();
+                rules.push((name.clone(), needle.clone()));
+                rules
+            });
+        }
         let seen = state.captures[SEEN_CAPTURE].as_u64().unwrap_or(0) as usize;
-        let texts: Vec<String> = model
+        let batches: Vec<Vec<String>> = model
             .embedded
             .load_clone()
             .into_iter()
             .filter(|(model, _)| *model == name)
-            .map(|(_, text)| text)
+            .map(|(_, batch)| batch)
             .collect();
+        let new_batches = &batches[seen.min(batches.len())..];
+        if let Some(expected) = self.expected_max_batch {
+            let actual = new_batches.iter().map(Vec::len).max().unwrap_or_default();
+            if actual != expected {
+                return Err(Failure::operation(format!(
+                    "largest embedding batch had {actual} texts, expected {expected}"
+                )));
+            }
+        }
+        let texts: Vec<&String> = new_batches.iter().flatten().collect();
         state
             .captures
-            .insert(SEEN_CAPTURE.to_owned(), json!(texts.len()));
-        Ok(json!({ "embedded": texts[seen.min(texts.len())..] }))
+            .insert(SEEN_CAPTURE.to_owned(), json!(batches.len()));
+        Ok(json!({ "embedded": texts }))
     }
 }
 

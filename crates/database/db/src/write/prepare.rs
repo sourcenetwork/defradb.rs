@@ -7,6 +7,10 @@ use storage::corekv::Store;
 use crate::{block::builder::DocRef, database::DB};
 use defra_core::encryption::EncryptionConfig;
 
+mod embedding_batches;
+
+use embedding_batches::{resolve_embedding_batch, resolve_embeddings};
+
 #[derive(serde::Deserialize)]
 struct PreparedProjectionStage(
     String,
@@ -216,12 +220,14 @@ where
     S: Store + 'static,
 {
     match request.kind() {
-        query::prepared::PreparedInputKind::Embedding => resolve_embeddings(db, &[request])
-            .await?
-            .pop()
-            .ok_or_else(|| {
-                query::error::QueryError::execution("embedding service returned nothing")
-            }),
+        query::prepared::PreparedInputKind::Embedding => {
+            resolve_embedding_batch(db, None, &[request])
+                .await?
+                .pop()
+                .ok_or_else(|| {
+                    query::error::QueryError::execution("embedding service returned nothing")
+                })
+        }
         query::prepared::PreparedInputKind::Signature => {
             resolve_signatures(db, context, &[request])
                 .await?
@@ -530,7 +536,7 @@ where
         memo.insert_projection_authority(request, Arc::new(authority));
         answers[index] = Some(Arc::from(b"true".as_slice()));
     }
-    let ordinary_answers = resolve_inputs(db, context, ordinary).await?;
+    let ordinary_answers = resolve_inputs(db, context, Some(memo), ordinary).await?;
     for (index, answer) in ordinary_indices.into_iter().zip(ordinary_answers) {
         answers[index] = Some(answer);
     }
@@ -550,6 +556,7 @@ where
 pub(crate) async fn resolve_inputs<S>(
     db: &DB<S>,
     context: &defra_core::RequestContext,
+    memo: Option<&query::prepared::PreparedInputMemo>,
     requests: Vec<query::prepared::PreparedInputRequest>,
 ) -> query::error::Result<Vec<Arc<[u8]>>>
 where
@@ -579,16 +586,18 @@ where
         indices.iter().map(|index| &requests[*index]).collect()
     };
     let (signature_requests, embedding_requests) = (picked(&signatures), picked(&embeddings));
-    let (signed, embedded, fetched) = futures::future::try_join3(
-        resolve_signatures(db, context, &signature_requests),
-        resolve_embeddings(db, &embedding_requests),
-        futures::future::try_join_all(
-            others
-                .iter()
-                .map(|index| resolve_input(db, context, &requests[*index])),
+    let other_inputs = others
+        .iter()
+        .map(|index| resolve_input(db, context, &requests[*index]));
+    let (other_answers, embedded) = futures::join!(
+        futures::future::try_join(
+            resolve_signatures(db, context, &signature_requests),
+            futures::future::try_join_all(other_inputs),
         ),
-    )
-    .await?;
+        resolve_embeddings(db, memo, &embedding_requests),
+    );
+    let (signed, fetched) = other_answers?;
+    let embedded = embedded?;
     let mut answers: Vec<Option<Arc<[u8]>>> = vec![None; requests.len()];
     for (index, answer) in signatures
         .into_iter()
@@ -604,44 +613,6 @@ where
             answer.ok_or_else(|| {
                 query::error::QueryError::execution("an external input went unanswered")
             })
-        })
-        .collect()
-}
-
-/// Every embedding of a wave through the database's embedding service:
-/// each text once, from the cache when it holds it, all in flight at once.
-async fn resolve_embeddings<S>(
-    db: &DB<S>,
-    requests: &[&query::prepared::PreparedInputRequest],
-) -> query::error::Result<Vec<Arc<[u8]>>>
-where
-    S: Store + 'static,
-{
-    if requests.is_empty() {
-        return Ok(Vec::new());
-    }
-    let keys = requests
-        .iter()
-        .map(|request| {
-            crate::search::embedding::EmbeddingInput::decode(request.exact_request())
-                .map(crate::remote_inputs::Embedding::new)
-                .map_err(|error| {
-                    query::error::QueryError::execution(format!("embedding error: {error}"))
-                })
-        })
-        .collect::<query::error::Result<Vec<_>>>()?;
-    db.remote_inputs()
-        .embeddings()
-        .get_many(keys)
-        .await
-        .into_iter()
-        .map(|vector| {
-            let vector = vector.map_err(|error| {
-                query::error::QueryError::execution(format!("embedding error: {error}"))
-            })?;
-            serde_json::to_vec(&*vector)
-                .map(Arc::from)
-                .map_err(|error| query::error::QueryError::execution(error.to_string()))
         })
         .collect()
 }
@@ -846,7 +817,7 @@ impl<S: Store + 'static> crate::AutoCommitMutator<S> {
                             Err(crate::block::builder::BuildError::NeedsInput(request)) => {
                                 inputs
                                     .answer_wave(&request, |wave| {
-                                        resolve_inputs(&self.db, context, wave)
+                                        resolve_inputs(&self.db, context, Some(&inputs), wave)
                                     })
                                     .await?;
                             }

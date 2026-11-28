@@ -292,7 +292,7 @@ impl<S: Store + 'static> DocMutator for AutoCommitMutator<S> {
                 )
                 .await
             }
-            None => crate::write::prepare::resolve_inputs(&self.db, context, requests).await,
+            None => crate::write::prepare::resolve_inputs(&self.db, context, None, requests).await,
         }
     }
 
