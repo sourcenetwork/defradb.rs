@@ -11,13 +11,21 @@
 \*   1. nac         the caller may truncate collections on this node;
 \*   1b. chunk      the collection is not a chunk collection, whose documents
 \*                  only the writes to its parent may change;
-\*   2. branchable  a filtered truncate is refused on a branchable collection,
-\*                  whose history the documents share;
+\*   2. branchable  a filtered truncate of a branchable collection is let
+\*                  through (Go refuses it; left out, the RED refuses it too);
 \*   3. txn         a filtered truncate is refused inside a transaction;
 \*   4. shape       the filter is a filter: conditions, or source text that
 \*                  parses to conditions.
 \* An unfiltered truncate skips checks 2 to 4 (never the chunk check) and removes every document, in a
 \* transaction or not.
+\*
+\* Each document has a history: the blocks of its versions. A truncate
+\* removes a document's history with it, except that a filtered truncate of a
+\* branchable collection keeps the history of the documents it removes: the
+\* collection DAG links every version, so the purge only drops the documents'
+\* ownership of those blocks ("keephistory", purge.rs DB::purge_rows, modeled
+\* on its own in Purge.tla). An unfiltered truncate removes the whole
+\* collection DAG, so it takes every history, branchable or not.
 \*
 \* A materialized view keeps its rows in a cache of their own, apart from the
 \* documents. An unfiltered truncate of a view empties that cache too, so a
@@ -48,8 +56,8 @@
 \* answer, so the model explores every combination.
 \*
 \* What must never happen: a document removed for a caller without permission;
-\* a document removed from a chunk collection; a filtered truncate removing anything from a branchable collection; a
-\* filtered truncate removing a document that does not match in committed
+\* a document removed from a chunk collection; a filtered truncate of a branchable collection
+\* refused, or removing any history the collection DAG links; a filtered truncate removing a document that does not match in committed
 \* state; a filtered page purging a document a concurrent write moved out of
 \* the filter; a bounded retry losing committed partial progress; a metadata
 \* cleanup that ran out of retries reported as a success; a filter that is
@@ -58,8 +66,9 @@
 \*
 \* Code it models (crates/database/db/src/collection/ops/truncate/mod.rs):
 \*   DB::truncate_collection_as  the whole sequence, for every edge
-\*   DB::truncate_target         checks 1 to 3 in Go's order, with the chunk check
-\*                               (chunk/user_writes.rs ensure_admin_changeable) after nac
+\*   DB::truncate_target         checks 1 and 3 in Go's order, with the chunk check
+\*                               (chunk/user_writes.rs ensure_admin_changeable) after nac,
+\*                               and no refusal of a branchable collection (check 2)
 \*   conditions                  check 4: the filter's shape
 \*   DB::truncate                the delete, all (all.rs truncate_all) or matching (filtered.rs truncate_matching)
 \*   matching_doc_ids_in_attempt (filtered.rs) a page's matches read again in each attempt (MoveAfterSelection, "reread")
@@ -74,21 +83,25 @@ EXTENDS Naturals, FiniteSets   \* numbers to compare, and Cardinality to count d
 
 CONSTANTS
   Docs,      \* the documents in the collection
-  Enforced   \* which checks and steps the database really runs (a subset of the eleven)
+  Enforced   \* which checks and steps the database really runs (a subset of the twelve)
 
 \* At least two documents, so a filter can match some and not others.
 ASSUME Cardinality(Docs) >= 2
-\* Only the five named checks, the filtered-page reread, the view cache clear,
-\* the retry progress guard, the two search-record steps and the cleanup's
-\* error report can be enforced:
-\* "reread" chooses a filtered page's matches again just before purge,
+\* These twelve checks and steps can be enforced:
+\* "nac", "chunk", "txn" and "shape" are the named refusals the code runs;
+\* "allowbranchable" skips Go's refusal of a filtered truncate of a branchable
+\* collection; "reread" chooses a filtered page's matches again just before
+\* purge; "viewcache" clears a view's cached rows; and "progress" keeps the
+\* documents committed before a retry budget runs out.
 \* "seprefix" deletes the collection's `/se/` prefix on an unfiltered truncate,
 \* and "sesamespace" stores received records under that same datastore prefix
 \* rather than in the raw root store. "metaerror" returns the error of a
-\* metadata cleanup that ran out of retries to the caller.
-ASSUME Enforced \subseteq {"nac", "chunk", "branchable", "txn", "shape", "reread",
+\* metadata cleanup that ran out of retries to the caller. "keephistory" keeps
+\* the history of the documents a filtered truncate of a branchable collection
+\* removes.
+ASSUME Enforced \subseteq {"nac", "chunk", "allowbranchable", "txn", "shape", "reread",
                             "viewcache", "progress", "seprefix", "sesamespace",
-                            "metaerror"}
+                            "metaerror", "keephistory"}
 
 \* A document the node holds no copy of but received search records for.
 Unheld == {"unheld"}
@@ -112,13 +125,14 @@ VARIABLES
   isView,          \* the collection is a materialized view
   viewRows,        \* the rows the view's cache holds, one per document it showed
   seRecords,       \* the documents some search record still names
-  metaExhausted    \* the metadata cleanup ran out of retries
+  metaExhausted,   \* the metadata cleanup ran out of retries
+  history          \* the documents whose history blocks are still stored
 
 \* Every variable, for saying a step leaves them all as they are.
 vars == <<permitted, chunks, branchable, filtered, inTxn, shapeOk,
           committedMatch, txnMatch, step, contention, removed, committedChunks,
           refused, isView, viewRows, selectedMatch, currentMatch, seRecords,
-          metaExhausted>>
+          metaExhausted, history>>
 
 \* Every variable holds a value of the shape it should.
 TypeOK ==
@@ -141,6 +155,7 @@ TypeOK ==
   /\ viewRows \subseteq Docs
   /\ seRecords \subseteq Docs \cup Unheld
   /\ metaExhausted \in BOOLEAN
+  /\ history \subseteq Docs
 
 \* Any request against any collection can arrive; nothing is removed yet.
 Init ==
@@ -168,15 +183,24 @@ Init ==
   /\ seRecords = Docs \cup Unheld
   \* The cleanup has not run yet, so it has not run out of retries.
   /\ metaExhausted = FALSE
+  \* Every document's history is stored before the truncate.
+  /\ history = Docs
 
-\* Whether an enforced check fails for this request. Checks 2 to 4 apply only
-\* to a filtered truncate; the chunk check applies to every truncate.
-Refuse ==
+\* Whether an enforced check fails that every version of the code runs: the
+\* caller lacks permission, the collection holds chunks, or a filtered
+\* truncate runs in a transaction or carries something that is not a filter.
+OtherRefuse ==
   \/ "nac" \in Enforced /\ ~permitted
   \/ "chunk" \in Enforced /\ chunks
-  \/ filtered /\ "branchable" \in Enforced /\ branchable
   \/ filtered /\ "txn" \in Enforced /\ inTxn
   \/ filtered /\ "shape" \in Enforced /\ ~shapeOk
+
+\* Whether the request is refused: one of those checks fails, or, with the
+\* branchable check left out (Go's refusal), the request is a filtered
+\* truncate of a branchable collection.
+Refuse ==
+  \/ OtherRefuse
+  \/ filtered /\ "allowbranchable" \notin Enforced /\ branchable
 
 \* The documents the delete takes. Without a filter, all of them. A filter that
 \* is not one, let through, is read as no conditions and matches everything. A
@@ -202,7 +226,7 @@ Check ==
   /\ UNCHANGED <<permitted, chunks, branchable, filtered, inTxn, shapeOk,
                  committedMatch, selectedMatch, currentMatch, txnMatch, contention,
                  removed, committedChunks, isView, viewRows, seRecords,
-                 metaExhausted>>
+                 metaExhausted, history>>
 
 \* A write lands after a filtered page selected its matches and before a chunk
 \* is purged. It can move documents that are still there across the filter; a
@@ -220,21 +244,29 @@ MoveAfterSelection ==
   /\ selectedMatch' = selectedMatch
   /\ UNCHANGED <<permitted, chunks, branchable, filtered, inTxn, shapeOk,
                  txnMatch, contention, removed, committedChunks, refused, isView,
-                 viewRows, seRecords, metaExhausted>>
+                 viewRows, seRecords, metaExhausted, history>>
   \* Last, so every variable Targets reads already has its next value.
   /\ step' = IF Targets' \ removed = {} THEN "done" ELSE "delete"
 
 \* A filter matching no documents finishes without entering the delete loop.
 INV_EmptyFinishes == step = "delete" => Targets # {}
 
+\* Whether a removed document's history stays: only for a filtered truncate
+\* of a branchable collection, and only when the purge keeps it.
+KeepsHistory == filtered /\ branchable /\ "keephistory" \in Enforced
+
 \* The chunked delete: durable at once, outside any transaction. Each step
-\* removes one still-selected document. When the last one goes, a filtered
-\* truncate is finished; an unfiltered one goes on to clean up the
-\* collection's metadata (DB::truncate_documents).
+\* removes one still-selected document, and its history unless that history
+\* stays. When the last one goes, a filtered truncate is finished; an
+\* unfiltered one goes on to clean up the collection's metadata
+\* (DB::truncate_documents).
 Delete ==
   /\ step = "delete"
   /\ Targets \ removed # {}
-  /\ removed' = removed \cup {CHOOSE doc \in Targets \ removed : TRUE}
+  \* The one document this chunk removes, and what is left of the histories.
+  /\ LET doc == CHOOSE d \in Targets \ removed : TRUE
+     IN /\ removed' = removed \cup {doc}
+        /\ history' = IF KeepsHistory THEN history ELSE history \ {doc}
   /\ committedChunks' = removed'
   /\ step' = IF Targets \ removed' # {} THEN "delete"
              ELSE IF filtered THEN "done"
@@ -264,7 +296,8 @@ Metadata ==
          ELSE seRecords
   /\ UNCHANGED <<permitted, chunks, branchable, filtered, inTxn, shapeOk,
                  committedMatch, selectedMatch, currentMatch, txnMatch, contention,
-                 removed, committedChunks, refused, isView, metaExhausted>>
+                 removed, committedChunks, refused, isView, metaExhausted,
+                 history>>
 
 \* The metadata cleanup meets a writer that conflicts with every retry and runs
 \* out of its budget. Every chunk already committed, so every document stays
@@ -283,7 +316,7 @@ MetadataExhaust ==
   /\ step' = "done"
   /\ UNCHANGED <<permitted, chunks, branchable, filtered, inTxn, shapeOk,
                  committedMatch, selectedMatch, currentMatch, txnMatch, contention,
-                 removed, committedChunks, isView, viewRows, seRecords>>
+                 removed, committedChunks, isView, viewRows, seRecords, history>>
 
 \* A later chunk can exhaust its retry budget after earlier chunks committed.
 \* The documents committed by earlier chunks stay removed; the rest is refused.
@@ -298,7 +331,8 @@ Exhaust ==
   /\ step' = "done"
   /\ UNCHANGED <<permitted, chunks, branchable, filtered, inTxn, shapeOk,
                  committedMatch, selectedMatch, currentMatch, txnMatch, contention,
-                 committedChunks, isView, viewRows, seRecords, metaExhausted>>
+                 committedChunks, isView, viewRows, seRecords, metaExhausted,
+                 history>>
 
 \* Each step of a request is a check, a chunk deleted, a retry budget
 \* exhausted, a concurrent write landing between a filtered page's
@@ -323,8 +357,19 @@ INV_NoRemovalWithoutPermission == removed # {} => permitted
 \* A truncate removes nothing from a chunk collection.
 INV_NoRemovalFromChunks == chunks => removed = {}
 
-\* A filtered truncate removes nothing from a branchable collection.
-INV_FilteredNeverOnBranchable == (filtered /\ branchable) => removed = {}
+\* A filtered truncate of a branchable collection is never refused for being
+\* branchable: a request that ended with an error without contention failed
+\* one of the other checks.
+INV_FilteredOnBranchableAllowed ==
+  (step = "done" /\ refused /\ ~contention /\ filtered /\ branchable) => OtherRefuse
+
+\* A filtered truncate of a branchable collection keeps every document's
+\* history, the removed documents' included.
+INV_FilteredKeepsBranchableHistory == (filtered /\ branchable) => history = Docs
+
+\* Any other truncate removes a document's history with the document, and
+\* only that document's.
+INV_HistoryGoesWithItsDocument == ~(filtered /\ branchable) => history = Docs \ removed
 
 \* A filtered truncate removes only documents that match in committed state.
 INV_FilteredRemovesOnlyCommittedMatches == filtered => removed \subseteq committedMatch

@@ -24,6 +24,7 @@ mod request_context;
 mod same_part_reruns;
 mod same_request;
 mod size_constraint;
+mod stale_doc_scope;
 mod unchanged_fields;
 mod update;
 mod version_key;

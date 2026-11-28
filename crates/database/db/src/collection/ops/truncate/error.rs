@@ -4,10 +4,6 @@ use crate::error::Error;
 /// DefraDB has carries Go's text.
 #[derive(Debug, thiserror::Error)]
 pub enum TruncateError {
-    /// A filtered truncate on a branchable collection, whose shared history
-    /// cannot be split by document.
-    #[error("filtered truncate is not supported for branchable collections")]
-    FilteredBranchable,
     /// A filtered truncate in an explicit transaction: truncate is not
     /// transactional.
     #[error("filtered truncate cannot run in a transaction")]

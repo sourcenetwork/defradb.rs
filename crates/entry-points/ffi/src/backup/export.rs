@@ -10,6 +10,7 @@ use crate::{ffi_async_ok, ffi_entry, try_ffi, ERR_INVALID_NODE_HANDLE};
 /// Exports the documents of the comma-separated `collections` (every
 /// collection for null or empty) to the file `filepath`, as JSON (`format`
 /// "json", the default for null or empty), indented when `pretty` is set.
+/// The caller needs the `DocumentRead` node permission.
 ///
 /// # Safety
 ///
@@ -41,7 +42,8 @@ pub unsafe fn defra_backup_export(
         ffi_async_ok!(node_ptr, {
             let json_output =
                 db::backup::export_database_as(&context, &database, &runner, &collections, pretty)
-                    .await?;
+                    .await
+                    .map_err(|error| error.to_string())?;
 
             // Written to a temporary file and renamed, so a failed export
             // never leaves a partial file at `filepath`.

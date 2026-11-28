@@ -11,7 +11,8 @@ const CHUNK_SIZE: usize = 1000;
 
 impl<S: Store> crate::database::DB<S> {
     /// Delete the documents of `collection` that `filter` matches, with their
-    /// unshared history, keeping the collection; the number of documents.
+    /// unshared history, keeping the collection; the number of documents. In
+    /// a branchable collection their history stays, as a purge keeps it.
     pub(super) async fn truncate_matching(
         self: &Arc<Self>,
         collection: &Collection,

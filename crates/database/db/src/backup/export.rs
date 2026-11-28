@@ -1,19 +1,23 @@
 use std::sync::Arc;
 
+use acp::nac::NodePermission;
 use serde_json::{Map, Value as JsonValue};
 
 use storage::corekv::Store;
 
-use super::classify_schema_fields;
+use super::{classify_schema_fields, BackupError};
 use crate::DB;
 
 /// [`export_database_as`] in [`defra_core::RequestContext::ambient`].
-pub async fn export_database<S: Store>(
+pub async fn export_database<S>(
     database: &Arc<DB<S>>,
     runner: &Arc<dyn query::QueryExecutor>,
     collections: &[String],
     pretty: bool,
-) -> Result<String, String> {
+) -> Result<String, BackupError>
+where
+    S: Store,
+{
     export_database_as(
         &defra_core::RequestContext::ambient(),
         database,
@@ -24,23 +28,43 @@ pub async fn export_database<S: Store>(
     .await
 }
 
-/// Export database contents to a JSON string.
+/// Go's `BasicExport`: the documents of `collections` (every collection when
+/// empty) as the JSON a backup file holds, read as the identity acting in
+/// `context`, which needs the `DocumentRead` node permission. The caller
+/// writes the file.
 ///
 /// Three-phase export:
 /// - Phase 1: Query all docs, compute initial _docIDNew (including FK fields)
 /// - Phase 2: Remap FK values to _docIDNew and recompute _docIDNew
 /// - Phase 3: Build export output
-///
-/// If `collections` is empty, all collections are exported.
-/// Returns the JSON string (not written to file: the caller handles I/O). The
-/// documents are read as the identity acting in `context`.
-pub async fn export_database_as<S: Store>(
+pub async fn export_database_as<S>(
     context: &defra_core::RequestContext,
     database: &Arc<DB<S>>,
     runner: &Arc<dyn query::QueryExecutor>,
     collections: &[String],
     pretty: bool,
-) -> Result<String, String> {
+) -> Result<String, BackupError>
+where
+    S: Store,
+{
+    database
+        .check_node_access_as(context, NodePermission::DocumentRead)
+        .await?;
+    export(context, database, runner, collections, pretty)
+        .await
+        .map_err(BackupError::Export)
+}
+
+async fn export<S>(
+    context: &defra_core::RequestContext,
+    database: &Arc<DB<S>>,
+    runner: &Arc<dyn query::QueryExecutor>,
+    collections: &[String],
+    pretty: bool,
+) -> Result<String, String>
+where
+    S: Store,
+{
     let identity = context
         .identity()
         .map(identity::Did::new)

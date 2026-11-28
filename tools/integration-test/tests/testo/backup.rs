@@ -1,6 +1,8 @@
 mod duplicate_alias;
 mod failed_import;
 mod import_creator;
+mod node_access;
+mod print_dump;
 mod signed_import;
 mod one_to_many {
     mod export;

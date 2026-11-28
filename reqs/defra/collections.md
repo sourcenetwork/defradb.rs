@@ -410,6 +410,16 @@ A document re-added after truncate gets the same docID and the same head CID as 
 
 A truncate limited to certain documents removes only those (idempotently on retry), matches large integers exactly (2^53 vs 2^53+1), works through plain and unique secondary indexes, and frees a unique value so a document with it can be created again.
 
+# `defra.collection.truncate.filter_branchable`: A filtered truncate of a branchable collection keeps its history
+
+- **Parents:** ["go.collection.truncate"]
+- **Scenarios:** ["collection::truncate::branchable_filter::filtered_truncate_of_a_branchable_collection_removes_only_the_matches", "collection::truncate::branchable_filter::filtered_truncate_of_a_branchable_collection_keeps_its_history", "collection::truncate::branchable_filter::a_document_truncated_from_a_branchable_collection_can_be_added_again", "collection::truncate::branchable_filter::a_peer_update_restores_a_document_truncated_from_a_branchable_collection", "collection::truncate::branchable_filter::a_fresh_peer_sync_restores_a_document_truncated_from_a_branchable_collection", "db::collection::purge::purge_keeps_a_branchable_collections_history"]
+- **Scope:** "all clients except go-http, which follows `.github/testo/divergences.txt`: Go's parity pin refuses it with `filtered truncate is not supported for branchable collections`"
+
+A filtered truncate of a `@branchable` collection is not refused. It removes the matching documents as a purge does (`defra.purge.history`): with `Users @branchable { name: String @index(unique: true) }` holding John and Jane, truncating with `{name: {_eq: "John"}}` leaves only Jane. Every block of John's history stays stored, since the collection DAG links it, and no longer names John as an owner; both collection blocks stay listed. `_commits` lists six blocks before the truncate and four after: John's field and composite blocks are no longer listed, as no document holds them. Querying `_commits(cid: <John's composite CID>)` finds the kept block, while `_commits(docID: <John>)` is empty. John can be added again with the same DocID because the unique value was freed, and `_commits(docID: <John>)` lists his field and composite blocks again.
+
+A peer that still holds John may update him after the truncate. Pulling the article back from that peer restores John with both fields and the new age rather than leaving a partial document with a null field. A fresh peer that syncs the branchable collection also gets John back whole from that history.
+
 # `defra.collection.truncate.other_collections`: Truncate leaves other collections intact
 
 - **Parents:** ["go.collection.truncate"]
@@ -437,6 +447,13 @@ A migration whose lens gives two documents the same value of a unique index stil
 - **Scenarios:** ["view::simple::with_unique_index::view_materialized_transform_giving_two_items_one_unique_value", "view::simple::with_unique_index::view_transform_giving_two_items_one_unique_value"]
 
 A view's items are not indexed, so a unique index a view declares refuses nothing: with `User { name: String }` holding `John` and `Fred`, a view `UserView { name: String, age: Int @index(unique: true) }` over `User { name }` whose `set-default` lens sets `age` to 23 returns both items for `UserView(filter: {age: {_eq: 23}})`, whether or not the view is materialized, and `RefreshViews` succeeds. A materialized view's cache holds every field the view declares, including fields only its lens produces, so the materialized view returns `age: 23` for both items as the non-materialized one does.
+
+# `defra.view.add_checks`: Every client adds a view through the same checks
+
+- **Parents:** ["go.view"]
+- **Scenarios:** ["view::simple::with_policy::add_view_with_an_unknown_policy_fails_and_creates_no_view", "view::simple::with_multiple_sources::add_view_with_two_source_selections_fails_and_creates_no_view"]
+
+`AddView`, `RefreshViews` and the downsample GC answer the same through the embedded node, FFI, the CLI, the embedded node's HTTP server and the HTTP server `defradb start` runs. `AddView` checks, in this order, and stops at the first refusal: the caller holds `add-view`; the SDL parses against the known collections, those the transaction created included (`view SDL parse error: <reason>`); the source query parses and selects exactly one source (`view query parse error: <reason>`, `invalid view query: no selections found`, `invalid view query: multiple selections found`); a lens CID, when given, is not blank (`cid too short`); no view field is a chunk; each downsample definition is valid (`invalid downsample definition: <reason>`); on a node with document ACP, each `@policy` names a policy and resource the node holds (`schema policy validation error: policyID specified does not exist with acp` for an unknown policy); and the acting identity is a DID (`malformed acting identity: <reason>`). It then creates every view of the SDL or none (`create view collection error: <reason>`; a lens CID the node holds no lens for fails with `lens CID not found: <cid>`), and builds the materialized views and bootstraps the downsamples once that commit lands (`refresh materialized views error: <reason>`, `bootstrap downsample collections error: <reason>`). `RefreshViews` checks `refresh-view` and fails with `refresh materialized views error: <reason>`; the GC checks `gc-view`.
 
 # `defra.wasm.collection_objects`: The wasm client returns Go-shaped collection version objects
 

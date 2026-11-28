@@ -22,12 +22,23 @@
 //! `inherited_encryption`, mirroring Go's `determineBlockEncryption` in
 //! `internal/core/block/store.go`.
 //!
-//! Inheritance is per field and requires a previous head. A field first
-//! written by an update has none, so on a document encrypted as a whole it
-//! falls back to the document-level policy recorded by the composite block's
-//! encryption link, which mints it a key rather than leaving it in the clear.
-//! Go writes that field in plaintext instead (its head set is per-field,
-//! `internal/core/block/store.go`); this is a deliberate divergence.
+//! One function decides each field's next block (`db`'s
+//! `field_encryption_source`):
+//! - (a) an explicit config naming the field wins;
+//! - (b) a field with heads follows them, as Go's `determineBlockEncryption`:
+//!   the first encrypted head's link, else plaintext;
+//! - (c) a field with no heads gets a fresh document-scope key only when the
+//!   document has a field and every field is encrypted under (b), and is
+//!   plaintext otherwise.
+//!
+//! Composites, the delete tombstone included, never link an `Encryption`
+//! block, as in Go (store.go `addDelta` encrypts only field deltas), so an
+//! `encrypt: true` create gets Go's docID. Two divergences from Go remain,
+//! both from (c), since Go writes every field with no heads in plaintext: a
+//! field an update writes first on an `encrypt: true` document is encrypted,
+//! and so is one on a document whose every written field was listed in
+//! `encryptedFields`, since nothing in the DAG tells that create from an
+//! `encrypt: true` one.
 //!
 //! Reusing one key across a field's history is sound because every delta is
 //! sealed with a fresh random 96-bit nonce (see `crypto::encryption::nonce`).
