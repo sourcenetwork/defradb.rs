@@ -44,7 +44,7 @@ libp2p-stream = { workspace = true, optional = true }
 net = { path = "../../building-blocks/net", features = ["libp2p"], optional = true }
 # The host resolver configuration the DNS layers read, with a fallback when
 # it lists no nameservers; the same version and features libp2p-dns uses.
-hickory-resolver = { version = "0.25.2", default-features = false, features = ["system-config"], optional = true }
+hickory-resolver = { version = "0.26.4", default-features = false, features = ["system-config"], optional = true }
 
 # Async
 async-trait = { workspace = true }
@@ -80,8 +80,8 @@ serde_ipld_dagcbor = { workspace = true }
 # Errors
 thiserror = { workspace = true }
 tracing = { workspace = true }
-rlimit = { version = "0.11", optional = true }
-sysinfo = { version = "0.39", optional = true }
+rlimit = { version = "0.12", optional = true }
+sysinfo = { version = "0.40", optional = true }
 
 # Bytes
 bytes = { workspace = true }
