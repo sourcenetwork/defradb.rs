@@ -23,6 +23,18 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
         self.subscriptions.collections.is_live(collection_id)
     }
 
+    /// Whether this node explicitly subscribed to the collection.
+    pub(super) fn is_explicitly_subscribed_collection(&self, collection_id: &str) -> bool {
+        self.subscriptions.collections.is_subscribed(collection_id)
+    }
+
+    /// Whether `peer_id` restored an outbound replicator for the collection.
+    pub(super) fn is_restored_replicator_live(&self, collection_id: &str, peer_id: &str) -> bool {
+        self.subscriptions
+            .collections
+            .is_replicator_live(collection_id, peer_id)
+    }
+
     /// The shared set of documents this node follows.
     pub fn followed_documents(&self) -> Arc<super::FollowedDocuments> {
         Arc::clone(&self.access.followed_documents)
@@ -47,7 +59,7 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
             .authorizer
             .peer_authorized_for_collection(peer_id_str, collection_id)
             .await
-            || self.is_locally_subscribed_collection(collection_id)
+            || self.is_explicitly_subscribed_collection(collection_id)
         {
             return Ok(());
         }

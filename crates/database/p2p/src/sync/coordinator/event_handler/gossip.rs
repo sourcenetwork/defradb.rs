@@ -147,18 +147,23 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
         let topic_matches_collection = topic == message.collection_id;
         let topic_matches_document = !message.doc_id.is_empty() && topic == message.doc_id;
         let is_subscribed = self.is_locally_subscribed_collection(&message.collection_id);
+        let is_explicitly_subscribed =
+            self.is_explicitly_subscribed_collection(&message.collection_id);
         let is_open_access = self.access.access_mode.is_open();
         let is_outbound_replicator_target =
             self.is_registered_replicator(propagation_source.as_str(), &message.collection_id);
+        let is_restored_replicator_live =
+            self.is_restored_replicator_live(&message.collection_id, propagation_source.as_str());
         let is_direction_filtered = !topic_matches_document
             && topic_matches_collection
             && is_outbound_replicator_target
-            && !is_subscribed;
+            && !is_explicitly_subscribed
+            && !is_restored_replicator_live;
+        let accepts_collection_gossip =
+            is_open_access || is_explicitly_subscribed || is_restored_replicator_live;
 
         if !topic_matches_document
-            && (!topic_matches_collection
-                || is_direction_filtered
-                || (!is_open_access && !is_subscribed))
+            && (!topic_matches_collection || is_direction_filtered || !accepts_collection_gossip)
         {
             if is_direction_filtered {
                 self.access
@@ -174,6 +179,8 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
                 topic_matches_document,
                 is_subscribed,
                 is_outbound_replicator_target,
+                is_explicitly_subscribed,
+                is_restored_replicator_live,
                 is_direction_filtered,
                 "Dropping GossipSub message outside accepted replication policy"
             );

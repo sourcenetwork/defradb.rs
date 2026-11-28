@@ -62,6 +62,11 @@ where
     /// Topics whose transport installation succeeded and that were not
     /// removed since.
     live: CollectionSet,
+    /// Collections explicitly subscribed by this node.
+    subscribed: CollectionSet,
+    /// Peers whose restored outbound replicator keeps a live collection
+    /// topic open for gossip ingress.
+    replicator_live: HopscotchMap<String, Vec<String>, RandomState>,
     /// Collections whose reconciler runs.
     reconciling: CollectionSet,
     broadcaster: Broadcaster<T>,
@@ -106,6 +111,8 @@ where
             shared: Arc::new(Shared {
                 store,
                 live: HopscotchMap::with_hasher(RandomState::default()),
+                subscribed: HopscotchMap::with_hasher(RandomState::default()),
+                replicator_live: HopscotchMap::with_hasher(RandomState::default()),
                 reconciling: HopscotchMap::with_hasher(RandomState::default()),
                 broadcaster,
                 shutdown,
@@ -116,6 +123,19 @@ where
     /// Whether this node has joined the collection's topic.
     pub(super) fn is_live(&self, collection_id: &str) -> bool {
         self.shared.live.contains_key(collection_id)
+    }
+
+    /// Whether this node explicitly subscribed to the collection.
+    pub(super) fn is_subscribed(&self, collection_id: &str) -> bool {
+        self.shared.subscribed.contains_key(collection_id)
+    }
+
+    /// Whether `peer_id` restored an outbound replicator for the collection.
+    pub(super) fn is_replicator_live(&self, collection_id: &str, peer_id: &str) -> bool {
+        self.shared
+            .replicator_live
+            .get(collection_id)
+            .is_some_and(|peers| peers.iter().any(|peer| peer == peer_id))
     }
 
     /// Subscribes the collections: the durable change, then the transport
@@ -129,6 +149,9 @@ where
             return Ok(0);
         }
         let desired_added = self.shared.store.add_collections(&requested).await?;
+        for collection_id in &requested {
+            self.shared.subscribed.insert(collection_id.clone(), ());
+        }
         let missing = requested
             .into_iter()
             .filter(|collection_id| !self.is_live(collection_id))
@@ -156,6 +179,10 @@ where
             return Ok(0);
         }
         self.shared.store.remove_collections(&requested).await?;
+        for collection_id in &requested {
+            self.shared.subscribed.remove(collection_id);
+            self.shared.replicator_live.remove(collection_id);
+        }
         let count = requested.len();
         let (removed, failure) = self.shared.change_all(requested, TopicChange::Remove).await;
         tracing::debug!(
@@ -183,6 +210,9 @@ where
             .shared
             .change_all(collections.clone(), TopicChange::Install)
             .await;
+        for collection_id in &collections {
+            self.shared.subscribed.insert(collection_id.clone(), ());
+        }
         if let Some(error) = failure {
             tracing::warn!(
                 error = %error,
@@ -204,11 +234,46 @@ where
         Ok(collections)
     }
 
+    /// Install a collection topic for a restored outbound replicator
+    /// without adding it to the node's durable P2P collection set.
+    pub(super) async fn restore_replicator(
+        &self,
+        collection_id: &str,
+        peer_id: &str,
+    ) -> Result<bool> {
+        let mut peers = self
+            .shared
+            .replicator_live
+            .remove(collection_id)
+            .unwrap_or_default();
+        if !peers.iter().any(|peer| peer == peer_id) {
+            peers.push(peer_id.to_string());
+        }
+        self.shared
+            .replicator_live
+            .insert(collection_id.to_string(), peers);
+        if self.is_live(collection_id) {
+            return Ok(false);
+        }
+        self.shared
+            .change_topic(collection_id, TopicChange::Install)
+            .await
+    }
+
     /// Marks a topic live without a transport call, for tests that start
     /// from a joined topic.
     #[cfg(test)]
     pub(super) fn insert_live(&self, collection_id: &str) {
         self.shared.live.insert(collection_id.to_owned(), ());
+        self.shared.subscribed.insert(collection_id.to_owned(), ());
+    }
+
+    #[cfg(test)]
+    pub(super) fn insert_replicator_live(&self, collection_id: &str, peer_id: &str) {
+        self.shared.live.insert(collection_id.to_owned(), ());
+        self.shared
+            .replicator_live
+            .insert(collection_id.to_owned(), vec![peer_id.to_owned()]);
     }
 }
 
@@ -330,6 +395,20 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
             .subscribe_collections(&[collection_id.to_string()])
             .await?;
         Ok(subscribed == 1)
+    }
+
+    /// Restore the collection topic a persisted replicator had live before
+    /// restart. The topic stays out of the durable P2P collection set, and
+    /// gossip ingress from it is admitted only for `peer_id`.
+    pub async fn restore_replicator_collection(
+        &self,
+        collection_id: &str,
+        peer_id: &str,
+    ) -> Result<bool> {
+        self.subscriptions
+            .collections
+            .restore_replicator(collection_id, peer_id)
+            .await
     }
 
     /// Subscribe to collection topics as one durable, bounded batch.

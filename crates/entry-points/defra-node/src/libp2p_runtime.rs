@@ -360,7 +360,7 @@ where
     );
 
     let restore_peerstore = Peerstore::new(store.clone()).with_max_txn_retries(max_txn_retries);
-    restore_libp2p_replicators(&handle, &restore_peerstore).await;
+    restore_libp2p_replicators(&coordinator, &restore_peerstore).await;
     let restored_doc_ids = restore_libp2p_documents(
         &handle,
         &restore_peerstore,
