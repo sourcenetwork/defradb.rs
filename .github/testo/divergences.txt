@@ -71,6 +71,14 @@ testo query::relation_order_with_filter::selected_relation_id::indexed
 testo query::relation_order_with_filter::selected_relation_id_unfiltered::indexed
 testo query::relation_order_with_filter::selected_relation_id_unfiltered_with_limit::indexed
 testo query::relation_order_with_filter::selected_relation_id_with_limit::indexed
+# Go drops the whole logical filter when it contains a secondary relation ID and a scalar sibling.
+testo query::one_to_one::with_filter_nested_secondary_relation_id::or_with_secondary_relation_id_and_sibling_matches_either
+# Go loses the relation joins inside a logical filter that contains a secondary relation ID.
+testo query::one_to_one::with_filter_nested_secondary_relation_id::deeply_nested_secondary_relation_id_is_evaluated
+# Go does not preserve a selected relation while evaluating a nested secondary relation ID.
+testo query::one_to_one::with_filter_nested_secondary_relation_id::nested_secondary_relation_id_keeps_selected_relation
+# Go lets a filtered relation selection hide the parent ID used by the logical filter.
+testo query::one_to_one::with_filter_nested_secondary_relation_id::filtered_relation_selection_does_not_hide_the_parent_id
 # An execute explain whose plan fails while it runs: Go reports the error as two `executionErrors` entries; Rust reports it once.
 testo explain::simple::with_invalid_request::execute_explain_reports_a_run_time_failure_in_execution_errors
 # Rust counts the vector-index entries read; Go reports one fetch for the whole vector search

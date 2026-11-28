@@ -375,6 +375,7 @@ impl Planner {
         let filter_parts = self.prepare_filter(select, &collection, &computed_field_names)?;
         let scalar_filter = filter_parts.scalar_filter;
         let relation_filter = filter_parts.relation_filter;
+        let filter_for_relation_paths = filter_parts.filter_for_relation_paths;
         let filter_for_plan = filter_parts.filter_for_plan;
         let is_complex_filter = filter_parts.is_complex_filter;
 
@@ -591,7 +592,7 @@ impl Planner {
         // already handles it via apply_multi_level_sub_joins.
         // Example: Book(filter: {author: {published: {rating: {_eq: 4.9}}}}) { name }
         // (no author selection, so we need to add the full join chain here)
-        if let Some(ref filter) = filter_for_plan {
+        if let Some(ref filter) = filter_for_relation_paths {
             // Get relation names from selection
             let selected_relation_names: Vec<&str> = select
                 .fields
@@ -650,8 +651,7 @@ impl Planner {
                 .collect();
 
             // Get relation names that are already handled as part of multi-level paths
-            let multi_level_first_relations: Vec<String> = select
-                .filter
+            let multi_level_first_relations: Vec<String> = filter_for_relation_paths
                 .as_ref()
                 .map(|f| {
                     self.relation_filter_paths(f, &collection)

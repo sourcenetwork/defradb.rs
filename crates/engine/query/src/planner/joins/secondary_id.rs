@@ -71,29 +71,19 @@ impl Planner {
                 continue; // Only handle secondary relations
             }
 
-            let already_joined = synthetic_order_relations.contains(relation_name)
-                || select
-                    .fields
-                    .iter()
-                    .any(|f| matches!(f, Requestable::Select(s) if s.field.name == relation_name));
-
-            let filter_conditions = select
-                .filter
-                .as_ref()
-                .and_then(|filter| filter.conditions().get(field_name.as_str()));
+            let selected_join_owns_id = select.fields.iter().any(|field| {
+                matches!(field, Requestable::Select(select)
+                    if select.field.name == relation_name
+                        && select.filter.is_none()
+                        && select.doc_ids.is_none())
+            });
+            let already_joined =
+                synthetic_order_relations.contains(relation_name) || selected_join_owns_id;
 
             if already_joined {
-                // The selection or order join owns this relation and fills its ID.
-                // A second join would discard the fields that join selected.
-                continue;
-            }
-
-            // The relation itself may have been joined for an object filter even
-            // when only its ID is filtered on.
-            if select.fields.iter().all(|requestable| {
-                !matches!(requestable, Requestable::Field(field) if field.name == *field_name)
-            }) && filter_conditions.is_none()
-            {
+                // An unfiltered selection or order join owns this relation and
+                // fills its ID. A filtered selection does not: its child may be
+                // hidden, but the parent ID still has to be evaluated.
                 continue;
             }
 

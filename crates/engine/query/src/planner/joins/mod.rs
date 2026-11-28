@@ -92,6 +92,13 @@ impl Planner {
             .iter()
             .map(|s| s.field.name.as_str())
             .collect();
+        plan = self.apply_secondary_id_joins(
+            plan,
+            &mut mapping,
+            select,
+            parent_collection,
+            &synthetic_order_relations,
+        )?;
         for syn_select in &synthetic_order_selects {
             selects_to_process.push((syn_select, None));
         }
@@ -133,13 +140,6 @@ impl Planner {
             parent_collection,
             parent_filter,
             &joined_relations,
-        )?;
-        plan = self.apply_secondary_id_joins(
-            plan,
-            &mut mapping,
-            select,
-            parent_collection,
-            &synthetic_order_relations,
         )?;
         plan = self.apply_aggregate_joins(
             plan,
