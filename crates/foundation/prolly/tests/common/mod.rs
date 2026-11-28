@@ -52,8 +52,4 @@ impl Store for Counting<'_> {
     async fn put(&mut self, _node: Node) -> prolly::Result<Hash> {
         unreachable!("reading only")
     }
-
-    async fn flush(&mut self) -> prolly::Result<()> {
-        Ok(())
-    }
 }

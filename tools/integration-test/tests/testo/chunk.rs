@@ -1,6 +1,9 @@
+mod access_events;
 mod access_grant;
+mod access_p2p;
 mod access_parent;
 mod access_support;
+mod access_verify;
 mod backup_round_trip;
 mod declare_already_exists;
 mod declare_collection;

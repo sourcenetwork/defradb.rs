@@ -3,8 +3,9 @@
 //! A record is one version byte followed by a JSON object. Version 1 holds
 //! the fields of [`OwedChange`] under their own names, with the tuple's
 //! fields beside the others, and every enum as an object tagged by `kind` in
-//! snake case (`op` is the bare string `add` or `delete`). A reader ignores
-//! fields it does not know, so a later version of the same byte may add some.
+//! snake case (`op` is the bare string `add`, `delete`, `archive` or
+//! `transfer`). A reader ignores fields it does not know, so a later version
+//! of the same byte may add some.
 //!
 //! `authority_checked` is such a field. It is written only when it is
 //! `false`, and a record without it reads as checked, so a record of a
@@ -97,6 +98,16 @@ pub enum OwedOp {
     /// removes every relationship on it and its owner no longer counts. Its
     /// tuple is [`OwedTuple::archive`].
     Archive,
+    /// Give the object to another owner: the provider names the tuple's
+    /// subject as its owner, and the change's actor, its owner until then,
+    /// keeps nothing by ownership. Every other relationship on the object
+    /// stays. Its tuple is [`OwedTuple::transfer`]. It is sent only once
+    /// every earlier change on its object is decided, and every later
+    /// change on its object waits for it
+    /// (`crate::ExternalDocumentAcp` `held_by_transfer`); from its commit
+    /// until it settles its actor is denied on the object
+    /// ([`crate::OwedDenial::Always`]).
+    Transfer,
 }
 
 /// The subject of an owed tuple, in a form this module owns: the stored
@@ -172,6 +183,26 @@ pub struct OwedTuple {
 }
 
 impl OwedTuple {
+    /// The tuple a transfer of one object to `new_owner` is recorded under:
+    /// the owner relation, naming the new owner.
+    pub fn transfer(policy_id: &str, resource: &str, object: &str, new_owner: Did) -> Self {
+        Self {
+            policy_id: policy_id.to_owned(),
+            resource: resource.to_owned(),
+            object: object.to_owned(),
+            relation: crate::relation::OWNER_RELATION.to_owned(),
+            subject: OwedSubject::Actor { did: new_owner },
+        }
+    }
+
+    /// The new owner a transfer recorded under this tuple names.
+    pub fn new_owner(&self) -> Option<&Did> {
+        match &self.subject {
+            OwedSubject::Actor { did } => Some(did),
+            _ => None,
+        }
+    }
+
     /// The tuple an archive of one object is recorded under: no relation,
     /// and every subject, since it takes them all.
     pub fn archive(policy_id: &str, resource: &str, object: &str) -> Self {

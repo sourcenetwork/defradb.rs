@@ -319,10 +319,9 @@ impl<S: Store + 'static, B: blockstore::Blockstore + 'static> DbMergeHandler<S, 
         self.prefill_batch_keys(blocks, &kms_contexts, &retry_deks)
             .await;
 
-        let mut prepared = self.clone();
         let result = loop {
             let attempt = BatchMergeRetryAttempt {
-                handler: prepared.clone(),
+                handler: self.clone(),
                 blocks: blocks.to_vec(),
                 retry_deks: retry_deks.clone(),
                 prefetch_requested: prefetch_requested.clone(),
@@ -342,11 +341,6 @@ impl<S: Store + 'static, B: blockstore::Blockstore + 'static> DbMergeHandler<S, 
                         });
                 }
                 Err(error) => match error.downcast_abort::<MergeError>() {
-                    Ok(MergeError::NeedsRegistration(lookup)) => {
-                        if let Err(error) = prepared.resolve_registration(*lookup).await {
-                            break Err(error);
-                        }
-                    }
                     Ok(MergeError::NeedsBatchDecryptionKey {
                         block_index,
                         encryption_cid,

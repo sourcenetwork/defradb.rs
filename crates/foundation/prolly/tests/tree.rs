@@ -199,10 +199,6 @@ fn every_stored_node_stays_near_the_byte_cap() {
             self.largest = self.largest.max(node.encode().len());
             self.inner.put(node).await
         }
-
-        async fn flush(&mut self) -> prolly::Result<()> {
-            Ok(())
-        }
     }
 
     run(async {
@@ -277,10 +273,6 @@ impl Store for FailFirstPut {
         }
         self.inner.put(node).await
     }
-
-    async fn flush(&mut self) -> prolly::Result<()> {
-        self.inner.flush().await
-    }
 }
 
 #[test]
@@ -344,10 +336,6 @@ impl Store for StallRead<'_> {
     async fn put(&mut self, _node: Node) -> prolly::Result<prolly::Hash> {
         unreachable!("reading only")
     }
-
-    async fn flush(&mut self) -> prolly::Result<()> {
-        Ok(())
-    }
 }
 
 #[test]
@@ -397,10 +385,6 @@ impl Store for StallFirstPut {
             std::future::pending::<()>().await;
         }
         self.inner.put(node).await
-    }
-
-    async fn flush(&mut self) -> prolly::Result<()> {
-        self.inner.flush().await
     }
 }
 

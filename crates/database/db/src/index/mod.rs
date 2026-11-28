@@ -5,11 +5,13 @@ pub mod build_gate;
 pub mod create;
 pub mod deferred;
 pub mod drop;
+mod duplicate;
 pub mod error;
 mod in_txn;
 mod listing;
 pub mod manager;
 pub(crate) mod pages;
+mod settle;
 pub mod vector;
 
 pub use error::{Error, Result};

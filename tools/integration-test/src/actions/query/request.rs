@@ -32,9 +32,9 @@ pub struct Request {
     pub expected_extensions: Value,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expected_error: Option<String>,
-    /// The `extensions.code` the error matching `expected_error` carries.
-    /// Go reports no code, so a case that sets it fails as unsupported
-    /// against a Go node.
+    /// The `extensions.code` the error matching `expected_error` carries; see
+    /// [`Op::expected_error_code`]. Go reports no code, so a case that sets it
+    /// fails as unsupported against a Go node.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expected_error_code: Option<String>,
     #[serde(flatten)]
@@ -66,27 +66,23 @@ impl Op for Request {
 
     fn run(&self, state: &State) -> Result<Value, Failure> {
         let identity = self.check_arguments(state)?;
-        state
-            .block_on(
-                state
-                    .node_on(self.common.node())?
-                    .execute_request_as(&self.context(state, identity), self.query_request()),
-            )
-            .map(|response| {
-                let extensions = response
-                    .extensions
-                    .map(|extensions| serde_json::to_value(extensions).unwrap_or_default());
-                envelope(
-                    response.data,
-                    response
-                        .errors
-                        .iter()
-                        .map(|e| (e.message.as_str(), self.kept_code(e.code()))),
-                    self.checked_extensions(extensions),
-                )
-            })
-            .map_err(|e| Failure::operation(e.to_string()))
-            .and_then(|envelope| self.typed(envelope))
+        let node = state.node_on(self.common.node())?;
+        let response = state.block_on(
+            self.scope(state, identity)
+                .on(&node)
+                .execute_request(self.query_request()),
+        );
+        let extensions = response
+            .extensions
+            .map(|extensions| serde_json::to_value(extensions).unwrap_or_default());
+        self.typed(envelope(
+            response.data,
+            response
+                .errors
+                .iter()
+                .map(|e| (e.message.as_str(), self.kept_code(e.code()))),
+            self.checked_extensions(extensions),
+        ))
     }
 }
 
@@ -121,12 +117,12 @@ impl Request {
         Ok(envelope)
     }
 
-    /// The context the request runs in: a mutation carries the acting
-    /// identity's key where Go would sign with it ([`State::context_on`]).
-    fn context(&self, state: &State, identity: Option<u64>) -> defra_core::RequestContext {
+    /// The scope the request runs in: a mutation signs with the acting
+    /// identity's key where Go would sign with it ([`State::scope_on`]).
+    fn scope(&self, state: &State, identity: Option<u64>) -> crate::node_scope::NodeScope {
         match self.request.as_str().trim_start().starts_with("mutation") {
-            true => state.context_on(self.common.node(), self.txn, identity, None),
-            false => state.context_as(self.txn, identity),
+            true => state.scope_on(self.common.node(), self.txn, identity, None),
+            false => state.scope_as(self.txn, identity),
         }
     }
 
@@ -251,7 +247,7 @@ impl HttpRun for Request {
                         action.checked_extensions(response.extensions),
                     )
                 })
-                .map_err(|e| Failure::operation(e.to_string()))
+                .map_err(|e| Failure::coded(e.to_string(), e.code()))
                 .and_then(|envelope| action.typed(envelope))
         });
     }

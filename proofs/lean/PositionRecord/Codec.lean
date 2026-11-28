@@ -1,13 +1,15 @@
 /-!
-# PositionRecord.Codec: a position record reads back as the keys it names
+# PositionRecord.Codec: a record of whole keys reads back as the keys it names
 
 The story, in plain words. A deferred index does not move its entries when a
 counter changes, because the write never learns the new value. A drain moves
 them later, and to find the old entries it keeps one position record per
-document: the exact keys of the entries the index holds for it. A document
-with an array field can have several entries, so a record is a list of keys.
-Each key is written as four bytes giving its length, then the key itself, one
-after another. An empty record names no entries.
+document: the entries the index holds for it. A document with an array field
+can have several entries, so a record is a list of keys. Records written
+before records kept field values alone (`PositionRecord.Values`) hold whole
+keys: each key is written as four bytes giving its length, then the key
+itself, one after another. An empty record names no entries. Stores still
+hold such records, so they must still read back.
 
 What must never happen: a record reads back as a different list of keys, in a
 different order, or with keys split or joined differently
@@ -16,8 +18,8 @@ leave the real ones behind.
 
 Bytes are modelled as natural numbers below 256.
 
-Rust anchors: `encode_record`, `decode_record` in
-`crates/database/db/src/index/deferred/record.rs`.
+Rust anchors: `decode_keys`, and `encode_keys` (the form older stores hold),
+in `crates/database/db/src/index/deferred/record.rs`.
 -/
 
 namespace PositionRecord

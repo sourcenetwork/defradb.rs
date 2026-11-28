@@ -44,6 +44,21 @@ async fn open_stream(
     len: u32,
     body: Body,
 ) -> Option<u32> {
+    // A stop sent after the tag can arrive before the length is written and
+    // fail that write; the stream keeps its stop code, so read it either way.
+    let _ = write_opening(send, tag, len, body).await;
+    let code = send.stopped().await.ok()??;
+    Some(u32::try_from(code.into_inner()).expect("small stop code"))
+}
+
+/// Writes the tag, length and body, stopping at the first write that fails;
+/// the caller reads the stop code either way.
+async fn write_opening(
+    send: &mut iroh::endpoint::SendStream,
+    tag: &[u8],
+    len: u32,
+    body: Body,
+) -> Option<()> {
     protocols::write_stream_tag(send, tag).await.ok()?;
     send.write_all(&len.to_be_bytes()).await.ok()?;
     match body {
@@ -52,14 +67,11 @@ async fn open_stream(
         Body::Trickle(every) => {
             for _ in 1..len {
                 crate::rt::time::sleep(every).await;
-                if send.write_all(&[0]).await.is_err() {
-                    break;
-                }
+                send.write_all(&[0]).await.ok()?;
             }
         }
     }
-    let code = send.stopped().await.ok()??;
-    Some(u32::try_from(code.into_inner()).expect("small stop code"))
+    Some(())
 }
 
 /// Dial a bare peer that opens one stream back with `tag` and a length prefix

@@ -50,13 +50,9 @@ impl Op for VerifyBlockSignature {
         state
             .block_on(
                 state
-                    .node_on(self.common.node())?
-                    .verify_block_signature_as(
-                        &state.context_as(self.txn, identity),
-                        self.cid.as_str(),
-                        &public_key,
-                        key_type,
-                    ),
+                    .scope_as(self.txn, identity)
+                    .on(&*state.node_on(self.common.node())?)
+                    .verify_block_signature(self.cid.as_str(), &public_key, key_type),
             )
             .map(|()| json!({}))
             .map_err(|e| Failure::operation(e.to_string()))

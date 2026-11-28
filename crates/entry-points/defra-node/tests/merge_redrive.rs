@@ -60,8 +60,7 @@ async fn plain_node() -> Result<Node> {
         .with_p2p(iroh_config())
         .build()
         .await?;
-    node.add_collection(&defra_core::RequestContext::ambient(), SDL)
-        .await?;
+    node.add_collection(SDL).await?;
     Ok(node)
 }
 
@@ -77,9 +76,7 @@ fn a_composite_merged_by_redrive_reaches_this_nodes_replicators() -> Result<()> 
                 )
                 .build()
                 .await?;
-            middle
-                .add_collection(&defra_core::RequestContext::ambient(), SDL)
-                .await?;
+            middle.add_collection(SDL).await?;
             let tail = plain_node().await?;
 
             connect(&author, &middle).await?;

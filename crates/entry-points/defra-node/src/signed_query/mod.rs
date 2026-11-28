@@ -19,7 +19,7 @@ mod tests;
 /// the node acts as, which owns the transactions it begins: the node's DID,
 /// or `None` on an identity-only node, whose request keeps its context's own
 /// identity so it matches the owner of the transaction it runs in.
-pub(super) async fn execute_with_signing_context(
+pub(crate) async fn execute_with_signing_context(
     edge: &Edge,
     executor: Arc<dyn QueryExecutor>,
     request: QueryRequest,
@@ -72,14 +72,14 @@ pub(super) async fn execute_signed(
 
 /// The answer to a query its task never finished: refused because the node
 /// is shutting down, or failed.
-pub(super) fn refused_response(error: EdgeError) -> QueryResponse {
+pub(crate) fn refused_response(error: EdgeError) -> QueryResponse {
     match error {
         EdgeError::Closed => QueryResponse::error("the node is shutting down"),
         error => QueryResponse::error(format!("query execution task failed: {error}")),
     }
 }
 
-pub(super) fn unavailable_node_signer_response(node_did: &str) -> QueryResponse {
+pub(crate) fn unavailable_node_signer_response(node_did: &str) -> QueryResponse {
     QueryResponse::error(format!(
         "configured node signing identity {node_did} is unavailable"
     ))

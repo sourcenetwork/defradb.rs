@@ -68,7 +68,6 @@ pub struct ReplicaUnit<'a> {
     /// The DID the node registers the document as: its provider's own actor.
     pub registrant: &'a Did,
     pub grants: &'a [ReplicaGrant],
-    pub parent: Option<&'a crate::RegistrationParent>,
 }
 
 /// One grant of a unit, as its marker keeps it.

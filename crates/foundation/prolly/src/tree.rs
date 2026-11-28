@@ -138,14 +138,14 @@ where
 
 /// Stores `items` as the root of `level`, after dropping every root above it
 /// that holds a single child, so the root is the lowest level that is one
-/// chunk (`ProllyTree.collapse`); `None` when there are no items. Flushes the
-/// store, so the root it returns names only stored nodes.
+/// chunk (`ProllyTree.collapse`); `None` when there are no items. It writes
+/// nothing durable: the store's owner commits the nodes put with the root
+/// that names them (`proofs/tla/ProllyNodeReclaim.tla`).
 pub(crate) async fn collapse<S>(store: &mut S, level: u8, items: Vec<Item>) -> Result<Option<Hash>>
 where
     S: Store,
 {
     if items.is_empty() {
-        store.flush().await?;
         return Ok(None);
     }
     let mut node = Arc::new(Node { level, items });
@@ -153,6 +153,5 @@ where
         node = load(store, &Hash::from_slice(&node.items[0].value)?).await?;
     }
     let root = store.put(Arc::unwrap_or_clone(node)).await?;
-    store.flush().await?;
     Ok(Some(root))
 }

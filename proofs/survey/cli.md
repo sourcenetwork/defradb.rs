@@ -16,7 +16,7 @@ forwarders:
   walk (`VecDeque` + `HashSet`), but the merge decision lives in
   `db::merge::DbMergeHandler`; this is the same walk B3 abstracts from
   `dag_fetcher.rs`.
-- `p2p_doc_pusher.rs` / `transport_doc_pusher.rs` — one-line delegation to
+- `transport_doc_pusher.rs` — one-line delegation to
   `db::merge::push_existing_docs`.
 - `doc_acp_adapter.rs` and `nac_adapter.rs` — trait impls over `acp` / `db` calls.
 

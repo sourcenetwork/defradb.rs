@@ -205,7 +205,7 @@ impl<S: Store + 'static> DocFetcher for LensedAutoCommitFetcher<S> {
         query_vector: &[f64],
         k: usize,
         effort: Option<usize>,
-    ) -> query::error::Result<Vec<u64>> {
+    ) -> query::error::Result<query::fetcher::VectorCandidates> {
         self.vector_search_impl(collection_name, index_id, query_vector, k, effort)
             .await
     }

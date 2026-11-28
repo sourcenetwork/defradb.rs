@@ -2,7 +2,7 @@
 //! License: AGPL-3.0-only OR LicenseRef-BSL-tests. Copyright 2026 Democratized Data Foundation.
 
 use integration_test::actions::{
-    AddCollection, AddDoc, ListEncryptedIndexes, NewEncryptedIndex, TxnBegin, TxnCommit,
+    AddCollection, AddDoc, ListEncryptedIndexes, NewEncryptedIndex, TxnBegin, TxnCommit, TxnDiscard,
 };
 use integration_test::m;
 use integration_test::test_case::TestCase;
@@ -55,6 +55,42 @@ fn txn_add_encrypted_index_exhibits_transactional_isolation_succeeds() {
                 expected_data: json!({
                     "indexes": m::unordered(json!([{ "FieldName": "name", "Type": "equality" }])),
                 }),
+                ..Default::default()
+            }
+            .into(),
+        ],
+        ..Default::default()
+    }
+    .execute();
+}
+
+#[test]
+#[mantra_macros::req_test("go.txn.indexes.read-own-writes")]
+fn txn_lists_an_encrypted_index_on_a_collection_it_created() {
+    TestCase {
+        id: integration_test::scenario_id!(),
+        actions: vec![
+            TxnBegin {
+                ..Default::default()
+            }
+            .into(),
+            AddCollection {
+                txn: Some(0),
+                sdl: "type User { name: String @encryptedIndex }".into(),
+                ..Default::default()
+            }
+            .into(),
+            ListEncryptedIndexes {
+                txn: Some(0),
+                collection: "User".into(),
+                expected_data: json!({
+                    "indexes": m::unordered(json!([{ "FieldName": "name", "Type": "equality" }])),
+                }),
+                ..Default::default()
+            }
+            .into(),
+            TxnDiscard {
+                txn: 0,
                 ..Default::default()
             }
             .into(),

@@ -182,12 +182,10 @@ fn a_projection_stages_through_vera_for_a_manager_in_a_transaction_and_for_the_n
             .add_policy(actor.as_str(), MANAGED_POLICY, None)
             .await
             .expect("policy");
-        node.add_collection(&defra_core::RequestContext::ambient(), &users(&policy))
+        node.add_collection(&users(&policy))
             .await
             .expect("collection");
         let manager = registered_identity();
-        let admin_context =
-            defra_core::RequestContext::default().with_identity(Some(admin.to_string()));
         let node_did = node.node_identity_did().expect("node DID").to_owned();
         for who in [actor.as_str(), manager.as_str(), node_did.as_str()] {
             for permission in [
@@ -197,7 +195,8 @@ fn a_projection_stages_through_vera_for_a_manager_in_a_transaction_and_for_the_n
                 NodePermission::DacRelationAdd,
                 NodePermission::DacRelationDelete,
             ] {
-                node.add_nac_actor_relationship_as(&admin_context, permission.as_str(), who)
+                node.with_identity(identity::Did::new(admin.to_string()).unwrap())
+                    .add_nac_actor_relationship(permission.as_str(), who)
                     .await
                     .expect("node permission");
             }
@@ -212,7 +211,7 @@ fn a_projection_stages_through_vera_for_a_manager_in_a_transaction_and_for_the_n
         // The manager writes another document in an explicit transaction;
         // the projection grants on `theirs` with the manager's authority.
         related.store(Some(theirs.clone()));
-        let transaction = node.begin_transaction_guard(false).await.unwrap();
+        let transaction = node.new_txn(false).await.unwrap();
         created(
             transaction
                 .execute_request(create_user("by the manager", &manager))
@@ -230,13 +229,10 @@ fn a_projection_stages_through_vera_for_a_manager_in_a_transaction_and_for_the_n
             NodePermission::CollectionGet,
             NodePermission::DacRelationAdd,
         ] {
-            node.add_nac_actor_relationship_as(
-                &admin_context,
-                permission.as_str(),
-                stranger.as_str(),
-            )
-            .await
-            .expect("node permission");
+            node.with_identity(identity::Did::new(admin.to_string()).unwrap())
+                .add_nac_actor_relationship(permission.as_str(), stranger.as_str())
+                .await
+                .expect("node permission");
         }
         let other = created(node.execute_request(create_user("other", &actor)).await);
         related.store(Some(other.clone()));
@@ -274,18 +270,12 @@ fn a_projection_stages_through_vera_for_a_manager_in_a_transaction_and_for_the_n
         observe.store(Some((policy.clone(), theirs.clone())));
         created(node.execute_request(create_user("observes", &actor)).await);
         assert_eq!(Option::clone(&observed.load()), Some(true));
-        let acting = defra_core::RequestContext::default().with_identity(Some(actor.to_string()));
-        let transaction = node.begin_transaction_guard(false).await.unwrap();
-        node.delete_dac_actor_relationship_change_for_in_txn(
-            transaction.handle(),
-            &acting,
-            "Users",
-            &theirs,
-            "reader",
-            reader.as_str(),
-        )
-        .await
-        .expect("staged revocation");
+        let transaction = node.new_txn(false).await.unwrap();
+        transaction
+            .acting_for(identity::Did::new(actor.to_string()).unwrap())
+            .change_dac_actor_relationship("Users", &theirs, "reader", reader.as_str(), true)
+            .await
+            .expect("staged revocation");
         let stale = transaction
             .execute_request(create_user("observes stale", &actor))
             .await;
@@ -301,19 +291,16 @@ fn a_projection_stages_through_vera_for_a_manager_in_a_transaction_and_for_the_n
         // for an owner: the edge's statement is undone, the input answered at
         // the edge, and the edge run again with it.
         source_owner.store(Some((policy.clone(), theirs.clone())));
-        let transaction = node.begin_transaction_guard(false).await.unwrap();
-        let changed = node
-            .change_nac_source_permission_for_in_txn(
-                transaction.handle(),
-                &admin_context,
-                &query::txn::SourcePermission {
-                    permission: NodePermission::CollectionPatch.as_str().into(),
-                    parent_source: None,
-                    subject_kind: "source".into(),
-                    subject: "tools:one".into(),
-                    delete: false,
-                },
-            )
+        let transaction = node.new_txn(false).await.unwrap();
+        let changed = transaction
+            .acting_for(identity::Did::new(admin.to_string()).unwrap())
+            .change_nac_source_permission(&query::txn::SourcePermission {
+                permission: NodePermission::CollectionPatch.as_str().into(),
+                parent_source: None,
+                subject_kind: "source".into(),
+                subject: "tools:one".into(),
+                delete: false,
+            })
             .await
             .expect("a source change whose projection needs a prepared owner");
         assert!(changed);

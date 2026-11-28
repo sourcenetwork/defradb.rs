@@ -1,9 +1,9 @@
 ---- MODULE RelationLinkConflict ----
 \* The story, in plain words. Two explicit transactions each want to link a
 \* one-to-one value. Each decides on a read first: the unique-index conflict
-\* lookup of an indexed create, or the scan a one-to-one relation join runs
-\* for a linked query. The first transaction just commits its link. The
-\* second reads, then tries to commit.
+\* lookup of an indexed create. The first transaction just commits its link.
+\* The second reads, then tries to commit. A query's one-to-one join is no
+\* such read: it decides nothing and is never validated (RelationJoinRead).
 \*
 \* What can happen: the second reads before or after the first commits, and
 \* the two commits land in either order.
@@ -20,9 +20,7 @@
 \* Rust owners: crates/database/db/src/index/manager/unique.rs
 \* (save_local_unique_validated, save_healing_stale_unique),
 \* crates/database/db/src/index/manager/mod.rs (on_document_create,
-\* on_document_update, on_document_update_modified),
-\* crates/engine/query/src/runner/query/nested.rs
-\* (has_one_to_one_relation_select), and
+\* on_document_update, on_document_update_modified), and
 \* crates/engine/datastore/src/multistore.rs (SharedTxn::set_scans_validated).
 EXTENDS Naturals
 

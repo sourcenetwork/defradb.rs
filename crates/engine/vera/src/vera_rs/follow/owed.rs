@@ -50,12 +50,14 @@ where
             policy_id,
             resource,
             object,
+            relationships,
             ..
         } => acp::VoidedEffect::Registration {
             creator: actor,
             policy_id: policy_id.clone(),
             resource: resource.clone(),
             object: object.clone(),
+            relationships: relationships.clone(),
             request_bound: claims.request.is_some()
                 && matches!(authority, acp::OwedAuthority::Delegation { .. }),
             authority,
@@ -69,6 +71,25 @@ where
             txn: None,
             tuple: acp::OwedTuple::archive(policy_id, resource, object),
             op: acp::OwedOp::Archive,
+            actor,
+            authority,
+            authority_checked: true,
+        }),
+        Lost::Transfer {
+            policy_id,
+            resource,
+            object,
+            new_owner,
+            ..
+        } => acp::VoidedEffect::Change(acp::NewOwedChange {
+            txn: None,
+            tuple: acp::OwedTuple::transfer(
+                policy_id,
+                resource,
+                object,
+                identity::Did::new(new_owner).ok()?,
+            ),
+            op: acp::OwedOp::Transfer,
             actor,
             authority,
             authority_checked: true,
@@ -180,5 +201,23 @@ mod tests {
             }
         );
         assert_eq!(owed_again(&grant("not a token".into()), |_| true), None);
+    }
+
+    #[test]
+    fn a_lost_transfer_is_owed_again_as_a_transfer_to_the_same_owner() {
+        let lost = Lost::Transfer {
+            policy_id: POLICY.into(),
+            resource: "users".into(),
+            object: "bae-1".into(),
+            new_owner: READER.into(),
+            token: token(OWNER),
+        };
+        let Some(acp::VoidedEffect::Change(owed)) = owed_again(&lost, |did| did == OWNER) else {
+            panic!("a change");
+        };
+        assert_eq!(owed.op, acp::OwedOp::Transfer);
+        assert_eq!(owed.actor.as_str(), OWNER);
+        assert_eq!(owed.tuple.relation, acp::OWNER_RELATION);
+        assert_eq!(owed.tuple.new_owner().map(|did| did.as_str()), Some(READER));
     }
 }

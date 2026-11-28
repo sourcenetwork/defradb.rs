@@ -111,6 +111,9 @@ impl Walk {
                         policy_id: fact.policy_id.clone(),
                         resource: fact.resource_name.clone(),
                         object: fact.object_id.clone(),
+                        // The record keeps no derived relationships: a gated
+                        // document restored here is refused by its `create`.
+                        relationships: Vec::new(),
                         authority: OwedAuthority::NodeKey,
                         request_bound: false,
                     });
@@ -346,6 +349,15 @@ where
     /// The fact a settled outbox change leaves.
     pub(super) fn settled_fact(&self, change: &OwedChange) -> RecoveryFact {
         let tuple = &change.tuple;
+        // A transfer is a new owner of the object's registration.
+        if let (OwedOp::Transfer, Some(new_owner)) = (change.op, tuple.new_owner()) {
+            return RecoveryFact::registered(
+                &tuple.policy_id,
+                &tuple.resource,
+                &tuple.object,
+                self.provider.canonical_actor(new_owner),
+            );
+        }
         self.relationship_fact(
             &change.actor,
             tuple.subject.clone(),

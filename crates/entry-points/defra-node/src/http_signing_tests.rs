@@ -19,12 +19,9 @@ fn http_write_signs_as_a_generated_node_identity() {
                 .build()
                 .await
                 .unwrap();
-            node.add_collection(
-                &defra_core::RequestContext::ambient(),
-                "type User { name: String }",
-            )
-            .await
-            .unwrap();
+            node.add_collection("type User { name: String }")
+                .await
+                .unwrap();
             let client = net::http::Client::builder(edge::testing::edge())
                 .no_proxy()
                 .timeout(Duration::from_secs(5))
@@ -64,7 +61,7 @@ fn http_client_signs_the_complete_agent_create_graph() {
         let node = Node::builder().enable_signing()
             .with_http(HttpConfig::with_listener(listener).unwrap())
             .build().await.unwrap();
-        node.add_collection(&defra_core::RequestContext::ambient(), "type Agent { agent_did: String @immutable, creation_nonce: String @immutable, node_did: String @immutable, display_name: String, tags: [String!] }").await.unwrap();
+        node.add_collection("type Agent { agent_did: String @immutable, creation_nonce: String @immutable, node_did: String @immutable, display_name: String, tags: [String!] }").await.unwrap();
         let schema = node.get_collection("Agent").unwrap().unwrap();
         let private = crypto::generate_ed25519().unwrap();
         let public = private.public_key();
@@ -223,19 +220,19 @@ resources:
                 .await
                 .unwrap();
             let node_did = node.node_identity_did().unwrap().to_owned();
-            let context = defra_core::RequestContext::default().with_identity(Some(owner.clone()));
-            let policy = node.add_dac_policy_as(&context, POLICY).await.unwrap();
-            node.add_collection(
-                &context,
-                &format!(
+            let policy = node
+                .with_identity(identity::Did::new(owner.clone()).unwrap())
+                .add_dac_policy(POLICY, None)
+                .await
+                .unwrap();
+            node.with_identity(identity::Did::new(owner.clone()).unwrap())
+                .add_collection(&format!(
                 "type Node @policy(id: \"{policy}\", resource: \"nodes\") {{ node_did: String }}"
-            ),
-            )
-            .await
-            .unwrap();
-            node.add_collection(
-                &context,
-                &format!(
+            ))
+                .await
+                .unwrap();
+            node.with_identity(identity::Did::new(owner.clone()).unwrap())
+                .add_collection(&format!(
                     r#"type Agent @policy(id: "{policy}", resource: "agents") {{
             agent_did: String @index(unique: true) @immutable
             creation_nonce: String @immutable
@@ -249,10 +246,9 @@ resources:
             created_at: String
             updated_at: DateTime @index(direction: DESC)
         }}"#
-                ),
-            )
-            .await
-            .unwrap();
+                ))
+                .await
+                .unwrap();
             let parent = node
                 .execute_request(
                     query::QueryRequest::new(
@@ -402,7 +398,7 @@ fn http_client_signs_a_single_document_update() {
         let node = Node::builder().enable_signing()
             .with_http(HttpConfig::with_listener(listener).unwrap())
             .build().await.unwrap();
-        node.add_collection(&defra_core::RequestContext::ambient(), "type Settings { name: String, tags: [String!], host: JSON, extra: String }").await.unwrap();
+        node.add_collection("type Settings { name: String, tags: [String!], host: JSON, extra: String }").await.unwrap();
         let schema = node.get_collection("Settings").unwrap().unwrap();
         let private = crypto::generate_ed25519().unwrap();
         let public = private.public_key();
@@ -613,12 +609,11 @@ resources:
         let address = listener.local_addr().unwrap();
         let node = Node::builder().enable_signing().with_node_acp_owner(owner_did.clone())
             .with_http(HttpConfig::with_listener(listener).unwrap()).build().await.unwrap();
-        let owner_context = defra_core::RequestContext::default().with_identity(Some(owner_did.clone()));
-        let policy = node.add_dac_policy_as(&owner_context, POLICY).await.unwrap();
-        node.add_collection(&owner_context, &format!("type ProtectedSettings @policy(id: \"{policy}\", resource: \"settings\") {{ name: String }}")).await.unwrap();
+        let policy = node.with_identity(identity::Did::new(owner_did.clone()).unwrap()).add_dac_policy(POLICY, None).await.unwrap();
+        node.with_identity(identity::Did::new(owner_did.clone()).unwrap()).add_collection(&format!("type ProtectedSettings @policy(id: \"{policy}\", resource: \"settings\") {{ name: String }}")).await.unwrap();
         let schema = node.get_collection("ProtectedSettings").unwrap().unwrap();
         for permission in [acp::nac::NodePermission::DocumentRead, acp::nac::NodePermission::DocumentUpdate, acp::nac::NodePermission::CollectionGet] {
-            node.add_nac_actor_relationship_as(&owner_context, permission.as_str(), &editor_did).await.unwrap();
+            node.with_identity(identity::Did::new(owner_did.clone()).unwrap()).add_nac_actor_relationship(permission.as_str(), &editor_did).await.unwrap();
         }
         let owner_token = String::from_utf8(identity::new_token(&owner, Duration::from_secs(60), Some(address.to_string()), None).unwrap()).unwrap();
         let editor_token = String::from_utf8(identity::new_token(&editor, Duration::from_secs(60), Some(address.to_string()), None).unwrap()).unwrap();
@@ -634,7 +629,7 @@ resources:
         let history: query::QueryResponse = http.post(format!("http://{address}/api/v0/graphql")).bearer_auth(&owner_token)
             .json(&json!({"query":query.query,"variables":query.variables})).send().await.unwrap().json().await.unwrap();
         let snapshot = defra_http::client_signed_update::snapshot_from_response(&doc_id, &history).unwrap();
-        node.add_dac_actor_relationship_as(&owner_context, "ProtectedSettings", &doc_id, "reader", &editor_did).await.unwrap();
+        node.with_identity(identity::Did::new(owner_did.clone()).unwrap()).add_dac_actor_relationship("ProtectedSettings", &doc_id, "reader", &editor_did).await.unwrap();
         let patch = json!({"name":"after"});
         let request = || query::QueryRequest::new("mutation($id:ID!, $input:ProtectedSettingsMutationInputArg!) { update_ProtectedSettings(docID:$id,input:$input) { _docID _version { cid } } }")
             .with_variables(json!({"id":doc_id,"input":patch}));
@@ -643,7 +638,7 @@ resources:
         let denied = defra_http::client_signed_update::execute(&url, &format!("Bearer {editor_token}"), request(), None, &mut denied_graph).await.unwrap();
         assert!(!denied.errors.is_empty(), "{denied:?}");
 
-        node.add_dac_actor_relationship_as(&owner_context, "ProtectedSettings", &doc_id, "editor", &editor_did).await.unwrap();
+        node.with_identity(identity::Did::new(owner_did.clone()).unwrap()).add_dac_actor_relationship("ProtectedSettings", &doc_id, "editor", &editor_did).await.unwrap();
         let handshake = defra_http::client_signed_create::websocket_request(&url, &format!("Bearer {editor_token}")).unwrap();
         let stream = net::connect(handshake.uri()).await.unwrap();
         let (mut socket, _) = async_tungstenite::client_async_with_config(handshake, stream, Some(defra_http::client_signed_create::websocket_config())).await.unwrap();
@@ -655,14 +650,14 @@ resources:
         let blocks = wave["blocks"].as_array().unwrap().iter().map(|value| hex::decode(value.as_str().unwrap()).unwrap()).collect::<Vec<_>>();
         let mut revoked_graph = graph();
         let signatures = revoked_graph.respond(&blocks).unwrap().iter().map(hex::encode).collect::<Vec<_>>();
-        node.delete_dac_actor_relationship_as(&owner_context, "ProtectedSettings", &doc_id, "editor", &editor_did).await.unwrap();
+        node.with_identity(identity::Did::new(owner_did.clone()).unwrap()).delete_dac_actor_relationship("ProtectedSettings", &doc_id, "editor", &editor_did).await.unwrap();
         socket.send(Message::Text(json!({"wave":wave["wave"],"signatures":signatures}).to_string().into())).await.unwrap();
         let frame = edge::testing::edge().timeout(Duration::from_secs(5), socket.next()).await.unwrap().unwrap().unwrap();
         let Message::Text(frame) = frame else { panic!("expected denied response") };
         let response: Value = serde_json::from_str(&frame).unwrap();
         assert_eq!(response["response"]["errors"], json!([{"message":"document not found: document not found or not authorized to access"}]), "{response}");
 
-        node.add_dac_actor_relationship_as(&owner_context, "ProtectedSettings", &doc_id, "editor", &editor_did).await.unwrap();
+        node.with_identity(identity::Did::new(owner_did.clone()).unwrap()).add_dac_actor_relationship("ProtectedSettings", &doc_id, "editor", &editor_did).await.unwrap();
         let handshake = defra_http::client_signed_create::websocket_request(&url, &format!("Bearer {editor_token}")).unwrap();
         let stream = net::connect(handshake.uri()).await.unwrap();
         let (mut socket, _) = async_tungstenite::client_async_with_config(handshake, stream, Some(defra_http::client_signed_create::websocket_config())).await.unwrap();
@@ -678,7 +673,7 @@ resources:
         let allowed = defra_http::client_signed_update::execute(&url, &format!("Bearer {editor_token}"), request(), None, &mut allowed_graph).await.unwrap();
         assert!(allowed.errors.is_empty(), "{:?}", allowed.errors);
         let cid = allowed.data.unwrap()["update_ProtectedSettings"][0]["_version"][0]["cid"].as_str().unwrap().to_owned();
-        let (block_bytes, signature_bytes) = node.authorized_signed_block_bytes(&cid, Some(&editor_did)).await.unwrap();
+        let (block_bytes, signature_bytes) = node.with_identity(identity::Did::new(&editor_did).unwrap()).authorized_signed_block_bytes(&cid).await.unwrap();
         let mut block = defra_core::block::Block::from_dag_cbor(&block_bytes).unwrap();
         let signature = defra_core::block::Signature::from_dag_cbor(&signature_bytes).unwrap();
         assert_eq!(block.signature.take(), Some(signature.generate_cid().unwrap()));
@@ -754,12 +749,11 @@ resources:
         let address = listener.local_addr().unwrap();
         let node = Node::builder().enable_signing().with_node_acp_owner(owner_did.clone())
             .with_http(HttpConfig::with_listener(listener).unwrap()).build().await.unwrap();
-        let context = defra_core::RequestContext::default().with_identity(Some(owner_did.clone()));
-        let policy = node.add_dac_policy_as(&context, POLICY).await.unwrap();
-        node.add_collection(&context, &format!("type DeleteRecord @policy(id: \"{policy}\", resource: \"records\") {{ name: String }}")).await.unwrap();
+        let policy = node.with_identity(identity::Did::new(owner_did.clone()).unwrap()).add_dac_policy(POLICY, None).await.unwrap();
+        node.with_identity(identity::Did::new(owner_did.clone()).unwrap()).add_collection(&format!("type DeleteRecord @policy(id: \"{policy}\", resource: \"records\") {{ name: String }}")).await.unwrap();
         let schema = node.get_collection("DeleteRecord").unwrap().unwrap();
         for permission in [acp::nac::NodePermission::DocumentRead, acp::nac::NodePermission::DocumentDelete, acp::nac::NodePermission::CollectionGet] {
-            node.add_nac_actor_relationship_as(&context, permission.as_str(), &other_did).await.unwrap();
+            node.with_identity(identity::Did::new(owner_did.clone()).unwrap()).add_nac_actor_relationship(permission.as_str(), &other_did).await.unwrap();
         }
         let token = |identity: &identity::RawIdentity| String::from_utf8(identity::new_token(identity, Duration::from_secs(60), Some(address.to_string()), None).unwrap()).unwrap();
         let owner_token = token(&owner);
@@ -786,7 +780,7 @@ resources:
         let mut hidden_graph = make_graph(&other_signing);
         let hidden_result = defra_http::client_signed_delete::execute(&ws, &auth(&other_token), delete(), None, &mut hidden_graph).await;
         assert!(hidden_result.is_err() || hidden_result.unwrap().has_errors());
-        node.add_dac_actor_relationship_as(&context, "DeleteRecord", &doc_id, "reader", &other_did).await.unwrap();
+        node.with_identity(identity::Did::new(owner_did.clone()).unwrap()).add_dac_actor_relationship("DeleteRecord", &doc_id, "reader", &other_did).await.unwrap();
         let mut denied_graph = make_graph(&other_signing);
         let denied = defra_http::client_signed_delete::execute(&ws, &auth(&other_token), delete(), None, &mut denied_graph).await;
         assert!(denied.is_err() || denied.unwrap().has_errors());
@@ -813,7 +807,15 @@ resources:
         let result = defra_http::client_signed_delete::execute(&ws, &auth(&owner_token), delete(), None, &mut final_graph).await.unwrap();
         assert!(!result.has_errors());
         assert_eq!(result.data.unwrap()["delete_DeleteRecord"][0]["_docID"], doc_id);
-        assert_eq!(node.verified_block_signer_did(&deleted_cid).await.unwrap(), owner_did);
+        // A deleted document keeps its access control (#3399): the node's own
+        // identity holds no relationship to it, so only its owner reads the
+        // delete's block and signature.
+        assert!(node.verified_block_signer_did(&deleted_cid).await.is_err());
+        let owner_node = node.with_identity(identity::Did::new(owner_did.clone()).unwrap());
+        let (block_bytes, signature_bytes) = owner_node.authorized_signed_block_bytes(&deleted_cid).await.unwrap();
+        let signed = defra_core::block::Block::from_dag_cbor(&block_bytes).unwrap();
+        let signature = defra_core::block::Signature::from_dag_cbor(&signature_bytes).unwrap();
+        assert_eq!(db::block::verify::verified_signature_signer_did(&signed, &signature).unwrap(), owner_did);
         let retained = node.execute_request(query::QueryRequest::new("{ DeleteRecord { _docID } }").with_identity(Some(owner.did().unwrap()))).await;
         assert!(retained.data.unwrap()["DeleteRecord"].as_array().unwrap().is_empty());
         let input = json!({"name":"unknown"});
@@ -862,7 +864,7 @@ fn http_client_signs_large_document_in_an_explicit_transaction() {
         let node = Node::builder().enable_signing()
             .with_http(HttpConfig::with_listener(listener).unwrap())
             .build().await.unwrap();
-        node.add_collection(&defra_core::RequestContext::ambient(), "type LargeRecord { contents: String }").await.unwrap();
+        node.add_collection("type LargeRecord { contents: String }").await.unwrap();
         let schema = node.get_collection("LargeRecord").unwrap().unwrap();
         let private = crypto::generate_ed25519().unwrap();
         let public = private.public_key();
@@ -923,7 +925,7 @@ fn incomplete_fragmented_signing_request_can_be_discarded_without_a_write() {
         let address = listener.local_addr().unwrap();
         let node = Node::builder().enable_signing()
             .with_http(HttpConfig::with_listener(listener).unwrap()).build().await.unwrap();
-        node.add_collection(&defra_core::RequestContext::ambient(), "type LargeRecord { contents: String }").await.unwrap();
+        node.add_collection("type LargeRecord { contents: String }").await.unwrap();
         let private = crypto::generate_ed25519().unwrap();
         let public_key_hex = hex::encode(private.public_key().raw());
         let identity = identity::RawIdentity::from_private_key(private).unwrap();

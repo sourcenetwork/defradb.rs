@@ -20,7 +20,6 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
         systemstore: &NamespaceView,
         context: &CompositeMergeContext<'_, '_>,
         collection: &CollectionVersion,
-        parent: Option<&acp::RegistrationParent>,
     ) -> std::result::Result<(), MergeError> {
         let (Some(provider), Some(policy)) = (self.db.document_acp(), collection.policy.as_ref())
         else {
@@ -46,7 +45,6 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                             creator,
                             registrant,
                             grants,
-                            parent,
                         },
                     )
                     .await
@@ -208,81 +206,31 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
             .map_err(|e| MergeError::Database(crate::error::Error::Storage(e)))?;
 
         if old_doc.is_none() && !doc_is_tombstoned {
-            let genesis = context.block.heads.as_deref().is_none_or(<[Cid]>::is_empty);
-            let policy = collection.schema().policy.as_ref();
-            let parent_field = policy.and_then(|policy| policy.parent_field.as_deref());
-            if parent_field.is_some() && !genesis {
-                return Err(MergeError::MergeFailed(
-                    "a parent-gated document requires its signed genesis".into(),
-                ));
-            }
-            if genesis {
-                let signer = self
-                    .verify_block_signature(context.cid, context.block, &[])
-                    .await?;
-                let provider = self.db.document_acp();
-                if parent_field.is_some() && (signer.is_none() || provider.is_none()) {
-                    return Err(MergeError::MergeFailed(
-                        "parent-gated genesis requires a verified signer and ACP provider".into(),
-                    ));
-                }
-                let mut parent = None;
-                if let (Some(provider), Some(policy), Some(signer)) = (provider, policy, signer) {
-                    let scoped = provider.bind_transaction(
+            if context.block.heads.as_deref().is_none_or(<[Cid]>::is_empty) {
+                if let (Some(provider), Some(policy), Some(signer)) = (
+                    self.db.document_acp(),
+                    collection.schema().policy.as_ref(),
+                    self.verify_block_signature(context.cid, context.block, &[])
+                        .await?,
+                ) {
+                    if let Some(scoped) = provider.bind_transaction(
                         systemstore.sibling(storage::namespace::Namespace::Acpstore),
-                    );
-                    let registering_replica =
-                        matches!(&context.replica, ReplicaStep::Register { .. });
-                    if let Some(field) =
-                        parent_field.filter(|_| scoped.is_some() || registering_replica)
-                    {
-                        let id = doc
-                            .get(field)
-                            .and_then(document::NormalValue::as_str)
-                            .filter(|s| !s.is_empty())
-                            .ok_or_else(|| {
-                                MergeError::MergeFailed(format!(
-                                    "missing parent document ID in '{field}'"
-                                ))
-                            })?;
-                        parent = if let Some(authority) = scoped.as_ref() {
-                            Some(
-                                authority
-                                    .registration_parent(&policy.id, &policy.resource_name, id)
-                                    .await
-                                    .map_err(|error| MergeError::MergeFailed(error.to_string()))?,
-                            )
-                        } else {
-                            self.registration_input(super::RegistrationLookup::Parent {
-                                policy: policy.id.clone(),
-                                child: policy.resource_name.clone(),
-                                parent: id.to_owned(),
-                            })?
-                        };
-                    }
-                    if let Some(scoped) = scoped {
+                    ) {
                         let signer = identity::Did::new(signer)
                             .map_err(|error| MergeError::MergeFailed(error.to_string()))?;
-                        super::genesis_access::register_genesis(
+                        super::genesis_access::register_signed_genesis(
                             &*scoped,
                             &signer,
                             &policy.id,
                             &policy.resource_name,
                             context.doc_id_str,
                             state.genesis_reader.as_ref(),
-                            parent.as_ref(),
                         )
                         .await
                         .map_err(|error| MergeError::MergeFailed(error.to_string()))?;
-                    } else if parent_field.is_some() && !registering_replica {
-                        self.registration_input(super::RegistrationLookup::Registered {
-                            policy: policy.id.clone(),
-                            resource: policy.resource_name.clone(),
-                            document: context.doc_id_str.to_owned(),
-                        })?;
                     }
                 }
-                self.record_replica(systemstore, context, collection.schema(), parent.as_ref())
+                self.record_replica(systemstore, context, collection.schema())
                     .await?;
             }
 
@@ -309,6 +257,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                 systemstore,
                 collection.resolved_root_id(),
                 context.doc_id_str,
+                context.doc_short_id,
                 &context.cid.to_string(),
             )
             .await
@@ -517,18 +466,8 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
             }
         }
 
-        if let (Some(provider), Some(policy)) =
-            (self.db.document_acp(), collection.schema().policy.as_ref())
-        {
-            if let Some(scoped) = provider
-                .bind_transaction(datastore.sibling(storage::namespace::Namespace::Acpstore))
-            {
-                scoped
-                    .unregister_doc_object(&policy.id, &policy.resource_name, context.doc_id_str)
-                    .await
-                    .map_err(|error| MergeError::MergeFailed(error.to_string()))?;
-            }
-        }
+        // The document's ACP object stays, as on a local delete: it still
+        // decides who reads the history this node keeps.
         let deleted_key = build_deleted_key(collection.collection_id(), context.doc_short_id);
         datastore
             .set(&deleted_key, &[DELETED_MARKER])
