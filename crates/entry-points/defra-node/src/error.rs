@@ -70,9 +70,6 @@ pub enum Error {
     #[error("{0}")]
     BlockAccess(String),
 
-    /// A schema policy does not match its policy definition.
-    #[error("schema policy validation error: {0}")]
-    PolicyValidation(String),
     /// A lens or the lens listing is not the JSON Go writes; serde's message.
     #[error("{0}")]
     LensJson(#[source] serde_json::Error),
@@ -89,42 +86,15 @@ pub enum Error {
     /// The identity acting on a request is malformed.
     #[error("malformed acting identity: {0}")]
     InvalidActingIdentity(#[source] identity::Error),
-    /// The target SDL of a view did not parse.
-    #[error("view SDL parse error: {0}")]
-    ViewSchemaParse(#[source] query::QueryError),
-    /// The source query of a view did not parse.
-    #[error("view query parse error: {0}")]
-    ViewQueryParse(#[source] query::QueryError),
-    /// The source query of a view selects nothing.
-    #[error("invalid view query: no selections found")]
-    ViewQueryEmpty,
-    /// The source query of a view selects more than one source type.
-    #[error("invalid view query: multiple selections found")]
-    ViewQueryMultipleSources,
-    /// A view's lens transform CID is empty, which Go's `cid.Decode` refuses.
-    #[error("cid too short")]
-    ViewTransformCidEmpty,
-    /// A view names a lens transform CID the node does not hold.
-    #[error("lens CID not found: {0}")]
-    ViewTransformMissing(String),
-    /// A downsample definition is invalid.
-    #[error("invalid downsample definition: {0}")]
-    InvalidDownsample(#[source] db::Error),
-    /// Creating the collection behind a view failed.
-    #[error("create view collection error: {0}")]
-    ViewCollectionCreate(#[source] db::Error),
-    /// Refreshing materialized views failed.
-    #[error("refresh materialized views error: {0}")]
-    MaterializedViewRefresh(#[source] db::Error),
+    /// A view operation was refused.
+    #[error(transparent)]
+    View(#[from] db::ViewError),
     /// An encrypted index operation was refused.
     #[error(transparent)]
     EncryptedIndex(#[from] db::EncryptedIndexError),
     /// A backup export, a backup import or a store dump failed.
     #[error(transparent)]
     Backup(#[from] db::backup::BackupError),
-    /// Bootstrapping downsample collections failed.
-    #[error("bootstrap downsample collections error: {0}")]
-    DownsampleBootstrap(#[source] db::Error),
 
     /// An identity string is not a DID.
     #[error("invalid identity DID: {0}")]
