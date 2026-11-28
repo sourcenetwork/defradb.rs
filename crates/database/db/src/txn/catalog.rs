@@ -10,10 +10,11 @@
 //! statement savepoint is a snapshot of both, taken and put back while the
 //! transaction is held alone.
 //!
-//! The collection map and the created set each sit behind an `Arc`, so a
-//! clone of the snapshot (a read, a savepoint, the start of a swap) is a
-//! reference. A change copies only the table it changes, whose entries are
-//! shared pointers. A replaced snapshot waits for kovan's deferred
+//! The collection cache and the created set sit behind `Arc`s, so a clone of
+//! the snapshot (a read, a savepoint, the start of a swap) is a few
+//! references. A load copies only the cache's short recent layer, never the
+//! collections already loaded ([`CollectionCache`]), and the created set is
+//! built by the first create. A replaced snapshot waits for kovan's deferred
 //! reclamation, so what it holds alone is what a load leaves behind.
 
 use std::sync::Arc;
@@ -28,7 +29,7 @@ use crate::collection::Collection;
 #[derive(Clone, Default)]
 struct Collections {
     cache: CollectionCache,
-    created: Arc<RapidHashSet<String>>,
+    created: Option<Arc<RapidHashSet<String>>>,
 }
 
 pub(super) struct Catalog {
@@ -130,13 +131,18 @@ impl Catalog {
 
     pub(super) fn mark_created(&self, collection_id: String) {
         self.update(|collections| {
-            Arc::make_mut(&mut collections.created).insert(collection_id.clone());
+            Arc::make_mut(collections.created.get_or_insert_default())
+                .insert(collection_id.clone());
         });
     }
 
     pub(super) fn was_created(&self, collection_id: &str) -> bool {
-        self.collections
-            .peek(|collections| collections.created.contains(collection_id))
+        self.collections.peek(|collections| {
+            collections
+                .created
+                .as_ref()
+                .is_some_and(|created| created.contains(collection_id))
+        })
     }
 
     pub(super) fn owe(&self, registration: OwedAcpRegistration) {

@@ -371,6 +371,7 @@ fn create_test_coordinator_with_blockstore_and_head_provider<B: Blockstore + 'st
             transport,
             broadcaster: broadcaster.clone(),
             failure_tx: Arc::new(AtomOption::none()),
+            failure_recorder: Arc::default(),
             dag_fetch_limiter: DagFetchLimiter::new(DEFAULT_MAX_CONCURRENT_DAG_FETCHES),
             push_backlog: crate::sync::push_backlog::PushBacklog::new(
                 crate::sync::DEFAULT_PUSH_QUEUE_CAPACITY,
@@ -859,7 +860,7 @@ impl P2PTransport for NoopTransport {
     ) -> crate::Result<MessageId> {
         if !self.publish_open.load(std::sync::atomic::Ordering::SeqCst) {
             return Err(crate::error::Error::GossipSubPublish(
-                "gossipsub publish error: InsufficientPeers".to_string(),
+                "InsufficientPeers".to_string(),
             ));
         }
         record(&self.published, topic);

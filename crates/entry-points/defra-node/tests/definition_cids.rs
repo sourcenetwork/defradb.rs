@@ -66,9 +66,7 @@ fn native_definitions_keep_their_ids() {
     workers::block_on(async {
         let node = Node::builder().build().await.unwrap();
         for (_, sdl) in SCHEMAS {
-            node.add_collection(&defra_core::RequestContext::ambient(), sdl)
-                .await
-                .unwrap();
+            node.add_collection(sdl).await.unwrap();
         }
         let mut names: Vec<&str> = SCHEMAS.iter().map(|(name, _)| *name).collect();
         names.push("Book");

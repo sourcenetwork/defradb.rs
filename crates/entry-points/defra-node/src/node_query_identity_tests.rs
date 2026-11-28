@@ -187,19 +187,20 @@ fn embedded_transaction_defaults_node_identity_and_preserves_explicit_actor() {
         let explicit_did = identity::Did::new("did:key:zExplicitTransactionActor").unwrap();
         let executor = Arc::new(IdentityRecordingExecutor::new(0));
         let node = signed_node_with_executor(node_did, executor.clone()).await;
-        let handle = TransactionHandle::new("identity-test-txn".to_string());
+        let txn = defra_core::TxnId { start: 0, route: 1 };
 
         let defaulted = node
-            .execute_request_in_txn(QueryRequest::new("query { defaulted }"), &handle)
+            .with_transaction(txn)
+            .execute_request(QueryRequest::new("query { defaulted }"))
             .await;
         assert!(
             !defaulted.has_errors(),
             "defaulted transaction query failed"
         );
         let explicit = node
-            .execute_request_in_txn(
+            .with_transaction(txn)
+            .execute_request(
                 QueryRequest::new("query { explicit }").with_identity(Some(explicit_did.clone())),
-                &handle,
             )
             .await;
         assert!(!explicit.has_errors(), "explicit transaction query failed");
@@ -223,12 +224,13 @@ fn unsigned_embedded_execution_remains_anonymous() {
             .await
             .expect("build unsigned identity-observing node");
         node.runner = executor.clone();
-        let handle = TransactionHandle::new("anonymous-test-txn".to_string());
+        let txn = defra_core::TxnId { start: 0, route: 1 };
 
         let direct = node.execute("query { direct }").await;
         let retry = node.execute("query { retry }").await;
         let transactional = node
-            .execute_request_in_txn(QueryRequest::new("query { transaction }"), &handle)
+            .with_transaction(txn)
+            .execute_request(QueryRequest::new("query { transaction }"))
             .await;
 
         assert!(!direct.has_errors());

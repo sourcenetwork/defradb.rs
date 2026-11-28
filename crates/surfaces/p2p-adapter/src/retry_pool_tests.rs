@@ -33,7 +33,7 @@ fn the_recorder_and_peer_activation_write_on_the_pool() {
     let before = stats.snapshot().off_pool_calls;
 
     let (failures, received) = nuclei::sync::mpsc::channel(1);
-    let recorder = spawn_failure_recorder(peerstore.clone(), received);
+    let recorder = spawn_failure_recorder(peerstore.clone(), received, Arc::default());
     let (registered, generation) = nuclei::sync::oneshot::channel();
     failures
         .try_send(p2p::sync::PushFailure {

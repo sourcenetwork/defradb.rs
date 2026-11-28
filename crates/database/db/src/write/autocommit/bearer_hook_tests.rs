@@ -6,8 +6,10 @@ use regolith::sync::Atom;
 const DID: &str = "did:key:autocommit-hook-test";
 const TOKEN: &str = "bearer-captured-when-staged";
 
+/// `denies_unregistered`: the provider reads a missing object as denied, so
+/// a delete may remove one.
 #[derive(Default)]
-struct TokenObserver(Atom<Vec<Option<String>>>);
+struct TokenObserver(Atom<Vec<Option<String>>>, bool);
 
 impl TokenObserver {
     fn record(&self) {
@@ -32,6 +34,7 @@ impl acp::DocumentACP for TokenObserver {
         _policy_id: &str,
         _resource_name: &str,
         _doc_id: &str,
+        _relationships: &[acp::DerivedRelationship],
     ) -> acp::Result<()> {
         assert_eq!(identity.as_str(), DID);
         self.record();
@@ -93,6 +96,10 @@ impl acp::DocumentACP for TokenObserver {
     ) -> acp::Result<()> {
         self.record();
         Ok(())
+    }
+
+    fn unregistered_documents_are_public(&self) -> bool {
+        !self.1
     }
 }
 
@@ -200,7 +207,7 @@ fn deferred_unregistration_hook_uses_bearer_captured_before_commit() {
         .await
         .unwrap();
         let collection = db.get_collection("BearerHookDeleteDoc").unwrap().unwrap();
-        let observer = Arc::new(TokenObserver::default());
+        let observer = Arc::new(TokenObserver(Atom::default(), true));
         db.set_document_acp(observer.clone());
 
         let txn = db.new_txn(false).await.unwrap();

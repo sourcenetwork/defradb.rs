@@ -29,7 +29,7 @@ defra-core = { path = "../../foundation/defra-core" }
 # vera.rs's token claims, its typed policy commands and their relationship types.
 vera-crypto = "0.2.0"
 vera-modules = "0.2.0"
-vera-acp = "0.2.0"
+vera-identity = "0.2.0"
 
 # The actor keys a delegation is signed with.
 k256.workspace = true
@@ -58,6 +58,7 @@ sha2 = { workspace = true, features = ["asm"] }
 # pinned ones, so a signed or hashed encoding that depends on this feature fails here and not only in a wider build.
 serde_json = { workspace = true, features = ["preserve_order"] }
 identity = { path = "../../building-blocks/identity" }
+mantra-macros = "0.9"
 nuclei.workspace = true
 regolith.workspace = true
 

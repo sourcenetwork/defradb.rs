@@ -4,7 +4,6 @@
 //! node cannot tell it from another defra node: it holds its own endpoint key,
 //! signs its PushLog envelopes with it, and needs no cooperation from the node.
 
-use std::net::{IpAddr, Ipv4Addr};
 use std::time::Duration;
 
 use cid::Cid;
@@ -26,11 +25,14 @@ pub struct HostilePeer {
 impl HostilePeer {
     pub async fn dial(p2p_addrs: &[String]) -> Self {
         let secret_key = generate_secret_key();
+        // Bound on every interface, as a node is. The node advertises only
+        // non-loopback addresses, and a socket bound to loopback that dials
+        // one hears back from 127.0.0.1, so its handshake never completes on
+        // the node's side and no PushLog it sends is ever read.
         let config = IrohEndpointConfig {
             secret_key: secret_key.clone(),
             relay_mode: IrohRelayModeConfig::Disabled,
             discovery: IrohDiscoveryConfig::Disabled,
-            bind_addr: Some(IpAddr::V4(Ipv4Addr::LOCALHOST)),
             ..Default::default()
         };
         let edge = edge::testing::edge();

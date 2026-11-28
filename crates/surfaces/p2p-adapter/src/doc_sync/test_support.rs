@@ -245,3 +245,60 @@ impl DocSyncDispatch for SlowDispatch {
         Ok(())
     }
 }
+
+/// One connected peer whose send publishes a merge report for each of
+/// `reports` on `bus` before it returns, as a reply's merges would. The
+/// reports are published after `sync_documents` subscribed, because it
+/// subscribes before it sends.
+pub(crate) struct ReportingDispatch {
+    bus: Arc<events::ChannelBus>,
+    reports: Vec<String>,
+}
+
+impl ReportingDispatch {
+    pub(crate) fn new(bus: Arc<events::ChannelBus>, reports: &[&str]) -> Self {
+        Self {
+            bus,
+            reports: reports.iter().map(|doc_id| doc_id.to_string()).collect(),
+        }
+    }
+}
+
+/// A merge report naming `doc_id`.
+pub(crate) fn merge_report(doc_id: &str) -> events::Message {
+    events::Message::merge_complete(events::MergeCompleteData {
+        doc_id: doc_id.to_string(),
+        subject_doc_id: None,
+        cid: Cid::default(),
+        collection_id: "collection".to_string(),
+        by_peer: String::new(),
+    })
+}
+
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+impl DocSyncDispatch for ReportingDispatch {
+    type Peer = String;
+
+    const SEND_CONFIRMS_REPLY: bool = false;
+
+    async fn connected_peers(&self) -> P2PResult<Vec<Self::Peer>> {
+        Ok(vec!["peer-0".to_string()])
+    }
+
+    fn sign_request(&self, _request: &mut DocSyncRequest) -> P2PResult<()> {
+        Ok(())
+    }
+
+    async fn send_doc_sync_request(
+        &self,
+        _peer: &Self::Peer,
+        _request: DocSyncRequest,
+    ) -> P2PResult<()> {
+        use events::Bus as _;
+        for doc_id in &self.reports {
+            self.bus.publish(merge_report(doc_id));
+        }
+        Ok(())
+    }
+}

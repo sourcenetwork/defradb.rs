@@ -317,6 +317,8 @@ documentation_style = "c"
 
 [export]
 include = [
+    "DefraKeyringGetCallback",
+    "DefraKeyringSetCallback",
     "DefraRemoteSignAsyncCallback",
     "DefraRemoteSignCallback",
     "DefraReplicationFilterCallback",

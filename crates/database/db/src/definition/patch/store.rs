@@ -260,8 +260,11 @@ impl<S: Store> crate::database::DB<S> {
                 self.pool(),
             )
             .await?;
-            let txn_lens_store = crate::txn::lenses::TxnLensStore::new(self.lens_store.clone());
-            txn_lens_store.add_with_id(lens.id.clone(), config).await?;
+            let txn_lens_store = crate::txn::lenses::TxnLensStore::new(self.lens_store().clone());
+            txn_lens_store
+                .add_with_id(lens.id.clone(), config.clone())
+                .await?;
+            self.owe_lens_on_commit(txn, lens.id.clone(), config, txn_lens_store.registrations())?;
             new_schema.previous_version = Some(CollectionSource {
                 source_collection_id: old_version_id.to_string(),
                 transform: Some(lens.id.to_string()),
@@ -477,13 +480,9 @@ impl<S: Store> crate::database::DB<S> {
             None
         };
         txn.on_commit(OnCommit::OrderedAndWait(Box::new(move || {
-            collections.rcu(|old| {
-                let mut cache = old.clone();
-                if let Some(collection) = &cached_collection {
-                    cache.put_named(&registered_name, collection.clone());
-                }
-                cache
-            });
+            if let Some(collection) = cached_collection {
+                collections.publish_named(&registered_name, collection, &[]);
+            }
         })))?;
         if new_schema.is_active {
             let view = txn.datastore()?;
@@ -584,7 +583,7 @@ impl<S: Store> crate::database::DB<S> {
                 continue;
             }
 
-            let mut needs_update = false;
+            let mut index_changes = Vec::new();
             let mut updated_schema = other_schema.clone();
             let max_index_id = updated_schema
                 .indexes
@@ -606,15 +605,15 @@ impl<S: Store> crate::database::DB<S> {
                     next_id
                 }) {
                     Ok(Some(index)) => {
+                        index_changes.push((index.id, None));
                         updated_schema.indexes.push(index);
-                        needs_update = true;
                     }
                     Ok(None) => {}
                     Err(e) => return Err(Error::InvalidPatch(e.to_string())),
                 }
             }
 
-            if needs_update {
+            if !index_changes.is_empty() {
                 // Store updated schema with new indexes
                 let key = CollectionKey::new(&updated_schema.version_id);
                 let data = serde_json::to_vec(&updated_schema).map_err(|e| {
@@ -639,11 +638,7 @@ impl<S: Store> crate::database::DB<S> {
                 let collections = std::sync::Arc::clone(&self.collections);
                 let registered_name = coll_name.to_string();
                 txn.on_commit(OnCommit::OrderedAndWait(Box::new(move || {
-                    collections.rcu(|old| {
-                        let mut cache = old.clone();
-                        cache.put_named(&registered_name, cached_collection.clone());
-                        cache
-                    });
+                    collections.publish_named(&registered_name, cached_collection, &index_changes);
                 })))?;
             }
         }

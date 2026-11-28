@@ -33,8 +33,9 @@ where
     }
 
     /// Permanently remove the documents `doc_ids` name from this node: their
-    /// values, index entries, primary keys, heads and every DocID alias, and
-    /// every block of their histories that no other document owns. In a
+    /// values, index entries, primary keys, heads, every DocID alias and the
+    /// access-control objects this node holds for them, and every block of
+    /// their histories that no other document owns. In a
     /// branchable collection the blocks stay, since the collection DAG links
     /// them, but no longer name the purged documents as owners. Nothing is
     /// replicated. A DocID that names no document is skipped. Returns how
@@ -74,7 +75,8 @@ where
                     let collection = txn
                         .load_collection_for_write_attempt(collection.name(), &collection)
                         .await?;
-                    db.purge_documents(txn, &collection, &doc_ids).await
+                    db.purge_documents(txn, &collection, &doc_ids, AcpObjects::Release)
+                        .await
                 })
             })
             .await?;
@@ -85,12 +87,14 @@ where
     /// Remove the documents `doc_ids` name from `collection` in `txn`, with
     /// their `@chunk` chunks, and return how many there were. Each document
     /// is counted once, however many of its aliases `doc_ids` names; a DocID
-    /// with no document is skipped.
+    /// with no document is skipped. `acp` says whether their ACP objects go
+    /// too.
     pub(crate) async fn purge_documents(
         &self,
         txn: &DbTxn<S>,
         collection: &Collection,
         doc_ids: &[document::DocID],
+        acp: AcpObjects,
     ) -> Result<usize> {
         crate::chunk::ensure_admin_changeable(collection.schema())?;
         let chunk_collections = crate::chunk::purge::collections(txn, collection).await?;
@@ -111,10 +115,10 @@ where
             for chunks_col in &chunk_collections {
                 txn.validate_collection_for_write(chunks_col).await?;
                 let chunk_ids = crate::chunk::purge::doc_ids(txn, chunks_col, &parents).await?;
-                self.purge_rows(txn, chunks_col, &chunk_ids).await?;
+                self.purge_rows(txn, chunks_col, &chunk_ids, acp).await?;
             }
         }
-        self.purge_rows(txn, collection, doc_ids).await
+        self.purge_rows(txn, collection, doc_ids, acp).await
     }
 
     async fn purge_rows(
@@ -122,6 +126,7 @@ where
         txn: &DbTxn<S>,
         collection: &Collection,
         doc_ids: &[document::DocID],
+        acp: AcpObjects,
     ) -> Result<usize> {
         let datastore = txn.datastore()?;
         let headstore = txn.headstore()?;
@@ -259,7 +264,26 @@ where
                 .await?;
             }
             crate::docid::map::delete_doc_id_mappings(&systemstore, doc_short_id).await?;
+            if acp == AcpObjects::Release {
+                crate::collection::acp::release_purged_doc_objects(
+                    self.document_acp(),
+                    txn.acpstore()?,
+                    collection.schema(),
+                    aliases.iter().map(String::as_str),
+                )
+                .await?;
+            }
         }
         Ok(targets.len())
     }
+}
+
+/// What a purge does with the ACP objects of the documents it removes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum AcpObjects {
+    /// Remove them with the history, so a DocID added again takes no old
+    /// grant: a purge.
+    Release,
+    /// Keep them, as Go's truncate does (`go.collection.truncate.acp`).
+    Keep,
 }

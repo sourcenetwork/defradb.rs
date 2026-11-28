@@ -42,6 +42,7 @@ impl Staging {
 fn objects(docs: &[String]) -> Vec<AcpObject<'_>> {
     docs.iter()
         .map(|doc| AcpObject {
+            relationships: &[],
             policy_id: POLICY,
             resource: RESOURCE,
             object_id: doc,
@@ -349,7 +350,7 @@ fn a_document_held_for_another_owner_is_cleared_and_left_out_of_the_list() {
         }
         staging
             .remote
-            .register_doc_object(&bob(), POLICY, RESOURCE, &docs[0])
+            .register_doc_object(&bob(), POLICY, RESOURCE, &docs[0], &[])
             .await
             .unwrap();
         let before = staging.submissions();

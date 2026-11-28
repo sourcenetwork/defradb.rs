@@ -9,7 +9,9 @@ use cid::Cid;
 use blockstore::Blockstore;
 
 use crate::error::{Error, Result};
+use crate::rt::time::Instant;
 use crate::sync::manager::diagnostics::SyncDiagnostics;
+use crate::sync::manager::walk_stats::WalkEnding;
 
 /// Parse IPLD block data and return the referenced CIDs that participate in
 /// Block-sync DAG transfer.
@@ -55,18 +57,80 @@ pub(crate) fn extract_ipld_links(block_data: &[u8]) -> Result<Vec<Cid>> {
     Ok(refs)
 }
 
+/// Children a walk looks at before it gives its core to other tasks, and the
+/// grain at which a fetch past its quantum can stop it.
+pub(crate) const MISSING_LINK_WALK_PAGE: u64 = 128;
+
+/// How a bounded walk ([`walk_missing_links`]) ended.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum WalkEnd {
+    /// Every reachable unmerged block was read; these are missing.
+    Frontier(Vec<Cid>),
+    /// The deadline passed at a page boundary. Says nothing about the DAG:
+    /// never empty, never complete.
+    Preempted,
+}
+
 /// Iteratively find ALL missing blocks in the DAG rooted at `block_data`.
 ///
 /// Walks the entire DAG using a work queue instead of recursion, so stack
 /// depth is constant regardless of DAG depth. Uses `is_merged()` to
-/// short-circuit traversal of already-merged subtrees.
+/// short-circuit traversal of already-merged subtrees. Yields after every
+/// [`MISSING_LINK_WALK_PAGE`] children and records its length, pages and time
+/// in `diagnostics`.
 ///
 /// `Ok([])` means every reachable unmerged block was read. A child whose read
 /// fails, or that does not parse, fails the whole walk: the caller does not
 /// know the frontier and must not take the DAG as complete
 /// ([`frontier_or_unknown`]). A storage conflict stays
 /// `Error::BlockstoreTxnConflict`.
-pub async fn find_all_missing_links<B>(blockstore: &B, block_data: &[u8]) -> Result<Vec<Cid>>
+pub async fn find_all_missing_links<B>(
+    blockstore: &B,
+    block_data: &[u8],
+    diagnostics: &SyncDiagnostics,
+) -> Result<Vec<Cid>>
+where
+    B: Blockstore,
+{
+    match walk_missing_links(blockstore, block_data, diagnostics, None).await? {
+        WalkEnd::Frontier(missing) => Ok(missing),
+        WalkEnd::Preempted => unreachable!("a walk without a deadline is never preempted"),
+    }
+}
+
+/// [`find_all_missing_links`], stopped at the first page boundary at or past
+/// `deadline`. A preempted walk keeps nothing: the next walk starts again
+/// from the root, so a caller passes a deadline only once it has made other
+/// progress, and the walk it repeats can never be its only work.
+pub(crate) async fn walk_missing_links<B>(
+    blockstore: &B,
+    block_data: &[u8],
+    diagnostics: &SyncDiagnostics,
+    deadline: Option<Instant>,
+) -> Result<WalkEnd>
+where
+    B: Blockstore,
+{
+    let started = Instant::now();
+    let mut visits = 0u64;
+    let mut pages = 0u64;
+    let walk = walk_pages(blockstore, block_data, deadline, &mut visits, &mut pages).await;
+    let ending = match &walk {
+        Ok(WalkEnd::Frontier(_)) => WalkEnding::Completed,
+        Ok(WalkEnd::Preempted) => WalkEnding::Preempted,
+        Err(_) => WalkEnding::Failed,
+    };
+    diagnostics.record_missing_link_walk(ending, visits, pages, started.elapsed());
+    walk
+}
+
+async fn walk_pages<B>(
+    blockstore: &B,
+    block_data: &[u8],
+    deadline: Option<Instant>,
+    visits: &mut u64,
+    pages: &mut u64,
+) -> Result<WalkEnd>
 where
     B: Blockstore,
 {
@@ -81,6 +145,14 @@ where
         for link_cid in refs {
             if !visited.insert(link_cid) {
                 continue;
+            }
+            *visits += 1;
+            if visits.is_multiple_of(MISSING_LINK_WALK_PAGE) {
+                if deadline.is_some_and(|end| Instant::now() >= end) {
+                    return Ok(WalkEnd::Preempted);
+                }
+                crate::rt::yield_now().await;
+                *pages += 1;
             }
 
             // Early-exit: merged subtrees are complete, skip traversal
@@ -113,7 +185,7 @@ where
         }
     }
 
-    Ok(missing)
+    Ok(WalkEnd::Frontier(missing))
 }
 
 /// The frontier a walk of `root_cid`'s DAG leaves: its missing blocks, or,

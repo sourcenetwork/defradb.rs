@@ -25,17 +25,15 @@ impl Action for IntrospectionRequest {
 
     fn execute(&self, state: &mut State) {
         assert!(self.txn.is_none(), "transactions are not supported yet");
-        let response = state
-            .block_on(
-                state
-                    .node_on(crate::scenario::DEFAULT_NODE)
-                    .expect("default node")
-                    .execute_request_as(
-                        &state.context(self.txn),
-                        QueryRequest::new(self.request.as_str()),
-                    ),
-            )
-            .expect("run request");
+        let node = state
+            .node_on(crate::scenario::DEFAULT_NODE)
+            .expect("default node");
+        let response = state.block_on(
+            state
+                .scope_as(self.txn, None)
+                .on(&node)
+                .execute_request(QueryRequest::new(self.request.as_str())),
+        );
         self.check(graphql_outcome(
             response.data,
             response.errors.iter().map(|e| e.message.as_str()),

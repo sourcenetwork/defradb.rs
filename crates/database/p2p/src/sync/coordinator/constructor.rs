@@ -267,6 +267,7 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
                     transport,
                     broadcaster,
                     failure_tx,
+                    failure_recorder: Arc::default(),
                     dag_fetch_limiter: DagFetchLimiter::new(max_dag_fetches),
                     push_backlog,
                     broadcast_coalescer,
@@ -321,6 +322,12 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
     /// Set the failure channel for reporting push failures to the FFI layer.
     pub fn set_failure_channel(&mut self, tx: mpsc::Sender<super::PushFailure>) {
         self.runtime.failure_tx.store_some(tx);
+    }
+
+    /// The counters the recorder draining this coordinator's failure channel
+    /// updates, reported in [`super::SyncStatus`].
+    pub fn failure_recorder_stats(&self) -> Arc<crate::sync::FailureRecorderStats> {
+        Arc::clone(&self.runtime.failure_recorder)
     }
 
     /// A bounded channel of `capacity` push failures, installed as this

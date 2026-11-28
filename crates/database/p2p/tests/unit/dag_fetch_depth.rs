@@ -1,6 +1,7 @@
 use super::*;
 
-/// The provider holds a 100-block chain and the receiver its oldest `held`
+/// The provider holds a 100-block chain that is no document's (a branchable
+/// collection's blocks name no haves) and the receiver its oldest `held`
 /// blocks. Each round serves only its cut below the frontier: a new head over
 /// held history costs one small round, and an empty receiver widens the cut
 /// without any round re-serving an earlier round's blocks.
@@ -52,7 +53,7 @@ async fn depth_cut_fetch_serves_only_the_cut_below_the_frontier() {
             event_tx,
             head,
             DagFetchContext::new(
-                "doc-id".to_string(),
+                String::new(),
                 "collection-id".to_string(),
                 "creator-id".to_string(),
                 PeerId::new("remote-peer".to_string()),

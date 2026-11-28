@@ -121,7 +121,7 @@ invariant "is violated" with a concrete counterexample trace.
   top of it.
 - **Integrator TODO:** no automated model↔code conformance harness yet (repo-wide
   policy, `proofs/README.md` "Model ≠ code"). Keep anchors in step manually if
-  `lifecycle.rs` / `operations.rs` / `db-nac/src/lib.rs` change the disable
+  `lifecycle.rs` / `operations.rs` / `crates/database/db/src/nac/mod.rs` change the disable
   persistence, the write-block, or the `is_admin` vs `is_admin_persisted` split.
 - **Integrator TODO (run-all):** the four `MC_Nac_*` configs above must run in
   `proofs/tla/run-all.sh` (it now picks up every top-level `*.cfg`, taking the

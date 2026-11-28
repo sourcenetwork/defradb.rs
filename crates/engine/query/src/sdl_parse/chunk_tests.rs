@@ -1,5 +1,5 @@
-use super::super::parser::{parse_sdl, parse_sdl_with_known_types};
-use rapidhash::{HashSetExt, RapidHashSet};
+use super::super::parser::{parse_sdl, parse_sdl_with_known_collections};
+use rapidhash::RapidHashMap;
 use schema::{FieldKind, CHUNK_SOURCE_ID_FIELD};
 
 const SDL: &str = r#"
@@ -190,23 +190,24 @@ fn chunk_refuses_a_second_chunk_on_one_field() {
     );
 }
 
-fn known(names: &[&str]) -> RapidHashSet<String> {
-    let mut known = RapidHashSet::new();
-    known.extend(names.iter().map(|name| name.to_string()));
-    known
+fn known(names: &[&str]) -> RapidHashMap<String, String> {
+    names
+        .iter()
+        .map(|name| (name.to_string(), format!("{name}-id")))
+        .collect()
 }
 
 #[test]
 fn a_chunk_name_is_not_taken_when_its_parent_is_already_known() {
     let collections =
-        parse_sdl_with_known_types(SDL, known(&["Article", "Article__body_chunk"])).unwrap();
+        parse_sdl_with_known_collections(SDL, known(&["Article", "Article__body_chunk"])).unwrap();
     let names: Vec<&str> = collections.iter().map(|c| c.name.as_str()).collect();
     assert_eq!(names, vec!["Article", "Article__body_chunk"]);
 }
 
 #[test]
 fn a_stored_collection_takes_the_chunk_name_of_a_new_parent() {
-    let err = parse_sdl_with_known_types(SDL, known(&["Article__body_chunk"]))
+    let err = parse_sdl_with_known_collections(SDL, known(&["Article__body_chunk"]))
         .unwrap_err()
         .to_string();
     assert_eq!(

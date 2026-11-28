@@ -100,75 +100,90 @@ pub(super) async fn submit(acp: &VeraDocumentACP, change: &OwedChange) -> Submis
         OwedSubject::Wildcard => Some(SubjectRef::AllActors),
         OwedSubject::EntitySet { .. } | OwedSubject::TypedWildcard { .. } => None,
     };
-    let written = match actor_subject {
-        Some(subject) => {
-            acp.remote(move |provider| async move {
-                if add {
-                    provider
-                        .set_relationship(&token, &policy, &resource, &object, &relation, &subject)
-                        .await
-                } else {
-                    provider
-                        .delete_relationship(
-                            &token, &policy, &resource, &object, &relation, &subject,
-                        )
-                        .await
-                }
-            })
-            .await
-        }
-        None => {
-            let subject = zanzibar::Subject::from(tuple.subject.clone());
-            let (kind, subject_resource, subject_object, subject_relation) =
-                match zanzibar::encode_subject(&subject) {
-                    Ok(encoded) if matches!(subject, zanzibar::Subject::EntitySet { .. }) => {
-                        encoded
+    let written = if change.op == OwedOp::Transfer {
+        let Some(new_owner) = tuple.new_owner().map(ToString::to_string) else {
+            return Submission::Unsupported {
+                reason: acp::Error::UnsupportedTransfer.to_string(),
+            };
+        };
+        acp.remote(move |provider| async move {
+            provider
+                .transfer_object(&token, &policy, &resource, &object, &new_owner)
+                .await
+                .map(|()| true)
+        })
+        .await
+    } else {
+        match actor_subject {
+            Some(subject) => {
+                acp.remote(move |provider| async move {
+                    if add {
+                        provider
+                            .set_relationship(
+                                &token, &policy, &resource, &object, &relation, &subject,
+                            )
+                            .await
+                    } else {
+                        provider
+                            .delete_relationship(
+                                &token, &policy, &resource, &object, &relation, &subject,
+                            )
+                            .await
                     }
-                    _ => {
-                        return Submission::Unsupported {
-                            reason: acp::Error::UnsupportedSubject(subject.to_string()).to_string(),
+                })
+                .await
+            }
+            None => {
+                let subject = zanzibar::Subject::from(tuple.subject.clone());
+                let (kind, subject_resource, subject_object, subject_relation) =
+                    match zanzibar::encode_subject(&subject) {
+                        Ok(encoded) if matches!(subject, zanzibar::Subject::EntitySet { .. }) => {
+                            encoded
                         }
+                        _ => {
+                            return Submission::Unsupported {
+                                reason: acp::Error::UnsupportedSubject(subject.to_string())
+                                    .to_string(),
+                            }
+                        }
+                    };
+                acp.remote(move |provider| async move {
+                    if add {
+                        provider
+                            .set_relationship_subject_as(
+                                &token,
+                                &policy,
+                                &resource,
+                                &object,
+                                &relation,
+                                kind,
+                                &subject_resource,
+                                &subject_object,
+                                &subject_relation,
+                            )
+                            .await
+                    } else {
+                        provider
+                            .delete_relationship_subject_as(
+                                &token,
+                                &policy,
+                                &resource,
+                                &object,
+                                &relation,
+                                kind,
+                                &subject_resource,
+                                &subject_object,
+                                &subject_relation,
+                            )
+                            .await
                     }
-                };
-            acp.remote(move |provider| async move {
-                if add {
-                    provider
-                        .set_relationship_subject_as(
-                            &token,
-                            &policy,
-                            &resource,
-                            &object,
-                            &relation,
-                            kind,
-                            &subject_resource,
-                            &subject_object,
-                            &subject_relation,
-                        )
-                        .await
-                } else {
-                    provider
-                        .delete_relationship_subject_as(
-                            &token,
-                            &policy,
-                            &resource,
-                            &object,
-                            &relation,
-                            kind,
-                            &subject_resource,
-                            &subject_object,
-                            &subject_relation,
-                        )
-                        .await
-                }
-            })
-            .await
+                })
+                .await
+            }
         }
     };
     match written {
-        Ok(_) => {
-            acp.invalidate_cached_access(&tuple.policy_id);
-            Submission::Applied
-        }
+        Ok(_) => Submission::Applied,
         Err(ProviderError::Unavailable(reason)) => Submission::Unavailable { reason },
         Err(error) if acp.provider.write_refused(&error) => {
             // A delegation that expired on the way is not the provider's

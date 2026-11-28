@@ -1,3 +1,4 @@
+use std::env;
 use std::path::Path;
 use std::process::Command;
 
@@ -47,4 +48,23 @@ fn main() {
 
     println!("cargo:rustc-env=GIT_COMMIT={commit}");
     println!("cargo:rustc-env=BUILD_DATE={date}");
+    println!("cargo:rustc-env=RUSTC_VERSION={}", rustc_version());
+}
+
+/// The version of the compiler building this crate (`1.100.0` from `rustc 1.100.0 (… …)`), as
+/// Go's version string names the Go toolchain that built it.
+fn rustc_version() -> String {
+    let rustc = env::var("RUSTC").unwrap_or_else(|_| "rustc".to_string());
+    Command::new(rustc)
+        .arg("--version")
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .and_then(|o| {
+            String::from_utf8_lossy(&o.stdout)
+                .split_whitespace()
+                .nth(1)
+                .map(str::to_string)
+        })
+        .unwrap_or_else(|| "unknown".to_string())
 }

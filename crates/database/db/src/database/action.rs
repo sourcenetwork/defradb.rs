@@ -138,6 +138,21 @@ pub(crate) async fn delete_action_record(
     .await
 }
 
+/// Start the durable action in the transaction that defines its work.
+pub(crate) async fn stage_action_start(
+    systemstore: &datastore::NamespaceView,
+    collection_id: &str,
+    action: Action,
+    subject: &str,
+) -> Result<()> {
+    let [status, reason, progress] = action_record_keys(collection_id, action, subject);
+    systemstore
+        .set(&status, &encode_status(ActionStatus::IN_PROGRESS))
+        .await
+        .map_err(Error::Storage)?;
+    delete_keys(systemstore, &[reason, progress]).await
+}
+
 /// Mark an action's record errored with `reason`, keeping its progress.
 pub(crate) async fn stage_action_failure(
     systemstore: &datastore::NamespaceView,
@@ -203,17 +218,11 @@ impl<S: Store> crate::database::DB<S> {
             action,
             subject,
         )?;
-        let [status, reason, progress] = action_record_keys(collection_id, action, subject);
-        systemstore
-            .set(&status, &encode_status(ActionStatus::IN_PROGRESS))
-            .await
-            .map_err(Error::Storage)?;
-        delete_keys(systemstore, &[reason, progress]).await?;
+        stage_action_start(systemstore, collection_id, action, subject).await?;
         Ok(lease)
     }
 
-    /// The process-local lease of an action whose in-progress record outlived
-    /// the process that started it; the record itself stays as it is.
+    /// Claim a committed action for this process, leaving its durable record as is.
     pub(crate) fn resume_action(
         &self,
         collection_id: &str,
@@ -269,27 +278,29 @@ impl<S: Store> crate::database::DB<S> {
     }
 
     pub async fn complete_action(&self, lease: ActionExecutionLease) -> Result<()> {
-        let collection_id = lease.collection_id();
-        let action = lease.action();
-        let subject = lease.subject();
         let txn = self.new_txn(false).await?;
         let systemstore = txn.systemstore()?;
         delete_keys(
             &systemstore,
-            &action_record_keys(collection_id, action, subject),
+            &action_record_keys(lease.collection_id(), lease.action(), lease.subject()),
         )
         .await?;
         drop(systemstore);
         txn.commit().await?;
+        self.publish_completed_action(&lease);
+        Ok(())
+    }
 
+    /// Announce that the action of `lease` completed, once the commit that
+    /// cleared its record has landed.
+    pub(crate) fn publish_completed_action(&self, lease: &ActionExecutionLease) {
         self.publish_action(ActionExecution {
-            collection_id: collection_id.to_string(),
-            action,
-            subject: subject.to_string(),
+            collection_id: lease.collection_id().to_string(),
+            action: lease.action(),
+            subject: lease.subject().to_string(),
             status: ActionStatus::COMPLETED,
             ..Default::default()
         });
-        Ok(())
     }
 
     pub async fn clear_action(
@@ -350,7 +361,7 @@ impl<S: Store> crate::database::DB<S> {
 
         let txn = self.new_txn(true).await?;
         let systemstore = txn.systemstore()?;
-        let executions = index_action_executions(&systemstore, collection_id).await?;
+        let executions = index_listing_executions(&systemstore, collection_id).await?;
         drop(systemstore);
         txn.discard()?;
         Ok(executions)
@@ -427,12 +438,48 @@ pub(crate) async fn index_action_statuses(
         .collect())
 }
 
+/// [`index_action_executions`] as an index listing shows them: a unique
+/// index the owed reindex could not fill, because a migration gave two
+/// documents one of its values, lists as a failed build with the reason.
+pub(crate) async fn index_listing_executions(
+    systemstore: &datastore::NamespaceView,
+    collection_id: &str,
+) -> Result<RapidHashMap<u32, ActionExecution>> {
+    let mut executions = index_action_executions(systemstore, collection_id).await?;
+    if let Some((index_id, reason)) =
+        crate::definition::migration::owed_failure(systemstore, collection_id).await?
+    {
+        executions
+            .entry(index_id)
+            .or_insert_with(|| ActionExecution {
+                collection_id: collection_id.to_string(),
+                action: Action::BACKFILL_INDEX,
+                subject: index_id.to_string(),
+                status: ActionStatus::ERRORED,
+                reason,
+            });
+    }
+    Ok(executions)
+}
+
 pub(crate) async fn index_action_executions(
     systemstore: &datastore::NamespaceView,
     collection_id: &str,
 ) -> Result<RapidHashMap<u32, ActionExecution>> {
+    index_action_records(systemstore, collection_id).await
+}
+
+async fn index_action_records(
+    systemstore: &datastore::NamespaceView,
+    collection_id: &str,
+) -> Result<RapidHashMap<u32, ActionExecution>> {
     let mut iter = systemstore
-        .iterator(IterOptions::new().with_prefix(ActionStatusKey::collection_prefix(collection_id)))
+        .iterator(
+            IterOptions::new().with_prefix(ActionStatusKey::action_prefix(
+                collection_id,
+                Action::BACKFILL_INDEX,
+            )),
+        )
         .await
         .map_err(Error::Storage)?;
     let pairs = iter.collect_all().await.map_err(Error::Storage)?;

@@ -28,6 +28,11 @@ impl TxnLensStore {
             .get_or_init_racy(|| self.base.new_isolated_store())
     }
 
+    /// The store holding this transaction's own registrations.
+    pub(crate) fn registrations(&self) -> Arc<dyn TransformStore> {
+        Arc::clone(self.local())
+    }
+
     fn initialized_local(&self) -> Option<&Arc<dyn TransformStore>> {
         self.local.get()
     }

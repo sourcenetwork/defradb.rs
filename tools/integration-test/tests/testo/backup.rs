@@ -17,4 +17,5 @@ mod self_reference {
 mod simple {
     mod export;
     mod import;
+    mod import_alias;
 }

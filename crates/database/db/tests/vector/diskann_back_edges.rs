@@ -1,5 +1,6 @@
 //! Adding back-edges to an encoded DiskANN record in place writes the bytes
-//! that decoding it, adding each edge and encoding it again would.
+//! that decoding it, adding each edge and encoding it again would, in both
+//! layouts.
 
 use db::index::vector::engine::diskann::codec::{self, Record};
 use db::index::vector::store::NodeId;
@@ -55,6 +56,32 @@ proptest! {
         prop_assert_eq!(&bytes, &codec::encode_record(&record));
         prop_assert_eq!(count, record.neighbors.len());
     }
+
+    #[test]
+    fn adding_ids_in_place_writes_what_adding_edges_and_dropping_codes_would(
+        (m, own, existing, target, added) in case()
+    ) {
+        let target = NodeId(target);
+        let mut record = Record { code: own, neighbors: Vec::new() };
+        add_decoded(&mut record, target, &existing);
+        let ids: Vec<NodeId> = record.neighbors.iter().map(|(id, _)| *id).collect();
+        let mut bytes = codec::encode_id_list(&ids);
+        prop_assert_eq!(&bytes, &codec::encode_ids(&record.neighbors));
+
+        let count = codec::add_ids(&mut bytes, target, &added).unwrap();
+        add_decoded(&mut record, target, &added);
+
+        prop_assert_eq!(&bytes, &codec::encode_ids(&record.neighbors));
+        prop_assert_eq!(count, record.neighbors.len());
+        prop_assert_eq!(m, record.code.len());
+    }
+}
+
+#[test]
+fn a_corrupt_ids_only_record_is_an_error() {
+    let mut bytes = codec::encode_id_list(&[NodeId(1), NodeId(2)]);
+    bytes.pop();
+    assert!(codec::add_ids(&mut bytes, NodeId(9), &[(NodeId(3), Vec::new())]).is_err());
 }
 
 #[test]

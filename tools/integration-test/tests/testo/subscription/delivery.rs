@@ -8,6 +8,7 @@ mod arrivals;
 mod beyond_head;
 mod merge_once;
 mod resume;
+mod retention;
 mod visibility;
 
 use integration_test::actions::Request;

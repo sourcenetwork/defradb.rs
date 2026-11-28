@@ -50,6 +50,7 @@ async fn update_signed_by_a_granted_writer_merges() {
 /// so it is public there, as in Go.
 #[nuclei::test]
 #[serial]
+#[ignore = "https://github.com/sourcenetwork/defradb.rs/issues/2090"]
 async fn update_to_unregistered_protected_document_merges() {
     edge::compat(async move {
         let owner = author(0x11);

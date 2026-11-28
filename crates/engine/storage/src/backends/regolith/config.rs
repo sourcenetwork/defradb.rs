@@ -225,6 +225,14 @@ mod tests {
     use crate::merge::counter_i64;
     use crate::{RegolithStore, RegolithStoreOptions};
 
+    #[test]
+    fn an_open_keeps_the_configured_key_limit() {
+        let limit = regolith::DEFAULT_MAX_KEY_SIZE * 2;
+        let mut options = RegolithStoreOptions::memory();
+        options.engine = options.engine.max_key_size(limit);
+        assert_eq!(options.engine_for_open().get_max_key_size(), limit);
+    }
+
     /// A read-only open folds merged values as the writable open does. It
     /// opened without the merge operator before, and the read failed.
     #[test]

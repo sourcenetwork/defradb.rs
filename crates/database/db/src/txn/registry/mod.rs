@@ -209,13 +209,31 @@ impl<S: Store + 'static> DbTransactionRegistry<S> {
             + MaybeSend
             + 'static,
     {
+        self.in_txn_for(context, context, txn_id, work).await
+    }
+
+    /// [`Self::in_txn`] where `owner` admits the turn and `context` is the
+    /// caller whose access the work checks.
+    async fn in_txn_for<T, W>(
+        &self,
+        owner: &RequestContext,
+        context: &RequestContext,
+        txn_id: &str,
+        work: W,
+    ) -> Result<T>
+    where
+        T: MaybeSend + 'static,
+        W: for<'t> FnOnce(&'t mut OwnedTxn<S>) -> LocalBoxFuture<'t, Result<T>>
+            + MaybeSend
+            + 'static,
+    {
         let not_found = || Error::TransactionNotFound(txn_id.to_string());
         let id = TxnId::parse(txn_id).ok_or_else(not_found)?;
         let scope = context.clone();
         let ran = self
             .owners()
             .map_err(|error| Error::Other(error.to_string()))?
-            .run(id, &self.caller(context), move |owned| {
+            .run(id, &self.caller(owner), move |owned| {
                 Box::pin(async move { scope.mirror(work(owned)).await })
             })
             .await;

@@ -72,6 +72,7 @@ mod push_worker;
 mod receive_gate;
 mod replicators;
 mod result_types;
+mod rooted_request;
 mod selective_car_access;
 mod subscriptions;
 
@@ -81,7 +82,7 @@ pub use result_types::{CreateReplicatorResult, LoadReplicatorsResult};
 pub use selective_car_access::{HeadHintCarAuthority, HeadHintCarGrant};
 
 use rapidhash::{HashMapExt, RapidHashMap};
-use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{fence, AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -160,6 +161,8 @@ pub struct PushFailure {
 pub struct SyncStatus {
     /// Live queue occupancy and retry/retirement counters.
     pub push_backlog: crate::sync::push_backlog::PushBacklogSnapshot,
+    /// Lane depth, run sizes and failed runs of the push failure recorder.
+    pub failure_recorder: crate::sync::FailureRecorderSnapshot,
     /// Gossip updates folded into a newer update during the short window.
     pub broadcast_coalesced_total: u64,
     /// Duplicate replicator updates folded by the bounded outgoing queue.
@@ -196,6 +199,9 @@ pub struct SyncStatus {
     pub non_authoritative_broadcast_high_water: usize,
     pub non_authoritative_broadcast_rejected_total: u64,
     pub missing_link_retries: u64,
+    /// Length, pages, time, preemptions and failures of local missing-link
+    /// walks (#2599).
+    pub missing_link_walks: crate::sync::MissingLinkWalkSnapshot,
     pub car_requested_cids: u64,
     pub car_present_cids: u64,
     pub car_served_cids: u64,
@@ -283,6 +289,8 @@ struct SyncShutdownState {
     /// Every retained handle, pending-DAG fetches included; the registry
     /// below keeps only their reservations and generation-scoped leases.
     background_tasks: SegQueue<TrackedTask>,
+    /// Registrations admitted before shutdown began. The drain waits for
+    /// zero before it takes the queue, including work queued on the edge.
     task_registry_accesses: AtomicUsize,
     task_registry_idle: Event,
     non_authoritative_broadcast_slots: Arc<regolith::sync::Semaphore>,
@@ -294,19 +302,24 @@ struct SyncShutdownState {
     pending_dag_fetch_task_limit: usize,
     /// Wakes the existing retry clock after an owned task or merge releases capacity.
     pending_dag_capacity_released: Notify,
-    #[cfg(test)]
-    pending_dag_work_changed: Notify,
     pending_dag_fetch_tasks: Atom<RapidHashMap<Cid, PendingDagFetchTask>>,
     /// Where the coordinator's network work runs.
     network: crate::network::Network,
 }
 
-struct TaskRegistryAccess<'shutdown>(&'shutdown SyncShutdownState);
+struct TaskRegistryAccess(Arc<SyncShutdownState>);
 
-impl TaskRegistryAccess<'_> {
-    fn register_task(&self, task: TrackedTask) {
+impl TaskRegistryAccess {
+    fn register_task(&self, task: TrackedTask) -> bool {
         self.prune_finished_tasks();
+        let abort = task.abort_handle();
         self.0.background_tasks.push(task);
+        fence(Ordering::SeqCst);
+        if self.0.is_shutting_down.load(Ordering::SeqCst) {
+            abort.abort();
+            return false;
+        }
+        true
     }
 
     fn prune_finished_tasks(&self) {
@@ -322,7 +335,7 @@ impl TaskRegistryAccess<'_> {
     }
 }
 
-impl Drop for TaskRegistryAccess<'_> {
+impl Drop for TaskRegistryAccess {
     fn drop(&mut self) {
         if self.0.task_registry_accesses.fetch_sub(1, Ordering::SeqCst) == 1
             && self.0.is_shutting_down.load(Ordering::SeqCst)
@@ -384,13 +397,6 @@ impl Drop for PendingDagWorkOwner {
             }
             next
         });
-        #[cfg(test)]
-        if released {
-            self.shutdown
-                .inner
-                .pending_dag_work_changed
-                .notify_waiters();
-        }
         if released && !self.shutdown.is_shutting_down() {
             self.shutdown
                 .inner
@@ -572,8 +578,6 @@ impl SyncShutdownHandle {
                 non_authoritative_broadcast_high_water: AtomicUsize::new(0),
                 non_authoritative_broadcast_rejected: AtomicU64::new(0),
                 pending_dag_capacity_released: Notify::new(),
-                #[cfg(test)]
-                pending_dag_work_changed: Notify::new(),
                 pending_dag_fetch_task_limit: pending_dag_fetch_task_limit.max(1),
                 pending_dag_fetch_tasks: Atom::new(RapidHashMap::new()),
             }),
@@ -616,7 +620,7 @@ impl SyncShutdownHandle {
     }
 
     /// Wait for registered tasks within the graceful and cancellation budgets.
-    /// Concurrent callers share teardown. An edge-owned drain survives caller cancellation.
+    /// Concurrent callers share teardown; cancelling a caller does not stop it.
     pub async fn shutdown(&self) {
         let complete = self.inner.shutdown_complete.clone();
         if self.begin_shutdown() {
@@ -658,17 +662,33 @@ impl SyncShutdownHandle {
         let Some(access) = self.begin_task_registry_access() else {
             return false;
         };
-        access.register_task(TrackedTask::spawn(self.network().edge(), future));
-        true
+        // A pool worker (a write's broadcast, a merge's follow-up) has no
+        // reactor: the task is registered and run on the network edge.
+        let network = self.network();
+        if let Some(edge) = network.crossing() {
+            let handle = self.clone();
+            drop(edge.spawn(async move {
+                handle.spawn_here(future, access);
+            }));
+            return true;
+        }
+        self.spawn_here(future, access)
     }
 
-    fn begin_task_registry_access(&self) -> Option<TaskRegistryAccess<'_>> {
+    fn spawn_here<F>(&self, future: F, access: TaskRegistryAccess) -> bool
+    where
+        F: std::future::Future<Output = ()> + MaybeSend + 'static,
+    {
+        access.register_task(TrackedTask::spawn(self.network().edge(), future))
+    }
+
+    fn begin_task_registry_access(&self) -> Option<TaskRegistryAccess> {
         // Announce before reading the flag so the drain sees every admitted
         // access, including a registration that has yet to publish its handle.
         self.inner
             .task_registry_accesses
             .fetch_add(1, Ordering::SeqCst);
-        let access = TaskRegistryAccess(&self.inner);
+        let access = TaskRegistryAccess(Arc::clone(&self.inner));
         (!self.inner.is_shutting_down.load(Ordering::SeqCst)).then_some(access)
     }
 
@@ -782,8 +802,6 @@ impl SyncShutdownHandle {
             }
             next
         });
-        #[cfg(test)]
-        self.inner.pending_dag_work_changed.notify_waiters();
     }
 
     fn pending_dag_work_owner(&self, root_cid: Cid) -> Arc<PendingDagWorkOwner> {
@@ -854,11 +872,12 @@ impl SyncShutdownHandle {
         let mut claimed = false;
         self.inner.pending_dag_fetch_tasks.rcu(|current| {
             let mut next = Self::prune_pending_dag_fetches(current);
-            claimed = match next.get(&root_cid) {
-                Some(PendingDagFetchTask::Scheduled) => true,
-                Some(_) => false,
-                None => next.len() < self.inner.pending_dag_fetch_task_limit,
-            };
+            claimed = !self.is_shutting_down()
+                && match next.get(&root_cid) {
+                    Some(PendingDagFetchTask::Scheduled) => true,
+                    Some(_) => false,
+                    None => next.len() < self.inner.pending_dag_fetch_task_limit,
+                };
             if claimed {
                 next.insert(
                     root_cid,
@@ -895,9 +914,9 @@ impl SyncShutdownHandle {
         });
         // Keep the slot live until Running is installed even if the spawned
         // future completes before this thread finishes its registration.
-        access.register_task(task);
+        let accepted = access.register_task(task);
         drop(owner);
-        Some(abort)
+        accepted.then_some(abort)
     }
 
     /// Number of live retained background task handles. Prunes finished
@@ -923,8 +942,6 @@ impl SyncShutdownHandle {
         self.inner
             .pending_dag_fetch_tasks
             .store(RapidHashMap::new());
-        #[cfg(test)]
-        self.inner.pending_dag_work_changed.notify_waiters();
         let mut handles = Vec::new();
         while let Some(task) = self.inner.background_tasks.pop() {
             handles.push(task);
@@ -993,6 +1010,9 @@ pub(super) struct SyncRuntime<T: P2PTransport> {
     /// Behind a shared slot so the fixed push workers observe a channel that
     /// is installed after construction (`set_failure_channel`).
     pub(super) failure_tx: Arc<AtomOption<mpsc::Sender<PushFailure>>>,
+
+    /// What the recorder draining `failure_tx` holds and does.
+    pub(super) failure_recorder: Arc<crate::sync::FailureRecorderStats>,
 
     /// Limiter for concurrent DAG fetch tasks (configurable via SyncConfig).
     pub(super) dag_fetch_limiter: DagFetchLimiter,
@@ -1168,6 +1188,7 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
         let estimates = self.manager.pending_dag_estimates();
         SyncStatus {
             push_backlog,
+            failure_recorder: self.runtime.failure_recorder.snapshot(),
             broadcast_coalesced_total: self.runtime.broadcast_coalescer.coalesced(),
             push_updates_coalesced_total,
             gossip_direction_filtered_total: self
@@ -1194,6 +1215,7 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
             non_authoritative_broadcast_high_water,
             non_authoritative_broadcast_rejected_total,
             missing_link_retries: diagnostics.missing_link_retries,
+            missing_link_walks: diagnostics.missing_link_walks,
             car_requested_cids: diagnostics.car_requested_cids,
             car_present_cids: diagnostics.car_present_cids,
             car_served_cids: diagnostics.car_served_cids,
@@ -1625,6 +1647,9 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
         {
             true
         } else {
+            self.runtime
+                .shutdown
+                .release_pending_dag_fetch_reservation(&root_cid);
             self.manager
                 .diagnostics()
                 .record_pending_dag_retry_suppressed();
@@ -1661,8 +1686,14 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
     /// Waits until no pending-DAG work holds a slot. A fetch task sends its
     /// `DagReady` before it records its attempt and drops its owner, so the
     /// merge of that event can finish while the task still holds the slot.
-    /// Wait on the edge's real clock so the deadline cannot advance the
-    /// caller's paused test clock.
+    /// Every owner's release signals `pending_dag_capacity_released`, which
+    /// keeps a permit for a release that lands before the wait.
+    ///
+    /// Panics if a slot is still held after `PENDING_DAG_RELEASE_LIMIT`: a
+    /// leaked owner, or a wake-up another waiter on the notifier took. The
+    /// wait and its deadline run on the edge's real clock. The caller only
+    /// awaits a oneshot: a timer on a paused test runtime would let that
+    /// clock auto-advance to it and move the test's own deadlines.
     #[cfg(test)]
     pub(crate) async fn pending_dag_work_released(&self) {
         const PENDING_DAG_RELEASE_LIMIT: Duration = Duration::from_secs(5);
@@ -1671,12 +1702,12 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
         let (done, outcome) = futures::channel::oneshot::channel();
         self.network().spawn(async move {
             let wait = async {
-                loop {
-                    let changed = shutdown.inner.pending_dag_work_changed.notified();
-                    if shutdown.pending_dag_fetch_count() == 0 {
-                        break;
-                    }
-                    changed.await;
+                while shutdown.pending_dag_fetch_count() != 0 {
+                    shutdown
+                        .inner
+                        .pending_dag_capacity_released
+                        .notified()
+                        .await;
                 }
             };
             let released = edge.timeout(PENDING_DAG_RELEASE_LIMIT, wait).await.is_ok();
@@ -1704,6 +1735,10 @@ pub type Libp2pSyncCoordinator<B> =
 /// Type alias for SyncCoordinator using the iroh transport.
 #[cfg(feature = "iroh-transport")]
 pub type IrohSyncCoordinator<B> = SyncCoordinator<B, crate::iroh::IrohTransport>;
+
+/// Type alias for SyncCoordinator using the pinc transport.
+#[cfg(all(feature = "pinc-transport", not(target_arch = "wasm32")))]
+pub type PincSyncCoordinator<B> = SyncCoordinator<B, crate::pinc::PincTransport>;
 
 #[cfg(test)]
 mod access_tests;
@@ -1975,20 +2010,33 @@ mod shutdown_tests {
         assert_eq!(shutdown.non_authoritative_broadcast_stats().0, 0);
     }
 
+    /// #1099: completed handles must not accumulate for the process lifetime.
     #[nuclei::test(threads = 0)]
-    async fn ordinary_registration_retires_finished_fetch_handles() {
+    async fn spawn_task_prunes_finished_handles() {
         let shutdown = SyncShutdownHandle::new(4, test_network());
-        let root = Cid::new_v1(0x55, Code::Sha2_256.digest(b"finished-fetch"));
-        let fetch = shutdown.spawn_pending_dag_fetch(root, async {}).unwrap();
-        let deadline = crate::rt::time::Instant::now() + Duration::from_secs(2);
-        while !fetch.is_finished() {
-            assert!(crate::rt::time::Instant::now() < deadline);
-            crate::rt::yield_now().await;
+        let completed = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        for _ in 0..50 {
+            let completed = Arc::clone(&completed);
+            shutdown.spawn_task(async move {
+                completed.fetch_add(1, Ordering::SeqCst);
+            });
         }
 
-        assert_eq!(shutdown.inner.background_tasks.len(), 1);
-        assert!(shutdown.spawn_task(async {}));
-        assert_eq!(shutdown.inner.background_tasks.len(), 1);
+        let deadline = crate::rt::time::Instant::now() + Duration::from_secs(2);
+        while completed.load(Ordering::SeqCst) < 50 {
+            assert!(crate::rt::time::Instant::now() < deadline);
+            crate::rt::time::sleep(Duration::from_millis(5)).await;
+        }
+
+        shutdown.spawn_task(async {
+            crate::rt::time::sleep(Duration::from_secs(5)).await;
+        });
+
+        assert!(
+            shutdown.retained_task_count() <= 2,
+            "finished handles must be pruned on registration, retained {}",
+            shutdown.retained_task_count()
+        );
         shutdown.shutdown().await;
     }
 
@@ -2110,9 +2158,6 @@ mod shutdown_tests {
         let started = crate::rt::time::Instant::now();
         shutdown.shutdown().await;
 
-        assert_eq!(shutdown.pending_dag_fetch_count(), 0);
-        assert!(shutdown.spawn_pending_dag_fetch(root, async {}).is_none());
-        assert!(shutdown.inner.background_tasks.is_empty());
         assert!(
             started.elapsed() < BACKGROUND_TASK_SHUTDOWN_TIMEOUT,
             "pending fetch waited for the abort deadline instead of the shutdown signal"
