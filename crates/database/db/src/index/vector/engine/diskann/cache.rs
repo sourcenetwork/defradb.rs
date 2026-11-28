@@ -24,21 +24,19 @@ use crate::index::vector::store::NodeId;
 /// each starts. A concurrent map holding each code as its own allocation cost
 /// about six times the codes themselves at 1M vectors.
 ///
-/// Each slot is the code followed by the node's cluster, which names its
-/// record's key, or [`NO_CLUSTER`] for a node whose record is keyed by its id
-/// alone. The cluster sits beside the code so one lookup touches one place.
+/// Each slot is the code alone, so neighbours can read the hot bytes at the
+/// same density as an unclustered index. A parallel array holds each node's
+/// cluster, which names its record's key, or [`NO_CLUSTER`] for a node whose
+/// record is keyed by its id alone.
 #[derive(Debug, Default)]
 pub struct Codes {
-    index: RapidHashMap<NodeId, u32>,
+    index: RapidHashMap<NodeId, u64>,
     bytes: Vec<u8>,
     len: usize,
 }
 
 /// A node's code and the cluster its record is keyed by, if any.
 pub type Coded = (Vec<u8>, Option<u32>);
-
-/// Bytes of a slot past its code: the cluster.
-const CLUSTER_LEN: usize = 4;
 
 impl Codes {
     /// Every code of one index has the same length, set by the first; a code
@@ -54,22 +52,26 @@ impl Codes {
                 got: code.len(),
             });
         }
-        let slot = u32::try_from(self.bytes.len() / (self.len + CLUSTER_LEN))
+        let slot = u32::try_from(self.bytes.len() / self.len)
             .map_err(|_| Error::DiskAnnCodeSlots { id: id.0 })?;
-        self.index.insert(id, slot);
+        let cluster = cluster.unwrap_or(NO_CLUSTER);
+        self.index
+            .insert(id, u64::from(slot) | (u64::from(cluster) << 32));
         self.bytes.extend_from_slice(code);
-        self.bytes
-            .extend_from_slice(&cluster.unwrap_or(NO_CLUSTER).to_le_bytes());
         Ok(())
     }
 
     fn get(&self, id: NodeId) -> Option<(&[u8], Option<u32>)> {
-        let slot = *self.index.get(&id)? as usize;
-        let (code, cluster) = self.bytes[slot * (self.len + CLUSTER_LEN)..]
-            [..self.len + CLUSTER_LEN]
-            .split_at(self.len);
-        let cluster = u32::from_le_bytes(cluster.try_into().unwrap());
+        let tagged = *self.index.get(&id)?;
+        let slot = tagged as u32 as usize;
+        let code = &self.bytes[slot * self.len..][..self.len];
+        let cluster = (tagged >> 32) as u32;
         Some((code, (cluster != NO_CLUSTER).then_some(cluster)))
+    }
+
+    fn code(&self, id: NodeId) -> Option<&[u8]> {
+        let slot = *self.index.get(&id)? as u32 as usize;
+        Some(&self.bytes[slot * self.len..][..self.len])
     }
 
     fn shrink_to_fit(&mut self) {
@@ -157,6 +159,16 @@ impl CodeCache {
         match loaded.codes.get(id) {
             Some((code, cluster)) => Some((code.to_vec(), cluster)),
             None => loaded.misses.get(&id),
+        }
+    }
+
+    /// A node's code alone, for the neighbour-ranking path that never reads
+    /// the node's record key.
+    pub fn code(&self, id: NodeId) -> Option<Vec<u8>> {
+        let loaded = self.loaded.load();
+        match loaded.codes.code(id) {
+            Some(code) => Some(code.to_vec()),
+            None => loaded.misses.get(&id).map(|(code, _)| code),
         }
     }
 

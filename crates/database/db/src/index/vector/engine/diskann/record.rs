@@ -103,7 +103,7 @@ where
         };
         let mut neighbors = Vec::new();
         for neighbor in codec::decode_ids(&located.bytes)? {
-            if let Some((code, _)) = self.code(m, neighbor).await? {
+            if let Some(code) = self.code_only(m, neighbor).await? {
                 neighbors.push((neighbor, code));
             }
         }
@@ -166,6 +166,18 @@ where
             codes.insert(id, coded.clone());
         }
         Ok(coded)
+    }
+
+    /// A node's code where the caller does not need the cluster.
+    async fn code_only(&self, m: usize, id: NodeId) -> Result<Option<Vec<u8>>> {
+        if let Some(code) = self.codes.as_ref().and_then(|codes| codes.code(id)) {
+            return Ok(Some(code));
+        }
+        let coded = self.stored_code(m, id).await?;
+        if let (Some(codes), Some((code, cluster))) = (&self.codes, coded.as_ref()) {
+            codes.insert(id, (code.clone(), *cluster));
+        }
+        Ok(coded.map(|(code, _)| code))
     }
 
     /// A node's code and cluster as the transaction reads them.
