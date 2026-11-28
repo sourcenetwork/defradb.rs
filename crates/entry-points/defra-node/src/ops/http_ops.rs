@@ -93,20 +93,12 @@ impl ViewOperations for HttpNodeOps {
     }
 
     async fn gc_downsample_histories(&self, names: Option<Vec<String>>) -> Result<(), String> {
-        let (database, context) = (self.ops.database.clone(), self.context());
+        let (registry, context) = (self.ops.txn_registry.clone(), self.context());
         self.ops
             .on_pool(move || async move {
-                database
-                    .check_node_access_as(&context, acp::nac::NodePermission::ViewGc)
-                    .await?;
-                let options = names.map(db::downsample::GcDownsampleHistoriesOptions::with_names);
-                database
-                    .gc_downsample_histories_as(&context, options)
-                    .await
-                    .map_err(crate::Error::from)
+                Ok::<_, crate::Error>(registry.gc_downsample_views_as(&context, names).await?)
             })
             .await
-            .map(drop)
             .map_err(text)
     }
 }

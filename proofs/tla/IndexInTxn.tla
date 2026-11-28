@@ -60,10 +60,9 @@
 \* run at commit from what the transaction committed. An AddView whose
 \* multi-type SDL fails part way is rolled back to its savepoint:
 \*   crates/database/db/src/collection/ops/create.rs        DB::stage_new_collections
-\*   crates/database/db/src/txn/registry/views.rs           add_view_in_txn,
-\*                                                 refresh_views_in_txn
-\*   crates/entry-points/defra-node/src/db_impls.rs             DbSchemaOps (routes a txn)
-\*   crates/entry-points/cli/src/view_adapter.rs                ViewAdapter (routes a txn)
+\*   crates/database/db/src/txn/registry/views.rs           add_view_in_txn and
+\*                                                 refresh_views_in_txn (route a txn)
+\*   crates/database/db/src/view/client/mod.rs              add_view and refresh_views_as
 \*   crates/surfaces/http/src/handlers/views.rs             the x-defradb-tx context
 EXTENDS Naturals
 

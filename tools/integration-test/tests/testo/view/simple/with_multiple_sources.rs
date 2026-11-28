@@ -6,6 +6,7 @@ use serde_json::json;
 /// refused rather than silently keep the first. Go still accepts it, so the
 /// test is listed in .github/testo/divergences.txt (sourcenetwork/defradb.rs#2594).
 #[test]
+#[mantra_macros::req_test("defra.view.add_checks")]
 fn add_view_with_two_source_selections_fails_and_creates_no_view() {
     TestCase {
         id: integration_test::scenario_id!(),

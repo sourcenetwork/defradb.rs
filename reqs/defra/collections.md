@@ -448,6 +448,13 @@ A migration whose lens gives two documents the same value of a unique index stil
 
 A view's items are not indexed, so a unique index a view declares refuses nothing: with `User { name: String }` holding `John` and `Fred`, a view `UserView { name: String, age: Int @index(unique: true) }` over `User { name }` whose `set-default` lens sets `age` to 23 returns both items for `UserView(filter: {age: {_eq: 23}})`, whether or not the view is materialized, and `RefreshViews` succeeds. A materialized view's cache holds every field the view declares, including fields only its lens produces, so the materialized view returns `age: 23` for both items as the non-materialized one does.
 
+# `defra.view.add_checks`: Every client adds a view through the same checks
+
+- **Parents:** ["go.view"]
+- **Scenarios:** ["view::simple::with_policy::add_view_with_an_unknown_policy_fails_and_creates_no_view", "view::simple::with_multiple_sources::add_view_with_two_source_selections_fails_and_creates_no_view"]
+
+`AddView`, `RefreshViews` and the downsample GC answer the same through the embedded node, FFI, the CLI, the embedded node's HTTP server and the HTTP server `defradb start` runs. `AddView` checks, in this order, and stops at the first refusal: the caller holds `add-view`; the SDL parses against the known collections, those the transaction created included (`view SDL parse error: <reason>`); the source query parses and selects exactly one source (`view query parse error: <reason>`, `invalid view query: no selections found`, `invalid view query: multiple selections found`); a lens CID, when given, is not blank (`cid too short`); no view field is a chunk; each downsample definition is valid (`invalid downsample definition: <reason>`); on a node with document ACP, each `@policy` names a policy and resource the node holds (`schema policy validation error: policyID specified does not exist with acp` for an unknown policy); and the acting identity is a DID (`malformed acting identity: <reason>`). It then creates every view of the SDL or none (`create view collection error: <reason>`; a lens CID the node holds no lens for fails with `lens CID not found: <cid>`), and builds the materialized views and bootstraps the downsamples once that commit lands (`refresh materialized views error: <reason>`, `bootstrap downsample collections error: <reason>`). `RefreshViews` checks `refresh-view` and fails with `refresh materialized views error: <reason>`; the GC checks `gc-view`.
+
 # `defra.wasm.collection_objects`: The wasm client returns Go-shaped collection version objects
 
 - **Parents:** ["go.collection_version"]
