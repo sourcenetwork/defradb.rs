@@ -15,5 +15,6 @@ mod truncate {
     mod other_collections;
     mod parallel;
     mod simple;
+    mod under_writers;
     mod view;
 }

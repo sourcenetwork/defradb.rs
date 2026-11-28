@@ -25,11 +25,20 @@ impl<S: Store> crate::database::DB<S> {
         self.truncate_documents(collection).await
     }
 
+    /// Every document is marked deleted before any chunk is purged. A purge
+    /// deletes the keys writers merge into, so a writer committing during a
+    /// purge attempt would make it run again; once the markers commit, no
+    /// local writer of these documents can commit, and each purge attempt
+    /// meets only creates, deletes and merges from peers
+    /// (proofs/tla/TruncateUnderWriters.tla).
     async fn truncate_documents(self: &Arc<Self>, collection: &Collection) -> Result<usize>
     where
         S: 'static,
     {
         let doc_ids = self.collect_doc_short_ids(collection).await?;
+        for chunk in doc_ids.chunks(CHUNK_SIZE) {
+            self.mark_chunk_deleted(collection, chunk).await?;
+        }
         for chunk in doc_ids.chunks(CHUNK_SIZE) {
             self.truncate_chunk(collection, chunk).await?;
         }
@@ -64,6 +73,35 @@ impl<S: Store> crate::database::DB<S> {
         }
         let _ = txn.discard();
         Ok(doc_ids)
+    }
+
+    /// Set the deletion marker of a chunk of documents in one engine-retried
+    /// transaction. It reads nothing and puts only markers, which no update
+    /// writes, so an update never makes it run again.
+    async fn mark_chunk_deleted(
+        self: &Arc<Self>,
+        collection: &Collection,
+        doc_short_ids: &[u64],
+    ) -> Result<()>
+    where
+        S: 'static,
+    {
+        let collection = collection.clone();
+        let doc_short_ids = doc_short_ids.to_vec();
+        self.transact_db(move |txn| {
+            let collection = collection.clone();
+            let doc_short_ids = doc_short_ids.clone();
+            Box::pin(async move {
+                let datastore = txn.datastore()?;
+                for &doc_short_id in &doc_short_ids {
+                    collection
+                        .set_deletion_marker(&datastore, doc_short_id)
+                        .await?;
+                }
+                Ok(())
+            })
+        })
+        .await
     }
 
     /// Delete data for a chunk of doc short IDs in one engine-retried write

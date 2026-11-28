@@ -28,6 +28,20 @@ pub(super) const PROPERTIES: &[Property] = &[
         bound_by: "",
     },
     Property {
+        // An unfiltered truncate while clients update the collection: every
+        // document is marked deleted in transactions of their own before any
+        // chunk is purged, and writers read the marker validated, so no
+        // update refuses a truncate transaction and it never runs out of
+        // retries.
+        family: "Collection truncate",
+        name: "INV_FirstAttemptCommits / INV_NeverExhausted / INV_NoWriteAfterMark / INV_DoneRemovesAll",
+        axis: Tla,
+        anchor: "crates/database/db/src/collection/ops/truncate/all.rs DB::truncate_documents, DB::mark_chunk_deleted, DB::truncate_chunk_in; crates/database/db/src/collection/index.rs Collection::set_deletion_marker; crates/database/db/src/collection/crud.rs Collection::fields_at; crates/database/db/src/write/autocommit/update.rs run_update_attempt; crates/database/db/src/block/cleanup.rs delete_owned_dag_for_owners",
+        model_ref: "MC_TruncateUnderWriters_{Green,Red_*}.cfg",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
         // The key prefix the truncate deletes per index covers exactly that
         // index's entries: never another index's, and never a key of a
         // `/tag/name/` family, whatever the short ID. The collection-wide

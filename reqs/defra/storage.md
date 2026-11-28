@@ -115,6 +115,15 @@ Operations on a collection's documents as a whole.
 
 Each block records the DocIDs that own it; field blocks are content-addressed and carry no document identity, so ownership is a set. Before `Truncate`, a document's genesis field block is owned by its DocID. After `Truncate`, the DocID no longer resolves on this node and the block has no owner.
 
+# `defra.collection.truncate_under_writers`: Truncate finishes while clients update the collection
+
+- **Parents:** ["defra.collection"]
+- **Scenarios:** ["collection.truncate.under_writers.truncate_finishes_while_writers_update_the_collection", "collection.truncate.under_writers.truncate_finishes_while_writers_update_an_unindexed_field", "db::collection::truncate_under_writers::an_unfiltered_truncate_finishes_while_every_attempt_meets_a_writer", "db::collection::truncate_under_writers::a_failed_purge_leaves_marked_documents_and_a_rerun_finishes"]
+
+An unfiltered truncate (`truncate_<Collection>`, `DELETE /api/v0/collections/<name>/truncate`, `defradb client collection truncate`) succeeds while other clients keep updating documents that exist when it starts, with or without an index on the updated field: the updates never make it fail with a transaction conflict. Once it has started on a document, an update of that document no longer commits: GraphQL `update_<Collection>` returns `[]` for it whether selected by filter or by `docID`. The collection API returns `document not found: <docID>` for an update of a marked document. If a purge fails after marking, a later truncate can finish removing the marked documents. When the truncate returns, a query of the collection with `showDeleted: true` returns `[]`.
+
+The guarantee does not cover creates, deletes, peer merges, or updates that create chunks for a `@chunk` parent. Those can still make a purge run out of retries. If a truncate returns an error after it marked documents, those documents remain deleted but not purged: ordinary reads return nothing, `showDeleted: true` lists them, and running the same truncate again finishes removing them.
+
 # `defra.save_many`: Save many documents in one transaction
 
 - **Parents:** ["defra"]
