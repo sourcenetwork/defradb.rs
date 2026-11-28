@@ -1,3 +1,4 @@
+mod aggregate_over_relation;
 mod all_empty_array;
 mod array;
 mod array_composite;
@@ -13,6 +14,7 @@ mod backfill_unique;
 mod backfill_unique_txn;
 mod build_in_background;
 mod composite_in_order;
+mod composite_none;
 mod crdt;
 mod ddl_under_writes;
 mod delete;
