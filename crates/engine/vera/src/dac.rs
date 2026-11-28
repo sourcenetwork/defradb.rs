@@ -486,6 +486,37 @@ impl DocumentACP for VeraDocumentACP {
         request_bound::with_policy_command(command, |command| self.authority(actor, command))
     }
 
+    fn request_bound_authority(
+        &self,
+        actor: &Did,
+        token: &str,
+        command: acp::ProviderCommand<'_>,
+    ) -> Result<acp::OwedAuthority> {
+        if self.provider.delegation_audience().is_none() {
+            return self.command_authority(actor, command);
+        }
+        let unavailable = |reason: &str| acp::Error::OwedAuthorityUnavailable {
+            actor: actor.to_string(),
+            reason: reason.to_string(),
+        };
+        request_bound::with_policy_command(command, |command| {
+            let bound =
+                command.and_then(|command| self.request_bound(actor.as_str(), token, command));
+            match bound {
+                Some(Ok(())) => Ok(acp::OwedAuthority::Delegation {
+                    token: token.to_string(),
+                }),
+                Some(Err(refusal)) => Err(refusal),
+                None if command.is_some() => Err(unavailable(
+                    "the delegation presented as bound to one request is bound to none",
+                )),
+                None => Err(unavailable(
+                    "a delegation bound to one request names no command of this write",
+                )),
+            }
+        })
+    }
+
     async fn submit_owed_change(&self, change: &acp::OwedChange) -> acp::Submission {
         owed::submit(self, change).await
     }

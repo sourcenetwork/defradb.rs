@@ -413,6 +413,30 @@ pub trait DocumentACP: MaybeSendSync {
         self.owed_authority(actor)
     }
 
+    /// Whether `token`, presented by `actor` as a delegation bound to
+    /// `command`, gives the authority the send path would use for that
+    /// command now. The token is carried in a request context of its own and
+    /// checked by [`command_authority`](Self::command_authority), so a host
+    /// can refuse a write before it starts with the same
+    /// [`Error::OwedAuthorityUnavailable`](crate::Error::OwedAuthorityUnavailable)
+    /// or [`Error::DelegationOutsideWindow`](crate::Error::DelegationOutsideWindow)
+    /// the send path gives for an accepted command's credential. A provider
+    /// that does not bind request credentials checks the command as it would
+    /// without one.
+    fn request_bound_authority(
+        &self,
+        actor: &Did,
+        token: &str,
+        command: crate::ProviderCommand<'_>,
+    ) -> Result<crate::outbox::OwedAuthority> {
+        let context =
+            RequestContext::default().with_request_delegation(actor.to_string(), token.to_owned());
+        match self.bind_request(&context) {
+            Some(provider) => provider.command_authority(actor, command),
+            None => self.command_authority(actor, command),
+        }
+    }
+
     /// Whether missing registrations allow public access or require a collection grant.
     /// Remote backends may deny absence, including retired policies and archived objects.
     fn unregistered_documents_are_public(&self) -> bool {

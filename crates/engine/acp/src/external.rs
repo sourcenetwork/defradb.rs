@@ -598,6 +598,15 @@ where
         self.provider.command_authority(actor, command)
     }
 
+    fn request_bound_authority(
+        &self,
+        actor: &Did,
+        token: &str,
+        command: crate::ProviderCommand<'_>,
+    ) -> Result<crate::outbox::OwedAuthority> {
+        self.provider.request_bound_authority(actor, token, command)
+    }
+
     async fn submit_owed_change(
         &self,
         change: &crate::outbox::OwedChange,
