@@ -1,4 +1,5 @@
-//! Backups as the caller `context` names, outside any transaction.
+//! Backups as the caller `context` names, outside any transaction, and the
+//! store dump.
 
 use db::backup::ImportHost;
 use defra_core::RequestContext;
@@ -38,6 +39,16 @@ impl NodeCore<'_> {
         let context = self.node.admitted_caller(context)?.with_txn(None);
         let host = NodeHost::new(self.node, context.clone())?;
         self.import_admitted(context, host, data).await.map(drop)
+    }
+
+    /// Go's `PrintDump`: every key of the node's store, one line each naming
+    /// its namespace, the key and its value's size, as `context`'s identity
+    /// and only with the `read-document` node permission.
+    pub(crate) async fn print_dump(&self, context: &RequestContext) -> Result<Vec<String>> {
+        self.node
+            .ops()
+            .print_dump_as(self.node.admitted_caller(context)?)
+            .await
     }
 
     /// The import of [`Self::import_backup`] as one admitted request, every

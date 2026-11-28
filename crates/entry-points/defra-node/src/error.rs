@@ -119,9 +119,9 @@ pub enum Error {
     /// An encrypted index operation was refused.
     #[error(transparent)]
     EncryptedIndex(#[from] db::EncryptedIndexError),
-    /// A backup export or import failed; the backup code reports it as text.
-    #[error("{0}")]
-    Backup(String),
+    /// A backup export, a backup import or a store dump failed.
+    #[error(transparent)]
+    Backup(#[from] db::backup::BackupError),
     /// Bootstrapping downsample collections failed.
     #[error("bootstrap downsample collections error: {0}")]
     DownsampleBootstrap(#[source] db::Error),

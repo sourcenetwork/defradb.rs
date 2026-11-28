@@ -1,11 +1,15 @@
-//! Database export and import.
+//! Database export and import, and the store dump: the one implementation
+//! HTTP, the CLI, FFI and the embedded node call.
 
 mod alias;
 mod batch;
+mod dump;
+mod error;
 mod export;
 mod host;
 mod import;
 
+pub use error::BackupError;
 pub use export::{export_database, export_database_as};
 pub use host::{DbJob, ImportHost, RunnerHost};
 pub use import::{import_database, import_database_as, ImportStats};

@@ -8,15 +8,21 @@ use defra_http::router::{BackupOperations, ImportResult};
 use query::executor::QueryExecutor;
 use storage::corekv::Store;
 
-/// Adapter that implements BackupOperations using database.
-pub struct BackupAdapter<S: Store> {
+/// HTTP's BackupOperations over the core's backup export and import.
+pub struct BackupAdapter<S>
+where
+    S: Store,
+{
     database: Arc<db::DB<S>>,
     runner: Arc<dyn QueryExecutor>,
     /// The request this adapter serves, for one bound to it.
     context: Option<RequestContext>,
 }
 
-impl<S: Store + 'static> BackupAdapter<S> {
+impl<S> BackupAdapter<S>
+where
+    S: Store + 'static,
+{
     /// Create an Arc-wrapped adapter.
     pub fn new_arc(
         database: Arc<db::DB<S>>,
@@ -34,8 +40,15 @@ impl<S: Store + 'static> BackupAdapter<S> {
     }
 }
 
+fn text(error: db::backup::BackupError) -> String {
+    error.to_string()
+}
+
 #[async_trait]
-impl<S: Store + 'static> BackupOperations for BackupAdapter<S> {
+impl<S> BackupOperations for BackupAdapter<S>
+where
+    S: Store + 'static,
+{
     fn bind_request(&self, context: &RequestContext) -> Option<Arc<dyn BackupOperations>> {
         Some(Arc::new(Self {
             database: Arc::clone(&self.database),
@@ -49,9 +62,16 @@ impl<S: Store + 'static> BackupOperations for BackupAdapter<S> {
         collections: Option<Vec<String>>,
         pretty: bool,
     ) -> Result<String, String> {
-        let cols = collections.unwrap_or_default();
-        db::backup::export_database_as(&self.context(), &self.database, &self.runner, &cols, pretty)
-            .await
+        let collections = collections.unwrap_or_default();
+        db::backup::export_database_as(
+            &self.context(),
+            &self.database,
+            &self.runner,
+            &collections,
+            pretty,
+        )
+        .await
+        .map_err(text)
     }
 
     async fn import(
@@ -59,14 +79,9 @@ impl<S: Store + 'static> BackupOperations for BackupAdapter<S> {
         data: &str,
         host: &dyn db::backup::ImportHost,
     ) -> Result<ImportResult, String> {
-        let stats =
-            db::backup::import_database_as(&self.context(), &self.database, host, data).await?;
-
-        Ok(ImportResult {
-            documents_imported: stats.documents_imported,
-            documents_skipped: 0,
-            collections_affected: stats.collections_affected,
-            errors: vec![],
-        })
+        db::backup::import_database_as(&self.context(), &self.database, host, data)
+            .await
+            .map(ImportResult::from)
+            .map_err(text)
     }
 }

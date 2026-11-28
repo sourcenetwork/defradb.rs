@@ -1,14 +1,21 @@
 use storage::corekv::{IterOptions, Reader, Store};
 use storage::namespace::Namespace;
 
+use super::BackupError;
 use crate::database::DB;
 
-impl<S: Store + 'static> DB<S> {
-    /// Dump all database key/value pairs as human-readable strings.
-    ///
-    /// Iterates over all namespaced keys in the underlying store and returns
-    /// each as a formatted string showing the namespace, key, and value size.
-    pub async fn print_dump(&self) -> Result<Vec<String>, String> {
+impl<S> DB<S>
+where
+    S: Store + 'static,
+{
+    /// Go's `PrintDump`: every key of the store, one line each naming its
+    /// namespace, the key and its value's size. As in Go, it checks no node
+    /// permission; an edge that hands the lines to a caller gates them.
+    pub async fn print_dump(&self) -> Result<Vec<String>, BackupError> {
+        self.dump_lines().await.map_err(BackupError::Dump)
+    }
+
+    async fn dump_lines(&self) -> Result<Vec<String>, String> {
         let store = self.store();
         let txn = store
             .new_txn(true)
