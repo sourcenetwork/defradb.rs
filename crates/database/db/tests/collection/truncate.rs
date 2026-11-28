@@ -280,19 +280,29 @@ fn filtered_truncate_includes_soft_deleted_documents() {
 }
 
 #[test]
-fn filtered_truncate_rejects_branchable_collections() {
+fn filtered_truncate_removes_only_the_matches_of_a_branchable_collection() {
     workers::block_on(async {
         let db = Arc::new(DB::new(RegolithStore::in_memory().unwrap()).unwrap());
         db.add_collection(&defra_core::RequestContext::ambient(), r#"type Users @branchable { name: String @index(name: "users_name", unique: true) age: Int }"#)
             .await
             .unwrap();
+        let mutator = AutoCommitMutator::new(db.clone());
+        create_user(&mutator, "Alice", 30).await;
+        create_user(&mutator, "Bob", 40).await;
 
-        let error = db
-            .truncate_collection_as(&RequestContext::ambient(), "Users", Some(&age_filter(30)))
+        db.truncate_collection_as(&RequestContext::ambient(), "Users", Some(&age_filter(30)))
             .await
-            .unwrap_err();
+            .unwrap();
+        create_user(&mutator, "Alice", 31).await;
 
-        assert!(matches!(error, TruncateError::FilteredBranchable));
+        assert_eq!(
+            AutoCommitFetcher::new(db)
+                .get_all("Users")
+                .await
+                .unwrap()
+                .len(),
+            2
+        );
     })
     .unwrap()
 }

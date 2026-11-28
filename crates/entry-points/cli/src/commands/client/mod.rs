@@ -17,6 +17,7 @@ mod purge;
 mod query;
 mod tx;
 mod validation;
+mod vera_delegation;
 pub mod view;
 
 use std::path::PathBuf;
@@ -168,12 +169,15 @@ impl ClientArgs {
 
         let auth_token = if let Some(ref key_bytes) = identity_key_bytes {
             let identity_name = self.identity_name.as_deref().unwrap_or("inline identity");
-            Some(generate_auth_token_from_key_bytes(
-                identity_name,
-                key_bytes,
-                &url,
-                authorized_account.as_deref(),
-            )?)
+            match vera_delegation::for_node(&url, identity_name, key_bytes, &edge).await? {
+                Some(delegation) => Some(delegation),
+                None => Some(generate_auth_token_from_key_bytes(
+                    identity_name,
+                    key_bytes,
+                    &url,
+                    authorized_account.as_deref(),
+                )?),
+            }
         } else {
             None
         };
@@ -231,7 +235,12 @@ fn decode_identity_hex(identity_hex: &str) -> Result<Vec<u8>> {
     hex::decode(identity_hex).map_err(|e| Error::InvalidIdentity(format!("invalid hex: {}", e)))
 }
 
-fn key_type_from_identity_bytes(name: &str, key_bytes: &[u8]) -> Result<crypto::KeyType> {
+pub(crate) const AUTH_TOKEN_LIFETIME: std::time::Duration = std::time::Duration::from_secs(15 * 60);
+
+pub(crate) fn key_type_from_identity_bytes(
+    name: &str,
+    key_bytes: &[u8],
+) -> Result<crypto::KeyType> {
     match key_bytes.len() {
         32 => Ok(crypto::KeyType::Secp256k1),
         64 => Ok(crypto::KeyType::Ed25519),
@@ -265,7 +274,7 @@ pub(crate) fn generate_auth_token_from_key_bytes(
 
     let token_bytes = new_token(
         &identity,
-        std::time::Duration::from_secs(15 * 60),
+        AUTH_TOKEN_LIFETIME,
         Some(audience_host.to_string()),
         authorized_account.map(str::to_string),
     )

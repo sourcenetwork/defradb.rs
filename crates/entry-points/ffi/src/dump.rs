@@ -11,7 +11,7 @@ pub(crate) fn defra_print_dump(node_ptr: usize, identity_ptr: usize) -> DefraRes
         let node = try_ffi!(request.require_node("print dump"));
         let database = try_ffi!(request.database());
         ffi_async_ok!(node, {
-            for line in database.print_dump().await? {
+            for line in database.print_dump().await.map_err(|e| e.to_string())? {
                 tracing::info!(target: "defra::dump", "{}", line);
             }
             Ok(())

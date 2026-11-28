@@ -237,6 +237,13 @@ With `Article` and `Article__body_chunk` replicated from one node to another, an
 
 After an article and its chunks reach the second node, deleting the article on the first leaves the second with no `Article` and an empty `Article__body_chunk`.
 
+# `defra.chunk.replicate.saturated`: A parent delete reaches a peer whose pending map is full
+
+- **Parents:** ["defra.chunk.replicate"]
+- **Scenarios:** ["chunk::replicate_saturated::a_parent_delete_reaches_a_peer_whose_pending_map_is_full"]
+
+The second node admits what it is sent with a pending-DAG map of 4 entries, one per sending peer. After an article with eight chunks reaches it, the article is deleted on the first node. A chunk's delete that arrives before its parent's waits for it and holds the sender's one entry while it waits, so the parent's delete and the other chunks' deletes wait on their durable records. Each waiting chunk gives the entry up after its retries, and the next record takes it at once: within 150 seconds of the delete the second node shows no `Article` and an empty `Article__body_chunk`.
+
 # `defra.chunk.replicate.parent_only`: A replicator of the parent ships its chunks
 
 - **Parents:** ["defra.chunk.replicate"]
@@ -304,6 +311,27 @@ An article created by Alice under a policy shows its chunks to Alice: `Article__
 - **Scenarios:** ["chunk::access_grant::a_reader_of_the_parent_sees_its_chunks_until_it_is_deleted"]
 
 After Alice adds the `reader` relation on her article for Bob, Bob sees the same chunks as Alice and their `_commits`. After Alice deletes the article, she sees no chunks and `_commits` of a chunk is empty.
+
+# `defra.chunk.access.events`: Only readers of the parent get its chunk events
+
+- **Parents:** ["defra.chunk.access"]
+- **Scenarios:** ["chunk::access_events::chunk_events_reach_only_readers_of_the_parent"]
+
+Alice, Bob and a request with no identity each subscribe to `Article__body_chunk { text }` before Alice adds an article with five paragraphs under a policy, and Bob then adds his own two-paragraph article. Alice's subscription gets exactly the five chunks of her text. Bob's gets exactly the two chunks of his own text and none of Alice's. The subscription with no identity gets no events. The CLI has no subscription stream, so this is not checked there.
+
+# `defra.chunk.access.p2p`: A peer gets a chunk's blocks only when its node can read the parent
+
+- **Parents:** ["defra.chunk.access"]
+- **Scenarios:** ["chunk::access_p2p::a_peer_gets_chunk_blocks_only_for_parents_its_node_can_read"]
+
+Two connected nodes have `Article` under a policy. On the first, identity 3 adds a three-paragraph article, and identity 2 adds a two-paragraph article and adds the `reader` relation on it for the second node's identity. After the second node syncs identity 2's article, identity 2 reads that article and exactly its two chunks there. After the second node also syncs identity 3's article by its docID and one of its chunks by the chunk's docID, the first node records that it filtered blocks from those responses. The second node holds none of the `text` blocks of identity 3's chunks: verifying each of them there fails with `ipld: could not find`.
+
+# `defra.chunk.access.verify`: Block verify refuses unsigned chunk create blocks
+
+- **Parents:** ["defra.chunk.access"]
+- **Scenarios:** ["chunk::access_verify::block_verify_refuses_unsigned_chunk_create_blocks"]
+
+On a node that signs its blocks, Alice adds an article with five paragraphs under a policy. Verifying the article's signed head against Alice's key succeeds for Alice and fails with `missing permission` for Bob and for a request with no identity. A chunk's create blocks are not signed, so verifying a chunk's head block or its `text` block fails with `block has no signature` for Alice, Bob and a request with no identity alike. A chunk delete block is signed and follows the parent's policy, but `_commits` does not expose chunk history after the parent is deleted; that path is covered by the database unit test. Only the in-process client signs with Alice's identity, so this is checked there.
 
 # `defra.chunk.embed`: Embedding chunks
 

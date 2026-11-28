@@ -47,6 +47,9 @@ testo index::range_filter::an_empty_range_limits_index_fetches
 # the loser with "transaction conflict. Please retry".
 testo txn::new_encrypted_index_concurrent::a_concurrent_encrypted_index_delete_and_adds_all_land
 testo txn::new_encrypted_index_concurrent::concurrent_encrypted_index_adds_all_land
+# A query's one-to-one join reads the related documents as a query read, which decides nothing, so Rust does not check it at
+# commit and both transactions commit; Go answers the second "transaction conflict. Please retry".
+testo mutation::add::field_kinds::one_to_one_to_one::with_txn::transactional_creation_and_linking_of_relational_documents_backward
 # A query's read of a unique index entry (an equality filter, or a one-to-one relation's inverse side) decides nothing, so Rust
 # does not check it at commit; Go does and answers "transaction conflict. Please retry" when another writer adds that entry.
 testo mutation::add::field_kinds::one_to_one_to_one::with_txn::transactional_creation_and_linking_of_relational_documents_forward
@@ -70,3 +73,21 @@ testo query::relation_order_with_filter::selected_relation_id_unfiltered_with_li
 testo query::relation_order_with_filter::selected_relation_id_with_limit::indexed
 # An execute explain whose plan fails while it runs: Go reports the error as two `executionErrors` entries; Rust reports it once.
 testo explain::simple::with_invalid_request::execute_explain_reports_a_run_time_failure_in_execution_errors
+# Go's parity pin refuses a filtered truncate of a branchable collection.
+testo collection::truncate::branchable_filter::filtered_truncate_of_a_branchable_collection_removes_only_the_matches
+# Go's parity pin refuses a filtered truncate of a branchable collection.
+testo collection::truncate::branchable_filter::filtered_truncate_of_a_branchable_collection_keeps_its_history
+# Go's parity pin refuses a filtered truncate of a branchable collection.
+testo collection::truncate::branchable_filter::a_document_truncated_from_a_branchable_collection_can_be_added_again
+# Go's parity pin refuses a filtered truncate of a branchable collection.
+testo collection::truncate::branchable_filter::a_peer_update_restores_a_document_truncated_from_a_branchable_collection
+# Go's parity pin refuses a filtered truncate of a branchable collection.
+testo collection::truncate::branchable_filter::a_fresh_peer_sync_restores_a_document_truncated_from_a_branchable_collection
+# Rust counts the vector-index entries read; Go reports one fetch for the whole vector search
+# until https://github.com/sourcenetwork/defradb/issues/5080 lands.
+testo explain::execute::vector_index_fetches::hnsw_search_counts_its_reads
+testo explain::execute::vector_index_fetches::flat_search_counts_its_reads
+testo explain::execute::vector_index_fetches::ivfflat_search_counts_its_reads
+testo explain::execute::vector_index_fetches::ivfpq_search_counts_its_reads
+testo explain::execute::vector_index_fetches::ssg_search_counts_its_reads
+testo explain::execute::vector_index_fetches::diskann_search_counts_its_reads

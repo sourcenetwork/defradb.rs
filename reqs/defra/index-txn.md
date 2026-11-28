@@ -61,6 +61,13 @@ With a unique composite index on two fields, every comparison operator on the fi
 
 A unique composite index allows several documents with null in either or both fields; `_eq: null` on either field returns all of them, and documents updated from null values are found by their new values.
 
+# `defra.index.query.composite-none`: `_none` on a later field of a composite index
+
+- **Parents:** ["go.index.query"]
+- **Scenarios:** ["index::composite_none::composite_index_with_none_on_second_field_uses_first_field", "index::composite_none::none_on_second_field_without_index_matches", "index::composite_none::composite_index_with_only_none_on_second_field_scans", "index::composite_none::only_none_without_index_matches"]
+
+A filter with `_eq` on the first field of a composite index and `_none` on its second (array) field uses the index to narrow by the first field, applies `_none` to the fetched documents, and returns the same documents as without the index (sourcenetwork/defradb#3401). `_none` on the second field alone does not use the index and still returns the right documents. The indexed `_eq` plus `_none`-on-a-later-field shape is also covered, without an unindexed twin, by `go.index.array.composite` (`index::array_composite::array_composite_index_with_filter_on_indexed_array_using_none_should_use_index`).
+
 # `go.index.query.combined`: Indexed and non-indexed conditions together
 
 - **Parents:** ["go.index.query"]
@@ -144,6 +151,13 @@ Scalar and relation conditions at the top level apply as an AND; `_and`, `_or` a
 - **Scenarios:** ["query::one_to_many::with_relation_filter_indexed_fk::relation_filter_through_an_indexed_fk_keeps_a_joined_list_relation", "query::one_to_many::with_relation_filter_indexed_fk::relation_filter_through_an_indexed_fk_keeps_a_list_relation_filter", "query::one_to_many::with_relation_filter_indexed_fk::relation_filter_through_an_indexed_fk_keeps_a_nested_joined_relation", "query::one_to_many::with_relation_filter_indexed_fk::relation_filter_through_an_indexed_fk_keeps_a_second_relation_filter", "query::one_to_many::with_relation_filter_indexed_fk::relation_filter_through_an_indexed_fk_keeps_another_joined_relation"]
 
 When a parent-side foreign key is indexed and the query filters through it, a relation already joined into the parent plan, such as a selected publisher, survives the FK lookups and is rendered with the matching parent, together with the relations nested under it (the publisher's owner). A list relation, such as the book's reviews, survives the same way with all its children. A filter on that other relation still applies: a parent whose publisher fails it, or none of whose reviews pass it, is not returned.
+
+# `defra.index.relation.aggregate`: Aggregates over relations through indexes
+
+- **Parents:** ["go.index.relation"]
+- **Scenarios:** ["index::aggregate_over_relation::group_by_indexed_fk_with_fk_filter_sums_the_group", "index::aggregate_over_relation::group_by_unindexed_fk_with_fk_filter_sums_the_group", "index::aggregate_over_relation::group_by_indexed_fk_with_indexed_related_filter_counts_the_group", "index::aggregate_over_relation::group_by_unindexed_fk_with_related_filter_counts_the_group", "index::aggregate_over_relation::indexed_parent_filter_aggregates_children_through_indexed_fk", "index::aggregate_over_relation::unindexed_parent_filter_aggregates_children"]
+
+Aggregates over a relation return the same values whether or not the fields involved are indexed: `groupBy` on an indexed foreign key with an `_eq` filter on that key and `SUM`/`COUNT` over `GROUP` (the query shape of sourcenetwork/defradb#2829), `groupBy` on the foreign key with a filter on an indexed field of the related document, and `SUM` and `AVG` over children of a parent found through a unique index.
 
 # `go.index.relation.sub-filter`: Child sub-filters through indexes
 

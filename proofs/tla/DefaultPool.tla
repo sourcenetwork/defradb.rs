@@ -70,28 +70,30 @@
 \*
 \* TLC runs whole steps one at a time, as if memory were sequentially
 \* consistent. The Rust orderings give each step the order it has here: the
-\* slot is loaded with Acquire and swapped with AcqRel (kovan 0.1.22
-\* src/atom.rs:341-349, 488-535); closing is set with an AcqRel swap
-\* (mod.rs:193) and read with Acquire (mod.rs:274), and a stopper's own
-\* shutdown comes before its own load on the same thread; the cell's pointer
+\* slot is loaded with Acquire and swapped with AcqRel (Atom::load and
+\* Atom::compare_and_swap, kovan:src/atom.rs:340-349, 473-522); closing is set
+\* with an AcqRel swap (mod.rs:193) and read with Acquire (mod.rs:274), and a
+\* stopper's own shutdown comes before its own load on the same thread; the
+\* cell's pointer
 \* is loaded with Acquire and published with an AcqRel compare-and-swap
-\* (regolith 0.2.1 src/sync/once_cell.rs:78, 166-171).
+\* (regolith:src/sync/once_cell.rs:78, 166-171).
 \*
-\* Correspondence with the Rust code (crates/foundation/workers/src/pool/ unless named;
-\* once_cell.rs is regolith 0.2.1 src/sync/once_cell.rs):
+\* Correspondence with the Rust code (crates/foundation/workers/src/pool/ unless
+\* named; line numbers in kovan and regolith are at the versions Cargo.lock pins):
 \*
 \*   | Model             | Rust                                                        |
 \*   |-------------------|-------------------------------------------------------------|
 \*   | slot              | default.rs:24 DefaultPool.registered,                       |
 \*   |                   | Atom<Option<Weak<Handle>>>; slot.node is the Atom's node:   |
 \*   |                   | kovan compares the loaded node with the current one         |
-\*   |                   | (atom.rs:497-505) and swaps with compare_exchange           |
-\*   |                   | (atom.rs:510-516), and a replaced node is only retired      |
-\*   |                   | (atom.rs:519-522), never reused while a loader pins it, so  |
-\*   |                   | a fresh number per store stands for it; Empty is            |
-\*   |                   | Atom::new(None) (default.rs:78)                             |
+\*   |                   | (kovan:src/atom.rs:480-490) and swaps with compare_exchange |
+\*   |                   | (kovan:src/atom.rs:495-501), and a replaced node is only    |
+\*   |                   | retired (kovan:src/atom.rs:503-507), never reused while a   |
+\*   |                   | loader pins it, so a fresh number per store stands for it;  |
+\*   |                   | Empty is Atom::new(None) (default.rs:78)                    |
 \*   | cell              | default.rs:25 DefaultPool.started, OnceCell<Pool>           |
-\*   | turn              | once_cell.rs:51 init, the one-permit RawSemaphore           |
+\*   | turn              | regolith:src/sync/once_cell.rs:51 init, the one-permit      |
+\*   |                   | RawSemaphore                                                |
 \*   | state             | mod.rs:95 PoolShared.closing ("closing"), and whether any   |
 \*   |                   | Arc<Handle> is left ("gone": Weak::upgrade fails)           |
 \*   | ownerHolds        | the owner's Pool handle (mod.rs:226-228)                    |
@@ -120,18 +122,20 @@
 \*   |                   | registered (default.rs:85): the slot's load                 |
 \*   | Check             | default.rs:136-140 running(): upgrade, then !is_closing;    |
 \*   |                   | default.rs:105-107 answers it, else default.rs:108          |
-\*   | Fast              | default.rs:118 started.get() and once_cell.rs:139 get(),    |
-\*   |                   | then default.rs:121 block_on -> completion.rs:278-279       |
-\*   |                   | refuses on a worker                                         |
-\*   | Turn              | once_cell.rs:144 init.acquire(1), once_cell.rs:145-147 the  |
-\*   |                   | look again                                                  |
-\*   | StartOk           | once_cell.rs:148 init.await (default.rs:46-48 start_default |
-\*   |                   | -> Pool::start, start.rs:51-167), once_cell.rs:152-157,     |
+\*   | Fast              | default.rs:118 started.get() and                            |
+\*   |                   | regolith:src/sync/once_cell.rs:139 get(), then              |
+\*   |                   | default.rs:121 block_on -> completion.rs:278-279 refuses on |
+\*   |                   | a worker                                                    |
+\*   | Turn              | regolith:src/sync/once_cell.rs:144 init.acquire(1),         |
+\*   |                   | regolith:src/sync/once_cell.rs:145-147 the look again       |
+\*   | StartOk           | regolith:src/sync/once_cell.rs:148 init.await               |
+\*   |                   | (default.rs:46-48 start_default -> Pool::start,             |
+\*   |                   | start.rs:51-167), regolith:src/sync/once_cell.rs:152-157,   |
 \*   |                   | 164-183 publish; the turn's permit returns when `_turn`     |
 \*   |                   | drops at the end of get_or_try_init                         |
-\*   | StartFail         | once_cell.rs:148 `?` returns the error and `_turn` drops    |
-\*   |                   | (once_cell.rs:142-144); a browser's start always fails      |
-\*   |                   | (default.rs:52-54)                                          |
+\*   | StartFail         | regolith:src/sync/once_cell.rs:148 `?` returns the error    |
+\*   |                   | and `_turn` drops (regolith:src/sync/once_cell.rs:142-144); |
+\*   |                   | a browser's start always fails (default.rs:52-54)           |
 \*   | Answer            | get's and started's returns (default.rs:106, 108, 119, 122) |
 \*   | Observe           | ghost bookkeeping, no Rust counterpart                      |
 \*   | CheckClosing      | default.rs:140 (!pool.is_closing()) (RED: only upgrade)     |
@@ -150,12 +154,14 @@
 \*   |                   | start is refused, start.rs:58-60)                           |
 \*   | FastPathFirst     | default.rs:118 before completion.rs:278 (RED: a worker is   |
 \*   |                   | refused before the cell is read)                            |
-\*   | InitTurn          | once_cell.rs:144 one initializer at a time (RED: none)      |
-\*   | Recheck           | once_cell.rs:145-147 (RED: no second look)                  |
-\*   | FailReleases      | once_cell.rs:142-144 the permit returns on an error (RED:   |
-\*   |                   | kept)                                                       |
-\*   | PublishCas        | once_cell.rs:166-171, 155 the loser gets the winner (RED,   |
-\*   |                   | with InitTurn: a check-then-store cell)                     |
+\*   | InitTurn          | regolith:src/sync/once_cell.rs:144 one initializer at a     |
+\*   |                   | time (RED: none)                                            |
+\*   | Recheck           | regolith:src/sync/once_cell.rs:145-147 (RED: no second      |
+\*   |                   | look)                                                       |
+\*   | FailReleases      | regolith:src/sync/once_cell.rs:142-144 the permit returns   |
+\*   |                   | on an error (RED: kept)                                     |
+\*   | PublishCas        | regolith:src/sync/once_cell.rs:166-171, 155 the loser gets  |
+\*   |                   | the winner (RED, with InitTurn: a check-then-store cell)    |
 \*   | StopShutsFirst    | mod.rs:509 before mod.rs:510 (RED: ask, then shut down)     |
 \*   | StartedKept       | default.rs:5-8, 30-31 kept for the life of the process      |
 \*   |                   | (RED: a caller shuts it down)                               |
@@ -168,8 +174,9 @@
 \*   | Wins              | found no running pool, against the node that look loaded    |
 \*   | INV_Registered-   | default.rs:105-108, with the load (default.rs:85) before    |
 \*   | Wins              | the check (default.rs:140)                                  |
-\*   | INV_OneStart      | once_cell.rs:144-148 through default.rs:121                 |
-\*   | INV_OneDefault    | once_cell.rs:144-148, 152-157, 166-171                      |
+\*   | INV_OneStart      | regolith:src/sync/once_cell.rs:144-148 through              |
+\*   |                   | default.rs:121                                              |
+\*   | INV_OneDefault    | regolith:src/sync/once_cell.rs:144-148, 152-157, 166-171    |
 \*   | INV_ErrorHonest   | default.rs:118 before completion.rs:278-279                 |
 \*   | INV_WorkerNever-  | default.rs:121 block_on -> completion.rs:278-279            |
 \*   | Waits             |                                                             |
@@ -180,8 +187,9 @@
 \*   |                   | the loop); contract C3                                      |
 \*   | INV_Registration- | default.rs:68-69 ("The registration does not keep the pool  |
 \*   | KeepsNothingAlive | alive"), default.rs:24, 94                                  |
-\*   | LIVE_EveryCall-   | default.rs:118-122; once_cell.rs:142-148 (the permit always |
-\*   | Returns           | returns); completion.rs:278-279 (a worker never waits)      |
+\*   | LIVE_EveryCall-   | default.rs:118-122; regolith:src/sync/once_cell.rs:142-148  |
+\*   | Returns           | (the permit always returns); completion.rs:278-279 (a       |
+\*   |                   | worker never waits)                                         |
 \*   | LIVE_Every-       | default.rs:89-98: a swap fails only after another call's    |
 \*   | RegisterReturns   | swap worked, and each pool registers a bounded number of    |
 \*   |                   | times                                                       |
@@ -189,8 +197,9 @@
 \* Gaps, closed or explained:
 \*   * PROCESS (default.rs:28) is a regolith Lazy: threads that touch it first
 \*     at the same moment each build a DefaultPool and all of them use the one
-\*     published (once_cell.rs:110-115, 152-157). DefaultPool::new has no
-\*     effect, so the model starts from that one DefaultPool.
+\*     published (regolith:src/sync/once_cell.rs:110-115, 152-157).
+\*     DefaultPool::new has no effect, so the model starts from that one
+\*     DefaultPool.
 \*   * Weak::upgrade and the closing load are one step (Check): once upgraded,
 \*     the pool cannot go away before the closing load, and closing never
 \*     clears, so the one step sees what the second load sees.
@@ -198,16 +207,18 @@
 \*     check reads only the pool the load named, and a pool that stopped
 \*     running never runs again, so a split only adds runs whose
 \*     compare-and-swap then fails and loads again.
-\*   * once_cell.rs:139 (get before the turn) is folded into Fast, and the
-\*     acquire and the look after it are one step (Turn): only the turn
-\*     holder ever writes the cell, so nothing can change it in between.
+\*   * regolith:src/sync/once_cell.rs:139 (get before the turn) is folded
+\*     into Fast, and the acquire and the look after it are one step (Turn):
+\*     only the turn holder ever writes the cell, so nothing can change it
+\*     in between.
 \*   * Pool::start is one step: the only effects this mechanism sees are the
 \*     new pool and its publication. Its threads run no caller code before
 \*     they report (the default has no hook: config/mod.rs:197 through
 \*     Config::named, default.rs:58-63), so a start never waits on a thread
 \*     that waits for the start.
 \*   * After a publish, waiters get through two ways: the permits the publish
-\*     opens (once_cell.rs:175; Turn is enabled once the cell holds a pool)
+\*     opens (regolith:src/sync/once_cell.rs:175; Turn is enabled once the
+\*     cell holds a pool)
 \*     and the holder's permit when `_turn` drops (StartOk gives the turn
 \*     back). Either alone keeps every call returning, so neither has a
 \*     switch of its own; only the failure path (FailReleases) has one way.
@@ -580,12 +591,13 @@ Check(c) ==
   \* checking changes nothing else.
 
 Fast(c) ==
-  \* The call reads the started cell (default.rs:118, once_cell.rs:139). A
-  \* pool there is the answer. An empty cell means a start: a worker cannot
-  \* wait for one, so block_on refuses it (completion.rs:278-279); a plain
-  \* thread goes to wait for the turn. (RED FastPathFirst: a worker is
-  \* refused before the cell is read. RED WorkerRefused: a worker is never
-  \* refused and goes to wait like a plain thread.)
+  \* The call reads the started cell (default.rs:118,
+  \* regolith:src/sync/once_cell.rs:139). A pool there is the answer. An empty
+  \* cell means a start: a worker cannot wait for one, so block_on refuses it
+  \* (completion.rs:278-279); a plain thread goes to wait for the turn. (RED
+  \* FastPathFirst: a worker is refused before the cell is read. RED
+  \* WorkerRefused: a worker is never refused and goes to wait like a plain
+  \* thread.)
   /\ pc[c] = "fast"
   \* only a call that found no running registered pool;
   /\ LET found == cell # NoPool
@@ -619,10 +631,10 @@ Fast(c) ==
   \* reading the cell changes nothing else.
 
 Turn(c) ==
-  \* The call gets the initializer's turn (once_cell.rs:144) and looks at the
-  \* cell again (once_cell.rs:145-147). The turn is free, or a publish opened
-  \* it to everyone. A pool there now is the answer; an empty cell means this
-  \* call runs the start.
+  \* The call gets the initializer's turn (regolith:src/sync/once_cell.rs:144)
+  \* and looks at the cell again (regolith:src/sync/once_cell.rs:145-147). The
+  \* turn is free, or a publish opened it to everyone. A pool there now is the
+  \* answer; an empty cell means this call runs the start.
   /\ pc[c] = "turn"
   \* only a call waiting for the turn;
   /\ ~InitTurn \/ turn = NoCaller \/ cell # NoPool
@@ -648,9 +660,10 @@ Turn(c) ==
 StartOk(c) ==
   \* The start works (start_default -> Pool::start, default.rs:46-48) and the
   \* new pool is published with one compare-and-swap from empty
-  \* (once_cell.rs:152-157, 164-183). If another pool was published first,
-  \* the new one is dropped and the winner is the answer. The turn is given
-  \* back as the call returns. (RED PublishCas: a plain store overwrites.)
+  \* (regolith:src/sync/once_cell.rs:152-157, 164-183). If another pool was
+  \* published first, the new one is dropped and the winner is the answer. The
+  \* turn is given back as the call returns. (RED PublishCas: a plain store
+  \* overwrites.)
   /\ pc[c] = "start"
   \* only a call running the start;
   /\ ~onWorker[c]
@@ -674,9 +687,9 @@ StartOk(c) ==
 
 StartFail(c) ==
   \* The start fails (a thread the OS will not start; a browser starts none):
-  \* the error is the answer and the turn is given back (once_cell.rs:142-148)
-  \* so the next caller tries its own start. (RED FailReleases: the turn is
-  \* kept.)
+  \* the error is the answer and the turn is given back
+  \* (regolith:src/sync/once_cell.rs:142-148) so the next caller tries its own
+  \* start. (RED FailReleases: the turn is kept.)
   /\ pc[c] = "start"
   \* only a call running the start;
   /\ result' = [result EXCEPT ![c] = "error"]

@@ -1,5 +1,5 @@
 //! The read side of the previous release's per-value encryption wrapper
-//! (`crates/engine/storage/src/encrypted_store.rs`, deleted by #1920).
+//! (the encrypted store #1920 deleted).
 //!
 //! The wrapper stored each value as a 12-byte random nonce followed by its
 //! AES-256-GCM ciphertext and 16-byte tag, with the value's full storage key

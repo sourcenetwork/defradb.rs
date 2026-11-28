@@ -31,6 +31,9 @@ pub struct State {
     pub streams: crate::actions::stream::KeptStreams,
     /// How many nodes the test has started, Go's next node index.
     pub go_nodes_started: u64,
+    /// The Vera node the test's nodes share for document ACP, once a
+    /// `NewNode { isDocumentAcpTest }` started it.
+    pub vera: Option<Arc<crate::shared_vera::SharedVera>>,
 }
 
 /// The transactions a test has begun. Shared by every clone of the state, and
@@ -313,6 +316,7 @@ impl State {
                 ::identity::Did::new(crate::scenario::identity::did(seed))
                     .expect("a client identity has a valid DID")
             }),
+            bearer: None,
             signing: None,
             txn: self.context(txn).txn(),
         }
@@ -333,7 +337,7 @@ impl State {
                 .context_on(node, txn, identity, enable_signing)
                 .signing()
                 .cloned(),
-            ..self.scope_as(txn, identity)
+            ..self.scope_as_on(node, txn, identity)
         }
     }
 
@@ -345,6 +349,28 @@ impl State {
             Some(seed) => context.with_identity(Some(crate::scenario::identity::did(seed))),
             None => context,
         }
+    }
+
+    /// [`State::scope_as`] with the acting identity's delegation to the
+    /// named node when it uses Vera for document ACP.
+    pub fn scope_as_on(
+        &self,
+        node: &str,
+        txn: Option<usize>,
+        identity: Option<u64>,
+    ) -> crate::node_scope::NodeScope {
+        crate::node_scope::NodeScope {
+            bearer: identity.and_then(|seed| self.vera_delegation(node, seed)),
+            ..self.scope_as(txn, identity)
+        }
+    }
+
+    /// The Vera delegation identity `seed` presents to node `name`, when the
+    /// node is a Rust node that decides document ACP on Vera.
+    pub fn vera_delegation(&self, name: &str, seed: u64) -> Option<String> {
+        let core = self.slot(name)?.node.as_ref()?.core()?;
+        crate::shared_vera::delegation(&core, seed)
+            .unwrap_or_else(|error| panic!("a Vera delegation for identity {seed}: {error}"))
     }
 
     /// [`State::context_as`] for an in-process write to node `node`, carrying

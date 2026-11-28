@@ -166,6 +166,17 @@ pub struct ImportResult {
     pub errors: Vec<String>,
 }
 
+impl From<db::backup::ImportStats> for ImportResult {
+    fn from(stats: db::backup::ImportStats) -> Self {
+        Self {
+            documents_imported: stats.documents_imported,
+            documents_skipped: 0,
+            collections_affected: stats.collections_affected,
+            errors: Vec::new(),
+        }
+    }
+}
+
 /// Re-export NAC types from the acp crate for convenience.
 pub use acp::nac::{NacStatus, NodePermission};
 

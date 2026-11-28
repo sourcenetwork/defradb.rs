@@ -11,6 +11,7 @@ mod in_txn;
 mod listing;
 pub mod manager;
 pub(crate) mod pages;
+mod settle;
 pub mod vector;
 
 pub use error::{Error, Result};

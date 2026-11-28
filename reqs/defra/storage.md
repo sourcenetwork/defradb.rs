@@ -84,6 +84,24 @@ A collection patch that removes a field named by an index, full-text index, or v
 
 An index created while documents of its collection are updated is built: its backfill completes, the listing shows no failed backfill, and a filter on the indexed field fetches through the index, for a value an update wrote during the build as for an untouched one. The backfill identifies its index by ID in the definition it reads from the store, so a node whose collection cache is behind the committed index definition still completes it and never fails with `index '<name>' disappeared during backfill`.
 
+# `defra.index.ddl_under_writes`: An index dropped or created under writes is used once built
+
+- **Parents:** ["defra.index"]
+- **Scenarios:** ["index::ddl_under_writes::an_index_dropped_and_created_again_under_updates_is_built_and_used", "index::ddl_under_writes::indexes_created_together_under_updates_are_built", "index::ddl_under_writes::activating_a_version_publishes_its_indexes", "db::index::publication::an_index_created_while_a_commit_hook_holds_events_is_used", "db::index::publication::an_index_dropped_while_a_commit_hook_holds_events_can_be_created_again", "db::index::under_writes::an_index_recreated_while_updates_run_is_built", "db::index::under_writes::a_second_index_created_while_updates_run_is_built", "db::index::under_writes::two_indexes_created_together_are_built"]
+
+An index created, or dropped and created again under the same name, while documents of its collection are updated behaves as it does with no writes running. A drop or a create returns only once the node's own view of the collection has the change, so a create right after a drop succeeds and is never refused with `cached schema differs from persisted version '<version>'`. When the backfill completes, the listing shows the index's execution as completed and a filter on the indexed field fetches through the index from then on, without a restart. A backfill that fails is covered by `defra.index.backfill_failed`.
+
+Activating a collection version exposes that version's index definitions. A schema patch that adds a one-to-one relation index exposes the index as soon as the patch commits. A refresh racing a completed backfill keeps the completed index available. A backfill cannot settle an index belonging to a different collection that took the same name.
+
+Reconciling an already built index returns its definition without consuming an index ID. New IDs are above existing and retired IDs. Exhausting the available IDs reports `the index ID sequence exceeded u32`.
+
+# `defra.index.backfill_failed`: A failed backfill stops maintaining its index
+
+- **Parents:** ["defra.index"]
+- **Scenarios:** ["index::failed_backfill::a_failed_unique_backfill_stops_maintaining_the_index"]
+
+A unique index whose backfill fails because existing documents share a value stays in the listing with status `2` and the backfill's `can not index` reason. Writers stop maintaining it: another document with that same value is accepted without a restart, and queries scan the collection instead of fetching through the failed index.
+
 # `defra.collection`: Collection-wide operations
 
 - **Parents:** ["defra"]
@@ -380,6 +398,13 @@ A transaction that reads document alice and updates her `age` to 10 commits succ
 - **Scenarios:** ["txn::returned_field::an_update_commits_beside_a_write_of_a_field_it_returned"]
 
 A transaction runs `update_Snap(input: {status: "claimed"}) { content }` and gets `content: "init"`; another writer sets `content` to `"changed"` and commits first. The transaction still commits, and the document reads `status: "claimed"`, `content: "changed"`. What an update returns is read, not decided on, so it is not validated at commit. Go conflicts here.
+
+# `defra.txn.relation_join_read`: A query's one-to-one join does not fail its transaction's commit
+
+- **Parents:** ["defra.txn"]
+- **Scenarios:** ["txn::relation_join_read::a_one_to_one_join_read_does_not_fail_the_commit", "txn::relation_join_read::a_writer_of_the_same_link_still_loses_the_commit", "mutation::add::field_kinds::one_to_one_to_one::with_txn::transactional_creation_and_linking_of_relational_documents_backward"]
+
+With `Book { name: String publisher: Publisher @primary }` and `Publisher { name: String published: Book }` and publishers Website and Online, an explicit transaction adds `{name: "Mine", _publisherID: <Website>}` and runs `Book { name publisher { name } }`, which returns only its own book. An autocommit `add_Book` of `{name: "Theirs", _publisherID: <Online>}` then succeeds, and committing the transaction succeeds too: the join's read of the books decides nothing, so it is not checked at commit. `Book { name publisher { name } }` then returns both books. If the autocommit book links Website instead, committing the transaction fails with `transaction conflict. Please retry` and only the autocommit book is stored: the transaction's own check that Website was free is still validated. The same holds for two explicit transactions that each add a book for a different publisher and then query books: both commit. Go fails the second of those commits with `transaction conflict. Please retry`; that is a deliberate divergence.
 
 # `defra.document`: Documents
 

@@ -807,7 +807,15 @@ resources:
         let result = defra_http::client_signed_delete::execute(&ws, &auth(&owner_token), delete(), None, &mut final_graph).await.unwrap();
         assert!(!result.has_errors());
         assert_eq!(result.data.unwrap()["delete_DeleteRecord"][0]["_docID"], doc_id);
-        assert_eq!(node.verified_block_signer_did(&deleted_cid).await.unwrap(), owner_did);
+        // A deleted document keeps its access control (#3399): the node's own
+        // identity holds no relationship to it, so only its owner reads the
+        // delete's block and signature.
+        assert!(node.verified_block_signer_did(&deleted_cid).await.is_err());
+        let owner_node = node.with_identity(identity::Did::new(owner_did.clone()).unwrap());
+        let (block_bytes, signature_bytes) = owner_node.authorized_signed_block_bytes(&deleted_cid).await.unwrap();
+        let signed = defra_core::block::Block::from_dag_cbor(&block_bytes).unwrap();
+        let signature = defra_core::block::Signature::from_dag_cbor(&signature_bytes).unwrap();
+        assert_eq!(db::block::verify::verified_signature_signer_did(&signed, &signature).unwrap(), owner_did);
         let retained = node.execute_request(query::QueryRequest::new("{ DeleteRecord { _docID } }").with_identity(Some(owner.did().unwrap()))).await;
         assert!(retained.data.unwrap()["DeleteRecord"].as_array().unwrap().is_empty());
         let input = json!({"name":"unknown"});

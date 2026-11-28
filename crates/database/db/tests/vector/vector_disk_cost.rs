@@ -14,6 +14,9 @@
 //!   vector_disk_cost --ignored --nocapture
 //! ```
 //!
+//! For a DiskANN build with `RESIDENT_BUILD=1`, query with `ENGINE=resident`.
+//! That build writes only the resident layout.
+//!
 //! On macOS, copy the store with `ditto --nocache` instead of dropping caches.
 //! Pass 0 of a query process is cold, and for resident codes it includes
 //! loading them; later passes are warm. `EFFORT` is the engine's own knob: `L`
@@ -208,38 +211,76 @@ async fn snapshot(mem: &MemoryNodeStore) -> (Vec<Node>, Aux, Vec<Vec<u8>>, Optio
 /// merged every `n` inserts, as the background sweep merges whatever arrived
 /// since its last pass. Unset, the graph is built once at the end.
 /// `PENDING=<n>` leaves the last `n` inserts unmerged.
+///
+/// `RESIDENT_BUILD=1` grows the graph with resident codes instead, `CACHE=1`
+/// with the shared code cache a node's engine carries, and writes it into
+/// `resident_store` as built. Query this layout with `ENGINE=resident`.
+/// It prints the time spent merging and a digest of every record and code,
+/// excluding training's random tag, so two builds can be compared.
 async fn build_diskann(
     vectors: &[Vec<f32>],
     store: &RegolithStore,
     resident_store: &RegolithStore,
 ) {
     let start = Instant::now();
-    let mut engine =
-        DiskAnn::try_new(MemoryNodeStore::new(), Metric::Cosine, params(false), 7).unwrap();
+    let resident_build = std::env::var("RESIDENT_BUILD").is_ok();
+    let mut engine = DiskAnn::try_new(
+        MemoryNodeStore::new(),
+        Metric::Cosine,
+        params(resident_build),
+        7,
+    )
+    .unwrap();
+    if std::env::var("CACHE").is_ok() {
+        engine = engine.with_codes(Arc::new(CodeCache::default()));
+    }
     let live: usize = env("LIVE", "0").parse().unwrap();
     let pending: usize = env("PENDING", "0").parse().unwrap();
     let merged = vectors.len() - pending;
     let mut merges = 0;
+    let mut merging = std::time::Duration::ZERO;
     let mut trained = false;
     for (i, v) in vectors.iter().enumerate() {
         engine.insert(NodeId(i as u64 + 1), v).await.unwrap();
         let n = i + 1;
         let due = live > 0 && n < merged && (!trained || n % live == 0);
         if n == merged || due {
+            let merge = Instant::now();
             while engine.should_build().await.unwrap() {
                 engine.build().await.unwrap();
                 merges += 1;
+            }
+            if trained {
+                merging += merge.elapsed();
             }
             trained = trained || engine.state().await.unwrap().is_some();
         }
     }
     let m = engine.state().await.unwrap().unwrap().m as usize;
     eprintln!(
-        "BUILD diskann m={m} live={live} pending={pending} merges={merges} in {:.1?}",
+        "BUILD diskann m={m} live={live} pending={pending} merges={merges} in {:.1?}, \
+         merging after training {merging:.1?}",
         start.elapsed()
     );
 
     let (nodes, aux, log, _) = snapshot(engine.store()).await;
+    if resident_build {
+        let digest = aux
+            .iter()
+            .filter(|(kind, _, _)| *kind != codec::TRAINED)
+            .fold(0xcbf2_9ce4_8422_2325u64, |hash, (kind, key, value)| {
+                [&[*kind][..], key, value]
+                    .into_iter()
+                    .flatten()
+                    .fold(hash, |h, b| {
+                        (h ^ u64::from(*b)).wrapping_mul(0x100_0000_01b3)
+                    })
+            });
+        eprintln!("RECORDS digest={digest:016x} entries={}", aux.len());
+        drop(engine);
+        write(resident_store, RESIDENT, &nodes, &aux, &log, None).await;
+        return;
+    }
     drop(engine);
     let (records, shared): (Aux, Aux) = aux
         .into_iter()

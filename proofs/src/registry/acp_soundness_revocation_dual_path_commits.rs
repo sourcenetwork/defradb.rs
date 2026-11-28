@@ -155,7 +155,7 @@ pub(super) const PROPERTIES: &[Property] = &[
         family: "ACP soundness + revocation + dual-path commits",
         name: "INV_DeletedGrantsNothing / INV_NoGrantAfterArchive / INV_DeletedByPermitted / INV_ArchiveAsOwner / INV_HistoryOnlyToDeleter / INV_DeleteChargesNobody / LIVE_Retired: a deleted document grants nothing, no grant outlives its archive, only whom the policy lets delete deletes it, its archive is owed and sent only as its owner, only its deleter reads its commit history, its archive counts against no actor's admission of new changes, nor the node's, nor what its transaction may stage, and its object ends archived",
         axis: Tla,
-        anchor: "crates/engine/acp/src/outbox/staging.rs TransactionOutbox::stage_archive; crates/engine/acp/src/outbox/changes.rs OwedChanges::drop_unsent_on, OwedChanges::stage_archive; crates/engine/acp/src/outbox/deny.rs owed_denial, archive_actor; crates/engine/acp/src/outbox/ops.rs account, live_on; crates/engine/acp/src/outbox/changes.rs OwedChanges::stage; crates/engine/acp/src/outbox/submission.rs relationship_call; crates/database/db/src/write/autocommit/helpers.rs unregister_deleted_doc; crates/engine/query/src/txn/context.rs decided_by_owed, spared_by_owed_archive, decided_by_owed_archive; crates/engine/query/src/txn/read_access.rs OverlayChecker::object_access; crates/engine/acp/src/external.rs ExternalDocumentAcp::check_doc_access",
+        anchor: "crates/engine/acp/src/outbox/staging.rs TransactionOutbox::stage_archive; crates/engine/acp/src/outbox/changes.rs OwedChanges::drop_unsent_on, OwedChanges::stage_archive; crates/engine/acp/src/outbox/deny.rs owed_denial, archive_actor; crates/engine/acp/src/outbox/ops.rs account, live_on; crates/engine/acp/src/outbox/changes.rs OwedChanges::stage; crates/engine/acp/src/outbox/submission.rs relationship_call; crates/database/db/src/write/autocommit/helpers.rs archive_deleted_doc; crates/engine/query/src/txn/context.rs decided_by_owed, spared_by_owed_archive, decided_by_owed_archive; crates/engine/query/src/txn/read_access.rs OverlayChecker::object_access; crates/engine/acp/src/external.rs ExternalDocumentAcp::check_doc_access",
         model_ref: "MC_ArchiveOnDelete_{Green,Green_NoDrop,Red_GrantAfterArchive,Red_DeleteWithoutPermission,Red_ArchiveAsDeleter,Red_ArchiveChargesOwner,Red_ArchiveChargesNode,Red_ArchiveChargesTxn,Red_HistoryForTheOwner,Red_NoOverlay,Red_HistoryForAll,Red_OwedRegistrationFirst,Red_UnregisteredFirst}.cfg",
         tiers: &[Boundary, Contract],
         bound_by: "crates/database/db/tests/access/external_archive.rs an_owed_archive_leaves_its_actor_the_commit_history_and_nothing_else, an_owed_archive_denies_before_an_owed_registration_or_an_unregistered_object_could_grant, a_permitted_non_owners_delete_commits_and_denies_the_document_to_everyone_at_once, a_non_owners_delete_parks_the_archive_until_the_owners_authority_appears; crates/engine/acp/src/external/archive_tests.rs a_non_owners_deletes_leave_the_owners_admission_untouched, a_node_full_of_parked_archives_still_admits_new_changes, a_transactions_deletes_leave_its_own_staging_bound_untouched",
@@ -227,5 +227,29 @@ pub(super) const PROPERTIES: &[Property] = &[
         model_ref: "MC_RegisterDocOnce_{Green,Red_NoValidation,Red_Sentinel}.cfg",
         tiers: &[Boundary],
         bound_by: "",
+    },
+    Property {
+        // A delete keeps the document's ACP object, so the history the node
+        // retains reads under the same decision as before; a purge removes
+        // the object with the history, and a deleted DocID cannot be added
+        // again until then. Truncate is outside this model: it keeps the
+        // object and grants for Go parity and is covered by
+        // go.collection.truncate.acp.
+        family: "ACP soundness + revocation + dual-path commits",
+        name: "INV_NoUnintendedRead: nobody reads a document's history whom its current owner has not let read it, across delete, revocation, purge and re-creation",
+        axis: Tla,
+        anchor: "crates/database/db/src/write/autocommit/helpers.rs archive_deleted_doc, register_created_doc; crates/database/db/src/write/autocommit/mod.rs register_deleted_doc_with_acp_as; crates/engine/query/src/runner/mutation.rs execute_single_mutation; crates/database/db/src/merge/merge_handler/composite_persist.rs handle_deletion; crates/database/db/src/collection/acp.rs release_purged_doc_objects; crates/engine/acp/src/read_access.rs DirectChecker",
+        model_ref: "MC_DeletedHistory_{Green,Red_UnregisterOnDelete,Red_KeepOnPurge,Red_NoFence}.cfg",
+        tiers: &[Boundary],
+        bound_by: "tools/integration-test/tests/testo/acp/dac/deleted_history.rs a_deleted_documents_history_stays_hidden_from_an_actor_without_access, a_delete_committed_in_a_transaction_keeps_the_history_hidden, a_reader_keeps_a_deleted_documents_history_until_revoked, a_purged_document_added_again_takes_no_earlier_grant, a_deleted_documents_history_stays_hidden_after_peer_replication",
+    },
+    Property {
+        family: "ACP soundness + revocation + dual-path commits",
+        name: "DeletedHistory.delete_keeps_access / deleted_history_hidden_from_foreign / owner_reads_deleted_history / reader_keeps_grant_after_delete / revoke_after_delete_denies_reader / unregister_on_delete_leaks / recreate_refused_while_deleted / purged_then_recreated_has_no_reader / purged_document_recreated_by_another_denies_previous_owner / kept_object_carries_the_grant",
+        axis: Lean,
+        anchor: "crates/database/db/src/write/autocommit/helpers.rs archive_deleted_doc, register_created_doc; crates/database/db/src/collection/acp.rs release_purged_doc_objects; crates/engine/acp/src/read_access.rs DirectChecker",
+        model_ref: "DeletedHistory (lake build)",
+        tiers: &[Boundary],
+        bound_by: "tools/integration-test/tests/testo/acp/dac/deleted_history.rs a_deleted_documents_history_stays_hidden_from_an_actor_without_access, a_reader_keeps_a_deleted_documents_history_until_revoked, a_purged_document_added_again_takes_no_earlier_grant",
     },
 ];

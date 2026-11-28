@@ -510,6 +510,7 @@ Single-purpose legacy areas, one file each:
 | `p2p_admission_restart::` | hub restart must not lose success-acked pending-DAG registrations |
 | `p2p_admission_fairness::` | per-source-peer pending-DAG quotas under a noisy pusher |
 | `p2p_backlog::` | outbound push-backlog bounds and overload observability |
+| `p2p_burst_convergence::` | three full-mesh replicas converge after a burst fills their pending-DAG and push backlogs, and after a restart |
 | `p2p_push_storm::` | outbound push-storm reproduction and profiling harness |
 | `p2p_deep_catchup::` | deep full-DAG push under intake rate limiting |
 | `p2p_interop_bench::` | cross-runtime P2P replication cost |
@@ -656,13 +657,17 @@ Main runs CI once a night (07:00 UTC, or by hand with `gh workflow run ci.yml`):
 
 A batch is one PR carrying several PRs, so they share one full run.
 
-- One commit per carried PR, each its squash, with the subject `<title> (#N)`,
-  where #N is an open PR with that title. `Merge gate` checks only the subjects.
+- The batch branch comes off main. Each carried PR is retargeted to it and
+  squash-merged into it on GitHub, so it shows as merged with the subject
+  `<title> (#N)`. A PR that conflicts with the batch branch goes back to main.
+- `Merge gate` checks only the subjects: #N is open, or merged into the batch's
+  branch, under that title. Fixes the batch needs are commits on the batch
+  branch ending in the batch's own number.
 - Whoever reviews the batch checks that each commit carries #N's change and
   nothing else.
-- PRs that touch the same lines go in a batch as a stack: B is based on A, so
-  B's diff holds the resolution.
-- Once the batch lands, close each carried PR with `Landed in #<batch>`.
+- The batch PR's body carries a `Resolves #N` line, one per line, for every
+  issue a carried PR resolves, because merging into the batch branch closes
+  none of them.
 
 ## ACP / Searchable Encryption
 

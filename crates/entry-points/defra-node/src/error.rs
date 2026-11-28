@@ -89,13 +89,19 @@ pub enum Error {
     /// A view operation was refused.
     #[error(transparent)]
     View(#[from] db::ViewError),
-    /// A backup export or import failed; the backup code reports it as text.
-    #[error("{0}")]
-    Backup(String),
+    /// An encrypted index operation was refused.
+    #[error(transparent)]
+    EncryptedIndex(#[from] db::EncryptedIndexError),
+    /// A backup export, a backup import or a store dump failed.
+    #[error(transparent)]
+    Backup(#[from] db::backup::BackupError),
 
     /// An identity string is not a DID.
     #[error("invalid identity DID: {0}")]
     InvalidIdentityDid(#[source] identity::Error),
+    /// The owner a document is given to is not a DID.
+    #[error("invalid new owner DID: {0}")]
+    InvalidNewOwner(#[source] identity::Error),
     /// Looking a collection up failed.
     #[error("failed to get collection '{collection}': {source}")]
     CollectionLookup {

@@ -1258,8 +1258,10 @@ jobs:
       # The queue rebase-merges (#3325), so each commit of a pull request lands on
       # main as it is. A pull request with one commit lands it under its title. A
       # batch carries several pull requests, one commit each, and each commit names
-      # the one it carries as "<title> (#N)". Only the subjects are checked: the
-      # batch's reviewer approves what each commit carries.
+      # the one it carries as "<title> (#N)". A carried pull request is either still
+      # open or already merged into the batch's own branch. A commit ending in the
+      # batch's own number is a fix the batch makes. Only the subjects are checked:
+      # the batch's reviewer approves what each commit carries.
       - id: commits
         if: github.event_name == 'pull_request'
         uses: actions/github-script@v9
@@ -1282,10 +1284,12 @@ jobs:
                 if (!m) { problems.push(`${c.sha.slice(0, 9)} "${got}" names no pull request; squash to one commit, or end each subject with (#N)`); continue; }
                 const [, title, n] = m;
                 const number = Number(n);
-                if (number === pr.number || seen.has(number)) { problems.push(`${c.sha.slice(0, 9)} repeats #${n}`); continue; }
+                if (number === pr.number) continue;
+                if (seen.has(number)) { problems.push(`${c.sha.slice(0, 9)} repeats #${n}`); continue; }
                 seen.add(number);
                 const carried = await github.rest.pulls.get({ ...context.repo, pull_number: number }).then((r) => r.data, () => null);
-                if (!carried || carried.state !== 'open') { problems.push(`#${n} is not an open pull request`); continue; }
+                const intoBatch = carried && carried.merged && carried.base.ref === pr.head.ref;
+                if (!carried || !(carried.state === 'open' || intoBatch)) { problems.push(`#${n} is neither open nor merged into ${pr.head.ref}`); continue; }
                 if (carried.title !== title) problems.push(`${c.sha.slice(0, 9)} title "${title}" is not #${n}'s "${carried.title}"`);
               }
             }

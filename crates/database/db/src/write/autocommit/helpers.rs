@@ -609,18 +609,23 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
     }
 }
 
-/// Local ownership disappears in the same commit as the deletion marker. A
-/// remote provider that archives a deleted document's object
-/// ([`acp::DocumentACP::stages_archive_on_delete`], vera.rs) is owed the
-/// archive in this transaction, made as the object's owner whoever
-/// `context`'s identity is, so the delete and the archive commit together;
-/// the delete is refused, and nothing is deleted, when the archive cannot be
-/// staged (no identity, no owner, or the owner cannot be learned now)
-/// ([`acp::TransactionOutbox::stage_archive`], `proofs/tla/ArchiveOnDelete.tla`).
-/// Any other remote provider keeps the object: its registration, owed or
-/// held, stays, so the delete and every earlier change replicate to nodes
-/// that wait for the provider to hold the document.
-pub(crate) async fn unregister_deleted_doc(
+/// A delete keeps the document's ACP object: its owner and relationships
+/// still decide who reads the history the node retains (`_commits`, blocks,
+/// P2P serving), as Go keeps them, and a later revocation still applies.
+/// Only purging that history removes the object; a truncate keeps it, as
+/// Go's does.
+/// A remote provider that archives a deleted document's object
+/// ([`acp::DocumentACP::stages_archive_on_delete`], vera.rs) reads a missing
+/// object as denied, and is owed the archive in this transaction, made as
+/// the object's owner whoever `context`'s identity is, so the delete and the
+/// archive commit together; the delete is refused, and nothing is deleted,
+/// when the archive cannot be staged (no identity, no owner, or the owner
+/// cannot be learned now) ([`acp::TransactionOutbox::stage_archive`],
+/// `proofs/tla/ArchiveOnDelete.tla`). Any other remote provider keeps the
+/// object too: its registration, owed or held, stays, so the delete and
+/// every earlier change replicate to nodes that wait for the provider to
+/// hold the document.
+pub(crate) async fn archive_deleted_doc(
     provider: Option<&Arc<dyn acp::DocumentACP>>,
     systemstore: &NamespaceView,
     collection: &Collection,
@@ -631,16 +636,10 @@ pub(crate) async fn unregister_deleted_doc(
     let (Some(provider), Some(policy)) = (provider, collection.schema().policy.as_ref()) else {
         return Ok(());
     };
-    let acpstore = systemstore.sibling(storage::namespace::Namespace::Acpstore);
-    if let Some(scoped) = provider.bind_transaction(acpstore.clone()) {
-        return scoped
-            .unregister_doc_object(&policy.id, &policy.resource_name, &doc_id.to_string())
-            .await
-            .map_err(|error| query::error::QueryError::execution(error.to_string()));
-    }
     if !provider.stages_archive_on_delete() {
         return Ok(());
     }
+    let acpstore = systemstore.sibling(storage::namespace::Namespace::Acpstore);
     let refused =
         |error: acp::Error| query::error::QueryError::permission_denied(error.to_string());
     let actor = context

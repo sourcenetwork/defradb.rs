@@ -239,7 +239,6 @@ fn classify_backend_message(message: &str) -> Option<ErrorStatus> {
             "invalid collection name",
             "invalid document",
             "invalid entityset",
-            "filtered truncate is not supported",
             "no sets or deletes are allowed in a read-only transaction",
             "invalid lens configuration",
             "invalid patch",

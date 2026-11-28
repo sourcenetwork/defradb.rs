@@ -7,7 +7,7 @@
 //! rather than a silent gap.
 //!
 //! This is a documentation/invariant test, not a code-coverage scan: the
-//! actual enforcement is exercised end-to-end by `access/enforcement.rs`
+//! actual enforcement is exercised end-to-end by `access/context_enforcement.rs`
 //! (DB-layer allow/deny) and the `integration-test` `nac`/`acp` suites.
 
 use acp::nac::NodePermission;
@@ -27,7 +27,7 @@ use acp::nac::NodePermission::*;
 /// - `NacStatus`, `NacRelationAdd`, `NacRelationDelete`: the NAC operations in
 ///   `access/nac_ops/`.
 /// - `ActionList`: `list_actions` (`action.rs`).
-/// - `MigrationSet`: raw `set_migration` (`migration/set_migration.rs`) +
+/// - `MigrationSet`: raw `set_migration` (`crates/database/db/src/definition/migration/set.rs`) +
 ///   `set_migration_in_txn` (registry).
 /// - `DocumentUpdate`: `doc_mutator` create/update, `auto_commit_mutator`
 ///   create/update/create_many/batch. (Go uses update-document for create too.)

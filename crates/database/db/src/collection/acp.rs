@@ -212,10 +212,9 @@ pub async fn collection_to_register<'a>(
     )))
 }
 
-/// Clean up ACP relations when deleting a document.
-///
-/// This should be called when deleting a document to remove all
-/// associated relation tuples from the ACP store (owner, reader, updater, deleter).
+/// Remove a document's ACP relations (owner, reader, updater, deleter) once
+/// its history is gone from the node. A delete keeps them: they still decide
+/// who reads the history the node retains.
 pub async fn unregister_doc_if_needed(
     acp: &dyn DocumentACP,
     collection: &CollectionVersion,
@@ -238,6 +237,32 @@ pub async fn unregister_doc_if_needed(
     // Delete all ACP tuples for this document
     acp.unregister_doc_object(&policy.id, &policy.resource_name, doc_id)
         .await
+}
+
+/// Remove the ACP objects of `doc_ids`, whose history the purge running in
+/// `acpstore`'s transaction removes from this node, so a document added again
+/// under the same DocID takes no earlier owner or grant. Only a provider that
+/// joins the transaction holds this node's objects; a remote provider's object
+/// is shared with the other nodes that still hold the document, and stays.
+pub(crate) async fn release_purged_doc_objects<'ids, I>(
+    acp: Option<&Arc<dyn DocumentACP>>,
+    acpstore: datastore::NamespaceView,
+    collection: &CollectionVersion,
+    doc_ids: I,
+) -> acp::Result<()>
+where
+    I: IntoIterator<Item = &'ids str>,
+{
+    if collection.policy.is_none() {
+        return Ok(());
+    }
+    let Some(scoped) = acp.and_then(|acp| acp.bind_transaction(acpstore)) else {
+        return Ok(());
+    };
+    for doc_id in doc_ids {
+        unregister_doc_if_needed(&*scoped, collection, doc_id).await?;
+    }
+    Ok(())
 }
 
 /// ACP context for mutation operations.

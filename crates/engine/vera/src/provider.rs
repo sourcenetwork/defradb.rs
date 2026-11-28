@@ -313,6 +313,23 @@ pub trait VeraProvider: MaybeSendSync {
         object_id: &str,
     ) -> Result<(), ProviderError>;
 
+    /// Give the object to `new_owner` under `bearer_token`, its owner's.
+    /// A provider that moves no object between owners refuses it as
+    /// unsupported.
+    async fn transfer_object(
+        &self,
+        bearer_token: &str,
+        policy_id: &str,
+        resource: &str,
+        object_id: &str,
+        new_owner: &str,
+    ) -> Result<(), ProviderError> {
+        let _ = (bearer_token, policy_id, resource, object_id, new_owner);
+        Err(ProviderError::Unsupported(
+            "this provider moves no object to another owner".into(),
+        ))
+    }
+
     async fn set_relationship(
         &self,
         bearer_token: &str,

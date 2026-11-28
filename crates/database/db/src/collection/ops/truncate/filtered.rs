@@ -11,7 +11,8 @@ const CHUNK_SIZE: usize = 1000;
 
 impl<S: Store> crate::database::DB<S> {
     /// Delete the documents of `collection` that `filter` matches, with their
-    /// unshared history, keeping the collection; the number of documents.
+    /// unshared history, keeping the collection; the number of documents. In
+    /// a branchable collection their history stays, as a purge keeps it.
     pub(super) async fn truncate_matching(
         self: &Arc<Self>,
         collection: &Collection,
@@ -59,7 +60,14 @@ impl<S: Store> crate::database::DB<S> {
                     .iter()
                     .map(|doc_id| document::DocID::from_string(doc_id))
                     .collect::<std::result::Result<Vec<_>, _>>()?;
-                let purged = db.purge_documents(txn, &collection, &doc_ids).await?;
+                let purged = db
+                    .purge_documents(
+                        txn,
+                        &collection,
+                        &doc_ids,
+                        crate::collection::ops::purge::AcpObjects::Keep,
+                    )
+                    .await?;
                 Ok(purged)
             })
         })

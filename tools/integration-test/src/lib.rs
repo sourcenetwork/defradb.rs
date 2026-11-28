@@ -19,6 +19,7 @@ pub mod nodes;
 mod purge;
 mod reserved_port;
 pub mod scenario;
+pub mod shared_vera;
 mod stub_embedder;
 pub mod test_case;
 pub mod transport_choice;

@@ -151,7 +151,9 @@ async fn an_id_taken_after_its_check_leaves_every_other_saved_document_its_id() 
     )
     .await;
     assert_eq!(
-        raced.map(|stats| stats.documents_imported),
+        raced
+            .map(|stats| stats.documents_imported)
+            .map_err(|error| error.to_string()),
         Err("a document with the given ID already exists".to_string())
     );
 
@@ -164,7 +166,9 @@ async fn an_id_taken_after_its_check_leaves_every_other_saved_document_its_id() 
     )
     .await;
     assert_eq!(
-        refused.map(|stats| stats.documents_imported),
+        refused
+            .map(|stats| stats.documents_imported)
+            .map_err(|error| error.to_string()),
         Err("a document with the given ID already exists".to_string()),
         "John, saved in the batch whose registration lost SECOND, still answers to FIRST"
     );

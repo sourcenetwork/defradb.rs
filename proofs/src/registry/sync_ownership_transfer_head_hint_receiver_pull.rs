@@ -283,6 +283,24 @@ pub(super) const PROPERTIES: &[Property] = &[
     },
     Property {
         family: "Sync ownership transfer (head hint / receiver pull)",
+        name: "INV_Accounted / INV_Retention / INV_ProcessedOnce / INV_CleanEnd — a history root's progress counts its bookkeeping keys, an applied node keeps no mark, nothing is processed twice, and a finished walk leaves no keys",
+        axis: Tla,
+        anchor: "crates/database/db/src/merge/merge_handler/history_walk.rs DbMergeHandler::history_page; crates/database/db/src/merge/merge_handler/history.rs cleanup; crates/database/db/tests/merge/long_history/bookkeeping.rs",
+        model_ref: "MC_HistoryBookkeeping_{Green,Red_KeepMark,Red_NoAccount,Red_DropSkipped,Red_NoAppliedCheck}.cfg",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
+        family: "Sync ownership transfer (head hint / receiver pull)",
+        name: "push_accounts / pop_applied_accounts / pop_skipped_accounts / applied_node_retains_nothing — history bookkeeping updates match Progress::keys",
+        axis: Lean,
+        anchor: "crates/database/db/src/merge/merge_handler/history_walk.rs DbMergeHandler::history_page",
+        model_ref: "HistoryTurns.applied_node_retains_nothing (lake build)",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
+        family: "Sync ownership transfer (head hint / receiver pull)",
         name: "Ancestor publication is idempotent; cleanup and collection carriers preserve driver ownership",
         axis: Lean,
         anchor: "crates/database/db/src/merge/merge_handler/history.rs",
@@ -406,6 +424,22 @@ pub(super) const PROPERTIES: &[Property] = &[
         axis: Tla,
         anchor: "crates/database/p2p/src/sync/manager/process/pending_dag.rs PendingDagLease::finish_attempt, records_after_resync_cursor, resync_persisted_pending_dags_inner, try_insert_pending_dag, max_pending_dags_per_peer, continue_merge, consume_pending_merge_continuation, MergeTurn; crates/database/p2p/src/sync/manager/pending.rs PendingOrigin, PENDING_ROTATE_AFTER_DISPATCHES; crates/database/p2p/src/sync/replication/handlers.rs handle_block_received, process_merge_batch",
         model_ref: "MC_SyncOwnership_{Green_Memory,Green_Memory_Quota,Red_RetainedOverflow,Red_KeyOrderResync,Red_QuotaPassOver,Red_ImmortalContinuation}.cfg",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
+        // #2307: the resync sweep sleeps between its 60-second ticks. Every
+        // in-memory entry removal with a waiting durable root that has map and
+        // peer room wakes it: rotation, an ending continuation, TTL eviction,
+        // quarantine, merged cleanup, and persisted-record removal. A rotating
+        // root keeps its entry unless another waiter can take the place, so a
+        // waiter held out by its peer quota does not start a sweep that could
+        // only re-admit the same root.
+        family: "Sync ownership transfer (head hint / receiver pull)",
+        name: "INV_FreedPlaceArmed: a freed in-memory place wakes the resync sweep",
+        axis: Tla,
+        anchor: "crates/database/p2p/src/sync/manager/process/pending_dag.rs PendingDagLease::finish_attempt, MergeTurn, evict_expired, clear_pending_dag, quarantine_pending_dag, notify_if_durable_root_fits; crates/database/p2p/src/sync/manager/process/mod.rs remove_persisted_pending; crates/database/p2p/src/sync/pending_store/view.rs source; crates/database/p2p/src/sync/coordinator/mod.rs run_pending_dag_resync",
+        model_ref: "MC_SyncOwnership_{Green_Memory,Green_Memory_Quota,Green_TwoTierQuota,Red_RotateNoWake,Red_ContinuationNoWake,Red_RecordLeavingNoWake}.cfg",
         tiers: &[Boundary],
         bound_by: "",
     },

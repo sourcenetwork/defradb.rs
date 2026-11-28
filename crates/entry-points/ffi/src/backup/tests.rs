@@ -1,11 +1,15 @@
-//! Exporting some collections, and what an import refuses.
+//! Exporting some collections, who may export, and what an import refuses.
 
 use std::ptr;
 
 use serde_json::Value;
 
 use super::{defra_backup_export, defra_backup_import};
-use crate::test_support::{add_collection, close, cstr, err, node, ok, query};
+use crate::identities::{defra_identity_free, defra_identity_new};
+use crate::test_support::{
+    add_collection, close, cstr, err, local_options, node, node_with, ok, ok_json, query, query_as,
+};
+use crate::types::NodeInitOptions;
 
 /// A file in a fresh temporary directory holding `content`.
 fn file_with(content: &str) -> (tempfile::TempDir, std::ffi::CString) {
@@ -92,4 +96,46 @@ fn backup_refuses_a_transaction_handle() {
     err(unsafe { defra_backup_export(txn.txn_ptr, path.as_ptr(), ptr::null(), ptr::null(), 0, 0) });
     crate::txn::defra_transaction_discard(txn.txn_ptr);
     close(node);
+}
+
+#[test]
+fn node_access_control_refuses_an_export_to_a_stranger() {
+    let identity = || {
+        let result = unsafe { defra_identity_new(ptr::null()) };
+        assert_eq!(result.status, 0);
+        result.identity_ptr
+    };
+    let (owner, stranger) = (identity(), identity());
+    let node = node_with(NodeInitOptions {
+        identity_ptr: owner,
+        enable_node_acp: 1,
+        ..local_options()
+    });
+    let sdl = cstr("type User { name: String }");
+    ok_json(unsafe { crate::collection::defra_collection_add(node, sdl.as_ptr(), owner) });
+    query_as(
+        node,
+        r#"mutation { add_User(input: {name: "Alice"}) { _docID } }"#,
+        owner,
+    );
+    let directory = tempfile::tempdir().unwrap();
+    let file = directory.path().join("backup.json");
+    let path = cstr(&file.to_string_lossy());
+
+    let export_as = |caller| unsafe {
+        defra_backup_export(node, path.as_ptr(), ptr::null(), ptr::null(), 0, caller)
+    };
+    assert_eq!(
+        err(export_as(stranger)),
+        "not authorized to perform operation. Permission: read-document"
+    );
+    assert!(!file.exists(), "a refused export writes no file");
+
+    ok(export_as(owner));
+    let exported: Value = serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
+    assert_eq!(exported["User"][0]["name"], "Alice", "{exported}");
+
+    close(node);
+    defra_identity_free(owner);
+    defra_identity_free(stranger);
 }

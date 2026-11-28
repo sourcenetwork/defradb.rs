@@ -36,11 +36,13 @@ fn a_deleted_private_documents_arrival_is_shown_to_nobody() {
             );
 
             node.delete(&id).await;
-            assert!(!node
-                .acp
-                .is_doc_registered(POLICY, RESOURCE, &id)
-                .await
-                .unwrap());
+            assert!(
+                node.acp
+                    .is_doc_registered(POLICY, RESOURCE, &id)
+                    .await
+                    .unwrap(),
+                "the delete keeps the document's object, which still decides its history"
+            );
             for reader in [None, Some(stranger())] {
                 let (next, entries) = page(&node, path, reader.clone()).await;
                 assert_eq!(next, "2", "{path:?}: a hidden row still advances the page");

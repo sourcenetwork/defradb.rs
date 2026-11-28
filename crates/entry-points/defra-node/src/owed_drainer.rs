@@ -127,6 +127,7 @@ impl acp::OwedRefusalListener for PublishRefusals {
                 relation: tuple.relation.clone(),
                 subject: acp::Subject::from(tuple.subject.clone()).to_string(),
                 delete: change.op == acp::OwedOp::Delete,
+                transfer: change.op == acp::OwedOp::Transfer,
                 reason: reason.to_owned(),
                 parked: kept,
             },

@@ -17,6 +17,7 @@ mod drop_history;
 mod plan_size;
 mod requests;
 mod upgrade;
+mod whole_key_records;
 
 const COLLECTION: &str = "Tallies";
 
@@ -631,6 +632,40 @@ fn a_drain_indexes_an_old_document_at_its_migrated_value() {
             (0, 1),
             "the drain indexes the value backfill would"
         );
+    })
+    .unwrap();
+}
+
+/// A version with no transform on its path reads an old document as stored,
+/// as the drain indexes it.
+#[test]
+fn a_read_checks_an_old_document_as_stored_without_a_transform() {
+    workers::block_on(async {
+        let mut raw = DB::new(RegolithStore::in_memory().unwrap()).unwrap();
+        raw.set_lens_store(Arc::new(TimesTen::default()));
+        let db = Arc::new(raw);
+        let node = Node::with(Arc::clone(&db), true).await;
+        let v1 = db
+            .require_collection(COLLECTION)
+            .unwrap()
+            .version_id()
+            .to_string();
+        db.patch_collection(
+            &defra_core::RequestContext::default(),
+            r#"[{"op":"add","path":"/Tallies/Fields/-","value":{"Name":"note","Kind":"String"}}]"#,
+            None,
+        )
+        .await
+        .unwrap();
+        seed_owed_at(&db, &v1, "a", 1).await;
+
+        assert_eq!(node.names("{count: {_eq: 1}}", "{count: ASC}").await, ["a"]);
+        assert!(node
+            .names("{count: {_eq: 10}}", "{count: ASC}")
+            .await
+            .is_empty());
+        node.drain().await;
+        assert_eq!((node.stored_at(1).await, node.stored_at(10).await), (1, 0));
     })
     .unwrap();
 }

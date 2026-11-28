@@ -65,7 +65,7 @@ where
         .ok_or_else(|| Error::CollectionNotFound(options.collection.clone()))?;
     let page = rows(txn, collection.resolved_root_id(), options).await?;
 
-    let bound = reader.acp.bind_transaction(txn.acpstore()?);
+    let bound = reader.acp.bind_read_transaction(txn.acpstore()?);
     let reader = DocumentReader {
         context: reader.context,
         acp: bound.as_deref().unwrap_or(reader.acp),
