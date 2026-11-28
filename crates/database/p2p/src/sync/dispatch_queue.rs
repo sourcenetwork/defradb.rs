@@ -298,6 +298,8 @@ mod tests {
     }
 
     impl DispatchEvent for TestEvent {
+        type ServePeer = ();
+
         fn dispatch_class(&self) -> DispatchClass {
             match self {
                 Self::Request(_) => DispatchClass::Admission,

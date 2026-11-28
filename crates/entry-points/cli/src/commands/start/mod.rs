@@ -262,6 +262,11 @@ pub struct StartArgs {
     #[arg(long, env = "DEFRA_P2P_MAX_CONCURRENT_DAG_FETCHES")]
     pub p2p_max_concurrent_dag_fetches: Option<usize>,
 
+    /// Max CAR serves run at once for peers catching up from this node.
+    /// Default: 16.
+    #[arg(long, env = "DEFRA_P2P_MAX_ACTIVE_CAR_SERVES")]
+    pub p2p_max_active_car_serves: Option<usize>,
+
     /// Seconds an unacknowledged pending-DAG entry lives before eviction; an
     /// acknowledged entry does not expire. Default: 300.
     #[arg(long, env = "DEFRA_P2P_PENDING_DAG_TTL_SECS")]
@@ -583,6 +588,9 @@ impl StartArgs {
         }
         if let Some(max) = self.p2p_max_concurrent_dag_fetches {
             config.net.p2p_max_concurrent_dag_fetches = max;
+        }
+        if let Some(max) = self.p2p_max_active_car_serves {
+            config.net.p2p_max_active_car_serves = max;
         }
         if let Some(secs) = self.p2p_pending_dag_ttl_secs {
             config.net.p2p_pending_dag_ttl_secs = secs;

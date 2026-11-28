@@ -2,11 +2,15 @@
 //!
 //! The transport queue is the sole resident queue. The dispatcher classifies
 //! events into fixed admission, recovery-serving, and completion worker sets;
-//! lightweight state transitions drain inline. Excess requests are rejected
-//! in place instead of waiting for a slot and hiding ownership progress behind
-//! unrelated work. An event's lease is held until its handler returns.
+//! lightweight state transitions drain inline. Excess admission requests are
+//! rejected in place instead of waiting for a slot and hiding ownership
+//! progress behind unrelated work. A CAR serve that finds its lane full waits
+//! a bounded time in the drain's own waiting room, off the drain's path, and
+//! the freed slot goes to the peer holding the fewest serves
+//! ([`ServeAdmission`]). An event's lease is held until its handler returns.
 
 use std::future::Future;
+use std::hash::Hash;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
 
@@ -15,7 +19,8 @@ use futures::future::Fuse;
 use futures::FutureExt;
 use regolith::sync::Semaphore;
 
-use super::dispatch_queue::{DispatchSource, Queued};
+use super::car_serve_admission::{ServeAdmission, ServeOffer};
+use super::dispatch_queue::{DispatchSource, Lease, Queued};
 use crate::transport::TransportEvent;
 
 /// Whether a bounded request was admitted to a worker.
@@ -89,6 +94,10 @@ pub(crate) use classify_p2p_event;
 
 /// Classifies an event once at the shared transport boundary.
 pub trait DispatchEvent {
+    /// The compact key that counts a request against its requester's share of
+    /// the CAR-serve waiting room and active serve count.
+    type ServePeer: Eq + Hash + Clone + defra_core::thread_bounds::MaybeSend + 'static;
+
     fn dispatch_class(&self) -> DispatchClass;
 
     /// Whether a refusal of this event must be handled rather than dropped:
@@ -97,9 +106,17 @@ pub trait DispatchEvent {
     fn kept_when_refused(&self) -> bool {
         false
     }
+
+    /// The peer a recovery (CAR serve) request came from, which its share of
+    /// the serve lane is counted against. `None` shares one anonymous key.
+    fn serve_peer(&self) -> Option<Self::ServePeer> {
+        None
+    }
 }
 
 impl<ResponseToken> DispatchEvent for TransportEvent<ResponseToken> {
+    type ServePeer = u64;
+
     fn dispatch_class(&self) -> DispatchClass {
         self.dispatch_class()
     }
@@ -107,10 +124,21 @@ impl<ResponseToken> DispatchEvent for TransportEvent<ResponseToken> {
     fn kept_when_refused(&self) -> bool {
         matches!(self, TransportEvent::GossipMessage { .. })
     }
+
+    fn serve_peer(&self) -> Option<Self::ServePeer> {
+        match self {
+            TransportEvent::CarFetchRequest { peer_id, .. } => {
+                Some(rapidhash::v3::rapidhash_v3(peer_id.as_str().as_bytes()))
+            }
+            _ => None,
+        }
+    }
 }
 
 #[cfg(feature = "libp2p-transport")]
 impl DispatchEvent for crate::host::HostEvent {
+    type ServePeer = u64;
+
     fn dispatch_class(&self) -> DispatchClass {
         self.dispatch_class()
     }
@@ -118,12 +146,29 @@ impl DispatchEvent for crate::host::HostEvent {
     fn kept_when_refused(&self) -> bool {
         matches!(self, crate::host::HostEvent::GossipMessage { .. })
     }
+
+    fn serve_peer(&self) -> Option<Self::ServePeer> {
+        match self {
+            crate::host::HostEvent::CarFetchRequest { peer_id, .. } => {
+                Some(rapidhash::v3::rapidhash_v3(peer_id.as_ref().digest()))
+            }
+            _ => None,
+        }
+    }
 }
 
 const MAX_ACTIVE_REQUESTS: usize = 32;
-// CAR serving has a distinct reserve because receiver-owned recovery must not
-// wait behind serialized PushLog admission on the provider.
-const MAX_ACTIVE_RECOVERY: usize = 8;
+// CAR serving has its own lane, sized by `SyncConfig::max_active_car_serves`,
+// because receiver-owned recovery must not wait behind serialized PushLog
+// admission on the provider.
+//
+// How long a CAR serve waits for a lane slot before it is answered busy. Far
+// below the requester's 30 s response deadline, and long enough for a serve
+// to finish on a busy hub (#2536).
+#[cfg(not(test))]
+const CAR_SERVE_WAIT: std::time::Duration = std::time::Duration::from_millis(500);
+#[cfg(test)]
+const CAR_SERVE_WAIT: std::time::Duration = std::time::Duration::from_millis(200);
 const MAX_ACTIVE_REJECTIONS: usize = 8;
 // Refused gossip heads are kept durably by their own workers: local work
 // only, so the drain may wait for one without waiting on a remote peer.
@@ -140,12 +185,17 @@ const GOSSIP_REFUSAL_WAIT: std::time::Duration = std::time::Duration::from_milli
 const MAX_ACTIVE_COMPLETIONS: usize = 16;
 
 /// Instance-local diagnostics for the shared transport scheduler.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct DispatchDiagnostics {
+    recovery_capacity: usize,
     active_requests: AtomicUsize,
     active_requests_high_water: AtomicUsize,
     active_recovery: AtomicUsize,
     active_recovery_high_water: AtomicUsize,
+    waiting_recovery: AtomicUsize,
+    waiting_recovery_high_water: AtomicUsize,
+    recovery_waited_total: AtomicU64,
+    recovery_wait_expired_total: AtomicU64,
     active_rejections: AtomicUsize,
     active_rejections_high_water: AtomicUsize,
     active_completions: AtomicUsize,
@@ -155,6 +205,14 @@ pub struct DispatchDiagnostics {
     recovery_saturated_total: AtomicU64,
     rejection_dropped_total: AtomicU64,
     gossip_refusals_dropped_total: AtomicU64,
+    #[cfg(test)]
+    serve_deadline_arms: AtomicUsize,
+}
+
+impl Default for DispatchDiagnostics {
+    fn default() -> Self {
+        Self::new(crate::sync::DEFAULT_MAX_ACTIVE_CAR_SERVES)
+    }
 }
 
 /// Stable point-in-time scheduler diagnostics exposed through sync status.
@@ -163,9 +221,17 @@ pub struct DispatchSnapshot {
     pub request_capacity: usize,
     pub active_requests: usize,
     pub active_requests_high_water: usize,
+    /// CAR serves run at once (`SyncConfig::max_active_car_serves`).
     pub recovery_capacity: usize,
     pub active_recovery: usize,
     pub active_recovery_high_water: usize,
+    /// CAR serves waiting for a lane slot.
+    pub waiting_recovery: usize,
+    pub waiting_recovery_high_water: usize,
+    /// CAR serves that found the lane full, waited, and were served.
+    pub recovery_waited_total: u64,
+    /// CAR serves answered busy because their wait for a slot ran out.
+    pub recovery_wait_expired_total: u64,
     pub rejection_capacity: usize,
     pub active_rejections: usize,
     pub active_rejections_high_water: usize,
@@ -176,7 +242,8 @@ pub struct DispatchSnapshot {
     pub saturated_total: u64,
     /// Admission requests refused with a capacity nack.
     pub admission_saturated_total: u64,
-    /// CAR serves shed because the recovery lane was full, answered busy.
+    /// CAR serves answered busy: the lane and its waiting room were full, or
+    /// the wait for a slot ran out.
     pub recovery_saturated_total: u64,
     pub rejection_dropped_total: u64,
     /// Refused gossip heads dropped because no refusal worker freed in time.
@@ -184,14 +251,55 @@ pub struct DispatchSnapshot {
 }
 
 impl DispatchDiagnostics {
+    /// Diagnostics for a dispatcher whose CAR-serve lane runs
+    /// `recovery_capacity` serves at once (at least one).
+    pub fn new(recovery_capacity: usize) -> Self {
+        Self {
+            recovery_capacity: recovery_capacity.max(1),
+            active_requests: AtomicUsize::new(0),
+            active_requests_high_water: AtomicUsize::new(0),
+            active_recovery: AtomicUsize::new(0),
+            active_recovery_high_water: AtomicUsize::new(0),
+            waiting_recovery: AtomicUsize::new(0),
+            waiting_recovery_high_water: AtomicUsize::new(0),
+            recovery_waited_total: AtomicU64::new(0),
+            recovery_wait_expired_total: AtomicU64::new(0),
+            active_rejections: AtomicUsize::new(0),
+            active_rejections_high_water: AtomicUsize::new(0),
+            active_completions: AtomicUsize::new(0),
+            active_completions_high_water: AtomicUsize::new(0),
+            saturated_total: AtomicU64::new(0),
+            admission_saturated_total: AtomicU64::new(0),
+            recovery_saturated_total: AtomicU64::new(0),
+            rejection_dropped_total: AtomicU64::new(0),
+            gossip_refusals_dropped_total: AtomicU64::new(0),
+            #[cfg(test)]
+            serve_deadline_arms: AtomicUsize::new(0),
+        }
+    }
+
+    #[cfg(test)]
+    fn note_serve_deadline_armed(&self) {
+        self.serve_deadline_arms.fetch_add(1, Ordering::Relaxed);
+    }
+
+    #[cfg(test)]
+    fn serve_deadline_arms(&self) -> usize {
+        self.serve_deadline_arms.load(Ordering::Relaxed)
+    }
+
     pub fn snapshot(&self) -> DispatchSnapshot {
         DispatchSnapshot {
             request_capacity: MAX_ACTIVE_REQUESTS,
             active_requests: self.active_requests.load(Ordering::Relaxed),
             active_requests_high_water: self.active_requests_high_water.load(Ordering::Relaxed),
-            recovery_capacity: MAX_ACTIVE_RECOVERY,
+            recovery_capacity: self.recovery_capacity,
             active_recovery: self.active_recovery.load(Ordering::Relaxed),
             active_recovery_high_water: self.active_recovery_high_water.load(Ordering::Relaxed),
+            waiting_recovery: self.waiting_recovery.load(Ordering::Relaxed),
+            waiting_recovery_high_water: self.waiting_recovery_high_water.load(Ordering::Relaxed),
+            recovery_waited_total: self.recovery_waited_total.load(Ordering::Relaxed),
+            recovery_wait_expired_total: self.recovery_wait_expired_total.load(Ordering::Relaxed),
             rejection_capacity: MAX_ACTIVE_REJECTIONS,
             active_rejections: self.active_rejections.load(Ordering::Relaxed),
             active_rejections_high_water: self.active_rejections_high_water.load(Ordering::Relaxed),
@@ -208,6 +316,12 @@ impl DispatchDiagnostics {
                 .gossip_refusals_dropped_total
                 .load(Ordering::Relaxed),
         }
+    }
+
+    fn set_waiting_recovery(&self, waiting: usize) {
+        self.waiting_recovery.store(waiting, Ordering::Relaxed);
+        self.waiting_recovery_high_water
+            .fetch_max(waiting, Ordering::Relaxed);
     }
 
     fn enter(self: &Arc<Self>, kind: DispatchActivityKind) -> DispatchActivity {
@@ -260,6 +374,69 @@ impl Drop for DispatchActivity {
     }
 }
 
+/// A CAR-serve request and its lease, as it waits in the serve lane.
+type ServeRequest<E> = (E, Option<Lease>);
+
+/// Returns a CAR-serve slot to the drain when its serve ends, a panic or a
+/// cancellation included, so the lane never loses a slot.
+struct ServeSlot<K: 'static> {
+    peer: Option<K>,
+    released: regolith::sync::UnboundedSender<K>,
+}
+
+impl<K: 'static> Drop for ServeSlot<K> {
+    fn drop(&mut self) {
+        if let Some(peer) = self.peer.take() {
+            let _ = self.released.try_send(peer);
+        }
+    }
+}
+
+type ServeSleep = Fuse<defra_core::thread_bounds::MaybeBoxFuture<'static, ()>>;
+
+/// Keeps one sleep future armed while the earliest waiting deadline is
+/// unchanged, so draining other events does not rebuild it every iteration.
+struct ServeWait {
+    deadline: Option<crate::rt::time::Instant>,
+    sleep: Option<ServeSleep>,
+}
+
+impl ServeWait {
+    fn new() -> Self {
+        Self {
+            deadline: None,
+            sleep: None,
+        }
+    }
+
+    fn sync(
+        &mut self,
+        deadline: Option<crate::rt::time::Instant>,
+        _diagnostics: &DispatchDiagnostics,
+    ) {
+        if self.deadline == deadline {
+            return;
+        }
+        self.deadline = deadline;
+        self.sleep = deadline.map(|deadline| {
+            let sleep: defra_core::thread_bounds::MaybeBoxFuture<'static, ()> =
+                Box::pin(crate::rt::time::sleep_until(deadline));
+            sleep.fuse()
+        });
+        #[cfg(test)]
+        if deadline.is_some() {
+            _diagnostics.note_serve_deadline_armed();
+        }
+    }
+
+    async fn wait(&mut self) {
+        match &mut self.sleep {
+            Some(sleep) => sleep.await,
+            None => std::future::pending().await,
+        }
+    }
+}
+
 /// Drain transport events without ever waiting for a request-worker slot.
 pub(crate) async fn run_event_dispatcher<E, Source, Handler, HandlerFuture>(
     mut events: Source,
@@ -276,13 +453,20 @@ pub(crate) async fn run_event_dispatcher<E, Source, Handler, HandlerFuture>(
     HandlerFuture: Future<Output = ()> + defra_core::thread_bounds::MaybeSend + 'static,
 {
     let request_slots = Arc::new(Semaphore::new(MAX_ACTIVE_REQUESTS));
-    let recovery_slots = Arc::new(Semaphore::new(MAX_ACTIVE_RECOVERY));
+    let mut serves: ServeAdmission<
+        Option<E::ServePeer>,
+        ServeRequest<E>,
+        crate::rt::time::Instant,
+    > = ServeAdmission::new(diagnostics.recovery_capacity);
+    let (serve_released, serve_releases) = regolith::sync::unbounded::<Option<E::ServePeer>>();
     let rejection_slots = Arc::new(Semaphore::new(MAX_ACTIVE_REJECTIONS));
     let gossip_refusal_slots = Arc::new(regolith::sync::Semaphore::new(MAX_ACTIVE_GOSSIP_REFUSALS));
     let completion_slots = Arc::new(Semaphore::new(MAX_ACTIVE_COMPLETIONS));
     let mut tasks = TaskSet::new(edge);
+    let mut serve_wait = ServeWait::new();
 
     loop {
+        serve_wait.sync(serves.next_deadline(), &diagnostics);
         futures::select_biased! {
             result = if tasks.is_empty() {
                 Fuse::terminated()
@@ -290,6 +474,30 @@ pub(crate) async fn run_event_dispatcher<E, Source, Handler, HandlerFuture>(
                 tasks.join_next().fuse()
             } => {
                 report_join_result(result.expect("dispatcher task set was non-empty"));
+            }
+            peer = serve_releases.recv_async().fuse() => {
+                let Some(peer) = peer else { continue };
+                if let Some((peer, (event, lease))) = serves.release(&peer) {
+                    diagnostics.recovery_waited_total.fetch_add(1, Ordering::Relaxed);
+                    spawn_serve(&mut tasks, &diagnostics, &handler, &serve_released, peer, event, lease);
+                }
+                diagnostics.set_waiting_recovery(serves.waiting());
+            }
+            _ = serve_wait.wait().fuse() => {
+                let now = crate::rt::time::Instant::now();
+                while let Some((event, lease)) = serves.pop_expired(now) {
+                    diagnostics.recovery_wait_expired_total.fetch_add(1, Ordering::Relaxed);
+                    refuse(
+                        &mut tasks,
+                        &diagnostics,
+                        &handler,
+                        &rejection_slots,
+                        &diagnostics.recovery_saturated_total,
+                        event,
+                        lease,
+                    );
+                }
+                diagnostics.set_waiting_recovery(serves.waiting());
             }
             queued = events.next(completion_slots.available_permits() > 0).fuse() => {
                 let Some(Queued { event, lease }) = queued else {
@@ -313,96 +521,91 @@ pub(crate) async fn run_event_dispatcher<E, Source, Handler, HandlerFuture>(
                 } else if class == DispatchClass::Inline {
                     handler.clone()(event, DispatchAdmission::Admitted).await;
                     drop(lease);
-                } else {
-                    let (slots, activity_kind, lane_saturated) = match class {
-                        DispatchClass::Admission => (
-                            &request_slots,
-                            DispatchActivityKind::Request,
-                            &diagnostics.admission_saturated_total,
-                        ),
-                        DispatchClass::Recovery => (
-                            &recovery_slots,
-                            DispatchActivityKind::Recovery,
-                            &diagnostics.recovery_saturated_total,
-                        ),
-                        DispatchClass::Inline | DispatchClass::Completion => unreachable!(),
-                    };
-                    if let Some(permit) = slots.acquire_owned(1).now_or_never() {
-                        let task_handler = handler.clone();
-                        let activity = diagnostics.enter(activity_kind);
-                        tasks.spawn(async move {
-                            let _permit = permit;
-                            let _activity = activity;
-                            let _lease = lease;
-                            task_handler(event, DispatchAdmission::Admitted).await;
-                        });
-                    } else {
-                        diagnostics.saturated_total.fetch_add(1, Ordering::Relaxed);
-                        // A refused gossip head is kept durably on its own
-                        // workers. The drain waits for one rather than drop
-                        // the head: no peer re-announces it (#2489). Waiting
-                        // holds back the bounded transport queue.
-                        if event.kept_when_refused() {
-                            let waited = n0_future::time::timeout(
-                                GOSSIP_REFUSAL_WAIT,
-                                gossip_refusal_slots.acquire_owned(1),
-                            )
-                            .await;
-                            match waited {
-                                Ok(permit) => {
-                                    let refusal_handler = handler.clone();
-                                    let activity = diagnostics.enter(DispatchActivityKind::Rejection);
-                                    tasks.spawn(async move {
-                                        let _permit = permit;
-                                        let _activity = activity;
-                                        let _lease = lease;
-                                        refusal_handler(event, DispatchAdmission::Saturated).await;
-                                    });
-                                }
-                                Err(_) => {
-                                    diagnostics
-                                        .gossip_refusals_dropped_total
-                                        .fetch_add(1, Ordering::Relaxed);
-                                    tracing::warn!(
-                                        wait_ms = GOSSIP_REFUSAL_WAIT.as_millis() as u64,
-                                        "Dropped a refused gossip head: no refusal worker freed in time"
-                                    );
-                                    // The report names the peer and root as a node
-                                    // event. At most one per deadline: the drain
-                                    // waited the whole deadline for this one.
-                                    let report_handler = handler.clone();
-                                    tasks.spawn(async move {
-                                        let _lease = lease;
-                                        report_handler(event, DispatchAdmission::Dropped).await;
-                                    });
-                                }
-                            }
-                            continue;
+                } else if class == DispatchClass::Recovery {
+                    let peer = event.serve_peer();
+                    let deadline = crate::rt::time::Instant::now() + CAR_SERVE_WAIT;
+                    match serves.offer(peer.clone(), (event, lease), deadline) {
+                        ServeOffer::Admitted((event, lease)) => {
+                            spawn_serve(
+                                &mut tasks,
+                                &diagnostics,
+                                &handler,
+                                &serve_released,
+                                peer,
+                                event,
+                                lease,
+                            );
                         }
-                        lane_saturated.fetch_add(1, Ordering::Relaxed);
-                        // A capacity nack is best effort: the remote peer may stop
-                        // reading its response stream. Keep those writes off the
-                        // sole event drain. A stalled write keeps its bounded slot;
-                        // subsequent excess tokens are dropped, closing the stream
-                        // as an actionable transport failure for durable retry.
-                        if let Some(permit) = rejection_slots.acquire_owned(1).now_or_never() {
-                            let rejection_handler = handler.clone();
+                        ServeOffer::Waiting => diagnostics.set_waiting_recovery(serves.waiting()),
+                        ServeOffer::Shed((event, lease)) => refuse(
+                            &mut tasks,
+                            &diagnostics,
+                            &handler,
+                            &rejection_slots,
+                            &diagnostics.recovery_saturated_total,
+                            event,
+                            lease,
+                        ),
+                    }
+                } else if let Some(permit) = request_slots.acquire_owned(1).now_or_never() {
+                    let task_handler = handler.clone();
+                    let activity = diagnostics.enter(DispatchActivityKind::Request);
+                    tasks.spawn(async move {
+                        let _permit = permit;
+                        let _activity = activity;
+                        let _lease = lease;
+                        task_handler(event, DispatchAdmission::Admitted).await;
+                    });
+                } else if event.kept_when_refused() {
+                    diagnostics.saturated_total.fetch_add(1, Ordering::Relaxed);
+                    // A refused gossip head is kept durably on its own
+                    // workers. The drain waits for one rather than drop
+                    // the head: no peer re-announces it (#2489). Waiting
+                    // holds back the bounded transport queue.
+                    let waited = n0_future::time::timeout(
+                        GOSSIP_REFUSAL_WAIT,
+                        gossip_refusal_slots.acquire_owned(1),
+                    )
+                    .await;
+                    match waited {
+                        Ok(permit) => {
+                            let refusal_handler = handler.clone();
                             let activity = diagnostics.enter(DispatchActivityKind::Rejection);
                             tasks.spawn(async move {
                                 let _permit = permit;
                                 let _activity = activity;
                                 let _lease = lease;
-                                rejection_handler(event, DispatchAdmission::Saturated).await;
+                                refusal_handler(event, DispatchAdmission::Saturated).await;
                             });
-                        } else {
+                        }
+                        Err(_) => {
                             diagnostics
-                                .rejection_dropped_total
+                                .gossip_refusals_dropped_total
                                 .fetch_add(1, Ordering::Relaxed);
-                            tracing::debug!(
-                                "dropping transport request after rejection workers saturated"
+                            tracing::warn!(
+                                wait_ms = GOSSIP_REFUSAL_WAIT.as_millis() as u64,
+                                "Dropped a refused gossip head: no refusal worker freed in time"
                             );
+                            // The report names the peer and root as a node
+                            // event. At most one per deadline: the drain
+                            // waited the whole deadline for this one.
+                            let report_handler = handler.clone();
+                            tasks.spawn(async move {
+                                let _lease = lease;
+                                report_handler(event, DispatchAdmission::Dropped).await;
+                            });
                         }
                     }
+                } else {
+                    refuse(
+                        &mut tasks,
+                        &diagnostics,
+                        &handler,
+                        &rejection_slots,
+                        &diagnostics.admission_saturated_total,
+                        event,
+                        lease,
+                    );
                 }
             }
         }
@@ -411,6 +614,74 @@ pub(crate) async fn run_event_dispatcher<E, Source, Handler, HandlerFuture>(
     tasks.abort_all();
     while let Some(result) = tasks.join_next().await {
         report_join_result(result);
+    }
+}
+
+/// Run an admitted CAR serve; its [`ServeSlot`] hands the slot back to the
+/// drain when the handler returns.
+fn spawn_serve<E, K, Handler, HandlerFuture>(
+    tasks: &mut TaskSet<()>,
+    diagnostics: &Arc<DispatchDiagnostics>,
+    handler: &Handler,
+    released: &regolith::sync::UnboundedSender<K>,
+    peer: K,
+    event: E,
+    lease: Option<Lease>,
+) where
+    E: defra_core::thread_bounds::MaybeSend + 'static,
+    K: defra_core::thread_bounds::MaybeSend + 'static,
+    Handler: Fn(E, DispatchAdmission) -> HandlerFuture + Clone,
+    HandlerFuture: Future<Output = ()> + defra_core::thread_bounds::MaybeSend + 'static,
+{
+    let slot = ServeSlot {
+        peer: Some(peer),
+        released: released.clone(),
+    };
+    let activity = diagnostics.enter(DispatchActivityKind::Recovery);
+    let serve = handler.clone()(event, DispatchAdmission::Admitted);
+    tasks.spawn(async move {
+        let _slot = slot;
+        let _activity = activity;
+        let _lease = lease;
+        serve.await;
+    });
+}
+
+/// Answer a request its lane could not take, counted against `lane_saturated`.
+///
+/// A capacity nack is best effort: the remote peer may stop reading its
+/// response stream. Keep those writes off the sole event drain. A stalled
+/// write keeps its bounded slot; subsequent excess tokens are dropped, closing
+/// the stream as an actionable transport failure for durable retry.
+fn refuse<E, Handler, HandlerFuture>(
+    tasks: &mut TaskSet<()>,
+    diagnostics: &Arc<DispatchDiagnostics>,
+    handler: &Handler,
+    rejection_slots: &Arc<Semaphore>,
+    lane_saturated: &AtomicU64,
+    event: E,
+    lease: Option<Lease>,
+) where
+    E: defra_core::thread_bounds::MaybeSend + 'static,
+    Handler: Fn(E, DispatchAdmission) -> HandlerFuture + Clone,
+    HandlerFuture: Future<Output = ()> + defra_core::thread_bounds::MaybeSend + 'static,
+{
+    diagnostics.saturated_total.fetch_add(1, Ordering::Relaxed);
+    lane_saturated.fetch_add(1, Ordering::Relaxed);
+    if let Some(permit) = rejection_slots.acquire_owned(1).now_or_never() {
+        let activity = diagnostics.enter(DispatchActivityKind::Rejection);
+        let rejection = handler.clone()(event, DispatchAdmission::Saturated);
+        tasks.spawn(async move {
+            let _permit = permit;
+            let _activity = activity;
+            let _lease = lease;
+            rejection.await;
+        });
+    } else {
+        diagnostics
+            .rejection_dropped_total
+            .fetch_add(1, Ordering::Relaxed);
+        tracing::debug!("dropping transport request after rejection workers saturated");
     }
 }
 
@@ -423,6 +694,10 @@ fn report_join_result(result: Result<(), EdgeError>) {
         Err(error) => tracing::error!(%error, "transport request task failed"),
     }
 }
+
+#[cfg(test)]
+#[path = "event_dispatcher_serve_tests.rs"]
+mod serve_tests;
 
 #[cfg(test)]
 mod tests {
@@ -465,6 +740,8 @@ mod tests {
     }
 
     impl DispatchEvent for TestEvent {
+        type ServePeer = ();
+
         fn dispatch_class(&self) -> DispatchClass {
             match self {
                 Self::Request(_) | Self::Gossip(_) => DispatchClass::Admission,
@@ -719,71 +996,6 @@ mod tests {
         assert_eq!(snapshot.recovery_saturated_total, 0);
 
         release_requests.add_permits(MAX_ACTIVE_REQUESTS);
-        drop(tx);
-        dispatcher.join().await.unwrap();
-    }
-
-    #[nuclei::test(threads = 0)]
-    async fn recovery_serving_has_a_bounded_actionable_overflow() {
-        let (tx, rx) = mpsc::channel(32);
-        let started = Arc::new(Semaphore::new(0));
-        let release = Arc::new(Semaphore::new(0));
-        let rejected = Arc::new(Semaphore::new(0));
-        let diagnostics = Arc::new(DispatchDiagnostics::default());
-
-        let dispatcher = {
-            let started = Arc::clone(&started);
-            let release = Arc::clone(&release);
-            let rejected = Arc::clone(&rejected);
-            crate::rt::spawn(run_event_dispatcher(
-                rx,
-                edge::testing::edge(),
-                Arc::clone(&diagnostics),
-                move |event, admission| {
-                    let started = Arc::clone(&started);
-                    let release = Arc::clone(&release);
-                    let rejected = Arc::clone(&rejected);
-                    async move {
-                        match (event, admission) {
-                            (TestEvent::Recovery(_), DispatchAdmission::Admitted) => {
-                                started.add_permits(1);
-                                let _permit = release.acquire().await.unwrap();
-                            }
-                            (TestEvent::Recovery(_), DispatchAdmission::Saturated) => {
-                                rejected.add_permits(1);
-                            }
-                            _ => {}
-                        }
-                    }
-                },
-            ))
-        };
-
-        for index in 0..MAX_ACTIVE_RECOVERY {
-            tx.send(TestEvent::Recovery(index)).await.unwrap();
-        }
-        started
-            .acquire_many(MAX_ACTIVE_RECOVERY as u32)
-            .await
-            .unwrap()
-            .forget();
-        tx.send(TestEvent::Recovery(MAX_ACTIVE_RECOVERY))
-            .await
-            .unwrap();
-
-        crate::rt::time::timeout(Duration::from_secs(1), rejected.acquire())
-            .await
-            .expect("recovery overflow must produce an actionable rejection")
-            .unwrap()
-            .forget();
-        let snapshot = diagnostics.snapshot();
-        assert_eq!(snapshot.active_recovery, MAX_ACTIVE_RECOVERY);
-        assert_eq!(snapshot.active_recovery_high_water, MAX_ACTIVE_RECOVERY);
-        assert_eq!(snapshot.recovery_saturated_total, 1);
-        assert_eq!(snapshot.admission_saturated_total, 0);
-        assert_eq!(snapshot.saturated_total, 1);
-
-        release.add_permits(MAX_ACTIVE_RECOVERY);
         drop(tx);
         dispatcher.join().await.unwrap();
     }

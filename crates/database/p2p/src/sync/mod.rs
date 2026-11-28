@@ -14,6 +14,9 @@ mod broadcast_coalescer;
 mod broadcaster;
 pub(crate) mod car;
 mod car_authorization;
+mod car_serve_admission;
+#[cfg(test)]
+mod car_serve_admission_tests;
 mod collection_store;
 mod coordinator;
 mod dag_sync;
@@ -72,11 +75,12 @@ pub use manager::{
     default_rate_limit_backoff, DagFetchPeerPermit, GossipDecodeFailureSample, GossipTransport,
     MissingLinkWalkSnapshot, SyncConfig, SyncDiagnostics, SyncDiagnosticsSnapshot, SyncEvent,
     SyncEventReceiver, SyncManager, DEFAULT_BROADCAST_PENDING_BYTES,
-    DEFAULT_BROADCAST_WAIT_DEADLINE, DEFAULT_MAX_ACTIVE_PUSHES_PER_PEER,
-    DEFAULT_MAX_CONCURRENT_DAG_FETCHES, DEFAULT_MAX_CONCURRENT_PUSH_TASKS,
-    DEFAULT_MAX_DOC_SYNC_REQUEST_DOC_IDS, DEFAULT_MAX_PENDING_DAGS,
-    DEFAULT_PUSH_QUEUE_BYTE_CAPACITY, DEFAULT_PUSH_QUEUE_CAPACITY, DEFAULT_PUSH_SEND_TIMEOUT,
-    DEFAULT_RATE_LIMIT_BACKOFF_SECS, DEFAULT_RATE_LIMIT_BURST, DEFAULT_RATE_LIMIT_RATE,
+    DEFAULT_BROADCAST_WAIT_DEADLINE, DEFAULT_MAX_ACTIVE_CAR_SERVES,
+    DEFAULT_MAX_ACTIVE_PUSHES_PER_PEER, DEFAULT_MAX_CONCURRENT_DAG_FETCHES,
+    DEFAULT_MAX_CONCURRENT_PUSH_TASKS, DEFAULT_MAX_DOC_SYNC_REQUEST_DOC_IDS,
+    DEFAULT_MAX_PENDING_DAGS, DEFAULT_PUSH_QUEUE_BYTE_CAPACITY, DEFAULT_PUSH_QUEUE_CAPACITY,
+    DEFAULT_PUSH_SEND_TIMEOUT, DEFAULT_RATE_LIMIT_BACKOFF_SECS, DEFAULT_RATE_LIMIT_BURST,
+    DEFAULT_RATE_LIMIT_RATE,
 };
 pub use merge::{
     BlockMetadata, MergeBlock, MergeErrorDisposition, MergeHandler, MergeOutcome,

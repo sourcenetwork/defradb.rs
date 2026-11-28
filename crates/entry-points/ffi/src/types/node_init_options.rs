@@ -199,8 +199,8 @@ pub struct NodeInitOptions {
     /// mobile embedder runs it. Several such nodes run in one process without
     /// competing for a port. Refused together with `listening_addresses`.
     pub disable_p2p_listen: c_int,
-    /// Reserved, so the struct has no padding: leave it zero. It never
-    /// becomes a field; new fields go after the struct's last one.
+    /// Reserved, so the struct has no padding: leave it zero. Append-only
+    /// fields follow it.
     pub _reserved6: u32,
     /// Optional host keyring holding the node's peer key instead of the
     /// store: a platform keystore the host owns and secures. Set
@@ -244,6 +244,9 @@ pub struct NodeInitOptions {
     >,
     /// Passed back to the host keyring's callbacks on every call.
     pub peer_keyring_context: usize,
+    /// Maximum CAR serves run at once for peers catching up from this node.
+    /// Zero means use the default (16).
+    pub max_active_car_serves: usize,
 }
 
 impl Default for NodeInitOptions {
@@ -321,6 +324,7 @@ impl Default for NodeInitOptions {
             peer_keyring_get: None,
             peer_keyring_set: None,
             peer_keyring_context: 0,
+            max_active_car_serves: 0,
         }
     }
 }

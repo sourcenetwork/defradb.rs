@@ -453,6 +453,10 @@ pub struct NetConfig {
     /// Max concurrent DAG fetches across all peers. Default: 4.
     #[serde(default = "default_max_concurrent_dag_fetches")]
     pub p2p_max_concurrent_dag_fetches: usize,
+    /// Max CAR serves run at once for peers catching up from this node.
+    /// Default: 16.
+    #[serde(default = "default_max_active_car_serves")]
+    pub p2p_max_active_car_serves: usize,
     /// Seconds an unacknowledged pending-DAG entry lives before eviction; an
     /// acknowledged entry does not expire. Default: 300.
     #[serde(default = "default_pending_dag_ttl_secs")]
@@ -515,6 +519,9 @@ fn default_max_pending_dags() -> usize {
 fn default_max_concurrent_dag_fetches() -> usize {
     p2p::sync::DEFAULT_MAX_CONCURRENT_DAG_FETCHES
 }
+fn default_max_active_car_serves() -> usize {
+    p2p::sync::DEFAULT_MAX_ACTIVE_CAR_SERVES
+}
 fn default_pending_dag_ttl_secs() -> u64 {
     p2p::sync::PENDING_DAG_TTL.as_secs()
 }
@@ -573,6 +580,7 @@ impl Default for NetConfig {
             p2p_max_doc_sync_request_doc_ids: default_max_doc_sync_request_doc_ids(),
             p2p_max_pending_dags: default_max_pending_dags(),
             p2p_max_concurrent_dag_fetches: default_max_concurrent_dag_fetches(),
+            p2p_max_active_car_serves: default_max_active_car_serves(),
             p2p_pending_dag_ttl_secs: default_pending_dag_ttl_secs(),
             p2p_rebroadcast_on_merge: false,
             p2p_push_queue_capacity: default_push_queue_capacity(),

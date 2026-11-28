@@ -1,3 +1,4 @@
+mod car_serve_admission;
 mod cid_check;
 mod connection_manager;
 mod disjoint_groups;

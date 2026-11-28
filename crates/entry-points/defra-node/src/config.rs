@@ -304,6 +304,10 @@ pub struct SyncTuning {
     /// Maximum concurrent push tasks for sending blocks to replicators.
     /// Default: 8.
     pub max_concurrent_push_tasks: usize,
+    /// Maximum CAR serves run at once for peers catching up from this node; a
+    /// request past it waits briefly, then is answered busy. Each serve holds
+    /// up to 32 MiB. Default: 16.
+    pub max_active_car_serves: usize,
     /// Maximum document IDs accepted in a single DocSync request. Default: 1000.
     pub max_doc_sync_request_doc_ids: usize,
     /// Per-peer rate limit burst capacity (max tokens in bucket). Default: 500.
@@ -333,6 +337,7 @@ impl Default for SyncTuning {
         Self {
             max_concurrent_dag_fetches: defaults.max_concurrent_dag_fetches,
             max_concurrent_push_tasks: defaults.max_concurrent_push_tasks,
+            max_active_car_serves: defaults.max_active_car_serves,
             max_doc_sync_request_doc_ids: defaults.max_doc_sync_request_doc_ids,
             rate_limit_burst: defaults.rate_limit_burst,
             rate_limit_rate: defaults.rate_limit_rate,
@@ -350,6 +355,7 @@ impl SyncTuning {
         p2p::sync::SyncConfig {
             max_concurrent_dag_fetches: self.max_concurrent_dag_fetches,
             max_concurrent_push_tasks: self.max_concurrent_push_tasks,
+            max_active_car_serves: self.max_active_car_serves,
             max_doc_sync_request_doc_ids: self.max_doc_sync_request_doc_ids,
             rate_limit_burst: self.rate_limit_burst,
             rate_limit_rate: self.rate_limit_rate,
