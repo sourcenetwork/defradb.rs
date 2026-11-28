@@ -19,9 +19,10 @@
 \*     at the end of a retry pass by crates/surfaces/p2p-adapter/src/retry.rs
 \*     record_peer_finished) looks for any marker and when it finds none
 \*     deletes the row.
-\* Registrations and acknowledgements of different scopes run at once (the
-\* recorder's lanes, retry.rs spawn_failure_recorder), and the retry pass runs
-\* beside them.
+\* The failure recorder runs one peer's registrations and acknowledgements one
+\* transaction at a time (retry.rs spawn_failure_recorder, RetryRecorderLanes.tla),
+\* but a replay's registrations and the retry pass run beside it, so the model
+\* lets every actor run at once, which covers both.
 \*
 \* The look for "any other marker" is a scan of the peer's marker keys
 \* (peerstore.rs scope_markers_left). A plain scan does not notice a marker

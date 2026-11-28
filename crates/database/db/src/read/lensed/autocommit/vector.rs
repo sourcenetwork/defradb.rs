@@ -12,7 +12,7 @@ impl<S: Store + 'static> LensedAutoCommitFetcher<S> {
         query_vector: &[f64],
         k: usize,
         effort: Option<usize>,
-    ) -> query::error::Result<Vec<u64>> {
+    ) -> query::error::Result<query::fetcher::VectorCandidates> {
         let collection = self
             .db
             .get_collection(collection_name)

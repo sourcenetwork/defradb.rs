@@ -61,6 +61,10 @@ mod registration;
 mod registration_batch;
 mod replica;
 mod settle;
+mod transfer_order;
+#[cfg(test)]
+#[path = "external/transfer_tests.rs"]
+mod transfer_tests;
 mod voided;
 
 pub use drain::MAX_CHANGES_PER_REQUEST;
@@ -254,9 +258,12 @@ where
         }
     }
 
-    /// Whether an archive is owed, unsettled, on an object.
-    async fn archive_owed(
+    /// Whether what is owed, unsettled, on an object denies `identity`
+    /// whatever else is asked: the object's archive, or a transfer of the
+    /// object away from it.
+    async fn denied_outright(
         &self,
+        identity: &Identity,
         policy_id: &str,
         resource_name: &str,
         object_id: &str,
@@ -265,13 +272,13 @@ where
         let denial = owed_denial(
             &txn,
             &*self.provider,
-            &Identity::Anonymous,
+            identity,
             policy_id,
             resource_name,
             object_id,
         )
         .await?;
-        Ok(matches!(denial, OwedDenial::Archived))
+        Ok(matches!(denial, OwedDenial::Archived | OwedDenial::Always))
     }
 
     /// Wait until nothing is owed on `tuple`, woken whenever a record of
@@ -784,9 +791,13 @@ where
         doc_id: &str,
     ) -> Result<bool> {
         self.owed_layout().await?;
-        // A deleted document's owed archive denies before a registration
-        // still owed to its creator could grant it anything.
-        if self.archive_owed(policy_id, resource_name, doc_id).await? {
+        // A deleted document's owed archive, and a transfer owed away from
+        // the identity, deny before a registration still owed to its
+        // creator could grant it anything.
+        if self
+            .denied_outright(identity, policy_id, resource_name, doc_id)
+            .await?
+        {
             return Ok(false);
         }
         if let Some(owed) = self.owed(policy_id, resource_name, doc_id).await? {

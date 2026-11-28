@@ -41,6 +41,11 @@ pub enum PolicyAction<'a> {
     /// Archive the object: every relationship on it goes and its owner no
     /// longer counts. Only its owner may.
     ArchiveObject,
+    /// Give the object to another owner, named by its DID: the owner tuple
+    /// names it from then on, the previous owner keeps nothing by
+    /// ownership, and every other relationship stays. Only whoever manages
+    /// the owner relation, normally the owner alone, may.
+    TransferObject { new_owner: &'a str },
 }
 
 impl<'a> PolicyAction<'a> {

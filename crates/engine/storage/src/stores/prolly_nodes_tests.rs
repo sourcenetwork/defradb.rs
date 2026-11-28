@@ -1,25 +1,24 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
-use prolly::{diff, tree::DEFAULT_TARGET, Cached, Hash, Item, MemStore, Store as _, Tree};
+use prolly::{diff, tree::DEFAULT_TARGET, Cached, Hash, Item, MemStore, Tree};
 
-use super::{node_key, LiveRoots, LiveRootsFuture, ProllyNodes, ReclaimPage, NODES_PER_SWEEP};
+use super::{LiveRoots, LiveRootsFuture, ProllyNodes, ReclaimPage, NODES_PER_SWEEP};
 use crate::backends::RegolithStore;
 use crate::corekv::Dropable as _;
 use crate::corekv::{
-    engine_retry_options, transact, RetryAttemptFn, RetryAttemptFuture, RetryAttemptValue, RetryTxn,
+    engine_retry_options, transact, RetryAttemptFn, RetryAttemptFuture, RetryAttemptValue,
+    RetryTxn, Store,
 };
 
 /// The cache's budget: far below the tree's size.
 const BUDGET: usize = 64 * 1024;
-/// Bytes of puts that wait before one transaction writes them.
-const PENDING: usize = 32 * 1024;
 
-fn entry(n: u32) -> (Vec<u8>, Vec<u8>) {
+pub(super) fn entry(n: u32) -> (Vec<u8>, Vec<u8>) {
     (n.to_be_bytes().to_vec(), format!("heads-{n}").into_bytes())
 }
 
-async fn entries<S>(tree: &Tree, store: &S) -> Vec<Item>
+pub(super) async fn entries<S>(tree: &Tree, store: &S) -> Vec<Item>
 where
     S: prolly::Store,
 {
@@ -32,11 +31,11 @@ where
 }
 
 fn nodes(store: &Arc<RegolithStore>) -> Cached<ProllyNodes<RegolithStore>> {
-    let nodes = ProllyNodes::new(Arc::clone(store), engine_retry_options(5), PENDING);
+    let nodes = ProllyNodes::new(Arc::clone(store), engine_retry_options(5));
     Cached::new(nodes, BUDGET)
 }
 
-async fn node_keys(store: &RegolithStore) -> Vec<Vec<u8>> {
+pub(super) async fn node_keys(store: &RegolithStore) -> Vec<Vec<u8>> {
     let reader = crate::corekv::Store::new_txn(store, true).await.unwrap();
     let mut scan = reader
         .iterator(crate::corekv::IterOptions::new().with_prefix(b"t".to_vec()))
@@ -54,9 +53,9 @@ async fn node_keys(store: &RegolithStore) -> Vec<Vec<u8>> {
 /// The key the tests keep their live roots under: no family's, so Ordinary.
 const ROOTS_KEY: &[u8] = b"x/prolly-test-roots";
 
-/// One transaction of a tree's writer: it sets the roots key.
-struct Publish {
-    roots: Vec<u8>,
+/// The root write of a tree's writer: it sets the roots key.
+pub(super) struct Publish {
+    pub(super) roots: Vec<u8>,
 }
 
 impl RetryAttemptFn for Publish {
@@ -68,11 +67,23 @@ impl RetryAttemptFn for Publish {
     }
 }
 
-async fn publish_roots(store: &RegolithStore, roots: &[Hash]) {
-    let attempt = Box::new(Publish {
+fn root_write(roots: &[Hash]) -> Box<Publish> {
+    Box::new(Publish {
         roots: roots.iter().flat_map(|root| root.0).collect(),
-    });
-    transact::<_, ()>(store, engine_retry_options(5), None, attempt)
+    })
+}
+
+/// Publishes `roots` in the transaction that writes every node `nodes` holds.
+pub(super) async fn publish<S>(nodes: &mut ProllyNodes<S>, roots: &[Hash])
+where
+    S: Store + 'static,
+{
+    nodes.publish::<()>(root_write(roots)).await.unwrap();
+}
+
+/// Publishes `roots` alone, as a writer that put none of their nodes.
+async fn publish_roots(store: &RegolithStore, roots: &[Hash]) {
+    transact::<_, ()>(store, engine_retry_options(5), None, root_write(roots))
         .await
         .unwrap();
 }
@@ -88,7 +99,7 @@ async fn stored_roots(txn: &mut dyn RetryTxn) -> crate::corekv::Result<Vec<Hash>
 }
 
 /// The roots under `ROOTS_KEY`.
-struct StoredRoots;
+pub(super) struct StoredRoots;
 
 impl LiveRoots for StoredRoots {
     fn read<'txn>(&'txn self, txn: &'txn mut dyn RetryTxn) -> LiveRootsFuture<'txn> {
@@ -116,7 +127,7 @@ impl LiveRoots for PublishedAfterTheRead {
     }
 }
 
-async fn sweep(store: &RegolithStore) -> ReclaimPage {
+pub(super) async fn sweep(store: &RegolithStore) -> ReclaimPage {
     ProllyNodes::reclaim(store, Arc::new(StoredRoots), None, NODES_PER_SWEEP)
         .await
         .unwrap()
@@ -126,12 +137,11 @@ async fn sweep(store: &RegolithStore) -> ReclaimPage {
 fn a_reclaim_keeps_only_the_nodes_the_live_roots_name() {
     workers::block_on(async {
         let store = Arc::new(RegolithStore::in_memory().unwrap());
-        let mut regolith =
-            ProllyNodes::new(Arc::clone(&store), engine_retry_options(5), usize::MAX);
+        let mut regolith = ProllyNodes::new(Arc::clone(&store), engine_retry_options(5));
         let built = Tree::build(&mut regolith, DEFAULT_TARGET, (0..3).map(entry))
             .await
             .unwrap();
-        publish_roots(&store, &[built.root().unwrap()]).await;
+        publish(&mut regolith, &[built.root().unwrap()]).await;
         let stored = node_keys(&store).await.len();
         let report = sweep(&store).await;
         assert_eq!(report.scanned, stored);
@@ -144,7 +154,7 @@ fn a_reclaim_keeps_only_the_nodes_the_live_roots_name() {
             .remove(&mut regolith, &entry(1).0)
             .await
             .unwrap();
-        publish_roots(&store, &[edited_tree.root().unwrap()]).await;
+        publish(&mut regolith, &[edited_tree.root().unwrap()]).await;
         let report = sweep(&store).await;
         assert_eq!(report.deleted, 1);
         assert_eq!(node_keys(&store).await.len(), report.marked);
@@ -157,14 +167,14 @@ fn a_reclaim_keeps_only_the_nodes_the_live_roots_name() {
 fn a_multi_level_tree_reclaims_only_the_nodes_the_live_root_reaches() {
     workers::block_on(async {
         let store = Arc::new(RegolithStore::in_memory().unwrap());
-        let mut regolith =
-            ProllyNodes::new(Arc::clone(&store), engine_retry_options(5), usize::MAX);
+        let mut regolith = ProllyNodes::new(Arc::clone(&store), engine_retry_options(5));
         let mut tree = Tree::build(&mut regolith, DEFAULT_TARGET, (0..5_000).map(entry))
             .await
             .unwrap();
+        publish(&mut regolith, &[tree.root().unwrap()]).await;
         let built = node_keys(&store).await.len();
         tree.remove(&mut regolith, &entry(2_499).0).await.unwrap();
-        publish_roots(&store, &[tree.root().unwrap()]).await;
+        publish(&mut regolith, &[tree.root().unwrap()]).await;
 
         let report = sweep(&store).await;
         assert!(report.marked > 2, "the root has children: {report:?}");
@@ -181,15 +191,14 @@ fn a_multi_level_tree_reclaims_only_the_nodes_the_live_root_reaches() {
 fn a_root_published_while_a_page_is_swept_keeps_the_old_nodes_it_names() {
     workers::block_on(async {
         let store = Arc::new(RegolithStore::in_memory().unwrap());
-        let mut regolith =
-            ProllyNodes::new(Arc::clone(&store), engine_retry_options(5), usize::MAX);
+        let mut regolith = ProllyNodes::new(Arc::clone(&store), engine_retry_options(5));
         let first = Tree::build(&mut regolith, DEFAULT_TARGET, (0..5_000).map(entry))
             .await
             .unwrap();
         let mut tree = first;
         tree.remove(&mut regolith, &entry(2_499).0).await.unwrap();
         let edited = tree;
-        publish_roots(&store, &[edited.root().unwrap()]).await;
+        publish(&mut regolith, &[edited.root().unwrap()]).await;
 
         // The writer brings the removed entry back: the tree is the first
         // one again, and the nodes only it names sit unmarked on the page
@@ -213,7 +222,7 @@ fn a_root_published_while_a_page_is_swept_keeps_the_old_nodes_it_names() {
         );
         assert!(report.deleted > 0, "the edited tree's own nodes go");
         assert_eq!(node_keys(&store).await.len(), report.marked);
-        let fresh = ProllyNodes::new(Arc::clone(&store), engine_retry_options(5), usize::MAX);
+        let fresh = ProllyNodes::new(Arc::clone(&store), engine_retry_options(5));
         assert_eq!(entries(&first, &fresh).await.len(), 5_000);
     })
     .unwrap()
@@ -223,12 +232,11 @@ fn a_root_published_while_a_page_is_swept_keeps_the_old_nodes_it_names() {
 fn a_sweep_walks_one_bounded_page_at_a_time() {
     workers::block_on(async {
         let store = Arc::new(RegolithStore::in_memory().unwrap());
-        let mut regolith =
-            ProllyNodes::new(Arc::clone(&store), engine_retry_options(5), usize::MAX);
+        let mut regolith = ProllyNodes::new(Arc::clone(&store), engine_retry_options(5));
         let tree = Tree::build(&mut regolith, DEFAULT_TARGET, (0..5_000).map(entry))
             .await
             .unwrap();
-        publish_roots(&store, &[tree.root().unwrap()]).await;
+        publish(&mut regolith, &[tree.root().unwrap()]).await;
         let total = node_keys(&store).await.len();
         let limit = total / 3;
         let roots = Arc::new(StoredRoots);
@@ -258,11 +266,11 @@ fn a_sweep_walks_one_bounded_page_at_a_time() {
 fn a_sweep_with_no_live_roots_reclaims_every_node_page_by_page() {
     workers::block_on(async {
         let store = Arc::new(RegolithStore::in_memory().unwrap());
-        let mut regolith =
-            ProllyNodes::new(Arc::clone(&store), engine_retry_options(5), usize::MAX);
+        let mut regolith = ProllyNodes::new(Arc::clone(&store), engine_retry_options(5));
         Tree::build(&mut regolith, DEFAULT_TARGET, (0..5_000).map(entry))
             .await
             .unwrap();
+        publish(&mut regolith, &[]).await;
         let total = node_keys(&store).await.len();
         let limit = total / 3;
         let roots = Arc::new(StoredRoots);
@@ -289,11 +297,11 @@ fn a_sweep_with_no_live_roots_reclaims_every_node_page_by_page() {
 fn a_purge_leaves_no_t_key() {
     workers::block_on(async {
         let store = Arc::new(RegolithStore::in_memory().unwrap());
-        let mut regolith =
-            ProllyNodes::new(Arc::clone(&store), engine_retry_options(5), usize::MAX);
-        Tree::build(&mut regolith, DEFAULT_TARGET, (0..2).map(entry))
+        let mut regolith = ProllyNodes::new(Arc::clone(&store), engine_retry_options(5));
+        let tree = Tree::build(&mut regolith, DEFAULT_TARGET, (0..2).map(entry))
             .await
             .unwrap();
+        publish(&mut regolith, &[tree.root().unwrap()]).await;
         assert!(!node_keys(&store).await.is_empty());
         store.drop_all().await.unwrap();
         assert!(node_keys(&store).await.is_empty());
@@ -315,7 +323,12 @@ fn a_tree_far_larger_than_the_budget_matches_memory_and_stays_under_it() {
             .await
             .unwrap();
         assert_eq!(stored, tree, "the same root, so the golden roots hold here");
-        assert_eq!(regolith.inner().pending_bytes(), 0, "a build ends flushed");
+        assert!(
+            regolith.inner().pending_bytes() > 0,
+            "a build waits for its root"
+        );
+        publish(regolith.inner_mut(), &[stored.root().unwrap()]).await;
+        assert_eq!(regolith.inner().pending_bytes(), 0);
 
         let (before, built) = (tree, stored);
         for n in [3, 25_000, 49_999] {
@@ -330,6 +343,7 @@ fn a_tree_far_larger_than_the_budget_matches_memory_and_stays_under_it() {
             .await
             .unwrap();
         assert_eq!(stored, tree);
+        publish(regolith.inner_mut(), &[stored.root().unwrap()]).await;
 
         for n in (0..50_000).step_by(97) {
             let key = entry(n).0;
@@ -375,36 +389,6 @@ fn a_tree_far_larger_than_the_budget_matches_memory_and_stays_under_it() {
     .unwrap()
 }
 
-#[test]
-fn a_put_is_readable_before_and_after_its_flush() {
-    workers::block_on(async {
-        let store = Arc::new(RegolithStore::in_memory().unwrap());
-        let mut regolith =
-            ProllyNodes::new(Arc::clone(&store), engine_retry_options(5), usize::MAX);
-        let node = prolly::Node {
-            level: 0,
-            items: vec![Item {
-                key: b"k".to_vec(),
-                value: b"v".to_vec(),
-            }],
-        };
-        let hash = regolith.put(node.clone()).await.unwrap();
-        assert!(regolith.pending_bytes() > 0);
-        assert_eq!(regolith.get(&hash).await.unwrap().as_deref(), Some(&node));
-        regolith.flush().await.unwrap();
-        assert_eq!(regolith.pending_bytes(), 0);
-        assert_eq!(regolith.get(&hash).await.unwrap().as_deref(), Some(&node));
-
-        let txn = crate::corekv::Store::new_txn(&*store, true).await.unwrap();
-        assert_eq!(
-            txn.get(&node_key(&hash)).await.unwrap().as_deref(),
-            Some(node.encode().as_slice())
-        );
-        txn.discard();
-    })
-    .unwrap()
-}
-
 /// Build and point-read costs, in memory and in regolith behind a cache far
 /// smaller than the tree, so most reads miss. Run with `--run-ignored only`.
 #[test]
@@ -443,139 +427,37 @@ fn bench_build_and_get_at_a_size_that_misses_the_cache() {
     .unwrap()
 }
 
-/// A regolith store whose first `transact_retry` fails with an I/O error, or,
-/// with `stall`, waits forever.
-struct FailFirstWrite {
-    inner: Arc<RegolithStore>,
-    failed: std::sync::atomic::AtomicBool,
-    stall: bool,
-}
-
-impl crate::corekv::private::Sealed for FailFirstWrite {}
-
-#[async_trait::async_trait]
-impl crate::corekv::Store for FailFirstWrite {
-    fn crdts(&self) -> &crdt::Crdts {
-        self.inner.crdts()
-    }
-
-    async fn allocate(
-        &self,
-        key: &[u8],
-        count: u64,
-    ) -> crate::corekv::Result<std::ops::Range<u64>> {
-        self.inner.allocate(key, count).await
-    }
-
-    async fn new_txn(&self, readonly: bool) -> crate::corekv::Result<Box<dyn crate::corekv::Txn>> {
-        self.inner.new_txn(readonly).await
-    }
-
-    async fn transact_retry(
-        &self,
-        options: crate::corekv::RetryOptions,
-        attempt: crate::corekv::RetryAttempt,
-    ) -> Result<crate::corekv::RetryAttemptValue, crate::corekv::RetryAttemptError> {
-        if !self.failed.swap(true, std::sync::atomic::Ordering::SeqCst) {
-            if self.stall {
-                std::future::pending::<()>().await;
+/// The write path: a build and single-entry edits, each followed by the
+/// publication of its root, in regolith behind the cache. Run with
+/// `--run-ignored only`.
+#[test]
+#[ignore]
+fn bench_build_and_edit_then_publish() {
+    const BUILD: u32 = 200_000;
+    const EDITS: u32 = 2_000;
+    workers::block_on(async {
+        for _ in 0..15 {
+            let store = Arc::new(RegolithStore::in_memory().unwrap());
+            let mut regolith = nodes(&store);
+            let start = web_time::Instant::now();
+            let mut tree = Tree::build(&mut regolith, DEFAULT_TARGET, (0..BUILD).map(entry))
+                .await
+                .unwrap();
+            publish(regolith.inner_mut(), &[tree.root().unwrap()]).await;
+            let build = start.elapsed();
+            let start = web_time::Instant::now();
+            for n in 0..EDITS {
+                let (key, value) = entry(BUILD + n * 7);
+                tree.insert(&mut regolith, key, value).await.unwrap();
+                publish(regolith.inner_mut(), &[tree.root().unwrap()]).await;
             }
-            return Err(crate::corekv::RetryAttemptError::Storage(
-                crate::corekv::Error::Other("injected write failure".into()),
-            ));
+            let edits = start.elapsed();
+            println!(
+                "BENCH build+publish {:.0} ns/entry, edit+publish {:.0} ns/edit",
+                build.as_nanos() as f64 / f64::from(BUILD),
+                edits.as_nanos() as f64 / f64::from(EDITS)
+            );
         }
-        self.inner.transact_retry(options, attempt).await
-    }
-
-    async fn close(&self) -> crate::corekv::Result<()> {
-        self.inner.close().await
-    }
-}
-
-#[test]
-fn a_failed_flush_keeps_its_nodes_pending_and_the_next_flush_writes_them() {
-    workers::block_on(async {
-        let regolith = Arc::new(RegolithStore::in_memory().unwrap());
-        let store = Arc::new(FailFirstWrite {
-            inner: Arc::clone(&regolith),
-            failed: std::sync::atomic::AtomicBool::new(false),
-            stall: false,
-        });
-        let mut nodes = ProllyNodes::new(store, engine_retry_options(5), usize::MAX);
-        let node = prolly::Node {
-            level: 0,
-            items: vec![Item {
-                key: b"k".to_vec(),
-                value: b"v".to_vec(),
-            }],
-        };
-        let hash = nodes.put(node.clone()).await.unwrap();
-        let pending = nodes.pending_bytes();
-        assert!(pending > 0);
-
-        let error = nodes.flush().await.unwrap_err();
-        assert!(
-            error.to_string().contains("injected write failure"),
-            "{error}"
-        );
-        assert_eq!(nodes.pending_bytes(), pending, "nothing was written");
-        assert_eq!(nodes.get(&hash).await.unwrap().as_deref(), Some(&node));
-
-        nodes.flush().await.unwrap();
-        assert_eq!(nodes.pending_bytes(), 0);
-        let txn = crate::corekv::Store::new_txn(&*regolith, true)
-            .await
-            .unwrap();
-        let stored = txn.get(&node_key(&hash)).await.unwrap();
-        txn.discard();
-        assert_eq!(stored.as_deref(), Some(node.encode().as_slice()));
-    })
-    .unwrap()
-}
-
-#[test]
-fn a_flush_dropped_before_its_commit_keeps_its_nodes_pending() {
-    use std::future::Future as _;
-    use std::task::{Context, Waker};
-
-    workers::block_on(async {
-        let regolith = Arc::new(RegolithStore::in_memory().unwrap());
-        let store = Arc::new(FailFirstWrite {
-            inner: Arc::clone(&regolith),
-            failed: std::sync::atomic::AtomicBool::new(false),
-            stall: true,
-        });
-        let mut nodes = ProllyNodes::new(store, engine_retry_options(5), usize::MAX);
-        let node = prolly::Node {
-            level: 0,
-            items: vec![Item {
-                key: b"k".to_vec(),
-                value: b"v".to_vec(),
-            }],
-        };
-        let hash = nodes.put(node.clone()).await.unwrap();
-        let pending = nodes.pending_bytes();
-
-        {
-            let mut flush = std::pin::pin!(nodes.flush());
-            let polled = flush.as_mut().poll(&mut Context::from_waker(Waker::noop()));
-            assert!(polled.is_pending(), "the commit waits");
-        }
-        assert_eq!(nodes.pending_bytes(), pending, "nothing was written");
-        assert_eq!(
-            nodes.get(&hash).await.unwrap().as_deref(),
-            Some(&node),
-            "a dropped flush loses no put"
-        );
-
-        nodes.flush().await.unwrap();
-        assert_eq!(nodes.pending_bytes(), 0);
-        let txn = crate::corekv::Store::new_txn(&*regolith, true)
-            .await
-            .unwrap();
-        let stored = txn.get(&node_key(&hash)).await.unwrap();
-        txn.discard();
-        assert_eq!(stored.as_deref(), Some(node.encode().as_slice()));
     })
     .unwrap()
 }

@@ -1137,10 +1137,13 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry + 'static> QueryRunner<F, R
             }
         }
 
-        // A local ACP provider already wrote registration in the authorized
-        // transaction. External unregistration is a fallible ordered hook.
+        // A delete keeps the document's object on a provider that reads a
+        // missing one as public: it still decides who reads the history the
+        // node retains. Elsewhere, external unregistration is a fallible
+        // ordered hook.
         if !mutator.manages_external_acp_hooks()
             && matches!(mutation.mutation_type, MutationType::Delete)
+            && !self.acp.unregistered_documents_are_public()
         {
             if let Some(policy) = collection.policy.as_ref() {
                 for result in &results {

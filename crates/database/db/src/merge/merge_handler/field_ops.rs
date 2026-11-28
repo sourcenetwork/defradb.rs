@@ -65,7 +65,7 @@ async fn counter_on_active_version(
     let lens_document = crate::definition::lens::doc_to_lens_doc(&active)
         .ok_or_else(|| MergeError::MergeFailed("failed to decode a counter operand".into()))?;
     let source = match lens::transform_to_target(
-        &db.lens_store,
+        db.lens_store(),
         delta.collection_version_id,
         &history,
         lens::LensInput::new(collection.version_id(), lens_document),
@@ -86,7 +86,7 @@ async fn counter_on_active_version(
     let lens_document = crate::definition::lens::doc_to_lens_doc(&source)
         .ok_or_else(|| MergeError::MergeFailed("failed to decode a merged counter".into()))?;
     let migrated = lens::transform_to_target(
-        &db.lens_store,
+        db.lens_store(),
         collection.version_id(),
         &history,
         lens::LensInput::new(delta.collection_version_id, lens_document),

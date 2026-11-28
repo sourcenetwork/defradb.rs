@@ -353,7 +353,7 @@ where
                 crate::LensedDocFetcher::lent(
                     self.db.clone(),
                     &txn,
-                    self.db.lens_store.clone(),
+                    self.db.lens_store().clone(),
                     Default::default(),
                 )
                 .with_prepared_inputs(self.prepared_inputs.clone()),
@@ -608,7 +608,7 @@ impl<S: Store + 'static> DocMutator for BatchMutator<S> {
         self.validate_collection_for_write(&collection).await?;
         ensure_collection_is_active(&self.db, collection_name, &collection)?;
         crate::chunk::user_writes::ensure_user_writable(collection.schema())?;
-        let chunk_plans = crate::chunk::sync::plan_chunks(
+        let mut chunk_plans = crate::chunk::sync::plan_chunks(
             collection.schema(),
             &doc,
             Some(&modified_fields),
@@ -670,6 +670,7 @@ impl<S: Store + 'static> DocMutator for BatchMutator<S> {
             doc_id: &doc_id_text,
         };
         let heads = super::helpers::load_update_heads(&datastore, doc_short_id).await?;
+        crate::chunk::sync::inherit_encryption(&mut chunk_plans, &blockstore, &heads).await?;
         update_pipeline::write_local(
             &self.db,
             &stores,
@@ -791,7 +792,7 @@ impl<S: Store + 'static> DocMutator for BatchMutator<S> {
         if !existed {
             return Ok(DeleteResult::new(canonical_doc_id, existed));
         }
-        crate::write::autocommit::helpers::unregister_deleted_doc(
+        crate::write::autocommit::helpers::archive_deleted_doc(
             self.db.document_acp(),
             &systemstore,
             &collection,

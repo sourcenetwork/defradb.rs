@@ -36,6 +36,7 @@ pub mod map;
 pub mod name;
 pub(crate) mod ops;
 mod series;
+pub use encrypted_index::EncryptedIndexError;
 pub use map::{Cached, CollectionMap};
 pub(crate) mod provider;
 pub mod retriever;
@@ -164,6 +165,7 @@ pub struct Collection {
     built_indexes: Vec<IndexDescription>,
     /// A reindex is owed, so no index answers queries ([`index_status`]).
     reindex_owed: bool,
+    failed_rebuild: Option<u32>,
     /// `def` with the queryable index set substituted, built once here
     /// because a `Collection` never changes after construction. Query-side
     /// callers take a pointer clone of this instead of deep-copying the
@@ -219,6 +221,10 @@ fn serialize_definition_hint(def: &CollectionVersion) -> Option<Arc<[u8]>> {
 }
 
 impl Collection {
+    /// `def` with the index statuses its transaction reads. A publication
+    /// takes the statuses of indexes already in the cache at its ordered
+    /// commit callback, so this snapshot supplies only indexes the cache has
+    /// not seen and the reindex marker this transaction read.
     pub(crate) async fn load_index_actions(
         def: CollectionVersion,
         systemstore: &datastore::NamespaceView,
@@ -245,6 +251,7 @@ impl Collection {
             rebuilt_indexes: indexes.clone(),
             built_indexes: indexes,
             reindex_owed: false,
+            failed_rebuild: None,
             query_schema,
             part_id_snapshot: Arc::default(),
             crdts,
@@ -320,6 +327,7 @@ impl Collection {
             rebuilt_indexes,
             built_indexes,
             reindex_owed,
+            failed_rebuild: statuses.failed_rebuild(),
             query_schema,
             part_id_snapshot,
             crdts,
@@ -342,6 +350,7 @@ impl Collection {
     ) -> Self {
         Self {
             reindex_owed,
+            failed_rebuild,
             write_indexes: maintained(&self.rebuilt_indexes, failed_rebuild),
             query_schema: query_schema_of(
                 &self.def,
@@ -349,6 +358,83 @@ impl Collection {
                 &self.crdts,
             ),
             ..self.clone()
+        }
+    }
+
+    /// This definition with index statuses current at its commit callback.
+    /// `changes` carries only the statuses this transaction changed; every
+    /// other index keeps the status already in the cache, or this snapshot's
+    /// status when the cache has not seen that index. A version switch takes
+    /// its index list from the incoming definition.
+    pub(crate) fn with_current_index_actions(
+        &self,
+        current: Option<&Self>,
+        changes: &[(u32, Option<defra_core::ActionStatus>)],
+    ) -> Self {
+        let mut def = self.schema().clone();
+        if let Some(current) = current.filter(|cached| cached.version_id() == self.version_id()) {
+            def.indexes = current.schema().indexes.clone();
+            for (index_id, _) in changes {
+                if let Some(index) = self
+                    .schema()
+                    .indexes
+                    .iter()
+                    .find(|index| index.id == *index_id)
+                {
+                    match def.indexes.iter_mut().find(|index| index.id == *index_id) {
+                        Some(current) => *current = index.clone(),
+                        None => def.indexes.push(index.clone()),
+                    }
+                } else {
+                    def.indexes.retain(|index| index.id != *index_id);
+                }
+            }
+        }
+        let def = Arc::new(def);
+        let definition_wire = serialize_definition_hint(&def);
+        let mut actions = rapidhash::RapidHashMap::default();
+        for index in &def.indexes {
+            let change = changes
+                .iter()
+                .find_map(|(id, status)| (*id == index.id).then_some(status));
+            let status = match change {
+                Some(status) => *status,
+                None => current
+                    .filter(|collection| {
+                        collection
+                            .schema()
+                            .indexes
+                            .iter()
+                            .any(|cached| cached.id == index.id)
+                    })
+                    .unwrap_or(self)
+                    .index_action_status(index.id),
+            };
+            if let Some(status) = status {
+                actions.insert(index.id, status);
+            }
+        }
+        let statuses = IndexStatuses::from_parts(actions, self.reindex_owed, self.failed_rebuild);
+        Self::with_index_actions_and_wire(
+            def,
+            definition_wire,
+            Arc::clone(&self.part_id_snapshot),
+            &statuses,
+            self.crdts.clone(),
+        )
+    }
+
+    fn index_action_status(&self, index_id: u32) -> Option<defra_core::ActionStatus> {
+        if self.built_indexes.iter().any(|index| index.id == index_id) {
+            None
+        } else if self
+            .rebuilt_indexes
+            .iter()
+            .any(|index| index.id == index_id)
+        {
+            Some(defra_core::ActionStatus::IN_PROGRESS)
+        } else {
+            Some(defra_core::ActionStatus::ERRORED)
         }
     }
 
@@ -713,7 +799,12 @@ mod tests {
             "a writer's check sees the index it stopped maintaining"
         );
 
-        let retried = failed.with_reindex_owed(true, None);
+        let published = failed.with_current_index_actions(Some(&failed), &[(1, None)]);
+        assert!(published.queryable_indexes().is_empty());
+        assert_eq!(ids(published.write_indexes()), [1]);
+        assert_eq!(ids(published.rebuilt_indexes()), [1, 2]);
+
+        let retried = published.with_reindex_owed(true, None);
         assert_eq!(ids(retried.write_indexes()), [1, 2]);
     }
 }

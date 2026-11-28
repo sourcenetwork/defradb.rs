@@ -15,9 +15,11 @@ impl NodeCore<'_> {
         collection: &str,
         field_name: &str,
     ) -> Result<EncryptedIndexListing> {
+        let caller = context.clone();
+        let owner = self.node.admitted_caller(context)?;
         self.node
             .ops()
-            .add_encrypted_index(&self.node.admitted_caller(context)?, collection, field_name)
+            .add_encrypted_index(&owner, &caller, collection, field_name)
             .await
     }
 
@@ -27,9 +29,11 @@ impl NodeCore<'_> {
         context: &RequestContext,
         collection: &str,
     ) -> Result<Vec<EncryptedIndexListing>> {
+        let caller = context.clone();
+        let owner = self.node.admitted_caller(context)?;
         self.node
             .ops()
-            .list_encrypted_indexes(&self.node.admitted_caller(context)?, collection)
+            .list_encrypted_indexes(&owner, &caller, collection)
             .await
     }
 
@@ -39,9 +43,11 @@ impl NodeCore<'_> {
         &self,
         context: &RequestContext,
     ) -> Result<Vec<(String, Vec<EncryptedIndexListing>)>> {
+        let caller = context.clone();
+        let owner = self.node.admitted_caller(context)?;
         self.node
             .ops()
-            .list_all_encrypted_indexes(&self.node.admitted_caller(context)?)
+            .list_all_encrypted_indexes(&owner, &caller)
             .await
     }
 
@@ -52,9 +58,11 @@ impl NodeCore<'_> {
         collection: &str,
         field_name: &str,
     ) -> Result<()> {
+        let caller = context.clone();
+        let owner = self.node.admitted_caller(context)?;
         self.node
             .ops()
-            .delete_encrypted_index(&self.node.admitted_caller(context)?, collection, field_name)
+            .delete_encrypted_index(&owner, &caller, collection, field_name)
             .await
     }
 }

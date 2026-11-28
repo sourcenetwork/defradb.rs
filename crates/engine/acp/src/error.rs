@@ -48,6 +48,10 @@ pub enum Error {
     #[error("archiving an object is unsupported by this backend")]
     UnsupportedArchive,
 
+    /// The backend moves no object to another owner.
+    #[error("transferring an object's ownership is unsupported by this backend")]
+    UnsupportedTransfer,
+
     /// The backend cannot list a document's relationships.
     #[error("listing document relationships is unsupported by this backend")]
     UnsupportedRelationshipListing,

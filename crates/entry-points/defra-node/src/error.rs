@@ -116,6 +116,9 @@ pub enum Error {
     /// Refreshing materialized views failed.
     #[error("refresh materialized views error: {0}")]
     MaterializedViewRefresh(#[source] db::Error),
+    /// An encrypted index operation was refused.
+    #[error(transparent)]
+    EncryptedIndex(#[from] db::EncryptedIndexError),
     /// A backup export or import failed; the backup code reports it as text.
     #[error("{0}")]
     Backup(String),
@@ -126,6 +129,9 @@ pub enum Error {
     /// An identity string is not a DID.
     #[error("invalid identity DID: {0}")]
     InvalidIdentityDid(#[source] identity::Error),
+    /// The owner a document is given to is not a DID.
+    #[error("invalid new owner DID: {0}")]
+    InvalidNewOwner(#[source] identity::Error),
     /// Looking a collection up failed.
     #[error("failed to get collection '{collection}': {source}")]
     CollectionLookup {

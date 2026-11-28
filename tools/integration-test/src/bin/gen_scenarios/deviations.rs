@@ -22,6 +22,9 @@ enum Edit {
     /// Every verify step whose signer is client seed `seed` verifies against
     /// node `node`'s signing key instead.
     SignerNode { seed: u64, node: &'static str },
+    /// Every `explainScan` matcher expects scan metric `metric` above zero
+    /// rather than Go's exact count.
+    PositiveScanMetric { metric: &'static str },
 }
 
 const BRANCHABLE: &[Edit] = &[
@@ -49,7 +52,20 @@ const NODE_SIGNER: &[Edit] = &[Edit::SignerNode {
 const NODE_SIGNER_REASON: &str = "Go's signer is NodeIdentity(0), the node's own key, which the \
      corpus wrote as client identity 0; the test verifies against node db's signing key.";
 
+const VECTOR_INDEX_FETCHES: &[Edit] = &[Edit::PositiveScanMetric {
+    metric: "indexFetches",
+}];
+
+const VECTOR_INDEX_FETCHES_REASON: &str = "Go reports a routed vector search as one index fetch; \
+     defradb.rs counts the index entries the search reads, which depends on the graph, so the test \
+     expects a positive count, which Go's 1 also meets.";
+
 const ENTRIES: &[(&str, &[Edit], &str)] = &[
+    (
+        "query.simple.query-simple-with-similarity-on-vector-index-returns-k-nearest",
+        VECTOR_INDEX_FETCHES,
+        VECTOR_INDEX_FETCHES_REASON,
+    ),
     (
         "signature.signature-acp-with-branchable-collection-if-has-collection-access-validate-signature",
         BRANCHABLE,
@@ -86,6 +102,10 @@ pub fn apply(id: &str, steps: &mut [Value]) -> Option<&'static str> {
 }
 
 fn edit_step(edit: &Edit, step: &mut Value) {
+    if let Edit::PositiveScanMetric { metric } = edit {
+        positive_scan_metric(step, metric);
+        return;
+    }
     let Some(map) = step.as_object_mut() else {
         return;
     };
@@ -121,6 +141,32 @@ fn edit_step(edit: &Edit, step: &mut Value) {
                 "op".to_owned(),
                 Value::String("signature.verify".to_owned()),
             );
+        }
+        _ => {}
+    }
+}
+
+fn positive_scan_metric(value: &mut Value, metric: &str) {
+    match value {
+        Value::Object(map) => {
+            if map.get("$match").and_then(Value::as_str) == Some("explainScan") {
+                if let Some(count) = map
+                    .get_mut("metrics")
+                    .and_then(Value::as_object_mut)
+                    .and_then(|metrics| metrics.get_mut(metric))
+                {
+                    *count = serde_json::json!({ "$match": "positive" });
+                }
+                return;
+            }
+            for child in map.values_mut() {
+                positive_scan_metric(child, metric);
+            }
+        }
+        Value::Array(items) => {
+            for item in items {
+                positive_scan_metric(item, metric);
+            }
         }
         _ => {}
     }

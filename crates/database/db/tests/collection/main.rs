@@ -7,6 +7,7 @@ mod add_collection;
 mod cache;
 mod create_gate;
 mod delete;
+mod encrypted_index_client;
 mod encrypted_index_concurrent;
 mod map;
 mod name;

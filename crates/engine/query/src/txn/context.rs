@@ -215,12 +215,15 @@ async fn owed_denial(
     }
 }
 
-/// What an archive owed on a document decides for `identity`, before
-/// anything else about the document is asked: `Some(false)` for everyone
-/// but the archive's actor reading the commit history, `None` when no
-/// archive is owed. It comes before an owed registration and before the
+/// What an archive owed on a document, or a transfer owed away from
+/// `identity`, decides for it before anything else about the document is
+/// asked: `Some(false)` for everyone but the archive's actor reading the
+/// commit history, and for the old owner of an owed transfer; `None` when
+/// neither is owed. It comes before an owed registration and before the
 /// registration check, so neither a registration still owed to the creator
-/// nor a provider that has dropped the archived object reopens the document.
+/// nor a provider that has dropped the archived object, or still names the
+/// old owner, reopens the document (`proofs/tla/OwnerTransfer.tla`,
+/// `DenyFromCommit`).
 pub(crate) async fn decided_by_owed_archive(
     acp: &dyn DocumentACP,
     projection: Option<&AcpRegistrationProjection>,
@@ -231,8 +234,10 @@ pub(crate) async fn decided_by_owed_archive(
     for_commit_history: bool,
 ) -> AcpResult<Option<bool>> {
     let denial = owed_denial(acp, projection, identity, policy_id, resource_name, doc_id).await?;
-    if !matches!(denial, acp::OwedDenial::Archived) {
-        return Ok(None);
+    match denial {
+        acp::OwedDenial::Archived => {}
+        acp::OwedDenial::Always => return Ok(Some(false)),
+        acp::OwedDenial::None | acp::OwedDenial::UnlessOwner => return Ok(None),
     }
     spared_by_owed_archive(
         acp,

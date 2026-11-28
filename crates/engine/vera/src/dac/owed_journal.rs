@@ -58,6 +58,11 @@ impl Call<'_> {
         };
         let tuple = &self.change.tuple;
         let relation = tuple.relation.as_str();
+        // `subject` admits a transfer only to one actor.
+        let new_owner = match &self.subject {
+            Subject::Actor(SubjectRef::Actor(did)) => did.as_str(),
+            _ => "",
+        };
         OwedCall {
             bearer_token: &self.token,
             command: PolicyCommand {
@@ -68,6 +73,7 @@ impl Call<'_> {
                     OwedOp::Add => PolicyAction::SetRelationship { relation, subject },
                     OwedOp::Delete => PolicyAction::DeleteRelationship { relation, subject },
                     OwedOp::Archive => PolicyAction::ArchiveObject,
+                    OwedOp::Transfer => PolicyAction::TransferObject { new_owner },
                 },
             },
         }
@@ -77,6 +83,11 @@ impl Call<'_> {
 /// The subject `change` names, or the answer that ends its submission: a
 /// kind of subject the provider cannot take.
 fn subject(change: &OwedChange) -> Result<Subject, Submission> {
+    if change.op == OwedOp::Transfer && change.tuple.new_owner().is_none() {
+        return Err(Submission::Unsupported {
+            reason: acp::Error::UnsupportedTransfer.to_string(),
+        });
+    }
     match &change.tuple.subject {
         OwedSubject::Actor { did } => Ok(Subject::Actor(SubjectRef::Actor(did.to_string()))),
         OwedSubject::Wildcard => Ok(Subject::Actor(SubjectRef::AllActors)),

@@ -3,15 +3,20 @@
 \*
 \* Who acts: a reclamation worker (`ProllyNodes::reclaim`, `node_keys`,
 \* `ReclaimNodes::run` and `mark_roots` in
-\* crates/engine/storage/src/stores/prolly_nodes.rs) and one writer of a
-\* prolly tree, whose root the worker reads through `LiveRoots::read`.
+\* crates/engine/storage/src/stores/prolly_nodes.rs), which `reclaim_every`
+\* in crates/engine/storage/src/stores/prolly_nodes/schedule.rs runs one page
+\* per period, and one writer of a prolly tree, whose root the worker reads
+\* through `LiveRoots::read`.
 \*
 \* What can happen: the worker scans a page of stored node keys. Then, in one
 \* transaction, it reads the live root, marks every node that root names, and
-\* deletes the page's unmarked keys. Meanwhile the writer edits the tree: it
-\* writes the nodes of a new root and publishes that root. One of the new
-\* root's nodes is an old one that came back: it already sits in the store,
-\* named by no root, so the page holds it as something to delete.
+\* deletes the page's unmarked keys. Meanwhile the writer edits the tree: the
+\* edit's puts wait in memory (`ProllyNodes::put`; `collapse` in
+\* crates/foundation/prolly/src/tree.rs no longer writes them), and then one
+\* transaction writes those nodes and the new root together
+\* (`ProllyNodes::publish`, `PublishNodes::run`). One of the new root's nodes
+\* is an old one that came back: it already sits in the store, named by no
+\* root, so the page holds it as something to delete.
 \*
 \* What must never happen: a node the live root names is missing from the
 \* store (SweepKeepsLiveRoots).
@@ -19,19 +24,18 @@
 \* What this model trusts. `LiveRoots::read` returns the root of every live
 \* tree and reads it with a validated read, and regolith refuses the commit of
 \* a transaction whose validated read changed. A node write is blind: it
-\* conflicts with nothing and the later commit wins. Nothing in the workspace
-\* publishes a root yet, so the writer's rule (PublishWithNodes) is a contract
-\* on the caller that will store the roots, stated on `ProllyNodes::reclaim`.
-\* A caller whose writer commits nodes before their root (as a tree edit's
-\* flush does) is the PutAlone configuration: it must not run a page between
-\* an edit and the publication of its root.
+\* conflicts with nothing and the later commit wins. The writer's puts that
+\* wait in memory are not in the store, so the model leaves them out until
+\* the publish commits them. The PutAlone configuration is the writer this
+\* replaced: a tree edit that flushed its nodes in a transaction of their own
+\* before the root was published.
 EXTENDS Naturals, FiniteSets
 
 \* The guards. Each RED configuration turns one off.
 CONSTANTS
   RootsInTxn,        \* the delete transaction reads the live root itself
   ValidateRoots,     \* a root that changed before the commit re-runs the delete
-  PublishWithNodes,  \* a root is published in the transaction that writes its nodes
+  PublishWithNodes,  \* the root's nodes commit in the transaction that publishes it (`ProllyNodes::publish`)
   OnlyDeleteUnmarked \* a delete skips every marked node
 
 \* The nodes. "old" is the root live at the start and "new" is the root the
@@ -65,6 +69,7 @@ Closure(frontier) ==
 VARIABLES
   stored,    \* the node keys regolith holds
   liveRoots, \* the roots published, as the root keys hold them
+  pending,   \* the new root's nodes the writer put, waiting in its memory
   written,   \* the new root's nodes the writer committed on their own
   phase,     \* the worker: "idle", "scanned" (has a page) or "running" (in its transaction)
   page,      \* the keys the page scan found
@@ -72,7 +77,7 @@ VARIABLES
   txnRoots   \* the roots the running transaction read and marks from
 
 \* Every variable, for the steps that leave some unchanged.
-vars == <<stored, liveRoots, written, phase, page, argRoots, txnRoots>>
+vars == <<stored, liveRoots, pending, written, phase, page, argRoots, txnRoots>>
 
 \* Each variable holds the kind of value it should.
 TypeOK ==
@@ -82,6 +87,8 @@ TypeOK ==
   /\ liveRoots \subseteq Roots
   \* The writer only writes the new root's nodes.
   /\ written \subseteq Wrote
+  \* The writer only puts the new root's nodes.
+  /\ pending \subseteq Wrote
   \* The worker is in one of its three steps.
   /\ phase \in {"idle", "scanned", "running"}
   \* A page is a set of node names.
@@ -98,6 +105,8 @@ Init ==
   /\ stored = {"old", "kept", "gone", "back"}
   \* Only the old root is published.
   /\ liveRoots = {"old"}
+  \* The writer has put nothing.
+  /\ pending = {}
   \* The writer has written nothing.
   /\ written = {}
   \* The worker has not started.
@@ -110,35 +119,50 @@ Init ==
   /\ txnRoots = {}
 
 \* The planted bug of the PutAlone configuration: the writer commits one node
-\* of the new root in a transaction of its own, before the root.
+\* of the new root in a transaction of its own, before the root, as the old
+\* flush at the end of every tree edit did.
 PutAlone(n) ==
   \* Only when the guard is off.
   /\ ~PublishWithNodes
   \* The new root is not published yet.
   /\ liveRoots = {"old"}
-  \* It is a node of the new root, not yet written.
-  /\ n \in Wrote \ written
+  \* It is a node the edit put, not yet written.
+  /\ n \in pending \ written
   \* The blind put lands: the store holds the node, whether it did or not.
   /\ stored' = stored \cup {n}
   \* The writer remembers it wrote it.
   /\ written' = written \cup {n}
   \* Nothing else changes.
-  /\ UNCHANGED <<liveRoots, phase, page, argRoots, txnRoots>>
+  /\ UNCHANGED <<liveRoots, pending, phase, page, argRoots, txnRoots>>
 
-\* The writer publishes the new root.
+\* The writer's edit puts one node of the new root (`ProllyNodes::put`): it
+\* waits in memory, so the store and every page see nothing of it.
+Put(n) ==
+  \* The new root is not published yet.
+  /\ liveRoots = {"old"}
+  \* It is a node of the new root, not yet put.
+  /\ n \in Wrote \ pending
+  \* It waits in the writer's memory.
+  /\ pending' = pending \cup {n}
+  \* Nothing else changes: the store holds nothing new.
+  /\ UNCHANGED <<stored, liveRoots, written, phase, page, argRoots, txnRoots>>
+
+\* The writer publishes the new root (`ProllyNodes::publish`).
 Publish ==
   \* Once: only while the old root is the live one.
   /\ liveRoots = {"old"}
+  \* The edit is done: every node of the new root was put.
+  /\ pending = Wrote
   \* With the guard, the same commit writes the new root's nodes.
   /\ IF PublishWithNodes
-       \* The puts and the root land together.
-       THEN stored' = stored \cup Wrote
+       \* The puts that waited in memory and the root land together.
+       THEN stored' = stored \cup pending
        \* Without it, the nodes were written before, and may be gone by now.
        ELSE written = Wrote /\ stored' = stored
   \* The root key now names the new root.
   /\ liveRoots' = {"new"}
   \* Nothing else changes.
-  /\ UNCHANGED <<written, phase, page, argRoots, txnRoots>>
+  /\ UNCHANGED <<pending, written, phase, page, argRoots, txnRoots>>
 
 \* The worker scans one page of stored keys (`node_keys`).
 Scan ==
@@ -151,7 +175,7 @@ Scan ==
   \* It has a page to decide on.
   /\ phase' = "scanned"
   \* Nothing else changes.
-  /\ UNCHANGED <<stored, liveRoots, written, txnRoots>>
+  /\ UNCHANGED <<stored, liveRoots, pending, written, txnRoots>>
 
 \* The delete transaction starts, or starts again (`ReclaimNodes::run`).
 Begin ==
@@ -162,7 +186,7 @@ Begin ==
   \* The transaction is running.
   /\ phase' = "running"
   \* Nothing else changes.
-  /\ UNCHANGED <<stored, liveRoots, written, page, argRoots>>
+  /\ UNCHANGED <<stored, liveRoots, pending, written, page, argRoots>>
 
 \* The keys the transaction deletes: the page without the marked nodes, or,
 \* with the guard off, the whole page.
@@ -182,10 +206,12 @@ Commit ==
        \* Otherwise the deletes land and the page is done.
        ELSE phase' = "idle" /\ stored' = stored \ Doomed
   \* Nothing else changes.
-  /\ UNCHANGED <<liveRoots, written, page, argRoots, txnRoots>>
+  /\ UNCHANGED <<liveRoots, pending, written, page, argRoots, txnRoots>>
 
 \* One step of the writer or of the worker.
 Next ==
+  \* The writer's edit puts a node in memory.
+  \/ \E n \in Nodes : Put(n)
   \* The writer commits a node on its own (only with the guard off).
   \/ \E n \in Nodes : PutAlone(n)
   \* The writer publishes the new root.

@@ -41,7 +41,7 @@ pub use verified_client_mutation::{
 pub(crate) use write::{
     build_document_blocks, write_delete_block_with_inputs, write_document_blocks_with_inputs,
 };
-pub(crate) use write::{fresh_nonce, inherited_encryption_policy};
+pub(crate) use write::{fresh_nonce, inherited_encryption_at, inherited_encryption_policy};
 pub use write::{write_delete_block, write_document_blocks};
 
 use immutable::{compute_immutable_block, immutable_field_names, immutable_for_pass};

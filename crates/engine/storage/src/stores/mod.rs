@@ -25,7 +25,7 @@ pub use blockstore::{BlockWrite, Blockstore};
 pub use datastore::{Datastore, CHUNK_SIZE};
 pub use headstore::Headstore;
 pub use multistore::Multistore;
-pub use peerstore::Peerstore;
+pub use peerstore::{Peerstore, ScopeOutcome, ScopeRecord, ScopeRun};
 pub use retry_info::{
     rewrite_legacy_push_retry_doc_id, PushRetryMarker, PushRetryMarkerStats, RetryInfo,
     RetrySchedule, RetryScope, RETRY_INTERVALS_SECS,
