@@ -3,6 +3,7 @@
 use storage::corekv::Store;
 use storage::index::IndexIterator;
 
+use crate::chunk::owner::ChunkOwner;
 use crate::collection::Collection;
 use crate::error::{Error, Result};
 use crate::txn::DbTxn;
@@ -67,9 +68,11 @@ where
             match crate::docid::map::get_doc_id(&systemstore, entry.doc_short_id).await? {
                 Some(doc_id) => doc_ids.push(document::DocID::from_string(&doc_id)?),
                 None => tracing::warn!(
-                    collection = chunks_col.name(),
+                    chunks = chunks_col.name(),
                     doc_short_id = entry.doc_short_id,
-                    "Chunk index entry has no DocID; leaving it"
+                    parent = %parent,
+                    field = ChunkOwner::of(chunks_col.schema(), parent).field,
+                    "chunk index names a document with no DocID; leaving it"
                 ),
             }
         }

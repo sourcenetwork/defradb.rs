@@ -11,6 +11,7 @@ mod guard;
 mod key_owners;
 mod kms_release;
 mod lookup;
+mod owner;
 mod parent_collection;
 mod race;
 mod read;

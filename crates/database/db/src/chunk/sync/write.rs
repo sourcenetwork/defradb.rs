@@ -12,6 +12,7 @@ use storage::corekv::Store;
 use storage::keys::doc_id_index::DocRef;
 
 use crate::block::builder::{write_delete_block_with_inputs, write_document_blocks_with_inputs};
+use crate::chunk::owner::ChunkOwner;
 use crate::collection::Collection;
 use crate::event::emission::register_update_event_callback;
 use crate::write::autocommit::helpers::{register_created_doc, write_local_create};
@@ -241,6 +242,7 @@ where
     pub(super) async fn delete(
         &self,
         target: &ChunkCollection,
+        owner: &ChunkOwner<'_>,
         doc_short_id: u64,
     ) -> Result<Option<DerivedWrite>> {
         let collection = &target.collection;
@@ -248,7 +250,13 @@ where
             .await
             .map_err(|e| QueryError::execution(e.to_string()))?
         else {
-            tracing::warn!(doc_short_id, chunks = %collection.name(), "chunk index names a document with no DocID");
+            tracing::warn!(
+                doc_short_id,
+                chunks = %collection.name(),
+                parent = owner.doc_id,
+                field = owner.field,
+                "chunk index names a document with no DocID; leaving it"
+            );
             return Ok(None);
         };
         let doc_id = DocID::from_string(&doc_id)

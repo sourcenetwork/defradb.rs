@@ -73,10 +73,20 @@ impl ChunkGate {
             parent_app,
             decided: Arc::new(HopscotchMap::with_hasher(RandomState::default())),
         };
-        if gate.fetcher.is_none() || gate.parent.is_none() {
+        let missing = match (gate.fetcher.is_none(), gate.parent.is_none()) {
+            (true, true) => Some("document fetcher and parent collection"),
+            (true, false) => Some("document fetcher"),
+            (false, true) => Some("parent collection"),
+            (false, false) => None,
+        };
+        if let Some(missing) = missing {
+            let source = chunks_col.chunk_of.as_ref();
             tracing::warn!(
                 chunks = %gate.chunk_collection,
-                "chunk read gate has no fetcher or parent collection; every chunk is hidden"
+                parent = source.map_or("", |source| source.collection.as_str()),
+                field = source.map_or("", |source| source.field_name.as_str()),
+                missing,
+                "chunk read gate has no {missing}; every chunk is hidden"
             );
         }
         gate
@@ -86,6 +96,7 @@ impl ChunkGate {
     /// scan carried them; otherwise they are read again.
     pub(crate) async fn allows(&self, doc_id: &str, row: Option<ChunkFields>) -> Result<bool> {
         let (Some(fetcher), Some((parent, chunked))) = (&self.fetcher, &self.parent) else {
+            tracing::debug!(chunks = %self.chunk_collection, %doc_id, "chunk read gate is incomplete; hidden");
             return Ok(false);
         };
         let chunk = match row {

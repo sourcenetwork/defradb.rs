@@ -197,6 +197,41 @@ On a node that signs its blocks, creating an `Article` with a six-paragraph body
 
 After eight updates of one article run at the same time, `body` is the text of one of them, and `Article__body_chunk` holds exactly the paragraphs of that text, each with its blank line except the last. After six such updates and a delete run at the same time, either the article and all its chunks are gone, or the state is that of one winning update. The text the article started with never remains.
 
+# `defra.chunk.write.restart`: The chunks read back the same after a restart
+
+- **Parents:** ["defra.chunk.write"]
+- **Scenarios:** ["chunk::write_restart::chunks_read_back_after_the_node_restarts"]
+
+On a node that stores its data on disk, an article with a five-paragraph body shows the same five chunk hashes after the node restarts. An update to three paragraphs then shows exactly the three new chunks, and still after another restart. After the article is deleted and the node restarts, `Article__body_chunk` is empty.
+
+# `defra.chunk.write.empty_text`: An empty text has no chunks, and whitespace is one chunk
+
+- **Parents:** ["defra.chunk.write"]
+- **Scenarios:** ["chunk::write_empty_text::an_empty_body_has_no_chunks_and_whitespace_is_one_chunk"]
+
+An article added with an empty body has no chunks. Updating the body to two paragraphs gives their two chunks, and updating it to an empty string again leaves `Article__body_chunk` empty. A body of only spaces and blank lines is one chunk whose `text` is exactly that whitespace, since the chunks cover the whole text. Updating it back to the two paragraphs shows their two chunks.
+
+# `defra.chunk.write.null_text`: A null text has no chunks until it is set again
+
+- **Parents:** ["defra.chunk.write"]
+- **Scenarios:** ["chunk::write_null_text::a_null_body_hides_the_chunks_until_the_text_is_back"]
+
+An article added without a body has no chunks. Once its body is three paragraphs it has their three chunks. An update that sets `body` to null reads back a null `body` and leaves `Article__body_chunk` empty. Setting the same three paragraphs again shows the same three chunk hashes.
+
+# `defra.chunk.write.repeated_paragraphs`: A repeated paragraph has one chunk document
+
+- **Parents:** ["defra.chunk.write"]
+- **Scenarios:** ["chunk::write_repeated_paragraphs::a_repeated_paragraph_has_one_chunk"]
+
+A body that has one paragraph twice and then another paragraph gives two chunk documents: one for the repeated paragraph with its blank line, and one for the last. Updating the body to repeat that paragraph four times keeps the same two chunk documents, with the same `_docID`s.
+
+# `defra.chunk.write.overlap`: With an overlap, a chunk repeats the sentence before it
+
+- **Parents:** ["defra.chunk.write"]
+- **Scenarios:** ["chunk::write_overlap::a_chunk_repeats_the_last_sentence_of_the_one_before"]
+
+With `@chunk(maxChars: 160, overlap: 1)` and a body of three paragraphs of two sentences, each too long to share a chunk, the first chunk is the first paragraph with its blank line. Each later chunk starts with the last sentence of the paragraph before it, with that paragraph's blank line, and then holds its own paragraph.
+
 # `defra.chunk.purge`: Removing a parent removes its chunks
 
 - **Parents:** ["defra.chunk"]
@@ -305,6 +340,19 @@ An article created by Alice under a policy shows its chunks to Alice: `Article__
 
 After Alice adds the `reader` relation on her article for Bob, Bob sees the same chunks as Alice and their `_commits`. After Alice deletes the article, she sees no chunks and `_commits` of a chunk is empty.
 
+# `defra.chunk.access.writes`: Only a writer of the parent changes its chunks
+
+- **Parents:** ["defra.chunk.access"]
+- **Scenarios:** ["chunk::access_writes::only_a_writer_of_the_parent_changes_its_chunks"]
+
+An update or a delete of Alice's article by Bob, who has no relation to it, or an update without an identity, fails with `document not found or not authorized to access`, and Alice still sees the original chunks. After Alice adds the `writer` relation for Bob, Bob's update to three paragraphs gives exactly the three new chunks, which Alice and Bob see and a request with no identity does not. After Alice deletes that relation, Bob's update and delete fail with the same error, Alice still sees the three chunks and Bob sees none. Alice's delete then leaves her no chunks.
+
+# `defra.chunk.access.public`: Anyone changes the chunks of a public parent
+
+- **Parents:** ["defra.chunk.access"]
+- **Scenarios:** ["chunk::access_writes::anyone_changes_the_chunks_of_a_public_parent"]
+
+In a collection with a policy, an article added without an identity is public: a request with no identity and Bob both see its chunks. Bob's update to three paragraphs gives exactly the three new chunks for both, and a delete with no identity leaves no chunks for them. Alice still sees exactly the chunks of her own article.
 # `defra.chunk.access.events`: Only readers of the parent get its chunk events
 
 - **Parents:** ["defra.chunk.access"]
