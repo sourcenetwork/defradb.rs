@@ -139,15 +139,27 @@ where
             .ok_or_else(|| Error::CollectionNotFound(collection_name.to_string()))?;
         crate::chunk::ensure_admin_changeable(collection.schema())?;
         let mut schema = collection.schema().clone();
-        let position = schema
+        let index = match schema
             .indexes
             .iter()
             .position(|index| index.name == index_name)
-            .ok_or_else(|| Error::IndexNotFound {
-                collection: collection_name.to_string(),
-                index: index_name.to_string(),
-            })?;
-        let index = schema.indexes.remove(position);
+        {
+            Some(position) => schema.indexes.remove(position),
+            None => {
+                let position = schema
+                    .fulltext_indexes
+                    .iter()
+                    .position(|fulltext| {
+                        crate::index::fulltext_index_name(&fulltext.field_name) == index_name
+                    })
+                    .ok_or_else(|| Error::IndexNotFound {
+                        collection: collection_name.to_string(),
+                        index: index_name.to_string(),
+                    })?;
+                let fulltext = schema.fulltext_indexes.remove(position);
+                crate::index::fulltext_index_description(&fulltext)
+            }
+        };
         let index_id = index.id;
         retire_index_id(&txn.datastore()?, schema.resolved_root_id(), index.id).await?;
         let data = serde_json::to_vec(&schema).map_err(|error| {

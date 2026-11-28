@@ -440,7 +440,7 @@ fn drop_index_removes_everything_the_index_wrote() {
                 name: field.to_string(),
                 descending: false,
             }];
-            let kind = IndexManager::requested_kind(&fields, false, vector).unwrap();
+            let kind = IndexManager::requested_kind(&fields, false, vector, None).unwrap();
             db.create_index("Note", Some(name), fields, kind)
                 .await
                 .unwrap();

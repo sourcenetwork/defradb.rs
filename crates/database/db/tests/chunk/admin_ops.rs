@@ -55,7 +55,7 @@ fn index_create_on_a_chunk_collection_is_refused() {
     workers::block_on(async {
         let db = chunked_db().await;
         let fields = vec![field("hash")];
-        let kind = IndexManager::requested_kind(&fields, true, None).unwrap();
+        let kind = IndexManager::requested_kind(&fields, true, None, None).unwrap();
         assert_refused(db.create_index(CHUNKS, None, fields, kind).await);
         assert_refused(
             db.ensure_ordinary_index(CHUNKS, "by_text", vec![field("text")])
@@ -108,7 +108,7 @@ fn the_parent_still_takes_index_changes() {
     workers::block_on(async {
         let db = chunked_db().await;
         let fields = vec![field("title")];
-        let kind = IndexManager::requested_kind(&fields, false, None).unwrap();
+        let kind = IndexManager::requested_kind(&fields, false, None, None).unwrap();
         let index = db
             .create_index("Article", None, fields, kind)
             .await

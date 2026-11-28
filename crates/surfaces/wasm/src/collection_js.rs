@@ -148,6 +148,16 @@ enum IndexKindJs<'a> {
         #[serde(rename = "DISKANN", skip_serializing_if = "Option::is_none")]
         diskann: Option<schema::DiskAnnParams>,
     },
+    FullText {
+        #[serde(rename = "FieldName")]
+        field_name: &'a str,
+        #[serde(rename = "Language")]
+        language: &'a str,
+        #[serde(rename = "K1")]
+        k1: f64,
+        #[serde(rename = "B")]
+        b: f64,
+    },
 }
 
 impl<'a> From<&'a CollectionVersion> for CollectionJs<'a> {
@@ -209,7 +219,7 @@ impl<'a> From<&'a FieldDescription> for FieldJs<'a> {
 impl<'a> From<&'a IndexDescription> for IndexJs<'a> {
     fn from(index: &'a IndexDescription) -> Self {
         let fields = index.fields.as_slice();
-        let (kind, kind_description, unique) = match index.kind {
+        let (kind, kind_description, unique) = match index.kind.as_ref() {
             None => (
                 0,
                 IndexKindJs::Ordered {
@@ -246,6 +256,16 @@ impl<'a> From<&'a IndexDescription> for IndexJs<'a> {
                     diskann: vector
                         .diskann
                         .filter(|_| vector.algorithm == VectorAlgorithm::DiskAnn),
+                },
+                false,
+            ),
+            Some(IndexKind::FullText(fulltext)) => (
+                2,
+                IndexKindJs::FullText {
+                    field_name: &fulltext.field_name,
+                    language: &fulltext.language,
+                    k1: fulltext.k1,
+                    b: fulltext.b,
                 },
                 false,
             ),

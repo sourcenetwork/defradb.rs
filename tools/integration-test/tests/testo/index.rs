@@ -16,6 +16,7 @@ mod composite_in_order;
 mod crdt;
 mod ddl_under_writes;
 mod delete;
+mod dynamic_fulltext;
 mod failed_backfill;
 mod get;
 mod group_order;

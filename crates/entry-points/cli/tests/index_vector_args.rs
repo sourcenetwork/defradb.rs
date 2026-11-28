@@ -190,6 +190,7 @@ fn index_list_keeps_the_vector_configuration() {
 
     let kind = parsed
         .kind
+        .clone()
         .expect("the vector configuration must survive the parse");
     let schema::IndexKind::Vector(vector) = kind else {
         panic!("a vector index parsed as {kind:?}");

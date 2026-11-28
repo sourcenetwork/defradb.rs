@@ -148,6 +148,7 @@ macro_rules! transactional_ops {
                 fields: Vec<schema::IndexedFieldDescription>,
                 unique: bool,
                 vector: Option<schema::VectorIndexDescription>,
+                fulltext: Option<schema::FullTextIndexDescription>,
             ) -> crate::Result<schema::IndexDescription>;
 
             /// Create an index as `create_index` does, returning once it is
@@ -159,6 +160,7 @@ macro_rules! transactional_ops {
                 fields: Vec<schema::IndexedFieldDescription>,
                 unique: bool,
                 vector: Option<schema::VectorIndexDescription>,
+                fulltext: Option<schema::FullTextIndexDescription>,
             ) -> crate::Result<schema::IndexDescription>;
 
             /// The indexes of `collection`, each with the state of the action

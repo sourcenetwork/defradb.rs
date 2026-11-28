@@ -3,8 +3,9 @@
 
 use proptest::prelude::*;
 use schema::{
-    DiskAnnParams, DistanceMetric, HnswParams, IndexDescription, IndexKind, IvfFlatParams,
-    IvfPqParams, OrderedIndexDescription, SsgParams, VectorAlgorithm, VectorIndexDescription,
+    DiskAnnParams, DistanceMetric, FullTextIndexDescription, HnswParams, IndexDescription,
+    IndexKind, IvfFlatParams, IvfPqParams, OrderedIndexDescription, SsgParams, VectorAlgorithm,
+    VectorIndexDescription,
 };
 
 fn vector_description() -> VectorIndexDescription {
@@ -35,6 +36,14 @@ fn the_kind_serializes_as_a_discriminated_envelope() {
         serde_json::to_value(IndexKind::Ordered(OrderedIndexDescription { unique: true })).unwrap();
     assert_eq!(ordered["Kind"], 0);
     assert_eq!(ordered["KindDescription"]["Unique"], true);
+
+    let fulltext =
+        serde_json::to_value(IndexKind::FullText(FullTextIndexDescription::new("body"))).unwrap();
+    assert_eq!(fulltext["Kind"], 2);
+    assert_eq!(fulltext["KindDescription"]["FieldName"], "body");
+    assert_eq!(fulltext["KindDescription"]["Language"], "english");
+    assert_eq!(fulltext["KindDescription"]["K1"], 1.2);
+    assert_eq!(fulltext["KindDescription"]["B"], 0.75);
 }
 
 #[test]
@@ -48,6 +57,20 @@ fn the_kind_tag_controls_deserialization() {
     assert_eq!(
         ordered,
         IndexKind::Ordered(OrderedIndexDescription { unique: true })
+    );
+
+    let fulltext: IndexKind = serde_json::from_str(
+        r#"{"Kind":2,"KindDescription":{"FieldName":"body","Language":"french","K1":1.1,"B":0.6}}"#,
+    )
+    .unwrap();
+    assert_eq!(
+        fulltext,
+        IndexKind::FullText(FullTextIndexDescription {
+            field_name: "body".into(),
+            language: "french".into(),
+            k1: 1.1,
+            b: 0.6,
+        })
     );
 
     let error = serde_json::from_str::<IndexKind>(r#"{"Kind":42}"#).unwrap_err();
@@ -219,6 +242,16 @@ fn index_kinds() -> impl Strategy<Value = IndexKind> {
 
     prop_oneof![
         any::<bool>().prop_map(|unique| IndexKind::Ordered(OrderedIndexDescription { unique })),
+        (any::<String>(), any::<String>(), 0.1f64..16.0, 0.0f64..=1.0,).prop_map(
+            |(field_name, language, k1, b)| {
+                IndexKind::FullText(FullTextIndexDescription {
+                    field_name,
+                    language,
+                    k1,
+                    b,
+                })
+            }
+        ),
         (
             algorithms,
             metrics,
@@ -250,7 +283,10 @@ proptest! {
     #[test]
     fn every_index_kind_round_trips_through_the_envelope(kind in index_kinds()) {
         let json = serde_json::to_vec(&kind).unwrap();
-        prop_assert_eq!(serde_json::from_slice::<IndexKind>(&json).unwrap(), kind);
+        prop_assert_eq!(
+            serde_json::from_slice::<IndexKind>(&json).unwrap(),
+            kind.clone()
+        );
 
         let cbor = serde_ipld_dagcbor::to_vec(&kind).unwrap();
         prop_assert_eq!(serde_ipld_dagcbor::from_slice::<IndexKind>(&cbor).unwrap(), kind);

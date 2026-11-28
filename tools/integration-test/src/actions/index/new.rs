@@ -53,6 +53,7 @@ impl Op for NewIndex {
         let node = state.node_on(self.common.node())?;
         let scope = state.scope_as(self.txn, self.common.identity_seed);
         let vector = self.vector_description()?;
+        let fulltext = self.fulltext_description()?;
         // Go's NewIndex always returns before the build; its harness waits
         // for the build unless the scenario sets `async`.
         let created = match self.r#async {
@@ -62,6 +63,7 @@ impl Op for NewIndex {
                 fields,
                 self.unique(),
                 vector,
+                fulltext,
             )),
             false => state.block_on(scope.on(&node).create_index(
                 &self.collection,
@@ -69,6 +71,7 @@ impl Op for NewIndex {
                 fields,
                 self.unique(),
                 vector,
+                fulltext,
             )),
         };
         created
@@ -107,6 +110,25 @@ impl NewIndex {
         }
     }
 
+    /// The full-text configuration this index requests, with its field taken
+    /// from the request's fields when the config omits it.
+    fn fulltext_description(&self) -> Result<Option<schema::FullTextIndexDescription>, Failure> {
+        let Some(config) = &self.index.fulltext else {
+            return Ok(None);
+        };
+        let mut fulltext: schema::FullTextIndexDescription = serde_json::from_value(config.clone())
+            .map_err(|error| Failure::operation(error.to_string()))?;
+        if fulltext.field_name.is_empty() {
+            fulltext.field_name = self
+                .index
+                .fields
+                .first()
+                .map(|field| field.name.clone())
+                .unwrap_or_default();
+        }
+        Ok(Some(fulltext))
+    }
+
     /// Fails on the arguments no client supports yet.
     fn check_arguments(&self) -> Result<(), Failure> {
         self.common.client_identity(Self::name_of())?;
@@ -122,7 +144,10 @@ impl NewIndex {
                     .to_owned(),
             ));
         }
-        if self.index.ordered.is_some() && self.index.vector.is_some() {
+        let kinds = usize::from(self.index.ordered.is_some())
+            + usize::from(self.index.vector.is_some())
+            + usize::from(self.index.fulltext.is_some());
+        if kinds > 1 {
             return Err(Failure::operation(
                 "index request has more than one kind config".to_owned(),
             ));
@@ -176,6 +201,11 @@ impl HttpRun for NewIndex {
             let target = collection.clone();
             let txn = state.txn_id(action.txn);
             let in_txn = txn.is_some();
+            if state.client_type() == crate::ClientType::GoHttp && action.index.fulltext.is_some() {
+                return Err(Failure::unsupported(
+                    "index.new fulltext under GoHttp".to_owned(),
+                ));
+            }
             if action.r#async && state.client_type() == crate::ClientType::GoHttp {
                 return Err(Failure::unsupported(
                     "index.new async under GoHttp".to_owned(),
@@ -184,6 +214,7 @@ impl HttpRun for NewIndex {
             let wait_for_build = !action.r#async && !in_txn;
             let build_in_background = action.r#async && !in_txn;
             let vector = action.vector_description()?;
+            let fulltext = action.fulltext_description()?;
             let created = state
                 .http_as(
                     action.common.node(),
@@ -197,6 +228,7 @@ impl HttpRun for NewIndex {
                                 name.as_deref(),
                                 unique,
                                 vector,
+                                fulltext,
                                 build_in_background,
                             )
                             .await
@@ -271,7 +303,10 @@ impl CliRun for NewIndex {
         crate::scenario::execute_with(self, state, |action, state| {
             action.check_remote_arguments()?;
             // `index new` has no background flag, here or in Go's CLI.
-            unsupported_argument(&[("async", action.r#async)])?;
+            unsupported_argument(&[
+                ("async", action.r#async),
+                ("index.fulltext", action.index.fulltext.is_some()),
+            ])?;
             let fields = action.field_names().join(",");
             // Held here so the borrowed flags below outlive the argument list.
             let as_json = match action.vector_description()? {

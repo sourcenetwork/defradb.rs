@@ -74,7 +74,7 @@ where
                 collection.schema(),
                 self.name.as_deref().unwrap_or(""),
                 &self.fields,
-                self.kind,
+                self.kind.clone(),
             )
             .map_err(|error| RetryAttemptError::Abort(Box::new(error)))?;
             let index = self
@@ -86,7 +86,7 @@ where
                     IndexCreation {
                         name: self.name.as_deref(),
                         fields: self.fields.clone(),
-                        kind: self.kind,
+                        kind: self.kind.clone(),
                     },
                 )
                 .await
@@ -296,6 +296,30 @@ impl<S: Store> DB<S> {
         creation: IndexCreation<'_>,
     ) -> Result<IndexDescription> {
         crate::chunk::ensure_admin_changeable(collection.schema())?;
+        if let IndexKind::FullText(fulltext) = &creation.kind {
+            let field = collection
+                .schema()
+                .fields
+                .iter()
+                .find(|field| field.name == fulltext.field_name)
+                .ok_or_else(|| {
+                    Error::Other(format!(
+                        "full-text index field '{}' does not exist",
+                        fulltext.field_name
+                    ))
+                })?;
+            if !matches!(
+                field.kind,
+                schema::FieldKind::Scalar(
+                    schema::ScalarKind::String | schema::ScalarKind::NillableString
+                )
+            ) {
+                return Err(Error::Other(format!(
+                    "full-text index field '{}' must be a String",
+                    fulltext.field_name
+                )));
+            }
+        }
         let collection_id = collection.collection_id().to_string();
         let (index, committed_schema) = {
             let datastore = txn.datastore()?;

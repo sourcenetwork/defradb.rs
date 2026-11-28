@@ -320,6 +320,15 @@ With `type User { name: String @index(unique: true) age: Int }`, an explicit tra
 
 `POST /api/v0/collections/{name}/indexes` takes an optional boolean `BuildInBackground`, a field Go's request does not have. Left out or `false`, the response is sent once the backfill over the collection's existing documents has ended, so a listing straight after it never shows the index building. With `true`, the response is sent once the index definition has committed, with the same body (`Name`, `ID`, `Fields`, `Unique`, `Kind`), and the backfill goes on by itself: `ListIndexes` reports the index with `Execution` `Status: 1, Action: 3` (building) and filtered queries full-scan until the backfill ends, then `Status: 3, Action: 0` (ready) and queries use the index. The field decides only when the response is sent, never what is built: a `Vector` configuration sent with it creates a vector index, and without one the index is an ordered one. Under `x-defradb-tx` the field changes nothing, because that backfill runs when the transaction commits.
 
+# `defra.index.fulltext.manage`: Add, list and remove a full-text index dynamically
+
+- **Parents:** ["defra.bm25"]
+- **Scenarios:** ["index::dynamic_fulltext::a_populated_collection_gains_lists_and_loses_a_fulltext_index", "index::dynamic_fulltext::a_fulltext_backfill_resumes_after_restart_and_indexes_writes_made_while_gated"]
+
+The native scope operations and `POST /api/v0/collections/{name}/indexes` accept a `FullText` configuration on one `String` field, with `Language` defaulting to `english`, `K1` to `1.2` and `B` to `0.75`. The definition is added to the existing collection without changing its identity or documents, and the existing bounded, checkpointed backfill indexes the documents already stored. Writes made while the backfill is building maintain the index themselves. `ListIndexes` reports kind `2`, the configuration, the canonical name `__fulltext__:field` and the backfill action state; it reports the index ready only after backfill completes, and after a restart an unfinished build remains building until it resumes. `BM25(query:, fields:)` uses the new index immediately for later writes and after reopen. `DELETE /api/v0/collections/{name}/indexes/__fulltext__:field` accepts the listed canonical name, removes the definition and entries, and a reopen does not reconstruct it. Collection reads and index creation check `get-collection` and `create-index`, listing checks `list-indexes`, and removal checks `delete-index`.
+
+The path uses the existing `IndexDropBackfill.tla`, `IndexBuildGateClose.tla` and `IndexMaintenanceConsistency.tla` models; a dynamic full-text index gets a fresh retired-sequence ID like every other created index, and its backfill and removal use the same validated definition and checkpoint owners as ordered and vector indexes.
+
 # `defra.txn.indexes.concurrent-encrypted-changes`: Concurrent encrypted index changes outside a transaction
 
 - **Parents:** ["go.txn.indexes"]

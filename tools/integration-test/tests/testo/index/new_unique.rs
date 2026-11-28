@@ -127,6 +127,7 @@ fn index_new_both_ordered_and_vector_config_should_error() {
                     }],
                     ordered: Some(json!({})),
                     vector: Some(json!({ "Dimensions": 3, "HNSW": {}, "Metric": "COSINE" })),
+                    fulltext: None,
                 },
                 expected_error: Some("index request has more than one kind config".into()),
                 ..Default::default()

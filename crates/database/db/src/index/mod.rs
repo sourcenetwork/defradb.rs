@@ -16,4 +16,7 @@ pub mod vector;
 
 pub use error::{Error, Result};
 pub use listing::index_listing;
-pub use manager::{fulltext_index_name, BatchIndexResult, BulkIndexResult, IndexManager};
+pub use manager::{
+    fulltext_index_description, fulltext_index_id, fulltext_index_name, BatchIndexResult,
+    BulkIndexResult, IndexManager,
+};

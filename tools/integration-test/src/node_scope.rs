@@ -121,6 +121,7 @@ impl Scoped<'_> {
             fields: Vec<schema::IndexedFieldDescription>,
             unique: bool,
             vector: Option<schema::VectorIndexDescription>,
+            fulltext: Option<schema::FullTextIndexDescription>,
         ) -> defra_node::Result<schema::IndexDescription>;
         fn start_index(
             collection: &str,
@@ -128,6 +129,7 @@ impl Scoped<'_> {
             fields: Vec<schema::IndexedFieldDescription>,
             unique: bool,
             vector: Option<schema::VectorIndexDescription>,
+            fulltext: Option<schema::FullTextIndexDescription>,
         ) -> defra_node::Result<schema::IndexDescription>;
         fn list_indexes(collection: &str) -> defra_node::Result<Vec<defra_node::IndexListing>>;
         fn delete_index(collection: &str, name: &str) -> defra_node::Result<()>;

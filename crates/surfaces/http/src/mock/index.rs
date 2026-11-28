@@ -66,6 +66,7 @@ impl MockIndexOperations {
 
 #[async_trait]
 impl IndexOperations for MockIndexOperations {
+    #[allow(clippy::too_many_arguments)]
     async fn create_index(
         &self,
         collection: &str,
@@ -73,6 +74,7 @@ impl IndexOperations for MockIndexOperations {
         name: Option<&str>,
         unique: bool,
         vector: Option<schema::VectorIndexDescription>,
+        fulltext: Option<schema::FullTextIndexDescription>,
         _build_in_background: bool,
     ) -> Result<IndexInfo, String> {
         let index_name = match name {
@@ -84,7 +86,9 @@ impl IndexOperations for MockIndexOperations {
         };
 
         let index = IndexInfo {
-            kind: vector.map(schema::IndexKind::Vector),
+            kind: fulltext
+                .map(schema::IndexKind::FullText)
+                .or_else(|| vector.map(schema::IndexKind::Vector)),
             id: 0,
             name: index_name,
             collection: collection.to_string(),
@@ -149,6 +153,7 @@ impl FailingMockIndexOperations {
 
 #[async_trait]
 impl IndexOperations for FailingMockIndexOperations {
+    #[allow(clippy::too_many_arguments)]
     async fn create_index(
         &self,
         _collection: &str,
@@ -156,6 +161,7 @@ impl IndexOperations for FailingMockIndexOperations {
         _name: Option<&str>,
         _unique: bool,
         _vector: Option<schema::VectorIndexDescription>,
+        _fulltext: Option<schema::FullTextIndexDescription>,
         _build_in_background: bool,
     ) -> Result<IndexInfo, String> {
         Err(self.error.clone())

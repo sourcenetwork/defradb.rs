@@ -162,7 +162,7 @@ fn shared_literal(ty: &str, v: &Value, used: &mut Used, indent: usize) -> String
         out.push_str(&format!("{inner}{name}: {expr},\n"));
     }
     let optional: &[&str] = match ty {
-        "IndexSpec" => &["ordered", "vector"],
+        "IndexSpec" => &["ordered", "vector", "fulltext"],
         "Lens" => &["Lenses"],
         "Filter" => &["value"],
         _ => &[],

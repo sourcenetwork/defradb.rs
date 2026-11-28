@@ -5,7 +5,7 @@
 use schema::{CollectionVersion, IndexDescription, IndexKind, IndexedFieldDescription};
 
 use crate::error::{Error, Result};
-use crate::index::listing::is_hidden_relation_index;
+use crate::index::{fulltext_index_description, listing::is_hidden_relation_index};
 
 /// Refuse an index named `name` (generated when empty) over `fields` of
 /// `kind` when `version` lists an index with the same fields, directions and
@@ -25,20 +25,41 @@ pub(crate) fn refuse_duplicate_index(
     fields: &[IndexedFieldDescription],
     kind: IndexKind,
 ) -> Result<()> {
-    if !name.is_empty() && version.indexes.iter().any(|index| index.name == name) {
+    if !name.is_empty()
+        && (version.indexes.iter().any(|index| index.name == name)
+            || version
+                .fulltext_indexes
+                .iter()
+                .any(|fulltext| crate::index::fulltext_index_name(&fulltext.field_name) == name))
+    {
         return Ok(());
     }
     let kind = normalized_kind(kind);
-    match version.indexes.iter().find(|index| {
-        index.fields == fields
-            && IndexDescription::clone(index)
-                .normalized()
-                .kind
-                .map(normalized_kind)
-                == Some(kind)
-            && !is_hidden_relation_index(version, index)
-    }) {
-        Some(existing) => Err(Error::IndexDefinitionExists(existing.name.clone())),
+    let existing_name = version
+        .indexes
+        .iter()
+        .find(|index| {
+            index.fields == fields
+                && IndexDescription::clone(index)
+                    .normalized()
+                    .kind
+                    .map(normalized_kind)
+                    == Some(kind.clone())
+                && !is_hidden_relation_index(version, index)
+        })
+        .map(|index| index.name.clone())
+        .or_else(|| {
+            let IndexKind::FullText(fulltext) = kind else {
+                return None;
+            };
+            version
+                .fulltext_indexes
+                .iter()
+                .find(|existing| existing.field_name == fulltext.field_name)
+                .map(|existing| fulltext_index_description(existing).name)
+        });
+    match existing_name {
+        Some(existing) => Err(Error::IndexDefinitionExists(existing)),
         None => Ok(()),
     }
 }
@@ -47,5 +68,6 @@ fn normalized_kind(kind: IndexKind) -> IndexKind {
     match kind {
         IndexKind::Vector(vector) => IndexKind::Vector(vector.normalized()),
         ordered @ IndexKind::Ordered(_) => ordered,
+        fulltext @ IndexKind::FullText(_) => fulltext,
     }
 }

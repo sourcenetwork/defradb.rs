@@ -83,14 +83,16 @@ impl Serialize for IndexDescription {
     {
         let kind = self
             .kind
+            .clone()
             .unwrap_or(IndexKind::Ordered(OrderedIndexDescription {
                 unique: self.unique,
             }));
         let unique = match kind {
             IndexKind::Ordered(ordered) => ordered.unique,
             IndexKind::Vector(_) => false,
+            IndexKind::FullText(_) => false,
         };
-        let (kind, kind_description) = kind.into_wire();
+        let (kind, kind_description) = kind.to_wire();
 
         IndexDescriptionRef {
             name: &self.name,
@@ -112,8 +114,9 @@ impl<'de> Deserialize<'de> for IndexDescription {
         let wire = IndexDescriptionWire::deserialize(deserializer)?;
         let kind = IndexKind::from_wire(wire.kind, wire.kind_description, wire.unique)?;
         let unique = match kind {
-            IndexKind::Ordered(ordered) => ordered.unique,
+            IndexKind::Ordered(ref ordered) => ordered.unique,
             IndexKind::Vector(_) => false,
+            IndexKind::FullText(_) => false,
         };
 
         Ok(Self {
@@ -154,7 +157,15 @@ impl IndexDescription {
     pub fn vector(&self) -> Option<&VectorIndexDescription> {
         match self.kind.as_ref()? {
             IndexKind::Vector(vector) => Some(vector),
-            IndexKind::Ordered(_) => None,
+            IndexKind::Ordered(_) | IndexKind::FullText(_) => None,
+        }
+    }
+
+    /// The full-text configuration, when this is a full-text index.
+    pub fn fulltext(&self) -> Option<&FullTextIndexDescription> {
+        match self.kind.as_ref()? {
+            IndexKind::FullText(fulltext) => Some(fulltext),
+            IndexKind::Ordered(_) | IndexKind::Vector(_) => None,
         }
     }
 
@@ -168,7 +179,7 @@ impl IndexDescription {
     pub fn resolved_unique(&self) -> bool {
         match self.kind {
             Some(IndexKind::Ordered(ordered)) => ordered.unique,
-            Some(IndexKind::Vector(_)) => false,
+            Some(IndexKind::Vector(_) | IndexKind::FullText(_)) => false,
             None => self.unique,
         }
     }
@@ -190,7 +201,7 @@ impl IndexDescription {
             }));
         self.unique = match kind {
             IndexKind::Ordered(ordered) => ordered.unique,
-            IndexKind::Vector(_) => false,
+            IndexKind::Vector(_) | IndexKind::FullText(_) => false,
         };
         self.kind = Some(kind);
         self
@@ -253,7 +264,7 @@ impl EncryptedIndexDescription {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct FullTextIndexDescription {
     /// Name of the field being indexed.
-    #[serde(rename = "FieldName")]
+    #[serde(rename = "FieldName", default)]
     pub field_name: String,
 
     /// Language for tokenization and stemming (default: "english").
@@ -289,6 +300,44 @@ impl FullTextIndexDescription {
             k1: default_k1(),
             b: default_b(),
         }
+    }
+
+    /// Configuration errors a dynamic full-text index must not store.
+    pub fn validation_errors(&self) -> Vec<String> {
+        const LANGUAGES: &[&str] = &[
+            "arabic",
+            "danish",
+            "dutch",
+            "english",
+            "french",
+            "german",
+            "greek",
+            "hungarian",
+            "italian",
+            "norwegian",
+            "portuguese",
+            "romanian",
+            "russian",
+            "spanish",
+            "swedish",
+            "tamil",
+            "turkish",
+        ];
+        let mut errors = Vec::new();
+        if !LANGUAGES.contains(&self.language.to_lowercase().as_str()) {
+            errors.push(format!(
+                "unsupported full-text language '{}': expected one of {}",
+                self.language,
+                LANGUAGES.join(", ")
+            ));
+        }
+        if !self.k1.is_finite() || self.k1 <= 0.0 {
+            errors.push("full-text k1 must be finite and greater than zero".to_string());
+        }
+        if !self.b.is_finite() || !(0.0..=1.0).contains(&self.b) {
+            errors.push("full-text b must be finite and between zero and one".to_string());
+        }
+        errors
     }
 }
 
@@ -854,10 +903,11 @@ pub struct OrderedIndexDescription {
 ///
 /// The concrete variant *is* the kind, so an index can never be in a state
 /// where a kind tag and its config disagree.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum IndexKind {
     Ordered(OrderedIndexDescription),
     Vector(VectorIndexDescription),
+    FullText(FullTextIndexDescription),
 }
 
 impl Default for IndexKind {
@@ -868,12 +918,14 @@ impl Default for IndexKind {
 
 const INDEX_KIND_ORDERED: u8 = 0;
 const INDEX_KIND_VECTOR: u8 = 1;
+const INDEX_KIND_FULLTEXT: u8 = 2;
 
 #[derive(Serialize)]
 #[serde(untagged)]
 enum IndexKindDescriptionWire {
     Ordered(OrderedIndexDescription),
     Vector(VectorIndexDescription),
+    FullText(FullTextIndexDescription),
 }
 
 #[derive(Serialize)]
@@ -893,13 +945,17 @@ struct IndexKindWire {
 }
 
 impl IndexKind {
-    fn into_wire(self) -> (u8, IndexKindDescriptionWire) {
+    fn to_wire(&self) -> (u8, IndexKindDescriptionWire) {
         match self {
             Self::Ordered(ordered) => (
                 INDEX_KIND_ORDERED,
-                IndexKindDescriptionWire::Ordered(ordered),
+                IndexKindDescriptionWire::Ordered(*ordered),
             ),
-            Self::Vector(vector) => (INDEX_KIND_VECTOR, IndexKindDescriptionWire::Vector(vector)),
+            Self::Vector(vector) => (INDEX_KIND_VECTOR, IndexKindDescriptionWire::Vector(*vector)),
+            Self::FullText(fulltext) => (
+                INDEX_KIND_FULLTEXT,
+                IndexKindDescriptionWire::FullText(fulltext.clone()),
+            ),
         }
     }
 
@@ -925,6 +981,13 @@ impl IndexKind {
                 };
                 Ok(Self::Vector(vector))
             }
+            INDEX_KIND_FULLTEXT => {
+                let fulltext = match kind_description {
+                    Some(value) => serde_json::from_value(value).map_err(E::custom)?,
+                    None => FullTextIndexDescription::new(""),
+                };
+                Ok(Self::FullText(fulltext))
+            }
             _ => Err(E::custom(format!("unknown index kind: {kind}"))),
         }
     }
@@ -935,7 +998,7 @@ impl Serialize for IndexKind {
     where
         S: Serializer,
     {
-        let (kind, kind_description) = self.into_wire();
+        let (kind, kind_description) = self.to_wire();
         IndexKindRef {
             kind,
             kind_description,
