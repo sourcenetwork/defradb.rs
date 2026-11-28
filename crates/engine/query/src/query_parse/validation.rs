@@ -152,10 +152,6 @@ async fn validate_select_collection(
         return Err(QueryError::parse(msg));
     };
 
-    if let Some(filter) = &select.filter {
-        filter.without_secondary_relation_ids(&collection)?;
-    }
-
     validate_similarity(&select.fields, &collection, provider).await
 }
 
@@ -412,7 +408,7 @@ mod tests {
     }
 
     #[test]
-    fn nested_secondary_relation_id_filter_refuses() {
+    fn nested_secondary_relation_id_filter_validates() {
         workers::block_on(async {
             let collection = CollectionVersion::new(
                 "Book",
@@ -452,8 +448,7 @@ mod tests {
                 explain: None,
                 exhaustive: false,
             };
-            let error = validate_parsed_operation(&op, &provider).await.unwrap_err();
-            assert!(error.to_string().contains("top level"));
+            assert!(validate_parsed_operation(&op, &provider).await.is_ok());
         })
         .unwrap();
     }

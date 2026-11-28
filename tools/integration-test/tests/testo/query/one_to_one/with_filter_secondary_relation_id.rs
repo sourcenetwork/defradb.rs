@@ -5,7 +5,6 @@ use integration_test::actions::{AddCollection, AddDoc, Request};
 use integration_test::m;
 use integration_test::scenario::{captures, Common, Text};
 use integration_test::test_case::TestCase;
-use integration_test::ClientType;
 use serde_json::json;
 
 #[test]
@@ -399,92 +398,6 @@ fn query_one_to_one_with_eq_filter_on_secondary_relation_id_and_relation_selecti
                     compare: Some(true),
                     ..Default::default()
                 },
-                ..Default::default()
-            }
-            .into(),
-        ],
-        ..Default::default()
-    }
-    .execute();
-}
-
-#[test]
-#[mantra_macros::req_test("go.query.one_to_one.filter-relation-id")]
-fn query_one_to_one_with_nested_secondary_relation_id_filter_refuses_instead_of_matching_all() {
-    TestCase {
-        id: integration_test::scenario_id!(),
-        client_types: Some(&[ClientType::InProcess, ClientType::RustHttp, ClientType::Cli]),
-        actions: vec![
-            AddCollection {
-                sdl: r#"
-                    type Book {
-                        title: String
-                        publisher: Publisher
-                    }
-                    type Publisher {
-                        name: String
-                        book: Book @primary
-                    }
-                "#
-                .into(),
-                ..Default::default()
-            }
-            .into(),
-            Request {
-                request: r#"
-                    query {
-                        Book(filter: {_or: [{_publisherID: {_eq: "bae-x"}}]}) {
-                            title
-                        }
-                    }
-                "#
-                .into(),
-                expected_error: Some(
-                    "secondary relation ID filters are supported only at the top level".into(),
-                ),
-                ..Default::default()
-            }
-            .into(),
-        ],
-        ..Default::default()
-    }
-    .execute();
-}
-
-#[test]
-#[mantra_macros::req_test("go.query.one_to_one.filter-relation-id")]
-fn query_one_to_one_with_negated_secondary_relation_id_filter_refuses() {
-    TestCase {
-        id: integration_test::scenario_id!(),
-        client_types: Some(&[ClientType::InProcess, ClientType::RustHttp, ClientType::Cli]),
-        actions: vec![
-            AddCollection {
-                sdl: r#"
-                    type Book {
-                        title: String
-                        publisher: Publisher
-                    }
-                    type Publisher {
-                        name: String
-                        book: Book @primary
-                    }
-                "#
-                .into(),
-                ..Default::default()
-            }
-            .into(),
-            Request {
-                request: r#"
-                    query {
-                        Book(filter: {_not: {_publisherID: {_eq: null}}}) {
-                            title
-                        }
-                    }
-                "#
-                .into(),
-                expected_error: Some(
-                    "secondary relation ID filters are supported only at the top level".into(),
-                ),
                 ..Default::default()
             }
             .into(),

@@ -12,6 +12,9 @@ use crate::mapper::{Filter, Select};
 pub(in crate::planner) struct FilterParts {
     pub(in crate::planner) scalar_filter: Option<Filter>,
     pub(in crate::planner) relation_filter: Option<Filter>,
+    /// Aggregate-stripped filter before secondary relation IDs are removed.
+    /// Join discovery uses this so a safe scan reduction cannot hide a path.
+    pub(in crate::planner) filter_for_relation_paths: Option<Filter>,
     pub(in crate::planner) filter_for_plan: Option<Filter>,
     pub(in crate::planner) is_complex_filter: bool,
 }
@@ -30,13 +33,16 @@ impl super::Planner {
     ) -> crate::error::Result<FilterParts> {
         // Relation ID conditions must be evaluated after the join that computes
         // them, so they are stripped from the plan-level filter below.
-        let filter_for_plan = select.filter.as_ref().map(|f| {
+        let filter_for_relation_paths = select.filter.as_ref().map(|f| {
             let (stripped, _) = f.strip_aggregate_alias_conditions(computed_field_names);
             stripped
         });
-        let filter_for_plan = match filter_for_plan {
-            Some(filter) => Some(filter.without_secondary_relation_ids(collection)?),
-            None => None,
+        let (filter_for_plan, nested_secondary_relation_id) = match &filter_for_relation_paths {
+            Some(filter) => {
+                let stripped = filter.without_secondary_relation_ids(collection);
+                (Some(stripped.filter), stripped.nested)
+            }
+            None => (None, false),
         };
 
         // Convert doc_ids to a _docID filter and merge with the explicit filter.
@@ -74,15 +80,18 @@ impl super::Planner {
         };
 
         // Check if filter is complex (has relation conditions inside logical operators)
-        // or has multi-level relation paths (e.g., {author: {published: {rating: ...}}})
-        let is_complex_filter = filter_for_plan
-            .as_ref()
-            .map(|f| {
-                f.is_complex()
-                    || !self.relation_filter_paths(f, collection).is_empty()
-                    || f.has_alias_filter()
-            })
-            .unwrap_or(false);
+        // or has multi-level relation paths (e.g., {author: {published: {rating: ...}}}),
+        // or names a secondary relation ID inside a logical operator: that ID is
+        // known only after its join, so the whole filter runs after the joins.
+        let is_complex_filter = nested_secondary_relation_id
+            || filter_for_plan
+                .as_ref()
+                .map(|f| {
+                    f.is_complex()
+                        || !self.relation_filter_paths(f, collection).is_empty()
+                        || f.has_alias_filter()
+                })
+                .unwrap_or(false);
 
         // Split filter into scalar and relation parts (only useful for non-complex filters)
         // Note: JSON field nested access looks like relation filters structurally, but should
@@ -180,6 +189,7 @@ impl super::Planner {
         Ok(FilterParts {
             scalar_filter,
             relation_filter,
+            filter_for_relation_paths,
             filter_for_plan,
             is_complex_filter,
         })

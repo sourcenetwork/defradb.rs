@@ -602,6 +602,14 @@ With `Book.author` / `Author.written` (`written_books`) and `Book.reviewedBy` / 
 
 A missing relation's ID is null. An explicit ID predicate uses the ordinary null comparison rules, and other conditions on the same missing relation must also match.
 
+# `defra.query.one_to_one.nested_relation_id`: Secondary relation IDs inside logical filters
+
+- **Parents:** ["go.query.one_to_one.filter-relation-id"]
+- **Scenarios:** ["query::one_to_one::with_filter_nested_secondary_relation_id::or_with_secondary_relation_id_matches_related", "query::one_to_one::with_filter_nested_secondary_relation_id::not_with_null_secondary_relation_id_matches_related", "query::one_to_one::with_filter_nested_secondary_relation_id::not_with_related_secondary_relation_id_matches_orphans", "query::one_to_one::with_filter_nested_secondary_relation_id::or_with_secondary_relation_id_and_sibling_matches_either", "query::one_to_one::with_filter_nested_secondary_relation_id::deeply_nested_secondary_relation_id_is_evaluated", "query::one_to_one::with_filter_nested_secondary_relation_id::nested_secondary_relation_id_keeps_selected_relation", "query::one_to_one::with_filter_nested_secondary_relation_id::nested_secondary_relation_id_with_relation_object_filter", "query::one_to_one::with_filter_nested_secondary_relation_id::filtered_relation_selection_does_not_hide_the_parent_id", "query::one_to_one::with_filter_nested_secondary_relation_id::a_relation_path_in_a_dropped_logical_operator_still_gets_its_join", "query::one_to_one::with_filter_nested_secondary_relation_id::and_keeps_its_scalar_conjunct_at_the_scan"]
+
+A secondary relation ID condition (`_publisherID` on `Book` where `Publisher { book: Book @primary }`) is evaluated at any depth of `_and`, `_or` and `_not`, after the relation is resolved, with a missing relation's ID as null: `{_or: [{_publisherID: {_eq: <id>}}, {title: {_eq: "Orphan 2"}}]}` returns the linked book and the matching orphan, and `{_not: {_publisherID: {_eq: null}}}` returns the linked book. The condition combines with sibling scalar and relation object conditions, and the selected `publisher` and `_publisherID` fields are returned unchanged. An `_and` keeps its ID-free conjuncts in the scan filter; only `_or` and `_not` are withheld whole because removing one branch would change their meaning. Such a filter is never refused.
+
+
 # `defra.query.relation_order.filter_other_field`: Ordering by one field of a relation while filtering on another
 
 - **Parents:** ["go.query.one_to_one.order"]
