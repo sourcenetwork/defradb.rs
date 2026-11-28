@@ -200,7 +200,7 @@ pub enum Command {
     /// Dump server-side data
     ServerDump(ServerDumpArgs),
 
-    /// Inspect local database storage.
+    /// Inspect or checkpoint local database storage.
     Storage(StorageArgs),
 }
 

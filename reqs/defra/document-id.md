@@ -4,6 +4,8 @@
 
 A document's ID is `bae-` and a UUIDv5 of the CID of its genesis composite block. That block carries the creator's signature when the create is signed, and its links are the CIDs of the field blocks, each signed in turn. So whoever builds or verifies a signed create knows its ID before it commits, and no path gives the committed document a different one. There are two exceptions. Backup import is one, below. The other is the store upgrade that runs on open: it maps a legacy document whose stored ID is not its genesis's ID to the genesis's ID, and keeps the old ID as an alias. A document created under the current derivation already has its genesis's ID, so the upgrade leaves it alone.
 
+An offline Regolith checkpoint (`defra.backup.checkpoint`) preserves the original stored IDs and genesis blocks when moving a current-format Rust datastore.
+
 # `defra.document.id.node_signed`: A node-signed create commits the ID it returned
 
 - **Parents:** ["defra.document.id"]

@@ -204,6 +204,46 @@ impl RegolithStore {
         &self.inner.path
     }
 
+    /// Copy the persistent store into a directory that does not yet exist.
+    /// Run this administrative operation off database workers. A failed
+    /// checkpoint may leave an incomplete directory.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub async fn checkpoint_to_new_directory(&self, destination: &Path) -> Result<()> {
+        self.ensure_open()?;
+        let directory = std::fs::DirBuilder::new();
+        #[cfg(unix)]
+        let directory = {
+            use std::os::unix::fs::DirBuilderExt;
+            let mut directory = directory;
+            directory.mode(0o700);
+            directory
+        };
+        directory.create(destination).map_err(|error| {
+            if error.kind() == std::io::ErrorKind::AlreadyExists {
+                Error::Backend(format!(
+                    "storage checkpoint destination already exists: {}",
+                    destination.display()
+                ))
+            } else {
+                Error::Backend(format!(
+                    "failed to create checkpoint destination '{}': {error}",
+                    destination.display()
+                ))
+            }
+        })?;
+        self.inner
+            .db
+            .db()
+            .checkpoint(destination)
+            .await
+            .map_err(|error| {
+                Error::Backend(format!(
+                    "failed to checkpoint into '{}': {error}",
+                    destination.display()
+                ))
+            })
+    }
+
     /// The engine, for tests that reach under the adapter.
     #[cfg(test)]
     pub(super) fn engine(&self) -> &OptimisticTransactionDb {
