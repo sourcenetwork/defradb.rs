@@ -154,6 +154,12 @@ impl DefraKademlia {
         );
         Err(ConnectionDenied::new(HeldRedial))
     }
+
+    fn routing_table_is_empty(&mut self) -> bool {
+        self.inner
+            .kbuckets()
+            .all(|bucket| bucket.num_entries() == 0)
+    }
 }
 
 /// Why a Kademlia dial to a just-disconnected peer was not made.
@@ -240,6 +246,7 @@ impl NetworkBehaviour for DefraKademlia {
     }
 
     fn on_swarm_event(&mut self, event: FromSwarm) {
+        let new_listen_addr = matches!(event, FromSwarm::NewListenAddr(_));
         match &event {
             FromSwarm::ConnectionClosed(closed) if closed.remaining_established == 0 => {
                 self.redial_hold.hold(closed.peer_id, Instant::now());
@@ -250,6 +257,13 @@ impl NetworkBehaviour for DefraKademlia {
             _ => {}
         }
         self.inner.on_swarm_event(event);
+        // libp2p schedules a bootstrap on a new listen address while no peer
+        // is connected, and warns when it finds the routing table empty. With
+        // no known peer that bootstrap cannot run: bootstrapping now cancels
+        // it quietly. A peer inserted later schedules its own.
+        if new_listen_addr && self.routing_table_is_empty() {
+            let _ = self.inner.bootstrap();
+        }
     }
 
     fn on_connection_handler_event(

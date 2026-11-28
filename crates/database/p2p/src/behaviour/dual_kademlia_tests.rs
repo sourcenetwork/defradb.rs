@@ -1,6 +1,57 @@
 use libp2p::swarm::{behaviour::DialFailure, DialError};
+use std::fmt;
+use std::sync::Arc;
+use std::time::Duration;
+
+use futures::StreamExt;
+use libp2p::identity::Keypair;
+use libp2p::Transport;
+use regolith::sync::SegQueue;
+use tracing::{
+    field::{Field, Visit},
+    span, Event, Level, Metadata, Subscriber,
+};
 
 use super::*;
+
+#[derive(Default)]
+struct Message(Option<String>);
+
+impl Visit for Message {
+    fn record_debug(&mut self, field: &Field, value: &dyn fmt::Debug) {
+        if field.name() == "message" {
+            self.0 = Some(format!("{value:?}"));
+        }
+    }
+}
+
+struct CaptureWarnings(Arc<SegQueue<String>>);
+
+impl Subscriber for CaptureWarnings {
+    fn enabled(&self, metadata: &Metadata<'_>) -> bool {
+        metadata.level() <= &Level::WARN
+    }
+
+    fn new_span(&self, _: &span::Attributes<'_>) -> span::Id {
+        span::Id::from_u64(1)
+    }
+
+    fn record(&self, _: &span::Id, _: &span::Record<'_>) {}
+
+    fn record_follows_from(&self, _: &span::Id, _: &span::Id) {}
+
+    fn event(&self, event: &Event<'_>) {
+        let mut message = Message::default();
+        event.record(&mut message);
+        if let Some(message) = message.0 {
+            self.0.push(message);
+        }
+    }
+
+    fn enter(&self, _: &span::Id) {}
+
+    fn exit(&self, _: &span::Id) {}
+}
 
 fn held_kademlia(peer: PeerId) -> DefraKademlia {
     let mut kademlia = DefraKademlia::new(PeerId::random(), KademliaNetwork::Wan);
@@ -132,4 +183,57 @@ fn closing_one_of_several_connections_holds_nothing() {
         .expect("Kademlia dials the peer its query wants");
 
     assert!(pending_outbound(&mut kademlia, connection_id, peer).is_ok());
+}
+
+/// A new listen address schedules a bootstrap warning after the Kademlia
+/// throttle. With no peer to query, the wrapper must cancel it first.
+#[nuclei::test]
+async fn a_new_listen_address_with_no_peers_cancels_the_bootstrap_warning() {
+    crate::rt::time::timeout(
+        Duration::from_secs(10),
+        edge::compat(async {
+            let key = Keypair::generate_ed25519();
+            let peer_id = key.public().to_peer_id();
+            let transport = libp2p::core::transport::MemoryTransport::default()
+                .upgrade(libp2p::core::upgrade::Version::V1)
+                .authenticate(libp2p::noise::Config::new(&key).unwrap())
+                .multiplex(libp2p::yamux::Config::default())
+                .boxed();
+            let mut swarm = libp2p::Swarm::new(
+                transport,
+                DefraKademlia::new(peer_id, KademliaNetwork::Wan),
+                peer_id,
+                libp2p::swarm::Config::with_executor(crate::host::transport::Executor::new(
+                    edge::testing::edge(),
+                )),
+            );
+            swarm.listen_on("/memory/1".parse().unwrap()).unwrap();
+
+            let warnings = Arc::new(SegQueue::new());
+            let dispatch = tracing::Dispatch::new(CaptureWarnings(Arc::clone(&warnings)));
+            let mut listening = false;
+            let _ = crate::rt::time::timeout(Duration::from_secs(2), async {
+                loop {
+                    let _ = std::future::poll_fn(|cx| {
+                        tracing::dispatcher::with_default(&dispatch, || swarm.poll_next_unpin(cx))
+                    })
+                    .await;
+                    listening |= swarm
+                        .listeners()
+                        .any(|address| address.to_string().starts_with("/memory/"));
+                }
+            })
+            .await;
+
+            assert!(listening, "the memory transport never started listening");
+            while let Some(warning) = warnings.pop() {
+                assert!(
+                    !warning.contains("Failed to trigger bootstrap"),
+                    "a peerless Kademlia warned after its listen bootstrap: {warning}"
+                );
+            }
+        }),
+    )
+    .await
+    .expect("the Kademlia warning test finished");
 }

@@ -7,6 +7,13 @@ A node started with libp2p networking starts, listens and answers requests when 
 
 Which nameservers the node then uses (the host's accepted lines, or Go's `127.0.0.1:53` and `[::1]:53` fallback, never a public DNS service) is internal to the libp2p transport and no client can observe it, so it is a unit-level contract: the module docs of `crates/database/p2p/src/host/transport/resolver.rs`, its unit tests, and `proofs/lean/DnsResolverFallback.lean`.
 
+# `defra.node.start.peerless_quiet`: A node with no peers starts and stops without warnings
+
+- **Parents:** ["defra"]
+- **Scenarios:** ["crates/entry-points/cli/tests/startup_warnings.rs::peerless_node_starts_and_stops_without_warnings"]
+
+A node started with libp2p networking and no peer to connect to starts, serves a schema add and a write, and stops on SIGTERM without a `WARN` or `ERROR` log, except the host-dependent `a worker setting fell back to a weaker one` and `a thread setting fell back to a weaker one`. Having no known peer is that node's normal state, so its DHT does not log `Failed to trigger bootstrap: No known peers.`; a bootstrap that cannot run is skipped and the next peer the node learns of starts one. Its database opens and its startup reads (NAC state, stored replicators and followed documents) run on the database's worker pool, so it never logs `a storage call ran off the worker pool its store is placed on`. Open migrations stay in bounded pages and await each page's transaction, so they do not run the whole store in one poll. Its P2P host is stopped before the shutdown command is sent, matching the library node; the send to the stopped host is ignored. `crates/database/p2p/src/behaviour/dual_kademlia_tests.rs::a_new_listen_address_with_no_peers_cancels_the_bootstrap_warning` checks the DHT cancellation on a memory transport.
+
 # `defra.node.ffi_peer_keyring`: A C host keeps the node's peer key in its own keyring
 
 - **Parents:** ["defra"]

@@ -16,6 +16,9 @@ pub enum Error {
     #[error("document error: {0}")]
     Document(#[from] document::Error),
 
+    #[error("the database open did not run on its worker pool: {0}")]
+    OpenOffPool(#[source] workers::Error),
+
     #[error("failed to deserialize document at key {key:?}: {source}")]
     DocumentAtKey {
         key: String,

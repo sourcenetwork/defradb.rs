@@ -458,8 +458,22 @@ impl Node {
             edge,
         );
 
+        // The stored replicators and documents are read on the database's
+        // worker pool; the host is told about them here, at the edge.
         let restore_peerstore = database.peerstore();
-        match restore_peerstore.list_replicators().await {
+        let (replicators, documents) = workers::run_on(
+            database.pool(),
+            workers::Target::LeastLoaded,
+            move || async move {
+                (
+                    restore_peerstore.list_replicators().await,
+                    restore_peerstore.load_documents().await,
+                )
+            },
+        )
+        .await
+        .map_err(|e| Error::Server(format!("failed to restore P2P state: {e}")))?;
+        match replicators {
             Ok(entries) => {
                 for (_peer_id_str, data) in entries {
                     if let Ok(rep_info) = p2p::ReplicatorInfo::from_bytes(&data) {
@@ -480,7 +494,7 @@ impl Node {
         }
 
         let mut restored_doc_ids = RapidHashSet::new();
-        if let Ok(doc_ids) = restore_peerstore.load_documents().await {
+        if let Ok(doc_ids) = documents {
             let followed = coordinator.followed_documents();
             for doc_id in &doc_ids {
                 followed.insert(doc_id.clone(), ());
