@@ -36,24 +36,46 @@ pub struct TrackedAbort {
     stop: Arc<Event>,
 }
 
-struct MarkFinished(Arc<AtomicBool>);
+struct FinishedAfterDrop<F> {
+    future: Option<Pin<Box<F>>>,
+    finished: Arc<AtomicBool>,
+}
 
-impl Drop for MarkFinished {
+impl<F> Future for FinishedAfterDrop<F>
+where
+    F: Future<Output = ()>,
+{
+    type Output = ();
+
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        self.future
+            .as_mut()
+            .expect("tracked future is present until drop")
+            .as_mut()
+            .poll(cx)
+    }
+}
+
+impl<F> Drop for FinishedAfterDrop<F> {
     fn drop(&mut self) {
-        self.0.store(true, Ordering::Relaxed);
+        drop(self.future.take());
+        self.finished.store(true, Ordering::Release);
     }
 }
 
 impl TrackedTask {
     pub fn spawn(edge: &Edge, future: impl Future<Output = ()> + MaybeSend + 'static) -> Self {
         let finished = Arc::new(AtomicBool::new(false));
-        let marker = MarkFinished(Arc::clone(&finished));
         let stop = Arc::new(Event::new());
         let stopped = Arc::clone(&stop);
+        // Drop the future before marking it finished, even before the first poll.
+        let finished_after_drop = FinishedAfterDrop {
+            future: Some(Box::pin(future)),
+            finished: Arc::clone(&finished),
+        };
         let handle = edge
             .spawn(async move {
-                let _marker = marker;
-                let _ = select(std::pin::pin!(future), std::pin::pin!(stopped.wait())).await;
+                let _ = select(finished_after_drop, std::pin::pin!(stopped.wait())).await;
             })
             .within(Duration::MAX);
         Self {
@@ -64,7 +86,7 @@ impl TrackedTask {
     }
 
     pub fn is_finished(&self) -> bool {
-        self.finished.load(Ordering::Relaxed)
+        self.finished.load(Ordering::Acquire)
     }
 
     pub fn abort(&self) {
@@ -95,7 +117,7 @@ impl Drop for TrackedTask {
 
 impl TrackedAbort {
     pub fn is_finished(&self) -> bool {
-        self.finished.load(Ordering::Relaxed)
+        self.finished.load(Ordering::Acquire)
     }
 
     pub fn abort(&self) {

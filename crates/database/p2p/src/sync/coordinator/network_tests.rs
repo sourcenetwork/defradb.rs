@@ -1,6 +1,4 @@
-//! Work a pool worker hands the coordinator runs on the network edge: a
-//! worker has no reactor, so spawning there would panic and the work would
-//! never run.
+//! The coordinator submits work from pool workers through its edge handle.
 
 use std::sync::Arc;
 use std::time::Duration;

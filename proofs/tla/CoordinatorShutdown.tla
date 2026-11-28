@@ -19,22 +19,16 @@
 \*   3. it hands the drain to the network edge (try_spawn). The edge either
 \*      runs it as a task of its own, or, when it no longer accepts work,
 \*      hands it back unstarted, and then the winner runs it in place;
-\*   4. the drain (drain_background_tasks) clears the DAG fetch reservations,
-\*      waits until no pruner is at work, takes every handle out of the
-\*      tracked set, and joins them one by one under one shared deadline.
-\*      When the deadline passes it aborts every task still running and
-\*      joins them under a short abort timeout. Then it sends the completion;
-\*   5. every caller waits for the completion: Ok when the drain sent it, an
-\*      error (logged as a warning) when the sender was dropped unsent,
-\*      because the drain was cancelled or panicked.
-\* Meanwhile a late spawn may race the shutdown (spawn_task, spawn_here, or
-\* spawn_pending_dag_fetch): it reads the flag, spawns its task, prunes the
-\* set (takes each handle out, drops the finished ones, puts the live ones
-\* back), puts the new handle in the set, then reads the flag again and
-\* aborts its own task when shutdown has begun. The model checks that pruning
-\* beside this handshake cannot leak live work during shutdown. It does not
-\* prove that registration retires finished handles; that #3469 behaviour is
-\* covered by the coordinator test pending_dag_fetches_retire_finished_handles.
+\*   4. the drain waits for admitted registrations and pruners, clears the
+\*      DAG fetch reservations, and takes the tracked handles. It joins them
+\*      under one deadline, then stops and joins any remaining tasks under a
+\*      short abort timeout. Then it sends the completion;
+\*   5. every caller awaits completion, or sees the sender close if the
+\*      drain was cancelled or panicked.
+\* A registration declares itself active before checking the shutdown flag.
+\* When admitted, it spawns its task, retires finished handles, publishes the
+\* new handle, and leaves. A diagnostics prune uses the same admission window
+\* and can only remove finished handles.
 \*
 \* A tiny example. The edge has closed when shutdown is called. The winner's
 \* try_spawn hands the drain back, so the winner runs it itself: it takes the
@@ -74,8 +68,7 @@
 \*   |                   | is Scope::close, Scope::drain or the runtime's shutdown  |
 \*   | dw                | the drain as an edge task ("edge"), or awaited in place  |
 \*   |                   | by the winner ("here")                                   |
-\*   | DrainCheck        | drain_background_tasks: pending_dag_fetch_tasks.store,   |
-\*   |                   | fence, `while pruning.load() != 0 { yield_now().await }` |
+\*   | DrainCheck        | drain_background_tasks: wait on task_registry_idle if the access count is nonzero |
 \*   | DrainPop          | `while let Some(task) = background_tasks.pop()`          |
 \*   | DrainJoin         | one handle joined under `timeout(deadline - now, ..)`    |
 \*   | DrainDeadline     | `if result.is_err()`: abort.abort() and every            |
@@ -90,15 +83,12 @@
 \*   | life, loc         | a TrackedTask (crates/database/p2p/src/tracked_task.rs): whether  |
 \*   |                   | its future still runs (MarkFinished sets `finished` when |
 \*   |                   | it drops), and where its handle is                       |
-\*   | RegCheck          | spawn_task: `if self.is_shutting_down() { return false }`|
-\*   |                   | (spawn_pending_dag_fetch: the same read in its claim)    |
-\*   | RegSpawn          | spawn_here, spawn_pending_dag_fetch: TrackedTask::spawn  |
-\*   | PruneEnter ..     | prune_finished_tasks, called first by register_task:     |
-\*   | PruneExit         | pruning.fetch_add, the loop over background_tasks.len()  |
-\*   |                   | that pops and re-pushes the live handles,                |
-\*   |                   | pruning.fetch_sub                                        |
-\*   | RegPush,          | register_task: background_tasks.push, fence, re-read of  |
-\*   | RegRecheck        | is_shutting_down, abort.abort()                          |
+\*   | RegEnter, RegCheck | begin_task_registry_access: increment, then check the flag |
+\*   | RegSpawn          | spawn_task, spawn_pending_dag_fetch: TrackedTask::spawn  |
+\*   | PruneLook ..      | prune_finished_tasks: inspect up to the starting length, |
+\*   | PruneBack         | drop finished handles and put live ones back            |
+\*   | RegPush           | register_task: background_tasks.push                    |
+\*   | RegExit           | TaskRegistryAccess::drop: decrement and wake the drain  |
 \*   | SwapFlag          | begin_shutdown's swap (RED: a load, then a store, so two |
 \*   |                   | callers may both win)                                    |
 \*   | AtomicSpawn       | one try_spawn that hands a refused future back (RED: the |
@@ -108,33 +98,28 @@
 \*   | DrainOwnsSender   | the sender popped by the winner and moved into the drain |
 \*   |                   | (RED: left in the shared state and sent at the drain's   |
 \*   |                   | end)                                                     |
-\*   | WaitForPruners    | the `while pruning != 0` wait (RED: none)                |
-\*   | PrunerChecksFlag  | NOT IN THE CODE when this model was written:             |
-\*   |                   | prune_finished_tasks reads is_shutting_down right after  |
-\*   |                   | its fetch_add and leaves the set alone once it is set    |
-\*   |                   | (RED: the code as it stands, which never reads it)       |
-\*   | RecheckAfterPush  | register_task's re-read and abort (RED: none)            |
+\*   | WaitForRegistry   | drain waits for admitted registry access (RED: no wait)  |
+\*   | CheckRegistryFlag | admission reads the flag (RED: admits after shutdown)   |
+\*   | KeepActive        | pruning puts live handles back (RED: drops them)        |
 \*   | AbortAtDeadline   | the shared deadline and the abort path (RED: each handle |
 \*   |                   | joined with no deadline)                                 |
 \*
 \* Gaps, explained:
-\*   * One step of the model is one atomic step of the code. The flag, the
-\*     pruning count and the set are sequentially consistent: the SeqCst
-\*     swap, fetch_add and loads and the two fences make both handshakes
-\*     (the drain against a pruner, the drain against a register_task) work
-\*     like this.
-\*   * The drain takes the whole set in one step; the code pops handles one
-\*     by one. A pruner that pops while those pops run is one that started
-\*     after the drain's check, and with PrunerChecksFlag it leaves the set
-\*     alone, so the one step loses no interleaving that matters.
+\*   * Sequentially consistent atomics order entry, the flag check, and the
+\*     drain's read of the access count. If the drain sees a nonzero count,
+\*     the last exiting access sets a sticky event after shutdown starts.
+\*     A caller arriving after that signal can only increment and back out.
+\*     Waiting until it leaves too cannot change which handles are drained.
+\*   * The drain takes the whole set in one step. In Rust it pops one at a
+\*     time, and the admission check keeps the queue stable from this point.
 \*   * The drain joins the handles in any order; the code joins them in the
 \*     order it popped them. Joining an ended task out of turn only brings
 \*     the drain's end sooner; a task that hangs holds both until the
 \*     deadline.
 \*   * There is no clock. The deadline and the abort timeout may pass at any
 \*     moment of their waits, and fairness says they do pass.
-\*   * Clearing the DAG fetch reservations is not modeled: they hold abort
-\*     handles, not the tasks' futures, and take no part in the loop.
+\*   * Clearing fetch reservations follows the wait. Those entries hold weak
+\*     ownership references, while the tracked set holds the task handles.
 \*   * A drain cancelled from outside (Teardown, CancelWinner) makes no leak
 \*     promise. The handles it already took drop with it, and nuclei cancels
 \*     a task whose handle drops; the handles still in the set (the drain was
@@ -145,18 +130,16 @@
 \*     abort timeout ends the drain all the same.
 \*   * A late task is spawned by one late spawn; a pruner holds one handle
 \*     at a time, as the code does.
-\*   * Retirement of finished handles is not modeled. The Rust code prunes
-\*     on registration, but none of this model's invariants says a finished
-\*     handle leaves the set. The test
-\*     pending_dag_fetches_retire_finished_handles checks that behaviour,
-\*     and this model covers only the shutdown handshake around the prune.
+\*   * The scan abstracts queue order. The tests check retirement counts
+\*     for serial registrations. A diagnostics prune follows the same steps
+\*     as a registration through the scan, without spawning or publishing.
 
 EXTENDS Naturals, FiniteSets
 \* Naturals gives numbers; FiniteSets counts the handles in the set.
 
 CONSTANTS Callers, Tasks, Late, CanKill,
           SwapFlag, AtomicSpawn, RunRefused, DrainOwnsSender,
-          WaitForPruners, PrunerChecksFlag, RecheckAfterPush, AbortAtDeadline
+          WaitForRegistry, CheckRegistryFlag, KeepActive, AbortAtDeadline
 \* Callers are the callers of shutdown. Tasks are the tracked background
 \* tasks: those in Late come from a late spawn that races the shutdown, the
 \* others are in the tracked set from the start. CanKill says whether
@@ -171,31 +154,26 @@ ASSUME /\ Callers # {}
        /\ "none" \notin Tasks
        \* "none" is free to mean "no task";
        /\ \A s \in {CanKill, SwapFlag, AtomicSpawn, RunRefused, DrainOwnsSender,
-                    WaitForPruners, PrunerChecksFlag, RecheckAfterPush,
+                    WaitForRegistry, CheckRegistryFlag, KeepActive,
                     AbortAtDeadline} : s \in BOOLEAN
        \* and every switch is on or off.
 
 VARIABLES flag, edgeOpen, cpc, drains, dr, dw, snd,
-          life, loc, rpc, held, budget, pruning
+          life, loc, rpc, held, budget, accesses
 \* flag: shutdown has begun. edgeOpen: the edge still accepts work. cpc:
 \* where each caller is. drains: how many drains were built. dr: how far the
 \* drain got. dw: where it runs. snd: where the completion sender is. life:
 \* each task's future (running, ended, aborted). loc: where each task's
 \* handle is. rpc: where each late spawn is. held: the handle its pruner has
-\* taken out. budget: how many more handles its pruner may take. pruning:
-\* how many pruners are at work.
+\* taken out. budget: how many more handles its pruner may take. accesses:
+\* how many registrations or pruners are at work.
 
 vars == <<flag, edgeOpen, cpc, drains, dr, dw, snd,
-          life, loc, rpc, held, budget, pruning>>
+          life, loc, rpc, held, budget, accesses>>
 \* Every variable, for the stuttering steps.
 
 Ended == {"finished", "stopped"}
 \* A task whose future is gone: it ended, or was dropped after an abort.
-
-Busy(t) == \/ \E r \in Late : held[r] = t
-           \* a pruner has t's handle out of the set,
-           \/ t \in Late /\ rpc[t] \in {"push", "recheck"}
-           \* or t's spawn has not yet pushed it, or not yet re-read the flag.
 
 TypeOK ==
   \* Every variable holds a value of its kind.
@@ -220,14 +198,14 @@ TypeOK ==
   /\ loc \in [Tasks -> {"none", "hand", "queue", "pruner", "drain", "gone"}]
   \* each handle is nowhere yet, in its spawner's hand, in the set, out with
   \* a pruner, in the drain, or dropped;
-  /\ rpc \in [Late -> {"idle", "enter", "look", "pop", "back", "pexit", "spawn", "push", "recheck", "over"}]
+  /\ rpc \in [Late -> {"idle", "check", "look", "pop", "back", "push", "spawn", "exit", "over"}]
   \* each late spawn is at one of its steps;
   /\ held \in [Late -> Tasks \cup {"none"}]
   \* its pruner has one handle out, or none;
   /\ budget \in [Late -> 0..Cardinality(Tasks)]
   \* it may take at most as many handles as there are;
-  /\ pruning \in 0..Cardinality(Late)
-  \* and at most every late spawn prunes at once.
+  /\ accesses \in 0..Cardinality(Late)
+  \* and each late registration contributes at most one active access.
 
 Init ==
   \* Before shutdown:
@@ -247,7 +225,7 @@ Init ==
   \* the early tasks' handles are in the set;
   /\ rpc = [r \in Late |-> "idle"] /\ held = [r \in Late |-> "none"]
   \* no late spawn has begun, and no pruner has a handle out;
-  /\ budget = [r \in Late |-> 0] /\ pruning = 0
+  /\ budget = [r \in Late |-> 0] /\ accesses = 0
   \* and no pruner is at work.
 
 Build(c) ==
@@ -284,7 +262,7 @@ Call(c) ==
           \* and nothing else changes.
      \* The swap finds it clear: this caller wins.
      ELSE Build(c)
-  /\ UNCHANGED <<edgeOpen, dw, life, loc, rpc, held, budget, pruning>>
+  /\ UNCHANGED <<edgeOpen, dw, life, loc, rpc, held, budget, accesses>>
   \* The edge, the tasks and the late spawns are untouched.
 
 SetFlag(c) ==
@@ -294,7 +272,7 @@ SetFlag(c) ==
   \* it read the flag clear;
   /\ Build(c)
   \* it sets the flag and builds a drain;
-  /\ UNCHANGED <<edgeOpen, dw, life, loc, rpc, held, budget, pruning>>
+  /\ UNCHANGED <<edgeOpen, dw, life, loc, rpc, held, budget, accesses>>
   \* and nothing else changes.
 
 Start(c, w) ==
@@ -337,7 +315,7 @@ Spawn(c) ==
      ELSE IF edgeOpen THEN Start(c, "edge")
      \* or refuses it and hands it back: it runs in place (RED: dropped).
      ELSE IF RunRefused THEN Start(c, "here") ELSE Drop(c)
-  /\ UNCHANGED <<flag, edgeOpen, drains, life, loc, rpc, held, budget, pruning>>
+  /\ UNCHANGED <<flag, edgeOpen, drains, life, loc, rpc, held, budget, accesses>>
   \* The flag, the edge, the tasks and the late spawns are untouched.
 
 SpawnAfterCheck(c) ==
@@ -347,7 +325,7 @@ SpawnAfterCheck(c) ==
   /\ IF edgeOpen THEN Start(c, "edge") ELSE Drop(c)
   \* the edge admits it, or, closed in between, refuses it, and the spawn
   \* drops it;
-  /\ UNCHANGED <<flag, edgeOpen, drains, life, loc, rpc, held, budget, pruning>>
+  /\ UNCHANGED <<flag, edgeOpen, drains, life, loc, rpc, held, budget, accesses>>
   \* and nothing else changes.
 
 InPlaceDone(c) ==
@@ -358,7 +336,7 @@ InPlaceDone(c) ==
   \* the drain returned;
   /\ cpc' = [cpc EXCEPT ![c] = "wait"]
   \* the winner awaits the completion like everyone;
-  /\ UNCHANGED <<flag, edgeOpen, drains, dr, dw, snd, life, loc, rpc, held, budget, pruning>>
+  /\ UNCHANGED <<flag, edgeOpen, drains, dr, dw, snd, life, loc, rpc, held, budget, accesses>>
   \* and nothing else changes.
 
 Await(c) ==
@@ -369,7 +347,7 @@ Await(c) ==
   \* the sender sent, or dropped unsent;
   /\ cpc' = [cpc EXCEPT ![c] = IF snd = "sent" THEN "ok" ELSE "err"]
   \* the caller returns Ok, or logs the error and returns;
-  /\ UNCHANGED <<flag, edgeOpen, drains, dr, dw, snd, life, loc, rpc, held, budget, pruning>>
+  /\ UNCHANGED <<flag, edgeOpen, drains, dr, dw, snd, life, loc, rpc, held, budget, accesses>>
   \* and nothing else changes.
 
 CancelCaller(c) ==
@@ -378,7 +356,7 @@ CancelCaller(c) ==
   \* the caller waits;
   /\ cpc' = [cpc EXCEPT ![c] = "gone"]
   \* its shutdown future is dropped;
-  /\ UNCHANGED <<flag, edgeOpen, drains, dr, dw, snd, life, loc, rpc, held, budget, pruning>>
+  /\ UNCHANGED <<flag, edgeOpen, drains, dr, dw, snd, life, loc, rpc, held, budget, accesses>>
   \* and nothing else changes.
 
 EdgeClose ==
@@ -387,30 +365,30 @@ EdgeClose ==
   \* it accepted work;
   /\ edgeOpen' = FALSE
   \* now it refuses it; what it admitted runs on;
-  /\ UNCHANGED <<flag, cpc, drains, dr, dw, snd, life, loc, rpc, held, budget, pruning>>
+  /\ UNCHANGED <<flag, cpc, drains, dr, dw, snd, life, loc, rpc, held, budget, accesses>>
   \* and nothing else changes.
 
 DrainCheck ==
-  \* The drain's first poll: it clears the fetch reservations, then waits
-  \* until no pruner is at work (RED: does not wait).
+  \* The drain waits until no admitted registration or prune is active.
+  \* In RED it skips the wait.
   /\ dr = "start"
   \* the drain started;
-  /\ pruning = 0 \/ ~WaitForPruners
-  \* no pruner has handles out (RED: whatever pruners do);
+  /\ accesses = 0 \/ ~WaitForRegistry
+  \* registry access has ended (RED: regardless of access);
   /\ dr' = "pop"
   \* it goes on to take the set;
-  /\ UNCHANGED <<flag, edgeOpen, cpc, drains, dw, snd, life, loc, rpc, held, budget, pruning>>
+  /\ UNCHANGED <<flag, edgeOpen, cpc, drains, dw, snd, life, loc, rpc, held, budget, accesses>>
   \* and nothing else changes.
 
 DrainPop ==
   \* The drain takes every handle out of the set.
   /\ dr = "pop"
-  \* it checked the pruners;
+  \* it waited for registry access;
   /\ loc' = [t \in Tasks |-> IF loc[t] = "queue" THEN "drain" ELSE loc[t]]
   \* every handle in the set is now the drain's;
   /\ dr' = "join"
   \* and it starts joining them under the deadline;
-  /\ UNCHANGED <<flag, edgeOpen, cpc, drains, dw, snd, life, rpc, held, budget, pruning>>
+  /\ UNCHANGED <<flag, edgeOpen, cpc, drains, dw, snd, life, rpc, held, budget, accesses>>
   \* and nothing else changes.
 
 DrainJoin(t) ==
@@ -423,7 +401,7 @@ DrainJoin(t) ==
   \* t's future is gone;
   /\ loc' = [loc EXCEPT ![t] = "gone"]
   \* the join returns and the handle is used up;
-  /\ UNCHANGED <<flag, edgeOpen, cpc, drains, dr, dw, snd, life, rpc, held, budget, pruning>>
+  /\ UNCHANGED <<flag, edgeOpen, cpc, drains, dr, dw, snd, life, rpc, held, budget, accesses>>
   \* and nothing else changes.
 
 DrainDeadline ==
@@ -439,7 +417,7 @@ DrainDeadline ==
   \* each task it still holds that runs is aborted;
   /\ dr' = "abort"
   \* and it joins them under the abort timeout;
-  /\ UNCHANGED <<flag, edgeOpen, cpc, drains, dw, snd, loc, rpc, held, budget, pruning>>
+  /\ UNCHANGED <<flag, edgeOpen, cpc, drains, dw, snd, loc, rpc, held, budget, accesses>>
   \* and nothing else changes.
 
 AbortTimeout ==
@@ -450,7 +428,7 @@ AbortTimeout ==
   \* some handle is left;
   /\ loc' = [t \in Tasks |-> IF loc[t] = "drain" THEN "gone" ELSE loc[t]]
   \* every handle left drops (their tasks are aborted already);
-  /\ UNCHANGED <<flag, edgeOpen, cpc, drains, dr, dw, snd, life, rpc, held, budget, pruning>>
+  /\ UNCHANGED <<flag, edgeOpen, cpc, drains, dr, dw, snd, life, rpc, held, budget, accesses>>
   \* and nothing else changes.
 
 DrainReturn ==
@@ -463,7 +441,7 @@ DrainReturn ==
   \* it returned;
   /\ snd' = IF snd \in {"drain", "store"} THEN "sent" ELSE snd
   \* and the sender sends (RED: the drain pops it from the shared state now);
-  /\ UNCHANGED <<flag, edgeOpen, cpc, drains, dw, life, loc, rpc, held, budget, pruning>>
+  /\ UNCHANGED <<flag, edgeOpen, cpc, drains, dw, life, loc, rpc, held, budget, accesses>>
   \* and nothing else changes.
 
 Cancelled ==
@@ -473,7 +451,7 @@ Cancelled ==
   /\ loc' = [t \in Tasks |-> IF loc[t] = "drain" THEN "gone" ELSE loc[t]]
   \* the handles it took drop with it;
   /\ life' = [t \in Tasks |-> IF loc[t] = "drain" /\ life[t] = "live" THEN "aborting" ELSE life[t]]
-  \* and nuclei cancels each task whose handle dropped;
+  \* and the dropped handles signal their tasks to stop;
   /\ snd' = IF snd = "drain" THEN "closed" ELSE snd
   \* the sender it owned drops unsent (RED: one it did not own stays).
 
@@ -488,7 +466,7 @@ Teardown ==
   \* it waits to be polled, for a pruner, or for a task;
   /\ Cancelled
   \* it is cancelled;
-  /\ UNCHANGED <<flag, edgeOpen, cpc, drains, dw, rpc, held, budget, pruning>>
+  /\ UNCHANGED <<flag, edgeOpen, cpc, drains, dw, rpc, held, budget, accesses>>
   \* and nothing else changes.
 
 CancelWinner(c) ==
@@ -500,13 +478,13 @@ CancelWinner(c) ==
   \* c runs the drain;
   /\ \/ dr \in {"join", "abort"}
      \* the drain waits for a task,
-     \/ dr = "start" /\ pruning > 0
-     \* or yields for a pruner;
+     \/ dr = "start" /\ accesses > 0
+     \* or waits for registry access to finish;
   /\ Cancelled
   \* the drain is cancelled;
   /\ cpc' = [cpc EXCEPT ![c] = "gone"]
   \* and the winner leaves;
-  /\ UNCHANGED <<flag, edgeOpen, drains, dw, rpc, held, budget, pruning>>
+  /\ UNCHANGED <<flag, edgeOpen, drains, dw, rpc, held, budget, accesses>>
   \* and nothing else changes.
 
 Finish(t) ==
@@ -515,7 +493,7 @@ Finish(t) ==
   \* t runs;
   /\ life' = [life EXCEPT ![t] = "finished"]
   \* its future returned and dropped;
-  /\ UNCHANGED <<flag, edgeOpen, cpc, drains, dr, dw, snd, loc, rpc, held, budget, pruning>>
+  /\ UNCHANGED <<flag, edgeOpen, cpc, drains, dr, dw, snd, loc, rpc, held, budget, accesses>>
   \* and nothing else changes.
 
 Stop(t) ==
@@ -524,51 +502,44 @@ Stop(t) ==
   \* t was aborted;
   /\ life' = [life EXCEPT ![t] = "stopped"]
   \* its future is dropped;
-  /\ UNCHANGED <<flag, edgeOpen, cpc, drains, dr, dw, snd, loc, rpc, held, budget, pruning>>
+  /\ UNCHANGED <<flag, edgeOpen, cpc, drains, dr, dw, snd, loc, rpc, held, budget, accesses>>
   \* and nothing else changes.
 
-RegCheck(r) ==
-  \* Late spawn r reads the flag before anything else.
+RegEnter(r) ==
+  \* r declares that it wants to use the registry.
   /\ rpc[r] = "idle"
-  \* it has not begun;
-  /\ rpc' = [rpc EXCEPT ![r] = IF flag THEN "over" ELSE "spawn"]
-  \* shutdown has begun: it spawns nothing; otherwise it goes on to spawn;
-  /\ UNCHANGED <<flag, edgeOpen, cpc, drains, dr, dw, snd, life, loc, held, budget, pruning>>
-  \* and nothing else changes.
-
-PruneEnter(r) ==
-  \* r's pruner says it is at work.
-  /\ rpc[r] = "enter"
-  \* r spawned its task and holds its handle;
-  /\ pruning' = pruning + 1
-  \* one more pruner at work;
-  /\ rpc' = [rpc EXCEPT ![r] = "look"]
-  \* it goes on to look at the set;
+  \* it has not started;
+  /\ accesses' = accesses + 1
+  \* the drain can see it now;
+  /\ rpc' = [rpc EXCEPT ![r] = "check"]
+  \* r goes on to read the flag;
   /\ UNCHANGED <<flag, edgeOpen, cpc, drains, dr, dw, snd, life, loc, held, budget>>
   \* and nothing else changes.
 
+RegCheck(r) ==
+  \* r reads the shutdown flag after declaring itself active.
+  /\ rpc[r] = "check"
+  \* it has declared its access;
+  /\ rpc' = [rpc EXCEPT ![r] = IF CheckRegistryFlag /\ flag THEN "exit" ELSE "spawn"]
+  \* it leaves if shutdown started, or proceeds to spawn;
+  /\ UNCHANGED <<flag, edgeOpen, cpc, drains, dr, dw, snd, life, loc, held, budget, accesses>>
+  \* and nothing else changes.
+
 PruneLook(r) ==
-  \* r's pruner reads the flag (RED: it does not) and the size of the set.
+  \* r samples the size of the set after spawning.
   /\ rpc[r] = "look"
-  \* it said it is at work;
-  /\ IF PrunerChecksFlag /\ flag
-     \* Shutdown has begun: the drain may already have taken the set.
-     THEN /\ rpc' = [rpc EXCEPT ![r] = "pexit"]
-          \* it leaves the set alone;
-          /\ UNCHANGED budget
-          \* and takes nothing.
-     \* Otherwise it will take as many handles as the set holds now.
-     ELSE /\ budget' = [budget EXCEPT ![r] = Cardinality({t \in Tasks : loc[t] = "queue"})]
-          \* the set's length;
-          /\ rpc' = [rpc EXCEPT ![r] = "pop"]
-          \* and it starts taking handles.
-  /\ UNCHANGED <<flag, edgeOpen, cpc, drains, dr, dw, snd, life, loc, held, pruning>>
-  \* Nothing else changes.
+  \* r still holds its new handle;
+  /\ budget' = [budget EXCEPT ![r] = Cardinality({t \in Tasks : loc[t] = "queue"})]
+  \* it will take at most the number of handles currently in the set;
+  /\ rpc' = [rpc EXCEPT ![r] = "pop"]
+  \* it starts taking handles;
+  /\ UNCHANGED <<flag, edgeOpen, cpc, drains, dr, dw, snd, life, loc, held, accesses>>
+  \* and nothing else changes.
 
 PrunePop(r) ==
   \* r's pruner takes the next handle out of the set, or stops.
   /\ rpc[r] = "pop"
-  \* it is pruning;
+  \* it is accesses;
   /\ IF budget[r] > 0 /\ \E t \in Tasks : loc[t] = "queue"
      \* There are handles left to take and the set is not empty.
      THEN \E t \in Tasks :
@@ -583,11 +554,11 @@ PrunePop(r) ==
             /\ rpc' = [rpc EXCEPT ![r] = "back"]
             \* and it goes on to look at it.
      \* None left: the pruner stops.
-     ELSE /\ rpc' = [rpc EXCEPT ![r] = "pexit"]
+     ELSE /\ rpc' = [rpc EXCEPT ![r] = "push"]
           \* it goes on to say it is done;
           /\ UNCHANGED <<loc, held, budget>>
           \* and takes nothing.
-  /\ UNCHANGED <<flag, edgeOpen, cpc, drains, dr, dw, snd, life, pruning>>
+  /\ UNCHANGED <<flag, edgeOpen, cpc, drains, dr, dw, snd, life, accesses>>
   \* Nothing else changes.
 
 PruneBack(r) ==
@@ -595,24 +566,13 @@ PruneBack(r) ==
   \* otherwise puts it back in the set.
   /\ rpc[r] = "back"
   \* it holds a handle;
-  /\ loc' = [loc EXCEPT ![held[r]] = IF life[held[r]] \in Ended THEN "gone" ELSE "queue"]
+  /\ loc' = [loc EXCEPT ![held[r]] = IF ~KeepActive \/ life[held[r]] \in Ended THEN "gone" ELSE "queue"]
   \* dropped when finished, back in the set when not;
   /\ held' = [held EXCEPT ![r] = "none"]
   \* the pruner holds nothing;
   /\ rpc' = [rpc EXCEPT ![r] = "pop"]
   \* and it goes on to the next;
-  /\ UNCHANGED <<flag, edgeOpen, cpc, drains, dr, dw, snd, life, budget, pruning>>
-  \* and nothing else changes.
-
-PruneExit(r) ==
-  \* r's pruner says it is done.
-  /\ rpc[r] = "pexit"
-  \* it stopped taking handles;
-  /\ pruning' = pruning - 1
-  \* one fewer pruner at work;
-  /\ rpc' = [rpc EXCEPT ![r] = "push"]
-  \* and r goes on to put its handle in the set;
-  /\ UNCHANGED <<flag, edgeOpen, cpc, drains, dr, dw, snd, life, loc, held, budget>>
+  /\ UNCHANGED <<flag, edgeOpen, cpc, drains, dr, dw, snd, life, budget, accesses>>
   \* and nothing else changes.
 
 RegSpawn(r) ==
@@ -623,9 +583,9 @@ RegSpawn(r) ==
   \* the task runs;
   /\ loc' = [loc EXCEPT ![r] = "hand"]
   \* r holds its handle;
-  /\ rpc' = [rpc EXCEPT ![r] = "enter"]
+  /\ rpc' = [rpc EXCEPT ![r] = "look"]
   \* and goes on to prune the set before it registers the handle;
-  /\ UNCHANGED <<flag, edgeOpen, cpc, drains, dr, dw, snd, held, budget, pruning>>
+  /\ UNCHANGED <<flag, edgeOpen, cpc, drains, dr, dw, snd, held, budget, accesses>>
   \* and nothing else changes.
 
 RegPush(r) ==
@@ -634,21 +594,20 @@ RegPush(r) ==
   \* r pruned and holds the handle;
   /\ loc' = [loc EXCEPT ![r] = "queue"]
   \* it is in the set;
-  /\ rpc' = [rpc EXCEPT ![r] = "recheck"]
-  \* and r goes on to read the flag again;
-  /\ UNCHANGED <<flag, edgeOpen, cpc, drains, dr, dw, snd, life, held, budget, pruning>>
+  /\ rpc' = [rpc EXCEPT ![r] = "exit"]
+  \* and r can leave the registry;
+  /\ UNCHANGED <<flag, edgeOpen, cpc, drains, dr, dw, snd, life, held, budget, accesses>>
   \* and nothing else changes.
 
-RegRecheck(r) ==
-  \* r reads the flag again: shutdown has begun, so it aborts its own task
-  \* (RED: it never looks again).
-  /\ rpc[r] = "recheck"
-  \* r pushed its handle;
-  /\ life' = [life EXCEPT ![r] = IF RecheckAfterPush /\ flag /\ @ = "live" THEN "aborting" ELSE @]
-  \* the task is aborted when shutdown has begun and it still runs;
+RegExit(r) ==
+  \* r leaves after publishing its handle or after being refused.
+  /\ rpc[r] = "exit"
+  \* it has no more registry work;
+  /\ accesses' = accesses - 1
+  \* the drain no longer needs to wait for r;
   /\ rpc' = [rpc EXCEPT ![r] = "over"]
   \* and r is done;
-  /\ UNCHANGED <<flag, edgeOpen, cpc, drains, dr, dw, snd, loc, held, budget, pruning>>
+  /\ UNCHANGED <<flag, edgeOpen, cpc, drains, dr, dw, snd, life, loc, held, budget>>
   \* and nothing else changes.
 
 CallerStep(c) == SetFlag(c) \/ Spawn(c) \/ SpawnAfterCheck(c) \/ InPlaceDone(c) \/ Await(c)
@@ -659,9 +618,8 @@ DrainStep == DrainCheck \/ DrainPop \/ (\E t \in Tasks : DrainJoin(t))
 \* What the drain does, on the edge or in place; it does it whenever it can,
 \* and its deadline and abort timeout do pass.
 
-SpawnStep(r) == RegCheck(r) \/ PruneEnter(r) \/ PruneLook(r) \/ PrunePop(r)
-                \/ PruneBack(r) \/ PruneExit(r) \/ RegSpawn(r) \/ RegPush(r)
-                \/ RegRecheck(r)
+SpawnStep(r) == RegEnter(r) \/ RegCheck(r) \/ RegSpawn(r) \/ PruneLook(r)
+                \/ PrunePop(r) \/ PruneBack(r) \/ RegPush(r) \/ RegExit(r)
 \* What late spawn r does; it does it whenever it can.
 
 World == \/ EdgeClose \/ Teardown
@@ -686,15 +644,13 @@ Spec == /\ Init /\ [][Next]_vars
 \* Nothing is owed by the world: a task may hang forever, an aborted task may
 \* never be dropped, nobody need call, and nothing need cancel anything.
 
+\* Once the drain is over, every task has ended, was aborted, or never ran.
 INV_NoLeak ==
   dr \in {"done", "dropped"} =>
-  \* once the drain is over,
-    \A t \in Tasks : (loc[t] = "queue" /\ ~Busy(t)) => life[t] # "live"
-    \* every handle left in the set, with no late spawn at work on it, is
-    \* that of a task that ended or was aborted.
-\* Promise: once the drain returned (or, in a RED, was dropped unstarted), no
-\* task is left in the tracked set still running, never joined nor aborted,
-\* unless a late spawn is still at work on it.
+    \A t \in Tasks : life[t] # "live"
+
+\* Pruning never discards the handle of a task whose future still runs.
+INV_KeepActive == \A t \in Tasks : life[t] = "live" => loc[t] # "gone"
 
 INV_OneDrain == drains <= 1
 \* Promise: at most one drain is ever started.

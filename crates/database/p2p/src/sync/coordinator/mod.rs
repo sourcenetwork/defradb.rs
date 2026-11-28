@@ -289,9 +289,10 @@ struct SyncShutdownState {
     /// Every retained handle, pending-DAG fetches included; the registry
     /// below keeps only their reservations and generation-scoped leases.
     background_tasks: SegQueue<TrackedTask>,
-    /// Pruners mid-way through popping and re-pushing live handles; the drain
-    /// waits for zero before it takes the queue.
-    pruning: AtomicUsize,
+    /// Registrations admitted before shutdown began. The drain waits for
+    /// zero before it takes the queue, including work queued on the edge.
+    task_registry_accesses: AtomicUsize,
+    task_registry_idle: Event,
     non_authoritative_broadcast_slots: Arc<regolith::sync::Semaphore>,
     non_authoritative_broadcast_high_water: AtomicUsize,
     non_authoritative_broadcast_rejected: AtomicU64,
@@ -304,6 +305,44 @@ struct SyncShutdownState {
     pending_dag_fetch_tasks: Atom<RapidHashMap<Cid, PendingDagFetchTask>>,
     /// Where the coordinator's network work runs.
     network: crate::network::Network,
+}
+
+struct TaskRegistryAccess(Arc<SyncShutdownState>);
+
+impl TaskRegistryAccess {
+    fn register_task(&self, task: TrackedTask) -> bool {
+        self.prune_finished_tasks();
+        let abort = task.abort_handle();
+        self.0.background_tasks.push(task);
+        fence(Ordering::SeqCst);
+        if self.0.is_shutting_down.load(Ordering::SeqCst) {
+            abort.abort();
+            return false;
+        }
+        true
+    }
+
+    fn prune_finished_tasks(&self) {
+        let tasks = &self.0.background_tasks;
+        for _ in 0..tasks.len() {
+            let Some(task) = tasks.pop() else {
+                break;
+            };
+            if !task.is_finished() {
+                tasks.push(task);
+            }
+        }
+    }
+}
+
+impl Drop for TaskRegistryAccess {
+    fn drop(&mut self) {
+        if self.0.task_registry_accesses.fetch_sub(1, Ordering::SeqCst) == 1
+            && self.0.is_shutting_down.load(Ordering::SeqCst)
+        {
+            self.0.task_registry_idle.set();
+        }
+    }
 }
 
 /// Blocks served per wanted CID: near 1 when fetches are exact.
@@ -531,7 +570,8 @@ impl SyncShutdownHandle {
                 shutdown_complete: shutdown_complete.shared(),
                 shutdown_complete_tx,
                 background_tasks: SegQueue::new(),
-                pruning: AtomicUsize::new(0),
+                task_registry_accesses: AtomicUsize::new(0),
+                task_registry_idle: Event::new(),
                 non_authoritative_broadcast_slots: Arc::new(regolith::sync::Semaphore::new(
                     NON_AUTHORITATIVE_BROADCAST_TASK_LIMIT,
                 )),
@@ -617,63 +657,39 @@ impl SyncShutdownHandle {
     where
         F: std::future::Future<Output = ()> + MaybeSend + 'static,
     {
-        if self.is_shutting_down() {
+        // The edge handle can submit from a database worker. Register the
+        // returned task here so shutdown also sees work queued on the edge.
+        let Some(access) = self.begin_task_registry_access() else {
             return false;
-        }
+        };
         // A pool worker (a write's broadcast, a merge's follow-up) has no
         // reactor: the task is registered and run on the network edge.
         let network = self.network();
         if let Some(edge) = network.crossing() {
             let handle = self.clone();
             drop(edge.spawn(async move {
-                handle.spawn_here(future);
+                handle.spawn_here(future, access);
             }));
             return true;
         }
-        self.spawn_here(future)
+        self.spawn_here(future, access)
     }
 
-    fn spawn_here<F>(&self, future: F) -> bool
+    fn spawn_here<F>(&self, future: F, access: TaskRegistryAccess) -> bool
     where
         F: std::future::Future<Output = ()> + MaybeSend + 'static,
     {
-        self.register_task(TrackedTask::spawn(self.network().edge(), future))
+        access.register_task(TrackedTask::spawn(self.network().edge(), future))
     }
 
-    /// Retire finished handles, publish this one, then re-read the shutdown
-    /// flag behind a full fence. Pruning here, on every registration path,
-    /// keeps the retained handles at the live tasks instead of every task
-    /// ever spawned (#1099, #3469). The drain sets the flag, fences, then
-    /// takes the queue, so either it sees this handle or this sees the flag
-    /// and cancels the task itself.
-    fn register_task(&self, task: TrackedTask) -> bool {
-        self.prune_finished_tasks();
-        let abort = task.abort_handle();
-        self.inner.background_tasks.push(task);
-        fence(Ordering::SeqCst);
-        if self.inner.is_shutting_down.load(Ordering::SeqCst) {
-            abort.abort();
-            return false;
-        }
-        true
-    }
-
-    fn prune_finished_tasks(&self) {
-        let inner = &self.inner;
-        inner.pruning.fetch_add(1, Ordering::SeqCst);
-        if inner.is_shutting_down.load(Ordering::SeqCst) {
-            inner.pruning.fetch_sub(1, Ordering::SeqCst);
-            return;
-        }
-        for _ in 0..inner.background_tasks.len() {
-            let Some(task) = inner.background_tasks.pop() else {
-                break;
-            };
-            if !task.is_finished() {
-                inner.background_tasks.push(task);
-            }
-        }
-        inner.pruning.fetch_sub(1, Ordering::SeqCst);
+    fn begin_task_registry_access(&self) -> Option<TaskRegistryAccess> {
+        // Announce before reading the flag so the drain sees every admitted
+        // access, including a registration that has yet to publish its handle.
+        self.inner
+            .task_registry_accesses
+            .fetch_add(1, Ordering::SeqCst);
+        let access = TaskRegistryAccess(Arc::clone(&self.inner));
+        (!self.inner.is_shutting_down.load(Ordering::SeqCst)).then_some(access)
     }
 
     fn try_acquire_non_authoritative_broadcast_slot(
@@ -851,6 +867,7 @@ impl SyncShutdownHandle {
     where
         F: std::future::Future<Output = ()> + MaybeSend + 'static,
     {
+        let access = self.begin_task_registry_access()?;
         let owner = self.pending_dag_work_owner(root_cid);
         let mut claimed = false;
         self.inner.pending_dag_fetch_tasks.rcu(|current| {
@@ -897,7 +914,7 @@ impl SyncShutdownHandle {
         });
         // Keep the slot live until Running is installed even if the spawned
         // future completes before this thread finishes its registration.
-        let accepted = self.register_task(task);
+        let accepted = access.register_task(task);
         drop(owner);
         accepted.then_some(abort)
     }
@@ -906,7 +923,9 @@ impl SyncShutdownHandle {
     /// handles first so a burst of completed tasks does not overstate live
     /// work between registrations.
     pub fn retained_task_count(&self) -> usize {
-        self.prune_finished_tasks();
+        if let Some(access) = self.begin_task_registry_access() {
+            access.prune_finished_tasks();
+        }
         let reservations = self.inner.pending_dag_fetch_tasks.peek(|tasks| {
             tasks
                 .values()
@@ -917,13 +936,12 @@ impl SyncShutdownHandle {
     }
 
     async fn drain_background_tasks(&self, timeout: Duration) {
+        if self.inner.task_registry_accesses.load(Ordering::SeqCst) != 0 {
+            self.inner.task_registry_idle.wait().await;
+        }
         self.inner
             .pending_dag_fetch_tasks
             .store(RapidHashMap::new());
-        fence(Ordering::SeqCst);
-        while self.inner.pruning.load(Ordering::SeqCst) != 0 {
-            crate::rt::yield_now().await;
-        }
         let mut handles = Vec::new();
         while let Some(task) = self.inner.background_tasks.pop() {
             handles.push(task);
@@ -2061,6 +2079,10 @@ mod shutdown_tests {
     #[nuclei::test(threads = 0)]
     async fn pending_dag_fetches_retire_finished_handles() {
         let shutdown = SyncShutdownHandle::new(4, test_network());
+        let active_root = Cid::new_v1(0x55, Code::Sha2_256.digest(b"active-root"));
+        let active = shutdown
+            .spawn_pending_dag_fetch(active_root, std::future::pending())
+            .expect("the long-running fetch is admitted");
         let completed = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         for index in 0..50u32 {
             let root = Cid::new_v1(0x55, Code::Sha2_256.digest(&index.to_be_bytes()));
@@ -2083,12 +2105,16 @@ mod shutdown_tests {
             .spawn_pending_dag_fetch(root, std::future::pending())
             .is_some());
 
-        let held = shutdown.inner.background_tasks.len();
-        assert!(
-            held <= 2,
-            "finished fetch handles must be retired on registration, held {held}"
-        );
+        assert_eq!(shutdown.inner.background_tasks.len(), 2);
+        assert!(!active.is_finished(), "pruning stopped a live fetch");
+        assert!(shutdown
+            .spawn_pending_dag_fetch(active_root, async {})
+            .is_none());
         shutdown.shutdown().await;
+        assert!(
+            active.is_finished(),
+            "shutdown returned before the live fetch stopped"
+        );
     }
 
     #[nuclei::test(threads = 0)]
