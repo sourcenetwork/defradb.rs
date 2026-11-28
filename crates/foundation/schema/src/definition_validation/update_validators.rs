@@ -294,7 +294,7 @@ pub(super) fn validate_indexes_not_modified(
             continue;
         }
 
-        if new_col.indexes != old_col.indexes {
+        if new_col.indexes != old_col.indexes && !super::chunk_embedding_switch(old_col, new_col) {
             errs.push(format!(
                 "collection indexes cannot be mutated. CollectionID: {}",
                 new_col.version_id

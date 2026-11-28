@@ -141,6 +141,7 @@ fn embedding_keys(
             model: resolved_config.model.to_string(),
             api_key: embedding_config.api_key.clone(),
             text: source_text(embedding, doc),
+            generation: doc.collection().embedding_generation.clone(),
         };
         wanted.push((
             embedding.field_name.clone(),
@@ -242,6 +243,8 @@ struct PreparedEmbeddingRequest {
     model: String,
     api_key: String,
     text: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    generation: Option<String>,
 }
 
 pub(crate) fn prepared_embedding_request(
@@ -260,6 +263,7 @@ pub(crate) fn prepared_embedding_request(
         model: resolved.model.to_string(),
         api_key: config.api_key.clone(),
         text: source_text(embedding, doc),
+        generation: doc.collection().embedding_generation.clone(),
     };
     let bytes = serde_json::to_vec(&request).map_err(|error| error.to_string())?;
     Ok(query::prepared::PreparedInputRequest::new(
@@ -297,6 +301,7 @@ pub(crate) struct EmbeddingInput {
     pub model: String,
     pub api_key: String,
     pub text: String,
+    pub generation: Option<String>,
 }
 
 impl EmbeddingInput {
@@ -310,6 +315,7 @@ impl EmbeddingInput {
             model: request.model,
             api_key: request.api_key,
             text: request.text,
+            generation: request.generation,
         })
     }
 }
@@ -391,6 +397,7 @@ fn query_input(
         model: model.to_string(),
         api_key: embedding_config.api_key.clone(),
         text: text.to_string(),
+        generation: None,
     })
 }
 

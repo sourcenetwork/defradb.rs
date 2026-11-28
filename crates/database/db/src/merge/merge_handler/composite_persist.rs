@@ -85,6 +85,18 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
             .validate_write_definition_read(datastore, false)
             .await
             .map_err(MergeError::Database)?;
+        if Self::crosses_chunk_embedding_generation(
+            systemstore,
+            collection,
+            &active_version,
+            &stored_definition,
+        )
+        .await?
+        {
+            return Ok(Some(MergeOutcome::retryable_skip(
+                "the chunk's embedding generation is inactive",
+            )));
+        }
         if self
             .composite_merge_hook()
             .is_some_and(|hook| hook.supports_transactions())

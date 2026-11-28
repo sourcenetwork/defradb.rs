@@ -116,4 +116,22 @@ pub(super) const PROPERTIES: &[Property] = &[
         tiers: &[Boundary],
         bound_by: "",
     },
+    Property {
+        family: "Text chunking",
+        name: "Prepared / SingleGeneration / AuthorizedPreparation",
+        axis: Tla,
+        anchor: "crates/database/db/src/definition/patch/mod.rs DB::patch_collection; crates/database/db/src/definition/patch/embedding_switch.rs DB::switch_chunk_embeddings, DB::authorize_embedding_switch; crates/database/db/src/merge/merge_handler/stale_version.rs crosses_chunk_embedding_generation",
+        model_ref: "MC_ChunkEmbeddingSwitch_Green.cfg / MC_ChunkEmbeddingSwitch_Green_Denied.cfg / MC_ChunkEmbeddingSwitch_Red_NoAccessCheck.cfg / MC_ChunkEmbeddingSwitch_Red_NoVectors.cfg / MC_ChunkEmbeddingSwitch_Red_KeepOld.cfg / MC_ChunkEmbeddingSwitch_Red_Replay.cfg",
+        tiers: &[Boundary],
+        bound_by: "tools/integration-test/tests/testo/chunk/embed_switch.rs switch_replaces_searchable_chunks, wrong_dimensions_keep_the_old_generation, provider_failure_keeps_the_old_generation, a_protected_source_requires_bulk_read_authority",
+    },
+    Property {
+        family: "Text chunking",
+        name: "replacement_preserves_content / read_commitment",
+        axis: Lean,
+        anchor: "crates/database/db/src/definition/patch/embedding_switch.rs DB::switch_chunk_embeddings; crates/database/db/src/chunk/sync/write.rs chunk_document",
+        model_ref: "ChunkSplit.EmbeddingSwitch (lake build)",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
 ];

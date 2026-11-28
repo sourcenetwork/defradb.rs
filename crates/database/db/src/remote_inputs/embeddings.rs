@@ -67,6 +67,7 @@ impl PartialEq for Embedding {
         self.endpoint.provider == other.endpoint.provider
             && self.endpoint.url == other.endpoint.url
             && self.endpoint.model == other.endpoint.model
+            && self.input.generation == other.input.generation
             && self.digest == other.digest
             && self.fresh == other.fresh
     }
@@ -82,6 +83,7 @@ impl Hash for Embedding {
         self.endpoint.provider.hash(state);
         self.endpoint.url.hash(state);
         self.endpoint.model.hash(state);
+        self.input.generation.hash(state);
         self.digest.hash(state);
         self.fresh.hash(state);
     }

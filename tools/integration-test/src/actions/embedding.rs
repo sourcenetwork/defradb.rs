@@ -17,7 +17,7 @@ use crate::test_case::State;
 pub const EMBEDDING_CAPTURE: &str = "embedding";
 /// The words the model's vectors count, one dimension each.
 pub const EMBEDDING_WORDS: [&str; 3] = ["rivers", "engines", "music"];
-const MODEL_CAPTURE: &str = "embeddingModel";
+pub const MODEL_CAPTURE: &str = "embeddingModel";
 const SEEN_CAPTURE: &str = "embeddingSeen";
 
 /// What the model answers for `text`: how often each of [`EMBEDDING_WORDS`]
@@ -79,9 +79,13 @@ fn answer(mut stream: TcpStream) {
     }
     let request: Value = serde_json::from_slice(&body).unwrap_or_default();
     let name = request["model"].as_str().unwrap_or_default().to_owned();
+    let prompt = request["prompt"].as_str();
     let texts: Vec<String> = match &request["input"] {
         Value::String(text) => vec![text.clone()],
-        other => serde_json::from_value(other.clone()).unwrap_or_default(),
+        other => match prompt {
+            Some(text) => vec![text.to_owned()],
+            None => serde_json::from_value(other.clone()).unwrap_or_default(),
+        },
     };
     if model().failing.load_clone().contains(&name) {
         let _ = write!(
@@ -100,7 +104,11 @@ fn answer(mut stream: TcpStream) {
         .enumerate()
         .map(|(index, text)| json!({ "index": index, "embedding": embedding_of(text) }))
         .collect();
-    let body = json!({ "data": data }).to_string();
+    let body = match prompt {
+        Some(_) => json!({ "embedding": [0.0, 2.0] }),
+        None => json!({ "data": data }),
+    }
+    .to_string();
     let _ = write!(
         stream,
         "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",

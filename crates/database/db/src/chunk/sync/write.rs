@@ -91,12 +91,12 @@ where
 
     /// Sets the chunk's vectors from the memo, or returns the first request
     /// it lacks. Every miss is noted in the memo, so one wave answers them all.
-    pub(super) fn embed(
+    pub(crate) fn embed(
         &self,
-        target: &ChunkCollection,
+        collection: &Collection,
         doc: &mut Document,
     ) -> Result<Option<PreparedInputRequest>> {
-        let embeddings = &target.collection.schema().vector_embeddings;
+        let embeddings = &collection.schema().vector_embeddings;
         if embeddings.is_empty() {
             return Ok(None);
         }
@@ -105,7 +105,7 @@ where
         let inputs = self.prepared_inputs.ok_or_else(|| {
             QueryError::execution(format!(
                 "{} needs its embeddings prepared before the transaction",
-                target.collection.name()
+                collection.name()
             ))
         })?;
         let config = self.db.options().embedding_config();
@@ -121,7 +121,7 @@ where
                 };
                 return Err(QueryError::execution(format!(
                     "a chunk embedding needs a {missing}: set it on the @embedding or in the node's embedding config. Field: {}.{}",
-                    target.collection.name(),
+                    collection.name(),
                     embedding.field_name
                 )));
             }
@@ -140,7 +140,7 @@ where
         }
     }
 
-    pub(super) async fn create(
+    pub(crate) async fn create(
         &self,
         target: &ChunkCollection,
         parent: &str,
@@ -238,7 +238,7 @@ where
         })
     }
 
-    pub(super) async fn delete(
+    pub(crate) async fn delete(
         &self,
         target: &ChunkCollection,
         doc_short_id: u64,

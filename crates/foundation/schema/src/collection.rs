@@ -208,6 +208,14 @@ pub struct CollectionVersion {
     #[serde(rename = "ChunkOf", default, skip_serializing_if = "Option::is_none")]
     pub chunk_of: Option<ChunkSource>,
 
+    /// Commitment carried by a chunk collection version that replaces its vectors.
+    #[serde(
+        rename = "EmbeddingGeneration",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub embedding_generation: Option<String>,
+
     /// Sequential short ID for storage prefixes (matches Go's monotonic counter).
     ///
     /// Not serialized — stored separately in system store at /collection/shortID/{collection_id}.
@@ -266,6 +274,7 @@ impl CollectionVersion {
             vector_embeddings: Vec::new(),
             chunked_fields: Vec::new(),
             chunk_of: None,
+            embedding_generation: None,
             root_id: 0,
         }
     }

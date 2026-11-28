@@ -454,6 +454,7 @@ impl TryFrom<&Ipld> for CollectionDefinitionDeltaPayload {
                 }
                 None => Vec::new(),
             },
+            embedding_generation: parse_optional_string(map, "embeddingGeneration")?,
             chunk_of: map
                 .get("chunkOf")
                 .map(ChunkOfDelta::try_from)

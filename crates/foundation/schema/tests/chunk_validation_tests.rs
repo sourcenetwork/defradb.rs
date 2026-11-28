@@ -353,12 +353,12 @@ fn embedding(field: &str, source: &str, model: &str) -> schema::VectorEmbeddingD
 }
 
 #[test]
-fn changing_a_chunk_collections_embedding_is_refused() {
+fn removing_or_retargeting_a_chunk_collections_embedding_is_refused() {
     let mut embedded = chunk();
     embedded
         .vector_embeddings
         .push(embedding("body_v", "text", "m1"));
-    for patched in [vec![], vec![embedding("body_v", "text", "m2")]] {
+    for patched in [vec![], vec![embedding("another_v", "text", "m2")]] {
         let mut changed = embedded.clone();
         changed.vector_embeddings = patched;
         let err = check(vec![article(), embedded.clone()], vec![article(), changed]).unwrap_err();
