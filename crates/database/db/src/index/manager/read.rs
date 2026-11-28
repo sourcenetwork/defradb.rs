@@ -56,7 +56,7 @@ impl IndexManager {
         }
         let (mut hidden, mut added) = (Vec::new(), Vec::new());
         let prefix = IndexDataStoreKey::index_prefix(self.collection_short_id, desc.id);
-        let mut live_docs = LiveDocs::new(collection, datastore, systemstore, lens_store);
+        let mut live_docs = LiveDocs::for_read(collection, datastore, systemstore, lens_store);
         for doc in owed {
             let record = index_position_key(self.collection_short_id, desc.id, doc);
             // It only says which stored keys to hide at this snapshot, so a
