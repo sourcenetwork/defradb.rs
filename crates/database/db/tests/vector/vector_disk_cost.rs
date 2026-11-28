@@ -9,7 +9,7 @@
 //! PHASE=build N=100000 DIR=/path/bench ENGINES=diskann,hnsw,ivfpq \
 //!   cargo test --release -p db --test vector -- vector_disk_cost --ignored --nocapture
 //! sync; echo 3 | sudo tee /proc/sys/vm/drop_caches
-//! PHASE=query DIR=/path/bench ENGINE=diskann|resident|hnsw|ivfpq EFFORT=100 \
+//! PHASE=query DIR=/path/bench ENGINE=diskann|resident|clustered|hnsw|ivfpq EFFORT=100 \
 //!   PROFILE=server|embedded cargo test --release -p db --test vector -- \
 //!   vector_disk_cost --ignored --nocapture
 //! ```
@@ -23,6 +23,11 @@
 //! `queries.f32`) unmeasured, so pass 0 is warm on queries it has not seen.
 //! A build with `SPLIT=1` writes the resident layout into its own store,
 //! `db-resident`, which a query process opens with `DB=db-resident`.
+//!
+//! `ENGINE=resident` reads records keyed by id, the layout written before
+//! clusters, converted from the build with codes. `ENGINE=clustered` reads
+//! the resident layout a resident-codes build writes itself, records keyed by
+//! cluster: `ENGINES=clustered` builds it, into `db-clustered` with `SPLIT=1`.
 //! `tools/vector-bench` holds the corpus converter, the memory-capped runner,
 //! the warm-up query generator and the usearch reference.
 //!
@@ -60,6 +65,7 @@ const RECORDS: u32 = 1;
 const RESIDENT: u32 = 2;
 const HNSW: u32 = 3;
 const IVFPQ: u32 = 4;
+const CLUSTERED: u32 = 5;
 
 type Aux = Vec<(u8, Vec<u8>, Vec<u8>)>;
 
@@ -274,6 +280,51 @@ async fn build_diskann(
     write(resident_store, RESIDENT, &nodes, &resident, &log, None).await;
 }
 
+/// Builds the graph with resident codes from the start, as an index created
+/// with `residentCodes` does, so its records are keyed by cluster. `LIVE` and
+/// `PENDING` mean what they do for [`build_diskann`].
+async fn build_clustered(vectors: &[Vec<f32>], store: &RegolithStore) {
+    let start = Instant::now();
+    let mut engine =
+        DiskAnn::try_new(MemoryNodeStore::new(), Metric::Cosine, params(true), 7).unwrap();
+    let live: usize = env("LIVE", "0").parse().unwrap();
+    let pending: usize = env("PENDING", "0").parse().unwrap();
+    let merged = vectors.len() - pending;
+    let (mut merges, mut merging) = (0, std::time::Duration::ZERO);
+    let mut trained = false;
+    for (i, v) in vectors.iter().enumerate() {
+        engine.insert(NodeId(i as u64 + 1), v).await.unwrap();
+        let n = i + 1;
+        let due = live > 0 && n < merged && (!trained || n % live == 0);
+        if n == merged || due {
+            let started = Instant::now();
+            while engine.should_build().await.unwrap() {
+                engine.build().await.unwrap();
+                merges += 1;
+            }
+            if trained {
+                merging += started.elapsed();
+            }
+            trained = trained || engine.state().await.unwrap().is_some();
+        }
+    }
+    let (nodes, aux, log, _) = snapshot(engine.store()).await;
+    let mut clusters = std::collections::BTreeSet::new();
+    for (kind, key, _) in &aux {
+        if *kind == codec::GRAPH && key.len() == 12 {
+            clusters.insert(key[..4].to_vec());
+        }
+    }
+    eprintln!(
+        "BUILD clustered live={live} pending={pending} merges={merges} merging={merging:.1?} \
+         clusters={} in {:.1?}",
+        clusters.len(),
+        start.elapsed()
+    );
+    drop(engine);
+    write(store, CLUSTERED, &nodes, &aux, &log, None).await;
+}
+
 async fn build_hnsw(vectors: &[Vec<f32>], store: &RegolithStore) {
     let start = Instant::now();
     let mut engine = Hnsw::new(
@@ -356,19 +407,24 @@ async fn build(n: usize, q: usize, dims: usize, dir: &Path) {
 
     let store =
         RegolithStore::open_with_options(dir.join("db"), RegolithStoreOptions::new()).unwrap();
-    let split = std::env::var("SPLIT").is_ok().then(|| {
-        RegolithStore::open_with_options(dir.join("db-resident"), RegolithStoreOptions::new())
-            .unwrap()
-    });
+    let split = std::env::var("SPLIT").is_ok();
+    let open_split = |name: &str| {
+        split.then(|| {
+            RegolithStore::open_with_options(dir.join(name), RegolithStoreOptions::new()).unwrap()
+        })
+    };
+    let resident = open_split("db-resident");
+    let clustered = open_split("db-clustered");
     for engine in env("ENGINES", "diskann,hnsw,ivfpq").split(',') {
         match engine {
-            "diskann" => build_diskann(&vectors, &store, split.as_ref().unwrap_or(&store)).await,
+            "diskann" => build_diskann(&vectors, &store, resident.as_ref().unwrap_or(&store)).await,
+            "clustered" => build_clustered(&vectors, clustered.as_ref().unwrap_or(&store)).await,
             "hnsw" => build_hnsw(&vectors, &store).await,
             "ivfpq" => build_ivfpq(&vectors, &store).await,
             other => panic!("unknown engine {other}"),
         }
     }
-    if let Some(split) = split {
+    for split in [resident, clustered].into_iter().flatten() {
         split.close().await.ok();
     }
     store.close().await.ok();
@@ -413,6 +469,13 @@ macro_rules! with_engine {
             }
             "resident" => {
                 let kv = KvNodeStore::new($txn, COLLECTION, RESIDENT, 0);
+                let $e = DiskAnn::try_new(kv, Metric::Cosine, params(true), 7)
+                    .unwrap()
+                    .with_codes($codes.clone());
+                $body
+            }
+            "clustered" => {
+                let kv = KvNodeStore::new($txn, COLLECTION, CLUSTERED, 0);
                 let $e = DiskAnn::try_new(kv, Metric::Cosine, params(true), 7)
                     .unwrap()
                     .with_codes($codes.clone());

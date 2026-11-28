@@ -25,7 +25,17 @@
 //!
 //! ```text
 //! Record   4 neighbor count  per neighbor: 8 id
-//! Code     m code of a node in the graph
+//! Code     m code of a node in the graph  [4 cluster]
+//! ```
+//!
+//! A resident-codes record is keyed by its cluster, then its id, so the
+//! records of a cluster sort together and one page read serves several hops
+//! of a walk. The cluster is the last four bytes of the node's code value;
+//! a node written before clusters has neither, and its record stays keyed by
+//! its id alone:
+//!
+//! ```text
+//! Key      [4 cluster big-endian]  8 id big-endian
 //! ```
 //!
 //! What training fixes and what a merge changes are separate keys: an insert
@@ -160,6 +170,85 @@ pub struct Record {
 
 pub fn record_key(id: NodeId) -> [u8; 8] {
     id.0.to_be_bytes()
+}
+
+/// The bits a cluster tag keeps, so no tag is [`NO_CLUSTER`].
+pub const CLUSTER_TAG_MASK: u32 = 0x7fff_ffff;
+
+/// What an in-memory code slot holds for a node without a cluster.
+pub const NO_CLUSTER: u32 = u32::MAX;
+
+/// The tag of the cluster `founder` starts: its id cut to 31 bits. Two
+/// founders can share a tag, which only puts their clusters side by side:
+/// every key still carries the full id.
+pub fn cluster_tag(founder: NodeId) -> u32 {
+    (founder.0 as u32) & CLUSTER_TAG_MASK
+}
+
+/// A graph record's key: the cluster tag then the id, or the id alone for a
+/// node without a cluster.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GraphKey {
+    bytes: [u8; 12],
+    len: usize,
+}
+
+impl std::ops::Deref for GraphKey {
+    type Target = [u8];
+
+    fn deref(&self) -> &[u8] {
+        &self.bytes[..self.len]
+    }
+}
+
+pub fn graph_key(id: NodeId, cluster: Option<u32>) -> GraphKey {
+    let mut bytes = [0u8; 12];
+    match cluster {
+        Some(tag) => {
+            bytes[..4].copy_from_slice(&tag.to_be_bytes());
+            bytes[4..].copy_from_slice(&id.0.to_be_bytes());
+            GraphKey { bytes, len: 12 }
+        }
+        None => {
+            bytes[..8].copy_from_slice(&id.0.to_be_bytes());
+            GraphKey { bytes, len: 8 }
+        }
+    }
+}
+
+/// The id a graph record's key names, in either layout.
+pub fn graph_id(key: &[u8]) -> Result<NodeId> {
+    match key.len() {
+        12 => id_from_key(&key[4..]),
+        _ => id_from_key(key),
+    }
+}
+
+/// A resident code's stored value: the code, then its cluster tag if it has
+/// one.
+pub fn encode_code(code: &[u8], cluster: Option<u32>) -> Vec<u8> {
+    let mut buf = Vec::with_capacity(code.len() + 4);
+    buf.extend_from_slice(code);
+    if let Some(tag) = cluster {
+        buf.extend_from_slice(&tag.to_le_bytes());
+    }
+    buf
+}
+
+/// The code of `m` bytes and the cluster a stored code value holds.
+pub fn decode_code(bytes: &[u8], m: usize) -> Result<(&[u8], Option<u32>)> {
+    if bytes.len() == m {
+        return Ok((bytes, None));
+    }
+    if bytes.len() != m + 4 {
+        return Err(invalid("DISKANN code has the wrong width"));
+    }
+    let (code, tag) = bytes.split_at(m);
+    let tag = u32::from_le_bytes(tag.try_into().unwrap());
+    if tag > CLUSTER_TAG_MASK {
+        return Err(invalid("DISKANN code names an impossible cluster"));
+    }
+    Ok((code, Some(tag)))
 }
 
 pub fn id_from_key(key: &[u8]) -> Result<NodeId> {

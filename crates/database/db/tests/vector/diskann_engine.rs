@@ -304,10 +304,22 @@ fn a_dot_product_metric_is_refused() {
     assert!(err.to_string().contains("squared distance"), "got: {err}");
 }
 
-/// Counts graph-record reads: one per node a walk expands.
-struct Counting {
-    inner: MemoryNodeStore,
-    record_reads: std::sync::atomic::AtomicUsize,
+/// Counts graph-record reads: one per node a walk expands, and how many of
+/// them found a record.
+pub struct Counting {
+    pub inner: MemoryNodeStore,
+    pub record_reads: std::sync::atomic::AtomicUsize,
+    pub record_hits: std::sync::atomic::AtomicUsize,
+}
+
+impl Counting {
+    pub fn new(inner: MemoryNodeStore) -> Self {
+        Self {
+            inner,
+            record_reads: Default::default(),
+            record_hits: Default::default(),
+        }
+    }
 }
 
 #[async_trait::async_trait]
@@ -347,11 +359,16 @@ impl VectorNodeStore for Counting {
         kind: u8,
         key: &[u8],
     ) -> db::index::error::Result<Option<bytes::Bytes>> {
+        let value = self.inner.get_aux(kind, key).await?;
         if kind == codec::GRAPH {
             self.record_reads
                 .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            self.record_hits.fetch_add(
+                usize::from(value.is_some()),
+                std::sync::atomic::Ordering::Relaxed,
+            );
         }
-        self.inner.get_aux(kind, key).await
+        Ok(value)
     }
     async fn put_aux(
         &mut self,
@@ -427,10 +444,7 @@ fn a_walk_is_bounded_even_along_an_ever_closer_chain() {
         use std::sync::atomic::Ordering;
 
         let (vectors, queries) = corpus();
-        let store = Counting {
-            inner: MemoryNodeStore::new(),
-            record_reads: Default::default(),
-        };
+        let store = Counting::new(MemoryNodeStore::new());
         let mut index = DiskAnn::try_new(store, Metric::Cosine, params(), SEED).unwrap();
         for (i, vector) in vectors.iter().enumerate() {
             index.insert(NodeId(i as u64 + 1), vector).await.unwrap();

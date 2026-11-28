@@ -9,6 +9,7 @@ use rapidhash::{HashSetExt, RapidHashSet};
 use super::codec::{self, GraphState, Record};
 use super::graph::decode;
 use super::params::{CONSOLIDATE_MIN_DELETED, MAX_PLAN_PENDING, MERGE_MIN_BATCH};
+use super::record::ClusterSizes;
 use super::DiskAnn;
 use crate::index::error::{Error, Result};
 use crate::index::vector::quantize::{ProductQuantizer, Quantizer};
@@ -133,7 +134,7 @@ impl<S: VectorNodeStore> DiskAnn<S> {
         let mut affected = Vec::new();
         self.store()
             .iterate_aux(codec::GRAPH, b"", |key, value| {
-                let id = codec::id_from_key(key)?;
+                let id = codec::graph_id(key)?;
                 if deleted.contains(&id) {
                     return Ok(());
                 }
@@ -146,6 +147,9 @@ impl<S: VectorNodeStore> DiskAnn<S> {
             .await?;
         let mut deleted: Vec<NodeId> = deleted.into_iter().collect();
         deleted.sort();
+        // Clustered keys scan in cluster order; id order keeps the first
+        // affected node, a deleted entry's replacement, what it was.
+        affected.sort();
         Ok(MergePlan {
             pending,
             through,
@@ -181,8 +185,9 @@ impl<S: VectorNodeStore> DiskAnn<S> {
         }
 
         let slice = MERGE_MIN_BATCH.max(graph.live as usize / 10);
+        let mut sizes = ClusterSizes::default();
         for ids in plan.pending.chunks(slice) {
-            self.merge_slice(&pq, &mut graph, ids).await?;
+            self.merge_slice(&pq, &mut graph, &mut sizes, ids).await?;
         }
         graph.generation += 1;
         self.put_graph_state(&graph).await?;
@@ -207,6 +212,7 @@ impl<S: VectorNodeStore> DiskAnn<S> {
         &mut self,
         pq: &ProductQuantizer,
         graph: &mut GraphState,
+        sizes: &mut ClusterSizes,
         ids: &[NodeId],
     ) -> Result<()> {
         // Insert phase: link each node, buffering the back-edges it is owed
@@ -221,7 +227,7 @@ impl<S: VectorNodeStore> DiskAnn<S> {
             }
             let mut code = vec![0u8; pq.code_len()];
             pq.encode(&node.vector, &mut code);
-            for (neighbor, _) in self.link(pq, graph, id, &node.vector, &code).await? {
+            for (neighbor, _) in self.link(pq, graph, sizes, id, &node.vector, &code).await? {
                 owed.entry(neighbor).or_default().push((id, code.clone()));
             }
         }
@@ -267,7 +273,7 @@ impl<S: VectorNodeStore> DiskAnn<S> {
             if deleted.contains(&id) {
                 continue;
             }
-            let Some(record) = self.record(m, id).await? else {
+            let Some((record, cluster)) = self.record(m, id).await? else {
                 continue;
             };
             let mut edges = Vec::with_capacity(record.neighbors.len());
@@ -276,7 +282,7 @@ impl<S: VectorNodeStore> DiskAnn<S> {
                     edges.push((neighbor, code));
                     continue;
                 }
-                if let Some(gone) = self.record(m, neighbor).await? {
+                if let Some((gone, _)) = self.record(m, neighbor).await? {
                     edges.extend(
                         gone.neighbors
                             .into_iter()
@@ -288,6 +294,7 @@ impl<S: VectorNodeStore> DiskAnn<S> {
             let neighbors = self.prune(pq, &base, edges);
             self.put_record(
                 id,
+                cluster,
                 &Record {
                     code: record.code,
                     neighbors,
@@ -306,8 +313,11 @@ impl<S: VectorNodeStore> DiskAnn<S> {
         let mut removed = 0;
         for id in &deleted {
             let key = codec::record_key(*id);
-            if self.store().get_aux(codec::GRAPH, &key).await?.is_some() {
-                self.store_mut().delete_aux(codec::GRAPH, &key).await?;
+            if let Some(located) = self.locate(m, *id).await? {
+                let graph_key = codec::graph_key(*id, located.cluster);
+                self.store_mut()
+                    .delete_aux(codec::GRAPH, &graph_key)
+                    .await?;
                 self.store_mut().delete_aux(codec::CODE, &key).await?;
                 removed += 1;
             }
@@ -323,7 +333,7 @@ impl<S: VectorNodeStore> DiskAnn<S> {
         match self
             .store()
             .iterate_aux(codec::GRAPH, b"", |key, _| {
-                let id = codec::id_from_key(key)?;
+                let id = codec::graph_id(key)?;
                 if deleted.contains(&id) {
                     return Ok(());
                 }

@@ -32,6 +32,17 @@ pub const WALK_BUDGET_FACTOR: usize = 4;
 /// still gets past the entry's neighbourhood.
 pub const WALK_MIN_BUDGET: usize = 32;
 
+/// Bytes of resident-codes records one cluster holds: four of a server
+/// store's blocks. Measured on 100k vectors of 384 dimensions with the page
+/// cache cold, 16, 64, 128 and 256 KiB all cut a search's reads; 64 cut them
+/// most.
+pub const CLUSTER_BYTES: usize = 64 * 1024;
+
+/// How many of the nearest nodes a link's walk found are tried for a cluster
+/// with room before the node founds its own. Trying 8 left clusters half
+/// empty; 32 fills them about as well as trying all of them.
+pub const CLUSTER_CANDIDATES: usize = 32;
+
 pub const MAX_R: u32 = 1_024;
 pub const MAX_L: u32 = 100_000;
 pub const MAX_M: u32 = 4_096;
@@ -129,6 +140,12 @@ impl DiskAnnParams {
     /// `slack_limit` edges each.
     pub fn walk_budget(&self, l: usize) -> usize {
         (WALK_BUDGET_FACTOR * l).max(WALK_MIN_BUDGET)
+    }
+
+    /// Records one cluster takes before a new node founds its own: as many
+    /// records of `R` ids as [`CLUSTER_BYTES`] holds, at least one.
+    pub fn cluster_capacity(&self) -> usize {
+        (CLUSTER_BYTES / (4 + 8 * self.r as usize)).max(1)
     }
 
     pub fn alpha(&self) -> f64 {

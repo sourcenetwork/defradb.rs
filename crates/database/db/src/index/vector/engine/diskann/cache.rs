@@ -14,6 +14,7 @@ use kovan_map::HopscotchMap;
 use rapidhash::fast::RandomState;
 use rapidhash::RapidHashMap;
 
+use super::codec::NO_CLUSTER;
 use super::pending_cache::PendingCache;
 use crate::index::error::{Error, Result};
 use crate::index::vector::quantize::ProductQuantizer;
@@ -22,17 +23,25 @@ use crate::index::vector::store::NodeId;
 /// Codes loaded in one pass, back to back in one array with an index of where
 /// each starts. A concurrent map holding each code as its own allocation cost
 /// about six times the codes themselves at 1M vectors.
+///
+/// Each slot is the code alone, so neighbours can read the hot bytes at the
+/// same density as an unclustered index. A parallel array holds each node's
+/// cluster, which names its record's key, or [`NO_CLUSTER`] for a node whose
+/// record is keyed by its id alone.
 #[derive(Debug, Default)]
 pub struct Codes {
-    index: RapidHashMap<NodeId, u32>,
+    index: RapidHashMap<NodeId, u64>,
     bytes: Vec<u8>,
     len: usize,
 }
 
+/// A node's code and the cluster its record is keyed by, if any.
+pub type Coded = (Vec<u8>, Option<u32>);
+
 impl Codes {
     /// Every code of one index has the same length, set by the first; a code
     /// of another length would shift every later slot, so it is refused.
-    pub fn insert(&mut self, id: NodeId, code: &[u8]) -> Result<()> {
+    pub fn insert(&mut self, id: NodeId, code: &[u8], cluster: Option<u32>) -> Result<()> {
         if self.index.is_empty() {
             self.len = code.len();
         }
@@ -43,15 +52,25 @@ impl Codes {
                 got: code.len(),
             });
         }
-        let slot = u32::try_from(self.bytes.len() / self.len.max(1))
+        let slot = u32::try_from(self.bytes.len() / self.len)
             .map_err(|_| Error::DiskAnnCodeSlots { id: id.0 })?;
-        self.index.insert(id, slot);
+        let cluster = cluster.unwrap_or(NO_CLUSTER);
+        self.index
+            .insert(id, u64::from(slot) | (u64::from(cluster) << 32));
         self.bytes.extend_from_slice(code);
         Ok(())
     }
 
-    fn get(&self, id: NodeId) -> Option<&[u8]> {
-        let slot = *self.index.get(&id)? as usize;
+    fn get(&self, id: NodeId) -> Option<(&[u8], Option<u32>)> {
+        let tagged = *self.index.get(&id)?;
+        let slot = tagged as u32 as usize;
+        let code = &self.bytes[slot * self.len..][..self.len];
+        let cluster = (tagged >> 32) as u32;
+        Some((code, (cluster != NO_CLUSTER).then_some(cluster)))
+    }
+
+    fn code(&self, id: NodeId) -> Option<&[u8]> {
+        let slot = *self.index.get(&id)? as u32 as usize;
         Some(&self.bytes[slot * self.len..][..self.len])
     }
 
@@ -93,7 +112,7 @@ struct Loaded {
     /// The graph generation the codes were loaded at; `None` until loaded.
     generation: Option<u64>,
     codes: Codes,
-    misses: HopscotchMap<NodeId, Vec<u8>, RandomState>,
+    misses: HopscotchMap<NodeId, Coded, RandomState>,
 }
 
 impl CodeCache {
@@ -133,16 +152,28 @@ impl CodeCache {
         });
     }
 
-    pub fn get(&self, id: NodeId) -> Option<Vec<u8>> {
+    /// A node's code and cluster. The cluster may be another generation's:
+    /// a search that finds no record under it reads the node's own.
+    pub fn get(&self, id: NodeId) -> Option<Coded> {
         let loaded = self.loaded.load();
         match loaded.codes.get(id) {
-            Some(code) => Some(code.to_vec()),
+            Some((code, cluster)) => Some((code.to_vec(), cluster)),
             None => loaded.misses.get(&id),
         }
     }
 
-    pub fn insert(&self, id: NodeId, code: Vec<u8>) {
-        self.loaded.load().misses.insert(id, code);
+    /// A node's code alone, for the neighbour-ranking path that never reads
+    /// the node's record key.
+    pub fn code(&self, id: NodeId) -> Option<Vec<u8>> {
+        let loaded = self.loaded.load();
+        match loaded.codes.code(id) {
+            Some(code) => Some(code.to_vec()),
+            None => loaded.misses.get(&id).map(|(code, _)| code),
+        }
+    }
+
+    pub fn insert(&self, id: NodeId, coded: Coded) {
+        self.loaded.load().misses.insert(id, coded);
     }
 
     /// Whether the codes are at least as new as `generation`.
