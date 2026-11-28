@@ -1,17 +1,63 @@
 import Lean
 
-/-! The story. A remote author signs a document's genesis and replicates it to
-this node. The host may have asked that, for this collection, the genesis also
-grants read access: to everyone (`public`), or to this node when the genesis
-names it in an immutable field (`addressedBy`). This file decides who that
-reader is, and proves that nobody else becomes one: not a node the genesis did
-not name, not anyone when the host did not opt in, and nobody when the genesis
-arrives again after the document was registered.
+/-! The story. A created document's genesis may ask for a reader when the
+creator's provider cannot join the create's transaction: everyone (`public`),
+or the DID the document names in an immutable field (`addressedBy`). This file
+decides who the creator grants, and proves that only the document's valid DID
+address receives that grant.
 
-The code: `genesis_reader` and `register_signed_genesis` in
-`crates/database/db/src/merge/merge_handler/genesis_access.rs`. -/
+The same file fixes who registers a document owner. An owned local create
+registers in its transaction, a shared provider records its receiver's
+registration with the genesis, and an incoming genesis under Local ACP never
+registers an owner on the receiver.
+
+The code: `creator_reader` in
+`crates/database/db/src/merge/merge_handler/genesis_access.rs`;
+`register_created_doc` in `crates/database/db/src/write/autocommit/helpers.rs`;
+`persist_merged_document` and `record_replica` in
+`crates/database/db/src/merge/merge_handler/composite_persist.rs`. -/
 namespace EnrollmentGenesis
 open Lean
+
+/-- How this node obtained a document. -/
+inductive Origin where
+  /-- This node owns the create. -/
+  | localCreate
+  /-- A peer's signed genesis was merged under Local ACP. -/
+  | localIncoming
+  /-- A peer's signed genesis was merged under a shared provider. -/
+  | sharedIncoming
+  deriving DecidableEq, Repr
+
+/-- Whether an acquisition path registers a document owner. -/
+def registersOwner : Origin → Bool
+  -- An owned create registers its creator in the create's transaction.
+  | .localCreate => true
+  -- Local ACP stays node-local: the receiver registers no incoming owner.
+  | .localIncoming => false
+  -- A shared provider records the receiver's registration with the genesis.
+  | .sharedIncoming => true
+
+/-- An owned create registers its creator. -/
+theorem local_create_registers : registersOwner .localCreate = true := by
+  -- This is the definition of the local-create branch.
+  rfl
+
+/-- An incoming Local ACP genesis does not register an owner on the receiver. -/
+theorem incoming_local_does_not_register : registersOwner .localIncoming = false := by
+  -- This is the definition of the incoming-local branch.
+  rfl
+
+/-- The shared-provider merge records the receiver's registration. -/
+theorem shared_incoming_registers : registersOwner .sharedIncoming = true := by
+  -- This is the definition of the shared-incoming branch.
+  rfl
+
+/-- Only an owned create and a shared-provider genesis register an owner. -/
+theorem registered_iff_origin (origin : Origin) :
+    registersOwner origin = true ↔ origin ≠ .localIncoming := by
+  -- Check the three origins.
+  cases origin <;> simp [registersOwner]
 
 -- What the host asked for this collection.
 inductive Access where
@@ -25,69 +71,6 @@ inductive Access where
 
 -- The wildcard reader, the one spelling that means everyone.
 def wildcard : String := "*"
-
-/-- The reader a genesis asks for, before the first-registration guard.
-`address` is the decoded addressed field (none when it is absent, mutable or
-not a string), `receiver` this node's DID (none when the node has no identity). -/
-def genesisReader (access : Access) (address receiver : Option String) : Option String :=
-  -- Look at what the host asked for.
-  match access with
-  -- Nothing was asked: nobody.
-  | .off => none
-  -- A public collection: everyone.
-  | .public => some wildcard
-  -- An addressed collection: this node, and only when the genesis names it.
-  | .addressedBy =>
-    match address, receiver with
-    -- Both are known: the node reads exactly when the names are equal.
-    | some a, some r => if a = r then some r else none
-    -- A missing address or a node without identity: nobody.
-    | _, _ => none
-
-/-- A collection the host did not opt in grants nothing. -/
-theorem off_grants_nothing (address receiver : Option String) :
-    genesisReader .off address receiver = none := by
-  -- Unfold the definition; the `off` branch is `none`.
-  rfl
-
-/-- An addressed grant only ever names this node. -/
-theorem addressed_names_only_receiver (address receiver : Option String) (r : String)
-    (h : genesisReader .addressedBy address receiver = some r) : receiver = some r := by
-  -- Split on both options and on the equality test; every branch that returns
-  -- `some` returns the receiver itself.
-  unfold genesisReader at h
-  split at h <;> (try split at h) <;> simp_all
-
-/-- A genesis that names some other node grants this node nothing. -/
-theorem other_address_grants_nothing (a r : String) (h : a ≠ r) :
-    genesisReader .addressedBy (some a) (some r) = none := by
-  -- The names differ, so the equality test fails.
-  simp [genesisReader, h]
-
-/-- Without an address, an addressed collection stays private. -/
-theorem ordinary_delivery_keeps_private (receiver : Option String) :
-    genesisReader .addressedBy none receiver = none := by
-  -- No address means the catch-all branch.
-  cases receiver <;> rfl
-
-/-- Local initial read access is registered only at the first registration of
-a verified genesis that asks for a reader. -/
-def initialReader (first verified : Bool) (reader : Option String) : Option String :=
-  -- The guard holds only for a first registration of a signed genesis.
-  if first && verified then reader else none
-
-/-- A genesis that arrives again, after the document is registered, grants
-nothing: an owner's revocation stands. -/
-theorem replay_keeps_revocation (verified : Bool) (reader : Option String) :
-    initialReader false verified reader = none := by
-  -- `false && _` is `false`, so the guard fails.
-  simp [initialReader]
-
-/-- An unsigned genesis grants nothing. -/
-theorem unsigned_grants_nothing (first : Bool) (reader : Option String) :
-    initialReader first false reader = none := by
-  -- `_ && false` is `false`, so the guard fails.
-  simp [initialReader]
 
 -- A lowercase hexadecimal digit, as a provider actor's digest is written.
 def isLowerHex (c : Char) : Bool := c.isDigit || ('a' ≤ c && c ≤ 'f')
@@ -163,15 +146,6 @@ theorem creator_without_address_grants_nothing :
   -- The address is the answer, and it is absent.
   rfl
 
-/-- The creator grants exactly what the addressed node would grant itself
-when it registers the genesis on a provider of its own: on a shared provider
-the node the document names reads it as it would have locally. -/
-theorem creator_matches_addressed_receiver (access : Access) (a : String) (h : isDid a = true) :
-    creatorReader access (some a) = genesisReader access (some a) (some a) := by
-  -- Every access kind gives the same answer on both sides, the address being
-  -- a DID as the receiving node's own name is.
-  cases access <;> simp [creatorReader, genesisReader, h]
-
 -- The access kinds as the conformance test names them.
 def accessName : Access → String
   -- No access.
@@ -180,20 +154,6 @@ def accessName : Access → String
   | .public => "public"
   -- The addressed node.
   | .addressedBy => "addressed"
-
-/-- The executable cases the Rust conformance test compares against: every
-access kind against a matching, a different and a missing address, with and
-without a node identity. -/
-def cases : Json :=
-  -- The three inputs, each over its interesting values.
-  let accesses := [Access.off, .public, .addressedBy]
-  let addresses : List (Option String) := [some "did:key:receiver", some "did:key:other", none]
-  let receivers : List (Option String) := [some "did:key:receiver", none]
-  -- Every combination, with the reader the model decides.
-  toJson <| accesses.flatMap fun access => addresses.flatMap fun address =>
-    receivers.map fun receiver => Json.mkObj
-      [("access", toJson (accessName access)), ("address", toJson address),
-       ("receiver", toJson receiver), ("reader", toJson (genesisReader access address receiver))]
 
 /-- The executable cases for the creator's grant: every access kind against
 an address and no address. -/
@@ -213,13 +173,11 @@ def creatorCases : Json :=
 
 end EnrollmentGenesis
 
-/-- `lean --run EnrollmentGenesis.lean cases` prints the receiver's cases as
-JSON, `creator-cases` the creator's. -/
+/-- `lean --run EnrollmentGenesis.lean creator-cases` prints the creator's cases
+as JSON. -/
 def main (args : List String) : IO Unit := do
   -- Pick the command.
-  if args == ["cases"] then
-    IO.println EnrollmentGenesis.cases.compress
-  else if args == ["creator-cases"] then
+  if args == ["creator-cases"] then
     IO.println EnrollmentGenesis.creatorCases.compress
   else
-    throw <| IO.userError "usage: EnrollmentGenesis cases | creator-cases"
+    throw <| IO.userError "usage: EnrollmentGenesis creator-cases"

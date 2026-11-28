@@ -40,6 +40,13 @@ When the deployment refuses the transfer, the commit stands and the document sta
 
 On a node's own document ACP, `ActingFor::transfer_dac_object_owner` replaces the document's owner tuple with one naming `new_owner` in the transaction, and the change commits or rolls back with the transaction's rows. Once it commits, the new owner holds every permission an owner holds and manages the document's relationships; the previous owner holds none by ownership, and its relationship changes are refused as any non-manager's are and its transfers with `UNAUTHORIZED: not document owner, cannot transfer the document's ownership`. Anyone but the owner is refused with `UNAUTHORIZED: not document owner, cannot transfer the document's ownership`. A rolled-back transfer leaves the owner as it was.
 
+# `defra.acp.local_incoming_genesis_unregistered`: Incoming Local ACP genesis stays unregistered
+
+- **Parents:** ["defra.acp"]
+- **Scenarios:** ["p2p_iroh/replication/adversarial/permitted_update.rs::update_to_unregistered_protected_document_merges"]
+
+A signed document genesis received from a peer is not registered with Local ACP on the receiving node. The replicated document remains public there until that node creates the document itself, while a create owned by the receiving node still registers its creator atomically in the create transaction.
+
 # `defra.acp.vera_uncovered_takeover_recovery`: An uncovered takeover recovers without a new worker
 
 - **Parents:** ["defra.acp"]
