@@ -296,7 +296,9 @@ async fn continuous_rollup_test(cluster: TestCluster) {
         .expect("create raw metric");
     let source_doc_id = extract_doc_id(&create, "add_CpuRaw");
 
-    let (handle, events) = open_events_sse(api_url, "update").await;
+    let (handle, events) = open_events_sse(api_url, "update")
+        .await
+        .expect("open SSE subscription");
 
     let updates = [(20, 20), (70, 30), (80, 40)];
     for (event_count, (ts, value)) in updates.into_iter().enumerate() {

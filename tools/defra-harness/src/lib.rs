@@ -50,7 +50,7 @@ pub use p2p_helpers::{
 pub use poll::poll_until;
 pub use sse::{
     open_events_sse, open_merge_events_sse, open_peer_events_sse, wait_for_merge_events,
-    wait_for_peer_events, SseEvents,
+    wait_for_peer_events, SseEvents, SseWaitError,
 };
 
 /// The workspace whose `defradb` the harness builds and runs, and under whose

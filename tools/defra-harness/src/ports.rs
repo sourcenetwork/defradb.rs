@@ -207,10 +207,30 @@ pub fn multiaddr_ports(addr: &str) -> (Vec<u16>, Vec<u16>) {
 mod tests {
     use super::*;
     use rapidhash::{HashSetExt, RapidHashSet};
+    use regolith::sync::Mutex;
     use std::net::{TcpListener, UdpSocket};
 
-    #[test]
-    fn allocate_transport_ports_returns_unique_ports() {
+    static PORT_TEST_GUARD: Mutex<()> = Mutex::new(());
+
+    fn assert_tcp_released(port: u16) {
+        match TcpListener::bind(("127.0.0.1", port)) {
+            Ok(listener) => drop(listener),
+            Err(error) if error.kind() == std::io::ErrorKind::AddrInUse => {}
+            Err(error) => panic!("tcp port {port} was not released: {error}"),
+        }
+    }
+
+    fn assert_udp_released(port: u16) {
+        match UdpSocket::bind(("127.0.0.1", port)) {
+            Ok(socket) => drop(socket),
+            Err(error) if error.kind() == std::io::ErrorKind::AddrInUse => {}
+            Err(error) => panic!("udp port {port} was not released: {error}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn allocate_transport_ports_returns_unique_ports() {
+        let _serial = PORT_TEST_GUARD.lock().await;
         let ports = allocate_transport_ports(2).expect("allocate");
         assert_eq!(ports.len(), 2);
 
@@ -226,8 +246,9 @@ mod tests {
         assert_eq!(udp_seen.len(), 2, "expected 2 unique UDP ports for n=2");
     }
 
-    #[test]
-    fn release_frees_ports_for_rebinding() {
+    #[tokio::test]
+    async fn release_frees_ports_for_rebinding() {
+        let _serial = PORT_TEST_GUARD.lock().await;
         let mut p = allocate_transport_ports(1)
             .expect("allocate")
             .pop()
@@ -235,27 +256,27 @@ mod tests {
         let (http, tcp, ws, quic) = (p.http, p.tcp, p.ws, p.quic);
         p.release();
 
-        // Tiny TOCTOU window: between release() and the binds below, another
-        // process on the host could grab one of these ephemeral ports.
-        // In practice the window is microseconds and the test asserts the
-        // *behavior* of release() (the OS actually freeing the fds) which
-        // can only be verified by rebinding.
-        TcpListener::bind(("127.0.0.1", http)).expect("rebind http");
-        TcpListener::bind(("127.0.0.1", tcp)).expect("rebind tcp");
-        TcpListener::bind(("127.0.0.1", ws)).expect("rebind ws");
-        UdpSocket::bind(("127.0.0.1", quic)).expect("rebind quic");
+        assert!(p.tcp_guards.is_none());
+        assert!(p.udp_guard.is_none());
+        assert_tcp_released(http);
+        assert_tcp_released(tcp);
+        assert_tcp_released(ws);
+        assert_udp_released(quic);
     }
 
-    #[test]
-    fn reserved_ports_lock_out_a_competing_binder_until_released() {
-        let mut allocated = allocate_transport_ports(1)
-            .expect("allocate")
-            .pop()
-            .unwrap();
-        let (http, quic) = (allocated.http, allocated.quic);
-        allocated.release();
-
-        let mut reserved = reserve_ports(&[http], &[quic]).expect("reserve just-freed ports");
+    #[tokio::test]
+    async fn reserved_ports_lock_out_a_competing_binder_until_released() {
+        let _serial = PORT_TEST_GUARD.lock().await;
+        let (http, quic, mut reserved) = (0..16)
+            .find_map(|_| {
+                let mut allocated = allocate_transport_ports(1).ok()?.pop()?;
+                let (http, quic) = (allocated.http, allocated.quic);
+                allocated.release();
+                reserve_ports(&[http], &[quic])
+                    .ok()
+                    .map(|reserved| (http, quic, reserved))
+            })
+            .expect("reserve a just-freed port pair");
 
         assert!(
             TcpListener::bind(("127.0.0.1", http)).is_err(),
@@ -270,12 +291,15 @@ mod tests {
 
         reserved.release();
 
-        TcpListener::bind(("127.0.0.1", http)).expect("tcp rebind after release");
-        UdpSocket::bind(("127.0.0.1", quic)).expect("udp rebind after release");
+        assert!(reserved.tcp.is_empty());
+        assert!(reserved.udp.is_empty());
+        assert_tcp_released(http);
+        assert_udp_released(quic);
     }
 
-    #[test]
-    fn failed_reservation_holds_no_ports() {
+    #[tokio::test]
+    async fn failed_reservation_holds_no_ports() {
+        let _serial = PORT_TEST_GUARD.lock().await;
         let taken = TcpListener::bind("127.0.0.1:0").expect("bind competitor");
         let taken_port = taken.local_addr().unwrap().port();
 
@@ -291,8 +315,7 @@ mod tests {
             "reserving a port owned by someone else must fail"
         );
 
-        TcpListener::bind(("127.0.0.1", free_port))
-            .expect("a failed reservation must not keep holding the ports it did get");
+        assert_tcp_released(free_port);
     }
 
     #[test]

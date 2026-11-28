@@ -404,7 +404,9 @@ async fn txn_commit_publishes_update_events(cluster: TestCluster) {
         .expect("schema add");
 
     // Open SSE stream BEFORE the tx so we capture every emitted event
-    let (sse_handle, events) = open_events_sse(api_url, "update").await;
+    let (sse_handle, events) = open_events_sse(api_url, "update")
+        .await
+        .expect("open SSE subscription");
 
     // Drain any startup events from schema add
     nuclei::time::sleep(Duration::from_millis(200)).await;
@@ -562,7 +564,9 @@ async fn txn_discard_publishes_no_events(cluster: TestCluster) {
         .schema_add("type TxDiscard { name: String }")
         .expect("schema add");
 
-    let (sse_handle, events) = open_events_sse(api_url, "update").await;
+    let (sse_handle, events) = open_events_sse(api_url, "update")
+        .await
+        .expect("open SSE subscription");
     nuclei::time::sleep(Duration::from_millis(200)).await;
     let baseline = events.snapshot().len();
 

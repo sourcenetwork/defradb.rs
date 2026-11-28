@@ -124,7 +124,9 @@ async fn on_connect_join_event_doc_sync_topic() {
         let cluster = setup_two_nodes().await;
 
         // Open SSE event stream on node0 before connecting
-        let (handle, events) = open_peer_events_sse(cluster.api_url(0)).await;
+        let (handle, events) = open_peer_events_sse(cluster.api_url(0))
+            .await
+            .expect("open SSE subscription");
         nuclei::time::sleep(Duration::from_millis(300)).await;
 
         // Connect peers and subscribe to collection to trigger gossip topic join
@@ -168,8 +170,12 @@ async fn on_connect_bidirectional_join_events() {
         let cluster = setup_two_nodes().await;
 
         // Open SSE event streams on both nodes
-        let (handle0, events0) = open_peer_events_sse(cluster.api_url(0)).await;
-        let (handle1, events1) = open_peer_events_sse(cluster.api_url(1)).await;
+        let (handle0, events0) = open_peer_events_sse(cluster.api_url(0))
+            .await
+            .expect("open SSE subscription");
+        let (handle1, events1) = open_peer_events_sse(cluster.api_url(1))
+            .await
+            .expect("open SSE subscription");
         nuclei::time::sleep(Duration::from_millis(300)).await;
 
         connect_peers(&cluster);
@@ -228,7 +234,9 @@ async fn on_connect_multiple_peers_all_join_events() {
         let cluster = setup_three_nodes().await;
 
         // Open SSE on node0 (observer)
-        let (handle, events) = open_peer_events_sse(cluster.api_url(0)).await;
+        let (handle, events) = open_peer_events_sse(cluster.api_url(0))
+            .await
+            .expect("open SSE subscription");
         nuclei::time::sleep(Duration::from_millis(300)).await;
 
         // Connect node0 to both node1 and node2
@@ -284,7 +292,9 @@ async fn subscribe_collection_join_event() {
         nuclei::time::sleep(Duration::from_millis(500)).await;
 
         // Open SSE on node0
-        let (handle, events) = open_peer_events_sse(cluster.api_url(0)).await;
+        let (handle, events) = open_peer_events_sse(cluster.api_url(0))
+            .await
+            .expect("open SSE subscription");
         nuclei::time::sleep(Duration::from_millis(300)).await;
 
         // Both nodes add collection subscription
@@ -343,7 +353,9 @@ async fn subscribe_multiple_collections_join_events() {
         connect_peers(&cluster);
         nuclei::time::sleep(Duration::from_millis(500)).await;
 
-        let (handle, events) = open_peer_events_sse(cluster.api_url(0)).await;
+        let (handle, events) = open_peer_events_sse(cluster.api_url(0))
+            .await
+            .expect("open SSE subscription");
         nuclei::time::sleep(Duration::from_millis(300)).await;
 
         // Both nodes add both collections
@@ -397,7 +409,9 @@ async fn multiple_nodes_subscribed_collection_join_events() {
             .expect("connect 0→2");
         nuclei::time::sleep(Duration::from_millis(500)).await;
 
-        let (handle, events) = open_peer_events_sse(cluster.api_url(0)).await;
+        let (handle, events) = open_peer_events_sse(cluster.api_url(0))
+            .await
+            .expect("open SSE subscription");
         nuclei::time::sleep(Duration::from_millis(300)).await;
 
         // All nodes subscribe to collection
@@ -451,7 +465,9 @@ async fn unsubscribe_collection_left_event() {
         nuclei::time::sleep(Duration::from_millis(500)).await;
 
         // Open SSE on node0 to catch LEFT events
-        let (handle, events) = open_peer_events_sse(cluster.api_url(0)).await;
+        let (handle, events) = open_peer_events_sse(cluster.api_url(0))
+            .await
+            .expect("open SSE subscription");
         nuclei::time::sleep(Duration::from_millis(300)).await;
 
         // node1 removes collection subscription
@@ -512,7 +528,9 @@ async fn unsubscribe_multiple_collections_left_events() {
             .expect("collection add node1");
         nuclei::time::sleep(Duration::from_millis(500)).await;
 
-        let (handle, events) = open_peer_events_sse(cluster.api_url(0)).await;
+        let (handle, events) = open_peer_events_sse(cluster.api_url(0))
+            .await
+            .expect("open SSE subscription");
         nuclei::time::sleep(Duration::from_millis(300)).await;
 
         // node1 removes both collections
@@ -554,7 +572,9 @@ async fn subscribe_document_join_event() {
         connect_peers(&cluster);
         nuclei::time::sleep(Duration::from_millis(500)).await;
 
-        let (handle, events) = open_peer_events_sse(cluster.api_url(0)).await;
+        let (handle, events) = open_peer_events_sse(cluster.api_url(0))
+            .await
+            .expect("open SSE subscription");
         nuclei::time::sleep(Duration::from_millis(300)).await;
 
         // Both nodes subscribe to the document
@@ -608,7 +628,9 @@ async fn subscribe_multiple_documents_join_events() {
         connect_peers(&cluster);
         nuclei::time::sleep(Duration::from_millis(500)).await;
 
-        let (handle, events) = open_peer_events_sse(cluster.api_url(0)).await;
+        let (handle, events) = open_peer_events_sse(cluster.api_url(0))
+            .await
+            .expect("open SSE subscription");
         nuclei::time::sleep(Duration::from_millis(300)).await;
 
         // Both nodes subscribe to both documents
@@ -668,7 +690,9 @@ async fn unsubscribe_document_left_event() {
             .expect("document add node1");
         nuclei::time::sleep(Duration::from_millis(500)).await;
 
-        let (handle, events) = open_peer_events_sse(cluster.api_url(0)).await;
+        let (handle, events) = open_peer_events_sse(cluster.api_url(0))
+            .await
+            .expect("open SSE subscription");
         nuclei::time::sleep(Duration::from_millis(300)).await;
 
         // node1 removes document subscription
@@ -724,7 +748,9 @@ async fn unsubscribe_multiple_documents_left_events() {
             .expect("document add node1");
         nuclei::time::sleep(Duration::from_millis(500)).await;
 
-        let (handle, events) = open_peer_events_sse(cluster.api_url(0)).await;
+        let (handle, events) = open_peer_events_sse(cluster.api_url(0))
+            .await
+            .expect("open SSE subscription");
         nuclei::time::sleep(Duration::from_millis(300)).await;
 
         // node1 removes both document subscriptions
@@ -769,7 +795,9 @@ async fn all_topic_types_join_events() {
         nuclei::time::sleep(Duration::from_millis(500)).await;
 
         // Open SSE before topic subscriptions
-        let (handle, events) = open_peer_events_sse(cluster.api_url(0)).await;
+        let (handle, events) = open_peer_events_sse(cluster.api_url(0))
+            .await
+            .expect("open SSE subscription");
         nuclei::time::sleep(Duration::from_millis(300)).await;
 
         // Add collection subscription

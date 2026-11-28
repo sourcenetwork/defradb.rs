@@ -70,6 +70,10 @@ impl DefraClient {
         } else {
             self.exec(&["client", "view", "refresh"])?
         };
-        serde_json::from_str(&out).wrap_err("failed to parse view_refresh output")
+        let trimmed = out.trim();
+        if trimmed.is_empty() {
+            return Ok(serde_json::json!({}));
+        }
+        serde_json::from_str(trimmed).wrap_err("failed to parse view_refresh output")
     }
 }

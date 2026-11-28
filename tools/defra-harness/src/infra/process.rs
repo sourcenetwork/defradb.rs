@@ -115,9 +115,24 @@ impl ManagedProcess {
 
     /// Check if the process is still running.
     pub fn is_running(&mut self) -> bool {
-        self.child
-            .as_mut()
-            .is_some_and(|c| c.try_wait().ok().flatten().is_none())
+        let Some(mut child) = self.child.take() else {
+            return false;
+        };
+        match child.try_wait() {
+            Ok(None) => {
+                self.child = Some(child);
+                true
+            }
+            Ok(Some(status)) => {
+                tracing::info!("{}: exited with {}", self.name, status);
+                false
+            }
+            Err(error) => {
+                tracing::warn!("{}: error polling: {}", self.name, error);
+                self.child = Some(child);
+                false
+            }
+        }
     }
 
     /// Kill the process immediately.
@@ -145,6 +160,10 @@ impl Drop for ManagedProcess {
         let Some(mut child) = self.child.take() else {
             return;
         };
+
+        if matches!(child.try_wait(), Ok(Some(_))) {
+            return;
+        }
 
         let pid = child.id();
         tracing::info!("{}: sending SIGTERM to pid={}", self.name, pid);

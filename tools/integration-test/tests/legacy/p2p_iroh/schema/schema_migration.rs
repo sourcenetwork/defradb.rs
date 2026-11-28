@@ -108,7 +108,7 @@ async fn replicator_create_new_field_older_version() {
     node0.p2p_collection_add(&["Users"]).expect("col add n0");
     node1.p2p_collection_add(&["Users"]).expect("col add n1");
 
-    let (sse, merges) = open_merge_events_sse(cluster.api_url(1)).await;
+    let (sse, merges) = open_merge_events_sse(cluster.api_url(1)).await.expect("open SSE subscription");
     node0
         .p2p_replicator_set(&["Users"], &addr1)
         .expect("replicator");
@@ -160,7 +160,9 @@ async fn replicator_create_new_field_newer_version() {
         node0.p2p_collection_add(&["Users"]).expect("col add n0");
         node1.p2p_collection_add(&["Users"]).expect("col add n1");
 
-        let (sse, merges) = open_merge_events_sse(cluster.api_url(1)).await;
+        let (sse, merges) = open_merge_events_sse(cluster.api_url(1))
+            .await
+            .expect("open SSE subscription");
         node0
             .p2p_replicator_set(&["Users"], &addr1)
             .expect("replicator");
@@ -212,7 +214,7 @@ async fn replicator_create_new_field_updated_version() {
     node0.p2p_collection_add(&["Users"]).expect("col add n0");
     node1.p2p_collection_add(&["Users"]).expect("col add n1");
 
-    let (sse, merges) = open_merge_events_sse(cluster.api_url(1)).await;
+    let (sse, merges) = open_merge_events_sse(cluster.api_url(1)).await.expect("open SSE subscription");
     node0
         .p2p_replicator_set(&["Users"], &addr1)
         .expect("replicator");
@@ -272,7 +274,7 @@ async fn replicator_update_new_field_older_version() {
     node0.p2p_collection_add(&["Users"]).expect("col add n0");
     node1.p2p_collection_add(&["Users"]).expect("col add n1");
 
-    let (sse, merges) = open_merge_events_sse(cluster.api_url(1)).await;
+    let (sse, merges) = open_merge_events_sse(cluster.api_url(1)).await.expect("open SSE subscription");
     node0
         .p2p_replicator_set(&["Users"], &addr1)
         .expect("replicator");
@@ -337,7 +339,7 @@ async fn replicator_update_new_field_older_version_multistep() {
     node0.p2p_collection_add(&["Users"]).expect("col add n0");
     node1.p2p_collection_add(&["Users"]).expect("col add n1");
 
-    let (sse, merges) = open_merge_events_sse(cluster.api_url(1)).await;
+    let (sse, merges) = open_merge_events_sse(cluster.api_url(1)).await.expect("open SSE subscription");
     node0
         .p2p_replicator_set(&["Users"], &addr1)
         .expect("replicator");
@@ -449,7 +451,9 @@ async fn replicated_doc_older_schema_version() {
         node0.p2p_collection_add(&["Users"]).expect("col add n0");
         node1.p2p_collection_add(&["Users"]).expect("col add n1");
 
-        let (sse, merges) = open_merge_events_sse(cluster.api_url(1)).await;
+        let (sse, merges) = open_merge_events_sse(cluster.api_url(1))
+            .await
+            .expect("open SSE subscription");
         node0
             .p2p_replicator_set(&["Users"], &addr1)
             .expect("replicator");
@@ -516,7 +520,9 @@ async fn replicated_doc_much_older_schema_version() {
         node0.p2p_collection_add(&["Users"]).expect("col add n0");
         node1.p2p_collection_add(&["Users"]).expect("col add n1");
 
-        let (sse, merges) = open_merge_events_sse(cluster.api_url(1)).await;
+        let (sse, merges) = open_merge_events_sse(cluster.api_url(1))
+            .await
+            .expect("open SSE subscription");
         node0
             .p2p_replicator_set(&["Users"], &addr1)
             .expect("replicator");
@@ -579,7 +585,9 @@ async fn replicated_doc_newer_schema_version() {
         node0.p2p_collection_add(&["Users"]).expect("col add n0");
         node1.p2p_collection_add(&["Users"]).expect("col add n1");
 
-        let (sse, merges) = open_merge_events_sse(cluster.api_url(1)).await;
+        let (sse, merges) = open_merge_events_sse(cluster.api_url(1))
+            .await
+            .expect("open SSE subscription");
         node0
             .p2p_replicator_set(&["Users"], &addr1)
             .expect("replicator");
@@ -652,7 +660,9 @@ async fn replicated_doc_much_newer_with_history_gap() {
         node0.p2p_collection_add(&["Users"]).expect("col add n0");
         node1.p2p_collection_add(&["Users"]).expect("col add n1");
 
-        let (sse, merges) = open_merge_events_sse(cluster.api_url(1)).await;
+        let (sse, merges) = open_merge_events_sse(cluster.api_url(1))
+            .await
+            .expect("open SSE subscription");
         node0
             .p2p_replicator_set(&["Users"], &addr1)
             .expect("replicator");
@@ -717,7 +727,9 @@ async fn replicated_doc_other_schema_branch() {
         node0.p2p_collection_add(&["Users"]).expect("col add n0");
         node1.p2p_collection_add(&["Users"]).expect("col add n1");
 
-        let (sse, merges) = open_merge_events_sse(cluster.api_url(1)).await;
+        let (sse, merges) = open_merge_events_sse(cluster.api_url(1))
+            .await
+            .expect("open SSE subscription");
         node0
             .p2p_replicator_set(&["Users"], &addr1)
             .expect("replicator");

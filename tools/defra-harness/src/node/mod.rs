@@ -59,11 +59,7 @@ impl BinarySource {
 /// Download (or return cached) a release binary for the given version and node kind.
 fn resolve_release(version: &str, kind: NodeKind) -> crate::error::Result<PathBuf> {
     let cache_dir = dirs_cache().join("defra-harness").join(version);
-    let binary_name = match kind {
-        NodeKind::Rust => "defra",
-        NodeKind::Go => "defradb",
-    };
-    let cached = cache_dir.join(binary_name);
+    let cached = cache_dir.join("defradb");
     if cached.exists() {
         return Ok(cached);
     }
@@ -79,12 +75,13 @@ fn resolve_release(version: &str, kind: NodeKind) -> crate::error::Result<PathBu
     );
 
     std::fs::create_dir_all(&cache_dir)?;
+    let download = cache_dir.join(format!(".{asset_name}.download"));
 
     tracing::info!(%version, %url, "downloading release binary");
 
     let output = Command::new("curl")
         .args(["-fSL", "-o"])
-        .arg(&cached)
+        .arg(&download)
         .arg(&url)
         .output()
         .wrap_err_with(|| format!("failed to download {}", url))?;
@@ -95,6 +92,28 @@ fn resolve_release(version: &str, kind: NodeKind) -> crate::error::Result<PathBu
         url,
         String::from_utf8_lossy(&output.stderr)
     );
+
+    match kind {
+        NodeKind::Rust => {
+            let output = Command::new("tar")
+                .args(["-xzf"])
+                .arg(&download)
+                .arg("-C")
+                .arg(&cache_dir)
+                .arg("defradb")
+                .output()
+                .wrap_err_with(|| format!("failed to extract {}", download.display()))?;
+            crate::error::ensure!(
+                output.status.success(),
+                "failed to extract {}: {}",
+                download.display(),
+                String::from_utf8_lossy(&output.stderr)
+            );
+            std::fs::remove_file(&download)?;
+        }
+        NodeKind::Go => std::fs::rename(&download, &cached)?,
+    }
+    crate::error::ensure!(cached.exists(), "release did not contain defradb");
 
     #[cfg(unix)]
     {
@@ -110,9 +129,27 @@ fn release_asset_name(version: &str, kind: NodeKind) -> crate::error::Result<Str
     let ver_num = version.strip_prefix('v').unwrap_or(version);
     let name = match kind {
         NodeKind::Go => format!("defradb_{}_{}", ver_num, os_arch_suffix(os, arch)),
-        NodeKind::Rust => format!("defra_{}_{}", ver_num, os_arch_suffix(os, arch)),
+        NodeKind::Rust => rust_release_asset_name(version, os, arch),
     };
     Ok(name)
+}
+
+fn rust_release_asset_name(version: &str, os: &str, arch: &str) -> String {
+    format!(
+        "defradb_{version}_{}.tar.gz",
+        release_platform_suffix(os, arch)
+    )
+}
+
+fn release_platform_suffix(os: &str, arch: &str) -> String {
+    match (os, arch) {
+        ("macos", "aarch64") => "darwin_arm64".to_string(),
+        ("macos", "x86_64") => "darwin_amd64".to_string(),
+        ("linux", "x86_64") => "linux_amd64".to_string(),
+        ("linux", "aarch64") => "linux_arm64".to_string(),
+        ("windows", "x86_64") => "windows_amd64".to_string(),
+        _ => format!("{}_{}", os, arch),
+    }
 }
 
 fn os_arch_suffix(os: &str, arch: &str) -> String {
@@ -159,6 +196,23 @@ fn dirs_cache() -> PathBuf {
 }
 
 use crate::error::WrapErr;
+
+#[cfg(test)]
+mod tests {
+    use super::rust_release_asset_name;
+
+    #[test]
+    fn rust_release_asset_matches_the_published_archive() {
+        assert_eq!(
+            rust_release_asset_name("v1.2.0", "linux", "x86_64"),
+            "defradb_v1.2.0_linux_amd64.tar.gz"
+        );
+        assert_eq!(
+            rust_release_asset_name("v1.2.0", "macos", "aarch64"),
+            "defradb_v1.2.0_darwin_arm64.tar.gz"
+        );
+    }
+}
 
 /// How the DefraDB keyring is configured.
 #[derive(Clone, Debug)]

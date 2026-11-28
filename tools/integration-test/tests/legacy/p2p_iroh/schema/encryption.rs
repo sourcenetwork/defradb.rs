@@ -79,7 +79,9 @@ fn assert_user(cluster: &TestCluster, node_index: usize, expected_name: &str, ex
 async fn public_doc_fetch_key_decrypt() {
     edge::compat(async move {
         let (cluster, _) = setup_encrypted_cluster(SCHEMA).await;
-        let (sse, merges) = open_merge_events_sse(cluster.api_url(1)).await;
+        let (sse, merges) = open_merge_events_sse(cluster.api_url(1))
+            .await
+            .expect("open SSE subscription");
 
         cluster
         .client(0)
@@ -101,7 +103,7 @@ async fn public_doc_fetch_key_decrypt() {
 async fn public_doc_encrypted_field_fetch_key_decrypt() {
     edge::compat(async move {
     let (cluster, _) = setup_encrypted_cluster(SCHEMA).await;
-    let (sse, merges) = open_merge_events_sse(cluster.api_url(1)).await;
+    let (sse, merges) = open_merge_events_sse(cluster.api_url(1)).await.expect("open SSE subscription");
 
     cluster
         .client(0)
@@ -123,7 +125,7 @@ async fn public_doc_encrypted_field_fetch_key_decrypt() {
 async fn encrypted_public_doc_encrypted_field() {
     edge::compat(async move {
     let (cluster, _) = setup_encrypted_cluster(SCHEMA).await;
-    let (sse, merges) = open_merge_events_sse(cluster.api_url(1)).await;
+    let (sse, merges) = open_merge_events_sse(cluster.api_url(1)).await.expect("open SSE subscription");
 
     cluster
         .client(0)
@@ -145,7 +147,7 @@ async fn encrypted_public_doc_encrypted_field() {
 async fn all_fields_individually_encrypted() {
     edge::compat(async move {
     let (cluster, _) = setup_encrypted_cluster(SCHEMA).await;
-    let (sse, merges) = open_merge_events_sse(cluster.api_url(1)).await;
+    let (sse, merges) = open_merge_events_sse(cluster.api_url(1)).await.expect("open SSE subscription");
 
     cluster
         .client(0)
@@ -167,7 +169,7 @@ async fn all_fields_individually_encrypted() {
 async fn all_fields_of_public_doc_individually_encrypted() {
     edge::compat(async move {
     let (cluster, _) = setup_encrypted_cluster(SCHEMA).await;
-    let (sse, merges) = open_merge_events_sse(cluster.api_url(1)).await;
+    let (sse, merges) = open_merge_events_sse(cluster.api_url(1)).await.expect("open SSE subscription");
 
     cluster
         .client(0)
@@ -194,7 +196,7 @@ async fn updates_encrypted_delta_crdt_field() {
     edge::compat(async move {
     let (cluster, _) = setup_encrypted_cluster(PCOUNTER_SCHEMA).await;
     let node0 = cluster.client(0);
-    let (sse, merges) = open_merge_events_sse(cluster.api_url(1)).await;
+    let (sse, merges) = open_merge_events_sse(cluster.api_url(1)).await.expect("open SSE subscription");
 
     // Create doc with encrypted age field (pcounter initial: 21)
     let result = node0
@@ -235,7 +237,9 @@ async fn updates_delta_crdt_field_of_encrypted_doc() {
     edge::compat(async move {
         let (cluster, _) = setup_encrypted_cluster(PCOUNTER_SCHEMA).await;
         let node0 = cluster.client(0);
-        let (sse, merges) = open_merge_events_sse(cluster.api_url(1)).await;
+        let (sse, merges) = open_merge_events_sse(cluster.api_url(1))
+            .await
+            .expect("open SSE subscription");
 
         // Create fully encrypted doc (pcounter initial: 21)
         let result = node0
@@ -281,7 +285,9 @@ async fn updates_set_empty_string() {
         let (cluster, _) = setup_encrypted_cluster(SCHEMA).await;
         let node0 = cluster.client(0);
         let node1 = cluster.client(1);
-        let (sse, merges) = open_merge_events_sse(cluster.api_url(1)).await;
+        let (sse, merges) = open_merge_events_sse(cluster.api_url(1))
+            .await
+            .expect("open SSE subscription");
 
         // Create encrypted doc
         let result = node0
@@ -334,7 +340,9 @@ async fn updates_set_string_to_null() {
         let (cluster, _) = setup_encrypted_cluster(SCHEMA).await;
         let node0 = cluster.client(0);
         let node1 = cluster.client(1);
-        let (sse, merges) = open_merge_events_sse(cluster.api_url(1)).await;
+        let (sse, merges) = open_merge_events_sse(cluster.api_url(1))
+            .await
+            .expect("open SSE subscription");
 
         // Create encrypted doc
         let result = node0
@@ -390,7 +398,9 @@ async fn sync_encrypted_dag() {
     edge::compat(async move {
         let (cluster, _) = setup_encrypted_cluster(SCHEMA).await;
         let node0 = cluster.client(0);
-        let (sse, merges) = open_merge_events_sse(cluster.api_url(1)).await;
+        let (sse, merges) = open_merge_events_sse(cluster.api_url(1))
+            .await
+            .expect("open SSE subscription");
 
         // Create encrypted doc
         let result = node0
@@ -460,7 +470,9 @@ async fn encrypted_doc_indexed_field() {
         let (cluster, _) = setup_encrypted_cluster(INDEXED_SCHEMA).await;
         let node0 = cluster.client(0);
         let node1 = cluster.client(1);
-        let (sse, merges) = open_merge_events_sse(cluster.api_url(1)).await;
+        let (sse, merges) = open_merge_events_sse(cluster.api_url(1))
+            .await
+            .expect("open SSE subscription");
 
         // Create mix of encrypted and non-encrypted docs
         node0
@@ -511,7 +523,7 @@ async fn doc_encrypted_indexed_field() {
     let (cluster, _) = setup_encrypted_cluster(INDEXED_SCHEMA).await;
     let node0 = cluster.client(0);
     let node1 = cluster.client(1);
-    let (sse, merges) = open_merge_events_sse(cluster.api_url(1)).await;
+    let (sse, merges) = open_merge_events_sse(cluster.api_url(1)).await.expect("open SSE subscription");
 
     // Create docs with encrypted indexed fields
     node0
@@ -570,7 +582,9 @@ async fn doc_encrypted_indexed_field() {
 async fn peer_no_key_should_not_fetch() {
     edge::compat(async move {
         let (cluster, _) = setup_encrypted_cluster(SCHEMA).await;
-        let (sse, merges) = open_merge_events_sse(cluster.api_url(1)).await;
+        let (sse, merges) = open_merge_events_sse(cluster.api_url(1))
+            .await
+            .expect("open SSE subscription");
 
         cluster
         .client(0)
