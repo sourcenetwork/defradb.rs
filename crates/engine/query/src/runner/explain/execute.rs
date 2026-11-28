@@ -334,6 +334,8 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
                             strict: self.context().strict_access_reads(),
                             policy_id: policy.id.clone(),
                             resource_name: policy.resource_name.clone(),
+                            collection_id: collection.collection_id.clone(),
+                            is_branchable: collection.is_branchable,
                         }),
                     app_read,
                     self.acp_registration_projection.clone(),

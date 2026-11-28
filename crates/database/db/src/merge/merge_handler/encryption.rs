@@ -3,6 +3,7 @@ use std::sync::Arc;
 use cid::Cid;
 use defra_core::block::Encryption;
 use defra_core::merge::BlockMetadata;
+use identity::Identity as _;
 use storage::corekv::Store;
 
 use super::{DbMergeHandler, MergeError};
@@ -31,7 +32,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
         {
             return;
         }
-        let ctx = Self::kms_request_context(Some(metadata));
+        let ctx = self.kms_request_context(Some(metadata));
         let prefetched_dek_cids = Arc::clone(&self.prefetched_dek_cids);
         spawn_task(self.db.pool(), "db::dek_prefetch", async move {
             kms.prefetch_keys(&ctx, std::slice::from_ref(&enc_cid))
@@ -46,25 +47,30 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
     /// falling back to the P2P blockstore when the metadata arrived via replay,
     /// extracts the AES key, and decrypts the data. Returns data unchanged if
     /// no encryption CID is present.
-    pub(super) fn kms_request_context(metadata: Option<&BlockMetadata<'_>>) -> kms::RequestContext {
-        let Some(metadata) = metadata else {
-            return kms::RequestContext::anonymous();
-        };
-        let Some(collection_id) = metadata.collection_id else {
-            return kms::RequestContext::anonymous();
-        };
-        let Some(authorization) = metadata.explicit_replay_authorization_for(collection_id) else {
-            return kms::RequestContext::anonymous();
-        };
-        match identity::Did::new(&authorization.authorizer_did) {
-            Ok(did) => match &authorization.capability {
-                Some(capability) => {
-                    kms::RequestContext::with_explicit_replay(did, capability.clone())
-                }
-                None => kms::RequestContext::with_user(did),
-            },
-            Err(_) => kms::RequestContext::anonymous(),
+    pub(super) fn kms_request_context(
+        &self,
+        metadata: Option<&BlockMetadata<'_>>,
+    ) -> kms::RequestContext {
+        if let Some(authorization) = metadata.and_then(|metadata| {
+            metadata
+                .collection_id
+                .and_then(|collection_id| metadata.explicit_replay_authorization_for(collection_id))
+        }) {
+            if let Ok(did) = identity::Did::new(&authorization.authorizer_did) {
+                return match &authorization.capability {
+                    Some(capability) => {
+                        kms::RequestContext::with_explicit_replay(did, capability.clone())
+                    }
+                    None => kms::RequestContext::with_user(did),
+                };
+            }
         }
+
+        self.db
+            .node_identity()
+            .and_then(|identity| identity.did().ok())
+            .map(kms::RequestContext::with_user)
+            .unwrap_or_else(kms::RequestContext::anonymous)
     }
 
     pub async fn decrypt_block_data(
@@ -113,7 +119,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                     .ok_or(MergeError::NeedsDecryptionKey(*enc_cid))?;
                 return decrypt_with_key(data, key.as_slice());
             }
-            let ctx = Self::kms_request_context(metadata);
+            let ctx = self.kms_request_context(metadata);
             if local_only || self.local_keys_only {
                 let mut answers = kms
                     .get_local_keys_each(&ctx, std::slice::from_ref(enc_cid))

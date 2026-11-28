@@ -98,7 +98,7 @@ where
         }
         let cids = self.merge_key_cids(block).await;
         let answers = self
-            .fetch_merge_keys(&Self::kms_request_context(metadata), &cids)
+            .fetch_merge_keys(&self.kms_request_context(metadata), &cids)
             .await;
         if answers.is_empty() {
             return handler;
@@ -164,7 +164,7 @@ where
         if cids.is_empty() {
             return handler;
         }
-        let context = Self::kms_request_context(None);
+        let context = self.kms_request_context(None);
         let answers: Vec<(Cid, MergeKeyAnswer)> =
             match kms.get_local_keys_each(&context, &cids).await {
                 Ok(answers) => cids

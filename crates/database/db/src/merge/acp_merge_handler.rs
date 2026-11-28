@@ -1,7 +1,7 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
-use acp::{DocumentACP, DocumentPermission, Identity};
+use acp::{check_doc_read_access, DirectChecker, DocumentACP, DocumentPermission, Identity};
 use async_trait::async_trait;
 use cid::Cid;
 use defra_core::merge::{
@@ -20,6 +20,14 @@ use crate::merge::replica::{ReplicaRegistration, ReplicaStep};
 
 pub type AcpMergeError = MergeError;
 
+fn acp_object_id<'a>(collection: &'a CollectionVersion, doc_id: &'a str) -> &'a str {
+    if collection.is_branchable {
+        &collection.collection_id
+    } else {
+        doc_id
+    }
+}
+
 struct RegisterReplicatedDocAction {
     acp: Arc<dyn DocumentACP>,
     did: identity::Did,
@@ -36,6 +44,16 @@ struct RegisterReplicatedDocAction {
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl CompositePostCommitAction for RegisterReplicatedDocAction {
     async fn run(self: Box<Self>) -> Result<(), MergeError> {
+        if self
+            .acp
+            .is_doc_registered(&self.policy_id, &self.resource_name, &self.doc_id)
+            .await
+            .map_err(|e| {
+                MergeError::MergeFailed(format!("ACP registration lookup failed: {}", e))
+            })?
+        {
+            return Ok(());
+        }
         self.acp
             .register_doc_object(
                 &self.did,
@@ -115,15 +133,20 @@ impl AcpCompositeMergeHook {
         &self,
         acp: &dyn DocumentACP,
         identity: &Identity,
+        collection: &CollectionVersion,
         policy: &schema::PolicyDescription,
         doc_id: &str,
     ) -> Result<bool, MergeError> {
         let reads = |who: Identity| async move {
-            acp.check_doc_access(
-                &who,
-                DocumentPermission::Read,
+            check_doc_read_access(
+                &DirectChecker {
+                    acp,
+                    identity: &who,
+                },
                 &policy.id,
                 &policy.resource_name,
+                &collection.collection_id,
+                collection.is_branchable,
                 doc_id,
             )
             .await
@@ -460,8 +483,9 @@ impl CompositeMergeHook for AcpCompositeMergeHook {
             return Ok(None);
         };
 
+        let object_id = acp_object_id(collection, doc_id);
         let is_registered = acp
-            .is_doc_registered(&policy.id, &policy.resource_name, doc_id)
+            .is_doc_registered(&policy.id, &policy.resource_name, object_id)
             .await
             .map_err(|e| {
                 MergeError::MergeFailed(format!("ACP registration lookup failed: {}", e))
@@ -473,7 +497,7 @@ impl CompositeMergeHook for AcpCompositeMergeHook {
         }
 
         if self
-            .node_reads(acp.as_ref(), identity, policy, doc_id)
+            .node_reads(acp.as_ref(), identity, collection, policy, doc_id)
             .await?
         {
             return Ok(None);
@@ -515,8 +539,9 @@ impl CompositeMergeHook for AcpCompositeMergeHook {
             return Ok(None);
         }
 
+        let object_id = acp_object_id(collection, doc_id);
         let is_registered = acp
-            .is_doc_registered(&policy.id, &policy.resource_name, doc_id)
+            .is_doc_registered(&policy.id, &policy.resource_name, object_id)
             .await
             .map_err(|e| {
                 MergeError::MergeFailed(format!("ACP registration lookup failed: {}", e))

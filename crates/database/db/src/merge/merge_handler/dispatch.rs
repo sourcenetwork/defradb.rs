@@ -270,7 +270,7 @@ impl<S: Store + 'static, B: blockstore::Blockstore + 'static> DbMergeHandler<S, 
             is_recovery: metadata.is_recovery,
             is_schema_block: metadata.is_schema_block,
         };
-        let kms_context = Self::kms_request_context(Some(&retry_metadata));
+        let kms_context = self.kms_request_context(Some(&retry_metadata));
         if let Ok(block) = Block::from_dag_cbor(block_data) {
             let cids = self.merge_key_cids(&block).await;
             self.prefill_retry_keys(&kms_context, &cids, &retry_deks)

@@ -314,7 +314,7 @@ impl<S: Store + 'static, B: blockstore::Blockstore + 'static> DbMergeHandler<S, 
             .collect();
         let kms_contexts: Vec<_> = blocks
             .iter()
-            .map(|block| Self::kms_request_context(Some(&batch_block_metadata(block))))
+            .map(|block| self.kms_request_context(Some(&batch_block_metadata(block))))
             .collect();
         self.prefill_batch_keys(blocks, &kms_contexts, &retry_deks)
             .await;

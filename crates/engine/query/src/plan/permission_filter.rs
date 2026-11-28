@@ -5,7 +5,7 @@
 
 use std::sync::Arc;
 
-use acp::{DocumentACP, DocumentPermission, Identity};
+use acp::{DocumentACP, Identity};
 use async_trait::async_trait;
 use defra_core::thread_bounds::MaybeBoxFuture;
 use futures::{stream::FuturesOrdered, FutureExt, StreamExt};
@@ -37,6 +37,8 @@ pub struct AcpRead {
     pub strict: bool,
     pub policy_id: String,
     pub resource_name: String,
+    pub collection_id: String,
+    pub is_branchable: bool,
 }
 
 #[derive(Clone)]
@@ -47,6 +49,8 @@ pub(crate) struct AcpReadCheck {
     strict: bool,
     policy_id: Arc<str>,
     resource_name: Arc<str>,
+    collection_id: Arc<str>,
+    is_branchable: bool,
     retry_inputs: Option<crate::prepared::PreparedInputMemo>,
     projection: Option<Arc<AcpRegistrationProjection>>,
 }
@@ -64,6 +68,8 @@ impl AcpReadCheck {
             strict: read.strict,
             policy_id: Arc::from(read.policy_id),
             resource_name: Arc::from(read.resource_name),
+            collection_id: Arc::from(read.collection_id),
+            is_branchable: read.is_branchable,
             retry_inputs,
             projection,
         }
@@ -82,15 +88,15 @@ impl AcpReadCheck {
         if self.identity.is_authenticated() && self.dac_bypass {
             return Ok(true);
         }
-        match crate::txn::check_doc_access_with_prepared_inputs(
+        match crate::txn::check_doc_read_access_with_prepared_inputs(
             self.acp.as_ref(),
             self.projection.as_deref(),
             self.identity.as_ref(),
-            DocumentPermission::Read,
             self.policy_id.as_ref(),
             self.resource_name.as_ref(),
+            self.collection_id.as_ref(),
+            self.is_branchable,
             doc_id,
-            false,
             self.retry_inputs.as_ref(),
         )
         .await
@@ -189,6 +195,8 @@ impl PermissionFilterNode {
                 strict: false,
                 policy_id: Arc::from(policy_id.into()),
                 resource_name: Arc::from(resource_name.into()),
+                collection_id: Arc::from(""),
+                is_branchable: false,
                 retry_inputs: None,
                 projection: None,
             }),
@@ -294,6 +302,14 @@ impl PermissionFilterNode {
         self
     }
 
+    fn with_collection(mut self, collection_id: impl Into<Arc<str>>, is_branchable: bool) -> Self {
+        if let Some(acp) = &mut self.acp {
+            acp.collection_id = collection_id.into();
+            acp.is_branchable = is_branchable;
+        }
+        self
+    }
+
     /// Wrap `source` in whichever of the ACP and app checks apply, or return
     /// it unchanged when neither does.
     pub fn wrap(
@@ -330,6 +346,7 @@ impl PermissionFilterNode {
                     read.policy_id,
                     read.resource_name,
                 )
+                .with_collection(read.collection_id, read.is_branchable)
                 .with_dac_bypass(read.dac_bypass)
                 .with_strict_access(read.strict)
                 .with_app_check(app)
@@ -478,6 +495,7 @@ impl PlanNode for PermissionFilterNode {
 
 #[cfg(test)]
 mod tests {
+    use acp::DocumentPermission;
     use rapidhash::{HashMapExt, RapidHashMap};
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::time::Duration;
@@ -688,6 +706,16 @@ mod tests {
                 .unwrap_err();
             let crate::error::QueryError::NeedsInput(request) = error else {
                 panic!("expected typed ACP input request");
+            };
+            assert_eq!(acp.calls.load(Ordering::SeqCst), 0);
+
+            memo.insert(request, b"true".as_slice());
+            let error = node
+                .permission_check("doc-1".to_string(), doc.deep_clone())
+                .await
+                .unwrap_err();
+            let crate::error::QueryError::NeedsInput(request) = error else {
+                panic!("expected typed ACP permission request");
             };
             assert_eq!(acp.calls.load(Ordering::SeqCst), 0);
 

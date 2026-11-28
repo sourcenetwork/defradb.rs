@@ -411,6 +411,54 @@ fn strict_acp_writer_permission_does_not_replace_receiver_read_permission() {
     .unwrap()
 }
 
+#[test]
+fn the_direct_replicator_channel_merges_a_readable_owners_protected_genesis() {
+    workers::block_on(async {
+        let hook = hook_with_acp(true, registered_acp().await);
+        assert_eq!(
+            hook.on_protected_composite(
+                "doc1",
+                &protected_collection(),
+                &BlockMetadata::normal(
+                    "doc1",
+                    protected_collection_id(),
+                    OWNER,
+                    Some("peer"),
+                    true,
+                ),
+            )
+            .await
+            .unwrap(),
+            None
+        );
+    })
+    .unwrap()
+}
+
+#[test]
+fn an_already_registered_replica_is_not_registered_again() {
+    workers::block_on(async {
+        let hook = hook_with_acp(true, registered_acp().await);
+        let action = hook
+            .post_commit_action(
+                "doc1",
+                &protected_collection(),
+                &BlockMetadata::normal(
+                    "doc1",
+                    protected_collection_id(),
+                    OWNER,
+                    Some("peer"),
+                    false,
+                ),
+                Vec::new(),
+            )
+            .expect("a protected replica registration");
+
+        action.run().await.unwrap();
+    })
+    .unwrap()
+}
+
 /// A provider that keeps the relationships each registration carries.
 #[derive(Default)]
 struct Recording {
