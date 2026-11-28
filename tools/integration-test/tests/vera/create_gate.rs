@@ -296,9 +296,8 @@ async fn a_gated_collection_admits_creators_its_policy_lets_create() {
             vec![book.clone()]
         );
 
-        // Batched creates and an upsert's create branch each owe one
-        // parent-bound registration, and the provider's follow-up without
-        // the parent leaves both registrations intact.
+        // Each document of a batched create and an upsert's create branch
+        // is registered with its parent when its commit settles.
         let batch = node
             .execute_request(alice.request(&format!(
                 r#"mutation {{ add_Book(input: [
@@ -307,13 +306,7 @@ async fn a_gated_collection_admits_creators_its_policy_lets_create() {
                 ]) {{ _docID }} }}"#,
             )))
             .await;
-        assert!(!batch.has_errors(), "{:?}", batch.errors);
-        let batch_ids: Vec<String> = batch.data.expect("data")["add_Book"]
-            .as_array()
-            .expect("rows")
-            .iter()
-            .map(|row| row["_docID"].as_str().expect("_docID").to_owned())
-            .collect();
+        let batch_ids = ids(batch, "add_Book");
         assert_eq!(batch_ids.len(), 2);
         for id in &batch_ids {
             assert!(settled_reads(&node, &dave.did, &policy, "book", id).await);
