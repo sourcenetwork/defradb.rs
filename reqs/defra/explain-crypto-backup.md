@@ -463,3 +463,17 @@ A backup file in which two documents carry the same `_docID` (or `_docIDNew`) fa
 - **Scenarios:** ["backup::failed_import::a_failed_import_keeps_every_document_before_the_one_refused", "backup::failed_import::an_import_refusing_a_value_keeps_every_document_before_it"]
 
 An import that cannot create one of its documents fails with that document's error and stops there. Every document of the file before it is imported, and none after it is: a file of `{"name":"Alice"}`, `{"name":"John"}`, `{"name":"John"}`, `{"name":"Zed"}`, whose second John has the first one's content and so its ID, fails with `a document with the given ID already exists` and leaves Alice and the first John. A value the schema refuses stops it the same way: a file of `{"name":"Alice","points":1}`, `{"name":"Bob","points":"many"}` into a `pcounter` field `points` fails with `failed to create document in 'User': …` and leaves Alice.
+
+# `defra.backup.export.node_access`: An export needs the read-document node permission
+
+- **Parents:** ["go.backup.export"]
+- **Scenarios:** ["backup::node_access::an_export_by_the_node_owner_returns_the_documents", "backup::node_access::an_export_by_another_identity_is_not_authorized", "backup::node_access::an_export_with_no_identity_is_not_authorized"]
+
+With node ACP enabled, a backup export is checked for the `read-document` node permission before it reads anything, through every client (the embedded node, HTTP, the CLI and FFI alike), as Go's export checks it on each document it reads. The node owner's export returns the documents; an export with another identity, or with none, fails with `not authorized to perform operation. Permission: read-document`.
+
+# `defra.backup.dump`: A dump lists the node's store
+
+- **Parents:** ["go.backup"]
+- **Scenarios:** ["backup::print_dump::a_dump_lists_the_keys_of_the_store"]
+
+`dump` (Go's `PrintDump`, `GET /api/v0/debug/dump`) lists every key of the node's store, one line each naming its namespace, the key and its value's size, through the embedded node, its HTTP server and the CLI. After a collection and a document are added the list is not empty. The HTTP API answers it only in development mode, and with node ACP enabled only for a caller with the `read-document` node permission, since it hands the store's keys to the caller where Go only logs them.

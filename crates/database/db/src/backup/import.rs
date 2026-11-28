@@ -13,6 +13,7 @@ use super::alias::{self, Saved, ALIAS_TAKEN};
 use super::batch::{Batch, Gathered};
 use super::classify_schema_fields;
 use super::host::{ImportHost, RunnerHost};
+use super::BackupError;
 use crate::DB;
 
 /// Statistics from a backup import operation.
@@ -53,7 +54,7 @@ pub async fn import_database<S>(
     database: &Arc<DB<S>>,
     runner: &Arc<dyn query::QueryExecutor>,
     data: &str,
-) -> Result<ImportStats, String>
+) -> Result<ImportStats, BackupError>
 where
     S: Store + 'static,
 {
@@ -89,6 +90,20 @@ where
 /// one document at a time, so a failure stops the import with every
 /// document before the one refused kept.
 pub async fn import_database_as<S>(
+    context: &defra_core::RequestContext,
+    database: &Arc<DB<S>>,
+    host: &dyn ImportHost,
+    data: &str,
+) -> Result<ImportStats, BackupError>
+where
+    S: Store + 'static,
+{
+    import(context, database, host, data)
+        .await
+        .map_err(BackupError::Import)
+}
+
+async fn import<S>(
     context: &defra_core::RequestContext,
     database: &Arc<DB<S>>,
     host: &dyn ImportHost,

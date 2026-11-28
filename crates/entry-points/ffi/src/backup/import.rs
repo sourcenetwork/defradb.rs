@@ -68,7 +68,8 @@ pub unsafe fn defra_backup_import(
 
             db::backup::import_database_as(&context, &database, &host, &content)
                 .await
-                .map(|_| ())
+                .map(drop)
+                .map_err(|error| error.to_string())
         })
     }
 }
