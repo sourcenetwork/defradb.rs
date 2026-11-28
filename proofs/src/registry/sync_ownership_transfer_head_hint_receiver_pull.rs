@@ -428,6 +428,22 @@ pub(super) const PROPERTIES: &[Property] = &[
         bound_by: "",
     },
     Property {
+        // #2307: the resync sweep sleeps between its 60-second ticks. Every
+        // in-memory entry removal with a waiting durable root that has map and
+        // peer room wakes it: rotation, an ending continuation, TTL eviction,
+        // quarantine, merged cleanup, and persisted-record removal. A rotating
+        // root keeps its entry unless another waiter can take the place, so a
+        // waiter held out by its peer quota does not start a sweep that could
+        // only re-admit the same root.
+        family: "Sync ownership transfer (head hint / receiver pull)",
+        name: "INV_FreedPlaceArmed: a freed in-memory place wakes the resync sweep",
+        axis: Tla,
+        anchor: "crates/database/p2p/src/sync/manager/process/pending_dag.rs PendingDagLease::finish_attempt, MergeTurn, evict_expired, clear_pending_dag, quarantine_pending_dag, notify_if_durable_root_fits; crates/database/p2p/src/sync/manager/process/mod.rs remove_persisted_pending; crates/database/p2p/src/sync/pending_store/view.rs source; crates/database/p2p/src/sync/coordinator/mod.rs run_pending_dag_resync",
+        model_ref: "MC_SyncOwnership_{Green_Memory,Green_Memory_Quota,Green_TwoTierQuota,Red_RotateNoWake,Red_ContinuationNoWake,Red_RecordLeavingNoWake}.cfg",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
         // A hub that merges an upstream head forwards it to its own
         // replicators before the merge discharges the upstream pending
         // record; a forward that fails leaves the root unmarked, and any

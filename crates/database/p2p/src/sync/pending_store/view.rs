@@ -87,6 +87,13 @@ impl PersistedView {
         self.roots.keys().collect()
     }
 
+    /// The peer that announced `root`, when its durable record is present.
+    pub(crate) fn source(&self, root: &Cid) -> Option<Option<String>> {
+        self.roots
+            .get(root)
+            .map(|footprint| footprint.source.clone())
+    }
+
     /// How many roots with a durable record `source_peer` announced.
     pub fn source_count(&self, source_peer: Option<&str>) -> usize {
         self.sources
