@@ -203,6 +203,10 @@ pub struct DbTxn<S: Store> {
     /// The store `DB::new_txn` began this transaction on, for a later
     /// snapshot of it. `None` for a transaction begun any other way.
     store: Option<Arc<S>>,
+    /// The fence of this transaction's explicit commit, once its owner hands
+    /// it over. Post-commit work uses it to wait for every other landing
+    /// commit without waiting on its own.
+    commit_token: Arc<regolith::sync::Atom<Option<fence::CommitToken>>>,
 }
 
 /// What a statement's rollback puts back beside the engine's own savepoint.
@@ -269,7 +273,16 @@ impl<S: Store> DbTxn<S> {
             observed_owners: regolith::sync::OnceCell::new(),
             commit_registrations: regolith::sync::OnceCell::new(),
             store: None,
+            commit_token: Arc::new(regolith::sync::Atom::new(None)),
         }
+    }
+
+    pub(crate) fn commit_token(&self) -> Arc<regolith::sync::Atom<Option<fence::CommitToken>>> {
+        Arc::clone(&self.commit_token)
+    }
+
+    fn set_commit_token(&self, token: fence::CommitToken) {
+        self.commit_token.store(Some(token));
     }
 
     pub(crate) fn on_store(mut self, store: Arc<S>) -> Self {
@@ -1114,6 +1127,15 @@ impl<S: Store> DbTxn<S> {
     ///
     /// This should only be called by the transaction creator.
     pub async fn force_commit(mut self) -> Result<()> {
+        self.commit_without_fence().await
+    }
+
+    pub(crate) async fn force_commit_with_token(mut self, token: fence::CommitToken) -> Result<()> {
+        self.set_commit_token(token);
+        self.commit_without_fence().await
+    }
+
+    async fn commit_without_fence(&mut self) -> Result<()> {
         if let Err(error) = self.run_pending_collection_acp_registrations().await {
             if let Err(discard_error) = self.discard_active_txn() {
                 tracing::warn!(

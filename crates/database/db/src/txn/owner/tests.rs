@@ -109,11 +109,13 @@ fn a_caller_that_does_not_own_the_transaction_finds_nothing_and_changes_nothing(
     }))
     .unwrap();
     assert_eq!(foreign, Err(Unavailable::NotFound));
-    let finished =
-        block_on(owners.finish(id, &"bob", |probe| Box::pin(async move { drop(probe) }))).unwrap();
+    let finished = block_on(owners.finish(id, &"bob", |probe, _token| {
+        Box::pin(async move { drop(probe) })
+    }))
+    .unwrap();
     assert_eq!(finished, Err(Unavailable::NotFound));
     assert_eq!(dropped.load(Ordering::SeqCst), 0);
-    let log = block_on(owners.finish(id, &"alice", |mut probe| {
+    let log = block_on(owners.finish(id, &"alice", |mut probe, _token| {
         Box::pin(async move { std::mem::take(&mut probe.log) })
     }))
     .unwrap()
@@ -269,7 +271,7 @@ fn a_commit_whose_waiter_leaves_before_it_begins_still_lands() {
             block_on(async {
                 workers::timeout(Duration::from_millis(20), async {
                     owners
-                        .finish_detached(id, &"alice", |mut txn| {
+                        .finish_detached(id, &"alice", |mut txn, _token| {
                             Box::pin(async move {
                                 txn.log.push("committed".into());
                                 committed.fetch_add(1, Ordering::SeqCst);
@@ -360,9 +362,11 @@ fn an_outcome_is_open_then_final_only_for_its_owner() {
     assert_eq!(owners.outcome(id, &"alice"), Some(Outcome::Committing));
     Outcome::Committed.store(&status);
 
-    block_on(owners.finish(id, &"alice", |probe| Box::pin(async move { drop(probe) })))
-        .unwrap()
-        .unwrap();
+    block_on(owners.finish(id, &"alice", |probe, _token| {
+        Box::pin(async move { drop(probe) })
+    }))
+    .unwrap()
+    .unwrap();
     assert_eq!(owners.outcome(id, &"alice"), Some(Outcome::Committed));
     assert_eq!(owners.outcome(id, &"bob"), None);
 }
@@ -386,9 +390,11 @@ fn an_id_from_another_start_names_neither_the_live_transaction_nor_its_outcome()
 
     let status = owners.outcome_status(id, &"alice").unwrap();
     Outcome::Committed.store(&status);
-    block_on(owners.finish(id, &"alice", |probe| Box::pin(async move { drop(probe) })))
-        .unwrap()
-        .unwrap();
+    block_on(owners.finish(id, &"alice", |probe, _token| {
+        Box::pin(async move { drop(probe) })
+    }))
+    .unwrap()
+    .unwrap();
     assert_eq!(owners.outcome(id, &"alice"), Some(Outcome::Committed));
     assert_eq!(owners.outcome(foreign, &"alice"), None);
 }

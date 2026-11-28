@@ -13,7 +13,8 @@
 \*     its writes stay private until the caller commits.
 \*   - A request with no transaction runs on its own (autocommit) and its
 \*     writes reach the shared store at once.
-\*   - A patch inside a transaction is refused for now and changes nothing.
+\*   - A patch is no exception: inside a transaction it is held by that
+\*     transaction like every other operation (PatchInTxn models the rest).
 \*
 \* What must never happen:
 \*   1. A caller without the permission changes anything. (INV_NoEffectWithoutPermission)
@@ -82,8 +83,6 @@ Request(c, op, t) ==
        THEN /\ store' = store \cup {<<c, op>>}
             /\ leaked' = (leaked \/ t # NoTxn)                \* a named transaction was bypassed
             /\ UNCHANGED private
-     ELSE IF op = "patch"
-       THEN UNCHANGED <<store, private, leaked>>           \* a patch in a transaction is refused
      ELSE /\ private' = [private EXCEPT ![t] = @ \cup {<<c, op>>}]  \* held by its transaction
           /\ UNCHANGED <<store, leaked>>
 
@@ -99,8 +98,4 @@ INV_NoEffectWithoutPermission ==
 \* INV_TxnNeverAutocommits: a request that named a transaction never wrote
 \* the shared store directly.
 INV_TxnNeverAutocommits == ~leaked
-
-\* A patch inside a transaction changes nothing while it is refused.
-INV_PatchInTxnChangesNothing ==
-  \A t \in Txns : \A w \in private[t] : w[2] # "patch"     \* no transaction holds a patch
 ====

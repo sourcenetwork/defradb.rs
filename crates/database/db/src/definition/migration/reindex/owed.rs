@@ -317,7 +317,17 @@ where
 {
     /// The IDs of the collections owed a reindex.
     pub async fn owed_reindexes(&self) -> Result<Vec<String>> {
-        let txn = self.new_txn(true).await?;
+        self.owed_reindexes_after_commit(None).await
+    }
+
+    async fn owed_reindexes_after_commit(
+        &self,
+        commit: Option<&crate::txn::fence::CommitToken>,
+    ) -> Result<Vec<String>> {
+        let txn = match commit {
+            Some(token) => self.new_txn_after_commit(true, token).await?,
+            None => self.new_txn(true).await?,
+        };
         let mut collection_ids = Vec::new();
         {
             let systemstore = txn.systemstore()?;
@@ -343,9 +353,16 @@ where
     /// Settles every owed reindex once. A rebuild that fails is reported and
     /// stays owed.
     pub async fn settle_owed_reindexes(&self) -> Result<ReindexReport> {
+        self.settle_owed_reindexes_with(None).await
+    }
+
+    async fn settle_owed_reindexes_with(
+        &self,
+        commit: Option<&crate::txn::fence::CommitToken>,
+    ) -> Result<ReindexReport> {
         let mut report = ReindexReport::default();
-        for collection_id in self.owed_reindexes().await? {
-            match self.settle_owed_reindex(&collection_id).await {
+        for collection_id in self.owed_reindexes_after_commit(commit).await? {
+            match self.settle_owed_reindex(&collection_id, commit).await {
                 Ok(()) => report.settled += 1,
                 Err(error) => {
                     report.failed += 1;
@@ -363,7 +380,16 @@ where
     /// The follow-up of a committed schema change: settle what is owed. The
     /// change stands whatever happens here; a failure is reported and stays owed.
     pub(crate) async fn settle_owed_reindexes_after_commit(&self) {
-        if let Err(error) = self.settle_owed_reindexes().await {
+        self.settle_owed_reindexes_with_commit(None).await;
+    }
+
+    /// Settles owed reindexes from a commit's post-commit work. Transactions
+    /// this opens wait for every landing commit except `token`'s own.
+    pub(crate) async fn settle_owed_reindexes_with_commit(
+        &self,
+        token: Option<&crate::txn::fence::CommitToken>,
+    ) {
+        if let Err(error) = self.settle_owed_reindexes_with(token).await {
             tracing::warn!(
                 %error,
                 "Owed reindexes could not be read; they are settled at the next schema change and at open"
@@ -371,8 +397,15 @@ where
         }
     }
 
-    async fn settle_owed_reindex(&self, collection_id: &str) -> Result<()> {
-        let txn = self.new_txn(true).await?;
+    async fn settle_owed_reindex(
+        &self,
+        collection_id: &str,
+        commit: Option<&crate::txn::fence::CommitToken>,
+    ) -> Result<()> {
+        let txn = match commit {
+            Some(token) => self.new_txn_after_commit(true, token).await?,
+            None => self.new_txn(true).await?,
+        };
         let owed = read_owed(&txn.systemstore()?, collection_id).await?;
         txn.discard()?;
         let Some(owed) = owed else {
@@ -380,7 +413,7 @@ where
         };
         let rebuild = match self.find_collection_by_id(collection_id)? {
             Some(collection) => self
-                .reindex_needed(&collection, owed.migration_destination.as_deref())
+                .reindex_needed(&collection, owed.migration_destination.as_deref(), commit)
                 .await?
                 .then(|| collection.name().to_string()),
             None => None,
@@ -388,7 +421,10 @@ where
         match rebuild {
             Some(name) => self.rebuild_settling(&name, owed.token).await,
             None => {
-                let txn = self.new_txn(false).await?;
+                let txn = match commit {
+                    Some(token) => self.new_txn_after_commit(false, token).await?,
+                    None => self.new_txn(false).await?,
+                };
                 clear_owed_reindex(
                     &txn.systemstore()?,
                     &self.collections,

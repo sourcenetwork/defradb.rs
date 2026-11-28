@@ -764,13 +764,31 @@ impl<S: Store> DB<S> {
     /// If `readonly` is true, the transaction cannot perform writes.
     /// Returns `Error::DatabaseClosed` if the database has been closed.
     pub async fn new_txn(&self, readonly: bool) -> Result<DbTxn<S>> {
+        self.new_txn_except(readonly, None).await
+    }
+
+    /// Creates a transaction from work running after `token`'s commit is
+    /// durable. It waits for every landing commit except that one.
+    pub(crate) async fn new_txn_after_commit(
+        &self,
+        readonly: bool,
+        token: &crate::txn::fence::CommitToken,
+    ) -> Result<DbTxn<S>> {
+        self.new_txn_except(readonly, Some(token)).await
+    }
+
+    async fn new_txn_except(
+        &self,
+        readonly: bool,
+        token: Option<&crate::txn::fence::CommitToken>,
+    ) -> Result<DbTxn<S>> {
         if self.closed.load(Ordering::SeqCst) {
             return Err(Error::DatabaseClosed);
         }
         // A commit whose caller stopped waiting may still be landing; what
         // begins now must see it.
         if self.commit_fences.any() {
-            self.commit_fences.cleared().await;
+            self.commit_fences.cleared_except(token).await;
         }
         let id = self.next_txn_id();
         let basic_txn = BasicTxn::new(&*self.store, id, readonly)

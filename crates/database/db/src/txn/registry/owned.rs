@@ -21,6 +21,7 @@ use crate::error::{Error, Result};
 use crate::event::emission::TxnBroadcaster;
 use crate::read::lensed::fetcher::FetcherCaches;
 use crate::txn::context::DbTransactionContext;
+use crate::txn::fence::CommitToken;
 use crate::txn::lenses::TxnLensStore;
 use crate::txn::owner::TxnId;
 use crate::txn::{DbTxn, LentTxn};
@@ -51,6 +52,8 @@ where
     broadcaster: Option<Arc<dyn TxnBroadcaster>>,
     /// A request opened a statement it has not closed yet.
     statement_open: bool,
+    /// The transaction-local lenses visible when that statement began.
+    statement_lenses: Option<rapidhash::RapidHashSet<lens::TransformId>>,
 }
 
 impl<S> OwnedTxn<S>
@@ -73,6 +76,7 @@ where
             caches: FetcherCaches::default(),
             broadcaster,
             statement_open: false,
+            statement_lenses: None,
         })
     }
 
@@ -141,18 +145,49 @@ where
         let undone = self
             .alone()
             .and_then(|txn| txn.rollback_statement_savepoint());
-        if let Err(error) = undone {
-            error!(
-                txn_id = %self.id,
-                %error,
-                "failed to undo the statement a request left open"
-            );
+        match undone {
+            Ok(()) => {
+                if let Some(lenses) = self.statement_lenses.take() {
+                    self.lens_store.restore(lenses);
+                }
+            }
+            Err(error) => {
+                error!(
+                    txn_id = %self.id,
+                    %error,
+                    "failed to undo the statement a request left open"
+                );
+            }
         }
     }
 
+    pub(crate) fn begin_operation_statement(&mut self) -> Result<()> {
+        self.alone()?.set_statement_savepoint()?;
+        self.statement_open = true;
+        self.statement_lenses = Some(self.lens_store.snapshot());
+        Ok(())
+    }
+
+    pub(crate) fn end_operation_statement(&mut self, keep: bool) -> Result<()> {
+        if keep {
+            self.alone()?.release_statement_savepoint()?;
+        } else {
+            self.alone()?.rollback_statement_savepoint()?;
+        }
+        self.statement_open = false;
+        if !keep {
+            if let Some(lenses) = self.statement_lenses.take() {
+                self.lens_store.restore(lenses);
+            }
+        } else {
+            self.statement_lenses = None;
+        }
+        Ok(())
+    }
+
     /// Commits the transaction, after every request queued before this.
-    pub(crate) async fn commit(mut self) -> Result<()> {
-        self.take()?.force_commit().await
+    pub(crate) async fn commit(mut self, token: CommitToken) -> Result<()> {
+        self.take()?.force_commit_with_token(token).await
     }
 
     /// Commits the transaction, unless a provider told it owners its commit
@@ -160,13 +195,14 @@ where
     /// come back.
     pub(crate) async fn commit_unless_told(
         mut self,
+        token: CommitToken,
     ) -> crate::txn::owner::Ending<Self, Result<Vec<query::prepared::PreparedInputRequest>>> {
         let requests = match self.alone() {
             Ok(txn) => txn.observed_owner_requests(),
             Err(error) => return crate::txn::owner::Ending::Ended(Err(error)),
         };
         if requests.is_empty() {
-            return crate::txn::owner::Ending::Ended(self.commit().await.map(|()| requests));
+            return crate::txn::owner::Ending::Ended(self.commit(token).await.map(|()| requests));
         }
         crate::txn::owner::Ending::Kept(self, Ok(requests))
     }
@@ -176,6 +212,7 @@ where
     /// back and fails with [`Error::OwnerChanged`].
     pub(crate) async fn commit_confirmed(
         mut self,
+        token: CommitToken,
         confirmations: &[query::txn::OwnerAnswer],
     ) -> Result<()> {
         let txn = self.take()?;
@@ -183,7 +220,7 @@ where
             txn.force_discard()?;
             return Err(changed.into());
         }
-        txn.force_commit().await
+        txn.force_commit_with_token(token).await
     }
 
     /// Rolls the transaction back, after every request queued before this.
@@ -218,24 +255,11 @@ where
     }
 
     fn begin_statement(&mut self) -> std::result::Result<(), TransactionError> {
-        self.alone()
-            .and_then(|txn| txn.set_statement_savepoint())
-            .map_err(Self::turn_error)?;
-        self.statement_open = true;
-        Ok(())
+        self.begin_operation_statement().map_err(Self::turn_error)
     }
 
     fn end_statement(&mut self, keep: bool) -> std::result::Result<(), TransactionError> {
-        self.statement_open = false;
-        self.alone()
-            .and_then(|txn| {
-                if keep {
-                    txn.release_statement_savepoint()
-                } else {
-                    txn.rollback_statement_savepoint()
-                }
-            })
-            .map_err(Self::turn_error)
+        self.end_operation_statement(keep).map_err(Self::turn_error)
     }
 
     fn pin_collection(

@@ -9,6 +9,7 @@
 
 mod added;
 mod in_place;
+mod outcome;
 mod patch_slop;
 mod store;
 mod substitute_slop;
@@ -18,12 +19,14 @@ mod version;
 use crate::collection::Collection;
 use crate::error::{Error, Result};
 use crate::txn::DbTxn;
+pub(crate) use outcome::{forget_cached_collections, Patched};
 use rapidhash::{RapidHashMap, RapidHashSet};
 use schema::{CollectionSource, CollectionVersion};
 use serde_json::Value;
 use storage::corekv::{Key, OnCommit, Store};
 use storage::keys::systemstore::{CollectionKey, CollectionNameKey, CollectionVersionKey};
 use tracing::instrument;
+pub(crate) use validate::operations as validate_operations;
 
 /// A collection version the patch changes.
 pub(crate) struct PendingPatch {
@@ -67,7 +70,28 @@ impl<S: Store> crate::database::DB<S> {
         // Every read and write of the patch runs in this one transaction, so
         // the patch commits whole or not at all.
         let mut txn = self.new_txn(false).await?;
-        let old_versions = self.get_all_collection_versions_with_txn(&mut txn).await?;
+        let lens_store = std::sync::Arc::new(crate::txn::lenses::TxnLensStore::new(
+            self.lens_store.clone(),
+        ));
+        let patched = self
+            .patch_collection_with_txn(&mut txn, &raw, migration, lens_store)
+            .await?;
+        txn.commit().await?;
+        self.after_patch(patched, None).await
+    }
+
+    /// [`Self::patch_collection`]'s reads and writes, in `txn`, for the
+    /// already validated operations `raw`. The caller has checked node access,
+    /// commits `txn`, and then passes the result to [`Self::after_patch`]. A
+    /// migration's lens is registered in `lens_store`, so `txn` sees it.
+    pub(crate) async fn patch_collection_with_txn(
+        &self,
+        txn: &mut DbTxn<S>,
+        raw: &[Value],
+        migration: Option<lens::LensConfig>,
+        lens_store: std::sync::Arc<dyn lens::TransformStore>,
+    ) -> Result<Patched> {
+        let old_versions = self.get_all_collection_versions_with_txn(txn).await?;
         let versions: RapidHashMap<String, CollectionVersion> = old_versions
             .iter()
             .map(|version| (version.version_id.clone(), version.clone()))
@@ -77,7 +101,7 @@ impl<S: Store> crate::database::DB<S> {
         // collection an earlier operation added.
         let mut patched = versions.clone();
         let mut ops = Vec::with_capacity(raw.len());
-        for raw_op in &raw {
+        for raw_op in raw {
             // Collections resolve by their stored names, which an earlier
             // operation may have moved away; fields by the current state.
             let op =
@@ -137,12 +161,12 @@ impl<S: Store> crate::database::DB<S> {
         schema::definition_validation::validate_collection_changes(&old_versions, &new_versions)
             .map_err(Error::InvalidPatch)?;
         for version in &added {
-            validate::check_added_ids(&txn, version).await?;
+            validate::check_added_ids(txn, version).await?;
             Collection::validate_default_values(version)?;
             validate_index_fields(version)?;
         }
         for patched in &changed {
-            self.validate_changed(&txn, patched).await?;
+            self.validate_changed(txn, patched).await?;
         }
         if migration.is_some() && changed.len() > 1 {
             return Err(Error::InvalidPatch(
@@ -159,7 +183,7 @@ impl<S: Store> crate::database::DB<S> {
             .map(|version| version.version_id.clone())
             .collect();
         let deleted = self
-            .delete_collection_versions_batch_with_txn(&mut txn, version_ids)
+            .delete_collection_versions_batch_with_txn(txn, version_ids)
             .await?;
         // Collections are stored in the order the patch first names them, so
         // generated IDs are deterministic; a deactivated version releases its
@@ -173,16 +197,17 @@ impl<S: Store> crate::database::DB<S> {
         let mut migration = migration;
         let mut stored = Vec::new();
         for patched in changed {
-            if self.update_version_in_place(&mut txn, &patched).await? {
+            if self.update_version_in_place(txn, &patched).await? {
                 continue;
             }
             stored.push(
                 self.store_new_version(
-                    &mut txn,
+                    txn,
                     patched.new_schema,
                     &patched.old_schema,
                     patched.is_active_explicitly_set,
                     migration.take(),
+                    lens_store.clone(),
                 )
                 .await?,
             );
@@ -190,25 +215,9 @@ impl<S: Store> crate::database::DB<S> {
         // A new version of an existing collection whose IDs name stored
         // blocks is stored as given, as Go does.
         for version in &added {
-            self.store_added_version(&mut txn, version).await?;
+            self.store_added_version(txn, version).await?;
         }
-        txn.commit().await?;
-
-        if stored.is_empty() {
-            self.settle_owed_reindexes_after_commit().await;
-            for deleted in &deleted {
-                self.after_version_deleted(deleted)?;
-            }
-        } else {
-            for deleted in &deleted {
-                self.after_version_deleted(deleted)?;
-            }
-            for stored in stored {
-                self.after_version_stored(stored).await;
-            }
-            self.settle_owed_reindexes_after_commit().await;
-        }
-        Ok(())
+        Ok(Patched { deleted, stored })
     }
 
     /// The checks on a changed version that need the database, read in `txn`.

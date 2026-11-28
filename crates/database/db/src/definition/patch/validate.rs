@@ -15,7 +15,7 @@ const KIND: &str = "Kind";
 const APPEND: &str = "-";
 
 /// The operations of a patch: a non-empty JSON array.
-pub(super) fn operations(patch: &str) -> Result<Vec<Value>> {
+pub(crate) fn operations(patch: &str) -> Result<Vec<Value>> {
     let patch: Value = serde_json::from_str(patch).map_err(|e| invalid(e.to_string()))?;
     let Value::Array(ops) = patch else {
         return Err(invalid("patch must be a JSON array"));

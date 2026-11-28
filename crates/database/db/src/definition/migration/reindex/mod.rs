@@ -59,6 +59,7 @@ where
         &self,
         collection: &crate::collection::Collection,
         migration_destination: Option<&str>,
+        commit: Option<&crate::txn::fence::CommitToken>,
     ) -> Result<bool> {
         if collection.get_indexes().is_empty() {
             return Ok(false);
@@ -66,7 +67,10 @@ where
         let Some(destination) = migration_destination else {
             return Ok(true);
         };
-        let read_txn = self.new_txn(true).await?;
+        let read_txn = match commit {
+            Some(token) => self.new_txn_after_commit(true, token).await?,
+            None => self.new_txn(true).await?,
+        };
         let versions = {
             let systemstore = read_txn.systemstore()?;
             get_collections_by_collection_id(&systemstore, collection.collection_id()).await?

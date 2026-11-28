@@ -252,11 +252,11 @@ impl<S: Store + 'static> TransactionRegistry for DbTransactionRegistry<S> {
             }
             self.owners()
                 .map_err(|error| unavailable(error, handle))?
-                .finish(id, &self.caller(context), move |owned| {
+                .finish(id, &self.caller(context), move |owned, token| {
                     Box::pin(async move {
                         report_slow_phase("commit", "queue", queued);
                         let started = Instant::now();
-                        let result = owned.commit().await;
+                        let result = owned.commit(token).await;
                         if let Some(outcome) = outcome.as_ref() {
                             match result {
                                 Ok(()) => crate::txn::owner::Outcome::Committed.store(outcome),
@@ -293,11 +293,11 @@ impl<S: Store + 'static> TransactionRegistry for DbTransactionRegistry<S> {
             }
             self.owners()
                 .map_err(|error| unavailable(error, handle))?
-                .finish_detached(id, &self.caller(context), move |owned| {
+                .finish_detached(id, &self.caller(context), move |owned, token| {
                     Box::pin(async move {
                         report_slow_phase("commit", "queue", queued);
                         let started = Instant::now();
-                        let result = owned.commit().await;
+                        let result = owned.commit(token).await;
                         if let Some(outcome) = outcome.as_ref() {
                             match result {
                                 Ok(()) => crate::txn::owner::Outcome::Committed.store(outcome),
@@ -335,12 +335,12 @@ impl<S: Store + 'static> TransactionRegistry for DbTransactionRegistry<S> {
                 }
                 self.owners()
                     .map_err(|error| unavailable(error, handle))?
-                    .finish_unless(id, &self.caller(context), move |owned| {
+                    .finish_unless(id, &self.caller(context), move |owned, token| {
                         Box::pin(async move {
                             report_slow_phase("commit", "queue", queued);
                             let started = Instant::now();
                             let ending =
-                                match owned.commit_unless_told().await {
+                                match owned.commit_unless_told(token).await {
                                     crate::txn::owner::Ending::Ended(result) => {
                                         if let Some(outcome) = outcome.as_ref() {
                                             match result {
@@ -396,10 +396,10 @@ impl<S: Store + 'static> TransactionRegistry for DbTransactionRegistry<S> {
             }
             self.owners()
                 .map_err(|error| unavailable(error, handle))?
-                .finish(id, &self.caller(context), move |owned| {
+                .finish(id, &self.caller(context), move |owned, token| {
                     Box::pin(async move {
                         owned
-                            .commit_confirmed(&confirmations)
+                            .commit_confirmed(token, &confirmations)
                             .await
                             .map_err(|error| commit_error(&label, error))
                             .inspect(|()| {
@@ -460,15 +460,14 @@ impl<S: Store + 'static> TransactionRegistry for DbTransactionRegistry<S> {
         patch: &str,
         migration: Option<lens::LensConfig>,
     ) -> std::result::Result<(), TransactionError> {
-        if context.txn().is_some() {
-            return Err(TransactionError::not_supported(
-                "collection patches inside an explicit transaction are not supported yet",
-            ));
-        }
-        self.db
-            .patch_collection(context, patch, migration)
-            .await
-            .map_err(operation_error)
+        let patched = match context.txn() {
+            Some(id) => {
+                self.patch_collection_in_txn_as(context, &id.to_string(), patch, migration)
+                    .await
+            }
+            None => self.db.patch_collection(context, patch, migration).await,
+        };
+        patched.map_err(operation_error)
     }
 
     async fn create_index_in_txn_as(
@@ -808,7 +807,7 @@ impl<S: Store + 'static> TransactionRegistry for DbTransactionRegistry<S> {
             .outcome_status(id, &self.caller(context));
         self.owners()
             .map_err(|error| unavailable(error, handle))?
-            .finish(id, &self.caller(context), move |owned| {
+            .finish(id, &self.caller(context), move |owned, _token| {
                 Box::pin(async move {
                     owned
                         .discard()

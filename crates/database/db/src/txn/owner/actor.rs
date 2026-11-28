@@ -23,7 +23,7 @@ use web_time::Instant;
 
 use super::idle::expired;
 use super::{Shared, TxnId};
-use crate::txn::fence::Landing;
+use crate::txn::fence::{CommitToken, Landing};
 
 /// A request's work on the transaction, given it by value: it puts the
 /// transaction back in its idle slot before its answer goes out.
@@ -38,10 +38,10 @@ pub(super) type Work<T> =
 
 /// The work that ends the transaction, given it by value.
 #[cfg(not(target_family = "wasm"))]
-pub(super) type Last<T> = Box<dyn FnOnce(T) -> LocalBoxFuture<'static, ()> + Send>;
+pub(super) type Last<T> = Box<dyn FnOnce(T, CommitToken) -> LocalBoxFuture<'static, ()> + Send>;
 /// The work that ends the transaction, given it by value.
 #[cfg(target_family = "wasm")]
-pub(super) type Last<T> = Box<dyn FnOnce(T) -> LocalBoxFuture<'static, ()>>;
+pub(super) type Last<T> = Box<dyn FnOnce(T, CommitToken) -> LocalBoxFuture<'static, ()>>;
 
 pub(super) enum Message<T> {
     /// A request.
@@ -128,7 +128,7 @@ pub(super) async fn own<T, K>(
                 }
                 let Some(txn) = idle.pop() else { break };
                 leave();
-                last(txn).await;
+                last(txn, fence.token()).await;
                 if let Some(shared) = shared.upgrade() {
                     shared.outcomes[worker].touch(id, Instant::now());
                 }
