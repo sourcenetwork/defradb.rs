@@ -2,11 +2,13 @@
 use p2p::topics::DefraTopic;
 
 #[cfg(feature = "libp2p")]
-pub(crate) async fn restore_libp2p_replicators<S>(
-    handle: &p2p::P2PHostHandle,
+pub(crate) async fn restore_libp2p_replicators<S, B, T>(
+    coordinator: &std::sync::Arc<p2p::sync::SyncCoordinator<B, T>>,
     peerstore: &storage::stores::Peerstore<S>,
 ) where
     S: storage::corekv::Store + 'static,
+    B: blockstore::Blockstore + 'static,
+    T: p2p::P2PTransport,
 {
     match peerstore.list_replicators().await {
         Ok(entries) => {
@@ -21,8 +23,10 @@ pub(crate) async fn restore_libp2p_replicators<S>(
                 match p2p::ReplicatorInfo::from_bytes(&data) {
                     Ok(info) => {
                         if let Some(peer_id) = info.peer_id() {
-                            if let Err(error) =
-                                handle.create_replicator_info(peer_id, info.clone()).await
+                            let peer_id = p2p::transport::PeerId::from(peer_id);
+                            if let Err(error) = coordinator
+                                .create_replicator_info(&peer_id, info.clone(), false)
+                                .await
                             {
                                 tracing::warn!(peer_id = %peer_id, error = %error, "failed to restore replicator");
                                 continue;
@@ -32,8 +36,9 @@ pub(crate) async fn restore_libp2p_replicators<S>(
                                 if info.is_filtered_for_collection(collection_id) {
                                     continue;
                                 }
-                                let topic = DefraTopic::collection(collection_id);
-                                if let Err(error) = handle.subscribe(topic).await {
+                                if let Err(error) =
+                                    coordinator.subscribe_collection(collection_id).await
+                                {
                                     tracing::warn!(collection_id = %collection_id, error = %error, "failed to restore collection topic");
                                 }
                             }

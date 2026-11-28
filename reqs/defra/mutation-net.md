@@ -393,3 +393,10 @@ A node holding none of a document with 11 updates, told of its next head, fetche
 - **Scenarios:** ["net::simple::replicator::with_offline_push::a_push_to_a_stopped_peer_is_parked_until_it_restarts"]
 
 A replicator pushes a document to a stopped target without treating the offline target as a failed job: before the target starts again, the source's `push_backlog.failed_total` is no more than zero and `push_backlog.parked_total` is at least one. When the target restarts with its data, it receives the document.
+
+# `defra.net.replicator.symmetric_restart`: A restarted target keeps accepting a symmetric peer's updates
+
+- **Parents:** ["defra"]
+- **Scenarios:** ["net::simple::replicator::with_symmetric_restart::a_restarted_replicator_target_keeps_accepting_its_peers_updates"]
+
+Two nodes that each list the other as a replicator for a collection continue to converge after either one restarts. A document pushed before the restart is present on both. After the restarted target returns and reconnects, an update made on the node that did not restart reaches the restarted node.
