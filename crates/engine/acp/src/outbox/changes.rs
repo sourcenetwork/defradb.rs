@@ -237,13 +237,40 @@ impl OwedChanges {
         resource: &str,
         object: &str,
     ) -> Result<u64> {
+        self.drop_unsent_on_with_reason(policy_id, resource, object, DROPPED_WITH_DELETE)
+            .await
+    }
+
+    /// Drop changes staged for an object whose create was finally refused.
+    pub async fn drop_unsent_on_refused_create(
+        &self,
+        policy_id: &str,
+        resource: &str,
+        object: &str,
+    ) -> Result<u64> {
+        self.drop_unsent_on_with_reason(
+            policy_id,
+            resource,
+            object,
+            "its document's create was refused",
+        )
+        .await
+    }
+
+    async fn drop_unsent_on_with_reason(
+        &self,
+        policy_id: &str,
+        resource: &str,
+        object: &str,
+        reason: &str,
+    ) -> Result<u64> {
         let view = self.active_view()?;
         let mut dropped = 0;
         for seq in ops::live_on(&view, policy_id, resource, object).await? {
             let Some(change) = ops::change(&view, seq).await? else {
                 continue;
             };
-            if change.in_flight.is_none() && ops::discard(&view, seq, DROPPED_WITH_DELETE).await? {
+            if change.in_flight.is_none() && ops::discard(&view, seq, reason).await? {
                 dropped += 1;
             }
         }

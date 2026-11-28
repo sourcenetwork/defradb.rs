@@ -10,31 +10,23 @@ pub(crate) struct DocumentAcpSetup {
     pub dac_policies: Arc<db::DacPolicies>,
     #[cfg(feature = "vera")]
     pub vera_acp: Option<Arc<vera::VeraDocumentACP>>,
-    /// Starts settling the registrations a previous run left owed, on the
-    /// pool given; the node stops it with its other background tasks.
+    /// The gate used by the node’s settlement and cleanup tasks.
     #[cfg(feature = "vera")]
-    pub redrive: Option<StartRedrive>,
+    pub redrive: Option<Arc<acp::ExternalDocumentAcp<storage::RegolithStore>>>,
     /// The Vera node started for document ACP; the node stops it on shutdown.
     #[cfg(feature = "embedded-vera")]
     pub embedded_vera: Option<vera_embedded::HostedNode>,
 }
 
-#[cfg(feature = "vera")]
-pub(crate) type StartRedrive =
-    Box<dyn FnOnce(Option<&workers::Pool>) -> workers::Background + Send>;
-
-pub(crate) async fn create_document_acp<S>(
-    store: Arc<S>,
+pub(crate) async fn create_document_acp(
+    store: Arc<storage::RegolithStore>,
     _persistence: Persistence,
     config: &crate::DocumentAcpConfig,
     #[cfg_attr(not(feature = "vera"), allow(unused_variables))] network: Option<&edge::Edge>,
     #[cfg_attr(not(feature = "vera"), allow(unused_variables))] event_bus: Option<
         Arc<dyn events::Bus>,
     >,
-) -> Result<DocumentAcpSetup>
-where
-    S: storage::corekv::Store + 'static,
-{
+) -> Result<DocumentAcpSetup> {
     match config {
         #[cfg(feature = "vera")]
         crate::DocumentAcpConfig::Vera(config) => {
@@ -134,20 +126,17 @@ fn remote_edge(network: Option<&edge::Edge>) -> Result<edge::Edge> {
 /// run on `edge` and are not cached, the provider's policies are mirrored into
 /// `store`, and owed registrations are gated and redriven.
 #[cfg(feature = "vera")]
-pub(crate) fn verified_acp_setup<S>(
+pub(crate) fn verified_acp_setup(
     provider: Arc<dyn vera::VeraProvider>,
     edge: &edge::Edge,
     request_timeout: std::time::Duration,
-    store: Arc<S>,
-) -> DocumentAcpSetup
-where
-    S: storage::corekv::Store + 'static,
-{
+    store: Arc<storage::RegolithStore>,
+) -> DocumentAcpSetup {
     let vera_acp = Arc::new(
         vera::VeraDocumentACP::new(Arc::clone(&provider)).on_network(edge, request_timeout),
     );
     let dac_policies = vera_policies(&vera_acp, &store);
-    let (gate, redrive) = gate_external_acp(vera_acp.clone(), store);
+    let gate = Arc::new(acp::ExternalDocumentAcp::new(vera_acp.clone(), store));
     // What a switch of the deployment's active device voided is owed again
     // through the gate's outbox.
     let owed = Arc::downgrade(&gate);
@@ -157,11 +146,11 @@ where
     let recovery: std::sync::Weak<dyn acp::RecoverySource> = recovery;
     provider.set_recovery_source(recovery);
     DocumentAcpSetup {
-        document_acp: gate,
+        document_acp: gate.clone(),
         local_zanzibar_store: None,
         dac_policies,
         vera_acp: Some(vera_acp),
-        redrive: Some(redrive),
+        redrive: Some(gate),
         #[cfg(feature = "embedded-vera")]
         embedded_vera: None,
     }
@@ -175,45 +164,6 @@ where
 {
     let mirror = Arc::new(acp::PersistentZanzibarStore::from_store(Arc::clone(store)));
     Arc::new(db::DacPolicies::remote(vera.clone(), mirror))
-}
-
-/// Gate a Vera provider with the registrations creates still owe it, and
-/// settle in the background any a previous run left owed (a crash, or a
-/// provider call that failed). Until settled, such a document is readable only
-/// by its creator. The node's drainer then runs on the same task for as long
-/// as the node does (`owed_drainer.rs`): it submits the relationship changes
-/// a previous run left owed, and every change committed since, after each
-/// commit that staged one and after a back-off while the provider is away.
-/// The task's storage runs on the pool it is started on; the provider sends
-/// its own calls to the network edge.
-#[cfg(feature = "vera")]
-fn gate_external_acp<S>(
-    provider: Arc<dyn acp::DocumentACP>,
-    store: Arc<S>,
-) -> (Arc<acp::ExternalDocumentAcp<S>>, StartRedrive)
-where
-    S: storage::corekv::Store + 'static,
-{
-    let gate = Arc::new(acp::ExternalDocumentAcp::new(provider, store));
-    let redrive = Arc::clone(&gate);
-    let start: StartRedrive = Box::new(move |pool| {
-        workers::spawn_background(pool, "acp::redrive_owed", move || async move {
-            match redrive.redrive_owed().await {
-                Ok(report) if report.settled > 0 => tracing::info!(
-                    settled = report.settled,
-                    failed = report.failed,
-                    "Settled ACP registrations owed from a previous run"
-                ),
-                Ok(_) => {}
-                Err(error) => tracing::warn!(
-                    %error,
-                    "Could not read owed ACP registrations; their documents stay readable only by their creators"
-                ),
-            }
-            crate::owed_drainer::drain(redrive).await;
-        })
-    });
-    (gate, start)
 }
 
 /// The node's NAC manager. With `owner`, NAC is enabled at startup and owned

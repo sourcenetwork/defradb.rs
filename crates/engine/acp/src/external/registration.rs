@@ -286,6 +286,12 @@ where
                 record.park(state, reason);
             })
             .await?;
+        if written
+            .as_ref()
+            .is_some_and(PendingRegistration::needs_create_cleanup)
+        {
+            self.create_cleanup.notify_one();
+        }
         // Only a park that was written is reported: the record may have
         // been replaced by another create meanwhile.
         if let Some(parked) = written.filter(|record| {

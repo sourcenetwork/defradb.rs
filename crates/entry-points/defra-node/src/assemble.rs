@@ -621,8 +621,13 @@ where
         background_tasks.push(replay);
     }
     #[cfg(all(feature = "vera", not(target_arch = "wasm32")))]
-    if let Some(start_redrive) = redrive {
-        background_tasks.push(start_redrive(database.pool()));
+    if let Some(gate) = redrive {
+        background_tasks.push(database.start_refused_create_cleanup(Arc::clone(&gate)));
+        background_tasks.push(workers::spawn_background(
+            database.pool(),
+            "acp::redrive_owed",
+            move || crate::owed_drainer::redrive(gate),
+        ));
     }
     // The sweep holds the registry, and through it the database and its
     // pool: held anywhere but the shutdown set, a node dropped without

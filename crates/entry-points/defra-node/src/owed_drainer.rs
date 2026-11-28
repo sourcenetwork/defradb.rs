@@ -135,6 +135,23 @@ impl acp::OwedRefusalListener for PublishRefusals {
     }
 }
 
+/// Settle registrations left by a previous run, then drain relationship changes.
+pub(crate) async fn redrive<S>(gate: Arc<acp::ExternalDocumentAcp<S>>)
+where
+    S: Store + 'static,
+{
+    match gate.redrive_owed().await {
+        Ok(report) if report.settled > 0 => tracing::info!(
+            settled = report.settled,
+            failed = report.failed,
+            "Settled ACP registrations owed from a previous run"
+        ),
+        Ok(_) => {}
+        Err(error) => tracing::warn!(%error, "Could not read owed ACP registrations"),
+    }
+    drain(gate).await;
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

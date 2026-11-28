@@ -17,15 +17,12 @@ use crate::{EmbeddedVeraConfig, Error, Result};
 /// asked before fails. Document ACP remembers a decision under the verified
 /// state it was read at and may repeat it while that state is fresh, which
 /// is at most the light client's freshness limit after the node stopped.
-pub(crate) async fn start<S>(
+pub(crate) async fn start(
     config: &EmbeddedVeraConfig,
     event_bus: Option<Arc<dyn events::Bus>>,
     edge: &edge::Edge,
-    store: Arc<S>,
-) -> Result<DocumentAcpSetup>
-where
-    S: storage::corekv::Store + 'static,
-{
+    store: Arc<storage::RegolithStore>,
+) -> Result<DocumentAcpSetup> {
     let node = vera_embedded::HostedNode::start_serving(
         vera_embedded::HostConfig {
             data_dir: config.data_dir.clone(),

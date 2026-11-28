@@ -355,6 +355,11 @@ impl Node {
             (pg_scope, pg_server)
         };
 
+        #[cfg(feature = "vera")]
+        let refused_create_cleanup = acp_setup
+            .external_gate
+            .map(|gate| database.start_refused_create_cleanup(gate));
+
         Ok(ServerSetup {
             database,
             p2p_handle: p2p_setup.host_handle,
@@ -362,6 +367,8 @@ impl Node {
             downsample_task,
             vector_rebuild_task,
             deferred_index_task,
+            #[cfg(feature = "vera")]
+            refused_create_cleanup,
             txn_cleanup_task,
             http_server,
             http_scope,
