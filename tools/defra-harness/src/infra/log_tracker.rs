@@ -164,13 +164,15 @@ async fn tail_loop(
     let mut line = String::new();
 
     loop {
-        line.clear();
         let read = reader
             .read_line(&mut line)
             .await
             .wrap_err("error reading log")?;
         if read == 0 {
             tokio::time::sleep(TAIL_POLL).await;
+            continue;
+        }
+        if !line.ends_with('\n') {
             continue;
         }
         let mut changed = false;
@@ -194,6 +196,7 @@ async fn tail_loop(
         if changed {
             observed.changed.notify_waiters();
         }
+        line.clear();
     }
 }
 
@@ -223,5 +226,28 @@ mod tests {
             .wait_for_ready(Duration::from_millis(100))
             .await
             .expect("readiness observed before subscription must remain visible");
+    }
+
+    #[tokio::test]
+    async fn a_partial_line_is_retained_until_a_later_append_completes_it() {
+        use std::io::Write;
+
+        let dir = crate::infra::TestRunDir::new(&std::env::temp_dir(), "DEFRA_LOG_TEST_KEEP")
+            .expect("create isolated log directory");
+        let path = dir.path().join("stdout.log");
+        std::fs::write(&path, "server rea").expect("write partial line");
+        let tracker = LogTracker::start(path.clone(), "server ready", Vec::new());
+
+        tokio::time::sleep(TAIL_POLL * 3).await;
+        let mut file = std::fs::OpenOptions::new()
+            .append(true)
+            .open(&path)
+            .expect("open log for append");
+        file.write_all(b"dy\n").expect("complete the line");
+
+        tracker
+            .wait_for_ready(Duration::from_secs(2))
+            .await
+            .expect("the completed line must trigger readiness");
     }
 }

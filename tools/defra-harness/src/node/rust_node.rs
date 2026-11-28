@@ -34,6 +34,12 @@ impl RustNode {
         workspace_root().join("target/debug/defradb")
     }
 
+    /// The workspace binary built with `features`, kept apart from the default
+    /// build so one feature set cannot replace another's executable.
+    pub fn workspace_binary_path_with_features(features: &[&str]) -> PathBuf {
+        Self::feature_target_dir(features).join("debug/defradb")
+    }
+
     /// Build the Rust binary via cargo (debug mode for fast iteration).
     pub fn build() -> Result<()> {
         let status = Command::new("cargo")
@@ -50,13 +56,37 @@ impl RustNode {
     pub fn build_with_features(features: &[&str]) -> Result<()> {
         let features_str = features.join(",");
         let status = Command::new("cargo")
-            .args(["build", "-p", "cli", "--features", &features_str])
+            .args([
+                "build",
+                "-p",
+                "cli",
+                "--features",
+                &features_str,
+                "--target-dir",
+            ])
+            .arg(Self::feature_target_dir(features))
             .current_dir(workspace_root())
             .status()
             .wrap_err("failed to run cargo build with features")?;
 
         crate::error::ensure!(status.success(), "cargo build failed with {}", status);
         Ok(())
+    }
+
+    fn feature_target_dir(features: &[&str]) -> PathBuf {
+        let mut features: Vec<&str> = features
+            .iter()
+            .copied()
+            .filter(|feature| !feature.is_empty())
+            .collect();
+        features.sort_unstable();
+        features.dedup();
+        let key = if features.is_empty() {
+            "default".to_string()
+        } else {
+            features.join("+")
+        };
+        workspace_root().join("target/defra-harness").join(key)
     }
 
     /// Verify the Rust binary is built and returns parseable version info.
@@ -269,6 +299,18 @@ mod tests {
         let (_binary, args, _envs) = node.command_parts(&test_config());
 
         assert!(!args.iter().any(|a| a == "--max-schema-size"));
+    }
+
+    #[test]
+    fn feature_builds_have_a_target_separate_from_the_default_build() {
+        assert_ne!(
+            RustNode::workspace_binary_path(),
+            RustNode::workspace_binary_path_with_features(&["iroh"])
+        );
+        assert_eq!(
+            RustNode::workspace_binary_path_with_features(&["iroh", "orbis"]),
+            RustNode::workspace_binary_path_with_features(&["orbis", "iroh"])
+        );
     }
 
     #[test]

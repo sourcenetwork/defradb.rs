@@ -10,8 +10,11 @@ pub use crate::infra::ManagedProcess;
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::divergences::NodeKind;
+
+static NEXT_STAGING_ID: AtomicU64 = AtomicU64::new(0);
 
 /// Where to obtain a DefraDB binary.
 #[derive(Debug, Clone)]
@@ -45,7 +48,7 @@ impl BinarySource {
             BinarySource::WorkspaceWithFeatures(features) => {
                 let refs: Vec<&str> = features.iter().map(|s| s.as_str()).collect();
                 RustNode::build_with_features(&refs)?;
-                Ok(RustNode::workspace_binary_path())
+                Ok(RustNode::workspace_binary_path_with_features(&refs))
             }
             BinarySource::Path(p) => {
                 crate::error::ensure!(p.exists(), "binary not found at {}", p.display());
@@ -58,7 +61,7 @@ impl BinarySource {
 
 /// Download (or return cached) a release binary for the given version and node kind.
 fn resolve_release(version: &str, kind: NodeKind) -> crate::error::Result<PathBuf> {
-    let cache_dir = dirs_cache().join("defra-harness").join(version);
+    let cache_dir = release_cache_dir(&dirs_cache(), version, kind);
     let cached = cache_dir.join("defradb");
     if cached.exists() {
         return Ok(cached);
@@ -95,33 +98,76 @@ fn resolve_release(version: &str, kind: NodeKind) -> crate::error::Result<PathBu
 
     match kind {
         NodeKind::Rust => {
+            let staging_id = NEXT_STAGING_ID.fetch_add(1, Ordering::Relaxed);
+            let staging = StagingDir::new(
+                cache_dir.join(format!(".extract-{}-{staging_id}", std::process::id())),
+            )?;
             let output = Command::new("tar")
                 .args(["-xzf"])
                 .arg(&download)
                 .arg("-C")
-                .arg(&cache_dir)
+                .arg(&staging.path)
                 .arg("defradb")
                 .output()
                 .wrap_err_with(|| format!("failed to extract {}", download.display()))?;
-            crate::error::ensure!(
-                output.status.success(),
-                "failed to extract {}: {}",
-                download.display(),
-                String::from_utf8_lossy(&output.stderr)
-            );
+            if !output.status.success() {
+                crate::error::bail!(
+                    "failed to extract {}: {}",
+                    download.display(),
+                    String::from_utf8_lossy(&output.stderr)
+                );
+            }
+            let extracted = staging.path.join("defradb");
+            crate::error::ensure!(extracted.exists(), "release did not contain defradb");
+            make_executable(&extracted)?;
+            std::fs::rename(&extracted, &cached)?;
             std::fs::remove_file(&download)?;
         }
-        NodeKind::Go => std::fs::rename(&download, &cached)?,
+        NodeKind::Go => {
+            make_executable(&download)?;
+            std::fs::rename(&download, &cached)?;
+        }
     }
     crate::error::ensure!(cached.exists(), "release did not contain defradb");
 
+    Ok(cached)
+}
+
+fn make_executable(path: &Path) -> crate::error::Result<()> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&cached, std::fs::Permissions::from_mode(0o755))?;
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755))?;
     }
+    #[cfg(not(unix))]
+    let _ = path;
+    Ok(())
+}
 
-    Ok(cached)
+fn release_cache_dir(cache: &Path, version: &str, kind: NodeKind) -> PathBuf {
+    let kind = match kind {
+        NodeKind::Rust => "rust",
+        NodeKind::Go => "go",
+    };
+    cache.join("defra-harness").join(version).join(kind)
+}
+
+struct StagingDir {
+    path: PathBuf,
+}
+
+impl StagingDir {
+    fn new(path: PathBuf) -> crate::error::Result<Self> {
+        let _ = std::fs::remove_dir_all(&path);
+        std::fs::create_dir_all(&path)?;
+        Ok(Self { path })
+    }
+}
+
+impl Drop for StagingDir {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.path);
+    }
 }
 
 fn release_asset_name(version: &str, kind: NodeKind) -> crate::error::Result<String> {
@@ -199,7 +245,8 @@ use crate::error::WrapErr;
 
 #[cfg(test)]
 mod tests {
-    use super::rust_release_asset_name;
+    use super::{release_cache_dir, rust_release_asset_name, StagingDir};
+    use crate::divergences::NodeKind;
 
     #[test]
     fn rust_release_asset_matches_the_published_archive() {
@@ -211,6 +258,31 @@ mod tests {
             rust_release_asset_name("v1.2.0", "macos", "aarch64"),
             "defradb_v1.2.0_darwin_arm64.tar.gz"
         );
+    }
+
+    #[test]
+    fn release_cache_is_namespaced_by_node_kind() {
+        let cache = std::path::Path::new("/cache");
+        let rust = release_cache_dir(cache, "v1.2.0", NodeKind::Rust);
+        let go = release_cache_dir(cache, "v1.2.0", NodeKind::Go);
+        assert_ne!(rust, go);
+        assert!(rust.ends_with("v1.2.0/rust"));
+        assert!(go.ends_with("v1.2.0/go"));
+        assert_eq!(
+            release_cache_dir(cache, "v1.2.0", NodeKind::Rust),
+            release_cache_dir(cache, "v1.2.0", NodeKind::Rust)
+        );
+    }
+
+    #[test]
+    fn staging_directory_is_removed_on_drop() {
+        let dir = crate::infra::TestRunDir::new(&std::env::temp_dir(), "DEFRA_STAGING_TEST_KEEP")
+            .expect("create isolated staging directory");
+        let path = dir.path().join("extract");
+        let staging = StagingDir::new(path.clone()).expect("create staging directory");
+        assert!(path.exists());
+        drop(staging);
+        assert!(!path.exists());
     }
 }
 

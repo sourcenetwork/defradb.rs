@@ -9,6 +9,8 @@
 //! each of its peers' fetch windows still sees some progress, which a plain
 //! pause or a stop cannot produce on localhost.
 
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 
 use crate::error::{Result, WrapErr};
@@ -32,39 +34,82 @@ fn send(pid: u32, signal: libc::c_int) -> std::io::Result<()> {
 /// the handle does the same on a best-effort basis.
 pub struct Throttle {
     pid: u32,
+    closing: Arc<AtomicBool>,
     task: Option<JoinHandle<()>>,
 }
 
 impl Throttle {
     fn start(pid: u32, run: Duration, stop: Duration) -> Self {
+        let closing = Arc::new(AtomicBool::new(false));
+        let worker_closing = Arc::clone(&closing);
         let task = tokio::spawn(async move {
             loop {
+                if worker_closing.load(Ordering::Acquire) {
+                    return;
+                }
                 let _ = send(pid, libc::SIGCONT);
                 tokio::time::sleep(run).await;
+                if worker_closing.load(Ordering::Acquire) {
+                    return;
+                }
                 let _ = send(pid, libc::SIGSTOP);
+                if worker_closing.load(Ordering::Acquire) {
+                    let _ = send(pid, libc::SIGCONT);
+                    return;
+                }
+                let _resume = ResumeGuard::new(pid);
                 tokio::time::sleep(stop).await;
             }
         });
         Self {
             pid,
+            closing,
             task: Some(task),
         }
     }
 
     /// End the duty cycle and leave the node running.
     pub async fn release(mut self) -> Result<()> {
+        self.closing.store(true, Ordering::Release);
+        let mut resume = ResumeGuard::new(self.pid);
         if let Some(task) = self.task.take() {
             task.abort();
             let _ = task.await;
         }
-        send(self.pid, libc::SIGCONT).wrap_err("resume throttled node")
+        resume.resume()
     }
 }
 
 impl Drop for Throttle {
     fn drop(&mut self) {
+        self.closing.store(true, Ordering::Release);
         if let Some(task) = self.task.take() {
             task.abort();
+        }
+        let _ = send(self.pid, libc::SIGCONT);
+    }
+}
+
+struct ResumeGuard {
+    pid: u32,
+    armed: bool,
+}
+
+impl ResumeGuard {
+    fn new(pid: u32) -> Self {
+        Self { pid, armed: true }
+    }
+
+    fn resume(&mut self) -> Result<()> {
+        send(self.pid, libc::SIGCONT).wrap_err("resume throttled node")?;
+        self.armed = false;
+        Ok(())
+    }
+}
+
+impl Drop for ResumeGuard {
+    fn drop(&mut self) {
+        if self.armed {
             let _ = send(self.pid, libc::SIGCONT);
         }
     }
@@ -149,6 +194,46 @@ mod tests {
         assert!(
             !state(&child).starts_with('T'),
             "a released throttle must leave the process running"
+        );
+        child.kill().expect("kill");
+        child.wait().expect("reap");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn dropping_a_throttle_leaves_a_stopped_process_running() {
+        let mut child = Command::new("sleep").arg("30").spawn().expect("spawn");
+        let throttle = Throttle::start(
+            child.id(),
+            Duration::from_millis(5),
+            Duration::from_millis(500),
+        );
+        assert!(
+            wait_for_state(&child, true).await,
+            "the duty cycle must freeze the process"
+        );
+
+        drop(throttle);
+
+        assert!(
+            wait_for_state(&child, false).await,
+            "dropping a throttle must resume its process"
+        );
+        child.kill().expect("kill");
+        child.wait().expect("reap");
+    }
+
+    #[tokio::test]
+    async fn dropping_a_resume_guard_resumes_the_process() {
+        let mut child = Command::new("sleep").arg("30").spawn().expect("spawn");
+        send(child.id(), libc::SIGSTOP).expect("stop");
+        assert!(wait_for_state(&child, true).await, "SIGSTOP must freeze");
+
+        let guard = ResumeGuard::new(child.id());
+        drop(guard);
+
+        assert!(
+            wait_for_state(&child, false).await,
+            "a cancelled release must resume its process"
         );
         child.kill().expect("kill");
         child.wait().expect("reap");

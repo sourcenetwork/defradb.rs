@@ -1,7 +1,6 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
-use regolith::sync::OnceCell;
 use reqwest::Client;
 
 use crate::divergences::NodeKind;
@@ -18,9 +17,6 @@ use super::runtime::TestCluster;
 /// TOCTOU window (another host process stealing the freed port). Each retry
 /// re-allocates fresh ports, so consecutive collisions are vanishingly rare.
 const PORT_CONFLICT_ATTEMPTS: usize = 3;
-
-static RUST_BUILD_DONE: OnceCell<()> = OnceCell::new();
-static IROH_BUILD_DONE: OnceCell<()> = OnceCell::new();
 
 /// Reads the `DEFRA_MULTIPLIERS` env var and returns true if `signed-docs`
 /// is present in its comma-separated value.
@@ -156,11 +152,14 @@ impl TestClusterBuilder {
     /// The flags appended to Rust node `index`: the cluster-wide ones, then
     /// that node's own.
     fn rust_args_for(&self, index: usize) -> Vec<String> {
-        self.extra_rust_args
+        let mut args: Vec<String> = self
+            .extra_rust_args
             .iter()
             .chain(self.node_extra_rust_args.get(index).into_iter().flatten())
             .cloned()
-            .collect()
+            .collect();
+        retain_last_scalar_arg(&mut args, "--max-schema-size");
+        args
     }
 
     /// Extra flags appended to every Go node's `start` command, after the
@@ -359,6 +358,37 @@ impl TestClusterBuilder {
     pub fn with_shared_searchable_encryption_key(mut self, key: [u8; 32]) -> Self {
         self.shared_se_key = Some(key);
         self
+    }
+}
+
+fn retain_last_scalar_arg(args: &mut Vec<String>, flag: &str) {
+    let prefix = format!("{flag}=");
+    let mut occurrences = Vec::new();
+    let mut index = 0;
+    while index < args.len() {
+        if args[index] == flag {
+            let end = if args
+                .get(index + 1)
+                .is_some_and(|next| !next.starts_with("--"))
+            {
+                index + 2
+            } else {
+                index + 1
+            };
+            occurrences.push(index..end);
+            index = end;
+        } else if args[index].starts_with(&prefix) {
+            occurrences.push(index..index + 1);
+            index += 1;
+        } else {
+            index += 1;
+        }
+    }
+
+    if occurrences.len() > 1 {
+        for range in occurrences.into_iter().rev().skip(1) {
+            args.drain(range);
+        }
     }
 }
 

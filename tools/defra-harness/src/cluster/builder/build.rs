@@ -26,22 +26,16 @@ impl TestClusterBuilder {
                         .unwrap_or(BinarySource::Workspace)
                 }
             });
-            // One workspace build per process: concurrent clusters wait for it.
             let path = match &source {
                 BinarySource::Workspace => {
-                    RUST_BUILD_DONE
-                        .get_or_try_init(async { RustNode::build() })
-                        .await
-                        .wrap_err("failed to build Rust binary")?;
+                    RustNode::build().wrap_err("failed to build Rust binary")?;
                     RustNode::workspace_binary_path()
                 }
                 BinarySource::WorkspaceWithFeatures(features) => {
                     let refs: Vec<&str> = features.iter().map(|s| s.as_str()).collect();
-                    IROH_BUILD_DONE
-                        .get_or_try_init(async { RustNode::build_with_features(&refs) })
-                        .await
+                    RustNode::build_with_features(&refs)
                         .wrap_err("failed to build Rust binary with features")?;
-                    RustNode::workspace_binary_path()
+                    RustNode::workspace_binary_path_with_features(&refs)
                 }
                 _ => source.resolve(NodeKind::Rust)?,
             };

@@ -37,6 +37,31 @@ fn node_extra_rust_args_follow_the_cluster_wide_ones_for_that_node_only() {
 }
 
 #[test]
+fn node_scalar_extra_args_override_cluster_values_without_duplicating_the_flag() {
+    let b = TestClusterBuilder::new()
+        .with_extra_rust_args(["--max-schema-size", "1024", "--peers", "peer-a"])
+        .with_node_extra_rust_args(2, ["--max-schema-size", "2048", "--peers", "peer-b"]);
+
+    let args = b.rust_args_for(2);
+    let positions: Vec<usize> = args
+        .iter()
+        .enumerate()
+        .filter_map(|(index, arg)| (arg == "--max-schema-size").then_some(index))
+        .collect();
+    assert_eq!(
+        positions.len(),
+        1,
+        "the scalar flag must occur once: {args:?}"
+    );
+    assert_eq!(args[positions[0] + 1], "2048");
+    assert_eq!(
+        args.iter().filter(|arg| *arg == "--peers").count(),
+        2,
+        "repeatable flags must be preserved"
+    );
+}
+
+#[test]
 fn no_signing_multiplier_sets_opt_out_flag() {
     let b = TestClusterBuilder::new();
     assert!(!b.signing_multiplier_opt_out, "default is opt-in");
