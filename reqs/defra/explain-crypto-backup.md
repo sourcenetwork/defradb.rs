@@ -331,6 +331,29 @@ With `@exhaustive`, ordering a primary-side parent by a related field (`Publishe
 
 Querying an encrypted document returns its plaintext fields, including a `pcounter` field that sums correctly after an update (5 then +3 gives 8), and related documents resolve when either, both or only the primary or secondary side are encrypted.
 
+# `go.encryption.doc.doc_id`: An encrypted document gets Go's docID
+
+- **Parents:** ["go.encryption.doc"]
+- **Scenarios:** ["encryption::doc_id::doc_encryption_doc_id_matches_go", "encryption::doc_id::doc_encryption_update_and_delete_composites_match_go"]
+
+A document created with `encrypt: true` gets the docID Go assigns to the same document. Only field commits link an encryption block: the `_C` commit of a create, an update or a delete links none, so its CID, and the docID derived from it, equal Go's. With Go's test key and nonce, `{"name": "John", "age": 21}` in `Users { name: String, age: Int @crdt(type: lww), verified: Boolean }` gets `bae-e1226eb9-e7dc-5185-986b-6236af58b1ed`, and its `_C` commit is `bafyreiagbtfpc23gmdiycsdfkzcks544xe7ud4i7joxwj47bdmmwhdlclm`.
+
+# `go.encryption.doc.new_field`: Encryption of a field an update writes without config
+
+- **Parents:** ["go.encryption.doc"]
+- **Scenarios:** ["encryption::new_field::doc_encryption_new_field_on_encrypted_doc_is_encrypted", "encryption::new_field::doc_encryption_new_field_on_partly_encrypted_doc_is_plaintext", "encryption::new_field::doc_encryption_new_field_when_every_written_field_was_listed_is_encrypted", "encryption::new_field::doc_encryption_new_field_on_unencrypted_doc_is_plaintext"]
+
+An update that carries no encryption config encrypts each field it writes the way the field's own history says. A field that already has commits follows its heads: it reuses the key of its first encrypted head, and stays plaintext when none of its heads is encrypted. A field the update writes for the first time is encrypted under a fresh document key only when the document already has at least one field and every one of its fields is encrypted; otherwise it is plaintext. An explicit `encrypt` or `encryptFields` on the update wins over both.
+
+This differs from Go in one way: Go writes a field that has no commits in plaintext (`internal/core/block/store.go`, `addDelta` and `determineBlockEncryption`), so in Go a field an update adds to an `encrypt: true` document is plaintext. Rust encrypts it, and for the same reason encrypts a field an update adds to a document created with `encryptFields` that listed every field it was created with.
+
+# `go.encryption.doc.field_level_update`: An unlisted field stays plaintext on update
+
+- **Parents:** ["go.encryption.doc"]
+- **Scenarios:** ["encryption::new_field::doc_encryption_field_level_update_keeps_unlisted_field_plaintext"]
+
+A document created with `encryptFields: [age]` and a plaintext `name` keeps `name` plaintext when an update without config writes it: `_commits(filter: {fieldName: {_eq: "name"}}) { delta }` returns both deltas as plaintext CBOR, and `age` stays encrypted.
+
 # `go.encryption.peer.diverged_versions`: KMS authorisation across diverged branchable versions
 
 - **Parents:** ["go.encryption.peer"]
@@ -463,3 +486,17 @@ A backup file in which two documents carry the same `_docID` (or `_docIDNew`) fa
 - **Scenarios:** ["backup::failed_import::a_failed_import_keeps_every_document_before_the_one_refused", "backup::failed_import::an_import_refusing_a_value_keeps_every_document_before_it"]
 
 An import that cannot create one of its documents fails with that document's error and stops there. Every document of the file before it is imported, and none after it is: a file of `{"name":"Alice"}`, `{"name":"John"}`, `{"name":"John"}`, `{"name":"Zed"}`, whose second John has the first one's content and so its ID, fails with `a document with the given ID already exists` and leaves Alice and the first John. A value the schema refuses stops it the same way: a file of `{"name":"Alice","points":1}`, `{"name":"Bob","points":"many"}` into a `pcounter` field `points` fails with `failed to create document in 'User': …` and leaves Alice.
+
+# `defra.backup.export.node_access`: An export needs the read-document node permission
+
+- **Parents:** ["go.backup.export"]
+- **Scenarios:** ["backup::node_access::an_export_by_the_node_owner_returns_the_documents", "backup::node_access::an_export_by_another_identity_is_not_authorized", "backup::node_access::an_export_with_no_identity_is_not_authorized"]
+
+With node ACP enabled, a backup export is checked for the `read-document` node permission before it reads anything, through every client (the embedded node, HTTP, the CLI and FFI alike), as Go's export checks it on each document it reads. The node owner's export returns the documents; an export with another identity, or with none, fails with `not authorized to perform operation. Permission: read-document`.
+
+# `defra.backup.dump`: A dump lists the node's store
+
+- **Parents:** ["go.backup"]
+- **Scenarios:** ["backup::print_dump::a_dump_lists_the_keys_of_the_store"]
+
+`dump` (Go's `PrintDump`, `GET /api/v0/debug/dump`) lists every key of the node's store, one line each naming its namespace, the key and its value's size, through the embedded node, its HTTP server and the CLI. After a collection and a document are added the list is not empty. The HTTP API answers it only in development mode, and with node ACP enabled only for a caller with the `read-document` node permission, since it hands the store's keys to the caller where Go only logs them.

@@ -119,6 +119,24 @@ impl Collection {
         }))
     }
 
+    /// [`read_hint`](Self::read_hint) without the version, for a reader that
+    /// reads every version as stored: only the deletion marker is validated.
+    pub(crate) async fn read_stored_hint(
+        &self,
+        datastore: &NamespaceView,
+        doc_short_id: u64,
+    ) -> Result<Option<Document>> {
+        if datastore
+            .has(&self.deleted_key(doc_short_id))
+            .await
+            .map_err(Error::Storage)?
+        {
+            return Ok(None);
+        }
+        self.read_document_unvalidated(datastore, doc_short_id)
+            .await
+    }
+
     async fn fields_at(
         &self,
         datastore: &NamespaceView,

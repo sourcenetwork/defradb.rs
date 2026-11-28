@@ -54,7 +54,9 @@ where
     }
 
     /// The collection `name`, once the caller may truncate it and the
-    /// truncate is one Go allows, checked in Go's order.
+    /// truncate is one Go allows, checked in Go's order. Go also refuses a
+    /// filtered truncate of a branchable collection; here it purges the
+    /// matches and keeps their history, which the collection DAG links.
     async fn truncate_target(
         &self,
         context: &RequestContext,
@@ -67,9 +69,6 @@ where
             .get_collection(name)?
             .ok_or_else(|| Error::CollectionNotFound(name.to_owned()))?;
         crate::chunk::ensure_admin_changeable(collection.schema())?;
-        if filtered && collection.schema().is_branchable {
-            return Err(TruncateError::FilteredBranchable);
-        }
         if filtered && context.txn().is_some() {
             return Err(TruncateError::FilteredInTransaction);
         }

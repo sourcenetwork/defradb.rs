@@ -19,6 +19,7 @@
   - [Conflict rules](./txn/conflict-rules.md)
   - [Conflict business logic](./txn/conflict-logic.md)
   - [Explicit transactions](./txn/explicit.md)
+  - [Unique index guarantees](./txn/guarantees.md)
 
 - [Reads](./reads/index.md)
   - [Read scenarios](./reads/scenarios.md)

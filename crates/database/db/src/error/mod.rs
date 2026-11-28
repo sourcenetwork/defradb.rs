@@ -316,9 +316,11 @@ impl Error {
 
 pub fn index_write_query_error(operation: &str, error: Error) -> query::error::QueryError {
     if let Error::UniqueViolation(message) = error {
-        query::error::QueryError::execution(message)
+        query::error::QueryError::UniqueViolation(message)
     } else if error.is_unique_constraint_violation() {
-        query::error::QueryError::execution(storage::corekv::UNIQUE_CONSTRAINT_VIOLATION_MESSAGE)
+        query::error::QueryError::UniqueViolation(
+            storage::corekv::UNIQUE_CONSTRAINT_VIOLATION_MESSAGE.to_owned(),
+        )
     } else {
         storage_query_error(error, &format!("{operation} error"))
     }

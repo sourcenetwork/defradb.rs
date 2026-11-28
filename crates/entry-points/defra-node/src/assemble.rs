@@ -593,12 +593,7 @@ where
     #[cfg(feature = "embedded-vera")]
     let embedded_vera = crate::single_slot(acp_setup.embedded_vera);
     database.set_dac_policies(acp_setup.dac_policies);
-    let schema_ops = db_impls::DbSchemaOps::new(
-        database.clone(),
-        query_limits,
-        document_acp.clone(),
-        registry.clone(),
-    );
+    let schema_ops = db_impls::DbSchemaOps::new(database.clone(), query_limits, registry.clone());
     let acp_ops: Arc<dyn acp_ops::AcpOps> = Arc::new(acp_ops::DbAcpOps::new(
         database.clone(),
         registry.clone(),

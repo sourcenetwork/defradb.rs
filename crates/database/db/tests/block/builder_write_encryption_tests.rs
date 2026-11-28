@@ -115,10 +115,12 @@ fn update_without_config_inherits_encryption_from_previous_block() {
     .unwrap()
 }
 
-/// The composite block carries its own encryption link for whole-document
-/// encryption, and must inherit it on update for the same reason.
+/// The composite block links no encryption, on an `encrypt: true` create and
+/// on the update after it, as Go's (store.go `addDelta` encrypts only field
+/// deltas): the DocID derives from the create composite's CID, so a link
+/// there gives a docID Go never computes. The field stays encrypted.
 #[test]
-fn update_without_config_inherits_composite_encryption() {
+fn composite_carries_no_encryption_link() {
     workers::block_on(async {
         let (blockstore, headstore) = stores().await;
         let identity = DocRef::new(2, 2);
@@ -146,10 +148,15 @@ fn update_without_config_inherits_composite_encryption() {
         .await
         .expect("create should succeed");
 
-        let created_enc_cid = field_block(&blockstore, &created.cid)
+        assert_eq!(
+            field_block(&blockstore, &created.cid).await.encryption,
+            None,
+            "the create composite must link no encryption block"
+        );
+        let field_enc_cid = field_block(&blockstore, &created.field_cids[0])
             .await
             .encryption
-            .expect("created composite block must be encrypted");
+            .expect("the created field block must be encrypted");
 
         doc.set_id(document::DocID::from_string(&created.doc_id).unwrap());
         doc.set("name", NormalValue::String("Alicia".to_string()))
@@ -172,8 +179,15 @@ fn update_without_config_inherits_composite_encryption() {
 
         assert_eq!(
             field_block(&blockstore, &updated.cid).await.encryption,
-            Some(created_enc_cid),
-            "composite block must inherit the previous composite block's encryption link"
+            None,
+            "the update composite must link no encryption block"
+        );
+        assert_eq!(
+            field_block(&blockstore, &updated.field_cids[0])
+                .await
+                .encryption,
+            Some(field_enc_cid),
+            "the field must keep its own encryption link"
         );
     })
     .unwrap()
@@ -397,8 +411,8 @@ fn inheritance_is_per_field() {
 }
 
 /// A field first written by an update has no heads of its own, so field-level
-/// inheritance finds nothing. On a document encrypted as a whole it must still
-/// be encrypted, under the document-level policy the composite head records.
+/// inheritance finds nothing. On a document whose every field is encrypted it
+/// must still be encrypted, under a fresh document-scope key.
 ///
 /// **Deliberate divergence from Go.** Go's `addDelta` builds its head set from
 /// the field's own prefix (`internal/core/block/store.go:82-86`,
@@ -531,14 +545,13 @@ fn update_of_unencrypted_document_stays_plaintext() {
     .unwrap()
 }
 
-/// Deleting an encrypted document must leave a tombstone carrying the same
-/// `Encryption` link as the composite it supersedes. Go's delete path runs
-/// through the same `addDelta` as every other write
-/// (`internal/db/document_delete.go:181-195`), so `determineBlockEncryption`
-/// inherits from the composite heads. The composite payload itself is never
-/// ciphertext (`store.go:213-215`); only the link is attached.
+/// Deleting an encrypted document leaves a tombstone with no `Encryption`
+/// link. Go's delete runs through the same `addDelta` as every other write
+/// (`internal/db/document_delete.go:181-195`), which encrypts only field
+/// deltas (`store.go` `addDelta`, under `block.Delta.IsField()`), so Go's
+/// composites, the tombstone included, never carry a link.
 #[test]
-fn delete_block_inherits_composite_encryption() {
+fn delete_block_links_no_encryption() {
     workers::block_on(async {
         let (blockstore, headstore) = stores().await;
         let identity = DocRef::new(8, 8);
@@ -566,11 +579,6 @@ fn delete_block_inherits_composite_encryption() {
         .await
         .expect("create should succeed");
 
-        let created_enc_cid = field_block(&blockstore, &created.cid)
-            .await
-            .encryption
-            .expect("created composite must carry an encryption link");
-
         let deleted = write_delete_block(
             &blockstore,
             &headstore,
@@ -584,18 +592,22 @@ fn delete_block_inherits_composite_encryption() {
 
         assert_eq!(
             field_block(&blockstore, &deleted.cid).await.encryption,
-            Some(created_enc_cid),
-            "delete tombstone must inherit the composite's encryption link"
+            None,
+            "the delete tombstone must link no encryption block"
         );
     })
     .unwrap()
 }
 
-/// The document-level fallback must key off whole-document encryption only.
-/// A document with `encrypt_fields` leaves its composite unencrypted, so a
-/// field that was never in that list stays in the clear when introduced later.
+/// The accepted cost of deciding from the field heads alone: every field the
+/// document has (`secret`) was listed in `encrypt_fields`, so the document is
+/// encrypted as a whole and a field an update writes first (`bio`) gets a
+/// fresh document key. Nothing in the DAG tells this create from an
+/// `encrypt: true` one once the composite links no encryption. Go writes
+/// `bio` in plaintext (store.go: a field with no heads has nothing to
+/// inherit).
 #[test]
-fn field_added_to_field_encrypted_document_stays_plaintext() {
+fn field_added_when_every_field_was_listed_is_encrypted() {
     workers::block_on(async {
         let (blockstore, headstore) = stores().await;
         let identity = DocRef::new(9, 9);
@@ -642,12 +654,15 @@ fn field_added_to_field_encrypted_document_stays_plaintext() {
         .await
         .expect("update should succeed");
 
-        assert_eq!(
-            field_block(&blockstore, &updated.field_cids[0])
-                .await
-                .encryption,
-            None,
-            "`bio` was never in `encrypt_fields`, so nothing should encrypt it"
+        let bio = field_block(&blockstore, &updated.field_cids[0]).await;
+        assert!(
+            bio.encryption.is_some(),
+            "every field of the document is encrypted, so `bio` must be too"
+        );
+        assert_ne!(
+            delta_data(&bio),
+            encode_value_as_cbor(&NormalValue::String("public".to_string())).unwrap(),
+            "the delta must hold ciphertext, not the plaintext value"
         );
     })
     .unwrap()
@@ -709,12 +724,12 @@ fn field_added_to_unencrypted_document_stays_plaintext() {
     .unwrap()
 }
 
-/// The fallback is not gated on the field being brand new. A field whose
-/// history predates the document being encrypted has heads, but none of them
-/// carry an encryption link, so field-level inheritance finds nothing — the
-/// document-level policy must still cover it.
+/// A field with heads follows them, as Go's `determineBlockEncryption`: a
+/// field whose history predates an `encrypt: true` update of another field
+/// has only plaintext heads, so an update without config writes it in
+/// plaintext. Encrypting it takes an explicit config naming it.
 #[test]
-fn document_policy_covers_field_whose_history_predates_encryption() {
+fn field_with_plaintext_heads_stays_plaintext_after_another_is_encrypted() {
     workers::block_on(async {
         let (blockstore, headstore) = stores().await;
         let identity = DocRef::new(11, 11);
@@ -780,14 +795,13 @@ fn document_policy_covers_field_whose_history_predates_encryption() {
         .expect("update should succeed");
 
         let name = field_block(&blockstore, &updated.field_cids[0]).await;
-        assert!(
-            name.encryption.is_some(),
-            "the document is encrypted as a whole, so `name` must be too"
+        assert_eq!(
+            name.encryption, None,
+            "`name` has only plaintext heads, so it must stay plaintext"
         );
-        assert_ne!(
+        assert_eq!(
             delta_data(&name),
             encode_value_as_cbor(&NormalValue::String("Bob".to_string())).unwrap(),
-            "the delta must hold ciphertext, not the plaintext value"
         );
     })
     .unwrap()

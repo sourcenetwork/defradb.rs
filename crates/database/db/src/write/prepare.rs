@@ -127,16 +127,17 @@ pub(crate) async fn prepare_keys_with_stores<S: Store + 'static>(
                 })
         })
         .collect();
-    if modified_fields.is_some() {
-        let all_fields: Vec<_> = doc.values().keys().cloned().collect();
-        let policy = if let Some(prior) = prior {
-            (prior.encrypt_doc, prior.encrypted_fields.clone())
-        } else if let Some((blockstore, headstore)) = stores {
-            crate::block::builder::inherited_encryption_policy(
-                blockstore,
-                headstore,
-                identity,
-                &all_fields,
+    // An update's fields with no heads may take a fresh document key
+    // (`field_encryption_source`), decided on the committed heads plus what
+    // the request's earlier writes prepared; a create has no heads, so only
+    // its explicit config encrypts it.
+    let pending = prior
+        .map(|prior| prior.written_fields.clone())
+        .unwrap_or_default();
+    let (scoped, written) = if modified_fields.is_some() {
+        if let Some((blockstore, headstore)) = stores {
+            crate::block::builder::doc_scope_fields(
+                blockstore, headstore, identity, &fields, config, &pending,
             )
             .await
             .map_err(query::error::QueryError::execution)?
@@ -145,35 +146,43 @@ pub(crate) async fn prepare_keys_with_stores<S: Store + 'static>(
                 .new_txn(true)
                 .await
                 .map_err(|e| query::error::QueryError::execution(e.to_string()))?;
-            let policy = {
+            let decided = {
                 let blockstore = txn
                     .blockstore()
                     .map_err(|e| query::error::QueryError::execution(e.to_string()))?;
                 let headstore = txn
                     .headstore()
                     .map_err(|e| query::error::QueryError::execution(e.to_string()))?;
-                crate::block::builder::inherited_encryption_policy(
+                crate::block::builder::doc_scope_fields(
                     &blockstore,
                     &headstore,
                     identity,
-                    &all_fields,
+                    &fields,
+                    config,
+                    &pending,
                 )
                 .await
                 .map_err(query::error::QueryError::execution)?
             };
             txn.discard()
                 .map_err(|e| query::error::QueryError::execution(e.to_string()))?;
-            policy
-        };
-        prepared.encrypt_doc = policy.0;
-        prepared.encrypted_fields = policy.1;
-    }
-    prepared.encrypt_doc |= config.is_some_and(|config| config.encrypt_doc);
+            decided
+        }
+    } else {
+        let written = fields
+            .iter()
+            .map(|field| {
+                let explicit = config.is_some_and(|config| config.should_encrypt_field(field));
+                (field.clone(), explicit)
+            })
+            .collect();
+        (RapidHashSet::default(), written)
+    };
+    prepared.doc_scope_fields = scoped;
+    prepared.written_fields = pending;
+    prepared.written_fields.extend(written);
     for field in fields {
-        if prepared.encrypt_doc
-            && !prepared.encrypted_fields.contains(&field)
-            && !scopes.iter().any(|(explicit, _)| explicit == &field)
-        {
+        if prepared.doc_scope_fields.contains(&field) {
             scopes.push((field, None));
         }
     }

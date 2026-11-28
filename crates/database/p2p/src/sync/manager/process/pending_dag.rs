@@ -40,6 +40,8 @@ pub(crate) struct PendingDagLease {
     persisted: Arc<PersistedView>,
     max_pending_dags: usize,
     max_per_peer: usize,
+    /// The resync loop's wake, for the place a rotation frees.
+    resync: Arc<regolith::sync::Notify>,
 }
 
 impl std::fmt::Debug for PendingDagLease {
@@ -76,12 +78,14 @@ impl PendingDagLease {
     /// A root with a durable record that has had
     /// `PENDING_ROTATE_AFTER_DISPATCHES` dispatches without merging instead
     /// gives its in-memory entry up when it holds a contended place (the map
-    /// is full, or its source peer is at its quota) while a durable root has
-    /// no entry. Its record stays, and the resync sweep, which resumes after
-    /// the place it admitted at last and gives a peer's places to that peer's
-    /// roots in turn, brings it back once the others had a turn: durable
-    /// roots past the cap take turns instead of the first ones in key order
-    /// holding the map for good.
+    /// is full, or its source peer is at its quota) and another durable root
+    /// could take the freed place. The resync sweep, which resumes after the
+    /// place it admitted at last and gives a peer's places to that peer's
+    /// roots in turn, admits that root: durable roots past the cap take turns
+    /// instead of the first ones in key order holding the map for good. The
+    /// rotating root keeps its entry when every other waiter is still held
+    /// out, so it keeps making progress and does not wake a sweep that could
+    /// only re-admit it.
     ///
     /// `sample` feeds the root's estimates and nothing else: the re-arm is the
     /// same whatever it says.
@@ -91,16 +95,20 @@ impl PendingDagLease {
         let rotates = durable
             && self.pending.read(|pending| {
                 pending.get(&self.root_cid).is_some_and(|dag| {
-                    dag.dispatches >= PENDING_ROTATE_AFTER_DISPATCHES
+                    let contended = dag.dispatches >= PENDING_ROTATE_AFTER_DISPATCHES
                         && (pending.len() >= self.max_pending_dags
                             || dag.source_peer.as_deref().is_some_and(|peer| {
                                 pending.source_count(peer) >= self.max_per_peer
-                            }))
-                }) && self.persisted.len()
-                    > pending
-                        .keys()
-                        .filter(|root| self.persisted.contains(root))
-                        .count()
+                            }));
+                    contended
+                        && waiting_durable_root_fits_after_removing(
+                            pending,
+                            &self.persisted,
+                            self.max_pending_dags,
+                            self.max_per_peer,
+                            &self.root_cid,
+                        )
+                })
             });
         self.pending.update(|pending| {
             if rotates {
@@ -116,10 +124,23 @@ impl PendingDagLease {
             }
         });
         if rotates {
-            tracing::debug!(
-                root_cid = %self.root_cid,
-                "Durable pending root gave its in-memory slot to a waiting one; its record stays"
-            );
+            let waits = self.pending.read(|pending| {
+                waiting_durable_root_fits(
+                    pending,
+                    &self.persisted,
+                    self.max_pending_dags,
+                    self.max_per_peer,
+                )
+            });
+            if waits {
+                tracing::debug!(
+                    root_cid = %self.root_cid,
+                    "Durable pending root gave its in-memory slot to a waiting one; its record stays"
+                );
+                // The place is free now and a durable root waits for it: the
+                // sweep fills it at once, not at its next tick.
+                self.resync.notify_one();
+            }
         }
     }
 }
@@ -130,6 +151,10 @@ impl PendingDagLease {
 pub(crate) struct MergeTurn {
     root_cid: Cid,
     local: Option<Arc<SharedPendingDags>>,
+    persisted: Arc<PersistedView>,
+    resync: Arc<regolith::sync::Notify>,
+    max_pending_dags: usize,
+    max_per_peer: usize,
 }
 
 impl Drop for MergeTurn {
@@ -144,11 +169,19 @@ impl Drop for MergeTurn {
             })
         };
         if pending.read(ended) {
-            pending.update(|registry| {
-                if ended(registry) {
-                    registry.remove(&root);
-                }
+            let freed =
+                pending.update(|registry| ended(registry) && registry.remove(&root).is_some());
+            let waits = pending.read(|registry| {
+                waiting_durable_root_fits(
+                    registry,
+                    &self.persisted,
+                    self.max_pending_dags,
+                    self.max_per_peer,
+                )
             });
+            if freed && waits {
+                self.resync.notify_one();
+            }
         }
     }
 }
@@ -198,6 +231,57 @@ fn evict_expired_pending_dags(
     expired
 }
 
+/// Whether a durable root without an entry could take the in-memory place a
+/// step just freed: the map and the root's peer both have room.
+fn waiting_durable_root_fits(
+    pending: &PendingDagRegistry,
+    persisted: &PersistedView,
+    max_pending_dags: usize,
+    max_per_peer: usize,
+) -> bool {
+    pending.len() < max_pending_dags
+        && persisted.roots().into_iter().any(|root| {
+            if pending.contains_key(&root) {
+                return false;
+            }
+            persisted.source(&root).is_some_and(|peer| {
+                peer.as_deref()
+                    .is_none_or(|peer| pending.source_count(peer) < max_per_peer)
+            })
+        })
+}
+
+/// Whether a durable root other than `removed` could take its place after it
+/// leaves the map: both the map and that root's peer have room.
+fn waiting_durable_root_fits_after_removing(
+    pending: &PendingDagRegistry,
+    persisted: &PersistedView,
+    max_pending_dags: usize,
+    max_per_peer: usize,
+    removed: &Cid,
+) -> bool {
+    let removed_source = pending
+        .get(removed)
+        .and_then(|dag| dag.source_peer.as_deref());
+    let len_after = pending
+        .len()
+        .saturating_sub(usize::from(pending.contains_key(removed)));
+    len_after < max_pending_dags
+        && persisted.roots().into_iter().any(|root| {
+            if root == *removed || pending.contains_key(&root) {
+                return false;
+            }
+            persisted.source(&root).is_some_and(|peer| {
+                peer.as_deref().is_none_or(|peer| {
+                    let held_after = pending.source_count(peer).saturating_sub(usize::from(
+                        removed_source.is_some_and(|removed| removed == peer),
+                    ));
+                    held_after < max_per_peer
+                })
+            })
+        })
+}
+
 impl<B: Blockstore + 'static> SyncManager<B> {
     pub(crate) fn pending_dag_lease(&self, root_cid: Cid) -> PendingDagLease {
         PendingDagLease {
@@ -206,6 +290,7 @@ impl<B: Blockstore + 'static> SyncManager<B> {
             persisted: Arc::clone(&self.persisted),
             max_pending_dags: self.max_pending_dags,
             max_per_peer: self.max_pending_dags_per_peer(),
+            resync: Arc::clone(&self.durable_only_ready),
         }
     }
     /// Get the pending DAGs count (for testing/monitoring).
@@ -215,6 +300,24 @@ impl<B: Blockstore + 'static> SyncManager<B> {
 
     pub(super) fn max_pending_dags_per_peer(&self) -> usize {
         (self.max_pending_dags / PENDING_DAG_PEER_CAPACITY_DIVISOR).max(1)
+    }
+
+    /// Wake the resync sweep when a freed place can admit a waiting durable
+    /// root now. Each wake walks the durable records, so quotas that keep
+    /// every waiter out do not start one.
+    pub(super) fn notify_if_durable_root_fits(&self) {
+        let max_per_peer = self.max_pending_dags_per_peer();
+        let fits = self.pending_dags.read(|pending| {
+            waiting_durable_root_fits(
+                pending,
+                &self.persisted,
+                self.max_pending_dags,
+                max_per_peer,
+            )
+        });
+        if fits {
+            self.durable_only_ready.notify_one();
+        }
     }
 
     /// A peer's share of the durable cap, as `max_pending_dags_per_peer` is
@@ -361,6 +464,9 @@ impl<B: Blockstore + 'static> SyncManager<B> {
         self.trace_expired(expired.iter().map(|(root, _)| root));
         for _ in &expired {
             self.diagnostics.record_pending_dag_expired();
+        }
+        if !expired.is_empty() {
+            self.notify_if_durable_root_fits();
         }
     }
 
@@ -611,6 +717,9 @@ impl<B: Blockstore + 'static> SyncManager<B> {
             )
         });
         self.trace_expired(expired.iter().map(|(root, _)| root));
+        if !expired.is_empty() {
+            self.notify_if_durable_root_fits();
+        }
         if let Some(depth) = depth {
             self.diagnostics.observe_pending_dag_depth(depth);
             if registered {
@@ -645,8 +754,13 @@ impl<B: Blockstore + 'static> SyncManager<B> {
         {
             return false;
         }
-        self.pending_dags
-            .update(|pending| pending.remove(root_cid).is_some())
+        let removed = self
+            .pending_dags
+            .update(|pending| pending.remove(root_cid).is_some());
+        if removed {
+            self.notify_if_durable_root_fits();
+        }
+        removed
     }
 
     /// Claim the right to dispatch receiver work for this root. Returns false
@@ -795,6 +909,10 @@ impl<B: Blockstore + 'static> SyncManager<B> {
             local: entry
                 .is_some_and(|(_, local)| local)
                 .then(|| Arc::clone(&self.pending_dags)),
+            persisted: Arc::clone(&self.persisted),
+            resync: Arc::clone(&self.durable_only_ready),
+            max_pending_dags: self.max_pending_dags,
+            max_per_peer: self.max_pending_dags_per_peer(),
         }
     }
 
@@ -936,6 +1054,9 @@ impl<B: Blockstore + 'static> SyncManager<B> {
             (entry, expired)
         });
         self.trace_expired(expired.iter().map(|(root, _)| root));
+        if !expired.is_empty() {
+            self.notify_if_durable_root_fits();
+        }
 
         let Some(info) = pending_info else {
             tracing::debug!(
@@ -1495,6 +1616,7 @@ impl<B: Blockstore + 'static> SyncManager<B> {
         self.pending_dags.update(|pending| {
             pending.remove(root_cid);
         });
+        self.notify_if_durable_root_fits();
         self.diagnostics.record_pending_dag_terminal_quarantined();
 
         tracing::warn!(

@@ -66,6 +66,10 @@ pub const DOCUMENT_ALREADY_EXISTS_ERROR_CODE: &str = "DOCUMENT_ALREADY_EXISTS";
 pub const DOCUMENT_DELETED_ERROR_CODE: &str = "DOCUMENT_DELETED";
 /// A subscription sent without `Accept: text/event-stream`; HTTP answers it with 406.
 pub const SUBSCRIPTION_NEEDS_SSE_ERROR_CODE: &str = "SUBSCRIPTION_NEEDS_SSE";
+/// A write a unique index refused: another document holds the value. The
+/// write changed nothing, and writing the value again fails the same way
+/// until it is free.
+pub const UNIQUE_CONSTRAINT_VIOLATION_ERROR_CODE: &str = "UNIQUE_CONSTRAINT_VIOLATION";
 
 /// Stable conflict message recognized by the remote DefraDB client.
 pub const TXN_CONFLICT_MESSAGE: &str = "transaction conflict. Please retry";
@@ -473,6 +477,7 @@ impl QueryResponseError {
             crate::error::QueryError::UnknownMutationCollection(_)
         );
         let needs_sse = matches!(&error, crate::error::QueryError::SubscriptionNeedsSse);
+        let is_unique_violation = matches!(&error, crate::error::QueryError::UniqueViolation(_));
         let access_check = match &error {
             crate::error::QueryError::AccessCheckUnavailable { retryable } => Some(*retryable),
             _ => None,
@@ -506,6 +511,8 @@ impl QueryResponseError {
             response_error.with_code(UNKNOWN_MUTATION_COLLECTION_ERROR_CODE)
         } else if needs_sse {
             response_error.with_code(SUBSCRIPTION_NEEDS_SSE_ERROR_CODE)
+        } else if is_unique_violation {
+            response_error.with_code(UNIQUE_CONSTRAINT_VIOLATION_ERROR_CODE)
         } else if let Some(retryable) = access_check {
             response_error.with_code(match retryable {
                 true => ACCESS_CHECK_UNAVAILABLE_ERROR_CODE,
@@ -1174,6 +1181,17 @@ mod tests {
             serde_json::to_value(response).unwrap()["errors"][0]["extensions"]["code"],
             TXN_CONFLICT_ERROR_CODE
         );
+    }
+
+    #[test]
+    fn a_unique_violation_keeps_its_message_and_carries_its_code() {
+        let message = "can not index a doc's field(s) that violates unique index. DocID: bae-1";
+        let error = QueryResponseError::from_query_error(
+            crate::error::QueryError::UniqueViolation(message.into()),
+        );
+
+        assert_eq!(error.message, message);
+        assert_eq!(error.code(), Some(UNIQUE_CONSTRAINT_VIOLATION_ERROR_CODE));
     }
 
     #[test]

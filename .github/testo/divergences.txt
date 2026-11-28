@@ -71,8 +71,23 @@ testo query::relation_order_with_filter::selected_relation_id::indexed
 testo query::relation_order_with_filter::selected_relation_id_unfiltered::indexed
 testo query::relation_order_with_filter::selected_relation_id_unfiltered_with_limit::indexed
 testo query::relation_order_with_filter::selected_relation_id_with_limit::indexed
+# Without an index, Go's badger validates the filter scan and aborts the second explicit commit of an equal value with "transaction conflict. Please retry"; Rust's scan is a query read that decides nothing (AGENTS.md § Reads and writes), so both commit.
+testo txn::unique_isolation::without_an_index_both_commit
+# Go writes a field with no heads in plaintext (store.go:91); Rust gives it a document key when every field of the document is encrypted.
+testo encryption::new_field::doc_encryption_new_field_on_encrypted_doc_is_encrypted
+testo encryption::new_field::doc_encryption_new_field_when_every_written_field_was_listed_is_encrypted
 # An execute explain whose plan fails while it runs: Go reports the error as two `executionErrors` entries; Rust reports it once.
 testo explain::simple::with_invalid_request::execute_explain_reports_a_run_time_failure_in_execution_errors
+# Go's parity pin refuses a filtered truncate of a branchable collection.
+testo collection::truncate::branchable_filter::filtered_truncate_of_a_branchable_collection_removes_only_the_matches
+# Go's parity pin refuses a filtered truncate of a branchable collection.
+testo collection::truncate::branchable_filter::filtered_truncate_of_a_branchable_collection_keeps_its_history
+# Go's parity pin refuses a filtered truncate of a branchable collection.
+testo collection::truncate::branchable_filter::a_document_truncated_from_a_branchable_collection_can_be_added_again
+# Go's parity pin refuses a filtered truncate of a branchable collection.
+testo collection::truncate::branchable_filter::a_peer_update_restores_a_document_truncated_from_a_branchable_collection
+# Go's parity pin refuses a filtered truncate of a branchable collection.
+testo collection::truncate::branchable_filter::a_fresh_peer_sync_restores_a_document_truncated_from_a_branchable_collection
 # Rust counts the vector-index entries read; Go reports one fetch for the whole vector search
 # until https://github.com/sourcenetwork/defradb/issues/5080 lands.
 testo explain::execute::vector_index_fetches::hnsw_search_counts_its_reads

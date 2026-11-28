@@ -20,7 +20,6 @@ use std::sync::Arc;
 use storage::corekv::{Key, Store};
 
 pub mod action;
-pub(crate) mod dump;
 pub mod replication;
 pub(crate) mod spawn;
 pub mod storage_stats;

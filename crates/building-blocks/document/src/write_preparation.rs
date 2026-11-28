@@ -10,8 +10,14 @@ use std::sync::Arc;
 pub struct WritePreparation {
     pub collection_short_id: u32,
     pub doc_short_id: u64,
-    pub encrypt_doc: bool,
-    pub encrypted_fields: RapidHashSet<String>,
+    /// The fields with no heads this write encrypts under a fresh document
+    /// key, decided when the keys were minted, so the block builder takes the
+    /// same decision.
+    pub doc_scope_fields: RapidHashSet<String>,
+    /// Every field this write and the writes prepared before it in the same
+    /// request write, with whether each is encrypted: heads that have not
+    /// committed yet when the next write of the request is prepared.
+    pub written_fields: RapidHashMap<String, bool>,
     keys: RapidHashMap<String, (Cid, EncryptionKey)>,
     key_scopes: RapidHashMap<String, Option<String>>,
     requires_kms_keys: bool,
@@ -23,8 +29,8 @@ impl std::fmt::Debug for WritePreparation {
         f.debug_struct("WritePreparation")
             .field("collection_short_id", &self.collection_short_id)
             .field("doc_short_id", &self.doc_short_id)
-            .field("encrypt_doc", &self.encrypt_doc)
-            .field("encrypted_fields", &self.encrypted_fields)
+            .field("doc_scope_fields", &self.doc_scope_fields)
+            .field("written_fields", &self.written_fields)
             .field("key_count", &self.keys.len())
             .field("requires_kms_keys", &self.requires_kms_keys)
             .field("has_prepared_payload", &self.payload.is_some())
@@ -37,8 +43,8 @@ impl WritePreparation {
         Self {
             collection_short_id,
             doc_short_id,
-            encrypt_doc: false,
-            encrypted_fields: RapidHashSet::default(),
+            doc_scope_fields: RapidHashSet::default(),
+            written_fields: RapidHashMap::new(),
             keys: RapidHashMap::new(),
             key_scopes: RapidHashMap::new(),
             requires_kms_keys: false,
@@ -57,7 +63,6 @@ impl WritePreparation {
         key: [u8; 32],
         scope_field: Option<String>,
     ) {
-        self.encrypted_fields.insert(field.clone());
         self.key_scopes.insert(field.clone(), scope_field);
         self.keys
             .insert(field, (cid, EncryptionKey::new(key.to_vec())));

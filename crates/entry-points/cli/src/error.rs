@@ -186,3 +186,20 @@ impl Error {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::Error;
+
+    #[test]
+    fn a_typed_unique_refusal_keeps_its_code() {
+        let refused = Error::Documents(query::documents::Error::UniqueViolation(
+            "can not index a doc's field(s) that violates unique index".into(),
+        ));
+
+        assert_eq!(
+            refused.code(),
+            Some(query::executor::UNIQUE_CONSTRAINT_VIOLATION_ERROR_CODE)
+        );
+    }
+}

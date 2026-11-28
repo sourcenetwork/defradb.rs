@@ -168,68 +168,61 @@ fn an_index_dropped_and_created_again_under_updates_is_built_and_used() {
 
 #[test]
 #[mantra_macros::req_test("defra.index.ddl_under_writes")]
-fn indexes_created_together_under_updates_are_built() {
+fn indexes_created_one_after_another_under_updates_are_built() {
     let mut actions: Vec<Actions> = vec![AddCollection {
         sdl: "type U { n: Int @crdt(type: pcounter)  g: Int  h: Int }".into(),
         ..Default::default()
     }
     .into()];
     actions.extend((0..DOCS).map(add));
-    let mut together = updates();
-    together.extend([
-        NewIndex {
-            collection: "U".into(),
-            index: index_on("by_g", "g"),
-            expected_data: succeeds(),
-            common: Common {
-                envelope: true,
+    // One index at a time: Go keeps only one of two indexes created
+    // concurrently on a collection, while both NewIndex calls succeed.
+    for (name, field) in [("by_g", "g"), ("by_h", "h")] {
+        let mut under_updates = updates();
+        under_updates.push(
+            NewIndex {
+                collection: "U".into(),
+                index: index_on(name, field),
+                expected_data: succeeds(),
+                common: Common {
+                    envelope: true,
+                    ..Default::default()
+                },
                 ..Default::default()
-            },
-            ..Default::default()
-        }
-        .into(),
-        NewIndex {
-            collection: "U".into(),
-            index: index_on("by_h", "h"),
-            expected_data: succeeds(),
-            common: Common {
-                envelope: true,
+            }
+            .into(),
+        );
+        actions.push(
+            Parallel {
+                actions: under_updates,
                 ..Default::default()
-            },
-            ..Default::default()
-        }
-        .into(),
-    ]);
-    actions.extend([
-        Parallel {
-            actions: together,
-            ..Default::default()
-        }
-        .into(),
-        ListIndexes {
-            collection: "U".into(),
-            expected_data: json!({
-                "indexes": m::unordered(json!([
-                    m::object(json!({
-                        "Description": m::object(json!({
-                            "Name": "by_g",
-                            "Fields": [m::object(json!({ "Name": "g" }))],
-                        })),
-                        "Execution": m::object(json!({ "Status": 3 })),
+            }
+            .into(),
+        );
+    }
+    actions.extend([ListIndexes {
+        collection: "U".into(),
+        expected_data: json!({
+            "indexes": m::unordered(json!([
+                m::object(json!({
+                    "Description": m::object(json!({
+                        "Name": "by_g",
+                        "Fields": [m::object(json!({ "Name": "g" }))],
                     })),
-                    m::object(json!({
-                        "Description": m::object(json!({
-                            "Name": "by_h",
-                            "Fields": [m::object(json!({ "Name": "h" }))],
-                        })),
-                        "Execution": m::object(json!({ "Status": 3 })),
+                    "Execution": m::object(json!({ "Status": 3 })),
+                })),
+                m::object(json!({
+                    "Description": m::object(json!({
+                        "Name": "by_h",
+                        "Fields": [m::object(json!({ "Name": "h" }))],
                     })),
-                ])),
-            }),
-            ..Default::default()
-        }
-        .into(),
-    ]);
+                    "Execution": m::object(json!({ "Status": 3 })),
+                })),
+            ])),
+        }),
+        ..Default::default()
+    }
+    .into()]);
     TestCase {
         id: integration_test::scenario_id!(),
         actions: actions.into_iter().map(Into::into).collect(),
