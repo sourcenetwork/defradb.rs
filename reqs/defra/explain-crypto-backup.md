@@ -463,3 +463,12 @@ A backup file in which two documents carry the same `_docID` (or `_docIDNew`) fa
 - **Scenarios:** ["backup::failed_import::a_failed_import_keeps_every_document_before_the_one_refused", "backup::failed_import::an_import_refusing_a_value_keeps_every_document_before_it"]
 
 An import that cannot create one of its documents fails with that document's error and stops there. Every document of the file before it is imported, and none after it is: a file of `{"name":"Alice"}`, `{"name":"John"}`, `{"name":"John"}`, `{"name":"Zed"}`, whose second John has the first one's content and so its ID, fails with `a document with the given ID already exists` and leaves Alice and the first John. A value the schema refuses stops it the same way: a file of `{"name":"Alice","points":1}`, `{"name":"Bob","points":"many"}` into a `pcounter` field `points` fails with `failed to create document in 'User': …` and leaves Alice.
+
+# `defra.backup.checkpoint`: An offline Regolith checkpoint preserves signed document history
+
+- **Parents:** ["defra.document.id"]
+- **Scenarios:** ["node::storage_checkpoint::checkpoint_preserves_configuration_and_signed_history"]
+
+With the source node stopped, `defradb storage checkpoint <destination>` opens its configured on-disk Regolith store and creates a checkpoint in a new directory on the same filesystem. On Unix, the new directory is accessible only to its owner. Starting a Rust node with that directory as its datastore path exposes the same collection definitions and index configuration, document IDs, current values, commit CIDs, and signatures. Opening the source uses the normal read-write store open: it may upgrade a legacy value-wrapped store in place or reseal its manifest under the current at-rest key, even if checkpoint creation later fails. The checkpoint contains datastore files. External keys and node configuration needed to open and run the store are supplied separately.
+
+An existing destination is refused with `storage checkpoint destination already exists: <path>`. A source with no manifest is refused with `storage checkpoint source has no manifest: <path>`, and an in-memory source fails with `storage checkpoint requires an on-disk database`. A destination created by a failed checkpoint may contain incomplete files. Use a new destination when retrying.

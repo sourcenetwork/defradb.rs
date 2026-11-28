@@ -5,4 +5,5 @@ mod identity;
 mod identity_only;
 mod openapi_document;
 mod resolver;
+mod storage_checkpoint;
 mod version;
