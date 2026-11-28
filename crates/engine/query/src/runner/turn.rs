@@ -406,26 +406,17 @@ where
         // node access control grants `bypass-dac` reads past document ACP,
         // unless the request's caller denied it the bypass. A delegated read
         // answers for its actor, so the principal's bypass never reaches it.
-        let context = self.context();
-        let unresolved = !require_bound_nac
-            && request.identity.is_some()
-            && !context.dac_bypass()
-            && !context.dac_bypass_denied();
-        let bypass = match unresolved {
-            true => match txn_ctx.doc_fetcher().dac_bypass(&nac_identity).await {
-                Ok(bypass) => bypass,
+        let bypassed = match require_bound_nac {
+            true => None,
+            false => match self
+                .with_decided_dac_bypass(txn_ctx.doc_fetcher().as_ref(), request.identity.as_ref())
+                .await
+            {
+                Ok(bypassed) => bypassed,
                 Err(error) => return Ok(Turned::Done(QueryResponse::error(error.to_string()))),
             },
-            false => false,
         };
-        let bypassed;
-        let this = match bypass {
-            true => {
-                bypassed = self.for_request(self.context().into_owned().with_dac_bypass(true));
-                &bypassed
-            }
-            false => self,
-        };
+        let this = bypassed.as_ref().unwrap_or(self);
 
         let identity = self.resolve_identity(request.identity);
         let mut warnings: Vec<GqlWarning> = Vec::new();
@@ -464,7 +455,7 @@ where
                     }
                     let fetcher = txn_ctx.doc_fetcher();
                     if let Some(explain_type) = explain {
-                        self.with_collection_provider(txn_provider)
+                        this.with_collection_provider(txn_provider)
                             .explain_query_with_identity_and_vars(
                                 &request.query,
                                 identity,
@@ -488,7 +479,7 @@ where
                     explain, mutations, ..
                 } => {
                     if let Some(explain_type) = explain {
-                        self.with_collection_provider(txn_provider)
+                        this.with_collection_provider(txn_provider)
                             .explain_mutation_with_identity(&request.query, identity, explain_type)
                             .await
                     } else {

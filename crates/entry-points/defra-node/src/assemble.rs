@@ -33,6 +33,7 @@ pub(crate) struct Extras {
     pub txn_ownership: db::TxnOwnership,
     pub document_projector: Option<Arc<dyn db::DocumentMutationProjector>>,
     pub replica_registration: Option<db::merge::ReplicaRegistration>,
+    pub default_identity: Option<identity::Did>,
     #[cfg(all(test, feature = "p2p"))]
     pub kms_transport_wrapper: Option<TestKmsTransportWrapper>,
     #[cfg(not(target_arch = "wasm32"))]
@@ -545,6 +546,10 @@ where
         query_runner.with_query_timeout(timeout_secs(timeout))
     } else {
         query_runner
+    };
+    let query_runner = match extras.default_identity.clone() {
+        Some(identity) => query_runner.with_default_identity(identity),
+        None => query_runner,
     };
     // Wire the SE remote query transport so this node can act as an SE query
     // OWNER, fanning encrypted_<Collection> queries to replicators (#976).

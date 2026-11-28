@@ -185,6 +185,7 @@ mod nac {
         mod add_p2p_replicator;
         mod add_view;
         mod connect_p2p_peer;
+        mod dac_bypass_paths;
         mod dac_bypass_with_nac_off;
         mod delete_dac_relationship;
         mod delete_document;

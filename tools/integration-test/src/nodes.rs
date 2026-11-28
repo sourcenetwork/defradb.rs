@@ -40,6 +40,8 @@ pub struct NodeSpec {
     /// The client identity seed starting the node, which owns its NAC when
     /// it enables it.
     pub nac_owner: Option<u64>,
+    /// The identity the query runner uses when a request carries none.
+    pub default_identity: Option<u64>,
     /// The node's admission limits, if not the defaults.
     pub admission: Option<crate::actions::AdmissionSpec>,
     /// The node's connection manager, if not the default.
@@ -483,6 +485,11 @@ fn build(spec: &NodeSpec, listen: &str, http: Option<HttpConfig>) -> Result<Node
             Some(seed) => builder.with_node_acp_owner(crate::scenario::identity::did(*seed)),
             None => builder.with_node_acp_enabled(),
         };
+    }
+    if let Some(seed) = spec.default_identity {
+        let did = identity::Did::new(crate::scenario::identity::did(seed))
+            .map_err(|error| error.to_string())?;
+        builder = builder.with_default_identity(did);
     }
     let node = workers::block_on(builder.build())
         .expect("run builder")

@@ -70,6 +70,8 @@ pub struct NodeBuilder {
     txn_ownership: db::TxnOwnership,
     document_projector: Option<Arc<dyn db::DocumentMutationProjector>>,
     replica_registration: Option<db::merge::ReplicaRegistration>,
+    /// The identity the query runner uses when a request names none.
+    default_identity: Option<identity::Did>,
     #[cfg(all(test, feature = "p2p"))]
     kms_transport_wrapper: Option<crate::assemble::TestKmsTransportWrapper>,
     /// How long an idle explicit transaction lives, and how often the sweep
@@ -112,6 +114,15 @@ fn with_at_rest_keys(
 }
 
 impl NodeBuilder {
+    /// Set the identity the query runner uses when a request carries none.
+    ///
+    /// An explicit request identity takes precedence. This is the embedded
+    /// equivalent of the CLI's `--identity` query identity.
+    pub fn with_default_identity(mut self, identity: identity::Did) -> Self {
+        self.default_identity = Some(identity);
+        self
+    }
+
     #[cfg(all(test, feature = "p2p"))]
     pub(crate) fn with_test_kms_transport_wrapper(
         mut self,
@@ -625,6 +636,7 @@ impl NodeBuilder {
             txn_ownership: self.txn_ownership,
             document_projector: self.document_projector.take(),
             replica_registration: self.replica_registration.take(),
+            default_identity: self.default_identity.take(),
             #[cfg(all(test, feature = "p2p"))]
             kms_transport_wrapper: self.kms_transport_wrapper.take(),
             #[cfg(not(target_arch = "wasm32"))]

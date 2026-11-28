@@ -4,6 +4,7 @@ mod common;
 
 mod context_enforcement;
 mod coverage;
+mod dac_bypass_writes;
 mod dac_policy;
 mod external_archive;
 mod external_counts;

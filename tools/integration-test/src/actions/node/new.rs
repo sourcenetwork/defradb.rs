@@ -50,6 +50,9 @@ pub struct NewNode {
     pub network: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub node_identity_seed: Option<u64>,
+    /// The identity the query runner uses when a request carries none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_identity_seed: Option<u64>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub enable_signing: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -166,6 +169,7 @@ impl Op for NewNode {
         probe.go_config = None;
         probe.go_datastore = false;
         probe.node_identity_seed = None;
+        probe.default_identity_seed = None;
         probe.enable_signing = false;
         probe.key_type = None;
         probe.with_identity = false;
@@ -207,6 +211,13 @@ impl Op for NewNode {
                 state.client_type()
             )));
         }
+        if self.default_identity_seed.is_some() && state.client_type() == ClientType::GoHttp {
+            return Err(Failure::unsupported(format!(
+                "{} argument defaultIdentitySeed under {:?}",
+                Self::name(),
+                state.client_type()
+            )));
+        }
         self.check_own_process(state.client_type())?;
         let max_txn_retries = self.max_txn_retries(state.client_type())?;
         let registered_identity = self.registered_identity(state.client_type())?;
@@ -236,6 +247,7 @@ impl Op for NewNode {
             resolv_conf: self.resolv_conf(state.client_type())?,
             iroh_network: self.iroh,
             node_identity,
+            default_identity: self.default_identity_seed,
             registered_identity,
             go_index: Some(go_index),
             signing,

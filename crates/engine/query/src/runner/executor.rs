@@ -158,12 +158,27 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryExecutor for QueryRun
         // Inputs are fetched as the identity acting in the request, the one
         // its attempts act as.
         let runner = self.for_query(request);
-        let runner = runner.for_caller(runner.resolve_identity(request.identity.clone()).as_ref());
         let Some(prepared) = prepared else {
             return Err(crate::error::QueryError::execution(
                 "retry input has no request preparation capsule",
             ));
         };
+        // An attempt decided the other DAC bypass than the write's documents
+        // were chosen under: they are chosen again under the attempt's.
+        if let Some(bypassed) = crate::prepared::PreparedDacBypass::decided(input) {
+            let again = await_with_timeout(
+                runner.prepare_mutations_again(request, &prepared, bypassed),
+                self.deadline(),
+                self.deadline_pool.as_ref(),
+            )
+            .await?;
+            return again.map(Some).ok_or_else(|| {
+                crate::error::QueryError::permission_denied(
+                    "node access control refused the write while its documents were chosen again",
+                )
+            });
+        }
+        let runner = runner.for_caller(runner.resolve_identity(request.identity.clone()).as_ref());
         prepared
             .inputs
             .answer_wave(input, |wave| runner.resolve_wave(&prepared.inputs, wave))

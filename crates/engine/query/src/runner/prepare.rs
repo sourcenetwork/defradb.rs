@@ -18,6 +18,28 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
         &self,
         request: &QueryRequest,
     ) -> Result<Option<Arc<PreparedMutations>>> {
+        self.prepare_mutations_under(request, None).await
+    }
+
+    /// `request` prepared again under the DAC bypass an attempt of `stale`
+    /// decided in its own transaction, keeping the request time and every
+    /// input `stale` already holds, so its creates, signatures and short IDs
+    /// stay the ones its attempts used.
+    pub(super) async fn prepare_mutations_again(
+        &self,
+        request: &QueryRequest,
+        stale: &PreparedMutations,
+        bypassed: bool,
+    ) -> Result<Option<Arc<PreparedMutations>>> {
+        self.prepare_mutations_under(request, Some((stale, bypassed)))
+            .await
+    }
+
+    async fn prepare_mutations_under(
+        &self,
+        request: &QueryRequest,
+        again: Option<(&PreparedMutations, bool)>,
+    ) -> Result<Option<Arc<PreparedMutations>>> {
         let Some(mutator) = self.mutator.as_ref() else {
             return Ok(None);
         };
@@ -82,21 +104,29 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
             return Ok(None);
         }
         let identity = self.resolve_identity(request.identity.clone());
-        let request_time = Utc::now().with_timezone(&FixedOffset::east_opt(0).unwrap());
+        let request_time = match again {
+            Some((stale, _)) => stale.request_time,
+            None => Utc::now().with_timezone(&FixedOffset::east_opt(0).unwrap()),
+        };
         let mut prepared = PreparedMutations {
             request_time,
             mutations: RapidHashMap::new(),
-            inputs: match &request.known_inputs {
-                Some(known) => {
+            inputs: match (again, &request.known_inputs) {
+                (Some((stale, _)), _) => stale.inputs.clone(),
+                (None, Some(known)) => {
                     crate::prepared::PreparedInputMemo::default().with_known(Arc::clone(known))
                 }
-                None => crate::prepared::PreparedInputMemo::default(),
+                (None, None) => crate::prepared::PreparedInputMemo::default(),
             },
             engine_managed_retry: !mutations
                 .iter()
                 .any(|mutation| mutation.mutation_type == MutationType::Truncate)
                 && mutator.engine_retries_batches(),
             parsed: None,
+            dac_bypass: crate::prepared::PreparedDacBypass {
+                caller: request.identity.clone(),
+                bypassed: false,
+            },
         };
         if prepared.engine_managed_retry {
             // The identity the mutation's attempts act as.
@@ -138,6 +168,20 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
                 prepared.inputs.insert(request, Arc::<[u8]>::from(response));
             }
         }
+        // The documents a write may target, chosen under the bypass node
+        // access control grants the request's caller now, or under the one
+        // an attempt decided in its own transaction. Each attempt decides
+        // it again there and ends when it differs, so no attempt works on
+        // documents chosen under another bypass.
+        let bypassed = match again {
+            Some((_, bypassed)) => self.with_dac_bypass_as_decided(bypassed),
+            None => {
+                self.with_decided_dac_bypass(self.fetcher.as_ref(), request.identity.as_ref())
+                    .await?
+            }
+        };
+        let this = bypassed.as_ref().unwrap_or(self);
+        prepared.dac_bypass.bypassed = this.context().dac_bypass();
         let mut documents = Vec::new();
         let mut projected_ids = rapidhash::RapidHashSet::default();
         for mutation in mutations {
@@ -154,7 +198,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
                 base: self.fetcher.as_ref(),
                 documents: &documents,
             };
-            let authorized = self
+            let authorized = this
                 .authorize_mutation(
                     mutation,
                     &identity,

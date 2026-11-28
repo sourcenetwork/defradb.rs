@@ -55,6 +55,9 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry + 'static> QueryRunner<F, R
         resource_name: &str,
         doc_id: &str,
     ) -> Result<bool> {
+        if self.dac_bypassed(identity) {
+            return Ok(true);
+        }
         crate::txn::check_doc_access_with_prepared_inputs(
             self.acp.as_ref(),
             self.acp_registration_projection.as_deref(),
@@ -279,6 +282,27 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry + 'static> QueryRunner<F, R
                             batch_mutator.set_document_acp(acp.clone());
                             let attempt_acp = batch_fetcher.scoped_acp(acp.clone()).await?;
                             let mut batch_runner = runner.scoped_runner(attempt_acp);
+                            // Decided in this attempt's transaction, for the
+                            // request's own caller, so the grant and the
+                            // documents it reaches agree. Documents chosen
+                            // under the other bypass are chosen again.
+                            if let Some(prepared) = prepared.as_ref() {
+                                if let Some(bypassed) = batch_runner
+                                    .with_decided_dac_bypass(
+                                        batch_fetcher.as_ref(),
+                                        prepared.dac_bypass.caller.as_ref(),
+                                    )
+                                    .await?
+                                {
+                                    batch_runner = bypassed;
+                                }
+                                if let Some(again) = prepared
+                                    .dac_bypass
+                                    .stale(batch_runner.context().dac_bypass())
+                                {
+                                    return Err(QueryError::NeedsInput(again));
+                                }
+                            }
                             batch_runner.acp_registration_projection =
                                 batch_mutator.acp_registration_projection();
                             batch_runner.retry_inputs = prepared.as_ref().map(|p| p.inputs.clone());
@@ -345,6 +369,9 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry + 'static> QueryRunner<F, R
         prepared_inputs: Option<&crate::prepared::PreparedInputMemo>,
         strict_attempt: bool,
     ) -> Result<bool> {
+        if self.dac_bypassed(identity) {
+            return Ok(true);
+        }
         let result = crate::txn::check_doc_access_with_prepared_inputs(
             self.acp.as_ref(),
             self.acp_registration_projection.as_deref(),

@@ -27,6 +27,7 @@ mod commits_height;
 mod commits_numeric;
 #[cfg(test)]
 mod context_tests;
+mod dac_bypass;
 #[cfg(test)]
 mod encrypted_select_tests;
 mod executor;
