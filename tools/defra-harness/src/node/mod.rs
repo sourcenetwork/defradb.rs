@@ -78,7 +78,11 @@ fn resolve_release(version: &str, kind: NodeKind) -> crate::error::Result<PathBu
     );
 
     std::fs::create_dir_all(&cache_dir)?;
-    let download = cache_dir.join(format!(".{asset_name}.download"));
+    let staging_id = NEXT_STAGING_ID.fetch_add(1, Ordering::Relaxed);
+    let download = cache_dir.join(format!(
+        ".{asset_name}.{}-{staging_id}.download",
+        std::process::id()
+    ));
 
     tracing::info!(%version, %url, "downloading release binary");
 
@@ -98,7 +102,6 @@ fn resolve_release(version: &str, kind: NodeKind) -> crate::error::Result<PathBu
 
     match kind {
         NodeKind::Rust => {
-            let staging_id = NEXT_STAGING_ID.fetch_add(1, Ordering::Relaxed);
             let staging = StagingDir::new(
                 cache_dir.join(format!(".extract-{}-{staging_id}", std::process::id())),
             )?;

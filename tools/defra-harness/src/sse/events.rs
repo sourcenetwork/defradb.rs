@@ -61,6 +61,18 @@ struct EventNode {
     previous: Option<Arc<EventNode>>,
 }
 
+impl Drop for EventNode {
+    fn drop(&mut self) {
+        let mut next = self.previous.take();
+        while let Some(node) = next {
+            match Arc::try_unwrap(node) {
+                Ok(mut node) => next = node.previous.take(),
+                Err(_) => break,
+            }
+        }
+    }
+}
+
 impl SseEvents {
     pub(super) fn new() -> Self {
         Self {
@@ -156,6 +168,37 @@ impl SseEvents {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_long_event_chain_drops_on_a_small_stack() {
+        std::thread::Builder::new()
+            .stack_size(2 * 1024 * 1024)
+            .spawn(|| {
+                let events = SseEvents::new();
+                for n in 0..50_000 {
+                    events.push(serde_json::json!(n));
+                }
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_waiter_wakes_when_events_arrive() {
+        let events = SseEvents::new();
+        let writer = events.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            writer.push(serde_json::json!(1));
+            writer.push(serde_json::json!(2));
+        });
+        let got = events
+            .wait_until(Duration::from_secs(2), |e| e.len() >= 2)
+            .await
+            .unwrap();
+        assert_eq!(got.len(), 2);
+    }
 
     #[test]
     fn pushes_preserve_order_without_rewriting_the_snapshot() {

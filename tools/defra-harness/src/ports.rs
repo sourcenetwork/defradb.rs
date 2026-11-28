@@ -213,19 +213,13 @@ mod tests {
     static PORT_TEST_GUARD: Mutex<()> = Mutex::new(());
 
     fn assert_tcp_released(port: u16) {
-        match TcpListener::bind(("127.0.0.1", port)) {
-            Ok(listener) => drop(listener),
-            Err(error) if error.kind() == std::io::ErrorKind::AddrInUse => {}
-            Err(error) => panic!("tcp port {port} was not released: {error}"),
-        }
+        TcpListener::bind(("127.0.0.1", port))
+            .unwrap_or_else(|error| panic!("tcp port {port} was not released: {error}"));
     }
 
     fn assert_udp_released(port: u16) {
-        match UdpSocket::bind(("127.0.0.1", port)) {
-            Ok(socket) => drop(socket),
-            Err(error) if error.kind() == std::io::ErrorKind::AddrInUse => {}
-            Err(error) => panic!("udp port {port} was not released: {error}"),
-        }
+        UdpSocket::bind(("127.0.0.1", port))
+            .unwrap_or_else(|error| panic!("udp port {port} was not released: {error}"));
     }
 
     #[tokio::test]

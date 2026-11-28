@@ -19,7 +19,6 @@ regolith.workspace = true
 # `rustls-no-provider`, so `Client::new()` panics in a test binary that
 # installs no provider.
 reqwest = { version = "0.12", features = ["json", "stream"] }
-serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 # Node processes, log tails and HTTP calls run on the tokio runtime of whoever
