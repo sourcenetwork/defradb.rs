@@ -21,7 +21,7 @@ path = "tests/vera/main.rs"
 [dependencies]
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 commonware-codec = "=2026.10.0"
-defra-harness = { git = "https://github.com/sourcenetwork/backbone.git", rev = "3421379115d69fd8bed8536943d5397ac6eb5ace" }
+defra-harness = { path = "../defra-harness" }
 crypto = { path = "../../crates/foundation/crypto" }
 document = { path = "../../crates/building-blocks/document" }
 blockstore = { path = "../../crates/engine/blockstore" }

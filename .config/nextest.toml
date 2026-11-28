@@ -19,12 +19,12 @@ command = { command-line = ".config/build-test-binaries.sh conformance", relativ
 slow-timeout = { period = "60s" }
 
 [[profile.default.overrides]]
-filter = "package(integration-test) | (package(conformance) & !binary(lean_conformance))"
+filter = "package(integration-test) | (package(defra-harness) & (binary(restart) | test(ports::))) | (package(conformance) & !binary(lean_conformance))"
 test-group = "nodes"
 retries = 1
 
 [[profile.default.scripts]]
-filter = "package(integration-test)"
+filter = "package(integration-test) | (package(defra-harness) & binary(restart))"
 setup = "integration-binaries"
 
 [[profile.default.scripts]]

@@ -77,7 +77,7 @@ shipped code, on two axes matching the two tools:
 | Axis | What it checks | Needs a binary? | Entry |
 |---|---|---|---|
 | **Lean (auto)** | `lean/Conformance.lean` emits a JSON contract (vocabularies derived from the Lean models); the live Rust types are asserted to still match — anti-drift | no | `tests/lean_conformance.rs` |
-| **TLA (behavioral)** | each family's invariant is driven against the **running DefraDB binary** via the backbone `defra-harness` | yes | `tests/tla_conformance.rs` |
+| **TLA (behavioral)** | each family's invariant is driven against the **running DefraDB binary** via `tools/defra-harness` | yes | `tests/tla_conformance.rs` |
 
 [`src/registry.rs`](src/registry.rs) is the spine: every *Modeled* family maps
 to its family file under [`src/registry/`](src/registry) — its headline invariant,

@@ -251,7 +251,7 @@ jobs:
         with:
           shared-key: perf-wasm
       - name: Isolate the WASM dependency graph
-        run: sed -i '/"tools\/integration-test"/d; /"tools\/ffi-test"/d; /"proofs"/d' Cargo.toml
+        run: sed -i '/"tools\/defra-harness"/d; /"tools\/integration-test"/d; /"tools\/ffi-test"/d; /"proofs"/d' Cargo.toml
       - uses: browser-actions/setup-firefox@0bc507ddf224827e3b1af68e014d5e42ab93e795 # v1
       - uses: browser-actions/setup-geckodriver@eb8b0670366f719ca31703766a8cb7e3ea2c56ed # v0.0.0
         with:

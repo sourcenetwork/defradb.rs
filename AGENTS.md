@@ -112,6 +112,7 @@ crates/
 
 tools/
 ├── apple/                  # Apple embedding: .xcframework build + Swift import smoke test
+├── defra-harness/          # Node manager, CLI client and fixtures the integration and conformance tests drive
 ├── ffi-test/               # FFI compatibility testing against Go
 ├── hf_embedding_server.py  # Local HuggingFace embedding server for embedding benchmarks
 ├── integration-test/       # Rust-native integration tests (primary validation)
@@ -122,7 +123,7 @@ tools/
 └── vector-bench/           # Corpus, warm-up, memory-cap and usearch tools for vector_disk_cost
 ```
 
-Only `ffi-test`, `integration-test`, and `lens-host` are workspace members; the
+Only `defra-harness`, `ffi-test`, `integration-test`, and `lens-host` are workspace members; the
 rest are scripts, non-Rust harnesses, and `lenses`, a wasm32 workspace of its own.
 
 ### File Size Guidelines
@@ -340,7 +341,8 @@ that is correct but slower is not done.
   workers' CPU ledger (`workers::EdgeCores`), one nuclei shard pinned per CPU there, and a worker pool plans its
   workers on the rest and sets nothing aside for it. Network threads and database workers never share a core.
 - No crate of ours depends on tokio, `tokio-stream` or `tokio-util`, tests and tools included, except `edge`, which owns
-  the one tokio runtime `edge::compat` enters.
+  the one tokio runtime `edge::compat` enters, and `tools/defra-harness`, which starts node processes and calls them
+  over HTTP on its caller's tokio runtime: `edge::compat` in our tests, a tokio test in Backbone's.
   Every socket of ours is a nuclei socket: `net` serves HTTP and gRPC, is the HTTP client in place of reqwest, and is
   the gRPC channel tonic's clients run on; libp2p's TCP and WebSocket transports run on nuclei sockets too. A library
   that binds its own tokio sockets and takes none of ours (iroh, libp2p's QUIC and DNS, the vera.rs clients) runs

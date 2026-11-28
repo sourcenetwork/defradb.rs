@@ -296,7 +296,9 @@ async fn continuous_rollup_test(cluster: TestCluster) {
         .expect("create raw metric");
     let source_doc_id = extract_doc_id(&create, "add_CpuRaw");
 
-    let (handle, events) = open_events_sse(api_url, "update").await;
+    let (handle, events) = open_events_sse(api_url, "update")
+        .await
+        .expect("open SSE subscription");
 
     let updates = [(20, 20), (70, 30), (80, 40)];
     for (event_count, (ts, value)) in updates.into_iter().enumerate() {
@@ -314,10 +316,7 @@ async fn continuous_rollup_test(cluster: TestCluster) {
 
         let expected_events = event_count + 1;
         poll_until(
-            || {
-                count_update_events_for_doc(&events.lock().expect("events lock"), &source_doc_id)
-                    >= expected_events
-            },
+            || count_update_events_for_doc(&events.snapshot(), &source_doc_id) >= expected_events,
             EVENT_TIMEOUT,
             POLL_INTERVAL,
             "raw metric update event should arrive",
