@@ -501,6 +501,31 @@ impl DagFetchLimiter {
         }
     }
 
+    /// Takes both permits only if they are free now. A clock-dispatched fetch
+    /// uses this after its local walk and gives its pending-DAG slot back when
+    /// another root holds the peer, instead of waiting while it holds the slot.
+    pub(crate) fn try_acquire(
+        &self,
+        source_peer: &PeerId,
+        reserved: Option<OwnedSemaphorePermit>,
+    ) -> Option<DagFetchPermits> {
+        if self.closed.is_set() {
+            return None;
+        }
+        let peer_permit = match reserved {
+            Some(permit) => permit,
+            None => self
+                .peer_semaphore(source_peer.as_str())
+                .acquire_owned(1)
+                .now_or_never()?,
+        };
+        let global_permit = self.global.acquire_owned(1).now_or_never()?;
+        Some(DagFetchPermits {
+            _global: global_permit,
+            _peer: peer_permit,
+        })
+    }
+
     /// Whether a fetch that holds its source peer's permit gets a global one
     /// without waiting.
     pub(crate) fn has_global_permit(&self) -> bool {
