@@ -14,14 +14,17 @@ use testo::prelude::*;
 /// first batch, so the corpus sizes its collections against this batch.
 const GO_BACKFILL_BATCH_DOCS: usize = 100;
 
-/// A Rust receiver's admission limits: its pending-DAG map and its per-peer
-/// rate bucket (tokens, and tokens refilled per second).
+/// A Rust node's admission limits: its pending-DAG map, per-peer rate bucket
+/// (tokens, and tokens refilled per second), and CAR-serve lane.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AdmissionSpec {
     pub max_pending_dags: usize,
     pub rate_limit_burst: u32,
     pub rate_limit_rate: f64,
+    /// CAR serves this node runs at once; `None` keeps the default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_active_car_serves: Option<usize>,
     /// The byte budget for one peer's deferred gossip heads; `None` keeps
     /// the default.
     #[serde(default, skip_serializing_if = "Option::is_none")]

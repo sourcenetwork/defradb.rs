@@ -60,6 +60,7 @@ fn default_start_args() -> StartArgs {
         p2p_max_doc_sync_request_doc_ids: None,
         p2p_max_pending_dags: None,
         p2p_max_concurrent_dag_fetches: None,
+        p2p_max_active_car_serves: None,
         p2p_pending_dag_ttl_secs: None,
         p2p_rebroadcast_on_merge: None,
         p2p_push_queue_capacity: None,
@@ -193,6 +194,7 @@ fn test_apply_to_config_all_flags() {
         p2p_max_doc_sync_request_doc_ids: Some(64),
         p2p_max_pending_dags: Some(7),
         p2p_max_concurrent_dag_fetches: Some(2),
+        p2p_max_active_car_serves: Some(3),
         p2p_pending_dag_ttl_secs: Some(20),
         p2p_rebroadcast_on_merge: Some(true),
         p2p_push_queue_capacity: Some(48),
@@ -232,6 +234,7 @@ fn test_apply_to_config_all_flags() {
     assert_eq!(config.net.p2p_max_doc_sync_request_doc_ids, 64);
     assert_eq!(config.net.p2p_max_pending_dags, 7);
     assert_eq!(config.net.p2p_max_concurrent_dag_fetches, 2);
+    assert_eq!(config.net.p2p_max_active_car_serves, 3);
     assert_eq!(config.net.p2p_pending_dag_ttl_secs, 20);
     assert!(config.net.p2p_rebroadcast_on_merge);
     assert_eq!(config.net.p2p_push_queue_capacity, 48);
@@ -384,6 +387,7 @@ const P2P_START_FLAGS: &[&str] = &[
     "p2p-max-doc-sync-request-doc-ids",
     "p2p-max-pending-dags",
     "p2p-max-concurrent-dag-fetches",
+    "p2p-max-active-car-serves",
     "p2p-pending-dag-ttl-secs",
     "p2p-rebroadcast-on-merge",
     "p2p-push-queue-capacity",

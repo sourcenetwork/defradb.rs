@@ -199,6 +199,7 @@ impl Node {
             max_doc_sync_request_doc_ids: config.net.p2p_max_doc_sync_request_doc_ids,
             max_pending_dags: config.net.p2p_max_pending_dags,
             max_concurrent_dag_fetches: config.net.p2p_max_concurrent_dag_fetches,
+            max_active_car_serves: config.net.p2p_max_active_car_serves,
             pending_dag_ttl: std::time::Duration::from_secs(config.net.p2p_pending_dag_ttl_secs),
             push_queue_capacity: config.net.p2p_push_queue_capacity,
             push_queue_byte_capacity: config.net.p2p_push_queue_byte_capacity,
@@ -220,6 +221,7 @@ mod tests {
             sync.max_concurrent_dag_fetches,
             defaults.max_concurrent_dag_fetches
         );
+        assert_eq!(sync.max_active_car_serves, defaults.max_active_car_serves);
         assert_eq!(sync.pending_dag_ttl, defaults.pending_dag_ttl);
     }
 }

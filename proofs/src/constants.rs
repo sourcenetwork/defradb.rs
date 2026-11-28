@@ -80,6 +80,18 @@ pub const CONSTANTS: &[Constant] = &[
     },
     Constant {
         file: SYNC_CONFIG,
+        name: "DEFAULT_MAX_ACTIVE_CAR_SERVES",
+        value: Count(16),
+        models: &[Scaled("proofs/tla/CarServeAdmission.tla", "Capacity")],
+    },
+    Constant {
+        file: "crates/database/p2p/src/sync/car_serve_admission.rs",
+        name: "CAR_SERVE_WAIT_SHARE_DIVISOR",
+        value: Count(4),
+        models: &[Scaled("proofs/tla/CarServeAdmission.tla", "ShareDivisor")],
+    },
+    Constant {
+        file: SYNC_CONFIG,
         name: "DEFAULT_MAX_PENDING_DAGS",
         value: Count(1000),
         models: &[

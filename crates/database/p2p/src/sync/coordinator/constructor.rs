@@ -189,6 +189,7 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
         let peer_state = Arc::new(PeerStateTracker::new());
         let max_dag_fetches = config.max_concurrent_dag_fetches.max(1);
         let max_push_tasks = config.max_concurrent_push_tasks.max(1);
+        let max_car_serves = config.max_active_car_serves.max(1);
         let push_backlog = crate::sync::push_backlog::PushBacklog::new(
             config.push_queue_capacity,
             config.push_queue_byte_capacity,
@@ -285,7 +286,9 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
                     broadcast_wait_deadline,
                     broadcast_room,
                     shutdown,
-                    dispatch_diagnostics: Arc::new(crate::sync::DispatchDiagnostics::default()),
+                    dispatch_diagnostics: Arc::new(crate::sync::DispatchDiagnostics::new(
+                        max_car_serves,
+                    )),
                     filter_matcher,
                 },
                 manager,

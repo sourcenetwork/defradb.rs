@@ -35,6 +35,14 @@ pub const DEFAULT_PUSH_QUEUE_BYTE_CAPACITY: usize = 32 * 1024 * 1024;
 /// share one such cap, so any number of them cannot either.
 pub const DEFAULT_MAX_ACTIVE_PUSHES_PER_PEER: usize = 4;
 
+/// Default number of CAR serves a node runs at once for its peers (#2536).
+///
+/// Each serve holds up to twice `CAR_MAX_BYTES` (the collected blocks and the
+/// encoded response) until its write finishes, so this bounds serve memory
+/// at 512 MiB. Four peers fetching at the default
+/// `max_concurrent_dag_fetches` fit without waiting.
+pub const DEFAULT_MAX_ACTIVE_CAR_SERVES: usize = 16;
+
 /// Default maximum document IDs accepted in one DocSync request.
 pub const DEFAULT_MAX_DOC_SYNC_REQUEST_DOC_IDS: usize = MAX_DOC_IDS;
 
@@ -114,6 +122,11 @@ pub struct SyncConfig {
     /// Maximum push jobs concurrently in flight to a single peer.
     pub max_active_pushes_per_peer: usize,
 
+    /// Maximum CAR serves run at once for peers. A request that finds them
+    /// all busy waits briefly for one, the peer holding the fewest going first,
+    /// and is answered busy past that wait. Values below 1 are normalized to 1.
+    pub max_active_car_serves: usize,
+
     /// Maximum document IDs accepted in a single DocSync request.
     ///
     /// Keeps pull-based document sync bounded while allowing deployments to tune
@@ -172,6 +185,7 @@ impl Default for SyncConfig {
             push_queue_capacity: DEFAULT_PUSH_QUEUE_CAPACITY,
             push_queue_byte_capacity: DEFAULT_PUSH_QUEUE_BYTE_CAPACITY,
             max_active_pushes_per_peer: DEFAULT_MAX_ACTIVE_PUSHES_PER_PEER,
+            max_active_car_serves: DEFAULT_MAX_ACTIVE_CAR_SERVES,
             max_doc_sync_request_doc_ids: DEFAULT_MAX_DOC_SYNC_REQUEST_DOC_IDS,
             rate_limit_burst: DEFAULT_RATE_LIMIT_BURST,
             rate_limit_rate: DEFAULT_RATE_LIMIT_RATE,

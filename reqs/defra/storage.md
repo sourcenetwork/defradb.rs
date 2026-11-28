@@ -447,6 +447,13 @@ A node with a replication filter also asks it in the P2P receive path. On arriva
 
 Gossip has no reply and no retry, so a gossip head a node refuses for its per-peer rate limit or its pending-DAG capacity is kept as a durable pending record that takes no slot, and is fetched once a slot frees: a burst over both limits loses no document. These records are bounded by bytes, per source peer (`gossip_deferral_peer_bytes`) and in all (`gossip_deferral_total_bytes`). Past a budget the head is dropped, and the node reports a `p2p-gossip-head-dropped` event naming the peer and the root, so the application can resync it.
 
+# `defra.p2p.car_serve_lane`: A full CAR-serve lane waits and grants fairly
+
+- **Parents:** ["defra"]
+- **Scenarios:** ["net::car_serve_admission::concurrent_spokes_catch_up_through_a_single_serve_lane"]
+
+A node serves at most `max_active_car_serves` CAR requests at once. A request that finds the lane full waits up to 500 ms in a room the size of the lane; one requester may fill at most one quarter of that room, with a minimum of one place. A freed slot goes to the waiting request whose requester has the fewest active serves, oldest first among equals. A request past its wait, or with no room, is answered busy, or has its stream closed if no rejection worker is free, and the requester retries another provider. Active serves are not capped per requester: the requester's `max_concurrent_dag_fetches` (four by default) bounds how many it starts, and only a released slot is granted fairly. With a one-serve hub and several spokes catching up together, every spoke converges and the hub's `request_dispatch/recovery_waited_total` rises above zero.
+
 # `defra.p2p.cid_check`: A block that does not hash to its CID is refused on every arrival path
 
 - **Parents:** ["defra"]

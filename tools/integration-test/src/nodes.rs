@@ -419,6 +419,9 @@ fn build(spec: &NodeSpec, listen: &str, http: Option<HttpConfig>) -> Result<Node
             libp2p.sync.max_pending_dags = limits.max_pending_dags;
             libp2p.sync.rate_limit_burst = limits.rate_limit_burst;
             libp2p.sync.rate_limit_rate = limits.rate_limit_rate;
+            if let Some(max) = limits.max_active_car_serves {
+                libp2p.sync.max_active_car_serves = max;
+            }
             if let Some(bytes) = limits.deferral_peer_bytes {
                 libp2p.sync.gossip_deferral_peer_bytes = bytes;
             }

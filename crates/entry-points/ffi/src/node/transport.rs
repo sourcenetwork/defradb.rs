@@ -88,6 +88,9 @@ fn sync_tuning(
     if options.max_concurrent_push_tasks > 0 {
         tuning.max_concurrent_push_tasks = options.max_concurrent_push_tasks;
     }
+    if options.max_active_car_serves > 0 {
+        tuning.max_active_car_serves = options.max_active_car_serves;
+    }
     if options.max_doc_sync_request_doc_ids > 0 {
         tuning.max_doc_sync_request_doc_ids = options.max_doc_sync_request_doc_ids;
     }
@@ -472,6 +475,15 @@ mod tests {
         assert_eq!(config.resource_limits.memory_mib, Some(256));
         assert_eq!(config.resource_limits.file_descriptors, Some(512));
         assert_eq!(config.resource_limits.max_streams_per_peer, Some(64));
+    }
+
+    #[test]
+    fn the_active_car_serve_limit_reaches_the_sync_config() {
+        let config = libp2p_config(&NodeInitOptions {
+            max_active_car_serves: 3,
+            ..NodeInitOptions::default()
+        });
+        assert_eq!(config.sync.max_active_car_serves, 3);
     }
 
     #[test]

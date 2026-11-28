@@ -28,6 +28,27 @@ pub(super) const PROPERTIES: &[Property] = &[
         bound_by: "",
     },
     Property {
+        // A CAR serve that finds its lane full waits a bounded time for a
+        // slot; the freed slot goes to the peer running the fewest serves.
+        // Past the wait, or with the room full, it is answered busy (#2536).
+        family: "Inbound stream admission",
+        name: "INV_Capacity / INV_SlotsAccounted / INV_WorkConserving / INV_RoomBounded / INV_BusyOnlyWhenFull / INV_FairGrant / LIVE_Answered: a full CAR-serve lane waits, grants fairly and ends every request served, busy or closed",
+        axis: Tla,
+        anchor: "crates/database/p2p/src/sync/car_serve_admission.rs ServeAdmission::offer, ServeAdmission::release, ServeAdmission::pop_expired; crates/database/p2p/src/sync/event_dispatcher.rs run_event_dispatcher, spawn_serve, refuse, ServeSlot",
+        model_ref: "MC_CarServeAdmission_{Green,Red_NoCapacity,Red_ShedAtOnce,Red_UnboundedRoom,Red_NoGrant,Red_FifoGrant,Red_LeakOnFail}.cfg",
+        tiers: &[Boundary],
+        bound_by: "crates/database/p2p/src/sync/event_dispatcher_serve_tests.rs a_serve_that_finds_the_lane_full_waits_for_a_slot, a_wait_that_runs_out_is_answered_busy, a_freed_slot_goes_to_the_peer_holding_the_fewest_serves, a_peer_past_its_share_of_the_waiting_room_is_answered_busy_at_once",
+    },
+    Property {
+        family: "Inbound stream admission",
+        name: "empty_healthy / offer_healthy / offer_waits_only_when_full / offer_admits_when_free / offer_sheds_only_when_room_full / release_healthy / release_grants_a_waiter / expire_healthy",
+        axis: Lean,
+        anchor: "crates/database/p2p/src/sync/car_serve_admission.rs ServeAdmission::offer, ServeAdmission::release, ServeAdmission::pop_expired",
+        model_ref: "CarServeAdmission (lake build)",
+        tiers: &[Boundary],
+        bound_by: "crates/database/p2p/src/sync/car_serve_admission_tests.rs a_full_lane_holds_the_request_until_a_slot_frees, the_room_is_bounded_overall_and_per_peer, an_expired_wait_is_returned_to_be_answered_busy",
+    },
+    Property {
         family: "Inbound stream admission",
         name: "INV_OnlyRegisteredServed / INV_ShareBound / INV_RoomIsTheRequest / INV_RevokedIsCut / INV_ShutdownLeavesNone / LIVE_HandlerEnds",
         axis: Tla,
