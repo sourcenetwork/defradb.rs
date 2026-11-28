@@ -48,7 +48,7 @@
 \* Code it models:
 \*   crates/engine/storage/src/index/unique.rs UniqueIndex::save, the `has`
 \*     check of the unique entry (a validated Ordinary read), and its nil skip
-\*     (`UniqueIndex::has_nil_field`, the doc-suffixed key)
+\*     (`UniqueIndex::has_never_unique_field`, the doc-suffixed key)
 \*   crates/database/db/src/error/mod.rs index_write_query_error, the typed
 \*     refusal (QueryError::UniqueViolation)
 \*   crates/database/db/src/write/autocommit/helpers.rs the autocommit create
@@ -59,7 +59,7 @@
 \* The engine boundary: regolith v0.2.5 (055589006356738a31ee3b0e965d8e2a9c5bc057)
 \* validates an Ordinary read at commit and aborts it when a newer commit
 \* wrote its key (proofs/tla/RepeatableRead.tla, MC_DefraLevel_* configs);
-\* commit_nowait validates exactly as commit does (src/transaction/nowait.rs:1-6).
+\* commit_nowait validates exactly as commit does (regolith:src/transaction/nowait.rs:1-6).
 \* That is assumed here, not modeled.
 EXTENDS Naturals, FiniteSets
 

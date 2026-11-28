@@ -84,13 +84,6 @@ impl NodeOps {
         Ok(db::backup::import_database_as(&context, &self.database, host, data).await?)
     }
 
-    /// [`crate::Node::print_dump`], on a database worker.
-    pub(crate) async fn print_dump(&self) -> Result<Vec<String>> {
-        let database = self.database.clone();
-        self.on_pool(move || async move { Ok(database.print_dump().await?) })
-            .await
-    }
-
     /// [`crate::Node::print_dump`] for `context`'s caller, checked before the
     /// store is read.
     pub(crate) async fn print_dump_as(&self, context: RequestContext) -> Result<Vec<String>> {
