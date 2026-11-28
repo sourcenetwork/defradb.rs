@@ -6,11 +6,13 @@ import Std
 A parent receives children in the requested order. Once the scan has found
 `offset + limit` children belonging to that parent, later children cannot
 change its page. The scan must count matches for this parent, not all index
-entries. The proof assumes the input already has the requested order; it does
-not prove that the planner selected an index with that order.
+entries. For a routed vector child, the predicate also includes the scalar
+filter applied by the scan. The input is assumed to have the requested order.
+Vector candidate selection, widening, and fallback are outside this proof.
 
-Rust anchor: `TypeJoinMany::next_per_parent` in
-`crates/engine/query/src/plan/type_join/type_join_many/children.rs`.
+Rust anchors: `TypeJoinMany::next_per_parent` and `scan_children_of` in
+`crates/engine/query/src/plan/type_join/type_join_many/children.rs`, and
+`ScanNode::next` in `crates/engine/query/src/plan/scan.rs` for the child filter.
 -/
 
 namespace ChildPage

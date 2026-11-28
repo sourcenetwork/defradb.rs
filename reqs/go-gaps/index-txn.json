@@ -822,6 +822,10 @@
       "tools/integration-test/tests/testo/index/vector_fallback_warning.rs::vector_index_warning_selective_filter_still_returns_matching_docs",
       "tools/integration-test/tests/testo/index/vector_fallback_warning.rs::vector_index_warning_with_filter_reports_warning",
       "tools/integration-test/tests/testo/index/vector_fallback_warning.rs::vector_index_warning_and_wrapped_filter_reports_warning",
+      "tools/integration-test/tests/testo/index/vector_filter_scope.rs::top_level_filter_uses_the_scalar_index",
+      "tools/integration-test/tests/testo/index/vector_filter_scope.rs::empty_filter_keeps_vector_routing",
+      "tools/integration-test/tests/testo/index/vector_filter_scope.rs::filter_warning_takes_precedence_over_missing_limit",
+      "tools/integration-test/tests/testo/index/vector_filter_scope.rs::scalar_filtered_children_page_per_parent",
       "crates/entry-points/defra-node/tests/vector_index_query_path.rs::dropping_the_limit_warns_vector_index_unused",
       "crates/entry-points/defra-node/tests/vector_index_query_path.rs::ascending_order_warns_vector_index_unused",
       "crates/entry-points/defra-node/tests/vector_index_query_path.rs::a_routed_similarity_query_has_no_extensions",
@@ -832,7 +836,7 @@
       "crates/engine/query/tests/vector_index_warnings.rs::every_not_routed_variant_maps_to_its_reason_string",
       "crates/engine/query/tests/vector_routing.rs::zero_or_several_similarities_do_not_route"
     ],
-    "evidence": "testo index::vector_fallback_warning ports all seven Go-Tests and asserts code VECTOR_INDEX_UNUSED end to end with reasons multipleSimilarityFields, noLimit, notOrderedBySimilarityDesc and filter (plain and _and-wrapped filter), no warning on a routed query or a field without a vector index, and the matching docs for a selective filter. vector_index_query_path.rs a_scalar_filter_takes_the_exhaustive_path and a_filtered_similarity_query_returns_a_full_page: a top-level filtered query skips the vector index and returns the full matching page; nested_vector_pages_are_scoped_to_each_parent: a one-to-many child with a scalar filter routes (assert_routes).",
+    "evidence": "testo index::vector_fallback_warning ports all seven Go-Tests and asserts code VECTOR_INDEX_UNUSED end to end with reasons multipleSimilarityFields, noLimit, notOrderedBySimilarityDesc and filter (plain and _and-wrapped filter), no warning on a routed query or a field without a vector index, and the matching docs for a selective filter. vector_index_query_path.rs a_scalar_filter_takes_the_exhaustive_path and a_filtered_similarity_query_returns_a_full_page: a top-level filtered query skips the vector index and returns the full matching page; nested_vector_pages_are_scoped_to_each_parent: a one-to-many child with a scalar filter routes (assert_routes). The vector_filter_scope scenarios check scalar index candidate selection, routing with an explicit empty filter, filter warning precedence, and per-parent pagination without child warnings.",
     "note": "Divergences from Go, whose tryRouteSimilarityToVectorIndex (internal/planner/vector_search.go) checks noLimit before filter and refuses any select whose scan carries a filter. 1) A one-to-many child select with a scalar filter routes through the vector index in Rust (planner/joins/child_plan.rs applies the filter on the routed child scan) and emits no warning when it does not route; Go, reading its planner, refuses it with reason 'filter'. 2) Check order: a top-level filtered query without a limit warns 'filter' in Rust (planner/builder/mod.rs checks the filter before route) and 'noLimit' in Go. 3) An unfiltered top-level select that rejects rows above the scan warns 'filter' and does not route in Rust; this covers ACP-gated policies, groupBy, chunk collections and app read validation. Go has no corresponding check, so those queries route without a warning. Top-level filtered selects otherwise match Go since #3171."
   },
   {

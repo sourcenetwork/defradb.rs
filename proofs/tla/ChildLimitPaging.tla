@@ -1,5 +1,7 @@
 ---- MODULE ChildLimitPaging ----
 \* Each parent scans the same child stream and keeps only its own children.
+\* This checks parent scoping and the ordered early stop. Vector candidate
+\* widening and scalar filtering are outside this specification.
 \* The scan may stop at offset + limit only when the selected index supplies
 \* the requested order. An unordered scan must be exhausted before sorting.
 \* Models TypeJoinMany::next_per_parent in

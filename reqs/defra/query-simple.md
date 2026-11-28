@@ -495,12 +495,19 @@ Within `_version`, `links` and `heads` can be selected several times under diffe
 
 On a field with `@index(vector: {dimensions: 3, hnsw: {metric: COSINE}})`, `User(order: {_alias: {sim: DESC}}, limit: k, offset: m)` with `sim: SIMILARITY(vector: {...})` returns the k nearest documents after skipping m, reading only those through the index (`@explain(type: execute)` shows 1 index fetch and k doc fetches). Updated vectors are re-ranked, deleted documents are excluded, and similarity ignores magnitude (`[10,0,0]` and `[1,0,0]` both score 1).
 
-# `defra.query.simple.similarity.filtered_vector_warning`: A non-empty filter exhausts a vector query
+# `defra.query.simple.similarity.filtered_vector_warning`: Exact scoring for top-level filtered similarity
 
 - **Parents:** ["go.query.simple.similarity"]
-- **Scenarios:** ["index::vector_fallback_warning::vector_index_warning_and_wrapped_filter_reports_warning"]
+- **Scenarios:** ["index::vector_fallback_warning::vector_index_warning_and_wrapped_filter_reports_warning", "index::vector_filter_scope::top_level_filter_uses_the_scalar_index", "index::vector_filter_scope::empty_filter_keeps_vector_routing", "index::vector_filter_scope::filter_warning_takes_precedence_over_missing_limit"]
 
-A similarity query with a non-empty scalar filter—including one wrapped in `_and`—does not use the vector index. It exhaustively scores the filter's matches and returns the `VECTOR_INDEX_UNUSED` warning with `reason: filter`. An empty filter selects every row and keeps vector routing.
+A top-level similarity query with a non-empty filter, including one wrapped in `_and`, skips the vector index. It scores all eligible matches exactly, using a scalar index for candidate selection when applicable, then applies similarity order and pagination. If a selected similarity field has a vector index, the response includes `VECTOR_INDEX_UNUSED` with that field and reason `filter`, even when the limit is omitted. An explicit `filter: {}` leaves an otherwise eligible query on the vector index.
+
+# `defra.query.simple.similarity.filtered_child_vector`: Filtered vector pages for one-to-many children
+
+- **Parents:** ["go.query.simple.similarity"]
+- **Scenarios:** ["index::vector_filter_scope::scalar_filtered_children_page_per_parent"]
+
+An eligible one-to-many child selection ordered by descending similarity can use the vector index with a scalar filter. The filter and parent relation determine which children count toward that parent's offset and limit. A child filter on a relation or a computed alias uses exact scoring. A child selection that skips the vector index does not emit `VECTOR_INDEX_UNUSED`.
 
 # `go.query.simple.select.fields`: Plain query returns every document with the selected fields
 
