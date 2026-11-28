@@ -664,8 +664,9 @@ A batch is one PR carrying several PRs, so they share one full run.
   branch ending in the batch's own number.
 - Whoever reviews the batch checks that each commit carries #N's change and
   nothing else.
-- The batch PR's body carries a `Closes #…` line for every issue a carried PR
-  closes, because merging into the batch branch closes none of them.
+- The batch PR's body carries a `Resolves #N` line, one per line, for every
+  issue a carried PR resolves, because merging into the batch branch closes
+  none of them.
 
 ## ACP / Searchable Encryption
 
