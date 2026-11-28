@@ -1390,7 +1390,7 @@ impl Grouped {
 fn rejected_by_the_chain(result: &defra_node::Result<bool>, verb: &str) -> bool {
     matches!(
         result,
-        Err(error @ defra_node::Error::RelationshipAcp { verb: named, .. })
+        Err(error @ defra_node::Error::DocAcp(db::DocAcpError::RelationshipAcp { verb: named, .. }))
             if *named == verb && error.to_string().contains("was rejected")
     )
 }

@@ -129,6 +129,10 @@ fn selected_actor_nac_revocation_conflicts_with_node_owned_grant() {
         })
         .await
         .unwrap();
+        node.with_identity(Did::new(&node_did).unwrap())
+            .add_nac_actor_relationship(acp::NodePermission::CollectionGet.as_str(), OWNER)
+            .await
+            .unwrap();
         let tx = node.new_txn(false).await.unwrap();
         assert!(node
             .with_transaction(tx.id())

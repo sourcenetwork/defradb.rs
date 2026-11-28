@@ -143,48 +143,9 @@ pub enum Error {
     /// The named collection does not exist.
     #[error("collection '{0}' does not exist")]
     CollectionMissing(String),
-    /// The collection has no policy to manage relationships on.
-    #[error("operation requires ACP, but collection has no policy")]
-    CollectionWithoutPolicy,
-    /// A relationship change named no collection.
-    #[error("collection name can't be empty")]
-    CollectionNameEmpty,
-    /// A relationship change is missing its identity, document, relation or
-    /// target (Go: `ErrMissingReqArgToAddRelationship` and its delete twin).
-    #[error("missing a required argument needed to {0} doc actor relationship.")]
-    RelationshipArgumentMissing(&'static str),
-    /// The policy side of a relationship change failed.
-    #[error("failed to {verb} document actor relationship with acp: {source}")]
-    RelationshipAcp {
-        /// `add` or `delete`.
-        verb: &'static str,
-        /// What failed.
-        #[source]
-        source: Box<Error>,
-    },
-    /// A relationship target did not parse.
-    #[error("invalid target: {0}")]
-    InvalidTarget(#[source] acp::Error),
-    /// The named policy does not exist.
-    #[error("policy '{0}' not found")]
-    PolicyNotFound(String),
-    /// The policy has no such resource.
-    #[error("resource '{0}' not found in policy")]
-    ResourceNotFound(String),
-    /// The policy resource has no such relation.
-    #[error("relation '{relation}' not found in policy resource '{resource}'")]
-    RelationNotFound {
-        /// The missing relation.
-        relation: String,
-        /// The resource that was searched.
-        resource: String,
-    },
-    /// Owner relations are managed by the system only.
-    #[error("OPERATION_FORBIDDEN: cannot add owner relation")]
-    OwnerRelationAdd,
-    /// Owner relations are managed by the system only.
-    #[error("OPERATION_FORBIDDEN: cannot delete owner relation")]
-    OwnerRelationDelete,
+    /// A document relationship operation was refused.
+    #[error(transparent)]
+    DocAcp(db::DocAcpError),
     /// The on-chain provider could not be created.
     #[cfg(feature = "vera")]
     #[error("failed to create Vera provider: {0}")]
@@ -593,6 +554,23 @@ impl Error {
 
 /// Result alias for node operations.
 pub type Result<T, E = Error> = std::result::Result<T, E>;
+
+impl From<db::DocAcpError> for Error {
+    /// A refusal the node has its own variant for keeps it, so a caller
+    /// matching on the ACP's or the transaction's error still finds it.
+    fn from(error: db::DocAcpError) -> Self {
+        match error {
+            db::DocAcpError::Db(error) => Self::Db(error),
+            db::DocAcpError::DacPolicy(error) => Self::DacPolicy(error),
+            db::DocAcpError::Acp(error) => Self::Acp(error),
+            db::DocAcpError::Query(error) => Self::Query(error),
+            db::DocAcpError::Transaction(error) => Self::Transaction(error),
+            db::DocAcpError::InvalidIdentityDid(error) => Self::InvalidIdentityDid(error),
+            db::DocAcpError::CollectionMissing(name) => Self::CollectionMissing(name),
+            error => Self::DocAcp(error),
+        }
+    }
+}
 
 #[cfg(test)]
 mod tests {

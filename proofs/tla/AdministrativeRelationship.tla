@@ -7,7 +7,7 @@
 \* trusted embedder's route may use this authority: Go's public routes keep its
 \* rule that only a document's managers change its relationships.
 \* Rust owners: acp DocumentACP, ZanzibarDocumentACP administrative relation,
-\* and defra-node acp_ops/transactional.rs relationship_in_txn.
+\* and db access/dac/client/in_txn.rs DocumentRelationships::in_txn.
 EXTENDS Naturals
 \* Each RED configuration removes one named guard.
 CONSTANT Bug, Scenario

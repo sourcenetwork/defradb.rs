@@ -179,7 +179,7 @@ impl AcpDocumentRelationshipAddArgs {
             .with_verbose(ctx.verbose);
 
         let result = client
-            .acp_doc_relationship_add(collection, doc_id, relation, actor)
+            .acp_doc_relationship_add(collection, doc_id, relation, actor, ctx.tx_id.as_deref())
             .await?;
         println!("{}", serde_json::to_string_pretty(&result)?);
         Ok(())
@@ -208,7 +208,7 @@ impl AcpDocumentRelationshipDeleteArgs {
             .with_verbose(ctx.verbose);
 
         let result = client
-            .acp_doc_relationship_delete(collection, doc_id, relation, actor)
+            .acp_doc_relationship_delete(collection, doc_id, relation, actor, ctx.tx_id.as_deref())
             .await?;
         println!("{}", serde_json::to_string_pretty(&result)?);
         Ok(())

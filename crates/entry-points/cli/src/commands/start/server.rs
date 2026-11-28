@@ -159,6 +159,7 @@ impl Node {
 
         if config.acp.document_type != AcpDocumentType::None {
             database.set_dac_policies(acp_setup.dac_policies.clone());
+            database.set_document_acp(acp_setup.document_acp.clone());
         }
 
         let mut p2p_setup = Self::setup_p2p(
@@ -342,7 +343,6 @@ impl Node {
             // The NAC routes, only on a node NAC was configured on.
             nac_adapter: nac.configured.then_some(nac.adapter),
             acp_setup: &acp_setup,
-            zanzibar_store,
             user_did: user_did.as_ref(),
             node_identity_did: node_did.map(|did| did.to_string()),
             edge: http_scope.edge().clone(),
@@ -355,6 +355,24 @@ impl Node {
             (pg_scope, pg_server)
         };
 
+        let owed_drainer = acp_setup.owed_gate.map(|gate| {
+            workers::spawn_background(Some(pool), "acp::redrive_owed", move || async move {
+                match gate.redrive_owed().await {
+                    Ok(report) if report.settled > 0 => info!(
+                        settled = report.settled,
+                        failed = report.failed,
+                        "Settled ACP registrations owed from a previous run"
+                    ),
+                    Ok(_) => {}
+                    Err(error) => tracing::warn!(
+                        %error,
+                        "Could not read owed ACP registrations; their documents stay readable only by their creators"
+                    ),
+                }
+                acp::drain_owed_changes(gate).await;
+            })
+        });
+
         Ok(ServerSetup {
             database,
             p2p_handle: p2p_setup.host_handle,
@@ -363,6 +381,7 @@ impl Node {
             vector_rebuild_task,
             deferred_index_task,
             txn_cleanup_task,
+            owed_drainer,
             http_server,
             http_scope,
             #[cfg(feature = "postgres")]

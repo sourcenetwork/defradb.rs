@@ -210,7 +210,7 @@ where
                     "Could not read owed ACP registrations; their documents stay readable only by their creators"
                 ),
             }
-            crate::owed_drainer::drain(redrive).await;
+            acp::drain_owed_changes(redrive).await;
         })
     });
     (gate, start)

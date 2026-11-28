@@ -125,13 +125,15 @@ where
                     let binding = definition
                         .policy
                         .as_ref()
-                        .ok_or(Error::CollectionWithoutPolicy)?;
+                        .ok_or(db::DocAcpError::CollectionWithoutPolicy)?;
                     fetcher
                         .transaction_dac_policy(&binding.id)
                         .await?
-                        .ok_or_else(|| Error::PolicyNotFound(binding.id.clone()))?
+                        .ok_or_else(|| db::DocAcpError::PolicyNotFound(binding.id.clone()))?
                         .get_resource(&binding.resource_name)
-                        .ok_or_else(|| Error::ResourceNotFound(binding.resource_name.clone()))?;
+                        .ok_or_else(|| {
+                            db::DocAcpError::ResourceNotFound(binding.resource_name.clone())
+                        })?;
                     if let Some(acp) = fetcher.transaction_acp(provider.clone()).await? {
                         acp.transfer_doc_object(
                             &actor,

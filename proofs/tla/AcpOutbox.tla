@@ -145,9 +145,9 @@
 \*   staging a change in its transaction    crates/engine/acp/src/outbox/staging.rs
 \*                                          TransactionOutbox::stage, over
 \*                                          crates/engine/acp/src/outbox/ops.rs stage,
-\*                                          called by relationship_in_txn in
-\*                                          crates/entry-points/defra-node/src/acp_ops/
-\*                                          transactional.rs;
+\*                                          called by DocumentRelationships::in_txn in
+\*                                          crates/database/db/src/access/dac/client/
+\*                                          in_txn.rs;
 \*   the deny overlay on committed state    crates/engine/acp/src/outbox/deny.rs
 \*                                          owed_denial, read by
 \*                                          ExternalDocumentAcp::revoked;
@@ -173,9 +173,11 @@
 \*                                          reauthorize and settle, behind the
 \*                                          node calls in
 \*                                          crates/entry-points/defra-node/src/node_core/owed.rs;
-\*   the drainer task, woken by commits     crates/entry-points/defra-node/src/
-\*   and backing off while the provider     owed_drainer.rs drain, started by
-\*   is away                                gate_external_acp;
+\*   the drainer task, woken by commits     crates/engine/acp/src/external/
+\*   and backing off while the provider     drainer.rs drain_owed_changes,
+\*   is away                                started by the node's
+\*                                          gate_external_acp and `defradb
+\*                                          start`'s owed_drainer;
 \*   the journaled request and its marks    crates/engine/acp/src/external/drain.rs
 \*                                          send_request, recover_marked, batch,
 \*                                          over crates/engine/acp/src/outbox/

@@ -55,6 +55,7 @@ mod archive_tests;
 #[path = "external/deadline_tests.rs"]
 mod deadline_tests;
 mod drain;
+mod drainer;
 mod owed;
 mod recovery;
 mod registration;
@@ -68,6 +69,7 @@ mod transfer_tests;
 mod voided;
 
 pub use drain::MAX_CHANGES_PER_REQUEST;
+pub use drainer::drain_owed_changes;
 pub use settle::{OwedScope, OwedSettlement, MAX_FAILED_SUBMISSIONS};
 pub use voided::{OweAgain, VoidedEffect};
 

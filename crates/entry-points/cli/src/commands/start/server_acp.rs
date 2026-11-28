@@ -13,6 +13,8 @@ use identity::Did;
 
 pub(super) struct DocumentAcpSetup {
     pub(super) document_acp: Arc<dyn acp::DocumentACP>,
+    /// The remote ACP gate whose owed changes the node's drainer submits.
+    pub(super) owed_gate: Option<Arc<acp::ExternalDocumentAcp<storage::DynStore>>>,
     /// The node's DAC policies, installed on the database.
     pub(super) dac_policies: Arc<db::DacPolicies>,
     /// The Vera node started for document ACP; shutdown stops it.
@@ -109,6 +111,7 @@ impl Node {
         let document_acp = Arc::new(acp::ZanzibarDocumentACP::new(zanzibar_store.clone()));
         Ok(DocumentAcpSetup {
             document_acp,
+            owed_gate: None,
             dac_policies: Arc::new(db::DacPolicies::local(zanzibar_store)),
             #[cfg(feature = "embedded-vera")]
             embedded_vera: None,
@@ -153,51 +156,16 @@ impl Node {
     }
 }
 
-/// Gate a Vera provider with the registrations creates still owe it, and
-/// settle in the background any a previous run left owed (a crash, or a
-/// provider call that failed). Until settled, such a document is readable only
-/// by its creator. The relationship changes a previous run left owed are
-/// submitted after them, once.
+/// Gate a Vera provider with the registrations creates still owe it. The start
+/// server redrives those registrations and runs the shared owed-change drainer
+/// once the database is ready. Until settled, such a document is readable only
+/// by its creator.
 #[cfg(feature = "vera")]
 fn gate_external_acp(
     provider: Arc<dyn acp::DocumentACP>,
     store: Arc<storage::DynStore>,
-    edge: &edge::Edge,
 ) -> Arc<acp::ExternalDocumentAcp<storage::DynStore>> {
-    let gate = Arc::new(acp::ExternalDocumentAcp::new(provider, store));
-    let redrive = Arc::clone(&gate);
-    drop(edge.spawn(async move {
-        match redrive.redrive_owed().await {
-            Ok(report) if report.settled > 0 => info!(
-                settled = report.settled,
-                failed = report.failed,
-                "Settled ACP registrations owed from a previous run"
-            ),
-            Ok(_) => {}
-            Err(error) => tracing::warn!(
-                %error,
-                "Could not read owed ACP registrations; their documents stay readable only by their creators"
-            ),
-        }
-        match redrive.settle_owed_changes_once(acp::OwedScope::All).await {
-            Ok(settlement) if settlement != acp::OwedSettlement::default() => info!(
-                settled = settlement.settled,
-                refused = settlement.refused,
-            discarded = settlement.discarded,
-            failed = settlement.failed,
-                awaiting_authority = settlement.awaiting_authority,
-                left = settlement.left,
-                provider_unavailable = settlement.provider_unavailable,
-                "Submitted ACP relationship changes owed from a previous run"
-            ),
-            Ok(_) => {}
-            Err(error) => tracing::warn!(
-                %error,
-                "Could not read owed ACP relationship changes; they stay owed"
-            ),
-        }
-    }));
-    gate
+    Arc::new(acp::ExternalDocumentAcp::new(provider, store))
 }
 
 /// The timeouts of a vera.rs provider, from the ACP configuration.
@@ -269,7 +237,7 @@ pub(super) fn vera_setup(
         vera::VeraDocumentACP::new(provider.clone()).on_network(edge, tuning.request_timeout),
     );
     let dac_policies = db::DacPolicies::remote(document_acp.clone(), zanzibar_store);
-    let gate = gate_external_acp(document_acp, store, edge);
+    let gate = gate_external_acp(document_acp, store);
     // What a switch of the deployment's active device voided is owed again
     // through the gate's outbox.
     let owed = Arc::downgrade(&gate);
@@ -281,7 +249,8 @@ pub(super) fn vera_setup(
     let recovery: std::sync::Weak<dyn acp::RecoverySource> = recovery;
     vera::VeraProvider::set_recovery_source(provider.as_ref(), recovery);
     DocumentAcpSetup {
-        document_acp: gate,
+        document_acp: gate.clone(),
+        owed_gate: Some(gate),
         dac_policies: Arc::new(dac_policies),
         #[cfg(feature = "embedded-vera")]
         embedded_vera: None,
