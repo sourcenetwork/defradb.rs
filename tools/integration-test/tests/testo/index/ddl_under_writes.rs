@@ -200,31 +200,29 @@ fn indexes_created_one_after_another_under_updates_are_built() {
             .into(),
         );
     }
-    actions.extend([
-        ListIndexes {
-            collection: "U".into(),
-            expected_data: json!({
-                "indexes": m::unordered(json!([
-                    m::object(json!({
-                        "Description": m::object(json!({
-                            "Name": "by_g",
-                            "Fields": [m::object(json!({ "Name": "g" }))],
-                        })),
-                        "Execution": m::object(json!({ "Status": 3 })),
+    actions.extend([ListIndexes {
+        collection: "U".into(),
+        expected_data: json!({
+            "indexes": m::unordered(json!([
+                m::object(json!({
+                    "Description": m::object(json!({
+                        "Name": "by_g",
+                        "Fields": [m::object(json!({ "Name": "g" }))],
                     })),
-                    m::object(json!({
-                        "Description": m::object(json!({
-                            "Name": "by_h",
-                            "Fields": [m::object(json!({ "Name": "h" }))],
-                        })),
-                        "Execution": m::object(json!({ "Status": 3 })),
+                    "Execution": m::object(json!({ "Status": 3 })),
+                })),
+                m::object(json!({
+                    "Description": m::object(json!({
+                        "Name": "by_h",
+                        "Fields": [m::object(json!({ "Name": "h" }))],
                     })),
-                ])),
-            }),
-            ..Default::default()
-        }
-        .into(),
-    ]);
+                    "Execution": m::object(json!({ "Status": 3 })),
+                })),
+            ])),
+        }),
+        ..Default::default()
+    }
+    .into()]);
     TestCase {
         id: integration_test::scenario_id!(),
         actions: actions.into_iter().map(Into::into).collect(),
