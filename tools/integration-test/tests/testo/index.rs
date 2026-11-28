@@ -82,3 +82,4 @@ mod unique_writer;
 mod update_unique;
 mod update_unique_composite;
 mod vector_fallback_warning;
+mod vector_filter_scope;

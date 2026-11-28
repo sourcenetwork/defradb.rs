@@ -184,8 +184,8 @@ impl ScanNode {
     /// parent scope or one the child select's scalar filter rejects. So the
     /// nearest `k` overall can hold fewer than `k` rows. Asking for a wider `k`
     /// and continuing is what returns a full page instead of whatever survived
-    /// the first `k`. Widening
-    /// stops at a fixed candidate budget, or when the index has nothing new.
+    /// the first `k`. Widening stops at a fixed candidate budget or when the
+    /// index has nothing new.
     /// A short page then falls back to one exhaustive scan. This bounds graph
     /// search effort and deduplication state independently of collection size.
     async fn open_vector_stream(&mut self) -> Result<bool> {

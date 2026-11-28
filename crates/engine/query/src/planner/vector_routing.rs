@@ -5,19 +5,20 @@
 //!
 //! A top-level select (`planner/builder/mod.rs`) is not routed when its filter
 //! has conditions, as in Go. It reads its candidates through a secondary index
-//! when one serves the filter, or the whole collection otherwise, scores every
-//! match exactly, then sorts and applies the limit. When the similarity field
+//! when one serves the filter, via a point read for an exact document ID, or by
+//! scanning the collection. It scores every eligible match exactly, then sorts
+//! and applies pagination. When the similarity field
 //! has a vector index, the planner attaches the `VECTOR_INDEX_UNUSED` warning
 //! with reason `filter`; a field without one never warns. That check runs
 //! before [`route`], so a filtered query without a limit warns `filter` where
 //! Go warns `noLimit`. An empty filter does not keep a query from routing;
 //! [`route`] still decides on the rest of its shape.
 //!
-//! A one-to-many child select (`planner/joins/child_plan.rs`) differs from Go:
-//! a scalar filter does not keep it from routing. The routed child scan applies
-//! that filter to each candidate and widens the search when it drops some. A
-//! relation or `_alias` filter keeps the child off the vector index, and a
-//! child that is not routed gets no warning.
+//! An eligible one-to-many child select (`planner/joins/child_plan.rs`) can
+//! route with a scalar filter. The child scan applies the filter and parent
+//! scope before counting matches toward the page, widening the search when
+//! necessary. Relation and `_alias` filters take the exact path. Child routing
+//! decisions do not emit warnings.
 
 use crate::executor::{GqlWarning, WARNING_CODE_VECTOR_INDEX_UNUSED};
 use crate::mapper::{OrderDirection, Requestable, Select};
