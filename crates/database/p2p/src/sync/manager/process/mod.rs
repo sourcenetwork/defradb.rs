@@ -95,8 +95,9 @@ pub struct SyncManager<B: Blockstore> {
     /// Coalesced wakeup for the sole bounded receiver dispatch owner.
     pub(super) pending_dag_ready: regolith::sync::Notify,
 
-    /// Wakes the resync loop when a durable-only record may now fit a slot.
-    pub(super) durable_only_ready: regolith::sync::Notify,
+    /// Wakes the resync loop when a durable root without an entry may now
+    /// fit a place: a record left, or an entry gave its place up.
+    pub(super) durable_only_ready: Arc<regolith::sync::Notify>,
     /// How much of the pending map each source peer holds, over minutes.
     pub(super) pending_occupancy: crate::sync::arbitration::PendingOccupancy,
 
@@ -221,7 +222,7 @@ impl<B: Blockstore + 'static> SyncManager<B> {
             peer_state,
             pending_dags: Arc::new(SharedPendingDags::default()),
             pending_dag_ready: regolith::sync::Notify::new(),
-            durable_only_ready: regolith::sync::Notify::new(),
+            durable_only_ready: Arc::new(regolith::sync::Notify::new()),
             pending_occupancy: crate::sync::arbitration::PendingOccupancy::default(),
             query_to_root: HopscotchMap::with_hasher(RandomState::default()),
             block_sync_completions: BlockSyncCompletionTracker::with_capacity(
@@ -453,8 +454,8 @@ impl<B: Blockstore + 'static> SyncManager<B> {
         };
         match store.remove(root_cid, &self.persisted).await {
             Ok(removed) => {
-                if removed && self.persisted.len() > self.pending_dag_count() {
-                    self.durable_only_ready.notify_one();
+                if removed {
+                    self.notify_if_durable_root_fits();
                 }
                 removed
             }
