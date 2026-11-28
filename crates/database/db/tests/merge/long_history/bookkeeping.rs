@@ -17,7 +17,10 @@ struct Bookkeeping {
     top: u64,
     accounted: Option<u64>,
     keys_known: bool,
+    bytes: Option<u64>,
+    bytes_known: bool,
     stored: u64,
+    stored_bytes: u64,
     skipped: u64,
 }
 
@@ -51,9 +54,11 @@ async fn bookkeeping(handler: &Handler, root: &cid::Cid) -> Option<Bookkeeping> 
         .await
         .unwrap();
     let mut stored = 0;
+    let mut stored_bytes = 0;
     let mut skipped = 0;
     while let Some(entry) = entries.next().await.unwrap() {
         stored += 1;
+        stored_bytes += (entry.key.len() + entry.value.len()) as u64;
         if entry.value.as_ref() == [1] {
             skipped += 1;
         }
@@ -64,7 +69,10 @@ async fn bookkeeping(handler: &Handler, root: &cid::Cid) -> Option<Bookkeeping> 
         top: state["top"].as_u64().unwrap(),
         accounted: state["keys"].as_u64(),
         keys_known: state["keys_known"].as_bool().unwrap_or(false),
+        bytes: state["bytes"].as_u64(),
+        bytes_known: state["bytes_known"].as_bool().unwrap_or(false),
         stored,
+        stored_bytes,
         skipped,
     })
 }
@@ -86,6 +94,11 @@ async fn walk_accounted(handler: &Handler, root: &MergeBlock, only_open: bool) -
             state.accounted.unwrap(),
             state.stored,
             "the root's progress must account every bookkeeping key it holds"
+        );
+        assert_eq!(
+            state.bytes.unwrap(),
+            state.stored_bytes,
+            "the root's progress must account every bookkeeping byte it holds"
         );
         let open = if state.finished { 0 } else { state.top + 1 };
         if only_open {
@@ -247,6 +260,8 @@ fn a_state_without_the_key_count_restarts_instead_of_resuming_from_zero() {
         let state = state.as_object_mut().unwrap();
         state.remove("keys");
         state.remove("keys_known");
+        state.remove("bytes");
+        state.remove("bytes_known");
         store
             .set(&key, &serde_json::to_vec(&state).unwrap())
             .await
@@ -264,7 +279,7 @@ fn a_state_without_the_key_count_restarts_instead_of_resuming_from_zero() {
             let Some(state) = bookkeeping(&handler, &root.cid).await else {
                 continue;
             };
-            if !state.keys_known {
+            if !state.keys_known || !state.bytes_known {
                 continue;
             }
             restarted = true;
@@ -272,6 +287,11 @@ fn a_state_without_the_key_count_restarts_instead_of_resuming_from_zero() {
                 state.accounted.unwrap(),
                 state.stored,
                 "the restarted walk must account every bookkeeping key it holds"
+            );
+            assert_eq!(
+                state.bytes.unwrap(),
+                state.stored_bytes,
+                "the restarted walk must account every bookkeeping byte it holds"
             );
         }
         assert!(

@@ -12,7 +12,7 @@
 \* partway through because its message is rejected, its context changes, or
 \* its admission slot is reclaimed; cleanup then pages through the partial
 \* stack and marks.
-\* What must never happen: the root's progress miscounts its keys; a finished,
+\* What must never happen: the root's progress miscounts its keys or bytes; a finished,
 \* applied node keeps a mark (bookkeeping then grows with the whole history,
 \* not with the open walk); a node is processed twice; bookkeeping outlives the
 \* walk. No node count stops a valid walk: there is no cutoff to model.
@@ -43,11 +43,17 @@ MaySkip == {2, 3, 5}
 \* applied: what the headstore records as applied.
 \* processed: how many times each node was processed.
 \* keys: the bookkeeping count the root's progress stores.
+\* bytes: the bookkeeping byte count the root's progress stores, in modeled key units.
 \* stage: the walk, then its cleanup, then nothing left.
 \* skipped: which blocks this run's processing skips, fixed at the start.
-VARIABLES stack, mark, applied, processed, keys, stage, skipped
+VARIABLES stack, mark, applied, processed, keys, bytes, stage, skipped
 \* All the state in one tuple for UNCHANGED and fairness.
-vars == <<stack, mark, applied, processed, keys, stage, skipped>>
+vars == <<stack, mark, applied, processed, keys, bytes, stage, skipped>>
+
+\* One modeled bookkeeping key contributes one byte unit. The Rust test checks
+\* the real key and value lengths; the model checks that every write and delete
+\* moves both counts together.
+KEY_BYTES == 1
 
 \* Admission writes the root's frame and its open mark: two keys.
 Init == /\ stack = << [n |-> Root, next |-> 1] >>
@@ -55,6 +61,7 @@ Init == /\ stack = << [n |-> Root, next |-> 1] >>
         /\ applied = {1}
         /\ processed = [n \in Nodes |-> 0]
         /\ keys = 2
+        /\ bytes = 2 * KEY_BYTES
         /\ stage = "walk"
         /\ skipped \in SUBSET MaySkip
 
@@ -76,6 +83,9 @@ PopApplied == /\ stage = "walk"
               /\ keys' = CASE Bug = "keepmark" -> keys - 1
                            [] Bug = "noaccount" -> keys
                            [] OTHER -> keys - 2
+              /\ bytes' = CASE Bug = "keepmark" -> bytes - KEY_BYTES
+                            [] Bug = "noaccount" \/ Bug = "nobytes" -> bytes
+                            [] OTHER -> bytes - 2 * KEY_BYTES
               /\ stack' = Popped
               /\ stage' = AfterPop
               /\ UNCHANGED <<applied, processed, skipped>>
@@ -86,7 +96,7 @@ SkipDone == /\ stage = "walk"
             /\ Top.next <= Len(Parents[Top.n])
             /\ mark[Parents[Top.n][Top.next]] = "done"
             /\ stack' = [stack EXCEPT ![Len(stack)].next = @ + 1]
-            /\ UNCHANGED <<mark, applied, processed, keys, stage, skipped>>
+            /\ UNCHANGED <<mark, applied, processed, keys, bytes, stage, skipped>>
 
 \* A parent with no mark is pushed: a new frame and an open mark, two keys.
 Push == /\ stage = "walk"
@@ -98,6 +108,7 @@ Push == /\ stage = "walk"
                               [n |-> p, next |-> 1])
            /\ mark' = [mark EXCEPT ![p] = "open"]
         /\ keys' = keys + 2
+        /\ bytes' = bytes + 2 * KEY_BYTES
         /\ UNCHANGED <<applied, processed, stage, skipped>>
 
 \* Every parent is done: the node is processed and its frame deleted. An
@@ -115,6 +126,7 @@ Process == /\ stage = "walk"
               /\ applied' = IF n \in skipped THEN applied ELSE applied \cup {n}
               /\ mark' = [mark EXCEPT ![n] = IF keep THEN "done" ELSE "none"]
               /\ keys' = keys - (IF keep THEN 1 ELSE 2)
+              /\ bytes' = bytes - (IF keep THEN KEY_BYTES ELSE 2 * KEY_BYTES)
            /\ stack' = Popped
            /\ stage' = AfterPop
            /\ UNCHANGED skipped
@@ -123,7 +135,7 @@ Process == /\ stage = "walk"
 \* cleanup to page through.
 Abort == /\ stage = "walk"
          /\ stage' = "clean"
-         /\ UNCHANGED <<stack, mark, applied, processed, keys, skipped>>
+         /\ UNCHANGED <<stack, mark, applied, processed, keys, bytes, skipped>>
 
 \* The marks currently occupying bookkeeping keys.
 Marked == {n \in Nodes : mark[n] # "none"}
@@ -136,6 +148,7 @@ CleanupMark == /\ stage = "clean"
                 /\ \E n \in Marked :
                      /\ mark' = [m \in Nodes |-> IF m = n THEN "none" ELSE mark[m]]
                      /\ keys' = (IF Bug = "cleanupnoaccount" THEN keys ELSE keys - 1)
+                     /\ bytes' = (IF Bug = "cleanupnoaccount" \/ Bug = "nobytes" THEN bytes ELSE bytes - KEY_BYTES)
                      /\ UNCHANGED <<stack, applied, processed, skipped, stage>>
 
 \* Deleting one frame is the other cleanup-page step.
@@ -143,6 +156,7 @@ CleanupFrame == /\ stage = "clean"
                  /\ Len(stack) > 0
                  /\ stack' = Popped
                  /\ keys' = (IF Bug = "cleanupnoaccount" THEN keys ELSE keys - 1)
+                 /\ bytes' = (IF Bug = "cleanupnoaccount" \/ Bug = "nobytes" THEN bytes ELSE bytes - KEY_BYTES)
                  /\ UNCHANGED <<mark, applied, processed, skipped, stage>>
 
 CleanupPage == CleanupMark \/ CleanupFrame
@@ -151,6 +165,7 @@ CleanupPage == CleanupMark \/ CleanupFrame
 CleanupDone == /\ stage = "clean"
                /\ Len(stack) + Cardinality(Marked) = 0
                /\ keys' = 0
+               /\ bytes' = 0
                /\ stage' = "gone"
                /\ UNCHANGED <<stack, mark, applied, processed, skipped>>
 
@@ -162,15 +177,20 @@ Spec == Init /\ [][Next]_vars /\ WF_vars(Next)
 
 \* The number of keys that exist: every frame and every mark.
 Stored == Len(stack) + Cardinality(Marked)
+\* The bytes those keys occupy in the model.
+StoredBytes == Stored * KEY_BYTES
 
 \* The progress counts exactly the bookkeeping keys that exist.
 INV_Accounted == keys = Stored
+\* The progress also counts exactly the modeled bytes that exist.
+INV_BytesAccounted == bytes = StoredBytes
 \* Only the open walk and the skipped nodes hold marks: an applied node keeps none.
 INV_Retention == \A n \in Nodes : mark[n] = "done" => n \in skipped
 \* No node is processed twice, applied or skipped.
 INV_ProcessedOnce == \A n \in Nodes : processed[n] <= 1
 \* Once the walk or its cleanup is over, no key is left.
 INV_CleanEnd == stage = "gone" => /\ keys = 0
+                                  /\ bytes = 0
                                   /\ Stored = 0
 \* The walk always finishes and leaves no bookkeeping.
 LIVE_Finishes == <>(stage = "gone")

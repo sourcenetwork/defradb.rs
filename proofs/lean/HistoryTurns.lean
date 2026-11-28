@@ -127,6 +127,14 @@ structure Book where
 -- The key count the root's progress must store for a given bookkeeping.
 def Book.keys (b : Book) : Nat := b.frames + b.marks
 
+-- The modeled disk cost of one bookkeeping key. Rust accounts each key's real
+-- encoded key and value lengths; the model checks that every operation moves
+-- the byte count with the key count.
+def KEY_BYTES : Nat := 1
+
+-- The byte count the root's progress must store for a given bookkeeping.
+def Book.bytes (b : Book) : Nat := b.keys * KEY_BYTES
+
 -- Pushing a parent writes one frame and one open mark.
 def Book.push (b : Book) : Book := { frames := b.frames + 1, marks := b.marks + 1 }
 
@@ -139,11 +147,22 @@ theorem push_accounts (b : Book) : b.push.keys = b.keys + 2 := by
   -- One frame and one mark: two more keys.
   simp [Book.push, Book.keys]; omega
 
+-- A push adds exactly the bytes of the frame and mark it writes.
+theorem push_bytes_accounted (b : Book) : b.push.bytes = b.bytes + 2 * KEY_BYTES := by
+  -- Both counts gain the same two modeled keys.
+  simp [Book.push, Book.keys, Book.bytes, KEY_BYTES]; omega
+
 -- Popping an applied node removes exactly the two keys the walk subtracts.
 theorem pop_applied_accounts (b : Book) (hf : 1 ≤ b.frames) (hm : 1 ≤ b.marks) :
     (b.pop false).keys = b.keys - 2 := by
   -- The frame and the mark both go.
   simp [Book.pop, Book.keys]; omega
+
+-- Popping an applied node removes exactly the bytes of its two deleted keys.
+theorem pop_applied_bytes_accounted (b : Book) (hf : 1 ≤ b.frames) (hm : 1 ≤ b.marks) :
+    (b.pop false).bytes = b.bytes - 2 * KEY_BYTES := by
+  -- The frame and mark bytes go with their keys.
+  simp [Book.pop, Book.keys, Book.bytes, KEY_BYTES]; omega
 
 -- Popping a skipped node removes only its frame, the one key the walk subtracts.
 theorem pop_skipped_accounts (b : Book) (hf : 1 ≤ b.frames) :
@@ -151,10 +170,21 @@ theorem pop_skipped_accounts (b : Book) (hf : 1 ≤ b.frames) :
   -- The done mark stays so a second branch passes the node over.
   simp [Book.pop, Book.keys]; omega
 
+-- Popping a skipped node removes only its frame's bytes.
+theorem pop_skipped_bytes_accounted (b : Book) (hf : 1 ≤ b.frames) :
+    (b.pop true).bytes = b.bytes - KEY_BYTES := by
+  -- The done mark's bytes stay with its key.
+  simp [Book.pop, Book.keys, Book.bytes, KEY_BYTES]; omega
+
 -- A push followed by an applied pop leaves the bookkeeping as it was: an applied
 -- node, however deep the history, retains nothing once it is finished.
 theorem applied_node_retains_nothing (b : Book) : (b.push.pop false) = b := by
   -- The frame and mark the push wrote are exactly the ones the pop deletes.
   cases b; simp [Book.push, Book.pop]
+
+-- An applied node retains no bytes either: a push and its applied pop cancel.
+theorem applied_node_retains_no_bytes (b : Book) : (b.push.pop false).bytes = b.bytes := by
+  -- The key and byte counts both return to the original bookkeeping.
+  simp [applied_node_retains_nothing]
 
 end HistoryTurns

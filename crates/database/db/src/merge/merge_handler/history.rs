@@ -51,6 +51,15 @@ struct Progress {
     /// continue with an incorrect count.
     #[serde(default)]
     keys_known: bool,
+    /// Live traversal key and value bytes under the root's data prefix. The
+    /// fixed-size state and admission records are accounted separately by the
+    /// root registry and are not part of a traversal page's budget.
+    #[serde(default)]
+    bytes: u64,
+    /// Old build states also have no byte count and restart like states with
+    /// no key count.
+    #[serde(default)]
+    bytes_known: bool,
 }
 
 fn now_unix() -> u64 {
@@ -116,6 +125,61 @@ where
         .map_err(storage_error)
 }
 
+fn bookkeeping_bytes(key: &[u8], value_len: usize) -> u64 {
+    (key.len() as u64).saturating_add(value_len as u64)
+}
+
+async fn put_bookkeeping<T>(
+    store: &NamespaceView,
+    key: &[u8],
+    value: T,
+    progress: &mut Progress,
+) -> Result<(), MergeError>
+where
+    T: Serialize,
+{
+    let bytes = serde_json::to_vec(&value).map_err(storage_error)?;
+    put_bookkeeping_bytes(store, key, &bytes, progress).await
+}
+
+async fn put_bookkeeping_bytes(
+    store: &NamespaceView,
+    key: &[u8],
+    bytes: &[u8],
+    progress: &mut Progress,
+) -> Result<(), MergeError> {
+    progress.keys = progress.keys.saturating_add(1);
+    progress.bytes = progress
+        .bytes
+        .saturating_add(bookkeeping_bytes(key, bytes.len()));
+    store.set(key, bytes).await.map_err(storage_error)
+}
+
+async fn rewrite_bookkeeping<T>(
+    store: &NamespaceView,
+    key: &[u8],
+    value: T,
+    previous_value_len: usize,
+    progress: &mut Progress,
+) -> Result<(), MergeError>
+where
+    T: Serialize,
+{
+    let bytes = serde_json::to_vec(&value).map_err(storage_error)?;
+    progress.bytes = progress
+        .bytes
+        .saturating_sub(bookkeeping_bytes(key, previous_value_len))
+        .saturating_add(bookkeeping_bytes(key, bytes.len()));
+    store.set(key, &bytes).await.map_err(storage_error)
+}
+
+fn forget_bookkeeping(key: &[u8], value_len: usize, progress: &mut Progress) {
+    progress.keys = progress.keys.saturating_sub(1);
+    progress.bytes = progress
+        .bytes
+        .saturating_sub(bookkeeping_bytes(key, value_len));
+}
+
 #[derive(Clone, Serialize, Deserialize)]
 enum Completion {
     Merged,
@@ -165,21 +229,24 @@ async fn cleanup(
         )
         .await
         .map_err(storage_error)?;
-    let mut keys = Vec::with_capacity(budget);
+    let mut entries = Vec::with_capacity(budget);
     for _ in 0..budget {
         let Some(entry) = iter.next().await.map_err(storage_error)? else {
             break;
         };
-        keys.push(entry.key);
+        entries.push((entry.key, entry.value.len()));
     }
     let more = iter.next().await.map_err(storage_error)?.is_some();
     iter.close().await.map_err(storage_error)?;
-    progress.keys = progress.keys.saturating_sub(keys.len() as u64);
-    for key in keys {
+    for (key, value_len) in &entries {
+        forget_bookkeeping(key, *value_len, progress);
+    }
+    for (key, _) in entries {
         store.delete(&key).await.map_err(storage_error)?;
     }
     if !more {
         progress.keys = 0;
+        progress.bytes = 0;
         store
             .delete(&state_key(root))
             .await
