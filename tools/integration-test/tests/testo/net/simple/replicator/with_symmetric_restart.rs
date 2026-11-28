@@ -1,8 +1,8 @@
 //! A restarted target of a symmetric replicator mesh keeps receiving its peer's updates.
 
 use integration_test::actions::{
-    AddCollection, AddDoc, AddReplicator, ConnectPeers, NewNode, Request, Restart, UpdateDoc,
-    WaitForPeersEvents,
+    AddCollection, AddDoc, AddReplicator, ConnectPeers, ListP2PCollections, NewNode, Request,
+    Restart, SyncCounters, UpdateDoc, Wait, WaitForPeersEvents,
 };
 use integration_test::scenario::{captures, Common, Eventually, Text};
 use integration_test::test_case::TestCase;
@@ -67,8 +67,20 @@ fn a_restarted_replicator_target_keeps_accepting_its_peers_updates() {
                 ..Default::default()
             }
             .into(),
+            ListP2PCollections {
+                expected_data: json!({ "collections": [] }),
+                common: on("db0"),
+                ..Default::default()
+            }
+            .into(),
             AddReplicator {
                 target: "db0".into(),
+                common: on("db1"),
+                ..Default::default()
+            }
+            .into(),
+            ListP2PCollections {
+                expected_data: json!({ "collections": [] }),
                 common: on("db1"),
                 ..Default::default()
             }
@@ -94,6 +106,16 @@ fn a_restarted_replicator_target_keeps_accepting_its_peers_updates() {
                 ..Default::default()
             }
             .into(),
+            Request {
+                request: read.into(),
+                expected_data: json!({ "Item": [{ "counter": 1 }] }),
+                common: Common {
+                    eventually: Some(Eventually::default()),
+                    ..on("db0")
+                },
+                ..Default::default()
+            }
+            .into(),
             Restart {
                 stop: true,
                 common: on("db1"),
@@ -111,6 +133,12 @@ fn a_restarted_replicator_target_keeps_accepting_its_peers_updates() {
                 ..Default::default()
             }
             .into(),
+            ListP2PCollections {
+                expected_data: json!({ "collections": [] }),
+                common: on("db1"),
+                ..Default::default()
+            }
+            .into(),
             ConnectPeers {
                 target: "db1".into(),
                 common: on("db0"),
@@ -122,6 +150,20 @@ fn a_restarted_replicator_target_keeps_accepting_its_peers_updates() {
                 doc_id: Text::reference("item"),
                 doc_map: json!({ "counter": 2 }),
                 common: on("db0"),
+                ..Default::default()
+            }
+            .into(),
+            Wait {
+                millis: Some(5_000),
+                common: on("db1"),
+                ..Default::default()
+            }
+            .into(),
+            SyncCounters {
+                at_most: [("gossip_direction_filtered_total".to_owned(), 0)]
+                    .into_iter()
+                    .collect(),
+                common: on("db1"),
                 ..Default::default()
             }
             .into(),

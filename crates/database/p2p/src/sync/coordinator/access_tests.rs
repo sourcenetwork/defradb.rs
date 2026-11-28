@@ -3372,6 +3372,50 @@ async fn gossip_controlled_mode_allows_subscribed_outbound_replicator_target() {
     );
 }
 
+#[nuclei::test(threads = 0)]
+async fn gossip_accepts_restored_replicator_source_without_a_collection_subscription() {
+    let replicators = Arc::new(ReplicatorRegistry::new());
+    let peer_state = Arc::new(PeerStateTracker::new());
+    let peer = random_peer_id();
+    peer_state.peer_connected(peer.as_str());
+    let (coordinator, _events) =
+        create_test_coordinator(AccessMode::Controlled, replicators, peer_state);
+
+    coordinator
+        .create_replicator(&peer, vec!["collection1".to_string()], false)
+        .await
+        .unwrap();
+    coordinator
+        .subscriptions
+        .collections
+        .insert_replicator_live("collection1", peer.as_str());
+
+    let result = coordinator
+        .handle_transport_event(gossip_event(peer, "collection1"))
+        .await;
+
+    assert!(
+        !matches!(&result, Err(Error::AccessDenied { .. })),
+        "a restored replicator source must keep accepting gossip without a local subscription, got {:?}",
+        result
+    );
+    assert!(
+        coordinator
+            .get_subscribed_collections()
+            .await
+            .unwrap()
+            .is_empty(),
+        "restoring a replicator topic must not add a durable collection subscription"
+    );
+    assert_eq!(
+        coordinator
+            .sync_status()
+            .await
+            .gossip_direction_filtered_total,
+        0
+    );
+}
+
 /// Collection commits carry an EMPTY `doc_id`, so unlike document updates they
 /// have no document-topic fallback: the collection topic is their only delivery
 /// path. A symmetric mesh makes both peers each other's outbound replicator

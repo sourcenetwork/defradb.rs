@@ -399,4 +399,4 @@ A replicator pushes a document to a stopped target without treating the offline 
 - **Parents:** ["defra"]
 - **Scenarios:** ["net::simple::replicator::with_symmetric_restart::a_restarted_replicator_target_keeps_accepting_its_peers_updates"]
 
-Two nodes that each list the other as a replicator for a collection continue to converge after either one restarts. A document pushed before the restart is present on both. After the restarted target returns and reconnects, an update made on the node that did not restart reaches the restarted node.
+Two nodes that each list the other as a replicator for a collection continue to converge after one of them restarts as the other's target. Neither restart adds the replicated collection to the node's P2P collection subscriptions. A document pushed before the restart is present on both. After the restarted target returns and reconnects, an update made on the node that did not restart reaches the restarted node without being filtered at gossip ingress.

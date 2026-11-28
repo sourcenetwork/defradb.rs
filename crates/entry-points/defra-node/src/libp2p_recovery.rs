@@ -36,8 +36,9 @@ pub(crate) async fn restore_libp2p_replicators<S, B, T>(
                                 if info.is_filtered_for_collection(collection_id) {
                                     continue;
                                 }
-                                if let Err(error) =
-                                    coordinator.subscribe_collection(collection_id).await
+                                if let Err(error) = coordinator
+                                    .restore_replicator_collection(collection_id, peer_id.as_str())
+                                    .await
                                 {
                                     tracing::warn!(collection_id = %collection_id, error = %error, "failed to restore collection topic");
                                 }

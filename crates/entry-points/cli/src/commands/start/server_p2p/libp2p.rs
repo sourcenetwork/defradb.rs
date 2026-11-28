@@ -461,15 +461,33 @@ impl Node {
         let restore_peerstore = database.peerstore();
         match restore_peerstore.list_replicators().await {
             Ok(entries) => {
-                for (_peer_id_str, data) in entries {
-                    if let Ok(rep_info) = p2p::ReplicatorInfo::from_bytes(&data) {
-                        if let Some(pid) = rep_info.peer_id() {
-                            let _ = handle.create_replicator_info(pid, rep_info.clone()).await;
-                            for cid in &rep_info.collections {
-                                let _ = handle
-                                    .subscribe(p2p::topics::DefraTopic::collection(cid))
-                                    .await;
+                for (peer_id_str, data) in entries {
+                    match p2p::ReplicatorInfo::from_bytes(&data) {
+                        Ok(rep_info) => {
+                            if let Some(pid) = rep_info.peer_id() {
+                                let peer_id = p2p::transport::PeerId::from(pid);
+                                if let Err(error) = coordinator
+                                    .create_replicator_info(&peer_id, rep_info.clone(), false)
+                                    .await
+                                {
+                                    warn!(%peer_id, %error, "failed to restore replicator");
+                                    continue;
+                                }
+                                for cid in &rep_info.collections {
+                                    if rep_info.is_filtered_for_collection(cid) {
+                                        continue;
+                                    }
+                                    if let Err(error) = coordinator
+                                        .restore_replicator_collection(cid, peer_id.as_str())
+                                        .await
+                                    {
+                                        warn!(collection_id = %cid, %error, "failed to restore collection topic");
+                                    }
+                                }
                             }
+                        }
+                        Err(error) => {
+                            warn!(%peer_id_str, %error, "failed to decode replicator info");
                         }
                     }
                 }
