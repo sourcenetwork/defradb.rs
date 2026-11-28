@@ -34,6 +34,8 @@ struct OwedProvider {
     expired: AtomicBool,
     /// Expire the delegation while the write is on its way.
     expires_in_flight: AtomicBool,
+    /// Report a lapsed delegation with the provider's validity window.
+    windowed: AtomicBool,
     /// The tokens the writes were sent with.
     tokens: SegQueue<String>,
 }
@@ -48,6 +50,7 @@ impl OwedProvider {
             key_vanishes: AtomicBool::new(false),
             expired: AtomicBool::new(false),
             expires_in_flight: AtomicBool::new(false),
+            windowed: AtomicBool::new(false),
             tokens: SegQueue::new(),
         })
     }
@@ -156,7 +159,18 @@ impl VeraProvider for OwedProvider {
     ) -> Option<std::result::Result<String, ProviderError>> {
         let (did, names) = token.strip_prefix("request:")?.split_once('|')?;
         Some(if self.expired.load(Ordering::Relaxed) {
-            Err(ProviderError::Config("request delegation: expired".into()))
+            if self.windowed.load(Ordering::Relaxed) {
+                Err(ProviderError::DelegationOutsideWindow(
+                    acp::DelegationWindow {
+                        not_before: 10,
+                        expires_at: 20,
+                        provider_time: 21,
+                        refusal: acp::WindowRefusal::Expired,
+                    },
+                ))
+            } else {
+                Err(ProviderError::Config("request delegation: expired".into()))
+            }
         } else if names != named(command) {
             Err(ProviderError::Config(
                 "request delegation: bound to another request".into(),
@@ -717,6 +731,59 @@ fn a_delegation_bound_to_one_request_counts_for_the_command_it_names_only() {
     assert!(unavailable(
         bound.command_authority(&did(REMOTE), registration("doc-1"))
     ));
+}
+
+#[test]
+fn a_host_precheck_answers_as_the_send_path_does() {
+    let provider = OwedProvider::new(true);
+    let acp = VeraDocumentACP::new(provider.clone());
+    let registration = |object| acp::ProviderCommand::RegisterObject {
+        relationships: &[],
+        policy_id: "policy-1",
+        resource: "users",
+        object,
+    };
+    let answer = |result: Result<OwedAuthority>| match result {
+        Ok(authority) => format!("accepted: {authority:?}"),
+        Err(error) => format!("refused: {error:?}"),
+    };
+    let compare = |actor: &str, token: &str, object: &'static str| {
+        let sent =
+            presenting(&acp, actor, token).command_authority(&did(actor), registration(object));
+        let checked = acp.request_bound_authority(&did(actor), token, registration(object));
+        assert_eq!(
+            answer(sent),
+            answer(checked),
+            "actor: {actor}, token: {token}"
+        );
+    };
+
+    let accepted = bound_to(REMOTE, "register doc-1");
+    compare(REMOTE, &accepted, "doc-1");
+    compare(REMOTE, &accepted, "doc-2");
+    compare(REMOTE, &bound_to(HELD, "register doc-1"), "doc-1");
+    compare(REMOTE, "delegation:not-a-request-binding", "doc-1");
+    assert!(matches!(
+        acp.request_bound_authority(&did(REMOTE), &accepted, registration("doc-1")),
+        Ok(OwedAuthority::Delegation { .. })
+    ));
+
+    provider.expired.store(true, Ordering::Relaxed);
+    compare(REMOTE, &accepted, "doc-1");
+
+    provider.windowed.store(true, Ordering::Relaxed);
+    let sent =
+        presenting(&acp, REMOTE, &accepted).command_authority(&did(REMOTE), registration("doc-1"));
+    let checked = acp.request_bound_authority(&did(REMOTE), &accepted, registration("doc-1"));
+    assert!(matches!(
+        sent,
+        Err(acp::Error::DelegationOutsideWindow { .. })
+    ));
+    assert!(matches!(
+        checked,
+        Err(acp::Error::DelegationOutsideWindow { .. })
+    ));
+    assert!(provider.sent().is_empty(), "the check sent nothing");
 }
 
 #[nuclei::test]

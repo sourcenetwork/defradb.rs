@@ -109,6 +109,14 @@ A token that declares itself a Vera delegation and fails a check is refused with
 
 A host may name its delegation signer by any `did:key` spelling of the signer's key that `crypto::parse_did_key` decodes. A delegation it issues for a secp256k1 key may name as its issuer any of the four spellings vera.rs takes for that key: the compressed or the uncompressed point, in base58btc (`did:key:z…`) or base64url (`did:key:u…`), whichever spelling names the signer itself. The token carries the issuer exactly as given, and vera.rs verifies it as that key's actor. An Ed25519 or P-256 key is taken by vera.rs only under its one base58btc DID (for P-256, of the compressed point); a signer named by any other spelling of such a key issues under that DID. An issuer that is not a spelling vera.rs takes for the signer's key, including the base64url spelling of an Ed25519 or P-256 key and any spelling of another key, is refused before anything is signed with `issuer DID is not a spelling vera.rs takes for the signing key`.
 
+# `defra.acp.request_bound_authority`: A host can check a request-bound delegation before a write
+
+- **Parents:** ["defra.acp"]
+- **Scenarios:** ["vera::a_host_precheck_answers_as_the_send_path_does"]
+- **Scope:** "crate test, not testo: the check is a host-facing provider seam and a testo node cannot construct the request-bound delegation the provider verifies"
+
+`DocumentACP::request_bound_authority` takes a signer, a delegation token and the provider command a write would send, and answers with the authority the send path gives for that command. An accepted token returns the provider's authority. A token the send path refuses returns the same `OwedAuthorityUnavailable` reason, and one outside its validity window returns `DelegationOutsideWindow` with the provider's window. Checking sends nothing and records nothing.
+
 # `go.acp.nac.gates.signature`: Block signature verification is gated
 
 - **Parents:** ["go.acp.nac.gates"]
