@@ -105,7 +105,8 @@ VARIABLES
   currentMatch,    \* the documents the filter matches when the delete runs
   txnMatch,        \* the documents it matches in the transaction's own view
   step,            \* "check", then "delete", then "metadata" when unfiltered, then "done"
-  contention,      \* a chunk meets a writer that conflicts with every retry
+  contention,      \* a chunk meets a writer that conflicts with every retry; for an
+                   \* unfiltered chunk not an update (TruncateUnderWriters.tla)
   removed,         \* the documents this request removed
   committedChunks, \* the documents chunks committed before an exhausted retry
   refused,         \* the request ended with an error

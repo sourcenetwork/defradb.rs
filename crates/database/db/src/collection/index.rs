@@ -256,6 +256,21 @@ impl Collection {
         Ok(true)
     }
 
+    /// Set a document's deletion marker without reading the document. Every
+    /// local writer of the document reads the marker validated, so once this
+    /// commits a writer that read it absent conflicts and its re-run finds
+    /// the document gone.
+    pub(crate) async fn set_deletion_marker(
+        &self,
+        datastore: &NamespaceView,
+        doc_short_id: u64,
+    ) -> Result<()> {
+        datastore
+            .set(&self.deleted_key(doc_short_id), &[DELETED_MARKER])
+            .await
+            .map_err(Error::Storage)
+    }
+
     /// Check if a document is marked as deleted.
     pub async fn is_deleted(&self, datastore: &NamespaceView, doc_short_id: u64) -> Result<bool> {
         let deleted_key = self.deleted_key(doc_short_id);
