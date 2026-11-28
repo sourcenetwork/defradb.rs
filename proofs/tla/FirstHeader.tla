@@ -26,11 +26,11 @@
 \* of the fetched head can fail transiently. A later term is also passed on: a
 \* switch of the deployment's active device voids blocks above its cut, and
 \* the light client reads such a header below its head to learn its head
-\* was voided (acp-light-client header_sync.rs run_header_loop).
+\* was voided (acp-light-client:src/header_sync.rs run_header_loop).
 \*
 \* The transport is not trusted: what it sends may be a forged header, and
 \* the light client checks the first header exactly as it checks the others
-\* (acp-light-client header_sync.rs authenticate_header).
+\* (acp-light-client:src/header_sync.rs authenticate_header).
 \*
 \* What must never happen:
 \*   1. the light client takes as its head a header no finalized block
@@ -54,8 +54,9 @@
 \*                       passed on even at or below it (acp.rs prepend_head);
 \*   Verify              the light client's check of every header against
 \*                       its trusted key and freshness limit
-\*                       (acp-light-client header_sync.rs authenticate_header,
-\*                       term::certify, observe_revision).
+\*                       (acp-light-client:src/header_sync.rs
+\*                       authenticate_header; acp-light-client:src/term.rs
+\*                       certify, observe_revision).
 
 EXTENDS Naturals, Sequences
 

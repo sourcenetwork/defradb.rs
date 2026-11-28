@@ -74,6 +74,7 @@ async fn search(db: &Arc<DB<RegolithStore>>, name: &str, index_id: u32, k: usize
         .vector_search(name, index_id, &vector_at(3), k, None)
         .await
         .expect("the search must resolve the collection")
+        .short_ids
 }
 
 #[test]
@@ -114,6 +115,29 @@ fn the_nearest_hit_is_the_document_the_query_came_from() {
             document.get("title"),
             Some(&NormalValue::String("doc-3".to_string())),
             "the nearest neighbour of doc-3's own vector must be doc-3"
+        );
+    })
+    .unwrap()
+}
+
+/// The search reports the index entries it read, at least one per hit it
+/// returns, which is what an execute explain shows as `indexFetches`.
+#[test]
+fn the_search_counts_the_index_entries_it_reads() {
+    workers::block_on(async {
+        let (db, index_id) = populated().await;
+        let txn = db.new_txn(true).await.unwrap();
+        let fetcher = DbDocFetcher::new(txn);
+        let candidates = fetcher
+            .vector_search(COLLECTION, index_id, &vector_at(3), 5, None)
+            .await
+            .expect("the search must resolve the collection");
+
+        assert_eq!(candidates.short_ids.len(), 5);
+        assert!(
+            candidates.index_reads >= 5,
+            "five hits need at least five entries read, got {}",
+            candidates.index_reads
         );
     })
     .unwrap()

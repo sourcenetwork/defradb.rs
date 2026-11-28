@@ -84,7 +84,6 @@ fn governed_policy() -> PolicyDescription {
     PolicyDescription {
         id: "policy-grants".to_string(),
         resource_name: "grants".to_string(),
-        parent_field: None,
     }
 }
 
@@ -485,7 +484,6 @@ fn an_ungoverned_policy_link_does_not_move_the_collection_id() {
         let policy_cid = schema::generate_policy_cid(&PolicyDescription {
             id: "p1".to_string(),
             resource_name: "ledgers".to_string(),
-            parent_field: None,
         })
         .unwrap();
         let block = Block::new(

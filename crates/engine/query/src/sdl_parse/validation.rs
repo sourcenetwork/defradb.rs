@@ -14,7 +14,7 @@ impl<'a> SdlParser<'a> {
         let all_type_names: RapidHashSet<String> = type_names
             .iter()
             .cloned()
-            .chain(self.known_external_types.iter().cloned())
+            .chain(self.known_collections.keys().cloned())
             .collect();
 
         for type_def in self.type_defs.values() {

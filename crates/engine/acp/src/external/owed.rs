@@ -290,7 +290,20 @@ where
                         staged && oldest.state == OwedState::Staged,
                     )
                 }
-                _ => (None, staged),
+                // Nothing of its tuple holds it: the order around a
+                // transfer on its object may.
+                _ => match self
+                    .holder_on_object(&change, &RapidHashSet::default())
+                    .await?
+                {
+                    Some(holder) => (
+                        Some(OwedHold::Change {
+                            seq: (holder.actor == change.actor).then_some(holder.seq),
+                        }),
+                        staged && holder.state == OwedState::Staged,
+                    ),
+                    None => (None, staged),
+                },
             },
         };
         Ok(OwedEntry {

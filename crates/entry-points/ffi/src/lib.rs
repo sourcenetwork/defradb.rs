@@ -38,6 +38,7 @@ pub mod node;
 mod node_settings_tests;
 pub mod options;
 pub mod p2p;
+pub mod peer_keyring;
 #[cfg(feature = "profiling")]
 pub mod profiling;
 pub mod query;

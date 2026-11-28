@@ -9,11 +9,39 @@ use zanzibar::types::{ObjectRef, Policy, Relationship, Subject};
 
 pub struct TransactionZanzibarStore {
     view: NamespaceView,
+    validated: bool,
 }
 const POLICY_PREFIX: &str = "/zanzibar/policy/";
 impl TransactionZanzibarStore {
     pub fn new(view: NamespaceView) -> Self {
-        Self { view }
+        Self {
+            view,
+            validated: true,
+        }
+    }
+
+    /// A store whose reads stay at the transaction snapshot without taking
+    /// part in its commit validation.
+    pub fn new_unvalidated(view: NamespaceView) -> Self {
+        Self {
+            view,
+            validated: false,
+        }
+    }
+
+    /// Read a point value. Unlike `get_parts` with named parts, an unvalidated
+    /// read cannot make the transaction conflict.
+    async fn get_value(&self, key: &[u8]) -> Result<Option<impl AsRef<[u8]>>> {
+        let value = if self.validated {
+            self.view.get(key).await
+        } else {
+            self.view.get_parts(key, &[]).await
+        };
+        value.map_err(|error| Error::Serialization(error.to_string()))
+    }
+
+    async fn has_value(&self, key: &[u8]) -> Result<bool> {
+        Ok(self.get_value(key).await?.is_some())
     }
     /// A write to the node's access control policy: the transaction owes
     /// what its [`datastore::NodeAccessWrites`] asks at commit.
@@ -57,22 +85,17 @@ impl ZanzibarStore for TransactionZanzibarStore {
         true
     }
     async fn store_policy(&self, policy: &Policy) -> Result<()> {
-        let txn = &self.view;
-
         let key = Self::policy_key(&policy.id);
         let value = serde_json::to_vec(policy)?;
-        if let Some(existing) = txn
-            .get(key.as_bytes())
-            .await
-            .map_err(|error| Error::Serialization(error.to_string()))?
-        {
+        if let Some(existing) = self.get_value(key.as_bytes()).await? {
             if existing.as_ref() != value.as_slice() {
                 return Err(Error::PolicyAlreadyExists(policy.id.clone()));
             }
             return Ok(());
         }
 
-        txn.set(key.as_bytes(), &value)
+        self.view
+            .set(key.as_bytes(), &value)
             .await
             .map_err(|e| Error::Serialization(format!("store_policy: set key {}: {}", key, e)))?;
 
@@ -80,17 +103,11 @@ impl ZanzibarStore for TransactionZanzibarStore {
     }
 
     async fn get_policy(&self, policy_id: &str) -> Result<Option<Policy>> {
-        let txn = &self.view;
-
         let key = Self::policy_key(policy_id);
 
-        match txn
-            .get(key.as_bytes())
-            .await
-            .map_err(|e| Error::Serialization(format!("get_policy: get key {}: {}", key, e)))?
-        {
+        match self.get_value(key.as_bytes()).await? {
             Some(data) => {
-                let policy: Policy = serde_json::from_slice(&data)?;
+                let policy: Policy = serde_json::from_slice(data.as_ref())?;
                 Ok(Some(policy))
             }
             None => Ok(None),
@@ -98,23 +115,18 @@ impl ZanzibarStore for TransactionZanzibarStore {
     }
 
     async fn has_policy(&self, policy_id: &str) -> Result<bool> {
-        self.view
-            .has(Self::policy_key(policy_id).as_bytes())
-            .await
-            .map_err(|e| Error::Serialization(format!("has_policy: {}", e)))
+        self.has_value(Self::policy_key(policy_id).as_bytes()).await
     }
 
     async fn list_policies(&self) -> Result<Vec<Policy>> {
-        let txn = &self.view;
-
         let iter_opts = IterOptions::new()
-            .with_validation(true)
+            .with_validation(self.validated)
             .with_prefix(POLICY_PREFIX.as_bytes().to_vec());
 
-        let mut iter = txn
-            .iterator(iter_opts)
-            .await
-            .map_err(|e| Error::Serialization(format!("list_policies: create iterator: {}", e)))?;
+        let mut iter =
+            self.view.iterator(iter_opts).await.map_err(|e| {
+                Error::Serialization(format!("list_policies: create iterator: {}", e))
+            })?;
 
         let mut policies = Vec::new();
         while let Some(kv) = iter
@@ -140,10 +152,7 @@ impl ZanzibarStore for TransactionZanzibarStore {
 
         let key = Self::policy_key(policy_id);
 
-        let exists = txn
-            .has(key.as_bytes())
-            .await
-            .map_err(|e| Error::Serialization(e.to_string()))?;
+        let exists = self.has_value(key.as_bytes()).await?;
 
         if exists {
             txn.delete(key.as_bytes())
@@ -152,7 +161,7 @@ impl ZanzibarStore for TransactionZanzibarStore {
 
             let rel_prefix = format!("/zanzibar/{}/rel/", policy_id);
             let iter_opts = IterOptions::new()
-                .with_validation(true)
+                .with_validation(self.validated)
                 .with_prefix(rel_prefix.into_bytes());
 
             let mut keys_to_delete = Vec::new();
@@ -200,10 +209,7 @@ impl ZanzibarStore for TransactionZanzibarStore {
 
         let key = Self::relationship_key(policy_id, rel);
 
-        let exists = txn
-            .has(key.as_bytes())
-            .await
-            .map_err(|e| Error::Serialization(e.to_string()))?;
+        let exists = self.has_value(key.as_bytes()).await?;
 
         if exists {
             txn.delete(key.as_bytes())
@@ -223,14 +229,10 @@ impl ZanzibarStore for TransactionZanzibarStore {
         relation: &str,
         subject: &Subject,
     ) -> Result<bool> {
-        let txn = &self.view;
-
         let rel = Relationship::new(resource, object_id, relation, subject.clone());
         let key = Self::relationship_key(policy_id, &rel);
 
-        txn.has(key.as_bytes())
-            .await
-            .map_err(|e| Error::Serialization(e.to_string()))
+        self.has_value(key.as_bytes()).await
     }
 
     async fn check_permission_direct(
@@ -241,36 +243,27 @@ impl ZanzibarStore for TransactionZanzibarStore {
         relation: &str,
         subject: &Did,
     ) -> Result<bool> {
-        let txn = &self.view;
-
         let direct = Relationship::with_entity(resource, object_id, relation, subject.clone());
         let direct_key = Self::relationship_key(policy_id, &direct);
 
-        if txn
-            .has(direct_key.as_bytes())
-            .await
-            .map_err(|e| Error::Serialization(e.to_string()))?
-        {
+        if self.has_value(direct_key.as_bytes()).await? {
             return Ok(true);
         }
 
         let wildcard = Relationship::new(resource, object_id, relation, Subject::Wildcard);
         let wildcard_key = Self::relationship_key(policy_id, &wildcard);
 
-        if txn
-            .has(wildcard_key.as_bytes())
-            .await
-            .map_err(|e| Error::Serialization(e.to_string()))?
-        {
+        if self.has_value(wildcard_key.as_bytes()).await? {
             return Ok(true);
         }
 
         let prefix = Self::relation_prefix(policy_id, resource, object_id, relation);
         let iter_opts = IterOptions::new()
-            .with_validation(true)
+            .with_validation(self.validated)
             .with_prefix(prefix.into_bytes());
 
-        let mut iter = txn
+        let mut iter = self
+            .view
             .iterator(iter_opts)
             .await
             .map_err(|e| Error::Serialization(e.to_string()))?;
@@ -300,7 +293,7 @@ impl ZanzibarStore for TransactionZanzibarStore {
 
         let prefix = Self::relation_prefix(policy_id, resource, object_id, relation);
         let iter_opts = IterOptions::new()
-            .with_validation(true)
+            .with_validation(self.validated)
             .with_prefix(prefix.into_bytes());
 
         let mut iter = txn
@@ -358,7 +351,7 @@ impl ZanzibarStore for TransactionZanzibarStore {
 
         let prefix = Self::relationship_prefix(policy_id, resource, object_id);
         let iter_opts = IterOptions::new()
-            .with_validation(true)
+            .with_validation(self.validated)
             .with_prefix(prefix.clone().into_bytes());
 
         let mut keys_to_delete = Vec::new();

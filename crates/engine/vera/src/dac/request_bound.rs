@@ -121,25 +121,12 @@ pub(super) fn with_policy_command<T>(
             policy_id,
             resource,
             object,
+            relationships,
         } => then(Some(&PolicyCommand {
             policy_id,
             resource,
             object_id: object,
-            action: PolicyAction::RegisterObject,
-        })),
-        ProviderCommand::RegisterUnderParent {
-            policy_id,
-            resource,
-            object,
-            parent,
-        } => then(Some(&PolicyCommand {
-            policy_id,
-            resource,
-            object_id: object,
-            action: PolicyAction::RegisterUnderParent {
-                resource: &parent.resource,
-                object_id: &parent.object_id,
-            },
+            action: PolicyAction::register(relationships),
         })),
         ProviderCommand::Relationship { tuple, op } => {
             let relation = tuple.relation.as_str();
@@ -147,6 +134,14 @@ pub(super) fn with_policy_command<T>(
                 OwedOp::Add => PolicyAction::SetRelationship { relation, subject },
                 OwedOp::Delete => PolicyAction::DeleteRelationship { relation, subject },
                 OwedOp::Archive => PolicyAction::ArchiveObject,
+                // A transfer names one actor, its new owner; any other
+                // subject names no DID, which no command takes.
+                OwedOp::Transfer => PolicyAction::TransferObject {
+                    new_owner: match subject {
+                        PolicySubject::Actor(SubjectRef::Actor(did)) => did.as_str(),
+                        _ => "",
+                    },
+                },
             };
             let sent = |action| PolicyCommand {
                 policy_id: &tuple.policy_id,

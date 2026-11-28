@@ -418,6 +418,7 @@ impl Sweep {
         let (durable_tx, recorded) = nuclei::sync::oneshot::channel();
         super::record_failure(
             &self.peerstore,
+            &p2p::sync::FailureRecorderStats::default(),
             p2p::sync::PushFailure {
                 peer_id: PEER.to_string(),
                 doc_id: doc.to_string(),

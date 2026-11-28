@@ -18,6 +18,7 @@ use std::sync::Arc;
 use regolith::sync::{ArrayQueue, Semaphore};
 
 use super::heartbeat::Heartbeat;
+use super::hook_beat::NO_HOOK;
 use super::signal::Signal;
 use crate::completion::{self, Completion, Fail};
 use crate::os::ContextSwitches;
@@ -121,6 +122,7 @@ pub(crate) struct Counters {
     pub tasks: AtomicU64,
     pub panics: AtomicU64,
     pub long_polls: AtomicU64,
+    pub long_hook_polls: AtomicU64,
     pub moved_out: AtomicU64,
     pub repins: AtomicU64,
     pub priority_resets: AtomicU64,
@@ -141,8 +143,10 @@ pub struct WorkerStats {
     pub tasks: u64,
     /// Tasks that panicked.
     pub panics: u64,
-    /// Polls that ran past the stuck limit.
+    /// Task polls that ran past the stuck limit.
     pub long_polls: u64,
+    /// I/O hook polls that ran past the stuck limit.
+    pub long_hook_polls: u64,
     /// Queued jobs moved off this worker while it was stuck.
     pub moved_out: u64,
     /// Times this worker found itself off its CPUs and pinned itself again.
@@ -151,11 +155,29 @@ pub struct WorkerStats {
     pub priority_resets: u64,
     /// Submissions admitted and not finished (queued plus running).
     pub load: usize,
-    /// Whether a poll is running past the stuck limit now.
+    /// Whether a poll (a task's or the I/O hook's) is running past the stuck
+    /// limit now.
     pub stuck: bool,
     /// How often the worker's thread was switched out so far; `None` where
     /// the platform does not say (only Linux does, per thread).
     pub switches: Option<ContextSwitches>,
+}
+
+/// [`WorkerShared`]'s stuck mark when no poll is marked.
+const NOT_STUCK: u64 = u64::MAX;
+
+/// How many low bits of a sighting hold the hook poll's number.
+const SIGHTED_BITS: u32 = 24;
+const SIGHTED_NUMBER: u64 = (1 << SIGHTED_BITS) - 1;
+/// The resolution of a sighting's time, in microseconds.
+const SIGHTING_UNIT: u64 = 1024;
+
+/// A sighting of the hook poll numbered `number` at `now`, in one word so
+/// two monitors agree on it with one compare-and-swap: the time first seen
+/// above, rounded up so a sighting never overstates, the number's low bits
+/// below.
+fn sighting(number: u64, now: u64) -> u64 {
+    (now.div_ceil(SIGHTING_UNIT) << SIGHTED_BITS) | (number & SIGHTED_NUMBER)
 }
 
 pub(crate) struct WorkerShared {
@@ -168,10 +190,22 @@ pub(crate) struct WorkerShared {
     items_cap: usize,
     bytes_cap: usize,
     pub heartbeat: Heartbeat,
-    /// A poll is running past the limit; routing goes around this worker.
-    pub stuck: AtomicBool,
-    /// The task last reported stuck, so two monitors report it once.
-    pub reported: AtomicU64,
+    /// The word of the poll the monitor found past the limit, or
+    /// [`NOT_STUCK`]; routing goes around this worker while one is marked.
+    /// Holding the poll's word, not a flag, lets the worker clear only the
+    /// mark for its own poll: a mark the monitor raised for a poll that has
+    /// already ended is never charged to the poll after it, and the
+    /// monitor's next scan sweeps it.
+    stuck: AtomicU64,
+    /// The latest task poll claimed for a stuck report, stored as its word
+    /// plus one so the zero word still has a smaller unclaimed sentinel.
+    reported: AtomicU64,
+    /// The word of the latest hook poll reported stuck, or [`NO_HOOK`];
+    /// see [`claim_hook_report`](Self::claim_hook_report).
+    hook_reported: AtomicU64,
+    /// The hook poll the monitors last saw and when they first saw it, as
+    /// [`sighting`]: the hook reads no clock, so it is timed from here.
+    hook_seen: AtomicU64,
     /// Stop now, dropping what is left.
     pub abandon: AtomicBool,
     /// The worker has stopped: whoever finds a message after this fails it.
@@ -203,13 +237,103 @@ impl WorkerShared {
             items_cap: items,
             bytes_cap: bytes,
             heartbeat: Heartbeat::new(),
-            stuck: AtomicBool::new(false),
-            reported: AtomicU64::new(u64::MAX),
+            stuck: AtomicU64::new(NOT_STUCK),
+            reported: AtomicU64::new(0),
+            hook_reported: AtomicU64::new(NO_HOOK),
+            hook_seen: AtomicU64::new(u64::MAX),
             abandon: AtomicBool::new(false),
             exited: AtomicBool::new(false),
             counters: Counters::default(),
             thread: AtomicU64::new(0),
         }
+    }
+
+    /// Marks the poll whose word is `word` as running past the limit,
+    /// unless the mark already names the poll shown now: with two monitors,
+    /// one held up since it read an older poll must not replace a newer
+    /// poll's mark, or its recheck would take that mark down while the
+    /// newer poll is still stuck.
+    pub(crate) fn mark_stuck(&self, word: u64) {
+        let mut mark = self.stuck.load(Ordering::SeqCst);
+        loop {
+            // A mark whose poll is no longer shown is never shown again, so
+            // it stays replaceable until the compare-and-swap; one that
+            // moved meanwhile fails it and is looked at again.
+            if mark == word || (mark != NOT_STUCK && self.heartbeat.word() == Some(mark)) {
+                return;
+            }
+            match self
+                .stuck
+                .compare_exchange_weak(mark, word, Ordering::SeqCst, Ordering::SeqCst)
+            {
+                Ok(_) => return,
+                Err(now) => mark = now,
+            }
+        }
+    }
+
+    /// Clears the mark of the poll whose word is `word`; whether that poll
+    /// was the one marked. The worker calls it once per poll, so the common
+    /// case is one plain load; a mark it misses is swept by the monitor.
+    pub(crate) fn unmark(&self, word: u64) -> bool {
+        self.stuck.load(Ordering::Relaxed) == word
+            && self
+                .stuck
+                .compare_exchange(word, NOT_STUCK, Ordering::SeqCst, Ordering::Relaxed)
+                .is_ok()
+    }
+
+    /// Clears a mark for a poll the heartbeat no longer shows: one raised
+    /// as that poll ended, or one the worker's plain load missed.
+    pub(crate) fn sweep_mark(&self) {
+        let mark = self.stuck.load(Ordering::SeqCst);
+        if mark != NOT_STUCK && self.heartbeat.word() != Some(mark) {
+            let _ =
+                self.stuck
+                    .compare_exchange(mark, NOT_STUCK, Ordering::SeqCst, Ordering::Relaxed);
+        }
+    }
+
+    /// Claims the report of the hook poll whose word is `word`: true at most
+    /// once per hook poll, and never for a poll older than one already
+    /// claimed, so a monitor held up since it read an older hook poll does
+    /// not report it again after the other monitor reported a newer one.
+    /// Hook words grow with the poll's number (wrapping only after 2^62
+    /// polls) and none is [`NO_HOOK`].
+    pub(crate) fn claim_hook_report(&self, word: u64) -> bool {
+        self.hook_reported.fetch_max(word, Ordering::AcqRel) < word
+    }
+
+    /// Claims the report of the task poll whose word is `word`: true at most
+    /// once per task poll, and never for a poll older than one already
+    /// claimed. Task words grow with the poll's start time, so a monitor held
+    /// up since it read an older poll does not report it after a newer one.
+    pub(crate) fn claim_task_report(&self, word: u64) -> bool {
+        let claim = word.saturating_add(1);
+        self.reported.fetch_max(claim, Ordering::AcqRel) < claim
+    }
+
+    /// How long the monitors have seen the hook poll numbered `number`,
+    /// at `now`: 0 the first time, then the time since, to a resolution of
+    /// [`SIGHTING_UNIT`] microseconds, never more than it really ran.
+    pub(crate) fn hook_elapsed(&self, number: u64, now: u64) -> u64 {
+        let seen = self.hook_seen.load(Ordering::Acquire);
+        if seen & SIGHTED_NUMBER == number & SIGHTED_NUMBER {
+            let first = seen >> SIGHTED_BITS;
+            return (now / SIGHTING_UNIT).saturating_sub(first) * SIGHTING_UNIT;
+        }
+        let _ = self.hook_seen.compare_exchange(
+            seen,
+            sighting(number, now),
+            Ordering::AcqRel,
+            Ordering::Relaxed,
+        );
+        0
+    }
+
+    /// Whether a poll is marked as running past the limit.
+    pub(crate) fn is_stuck(&self) -> bool {
+        self.stuck.load(Ordering::Relaxed) != NOT_STUCK
     }
 
     /// Records the calling thread as the one running this worker.
@@ -342,11 +466,12 @@ impl WorkerShared {
             tasks: read(&self.counters.tasks),
             panics: read(&self.counters.panics),
             long_polls: read(&self.counters.long_polls),
+            long_hook_polls: read(&self.counters.long_hook_polls),
             moved_out: read(&self.counters.moved_out),
             repins: read(&self.counters.repins),
             priority_resets: read(&self.counters.priority_resets),
             load: self.load(),
-            stuck: self.stuck.load(Ordering::Relaxed),
+            stuck: self.is_stuck(),
             switches: self.switches(),
         }
     }

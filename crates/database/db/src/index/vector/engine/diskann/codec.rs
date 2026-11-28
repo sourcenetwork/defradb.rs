@@ -278,27 +278,67 @@ pub fn add_edges(
 
 /// A resident-codes record: the neighbours' ids, their codes left behind.
 pub fn encode_ids(neighbors: &[(NodeId, Vec<u8>)]) -> Vec<u8> {
-    let mut buf = Vec::with_capacity(4 + neighbors.len() * 8);
-    buf.extend_from_slice(&(neighbors.len() as u32).to_le_bytes());
-    for (id, _) in neighbors {
+    encode_resident_ids(neighbors.iter().map(|(id, _)| *id))
+}
+
+/// A resident-codes record of these ids.
+pub fn encode_id_list(ids: &[NodeId]) -> Vec<u8> {
+    encode_resident_ids(ids.iter().copied())
+}
+
+fn encode_resident_ids<I>(ids: I) -> Vec<u8>
+where
+    I: ExactSizeIterator<Item = NodeId>,
+{
+    let mut buf = Vec::with_capacity(4 + ids.len() * 8);
+    buf.extend_from_slice(&(ids.len() as u32).to_le_bytes());
+    for id in ids {
         buf.extend_from_slice(&id.0.to_le_bytes());
     }
     buf
 }
 
-pub fn decode_ids(bytes: &[u8]) -> Result<Vec<NodeId>> {
+/// A resident-codes record's neighbour count, checked against its length.
+fn id_count(bytes: &[u8]) -> Result<usize> {
     let Some((count, ids)) = bytes.split_first_chunk::<4>() else {
         return Err(invalid("DISKANN record is truncated"));
     };
-    if ids.len() != (u32::from_le_bytes(*count) as usize).saturating_mul(8) {
+    let count = u32::from_le_bytes(*count) as usize;
+    if ids.len() != count.saturating_mul(8) {
         return Err(invalid("DISKANN record length disagrees with its count"));
     }
-    Ok(ids
+    Ok(count)
+}
+
+pub fn decode_ids(bytes: &[u8]) -> Result<Vec<NodeId>> {
+    id_count(bytes)?;
+    Ok(bytes[4..]
         .as_chunks::<8>()
         .0
         .iter()
         .map(|id| NodeId(u64::from_le_bytes(*id)))
         .collect())
+}
+
+/// Adds edges to an encoded resident-codes record in place, writing the ids
+/// that adding each edge to the record with codes and dropping the codes
+/// again would: an id already there stays, a new one goes on the end, and an
+/// edge to `target` is skipped. The edges' codes are not looked at. Returns
+/// the record's neighbour count.
+pub fn add_ids(bytes: &mut Vec<u8>, target: NodeId, edges: &[(NodeId, Vec<u8>)]) -> Result<usize> {
+    let mut count = id_count(bytes)?;
+    for (id, _) in edges {
+        if *id == target {
+            continue;
+        }
+        let key = id.0.to_le_bytes();
+        if !bytes[4..].as_chunks::<8>().0.contains(&key) {
+            bytes.extend_from_slice(&key);
+            count += 1;
+        }
+    }
+    bytes[..4].copy_from_slice(&(count as u32).to_le_bytes());
+    Ok(count)
 }
 
 /// The neighbour ids of a record in either layout.

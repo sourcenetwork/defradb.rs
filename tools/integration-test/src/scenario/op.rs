@@ -19,7 +19,7 @@ pub enum FailureKind {
 pub struct Failure {
     pub kind: FailureKind,
     pub message: String,
-    /// The stable code the failure carried, when it carried one.
+    /// The stable code the client reported with the error, when it reports one.
     pub code: Option<String>,
 }
 
@@ -55,6 +55,14 @@ impl Failure {
         self.code = code.map(Into::into);
         self
     }
+
+    /// An operation failure with the stable code its client reported.
+    pub fn coded(message: String, code: Option<&str>) -> Self {
+        Self {
+            code: code.map(str::to_owned),
+            ..Self::operation(message)
+        }
+    }
 }
 
 /// One op of the scenario protocol: its own fields, its expectation and its
@@ -83,6 +91,8 @@ pub trait Op:
 
     /// The stable code the error matching `expected_error` must carry: a
     /// GraphQL error's `extensions.code`, or the code a failed op carried.
+    /// Checked on the clients that report codes, in-process and rust-http;
+    /// cli and go-http print Go's text only.
     fn expected_error_code(&self) -> Option<&str> {
         None
     }

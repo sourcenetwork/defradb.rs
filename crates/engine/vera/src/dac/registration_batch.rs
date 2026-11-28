@@ -44,10 +44,13 @@ impl VeraDocumentACP {
         }
         for (chunk, listed) in objects.chunks(MAX_REGISTRATIONS_PER_REQUEST).enumerate() {
             let offset = chunk * MAX_REGISTRATIONS_PER_REQUEST;
-            let owned: Vec<[String; 3]> = listed
+            let owned: Vec<([String; 3], Vec<acp::DerivedRelationship>)> = listed
                 .iter()
                 .map(|object| {
-                    [object.policy_id, object.resource, object.object_id].map(str::to_owned)
+                    (
+                        [object.policy_id, object.resource, object.object_id].map(str::to_owned),
+                        object.relationships.to_vec(),
+                    )
                 })
                 .collect();
             let token = bearer_token.clone();
@@ -55,21 +58,20 @@ impl VeraDocumentACP {
                 .remote(move |provider| async move {
                     let refs: Vec<AcpObject<'_>> = owned
                         .iter()
-                        .map(|[policy_id, resource, object_id]| AcpObject {
-                            policy_id,
-                            resource,
-                            object_id,
-                        })
+                        .map(
+                            |([policy_id, resource, object_id], relationships)| AcpObject {
+                                policy_id,
+                                resource,
+                                object_id,
+                                relationships,
+                            },
+                        )
                         .collect();
                     provider.register_objects(&token, &refs).await
                 })
                 .await;
             match sent {
-                Ok(()) => {
-                    for object in listed {
-                        self.invalidate_cached_access(object.policy_id);
-                    }
-                }
+                Ok(()) => {}
                 Err(error @ ProviderError::Unavailable(_)) => {
                     return Err(RegistrationFailure::new(offset, provider_err(error)));
                 }
@@ -94,6 +96,7 @@ impl VeraDocumentACP {
                 object.policy_id,
                 object.resource,
                 object.object_id,
+                object.relationships,
             )
             .await
             .map_err(|error| RegistrationFailure::new(offset + index, error))?;
@@ -107,6 +110,6 @@ fn command<'a>(object: &AcpObject<'a>) -> PolicyCommand<'a> {
         policy_id: object.policy_id,
         resource: object.resource,
         object_id: object.object_id,
-        action: PolicyAction::RegisterObject,
+        action: PolicyAction::register(object.relationships),
     }
 }

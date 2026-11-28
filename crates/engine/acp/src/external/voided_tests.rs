@@ -31,7 +31,14 @@ impl Recording {
 
 #[async_trait]
 impl DocumentACP for Recording {
-    async fn register_doc_object(&self, actor: &Did, _: &str, _: &str, doc: &str) -> Result<()> {
+    async fn register_doc_object(
+        &self,
+        actor: &Did,
+        _: &str,
+        _: &str,
+        doc: &str,
+        _: &[crate::DerivedRelationship],
+    ) -> Result<()> {
         self.writes.push(format!("register {doc} as {actor}"));
         self.registered
             .store(true, std::sync::atomic::Ordering::Relaxed);
@@ -115,6 +122,7 @@ fn change(doc: &str, op: OwedOp) -> VoidedEffect {
 
 fn registration(doc: &str) -> VoidedEffect {
     VoidedEffect::Registration {
+        relationships: Vec::new(),
         creator: did(OWNER),
         policy_id: "policy".into(),
         resource: "users".into(),
@@ -285,6 +293,43 @@ fn what_is_owed_again_wakes_the_drainer() {
         )
         .await
         .expect("the drainer is woken");
+    })
+    .unwrap()
+}
+
+#[test]
+fn a_voided_registration_with_derived_relationships_stays_hidden_from_its_creator() {
+    workers::block_on(async {
+        let (_, gate) = gate();
+        let VoidedEffect::Registration {
+            creator,
+            policy_id,
+            resource,
+            object,
+            authority,
+            request_bound,
+            ..
+        } = registration("doc")
+        else {
+            unreachable!()
+        };
+        let gated = VoidedEffect::Registration {
+            relationships: vec![crate::DerivedRelationship {
+                relation: "author".into(),
+                target_resource: "authors".into(),
+                target_doc_id: "mike".into(),
+            }],
+            creator,
+            policy_id,
+            resource,
+            object,
+            authority,
+            request_bound,
+        };
+        gate.owe_again(&[gated]).await.unwrap();
+        let owed = gate.owed("policy", "users", "doc").await.unwrap().unwrap();
+        assert!(owed.gated, "{owed:?}");
+        assert!(!reads(&gate, OWNER, "doc").await);
     })
     .unwrap()
 }

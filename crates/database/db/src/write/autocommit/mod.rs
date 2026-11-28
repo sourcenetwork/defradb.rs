@@ -165,7 +165,7 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
         let Some(acp) = self.db.document_acp().cloned() else {
             return Ok(());
         };
-        if acp.supports_transactions() {
+        if acp.supports_transactions() || acp.unregistered_documents_are_public() {
             return Ok(());
         }
 
@@ -198,7 +198,7 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
         let fetcher = Arc::new(LensedDocFetcher::lent(
             self.db.clone(),
             &txn,
-            self.db.lens_store.clone(),
+            self.db.lens_store().clone(),
             Default::default(),
         ));
         let batch = Arc::new(BatchMutator::new_with_prepared_inputs(

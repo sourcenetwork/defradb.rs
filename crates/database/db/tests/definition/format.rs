@@ -81,7 +81,7 @@ fn simple_schema() -> CollectionVersion {
 #[test]
 fn older_index_formats_are_upgraded() {
     workers::block_on(async {
-        for format in [None, Some(1u32), Some(2), Some(3)] {
+        for format in [None, Some(1u32), Some(2), Some(3), Some(4)] {
             let store = RegolithStore::in_memory().unwrap();
             let db = db::DB::open(store.clone()).await.unwrap();
             db.add_collection(&defra_core::RequestContext::ambient(), SIMPLE_SDL)
@@ -112,6 +112,63 @@ fn older_index_formats_are_upgraded() {
             );
             assert!(db.require_collection("Tallies").is_ok());
         }
+    })
+    .unwrap()
+}
+
+/// Format 6 has the index key encoding format 7 reads. Moving its stamp must
+/// not rebuild or otherwise write the index, and must make older binaries
+/// refuse the store at open.
+#[test]
+fn a_format_six_store_is_stamped_without_rebuilding() {
+    use storage::keys::IndexDataStoreKey;
+
+    workers::block_on(async {
+        let store = RegolithStore::in_memory().unwrap();
+        let db = db::DB::open(store.clone()).await.unwrap();
+        db.add_collection(
+            &defra_core::RequestContext::ambient(),
+            r#"type Tallies { count: Int @index(name: "counts") }"#,
+        )
+        .await
+        .unwrap();
+        let collection = db.require_collection("Tallies").unwrap();
+        let prefix = IndexDataStoreKey::index_prefix(
+            collection.resolved_root_id(),
+            collection.schema().indexes[0].id,
+        );
+        let marker = [prefix.as_slice(), b"marker"].concat();
+        let txn = db.new_txn(false).await.unwrap();
+        txn.datastore()
+            .unwrap()
+            .set(&marker, b"preserved")
+            .await
+            .unwrap();
+        txn.systemstore()
+            .unwrap()
+            .set(INDEX_FORMAT_KEY, &6u32.to_be_bytes())
+            .await
+            .unwrap();
+        txn.commit().await.unwrap();
+        drop(db);
+
+        let db = db::DB::open(store).await.unwrap();
+        assert_eq!(
+            db.stored_index_format().await.unwrap(),
+            Some(CURRENT_INDEX_FORMAT)
+        );
+        let txn = db.new_txn(true).await.unwrap();
+        assert_eq!(
+            txn.datastore()
+                .unwrap()
+                .get(&marker)
+                .await
+                .unwrap()
+                .unwrap()
+                .as_ref(),
+            b"preserved",
+            "the format move writes nothing to the index"
+        );
     })
     .unwrap()
 }
@@ -374,8 +431,11 @@ fn rebuilds_a_descending_json_index_stamped(stored: u32, stale_walk: bool) {
             result.data.unwrap(),
             serde_json::json!({"User": [{"name": "John"}]})
         );
-        assert_eq!(CURRENT_INDEX_FORMAT, 5);
-        assert_eq!(reopened.stored_index_format().await.unwrap(), Some(5));
+        assert_eq!(CURRENT_INDEX_FORMAT, 7);
+        assert_eq!(
+            reopened.stored_index_format().await.unwrap(),
+            Some(CURRENT_INDEX_FORMAT)
+        );
     })
     .unwrap();
 }

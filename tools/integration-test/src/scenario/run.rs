@@ -6,6 +6,7 @@ use super::common::{Common, Eventually};
 use super::matcher::{match_expected, Options};
 use super::op::{Failure, FailureKind, Op};
 use super::pointer::{pointer, resolve};
+use crate::client_type::ClientType;
 use crate::test_case::State;
 
 const RETRIES: usize = 5;
@@ -50,10 +51,20 @@ where
             .any(|error| error.pointer("/extensions/code").and_then(Value::as_str) == Some(code))
 }
 
+/// The `extensions.code` of the response's first GraphQL error, when it has one.
+fn first_code(value: &Value) -> Option<&str> {
+    value
+        .get("errors")
+        .and_then(Value::as_array)
+        .and_then(|errors| errors.first())
+        .and_then(|error| error.pointer("/extensions/code"))
+        .and_then(Value::as_str)
+}
+
 /// Runs `call` again while it loses a transaction conflict. A response
-/// with GraphQL errors becomes the failure of its first error, unless
-/// `keeps_errors` asks for the response itself, as an action that checks an
-/// error's `extensions.code` does.
+/// with GraphQL errors becomes the failure of its first error, carrying that
+/// error's code, unless `keeps_errors` asks for the response itself, as an
+/// action that checks an error's `extensions.code` does.
 fn with_retry<F>(call: F, keeps_errors: bool) -> Result<Value, Failure>
 where
     F: Fn() -> Result<Value, Failure>,
@@ -63,7 +74,7 @@ where
         let failure = match &outcome {
             Ok(value) => graphql_errors(value)
                 .first()
-                .map(|first| Failure::operation((*first).to_owned())),
+                .map(|first| Failure::coded((*first).to_owned(), first_code(value))),
             Err(failure) => Some(failure.clone()),
         };
         let conflict = matches!(&failure, Some(f) if f.kind == FailureKind::TransactionConflict);
@@ -209,26 +220,36 @@ where
                 "expected error code {code:?} names no expected error"
             ));
         };
-        return match carries_code::<A>(&outcome, wanted, code) {
-            true => Ok(()),
-            false => Err(format!(
+        if reports_codes(state.client_type()) && !carries_code::<A>(&outcome, wanted, code) {
+            return Err(format!(
                 "expected error containing {wanted:?} with code {code:?}; got {}",
                 describe(&outcome)
-            )),
-        };
+            ));
+        }
     }
+    let expects_error = action.expected_error().is_some() || action.expected_error_code().is_some();
     if let Some(wanted) = action.expected_error() {
         let matched = match &outcome {
             Err(failure) => failure.message.contains(wanted),
             Ok(value) => A::GRAPHQL && graphql_errors(value).iter().any(|m| m.contains(wanted)),
         };
-        return match matched {
-            true => Ok(()),
-            false => Err(format!(
+        if !matched {
+            return Err(format!(
                 "expected error containing {wanted:?}; got {}",
                 describe(&outcome)
-            )),
+            ));
+        }
+    } else if action.expected_error_code().is_some() {
+        let errored = match &outcome {
+            Err(_) => true,
+            Ok(value) => A::GRAPHQL && !graphql_errors(value).is_empty(),
         };
+        if !errored {
+            return Err(format!("expected an error; got {}", describe(&outcome)));
+        }
+    }
+    if expects_error {
+        return Ok(());
     }
     let actual = outcome.map_err(|failure| failure.message)?;
     if A::GRAPHQL && !graphql_errors(&actual).is_empty() {
@@ -249,6 +270,12 @@ where
         state.captures.insert(name.clone(), value);
     }
     Ok(())
+}
+
+/// The clients whose errors carry a stable code. cli prints the server's
+/// text as Go's CLI does, and a Go node reports no code.
+fn reports_codes(client: ClientType) -> bool {
+    matches!(client, ClientType::InProcess | ClientType::RustHttp)
 }
 
 fn describe(outcome: &Result<Value, Failure>) -> String {

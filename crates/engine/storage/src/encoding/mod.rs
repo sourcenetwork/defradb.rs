@@ -11,6 +11,8 @@ mod bytes;
 mod fixed;
 mod float;
 pub mod json;
+#[cfg(test)]
+mod json_empty_array_tests;
 mod null;
 mod time;
 mod varint;

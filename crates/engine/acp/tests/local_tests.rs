@@ -64,7 +64,7 @@ fn test_register_doc_creates_owner() {
         let acp = create_acp();
         let owner = test_did();
 
-        acp.register_doc_object(&owner, "policy1", "users", "doc1")
+        acp.register_doc_object(&owner, "policy1", "users", "doc1", &[])
             .await
             .unwrap();
 
@@ -82,12 +82,12 @@ fn test_register_doc_twice_fails() {
         let acp = create_acp();
         let owner = test_did();
 
-        acp.register_doc_object(&owner, "policy1", "users", "doc1")
+        acp.register_doc_object(&owner, "policy1", "users", "doc1", &[])
             .await
             .unwrap();
 
         let result = acp
-            .register_doc_object(&owner, "policy1", "users", "doc1")
+            .register_doc_object(&owner, "policy1", "users", "doc1", &[])
             .await;
         assert!(matches!(result, Err(Error::DocumentAlreadyRegistered(_))));
     })
@@ -100,7 +100,7 @@ fn test_owner_has_all_permissions() {
         let acp = create_acp();
         let owner = test_did();
 
-        acp.register_doc_object(&owner, "policy1", "users", "doc1")
+        acp.register_doc_object(&owner, "policy1", "users", "doc1", &[])
             .await
             .unwrap();
 
@@ -144,7 +144,7 @@ fn test_anonymous_cannot_access_registered_doc() {
         let acp = create_acp();
         let owner = test_did();
 
-        acp.register_doc_object(&owner, "policy1", "users", "doc1")
+        acp.register_doc_object(&owner, "policy1", "users", "doc1", &[])
             .await
             .unwrap();
 
@@ -170,7 +170,7 @@ fn test_non_owner_cannot_access_without_relation() {
         let owner = test_did();
         let other = test_did2();
 
-        acp.register_doc_object(&owner, "policy1", "users", "doc1")
+        acp.register_doc_object(&owner, "policy1", "users", "doc1", &[])
             .await
             .unwrap();
 
@@ -217,7 +217,7 @@ fn test_add_reader_grants_read_only() {
         let owner = test_did();
         let reader = test_did2();
 
-        acp.register_doc_object(&owner, "policy1", "users", "doc1")
+        acp.register_doc_object(&owner, "policy1", "users", "doc1", &[])
             .await
             .unwrap();
 
@@ -281,7 +281,7 @@ fn test_add_updater_grants_read_and_update() {
         let owner = test_did();
         let updater = test_did2();
 
-        acp.register_doc_object(&owner, "policy1", "users", "doc1")
+        acp.register_doc_object(&owner, "policy1", "users", "doc1", &[])
             .await
             .unwrap();
 
@@ -343,7 +343,7 @@ fn test_non_owner_cannot_add_relationship() {
         let owner = test_did();
         let other = test_did2();
 
-        acp.register_doc_object(&owner, "policy1", "users", "doc1")
+        acp.register_doc_object(&owner, "policy1", "users", "doc1", &[])
             .await
             .unwrap();
 
@@ -370,7 +370,7 @@ fn test_cannot_add_owner_relation() {
         let owner = test_did();
         let other = test_did2();
 
-        acp.register_doc_object(&owner, "policy1", "users", "doc1")
+        acp.register_doc_object(&owner, "policy1", "users", "doc1", &[])
             .await
             .unwrap();
 
@@ -399,7 +399,7 @@ fn test_local_acp_stores_any_relation_name() {
         let owner = test_did();
         let other = test_did2();
 
-        acp.register_doc_object(&owner, "policy1", "users", "doc1")
+        acp.register_doc_object(&owner, "policy1", "users", "doc1", &[])
             .await
             .unwrap();
 
@@ -430,7 +430,7 @@ fn test_add_duplicate_relationship_returns_false() {
         let owner = test_did();
         let reader = test_did2();
 
-        acp.register_doc_object(&owner, "policy1", "users", "doc1")
+        acp.register_doc_object(&owner, "policy1", "users", "doc1", &[])
             .await
             .unwrap();
 
@@ -474,7 +474,7 @@ fn test_delete_relationship() {
         let owner = test_did();
         let reader = test_did2();
 
-        acp.register_doc_object(&owner, "policy1", "users", "doc1")
+        acp.register_doc_object(&owner, "policy1", "users", "doc1", &[])
             .await
             .unwrap();
 
@@ -539,7 +539,7 @@ fn test_delete_nonexistent_relationship_returns_false() {
         let owner = test_did();
         let other = test_did2();
 
-        acp.register_doc_object(&owner, "policy1", "users", "doc1")
+        acp.register_doc_object(&owner, "policy1", "users", "doc1", &[])
             .await
             .unwrap();
 
@@ -569,7 +569,7 @@ fn test_add_deleter_grants_read_and_delete() {
         let owner = test_did();
         let deleter = test_did2();
 
-        acp.register_doc_object(&owner, "policy1", "users", "doc1")
+        acp.register_doc_object(&owner, "policy1", "users", "doc1", &[])
             .await
             .unwrap();
 
@@ -637,7 +637,7 @@ fn test_delete_deleter_relationship_revokes_access() {
         let owner = test_did();
         let deleter = test_did2();
 
-        acp.register_doc_object(&owner, "policy1", "users", "doc1")
+        acp.register_doc_object(&owner, "policy1", "users", "doc1", &[])
             .await
             .unwrap();
 
@@ -715,7 +715,7 @@ fn test_non_owner_cannot_delete_relationship() {
         let reader = test_did2();
         let attacker = Did::new("did:key:z6MkattackerAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA").unwrap();
 
-        acp.register_doc_object(&owner, "policy1", "users", "doc1")
+        acp.register_doc_object(&owner, "policy1", "users", "doc1", &[])
             .await
             .unwrap();
 
@@ -757,7 +757,7 @@ fn test_cannot_delete_owner_relation() {
         let acp = create_acp();
         let owner = test_did();
 
-        acp.register_doc_object(&owner, "policy1", "users", "doc1")
+        acp.register_doc_object(&owner, "policy1", "users", "doc1", &[])
             .await
             .unwrap();
 
@@ -791,10 +791,10 @@ fn test_cross_collection_isolation() {
         let reader = test_did2();
 
         // Register same doc_id in two different collections
-        acp.register_doc_object(&owner, "policy1", "users", "doc1")
+        acp.register_doc_object(&owner, "policy1", "users", "doc1", &[])
             .await
             .unwrap();
-        acp.register_doc_object(&owner, "policy1", "posts", "doc1")
+        acp.register_doc_object(&owner, "policy1", "posts", "doc1", &[])
             .await
             .unwrap();
 

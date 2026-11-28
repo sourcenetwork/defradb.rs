@@ -29,6 +29,7 @@
 //! a duplicate a writer slips in during that window meets the walk, which
 //! settles it the way a merge does (the deterministic winner) and reports it.
 
+mod failure;
 mod owed;
 mod page;
 mod progress;
@@ -43,7 +44,7 @@ use crate::index::pages::PAGE_ITEMS;
 use crate::DB;
 
 pub use owed::ReindexReport;
-pub(crate) use owed::{owe_reindex, reindex_owed};
+pub(crate) use owed::{owe_reindex, owed_failure, owed_status, reindex_owed};
 use page::{ReindexPage, Step};
 
 impl<S> DB<S>
@@ -190,10 +191,18 @@ where
                 fence,
                 restamp_identity,
                 persist_migrations,
-                lens_store: Arc::clone(&self.lens_store),
+                lens_store: Arc::clone(self.lens_store()),
                 collections: Arc::clone(&self.collections),
             };
-            match self.run_page(page, &mut size).await? {
+            let step = match self.run_page(page, &mut size).await {
+                Ok(step) => step,
+                Err(error) => {
+                    self.record_failure(collection.collection_id(), token, &error)
+                        .await;
+                    return Err(error);
+                }
+            };
+            match step {
                 Step::More {
                     materialized: count,
                     needs_fence,

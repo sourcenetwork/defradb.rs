@@ -1,9 +1,9 @@
 # `go.query.simple.select.unknown-field`: Selecting an undefined field is rejected
 
 - **Parents:** ["go.query.simple.select"]
-- **Scenarios:** ["query.simple.with-similarity-on-query-should-error", "query.simple.with-undefined-field"]
+- **Scenarios:** ["query.simple.with-similarity-on-query-should-error", "query.simple.with-undefined-field", "query.simple.with-commits-field-on-collection", "query.simple.with-undefined-object-field"]
 
-Selecting a field the type does not define fails validation with `Cannot query field "ThisFieldDoesNotExists" on type "Users".`; `query { SIMILARITY }` at the root fails with `Cannot query field "SIMILARITY" on type "Query".`.
+Selecting a field the type does not define fails validation with `Cannot query field "ThisFieldDoesNotExists" on type "Users".`; `query { SIMILARITY }` at the root fails with `Cannot query field "SIMILARITY" on type "Query".`. A field the type does not define given a sub-selection fails the same way, naming the field and the type: `Book { _commits { cid } }` fails with `Cannot query field "_commits" on type "Book".` (a document's commits are its `_version` field), and `Book { author { name } }` on a `Book` with no `author` fails with `Cannot query field "author" on type "Book".`.
 
 # `go.query.simple.select.collection-isolation`: A collection query sees only its own documents
 
@@ -493,7 +493,7 @@ Within `_version`, `links` and `heads` can be selected several times under diffe
 - **Parents:** ["go.query.simple.similarity"]
 - **Scenarios:** ["query.simple.query-simple-with-similarity-on-vector-index-excludes-deleted-doc", "query.simple.query-simple-with-similarity-on-vector-index-is-magnitude-invariant", "query.simple.query-simple-with-similarity-on-vector-index-reflects-updated-vector", "query.simple.query-simple-with-similarity-on-vector-index-respects-offset", "query.simple.query-simple-with-similarity-on-vector-index-returns-k-nearest"]
 
-On a field with `@index(vector: {dimensions: 3, hnsw: {metric: COSINE}})`, `User(order: {_alias: {sim: DESC}}, limit: k, offset: m)` with `sim: SIMILARITY(vector: {...})` returns the k nearest documents after skipping m, reading only those through the index (`@explain(type: execute)` shows 1 index fetch and k doc fetches). Updated vectors are re-ranked, deleted documents are excluded, and similarity ignores magnitude (`[10,0,0]` and `[1,0,0]` both score 1).
+On a field with `@index(vector: {dimensions: 3, hnsw: {metric: COSINE}})`, `User(order: {_alias: {sim: DESC}}, limit: k, offset: m)` with `sim: SIMILARITY(vector: {...})` returns the k nearest documents after skipping m, reading only those through the index (`@explain(type: execute)` shows a positive index-fetch count and k doc fetches; Go reports 1, defradb.rs the index entries the search read, see `defra.explain.execute.vector_index_fetches`). Updated vectors are re-ranked, deleted documents are excluded, and similarity ignores magnitude (`[10,0,0]` and `[1,0,0]` both score 1).
 
 # `defra.query.simple.similarity.filtered_vector_warning`: Exact scoring for top-level filtered similarity
 

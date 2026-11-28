@@ -67,6 +67,10 @@ impl ActionStatusKey {
         format!("{ACTION_STATUS_PREFIX}/{collection_id}/").into_bytes()
     }
 
+    pub fn action_prefix(collection_id: &str, action: Action) -> Vec<u8> {
+        format!("{ACTION_STATUS_PREFIX}/{collection_id}/{}/", action.value()).into_bytes()
+    }
+
     pub fn parse(bytes: &[u8]) -> Option<Self> {
         let value = std::str::from_utf8(bytes)
             .ok()?
@@ -784,6 +788,10 @@ mod tests {
             ActionStatusKey::with_subject("collection", Action::BACKFILL_INDEX, "index_name");
         assert_eq!(subject.bytes(), b"/a/s/collection/3/index_name");
         assert_eq!(ActionStatusKey::parse(&subject.bytes()), Some(subject));
+        assert_eq!(
+            ActionStatusKey::action_prefix("collection", Action::BACKFILL_INDEX),
+            b"/a/s/collection/3/"
+        );
     }
 
     #[test]

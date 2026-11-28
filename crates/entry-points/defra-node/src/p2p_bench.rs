@@ -108,7 +108,7 @@ async fn build_bench_node() -> Node {
         .build()
         .await
         .expect("build P2P node");
-    node.add_collection(&defra_core::RequestContext::ambient(), BENCH_SDL)
+    node.add_collection(BENCH_SDL)
         .await
         .expect("add bench schema");
 
@@ -695,3 +695,5 @@ fn bench_pull_from_providers() {
         })
         .unwrap()
 }
+
+mod replicator_writes;
