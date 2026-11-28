@@ -81,7 +81,12 @@ impl<S: Store> P2PHost<S> {
                             }
                         }
                     });
-                let is_explicit_replicator = explicit_replay_authorization.is_some();
+                // This is Go's direct replicator channel: the sending node
+                // selected the receiver from its replicator registry. It is
+                // distinct from pubsub PushLog, whose collection access gate
+                // runs before the merge. The capability, when present, still
+                // carries the stronger replay authorization separately.
+                let is_explicit_replicator = true;
                 info!(
                     peer_id = %peer_id,
                     message_id = %request.message_id,

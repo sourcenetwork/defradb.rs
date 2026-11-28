@@ -28,6 +28,7 @@ fn acp_p2_p_subscribe_multi_block_doc_non_creator_reads_after_grants_land_remote
             NewNode {
                 node_identity_seed: Some(0),
                 network: true,
+                enable_signing: true,
                 with_identity: true,
                 common: Common {
                     node: Some("db0".into()),

@@ -244,6 +244,8 @@ impl Planner {
                 strict: self.strict_access,
                 policy_id: policy.id.clone(),
                 resource_name: policy.resource_name.clone(),
+                collection_id: collection.collection_id.clone(),
+                is_branchable: collection.is_branchable,
             }),
             _ => None,
         }

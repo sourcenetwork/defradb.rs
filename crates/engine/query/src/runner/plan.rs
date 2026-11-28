@@ -336,6 +336,8 @@ pub(crate) fn build_plan(
             strict: acf.strict,
             policy_id: acf.policy_id,
             resource_name: acf.resource_name,
+            collection_id: collection.collection_id.clone(),
+            is_branchable: collection.is_branchable,
         }),
         app_read,
         projection,

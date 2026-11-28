@@ -22,6 +22,8 @@ enum Edit {
     /// Every verify step whose signer is client seed `seed` verifies against
     /// node `node`'s signing key instead.
     SignerNode { seed: u64, node: &'static str },
+    /// Node `node` signs the documents it writes.
+    SigningNode { node: &'static str },
     /// Every `explainScan` matcher expects scan metric `metric` above zero
     /// rather than Go's exact count.
     PositiveScanMetric { metric: &'static str },
@@ -60,7 +62,19 @@ const VECTOR_INDEX_FETCHES_REASON: &str = "Go reports a routed vector search as 
      defradb.rs counts the index entries the search reads, which depends on the graph, so the test \
      expects a positive count, which Go's 1 also meets.";
 
+const GRANT_RACE_SIGNING: &[Edit] = &[Edit::SigningNode { node: "db0" }];
+
+const GRANT_RACE_SIGNING_REASON: &str = "The source node signs the protected document's updates. \
+     Go writes them unsigned, whereas defradb.rs refuses an unsigned update to a registered \
+     protected document; the scenario still checks that a non-creator reads the multi-block \
+     document once the grant race settles.";
+
 const ENTRIES: &[(&str, &[Edit], &str)] = &[
+    (
+        "acp.dac.p2p.subscribe_grant_race.acp_p2_p_subscribe_multi_block_doc_non_creator_reads_after_grants_land_remote_dac",
+        GRANT_RACE_SIGNING,
+        GRANT_RACE_SIGNING_REASON,
+    ),
     (
         "query.simple.query-simple-with-similarity-on-vector-index-returns-k-nearest",
         VECTOR_INDEX_FETCHES,
@@ -141,6 +155,17 @@ fn edit_step(edit: &Edit, step: &mut Value) {
                 "op".to_owned(),
                 Value::String("signature.verify".to_owned()),
             );
+        }
+        Edit::SigningNode { node } if op.starts_with("node.open") => {
+            if map.get("node").and_then(Value::as_str) != Some(*node) {
+                return;
+            }
+            map.insert(
+                "op".to_owned(),
+                Value::String("node.openP2PSigning".to_owned()),
+            );
+            map.remove("network");
+            map.remove("enableSigning");
         }
         _ => {}
     }

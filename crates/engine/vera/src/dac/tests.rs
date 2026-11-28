@@ -25,6 +25,8 @@ struct MockProvider {
     owner_queries: AtomicUsize,
     archive_calls: AtomicUsize,
     set_relationship_called: AtomicBool,
+    relationship_observed: AtomicBool,
+    relationship_present: bool,
     delete_relationship_called: AtomicBool,
     set_subject_call: AtomOption<(u8, String, String, String)>,
     delete_subject_call: AtomOption<(u8, String, String, String)>,
@@ -51,6 +53,8 @@ impl MockProvider {
             owner_queries: AtomicUsize::new(0),
             archive_calls: AtomicUsize::new(0),
             set_relationship_called: AtomicBool::new(false),
+            relationship_observed: AtomicBool::new(false),
+            relationship_present: false,
             delete_relationship_called: AtomicBool::new(false),
             set_subject_call: AtomOption::none(),
             delete_subject_call: AtomOption::none(),
@@ -141,6 +145,14 @@ impl VeraProvider for MockProvider {
     ) -> std::result::Result<bool, ProviderError> {
         self.set_relationship_called.store(true, Ordering::Relaxed);
         Ok(true)
+    }
+
+    async fn query_actor_relationship(
+        &self,
+        _query: crate::provider::ActorRelationshipQuery<'_>,
+    ) -> std::result::Result<bool, ProviderError> {
+        self.relationship_observed.store(true, Ordering::Relaxed);
+        Ok(self.relationship_present)
     }
 
     async fn delete_relationship(
@@ -384,6 +396,60 @@ async fn add_relationship_routes_actor_to_set_relationship() {
         provider.set_subject_call.is_none(),
         "actor must not hit subject path"
     );
+}
+
+#[nuclei::test]
+async fn add_relationship_reports_an_existing_actor_without_writing() {
+    let mut provider = MockProvider::new(vec![]);
+    provider.relationship_present = true;
+    let provider = Arc::new(provider);
+    let acp = VeraDocumentACP::new(provider.clone());
+    let target = Subject::Entity(zanzibar::Did::new_unchecked(
+        "did:key:zActorTarget".to_string(),
+    ));
+
+    let added = acp
+        .add_relationship(
+            &requestor(),
+            target,
+            "policy-1",
+            "users",
+            "doc-1",
+            "reader",
+            &[],
+        )
+        .await
+        .expect("existing actor relationship should be observed");
+
+    assert!(!added);
+    assert!(provider.relationship_observed.load(Ordering::Relaxed));
+    assert!(!provider.set_relationship_called.load(Ordering::Relaxed));
+}
+
+#[nuclei::test]
+async fn delete_relationship_reports_a_missing_actor_without_writing() {
+    let provider = Arc::new(MockProvider::new(vec![]));
+    let acp = VeraDocumentACP::new(provider.clone());
+    let target = Subject::Entity(zanzibar::Did::new_unchecked(
+        "did:key:zActorTarget".to_string(),
+    ));
+
+    let deleted = acp
+        .delete_relationship(
+            &requestor(),
+            target,
+            "policy-1",
+            "users",
+            "doc-1",
+            "reader",
+            &[],
+        )
+        .await
+        .expect("missing actor relationship should be observed");
+
+    assert!(!deleted);
+    assert!(provider.relationship_observed.load(Ordering::Relaxed));
+    assert!(!provider.delete_relationship_called.load(Ordering::Relaxed));
 }
 
 #[nuclei::test]

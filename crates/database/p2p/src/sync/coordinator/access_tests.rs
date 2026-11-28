@@ -3030,7 +3030,8 @@ async fn pushlog_registered_replicator_is_marked_explicit_replicator() {
 
 // Go parity: the direct replicator protocol skips the receiver-side
 // collection access gate. The sending node's replicator registry selects the
-// target; merge-time ACP still applies downstream.
+// target; the transport marks that channel separately from capability replay,
+// and merge-time ACP still applies downstream.
 #[nuclei::test(threads = 0)]
 async fn two_stream_controlled_mode_accepts_replicator_protocol_without_local_registration() {
     let replicators = Arc::new(ReplicatorRegistry::new());
@@ -3055,7 +3056,7 @@ async fn two_stream_controlled_mode_accepts_replicator_protocol_without_local_re
             assert_eq!(sender_peer.as_deref(), Some(peer.as_str()));
             assert!(
                 !is_explicit_replicator,
-                "ordinary direct replicator pushes should not imply explicit replay trust"
+                "the coordinator preserves the transport's ordinary-channel marker"
             );
         }
         other => panic!("expected DagReady, got {:?}", other),
@@ -3085,7 +3086,7 @@ async fn two_stream_controlled_mode_accepts_unknown_peer() {
             assert_eq!(sender_peer.as_deref(), Some(peer.as_str()));
             assert!(
                 !is_explicit_replicator,
-                "two-stream transport auth and explicit replay trust remain separate"
+                "the coordinator preserves the transport's ordinary-channel marker"
             );
         }
         other => panic!("expected DagReady, got {:?}", other),

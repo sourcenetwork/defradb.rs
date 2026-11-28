@@ -718,6 +718,21 @@ impl DocumentACP for VeraDocumentACP {
         relation: &str,
         _managing_relations: &[String],
     ) -> Result<bool> {
+        match self
+            .observe_actor_relationship(acp::ActorRelationshipObservation {
+                requester: requestor,
+                target,
+                policy: policy_id,
+                resource: resource_name,
+                document: doc_id,
+                relation,
+            })
+            .await
+        {
+            Ok(true) => return Ok(false),
+            Ok(false) | Err(acp::Error::UnsupportedRelationshipListing) => {}
+            Err(error) => return Err(error),
+        }
         let bearer_token = self.create_bearer_token(requestor.as_str()).await?;
         let subject = did_to_subject(target);
         self.admit_for(
@@ -822,6 +837,21 @@ impl DocumentACP for VeraDocumentACP {
         relation: &str,
         _managing_relations: &[String],
     ) -> Result<bool> {
+        match self
+            .observe_actor_relationship(acp::ActorRelationshipObservation {
+                requester: requestor,
+                target,
+                policy: policy_id,
+                resource: resource_name,
+                document: doc_id,
+                relation,
+            })
+            .await
+        {
+            Ok(false) => return Ok(false),
+            Ok(true) | Err(acp::Error::UnsupportedRelationshipListing) => {}
+            Err(error) => return Err(error),
+        }
         let bearer_token = self.create_bearer_token(requestor.as_str()).await?;
         let subject = did_to_subject(target);
         self.admit_for(
