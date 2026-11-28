@@ -22,8 +22,6 @@ iroh = ["defra-node/p2p", "p2p/iroh-transport"]
 libp2p = ["db/p2p", "p2p/libp2p-transport", "defra-node/libp2p"]
 wasmtime-runtime = [
     "db/wasmtime-runtime",
-    
-    
     "defra-node/wasmtime-runtime",
     "lens/wasmtime-runtime",
 ]

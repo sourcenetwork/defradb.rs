@@ -2,10 +2,9 @@
 
 ## Purpose
 Vera ACP client: implements `DocumentACP`/`VeraProvider` against native vera.rs. Builds and
-signs requests, queries policies/relationships, and gates document access. Keeps no
-access-decision cache of its own: a decision is reused only under the verified state it was
-read at, through the proof-validated light-client cache invalidated by chain height /
-module-state-root advance.
+signs requests, queries policies/relationships, and gates document access. The remote decision service reuses an answer only under its verified state
+key. The light client separately invalidates its proof cache when the module state
+root advances.
 
 ## State machines
 - **Remote decisions** (`decisions.rs` + `dac.rs::check_doc_access`): one call per decision
@@ -23,8 +22,7 @@ module-state-root advance.
 
 ## Verdict
 Mostly **plumbing/glue**: tx building, ABI/JSON (de)serialization, REST/RPC IO, bearer-token
-construction. Revocation consistency is covered by the Acp slice; with no decision cache
-here there is no stale positive answer to model. Unavailable ⇒ fail-closed is an assumed
+construction. The Acp slice covers revocation once the tuple view advances. Unavailable ⇒ fail-closed is an assumed
 boundary in the Acp/Auth models. Light-client proof validation is an external-dependency boundary.
 
 **model_worthy: false** — no high/medium candidate that isn't already covered or external.

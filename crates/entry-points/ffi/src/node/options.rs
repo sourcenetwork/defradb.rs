@@ -151,11 +151,13 @@ unsafe fn reject_unsupported(options: &NodeInitOptions) -> Result<(), String> {
             "node_acp_path: node ACP lives in the node's store",
         ),
         (
-            non_empty(options.remote_dac_log_id).is_some()
-                || non_empty(options.remote_dac_grpc_address).is_some()
-                || non_empty(options.remote_dac_comet_rpc_address).is_some()
-                || non_empty(options.vera_chain_id).is_some()
-                || !options.vera_signer_key.is_null(),
+            // Older callers can still pass empty C strings in these slots.
+            non_empty(options._reserved_acp0).is_some()
+                || non_empty(options._reserved_acp1).is_some()
+                || non_empty(options._reserved_acp2).is_some()
+                || non_empty(options._reserved_acp3).is_some()
+                || !options._reserved_acp4.is_null()
+                || options._reserved_acp5 != 0,
             REMOTE_DOCUMENT_ACP,
         ),
     ];
@@ -182,11 +184,7 @@ unsafe fn document_acp(options: &NodeInitOptions) -> Result<defra_node::Document
     }
 }
 
-/// Go's remote document ACP runs against the Go chain, which this
-/// implementation has no client for: its document ACP beyond the local engine
-/// is native Vera, which these options do not configure.
-const REMOTE_DOCUMENT_ACP: &str =
-    "remote document ACP (document_acp_type \"remote\", the remote_dac_ and vera_ options)";
+const REMOTE_DOCUMENT_ACP: &str = "remote document ACP (use document_acp_type \"local\")";
 
 /// A key the caller passed as a buffer and its length, or `None` for none.
 ///

@@ -105,10 +105,10 @@ fn remote_document_acp_is_refused() {
 }
 
 #[test]
-fn a_remote_document_acp_option_is_refused() {
+fn a_legacy_remote_acp_setting_is_refused() {
     let address = cstr("http://127.0.0.1:9090");
     let error = refused(NodeInitOptions {
-        remote_dac_grpc_address: address.as_ptr(),
+        _reserved_acp1: address.as_ptr(),
         ..local_options()
     });
     assert!(error.contains("remote document ACP"), "{error}");

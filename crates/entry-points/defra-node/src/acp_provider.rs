@@ -5,9 +5,10 @@ use std::time::Duration;
 
 /// A host's [`vera::VeraProvider`] for document ACP, compared by identity.
 ///
-/// The node wires it as it wires its configured vera.rs backend: access
-/// decisions are verified per request and not cached, remote policies are
-/// mirrored locally, and owed registrations are gated and redriven.
+/// The node asks the host provider for access decisions, mirrors its remote
+/// policies locally, and gates and redrives owed registrations. The default
+/// provider methods supply no verified state key or proof capability. A host
+/// that supplies a fresh verified state key can reuse decisions at that state.
 #[derive(Clone)]
 pub struct DocumentAcpProvider {
     pub(crate) provider: Arc<dyn vera::VeraProvider>,
@@ -23,7 +24,7 @@ impl DocumentAcpProvider {
         }
     }
 
-    /// Bound each remote decision by `request_timeout` instead.
+    /// Set the timeout used to budget each remote decision and its retry.
     #[must_use]
     pub fn with_request_timeout(mut self, request_timeout: Duration) -> Self {
         self.request_timeout = request_timeout;

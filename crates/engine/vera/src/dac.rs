@@ -22,9 +22,8 @@ use crate::{PolicyAction, PolicyCommand, PolicySubject};
 /// DocumentACP backed by Vera's ACP module.
 ///
 /// Delegates write and read operations to a `VeraProvider` implementation.
-/// It keeps no decision cache of its own: Vera's ACP state changes outside
-/// DefraDB's mutation path, so only a decision read at a verified state is
-/// reused, keyed by that state (see `decisions`).
+/// Access checks use the remote decision service, which reuses answers only
+/// under a fresh verified state key supplied by the provider.
 pub struct VeraDocumentACP {
     provider: Arc<dyn VeraProvider>,
     /// Remote decisions: one call per tuple in flight, a deadline, retries.
