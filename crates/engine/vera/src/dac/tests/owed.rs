@@ -829,6 +829,10 @@ fn a_host_prechecks_the_presented_delegation() {
         gate.request_bound_authority(&did(REMOTE), "delegation:not-a-request-binding", registration("doc-1")),
         Err(acp::Error::OwedAuthorityUnavailable { ref actor, .. }) if actor == REMOTE
     ));
+    assert!(matches!(
+        gate.request_bound_authority(&did(HELD), "not-a-delegation-at-all", registration("doc-1")),
+        Err(acp::Error::OwedAuthorityUnavailable { ref actor, .. }) if actor == HELD
+    ));
 }
 
 #[nuclei::test]
