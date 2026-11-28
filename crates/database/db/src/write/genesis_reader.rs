@@ -1,13 +1,11 @@
 //! The reader a created document's genesis asks for, on a provider that
 //! cannot join the create's transaction.
 //!
-//! A local provider grants this reader on the receiving node, which owns its
-//! replica there (`merge_handler::genesis_access::register_signed_genesis`).
-//! On a remote provider every node of the deployment shares one record of
-//! the document and its creator owns it, so a receiver cannot grant itself:
-//! the creator owes the grant from the create's own transaction, behind the
-//! document's owed registration, and the receivers' strict merge gate lets
-//! the document in once their provider holds both. The grant is counted
+//! On a remote provider every node of the deployment shares one record of the
+//! document and its creator owns it, so a receiver cannot grant itself: the
+//! creator owes the grant from the create's own transaction, behind the
+//! document's owed registration, and the receivers' strict merge gate lets the
+//! document in once their provider holds both. The grant is counted
 //! with the registration, one per created document, so a batch of creates is
 //! never refused for its grants (`acp::TransactionOutbox::stage_with_registration`).
 //! The model is

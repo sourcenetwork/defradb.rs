@@ -377,10 +377,10 @@ fn a_receiver_that_sees_the_genesis_after_another_registered_it_waits_for_the_ow
     .unwrap()
 }
 
-/// With a local provider a listed collection behaves as before: the
-/// replicated genesis registers its signer inside the merge.
+/// With a local provider a replicated genesis is not registered on this node:
+/// Local ACP stays node-local, and only an owned create registers its creator.
 #[test]
-fn a_local_provider_registers_the_genesis_signer_as_before() {
+fn a_local_provider_does_not_register_an_incoming_genesis() {
     workers::block_on(async {
         let receiver = Receiver::open_with(
             |store| {
@@ -406,7 +406,7 @@ fn a_local_provider_registers_the_genesis_signer_as_before() {
                 .get_doc_owner(POLICY, RESOURCE, &doc)
                 .await
                 .unwrap(),
-            Some(creator.did)
+            None
         );
         assert_eq!(receiver.owed(&doc).await, acp::ReplicaOwed::default());
     })

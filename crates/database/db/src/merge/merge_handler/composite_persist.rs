@@ -207,29 +207,6 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
 
         if old_doc.is_none() && !doc_is_tombstoned {
             if context.block.heads.as_deref().is_none_or(<[Cid]>::is_empty) {
-                if let (Some(provider), Some(policy), Some(signer)) = (
-                    self.db.document_acp(),
-                    collection.schema().policy.as_ref(),
-                    self.verify_block_signature(context.cid, context.block, &[])
-                        .await?,
-                ) {
-                    if let Some(scoped) = provider.bind_transaction(
-                        systemstore.sibling(storage::namespace::Namespace::Acpstore),
-                    ) {
-                        let signer = identity::Did::new(signer)
-                            .map_err(|error| MergeError::MergeFailed(error.to_string()))?;
-                        super::genesis_access::register_signed_genesis(
-                            &*scoped,
-                            &signer,
-                            &policy.id,
-                            &policy.resource_name,
-                            context.doc_id_str,
-                            state.genesis_reader.as_ref(),
-                        )
-                        .await
-                        .map_err(|error| MergeError::MergeFailed(error.to_string()))?;
-                    }
-                }
                 self.record_replica(systemstore, context, collection.schema())
                     .await?;
             }

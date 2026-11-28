@@ -147,28 +147,6 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                                 .to_string(),
                         ));
                     }
-                    if link_name == IMMUTABLE_LINK_NAME
-                        && payload.collection_version_id == context.payload.collection_version_id
-                    {
-                        state.genesis_reader = context.collection.as_ref().and_then(|collection| {
-                            let binding = collection.schema().policy.as_ref()?;
-                            super::genesis_access::genesis_reader(
-                                datastore.genesis_read_access(
-                                    collection.name(),
-                                    &binding.id,
-                                    &binding.resource_name,
-                                ),
-                                |field| {
-                                    payload
-                                        .fields
-                                        .get(field)
-                                        .filter(|_| immutable_fields.contains(field))
-                                        .map(|data| &data[..])
-                                },
-                                self.db.node_did().as_ref(),
-                            )
-                        });
-                    }
                     state
                         .immutable_block_fields
                         .insert(*link_cid, payload.fields.keys().cloned().collect());
