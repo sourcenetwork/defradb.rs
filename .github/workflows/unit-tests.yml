@@ -86,6 +86,8 @@ jobs:
           tool: cargo-nextest
       - uses: Swatinem/rust-cache@v2
         with:
+          # Experiment (#3321): a unique key so every job misses the Actions cache.
+          prefix-key: nocache-${{ github.run_id }}
           shared-key: unit
           save-if: ${{ github.ref == 'refs/heads/main' && (matrix.group == 'surfaces' || matrix.group == 'all') }}
       - run: cargo nextest run --cargo-profile super-dev $PACKAGES
