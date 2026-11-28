@@ -7,22 +7,21 @@ cd "$(dirname "${BASH_SOURCE[0]}")"
 
 # The runs are discovered, not listed: every top-level *.cfg here is a run of
 # <module> expecting <verdict>, one of GREEN (no error), RED (an invariant is
-# violated), DEFECT (a configuration of today's code that fails on a known
-# defect), or, for a recorded trace replay, TRACE:<depth> or DEADLOCK:<l>.
+# violated), or, for a recorded trace replay, TRACE:<depth> or DEADLOCK:<l>.
 # A trace replay walks one path, so its verdict also says where it ends:
 # TRACE:<depth> finds no error from exactly one initial state and walks every
 # event to the settled rest (depth = events + 1), and DEADLOCK:<l> stops with
 # event l next (past the end when l = events + 1).
 #
 # The module and verdict come from one place, the cfg's first line:
-#     \* run-all: <Module>.tla <GREEN|RED|DEFECT|TRACE:<n>|DEADLOCK:<n>>
+#     \* run-all: <Module>.tla <GREEN|RED|TRACE:<n>|DEADLOCK:<n>>
 # A cfg whose first line is not such a header is reported and fails the whole
 # run; so is a header naming a module that does not exist or a verdict that is
 # not one of these.
 #
 # The cfg's name decides nothing, but it may not say otherwise: a name with a
 # Green word (underscore-separated) and no Red word needs a GREEN or TRACE
-# header, one with Red and no Green a RED, DEFECT or DEADLOCK header. A name that
+# header, one with Red and no Green a RED or DEADLOCK header. A name that
 # disagrees with its header fails the whole run too.
 # --list prints the discovered `cfg module verdict` rows and nothing else, and
 # exits 2 when any cfg did not resolve to a module and verdict, or has a name
@@ -43,12 +42,12 @@ for cfg in *.cfg; do
     mod=${header% *}
   fi
   case "$want" in
-    GREEN|RED|DEFECT) ;;
+    GREEN|RED) ;;
     TRACE:[0-9]*|DEADLOCK:[0-9]*) ;;
     *) want='' ;;
   esac
   if [ -z "$mod" ] || [ -z "$want" ] || [ ! -f "$mod" ]; then
-    echo "run-all: $cfg: its first line must be '\* run-all: <Module>.tla <GREEN|RED|DEFECT|TRACE:<n>|DEADLOCK:<n>>', naming a module that exists" >&2
+    echo "run-all: $cfg: its first line must be '\* run-all: <Module>.tla <GREEN|RED|TRACE:<n>|DEADLOCK:<n>>', naming a module that exists" >&2
     unresolved=$((unresolved+1))
     continue
   fi
@@ -60,7 +59,7 @@ for cfg in *.cfg; do
     *_Red_*)   named=Red ;;
   esac
   case "$named:$want" in
-    Green:RED|Green:DEFECT|Green:DEADLOCK:*|Red:GREEN|Red:TRACE:*)
+    Green:RED|Green:DEADLOCK:*|Red:GREEN|Red:TRACE:*)
       echo "run-all: $cfg: its name says $named but its header says $want; rename it or correct the header" >&2
       unresolved=$((unresolved+1))
       continue
@@ -146,10 +145,6 @@ run_model() {
       elif grep -qE "is violated|was violated|properties were violated|Deadlock reached|Deadlock" <<<"$out"; then got=RED
       else got=ERROR; fi ;;
   esac
-  # DEFECT: the configuration models today's code and fails on a known defect,
-  # with no bug planted. It is expected to violate, like RED, and turns GREEN
-  # once the defect is fixed.
-  if [ "$want" = DEFECT ] && [ "$got" = RED ]; then got=DEFECT; fi
   if [ "$got" = "$want" ]; then
     printf "  ok   %-6s %-34s %s\n" "$got" "$cfg" "$mod"
   else

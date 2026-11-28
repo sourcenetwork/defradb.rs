@@ -37,25 +37,23 @@ modeled by `proofs/tla/ClientUniqueAdmission.tla`; the words and codes by
 - **Non-nil values only.** A nil value is never checked: its entry key carries the DocID,
   so any number of documents may hold nil (verified: `nil_values_are_not_refused`). A
   filter for nil is a prefix scan of those entries and decides nothing either (verified:
-  `a_nil_writers_filter_for_nil_decides_nothing`). A nil writer is still exposed to the
-  known defect below when its transaction filtered for a non-nil value.
+  `a_nil_writers_filter_for_nil_decides_nothing`).
 - **No index, no refusal.** Without a unique index, a filtered read for the value is a
   plain scan that decides nothing, so both writers commit (verified:
   `without_an_index_both_commit`). This differs from Go, whose store validates the scan
   and aborts the second explicit commit with `transaction conflict. Please retry`; the
   test is listed in `.github/testo/divergences.txt`.
-- **A filter read should not be a decision, and today one is (a known defect).** The
-  house rule is that a query read is never validated (AGENTS.md § Reads and writes). The
-  unique-index equality plan breaks it: it reads the entry with a validated `get`, so a
-  transaction that only filtered for a value it does not write loses its commit with
-  `transaction conflict. Please retry` when another writer adds that value. A full scan
-  or a non-indexed filter of the same shape commits. It hits a transaction that writes
-  nil the same way. This is not part of the guarantee;
-  `known_defect_a_unique_filter_read_aborts_the_commit`,
-  `known_defect_a_nil_writers_filter_read_aborts_the_commit` and the known-defect (DEFECT) model
-  configurations `MC_ClientUniqueAdmission_Red_FilterReadDecides` and
-  `MC_ClientUniqueAdmission_Red_FilterReadDecidesNil` pin today's answer so its fix is seen.
-  Go aborts here too.
+- **A filter read is not a decision.** The house rule is that a query read is never
+  validated (AGENTS.md § Reads and writes), and the unique-index equality plan keeps it:
+  it reads the entry with an unvalidated `get_parts(key, &[])`, so a transaction that only
+  filtered for a value it does not write still commits when another writer adds that
+  value, and so does one that writes nil (verified: `txn::unique_filter_read`
+  `a_unique_eq_filter_read_does_not_fail_the_commit` and
+  `a_nil_writers_unique_filter_read_does_not_fail_the_commit`). The model configurations
+  `MC_ClientUniqueAdmission_Red_FilterReadDecides` and
+  `MC_ClientUniqueAdmission_Red_FilterReadDecidesNil` plant the validated read the plan
+  used before #3379 and break the rule. Go validates the read and aborts the commit; those
+  tests are listed in `.github/testo/divergences.txt`.
 - **One document is not a unique race.** Two updates of the same document to one value
   leave one document holding it: `UniqueIndex::update` accepts an entry its own DocID
   holds, so the re-run of an autocommit update that lost finds its own document there

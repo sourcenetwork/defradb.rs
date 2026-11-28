@@ -27,23 +27,23 @@
 \*     the writer's value, or a conflict when no other committed document
 \*     holds a value the client read or wrote;
 \*   - without the index, anyone is refused;
-\*   - a client writing nil is refused over nil: it may lose its commit only
-\*     over a non-nil value its filter read (the known defect below).
+\*   - a client writing nil is refused over nil;
+\*   - anyone is refused unless another committed document holds the value
+\*     it writes: a query read decides nothing (AGENTS.md, Reads and writes).
 \*
-\* What the code does today and the house rules forbid: a query read is never
-\* a decision (AGENTS.md, Reads and writes), yet the unique-index equality plan
-\* reads the entry with a validated get
-\* (crates/engine/storage/src/index/eq_iterator.rs ExactMatchIterator::new_unique,
-\* its `txn.get`). So an explicit transaction that only filtered for a value
-\* it does not write loses its commit when another writer adds that value,
-\* and that holds for a client writing nil too. A filter for nil is a prefix
-\* scan of the doc-suffixed nil entries, which decides nothing.
-\* INV_RefusedOnlyOverItsOwnValue states the rule; the RED configurations
+\* A filtered read never decides. The unique-index equality plan reads the
+\* entry with an unvalidated `get_parts(key, &[])`
+\* (crates/engine/storage/src/index/eq_iterator.rs ExactMatchIterator::new_unique),
+\* so an explicit transaction that only filtered for a value it does not
+\* write still commits when another writer adds that value, and so does a
+\* client writing nil. A filter for nil is a prefix scan of the doc-suffixed
+\* nil entries, which decides nothing either. INV_RefusedOnlyOverItsOwnValue
+\* states the rule; the RED configurations
 \* MC_ClientUniqueAdmission_Red_FilterReadDecides and
-\* MC_ClientUniqueAdmission_Red_FilterReadDecidesNil show the code breaks it,
-\* and testo txn::unique_isolation
-\* known_defect_a_unique_filter_read_aborts_the_commit and
-\* known_defect_a_nil_writers_filter_read_aborts_the_commit pin the same answers.
+\* MC_ClientUniqueAdmission_Red_FilterReadDecidesNil plant the validated read
+\* the plan used before #3379 and break it, and testo txn::unique_filter_read
+\* a_unique_eq_filter_read_does_not_fail_the_commit and
+\* a_nil_writers_unique_filter_read_does_not_fail_the_commit pin the fixed answers.
 \*
 \* Code it models:
 \*   crates/engine/storage/src/index/unique.rs UniqueIndex::save, the `has`
@@ -70,6 +70,7 @@ CONSTANTS
   Indexed,          \* the field has a unique index
   EntryValidated,   \* the unique entry check is validated at commit (the real code); FALSE plants a bug
   ScanDecides,      \* without an index, the filtered read is validated like a decision (a planted bug)
+  FilterValidated,  \* the unique-index equality plan validates the filtered read, as before #3379 (a planted bug)
   LoserLeaves,      \* a commit that lost still leaves its index entry (a planted bug)
   RerunReuses,      \* an autocommit re-run keeps the first attempt's check instead of checking again (a planted bug)
   NilChecked,       \* nil is checked like any other value (a planted bug)
@@ -81,7 +82,7 @@ Nil == "nil"
 \* Two clients are enough to race; the modes and flags are what they say.
 ASSUME Cardinality(Clients) = 2
 ASSUME Mode \in {"Explicit", "Autocommit"}
-ASSUME {Indexed, EntryValidated, ScanDecides, LoserLeaves, RerunReuses, NilChecked} \subseteq BOOLEAN
+ASSUME {Indexed, EntryValidated, ScanDecides, FilterValidated, LoserLeaves, RerunReuses, NilChecked} \subseteq BOOLEAN
 ASSUME MaxAttempts \in Nat \ {0}
 
 VARIABLES
@@ -165,17 +166,18 @@ Begin(c) ==
   /\ UNCHANGED <<input, wanted, reason, docs, entries, lastWrite, seq>>
 
 \* The filtered read, for value wanted[c]. For a non-nil value served by the
-\* unique index, whether it is validated depends on the plan, so both are
-\* explored: today the equality plan validates it with a `get` (a known
-\* defect) and a full scan does not. A filter for nil is a prefix scan
-\* (ExactMatchIterator::new_unique, its `has_nil` branch), and without an
-\* index the read is a plain scan; both are validated only under the
-\* ScanDecides bug.
+\* unique index, the plan is the equality lookup or a full scan, so both are
+\* explored; neither is validated, unless the FilterValidated bug makes the
+\* equality lookup validate its read as it did before #3379. A filter for nil
+\* is a prefix scan (ExactMatchIterator::new_unique, its `has_nil` branch),
+\* and without an index the read is a plain scan; both are validated only
+\* under the ScanDecides bug.
 Filter(c) ==
   /\ pc[c] = "filter"
-  \* the plans this read may take: validated or not under the index's
-  \* equality lookup, otherwise a scan validated only under the bug
-  /\ \E validated \in (IF Indexed /\ wanted[c] # Nil THEN BOOLEAN ELSE {ScanDecides}) :
+  \* the plans this read may take: the index's equality lookup (validated
+  \* only under the FilterValidated bug) or a full scan, otherwise a scan
+  \* validated only under the ScanDecides bug
+  /\ \E validated \in (IF Indexed /\ wanted[c] # Nil THEN {FALSE, FilterValidated} ELSE {ScanDecides}) :
        scanned' = [scanned EXCEPT ![c] = validated]
   /\ pc' = [pc EXCEPT ![c] = "check"]
   /\ UNCHANGED <<input, wanted,snap, attempts, checked, reason, docs, entries, lastWrite, seq>>
@@ -280,17 +282,18 @@ INV_LoserRefusedTyped ==
           \E d \in docs \ {c} : input[d] \in {input[c], wanted[c]})
 
 \* The house rule (a query read decides nothing): nobody is refused unless
-\* another committed document holds the value it writes. The code breaks it
-\* today, so only the RED configuration FilterReadDecides checks it.
+\* another committed document holds the value it writes. The FilterValidated
+\* bug breaks it (the RED configurations FilterReadDecides and
+\* FilterReadDecidesNil).
 INV_RefusedOnlyOverItsOwnValue ==
   \A c \in Clients : pc[c] = "refused" => \E d \in docs \ {c} : input[d] = input[c]
 
 \* Without the index, nobody is refused.
 INV_NoIndexNotRefused == ~Indexed => \A c \in Clients : pc[c] # "refused"
 
-\* A client writing nil is never refused over nil: if it is refused at all,
-\* it lost its commit over a non-nil value its filter read, which another
-\* client committed.
+\* A client writing nil is never refused over nil: if it is refused at all
+\* (which only the FilterValidated bug allows), it lost its commit over a
+\* non-nil value its filter read, which another client committed.
 INV_NilNotRefused ==
   \A c \in Clients : (input[c] = Nil /\ pc[c] = "refused") =>
     \* never a unique violation, which nil cannot be
