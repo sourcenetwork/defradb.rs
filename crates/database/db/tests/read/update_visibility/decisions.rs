@@ -56,9 +56,10 @@ impl DocumentACP for Decisions {
         policy: &str,
         resource: &str,
         doc: &str,
+        _relationships: &[acp::DerivedRelationship],
     ) -> acp::Result<()> {
         self.inner
-            .register_doc_object(actor, policy, resource, doc)
+            .register_doc_object(actor, policy, resource, doc, &[])
             .await
     }
 
@@ -171,9 +172,10 @@ impl DocumentACP for DeletesMidPage {
         policy: &str,
         resource: &str,
         doc: &str,
+        _relationships: &[acp::DerivedRelationship],
     ) -> acp::Result<()> {
         self.inner
-            .register_doc_object(actor, policy, resource, doc)
+            .register_doc_object(actor, policy, resource, doc, &[])
             .await
     }
 

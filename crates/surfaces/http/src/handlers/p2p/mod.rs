@@ -9,8 +9,8 @@
 //!
 //! All endpoints enforce NAC permissions when NAC is enabled.
 
-use crate::error::{http_error_from_backend_message, HttpError};
-use crate::router::P2PError;
+use crate::error::{http_error_from_backend_message, peer_refused, HttpError};
+use crate::router::{peer, P2PError};
 
 mod collections;
 mod documents;
@@ -37,6 +37,15 @@ fn map_p2p_internal(error: P2PError) -> HttpError {
         P2PError::Unsupported(message) => HttpError::NotImplemented(message),
         P2PError::Transport(message) => HttpError::Internal(message),
         P2PError::Internal(message) => HttpError::Internal(message),
+    }
+}
+
+/// A refused sync: an adapter refusal, or a refusal before the adapter, by
+/// the status its message names.
+fn sync_refused(error: peer::Error) -> HttpError {
+    match error {
+        peer::Error::Refused(error) => map_p2p_internal(error),
+        error => peer_refused(error),
     }
 }
 

@@ -38,7 +38,12 @@ impl Op for ListReplicators {
 
         let node = state.node_on(self.common.node())?;
         let listed = state
-            .block_on(node.list_replicators_as(&state.context_as(None, identity)))
+            .block_on(
+                state
+                    .scope_as(None, identity)
+                    .scoped(&node)
+                    .list_replicators(),
+            )
             .map_err(failed)?;
         Ok(if self.full {
             json!(listed)

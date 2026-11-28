@@ -3,7 +3,7 @@ A storage error carries its I/O kind, operating-system code and message through
 CoreKV. GraphQL exposes a storage-full code only for a typed storage-full cause.
 Text alone cannot establish that cause; a failure code does not establish whether
 a transaction committed. Models corekv/io_failure.rs, regolith/transaction.rs and
-query/executor.rs. This changes encoding, with no recovery or retry transition.
+crates/engine/query/src/executor.rs. This changes encoding, with no recovery or retry transition.
 -/
 namespace StorageFailure
 

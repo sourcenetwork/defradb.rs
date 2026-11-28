@@ -13,10 +13,11 @@ use storage::corekv::{
 use storage::keys::systemstore::{CollectionKey, CollectionNameKey};
 
 use crate::collection::Collection;
-use crate::database::action::ActionExecutionLease;
+use crate::database::action::{stage_action_start, ActionExecutionLease};
 use crate::database::spawn::spawn_task;
 use crate::error::{Error, Result};
 use crate::index::backfill::BackfillPlan;
+use crate::index::duplicate::refuse_duplicate_index;
 use crate::index::IndexManager;
 use crate::txn::DbTxn;
 use crate::DB;
@@ -25,7 +26,77 @@ use crate::DB;
 /// this call committed whose backfill is still to run.
 enum IndexDefinition {
     Ready(IndexDescription),
-    Defined(IndexDescription, ActionExecutionLease),
+    Defined(IndexDescription),
+}
+
+/// The index definition an attempt stages inside the definition transaction.
+pub(super) struct IndexCreation<'name> {
+    pub(super) name: Option<&'name str>,
+    pub(super) fields: Vec<IndexedFieldDescription>,
+    pub(super) kind: IndexKind,
+}
+
+/// One attempt of [`DB::define_index`]'s definition change.
+struct DefineIndexAttempt<S>
+where
+    S: Store + 'static,
+{
+    db: Arc<DB<S>>,
+    collection: Collection,
+    collection_name: String,
+    name: Option<String>,
+    fields: Vec<IndexedFieldDescription>,
+    kind: IndexKind,
+}
+
+impl<S> RetryAttemptFn for DefineIndexAttempt<S>
+where
+    S: Store + 'static,
+{
+    fn run<'a>(&'a mut self, retry: &'a mut dyn RetryTxn) -> RetryAttemptFuture<'a> {
+        Box::pin(async move {
+            let io = retry.begin_attempt_io()?;
+            let txn = self
+                .db
+                .new_db_txn(datastore::BasicTxn::from_retry_attempt_io(
+                    io,
+                    0,
+                    self.db.crdts().clone(),
+                ));
+            let collection = txn
+                .load_collection_for_write_attempt(&self.collection_name, &self.collection)
+                .await
+                .map_err(|error| RetryAttemptError::Abort(Box::new(error)))?;
+            txn.validate_collection_for_write(&collection)
+                .await
+                .map_err(|error| RetryAttemptError::Abort(Box::new(error)))?;
+            refuse_duplicate_index(
+                collection.schema(),
+                self.name.as_deref().unwrap_or(""),
+                &self.fields,
+                self.kind,
+            )
+            .map_err(|error| RetryAttemptError::Abort(Box::new(error)))?;
+            let index = self
+                .db
+                .stage_index_definition(
+                    &txn,
+                    &collection,
+                    &self.collection_name,
+                    IndexCreation {
+                        name: self.name.as_deref(),
+                        fields: self.fields.clone(),
+                        kind: self.kind,
+                    },
+                )
+                .await
+                .map_err(|error| RetryAttemptError::Abort(Box::new(error)))?;
+            let collection_id = collection.collection_id().to_string();
+            let (io, callbacks) = txn.into_retry_attempt()?;
+            retry.finish_attempt_io(io, callbacks)?;
+            Ok(Box::new((index, collection_id)) as RetryAttemptValue)
+        })
+    }
 }
 
 impl<S: Store> DB<S> {
@@ -33,8 +104,9 @@ impl<S: Store> DB<S> {
     /// index every document the collection already holds. A missing or empty
     /// `name` is generated.
     ///
-    /// The definition and in-progress action commit together, and the cache
-    /// reloads before the new fence is captured. This makes writes that land
+    /// The definition and in-progress action commit together, and the
+    /// commit publishes them to the collection cache before it returns,
+    /// before the new fence is captured. This makes writes that land
     /// before publication part of the backfill range and lets later writes
     /// maintain the index themselves. Backfill then runs in bounded
     /// transactions detached from this future so a caller that gives up on
@@ -79,8 +151,7 @@ impl<S: Store> DB<S> {
         let index_id = index.id;
         spawn_task(self.pool(), "db::index_backfill", async move {
             // The build's outcome is on the index's action record. An error
-            // here comes from settling that record or reloading the cache
-            // after it, and nothing else reports it.
+            // here is settling that record, and nothing else reports it.
             if let Err(error) = db.backfill_index(lease, plan).await {
                 tracing::error!(
                     collection = %collection,
@@ -139,12 +210,12 @@ impl<S: Store> DB<S> {
                 })
             }
         };
-        let (index, lease) = match definition {
+        let index = match definition {
             IndexDefinition::Ready(index) => return Ok(index),
-            IndexDefinition::Defined(index, lease) => (index, lease),
+            IndexDefinition::Defined(index) => index,
         };
-        let plan = self
-            .publish_index_definition(collection_name, &collection_id, &index, &lease)
+        let (lease, plan) = self
+            .publish_index_definition(collection_name, &collection_id, &index)
             .await?;
         self.backfill_defined_index(index, lease, plan).await
     }
@@ -172,40 +243,61 @@ impl<S: Store> DB<S> {
     }
 
     async fn define_index(
-        &self,
+        self: &Arc<Self>,
         collection_name: &str,
         name: Option<&str>,
         fields: Vec<IndexedFieldDescription>,
         kind: IndexKind,
-    ) -> Result<(IndexDescription, ActionExecutionLease, BackfillPlan)> {
+    ) -> Result<(IndexDescription, ActionExecutionLease, BackfillPlan)>
+    where
+        S: 'static,
+    {
         let collection = self.require_collection(collection_name)?;
-
-        let txn = self.new_txn(false).await?;
-        txn.validate_collection_for_write(&collection).await?;
-        let (index, lease) = self
-            .stage_index_definition(&txn, &collection, collection_name, name, fields, kind)
-            .await?;
-        txn.commit().await?;
-        let plan = self
-            .publish_index_definition(collection_name, collection.collection_id(), &index, &lease)
+        let attempt = DefineIndexAttempt {
+            db: Arc::clone(self),
+            collection,
+            collection_name: collection_name.to_string(),
+            name: name.map(str::to_owned),
+            fields,
+            kind,
+        };
+        let (index, collection_id) = match self
+            .store()
+            .transact_retry(self.options().retry_options(), Box::new(attempt))
+            .await
+        {
+            Ok(value) => value
+                .downcast::<(IndexDescription, String)>()
+                .map(|defined| *defined)
+                .map_err(|_| Error::Other("invalid index definition result".into()))?,
+            Err(error) => {
+                return Err(match error.downcast_abort::<Error>() {
+                    Ok(error) => error,
+                    Err(error) => Error::Storage(error.into_storage()),
+                })
+            }
+        };
+        let (lease, plan) = self
+            .publish_index_definition(collection_name, &collection_id, &index)
             .await?;
         Ok((index, lease, plan))
     }
 
     /// Write the definition of a new index and its in-progress action into
-    /// `txn`, and refresh the collection cache when `txn` commits.
+    /// `txn`, and publish them to the collection cache when `txn` commits,
+    /// before the commit returns: the caller's next request, the backfill
+    /// first of all, works from this definition, even while writers' commit
+    /// hooks hold back ordered events.
     pub(super) async fn stage_index_definition(
         &self,
         txn: &DbTxn<S>,
         collection: &Collection,
         collection_name: &str,
-        name: Option<&str>,
-        fields: Vec<IndexedFieldDescription>,
-        kind: IndexKind,
-    ) -> Result<(IndexDescription, ActionExecutionLease)> {
+        creation: IndexCreation<'_>,
+    ) -> Result<IndexDescription> {
         crate::chunk::ensure_admin_changeable(collection.schema())?;
         let collection_id = collection.collection_id().to_string();
-        let (index, lease, committed_schema) = {
+        let (index, committed_schema) = {
             let datastore = txn.datastore()?;
             let systemstore = txn.systemstore()?;
             let mut manager = IndexManager::from_collection(
@@ -217,9 +309,9 @@ impl<S: Store> DB<S> {
                 .create_index_of_kind(
                     &datastore,
                     collection_name,
-                    name.unwrap_or("").to_string(),
-                    fields,
-                    kind,
+                    creation.name.unwrap_or("").to_string(),
+                    creation.fields,
+                    creation.kind,
                 )
                 .await?;
             let mut schema = collection.schema().clone();
@@ -239,15 +331,14 @@ impl<S: Store> DB<S> {
                     schema.version_id.as_bytes(),
                 )
                 .await?;
-            let lease = self
-                .stage_action(
-                    &systemstore,
-                    &collection_id,
-                    defra_core::Action::BACKFILL_INDEX,
-                    &index.id.to_string(),
-                )
-                .await?;
-            (index, lease, schema)
+            stage_action_start(
+                &systemstore,
+                &collection_id,
+                defra_core::Action::BACKFILL_INDEX,
+                &index.id.to_string(),
+            )
+            .await?;
+            (index, schema)
         };
         let cached_collection = crate::collection::Collection::load_index_actions(
             committed_schema,
@@ -255,24 +346,30 @@ impl<S: Store> DB<S> {
         )
         .await?;
         let cache = std::sync::Arc::clone(&self.collections);
-        txn.on_commit(OnCommit::Ordered(Box::new(move || {
-            cache.rcu(|old| {
-                let mut cache = old.clone();
-                cache.put(cached_collection.clone());
-                cache
-            });
+        let index_id = index.id;
+        txn.on_commit(OnCommit::OrderedAndWait(Box::new(move || {
+            cache.publish(
+                cached_collection,
+                &[(index_id, Some(defra_core::ActionStatus::IN_PROGRESS))],
+            );
         })))?;
-        Ok((index, lease))
+        Ok(index)
     }
 
-    /// Announce a committed definition and plan its backfill.
+    /// Claim and announce the backfill of a committed definition.
     pub(super) async fn publish_index_definition(
         &self,
         collection_name: &str,
         collection_id: &str,
         index: &IndexDescription,
-        lease: &ActionExecutionLease,
-    ) -> Result<BackfillPlan> {
+    ) -> Result<(ActionExecutionLease, BackfillPlan)> {
+        // A competing definition attempt may choose the same ID until commit
+        // validation picks its winner. Only committed definitions claim a job.
+        let lease = self.resume_action(
+            collection_id,
+            defra_core::Action::BACKFILL_INDEX,
+            &index.id.to_string(),
+        )?;
         // The fence is a short-ID cutoff taken after the definition commits.
         // It is sound without the definition commit's sequence because every
         // writer reads the definition key inside its own transaction:
@@ -289,13 +386,10 @@ impl<S: Store> DB<S> {
         // process stops before the first batch persists progress, startup
         // captures a fresh fence after publication.
         let fence = self.reserve_doc_short_id_fence().await?;
-        self.publish_started_action(lease);
-        Ok(BackfillPlan::new(
-            collection_name,
-            collection_id,
-            index,
-            fence,
-            0,
+        self.publish_started_action(&lease);
+        Ok((
+            lease,
+            BackfillPlan::new(collection_name, collection_id, index, fence, 0),
         ))
     }
 
@@ -320,10 +414,19 @@ impl<S: Store> DB<S> {
             .iter()
             .find(|index| index.name == name)
         else {
-            let (index, lease) = self
-                .stage_index_definition(txn, &collection, collection_name, Some(name), fields, kind)
+            let index = self
+                .stage_index_definition(
+                    txn,
+                    &collection,
+                    collection_name,
+                    IndexCreation {
+                        name: Some(name),
+                        fields,
+                        kind,
+                    },
+                )
                 .await?;
-            return Ok(IndexDefinition::Defined(index, lease));
+            return Ok(IndexDefinition::Defined(index));
         };
         if index.fields != fields || index.clone().normalized().kind != Some(kind) {
             return Err(Error::Other(format!(

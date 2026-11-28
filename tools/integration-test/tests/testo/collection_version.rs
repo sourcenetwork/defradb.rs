@@ -27,6 +27,7 @@ mod migrations {
     mod query {
         mod simple;
         mod with_collection_branch;
+        mod with_concurrent_update;
         mod with_date_time;
         mod with_doc_id;
         mod with_filter;
@@ -39,6 +40,8 @@ mod migrations {
         mod with_restart;
         mod with_set_default;
         mod with_txn;
+        mod with_txn_concurrent_read;
+        mod with_unique_index;
         mod with_update;
     }
     mod simple;

@@ -51,22 +51,20 @@ pub(super) struct Relationship<'a> {
 
 impl Relationship<'_> {
     pub fn in_process(&self, state: &State) -> Result<Value, Failure> {
-        let identity = self.common.client_identity(self.op)?;
-        let actor = identity
-            .map(crate::scenario::identity::did)
-            .unwrap_or_default();
+        let identity = self.common.acting_identity(self.op, state)?;
         let node = state.node_on(self.common.node())?;
+        let scoped = state
+            .scope_as_on(self.common.node(), None, identity)
+            .scoped(&node);
         let (collection, doc_id, relation) = (self.collection, self.doc_id, self.relation);
         let found = match self.change {
-            Change::Add => state.block_on(node.add_dac_actor_relationship(
-                &actor,
+            Change::Add => state.block_on(scoped.add_dac_actor_relationship(
                 collection,
                 doc_id,
                 relation,
                 &self.target,
             )),
-            Change::Delete => state.block_on(node.delete_dac_actor_relationship(
-                &actor,
+            Change::Delete => state.block_on(scoped.delete_dac_actor_relationship(
                 collection,
                 doc_id,
                 relation,
@@ -78,7 +76,7 @@ impl Relationship<'_> {
     }
 
     pub fn http(&self, state: &State) -> Result<Value, Failure> {
-        let identity = self.common.client_identity(self.op)?;
+        let identity = self.common.acting_identity(self.op, state)?;
         let change = self.change;
         let (collection, doc_id) = (self.collection.to_owned(), self.doc_id.to_owned());
         let (relation, target) = (self.relation.to_owned(), self.target.clone());
@@ -102,7 +100,7 @@ impl Relationship<'_> {
     }
 
     pub fn cli(&self, state: &State) -> Result<Value, Failure> {
-        let identity = self.common.client_identity(self.op)?;
+        let identity = self.common.acting_identity(self.op, state)?;
         let args = [
             "acp",
             "document",

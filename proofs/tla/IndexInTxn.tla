@@ -25,9 +25,9 @@
 \* get-collection, then the operation's own permission, in the transaction.
 \*
 \* Code it models:
-\*   crates/entry-points/defra-node/src/ops/index.rs           Node::create_index_as,
-\*                                                 Node::delete_index_as,
-\*                                                 Node::list_indexes_as (route a txn)
+\*   crates/entry-points/defra-node/src/node_core/index.rs     NodeCore::create_index,
+\*                                                 NodeCore::delete_index,
+\*                                                 NodeCore::list_indexes (route a txn)
 \*   crates/database/db/src/txn/registry/indexes.rs        create_index_in_txn,
 \*                                                 drop_index_in_txn, indexes_in_txn
 \*   crates/database/db/src/txn/registry/mod.rs            finish_statement
@@ -49,8 +49,9 @@
 \*                                                 delete_encrypted_index_in_txn,
 \*                                                 encrypted_indexes_in_txn,
 \*                                                 all_encrypted_indexes_in_txn
-\*   crates/entry-points/defra-node/src/ops/encrypted_index.rs NodeOps (routes a txn)
-\*   crates/entry-points/cli/src/encrypted_index_adapter.rs    EncryptedIndexAdapter (routes a txn)
+\*   crates/database/db/src/collection/encrypted_index/client/mod.rs
+\*                                                 DbTransactionRegistry::add_encrypted_index_as
+\*                                                 and its siblings (route a txn, for every client)
 \*   crates/surfaces/http/src/handlers/encrypted_index.rs  the x-defradb-tx context
 \* Views follow them too. AddView stages its view collections in the
 \* caller's transaction, and building its materialized views (and

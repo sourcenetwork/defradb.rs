@@ -38,11 +38,12 @@ impl Op for DeleteDoc {
     fn run(&self, state: &State) -> Result<Value, Failure> {
         let identity = self.common.client_identity(Self::name())?;
         state
-            .block_on(state.node_on(self.common.node())?.delete_doc(
-                &state.context_on(self.common.node(), self.txn, identity, None),
-                &self.collection,
-                self.doc_id.as_str(),
-            ))
+            .block_on(
+                state
+                    .scope_on(self.common.node(), self.txn, identity, None)
+                    .on(&*state.node_on(self.common.node())?)
+                    .delete_doc(&self.collection, self.doc_id.as_str()),
+            )
             .map(|()| json!({ "deleted": true }))
             .map_err(|e| Failure::operation(e.to_string()))
     }

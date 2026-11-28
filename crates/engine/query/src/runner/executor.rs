@@ -365,45 +365,6 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryExecutor for QueryRun
         self.registry.indexes_in_txn_as(context, collection).await
     }
 
-    async fn add_encrypted_index_in_txn_as(
-        &self,
-        context: &RequestContext,
-        collection: &str,
-        field: &str,
-    ) -> std::result::Result<(), TransactionError> {
-        self.registry
-            .add_encrypted_index_in_txn_as(context, collection, field)
-            .await
-    }
-
-    async fn delete_encrypted_index_in_txn_as(
-        &self,
-        context: &RequestContext,
-        collection: &str,
-        field: &str,
-    ) -> std::result::Result<(), TransactionError> {
-        self.registry
-            .delete_encrypted_index_in_txn_as(context, collection, field)
-            .await
-    }
-
-    async fn encrypted_indexes_in_txn_as(
-        &self,
-        context: &RequestContext,
-        collection: &str,
-    ) -> std::result::Result<Vec<String>, TransactionError> {
-        self.registry
-            .encrypted_indexes_in_txn_as(context, collection)
-            .await
-    }
-
-    async fn all_encrypted_indexes_in_txn_as(
-        &self,
-        context: &RequestContext,
-    ) -> std::result::Result<Vec<(String, Vec<String>)>, TransactionError> {
-        self.registry.all_encrypted_indexes_in_txn_as(context).await
-    }
-
     async fn set_active_collection_version_as(
         &self,
         context: &RequestContext,
@@ -797,8 +758,11 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
             }
             .with_warnings(warnings),
             Err(e) => {
-                // A subscription without SSE is the caller's mistake, answered with 406.
-                if matches!(e, crate::error::QueryError::SubscriptionNeedsSse) {
+                // The caller resolves the input and runs the request again.
+                if matches!(e, crate::error::QueryError::NeedsInput(_)) {
+                    tracing::debug!(query = %request.query, "Query needs an external input");
+                } else if matches!(e, crate::error::QueryError::SubscriptionNeedsSse) {
+                    // A subscription without SSE is the caller's mistake, answered with 406.
                     tracing::debug!(query = %request.query, "subscription sent without SSE");
                 } else {
                     tracing::error!(

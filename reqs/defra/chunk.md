@@ -305,6 +305,27 @@ An article created by Alice under a policy shows its chunks to Alice: `Article__
 
 After Alice adds the `reader` relation on her article for Bob, Bob sees the same chunks as Alice and their `_commits`. After Alice deletes the article, she sees no chunks and `_commits` of a chunk is empty.
 
+# `defra.chunk.access.events`: Only readers of the parent get its chunk events
+
+- **Parents:** ["defra.chunk.access"]
+- **Scenarios:** ["chunk::access_events::chunk_events_reach_only_readers_of_the_parent"]
+
+Alice, Bob and a request with no identity each subscribe to `Article__body_chunk { text }` before Alice adds an article with five paragraphs under a policy, and Bob then adds his own two-paragraph article. Alice's subscription gets exactly the five chunks of her text. Bob's gets exactly the two chunks of his own text and none of Alice's. The subscription with no identity gets no events. The CLI has no subscription stream, so this is not checked there.
+
+# `defra.chunk.access.p2p`: A peer gets a chunk's blocks only when its node can read the parent
+
+- **Parents:** ["defra.chunk.access"]
+- **Scenarios:** ["chunk::access_p2p::a_peer_gets_chunk_blocks_only_for_parents_its_node_can_read"]
+
+Two connected nodes have `Article` under a policy. On the first, identity 3 adds a three-paragraph article, and identity 2 adds a two-paragraph article and adds the `reader` relation on it for the second node's identity. After the second node syncs identity 2's article, identity 2 reads that article and exactly its two chunks there. After the second node also syncs identity 3's article by its docID and one of its chunks by the chunk's docID, the first node records that it filtered blocks from those responses. The second node holds none of the `text` blocks of identity 3's chunks: verifying each of them there fails with `ipld: could not find`.
+
+# `defra.chunk.access.verify`: Block verify refuses unsigned chunk create blocks
+
+- **Parents:** ["defra.chunk.access"]
+- **Scenarios:** ["chunk::access_verify::block_verify_refuses_unsigned_chunk_create_blocks"]
+
+On a node that signs its blocks, Alice adds an article with five paragraphs under a policy. Verifying the article's signed head against Alice's key succeeds for Alice and fails with `missing permission` for Bob and for a request with no identity. A chunk's create blocks are not signed, so verifying a chunk's head block or its `text` block fails with `block has no signature` for Alice, Bob and a request with no identity alike. A chunk delete block is signed and follows the parent's policy, but `_commits` does not expose chunk history after the parent is deleted; that path is covered by the database unit test. Only the in-process client signs with Alice's identity, so this is checked there.
+
 # `defra.chunk.embed`: Embedding chunks
 
 - **Parents:** ["defra.chunk"]

@@ -20,6 +20,8 @@ mod default;
 mod detached;
 mod driven;
 mod env;
+#[cfg(all(test, not(target_family = "wasm")))]
+mod hook_tests;
 mod monitor;
 mod placer;
 mod report;

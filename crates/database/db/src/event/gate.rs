@@ -64,10 +64,8 @@ impl<'page> Gate<'page> {
     }
 
     /// Hide what a provider outside the page's transaction admitted and a
-    /// delete has since removed. Such a provider loses a document's
-    /// registration to a delete on this node only after that delete commits
-    /// here, and may then read the document as public: a snapshot taken after
-    /// it decided holds every such delete. A registration a peer took from a
+    /// delete or a purge on this node has since removed: a snapshot taken
+    /// after it decided holds every such change. A registration a peer took from a
     /// provider the nodes share is not this node's delete: the document is
     /// still alive here, for this page as for every other query.
     ///
@@ -124,10 +122,11 @@ impl<'page> Gate<'page> {
 }
 
 /// Whether the document is neither deleted nor purged in the snapshot the
-/// stores read. A delete unregisters the document, and an unregistered
+/// stores read. A purge unregisters the document, and an unregistered
 /// document reads as public, so the access check alone would show its rows to
 /// anyone. The page decides nothing its transaction writes, so neither read
-/// is validated: a later delete or purge never fails that transaction.
+/// is validated: a later delete or purge never fails that transaction through
+/// the page's rows or access read.
 async fn alive(
     collection: &Collection,
     datastore: &NamespaceView,

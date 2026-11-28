@@ -66,8 +66,7 @@ impl EmbeddedSigner {
 
     /// `request`, signed with this key instead of the node's when
     /// [`Node::execute_request`](crate::Node::execute_request) or
-    /// [`Node::execute_request_in_txn`](crate::Node::execute_request_in_txn)
-    /// runs it.
+    /// [`TxnNode::execute_request`](crate::TxnNode::execute_request) runs it.
     pub fn attach(&self, mut request: QueryRequest) -> QueryRequest {
         request.context = request.context.with_signing(Some(self.config.clone()));
         request

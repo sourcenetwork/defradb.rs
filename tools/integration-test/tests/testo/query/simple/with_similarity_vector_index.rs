@@ -530,11 +530,12 @@ fn query_simple_with_similarity_on_vector_index_returns_k_nearest() {
                                         }
                                     }
                 "#.into(),
-                expected_data: json!(m::explain_scan(json!({ "indexFetches": 1, "docFetches": 2 }))),
+                expected_data: json!(m::explain_scan(json!({ "indexFetches": m::positive(), "docFetches": 2 }))),
                 ..Default::default()
             }
             .into(),
         ],
+        // Deviates from Go: Go reports a routed vector search as one index fetch; defradb.rs counts the index entries the search reads, which depends on the graph, so the test expects a positive count, which Go's 1 also meets.
         ..Default::default()
     }
     .execute();

@@ -318,6 +318,12 @@ fn submission(lost: &Lost) -> AcpTakeoverSubmission {
     let (kind, relation, subject, add) = match lost {
         Lost::Registration { .. } => ("registration", None, None, None),
         Lost::Archive { .. } => ("archive", None, None, None),
+        Lost::Transfer { new_owner, .. } => (
+            "transfer",
+            Some(acp::OWNER_RELATION.to_owned()),
+            Some(new_owner.clone()),
+            None,
+        ),
         Lost::Relationship {
             relation,
             subject,

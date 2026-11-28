@@ -5,7 +5,7 @@ search v1:
 
 - `benchmark_support.rs`
 - `benchmark_data_gen.rs`
-- `search_chunks.rs`
+- `crates/database/db/src/chunk/window.rs`
 
 Those files are the source of truth. This note is only a guide for consumers
 such as `coding-data` that need to mirror the same shape.
@@ -22,8 +22,8 @@ DefraDB owns the store and retrieval side:
 
 The generic dense-search implementation lives in:
 
-- `crates/database/db/src/dense_search.rs`
-- `crates/database/db/src/embedding.rs`
+- `crates/database/db/src/search/dense.rs`
+- `crates/database/db/src/search/embedding.rs`
 
 ## What Stays Outside DefraDB
 
@@ -68,7 +68,8 @@ Instead:
 - return enough parent metadata that results still feel like "a message in a
   session" or "an action in a session"
 
-The generic chunk helper is in `search_chunks.rs`.
+The generic chunk helper is `derive_search_chunks` in
+`crates/database/db/src/chunk/window.rs`.
 
 ## Embedding V1 Contract
 
@@ -101,8 +102,8 @@ Start here:
 
 - schema and fixture shape: `benchmark_support.rs`
 - normalized fixture generation: `benchmark_data_gen.rs`
-- hidden chunk derivation: `search_chunks.rs`
-- generic dense-search implementation: `crates/database/db/src/dense_search.rs`
+- hidden chunk derivation: `crates/database/db/src/chunk/window.rs`
+- generic dense-search implementation: `crates/database/db/src/search/dense.rs`
 
 If a future corpus wants search, the pattern should be:
 

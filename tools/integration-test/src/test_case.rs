@@ -31,6 +31,9 @@ pub struct State {
     pub streams: crate::actions::stream::KeptStreams,
     /// How many nodes the test has started, Go's next node index.
     pub go_nodes_started: u64,
+    /// The Vera node the test's nodes share for document ACP, once a
+    /// `NewNode { isDocumentAcpTest }` started it.
+    pub vera: Option<Arc<crate::shared_vera::SharedVera>>,
 }
 
 /// The transactions a test has begun. Shared by every clone of the state, and
@@ -159,6 +162,26 @@ impl State {
         self.nodes.0.insert(name.to_owned(), slot);
     }
 
+    /// [`State::start_node`], failing with the node builder's error and
+    /// leaving no node `name` when the start is refused.
+    pub fn try_start_node(&mut self, name: &str, spec: NodeSpec) -> Result<(), Failure> {
+        self.stop_node(name, false);
+        self.start_stopped(name, spec)
+    }
+
+    /// Start node `name`, already stopped, keeping its stopped slot when the
+    /// start is refused.
+    fn start_stopped(&mut self, name: &str, spec: NodeSpec) -> Result<(), Failure> {
+        let node =
+            TestNode::try_start(self.client_type(), spec.clone()).map_err(Failure::operation)?;
+        let slot = Slot {
+            spec,
+            node: Some(Arc::new(node)),
+        };
+        self.nodes.0.insert(name.to_owned(), slot);
+        Ok(())
+    }
+
     /// Start stopped node `name` again with NAC options, as Go's `Start`:
     /// `enable_nac` turns NAC on, owned by `owner` when it was never set up.
     /// A start the node refuses leaves it stopped, with the refusal.
@@ -180,14 +203,7 @@ impl State {
         spec.nac_owner = owner;
         configure(&mut spec);
         self.stop_node(name, true);
-        let node =
-            TestNode::try_start(self.client_type(), spec.clone()).map_err(Failure::operation)?;
-        let slot = Slot {
-            spec,
-            node: Some(Arc::new(node)),
-        };
-        self.nodes.0.insert(name.to_owned(), slot);
-        Ok(())
+        self.start_stopped(name, spec)
     }
 
     /// Start the in-process iroh node `name` as `spec` says, failing with the
@@ -230,6 +246,30 @@ impl State {
         }
     }
 
+    /// End node `name`'s process with SIGKILL and keep its data for a later
+    /// start. With `crashed` the process kills itself at an armed crash
+    /// point, and this only waits for that.
+    pub fn kill_node(&mut self, name: &str, crashed: bool) -> Result<(), Failure> {
+        let node = self.node(name)?;
+        match (node.process(), crashed) {
+            (Some(process), true) => process.killed(),
+            (Some(process), false) => process.kill(),
+            // Dropping a Go node's process kills it with SIGKILL.
+            (None, false) if node.is_go() => Ok(()),
+            _ => {
+                return Err(Failure::unsupported(format!(
+                    "killing node {name}: it does not run in a process of its own (NewNode \
+                     ownProcess)"
+                )))
+            }
+        }
+        .map_err(Failure::operation)?;
+        if let Some(slot) = self.nodes.0.get_mut(name) {
+            slot.node = None;
+        }
+        Ok(())
+    }
+
     /// Restart node `name`: start it again when it is stopped; stop and start
     /// it when it keeps its data; leave an in-memory node as it is, as Go's
     /// harness does.
@@ -263,6 +303,44 @@ impl State {
         RequestContext::ambient().with_txn(id)
     }
 
+    /// The scope an in-process node call runs in: inside transaction number
+    /// `txn` when the action names one, as client identity `identity` when it
+    /// names one.
+    pub fn scope_as(
+        &self,
+        txn: Option<usize>,
+        identity: Option<u64>,
+    ) -> crate::node_scope::NodeScope {
+        crate::node_scope::NodeScope {
+            did: identity.map(|seed| {
+                ::identity::Did::new(crate::scenario::identity::did(seed))
+                    .expect("a client identity has a valid DID")
+            }),
+            bearer: None,
+            signing: None,
+            txn: self.context(txn).txn(),
+        }
+    }
+
+    /// [`State::scope_as`] for an in-process write to node `node`, signing
+    /// with the acting client identity's own key where
+    /// [`State::context_on`] attaches it.
+    pub fn scope_on(
+        &self,
+        node: &str,
+        txn: Option<usize>,
+        identity: Option<u64>,
+        enable_signing: Option<bool>,
+    ) -> crate::node_scope::NodeScope {
+        crate::node_scope::NodeScope {
+            signing: self
+                .context_on(node, txn, identity, enable_signing)
+                .signing()
+                .cloned(),
+            ..self.scope_as_on(node, txn, identity)
+        }
+    }
+
     /// [`State::context`] with client identity `identity` acting in it when
     /// the action names one.
     pub fn context_as(&self, txn: Option<usize>, identity: Option<u64>) -> RequestContext {
@@ -271,6 +349,28 @@ impl State {
             Some(seed) => context.with_identity(Some(crate::scenario::identity::did(seed))),
             None => context,
         }
+    }
+
+    /// [`State::scope_as`] with the acting identity's delegation to the
+    /// named node when it uses Vera for document ACP.
+    pub fn scope_as_on(
+        &self,
+        node: &str,
+        txn: Option<usize>,
+        identity: Option<u64>,
+    ) -> crate::node_scope::NodeScope {
+        crate::node_scope::NodeScope {
+            bearer: identity.and_then(|seed| self.vera_delegation(node, seed)),
+            ..self.scope_as(txn, identity)
+        }
+    }
+
+    /// The Vera delegation identity `seed` presents to node `name`, when the
+    /// node is a Rust node that decides document ACP on Vera.
+    pub fn vera_delegation(&self, name: &str, seed: u64) -> Option<String> {
+        let core = self.slot(name)?.node.as_ref()?.core()?;
+        crate::shared_vera::delegation(&core, seed)
+            .unwrap_or_else(|error| panic!("a Vera delegation for identity {seed}: {error}"))
     }
 
     /// [`State::context_as`] for an in-process write to node `node`, carrying

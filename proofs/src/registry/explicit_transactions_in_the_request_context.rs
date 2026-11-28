@@ -13,7 +13,7 @@ pub(super) const PROPERTIES: &[Property] = &[
         family: "Explicit transactions in the request context",
         name: "INV_OnlyOwnerRuns / INV_ReadOnlyNeverWrites / INV_FinishedNeverRuns / INV_DiscardLeavesNothing / INV_NoLostUpdate",
         axis: Tla,
-        anchor: "crates/database/db/src/txn/registry/lifecycle.rs begin_as, run_as, commit_as, discard_as; crates/database/db/src/txn/owner/mod.rs Owners::run, Owners::finish; crates/entry-points/defra-node/src/ops/request.rs txn_begin, txn_commit, txn_discard; crates/engine/query/src/runner/turn.rs read-only rejection; tools/integration-test/tests/testo/txn/txn_context.rs",
+        anchor: "crates/database/db/src/txn/registry/lifecycle.rs begin_as, run_as, commit_as, discard_as; crates/database/db/src/txn/owner/mod.rs Owners::run, Owners::finish; crates/entry-points/defra-node/src/node_core/transaction.rs NodeCore::begin, NodeCore::commit, NodeCore::discard; crates/entry-points/defra-node/src/scope/txn_node.rs TxnNode::commit, TxnNode::discard; crates/engine/query/src/runner/turn.rs read-only rejection; tools/integration-test/tests/testo/txn/txn_context.rs",
         model_ref: "MC_TxnContext_{Green,Red_NoOwnerCheck,Red_ReadOnlyWrites,Red_RunAfterEnd,Red_DiscardLeaks,Red_NoConflictCheck}.cfg",
         tiers: &[Boundary],
         bound_by: "",
