@@ -42,17 +42,18 @@ fn newest_delta(node: &integration_test::DefraClient, doc_id: &str, field: &str)
         .expect("delta is base64")
 }
 
-/// A field introduced by an update on a document encrypted as a whole must be
-/// stored as ciphertext, across separate requests — the create and the update
-/// run in different transactions, so nothing in-process carries the policy
-/// between them.
+/// A field introduced by an update on a document whose every field is
+/// encrypted must be stored as ciphertext, across separate requests: the
+/// create and the update run in different transactions, so the decision comes
+/// from the field heads in the DAG (`field_encryption_source` rule (c)), not
+/// from anything in-process.
 ///
-/// This is the end-to-end form of `db-blocks`'
+/// This is the end-to-end form of `db`'s
 /// `field_added_by_update_inherits_document_encryption`, and Rust-only on
 /// purpose: run against a Go node this same body fails, because Go derives
 /// encryption from the field's own heads (`internal/core/block/store.go`) and a
-/// field introduced by an update has none. Asserting Go's behaviour here would
-/// pin an upstream defect, so the divergence is documented rather than tested.
+/// field introduced by an update has none. The divergence is deliberate and
+/// recorded in `defra_core::encryption`.
 async fn document_policy_covers_new_field_test(cluster: TestCluster) {
     let node = cluster.client(0);
 

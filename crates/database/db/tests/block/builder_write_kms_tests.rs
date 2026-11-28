@@ -206,10 +206,11 @@ fn inheritance_resolves_the_key_through_the_kms() {
     .unwrap()
 }
 
-/// The document-level policy fallback must mint through the KMS as well. A
-/// field introduced by an update on an `encrypt_doc` document has no head to
-/// inherit from, so it takes the generate path — and on a KMS-configured node
-/// that key belongs in the KMS, not in an inline block.
+/// The document-scope key (`FieldEncryptionSource::DocScopeNew`) must mint
+/// through the KMS as well. Every field head of the document (`name`) is
+/// encrypted, so a field an update writes first (`bio`) has no head to
+/// inherit from and takes the generate path; on a KMS-configured node that
+/// key belongs in the KMS, not in an inline block.
 #[test]
 fn document_policy_fallback_mints_through_the_kms() {
     workers::block_on(async {
