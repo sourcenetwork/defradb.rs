@@ -20,6 +20,8 @@ struct GoIndexCreateRequest {
     unique: bool,
     #[serde(rename = "Vector", skip_serializing_if = "Option::is_none")]
     vector: Option<schema::VectorIndexDescription>,
+    #[serde(rename = "FullText", skip_serializing_if = "Option::is_none")]
+    fulltext: Option<schema::FullTextIndexDescription>,
     #[serde(
         rename = "BuildInBackground",
         skip_serializing_if = "std::ops::Not::not"
@@ -134,8 +136,10 @@ impl HttpClient {
         unique: bool,
         vector: Option<schema::VectorIndexDescription>,
     ) -> Result<IndexInfo> {
-        self.index_create_with_build_mode(txn, collection, fields, name, unique, vector, false)
-            .await
+        self.index_create_with_build_mode(
+            txn, collection, fields, name, unique, vector, None, false,
+        )
+        .await
     }
 
     /// Create an index and optionally return while its backfill runs.
@@ -148,6 +152,7 @@ impl HttpClient {
         name: Option<&str>,
         unique: bool,
         vector: Option<schema::VectorIndexDescription>,
+        fulltext: Option<schema::FullTextIndexDescription>,
         build_in_background: bool,
     ) -> Result<IndexInfo> {
         let request = GoIndexCreateRequest {
@@ -161,6 +166,7 @@ impl HttpClient {
                 .collect(),
             unique,
             vector,
+            fulltext,
             build_in_background,
         };
         let path = format!("collections/{}/indexes", encode(collection));

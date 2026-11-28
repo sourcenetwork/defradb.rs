@@ -22,7 +22,7 @@ fn a_repeated_ordered_index_is_refused_and_nothing_is_defined() {
     workers::block_on(async {
         let (_store, db) = open_with_collection("Users").await;
         let (fields, kind) = by_name();
-        db.create_index("Users", None, fields.clone(), kind)
+        db.create_index("Users", None, fields.clone(), kind.clone())
             .await
             .unwrap();
 

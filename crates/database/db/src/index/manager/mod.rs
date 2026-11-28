@@ -12,8 +12,8 @@ use datastore::NamespaceView;
 use document::Document;
 use rapidhash::{HashMapExt, RapidHashMap};
 use schema::{
-    CollectionVersion, IndexDescription, IndexKind, IndexedFieldDescription,
-    OrderedIndexDescription, VectorIndexDescription,
+    CollectionVersion, FullTextIndexDescription, IndexDescription, IndexKind,
+    IndexedFieldDescription, OrderedIndexDescription, VectorIndexDescription,
 };
 use std::sync::atomic::AtomicBool;
 use storage::corekv::Key;
@@ -110,6 +110,41 @@ fn require_doc_short_id(doc_short_id: u64) -> Result<()> {
 /// not share the same namespace as user-defined secondary indexes.
 pub fn fulltext_index_name(field_name: &str) -> String {
     format!("__fulltext__:{field_name}")
+}
+
+/// The stable ID of the full-text index over `field_name`.
+///
+/// The high bit separates full-text IDs from ordinary index IDs, and the hash
+/// keeps them stable across restarts and runtimes.
+pub fn fulltext_index_id(field_name: &str) -> u32 {
+    let mut hash: u32 = 2166136261;
+    for byte in field_name.as_bytes() {
+        hash ^= *byte as u32;
+        hash = hash.wrapping_mul(16777619);
+    }
+    hash | 0x8000_0000
+}
+
+/// The canonical index description of a full-text definition.
+pub fn fulltext_index_description(fulltext: &schema::FullTextIndexDescription) -> IndexDescription {
+    fulltext_index_description_with_id(fulltext, fulltext_index_id(&fulltext.field_name))
+}
+
+fn fulltext_index_description_with_id(
+    fulltext: &schema::FullTextIndexDescription,
+    id: u32,
+) -> IndexDescription {
+    IndexDescription {
+        name: fulltext_index_name(&fulltext.field_name),
+        id,
+        fields: vec![IndexedFieldDescription {
+            name: fulltext.field_name.clone(),
+            descending: false,
+        }],
+        unique: false,
+        kind: Some(IndexKind::FullText(fulltext.clone())),
+        auto_generated: false,
+    }
 }
 
 /// Manages indexes for a collection.
@@ -241,27 +276,8 @@ impl IndexManager {
         // with regular indexes (which use the IndexIDSequenceKey mechanism).
         // The high-bit (0x8000_0000) separates the namespace from regular index IDs.
         for ft_desc in &schema.fulltext_indexes {
-            let idx_name = fulltext_index_name(&ft_desc.field_name);
-            let idx_id = {
-                // FNV-1a: stable across Rust versions unlike DefaultHasher
-                let mut h: u32 = 2166136261;
-                for byte in ft_desc.field_name.as_bytes() {
-                    h ^= *byte as u32;
-                    h = h.wrapping_mul(16777619);
-                }
-                h | 0x8000_0000
-            };
-            let desc = IndexDescription {
-                name: idx_name.clone(),
-                id: idx_id,
-                fields: vec![IndexedFieldDescription {
-                    name: ft_desc.field_name.clone(),
-                    descending: false,
-                }],
-                unique: false,
-                kind: None,
-                auto_generated: false,
-            };
+            let desc = fulltext_index_description(ft_desc);
+            let idx_name = desc.name.clone();
             let ft_index = FullTextIndex::new(collection_short_id, desc, ft_desc.clone());
             manager
                 .indexes
@@ -314,6 +330,39 @@ impl IndexManager {
         .await
     }
 
+    /// Create the full-text index of a definition.
+    ///
+    /// The definition uses the same retired-ID sequence as every other index,
+    /// so a dropped full-text index's cleanup can never delete a replacement's
+    /// entries.
+    async fn create_fulltext_index(
+        &mut self,
+        datastore: &NamespaceView,
+        fulltext: FullTextIndexDescription,
+    ) -> Result<IndexDescription> {
+        let errors = fulltext.validation_errors();
+        if !errors.is_empty() {
+            return Err(Error::Other(errors.join("; ")));
+        }
+        if fulltext.field_name.is_empty() {
+            return Err(Error::Other(
+                "full-text index must name a field".to_string(),
+            ));
+        }
+        let desc =
+            fulltext_index_description_with_id(&fulltext, self.next_index_id(datastore).await?);
+        if self.indexes.contains_key(&desc.name) {
+            return Err(Error::Other(format!(
+                "index with name already exists. Name: {}",
+                desc.name
+            )));
+        }
+        let index = FullTextIndex::new(self.collection_short_id, desc.clone(), fulltext);
+        self.indexes
+            .insert(desc.name.clone(), IndexType::FullText(index));
+        Ok(desc)
+    }
+
     /// The index kind a create-index request asks for.
     ///
     /// A vector index covers exactly one field and is never unique, which is
@@ -330,7 +379,32 @@ impl IndexManager {
         fields: &[IndexedFieldDescription],
         unique: bool,
         vector: Option<VectorIndexDescription>,
+        fulltext: Option<FullTextIndexDescription>,
     ) -> Result<IndexKind> {
+        if vector.is_some() && fulltext.is_some() {
+            return Err(Error::Other(
+                "an index cannot be both vector and full-text".to_string(),
+            ));
+        }
+        if let Some(fulltext) = fulltext {
+            if unique {
+                return Err(Error::Other("full-text index cannot be unique".to_string()));
+            }
+            if fields.len() != 1 {
+                return Err(Error::Other(format!(
+                    "full-text index must be on exactly one field, got {}",
+                    fields.len()
+                )));
+            }
+            if !fulltext.field_name.is_empty() && fields[0].name != fulltext.field_name {
+                return Err(Error::Other(
+                    "full-text index field must match the requested field".to_string(),
+                ));
+            }
+            let mut fulltext = fulltext;
+            fulltext.field_name = fields[0].name.clone();
+            return Ok(IndexKind::FullText(fulltext));
+        }
         let Some(vector) = vector else {
             return Ok(IndexKind::Ordered(OrderedIndexDescription { unique }));
         };
@@ -360,6 +434,20 @@ impl IndexManager {
         fields: Vec<IndexedFieldDescription>,
         kind: IndexKind,
     ) -> Result<IndexDescription> {
+        if let IndexKind::FullText(fulltext) = &kind {
+            let errors = fulltext.validation_errors();
+            if !errors.is_empty() {
+                return Err(Error::Other(errors.join("; ")));
+            }
+            if fields.len() != 1 || fields[0].name != fulltext.field_name {
+                return Err(Error::Other(
+                    "full-text index must name exactly its indexed field".to_string(),
+                ));
+            }
+            return self
+                .create_fulltext_index(datastore, fulltext.clone())
+                .await;
+        }
         let name = if name.is_empty() {
             let first_field = fields.first().map(|f| f.name.as_str()).unwrap_or("unknown");
             let existing: Vec<String> = self.indexes.keys().cloned().collect();
@@ -454,6 +542,7 @@ impl IndexManager {
             .indexes
             .values()
             .map(|index| index.description().id)
+            .filter(|id| *id <= 0x7fff_ffff)
             .max()
             .unwrap_or(0);
 
@@ -915,6 +1004,11 @@ pub(crate) async fn retire_index_id(
     collection_short_id: u32,
     index_id: u32,
 ) -> Result<()> {
+    // Static SDL full-text indexes use a separate deterministic namespace.
+    // Their high bit must not advance the ordinary index floor.
+    if index_id > 0x7fff_ffff {
+        return Ok(());
+    }
     if index_id_floor(datastore, collection_short_id).await? >= index_id {
         return Ok(());
     }

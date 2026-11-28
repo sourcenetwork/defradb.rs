@@ -380,6 +380,53 @@ fn test_regular_index_named_field_fulltext_does_not_collide_with_fulltext_index(
 }
 
 #[test]
+fn dynamic_fulltext_index_uses_fresh_ids_and_reuses_none_after_drop() {
+    workers::block_on(async {
+        let store = RegolithStore::in_memory().unwrap();
+        let db = DB::new(store).unwrap();
+        let txn = db.new_txn(false).await.unwrap();
+        let datastore = txn.datastore().unwrap();
+        let fields = vec![IndexedFieldDescription {
+            name: "name".to_string(),
+            descending: false,
+        }];
+        let kind = IndexManager::requested_kind(
+            &fields,
+            false,
+            None,
+            Some(FullTextIndexDescription::new("name")),
+        )
+        .unwrap();
+        let mut manager = IndexManager::new(1);
+
+        let first = manager
+            .create_index_of_kind(
+                &datastore,
+                "users",
+                String::new(),
+                fields.clone(),
+                kind.clone(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(first.name, RESERVED_FULLTEXT_INDEX_NAME_FOR_NAME);
+        assert_eq!(first.id, 1);
+        assert!(matches!(first.kind, Some(schema::IndexKind::FullText(_))));
+
+        assert!(manager
+            .delete_index(&datastore, RESERVED_FULLTEXT_INDEX_NAME_FOR_NAME)
+            .await
+            .unwrap());
+        let second = manager
+            .create_index_of_kind(&datastore, "users", String::new(), fields, kind)
+            .await
+            .unwrap();
+        assert_eq!(second.id, 2);
+    })
+    .unwrap();
+}
+
+#[test]
 fn test_on_document_create() {
     workers::block_on(async {
         let store = RegolithStore::in_memory().unwrap();
@@ -2073,7 +2120,7 @@ mod requested_kind {
     #[test]
     fn no_vector_config_is_an_ordered_index() {
         for unique in [false, true] {
-            let kind = IndexManager::requested_kind(&[field("name")], unique, None)
+            let kind = IndexManager::requested_kind(&[field("name")], unique, None, None)
                 .expect("an ordered index takes any uniqueness");
             match kind {
                 IndexKind::Ordered(ordered) => assert_eq!(ordered.unique, unique),
@@ -2084,7 +2131,7 @@ mod requested_kind {
 
     #[test]
     fn a_single_field_vector_request_is_a_vector_index() {
-        let kind = IndexManager::requested_kind(&[field("embedding")], false, Some(vector()))
+        let kind = IndexManager::requested_kind(&[field("embedding")], false, Some(vector()), None)
             .expect("one field and not unique is the valid shape");
         match kind {
             IndexKind::Vector(described) => assert_eq!(described, vector()),
@@ -2094,7 +2141,7 @@ mod requested_kind {
 
     #[test]
     fn a_unique_vector_request_is_refused() {
-        let error = IndexManager::requested_kind(&[field("embedding")], true, Some(vector()))
+        let error = IndexManager::requested_kind(&[field("embedding")], true, Some(vector()), None)
             .expect_err("unique and vector cannot both hold")
             .to_string();
         assert!(error.contains("unique"), "got: {error}");
@@ -2103,7 +2150,7 @@ mod requested_kind {
     #[test]
     fn a_multi_field_vector_request_is_refused() {
         for fields in [vec![], vec![field("a"), field("b")]] {
-            let error = IndexManager::requested_kind(&fields, false, Some(vector()))
+            let error = IndexManager::requested_kind(&fields, false, Some(vector()), None)
                 .expect_err("a vector index covers exactly one field")
                 .to_string();
             assert!(error.contains("exactly one field"), "got: {error}");

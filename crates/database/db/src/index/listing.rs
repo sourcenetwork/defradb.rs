@@ -8,11 +8,11 @@ use schema::{CollectionVersion, FieldKind, IndexDescription, ScalarKind};
 /// The indexes of `version` with their build state from `actions`, less the
 /// index the node adds for each primary relation on its own. An index
 /// without an action record is complete.
-pub fn index_listing<'v>(
-    version: &'v CollectionVersion,
+pub fn index_listing(
+    version: &CollectionVersion,
     actions: &RapidHashMap<u32, ActionExecution>,
-) -> Vec<(&'v IndexDescription, ActionExecution)> {
-    version
+) -> Vec<(IndexDescription, ActionExecution)> {
+    let mut listed: Vec<_> = version
         .indexes
         .iter()
         .filter(|index| !is_hidden_relation_index(version, index))
@@ -26,9 +26,23 @@ pub fn index_listing<'v>(
                     status: ActionStatus::COMPLETED,
                     ..Default::default()
                 });
-            (index, execution)
+            (index.clone(), execution)
         })
-        .collect()
+        .collect();
+    listed.extend(version.fulltext_indexes.iter().map(|fulltext| {
+        let index = crate::index::fulltext_index_description(fulltext);
+        let execution = actions
+            .get(&index.id)
+            .cloned()
+            .unwrap_or_else(|| ActionExecution {
+                collection_id: version.collection_id.clone(),
+                subject: index.id.to_string(),
+                status: ActionStatus::COMPLETED,
+                ..Default::default()
+            });
+        (index, execution)
+    }));
+    listed
 }
 
 /// Whether `index` is the one the node adds for a primary relation's

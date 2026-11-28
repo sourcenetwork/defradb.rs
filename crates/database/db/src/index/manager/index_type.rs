@@ -49,6 +49,13 @@ impl IndexType {
         collection_short_id: u32,
         desc: IndexDescription,
     ) -> crate::index::error::Result<Self> {
+        if let Some(fulltext) = desc.fulltext().cloned() {
+            return Ok(IndexType::FullText(FullTextIndex::new(
+                collection_short_id,
+                desc,
+                fulltext,
+            )));
+        }
         if desc.is_vector() {
             return Ok(IndexType::Vector(VectorIndex::try_new(
                 collection_short_id,

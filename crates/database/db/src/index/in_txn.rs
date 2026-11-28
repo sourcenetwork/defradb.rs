@@ -39,7 +39,12 @@ where
             .await?
             .ok_or_else(|| Error::CollectionNotFound(collection_name.to_string()))?;
         txn.validate_collection_for_write(&collection).await?;
-        refuse_duplicate_index(collection.schema(), name.unwrap_or(""), &fields, kind)?;
+        refuse_duplicate_index(
+            collection.schema(),
+            name.unwrap_or(""),
+            &fields,
+            kind.clone(),
+        )?;
         let index = self
             .stage_index_definition(
                 txn,

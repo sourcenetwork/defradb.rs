@@ -8,8 +8,8 @@ pub struct IndexField {
     pub descending: bool,
 }
 
-/// An index to create. `ordered` and `vector` carry the index's own option
-/// objects.
+/// An index to create. `ordered`, `vector` and `fulltext` carry the index's
+/// own option objects.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct IndexSpec {
     pub name: String,
@@ -19,4 +19,6 @@ pub struct IndexSpec {
     pub ordered: Option<Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub vector: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fulltext: Option<Value>,
 }

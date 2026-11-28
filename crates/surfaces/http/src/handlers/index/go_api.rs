@@ -35,6 +35,9 @@ pub struct GoCreateIndexRequest {
     /// Vector index config. Present iff this is a vector index request.
     #[serde(rename = "Vector", default)]
     pub vector: Option<schema::VectorIndexDescription>,
+    /// Full-text index config. Present iff this is a full-text index request.
+    #[serde(rename = "FullText", default)]
+    pub fulltext: Option<schema::FullTextIndexDescription>,
     /// Return after the index definition commits while backfill continues.
     #[serde(rename = "BuildInBackground", default)]
     pub build_in_background: bool,
@@ -203,8 +206,13 @@ pub async fn go_create_index(
                 descending: field.descending,
             })
             .collect();
-        let kind = db::IndexManager::requested_kind(&fields, request.unique, request.vector)
-            .map_err(|e| HttpError::BadRequest(e.to_string()))?;
+        let kind = db::IndexManager::requested_kind(
+            &fields,
+            request.unique,
+            request.vector,
+            request.fulltext,
+        )
+        .map_err(|e| HttpError::BadRequest(e.to_string()))?;
         let index = state
             .executor
             .create_index_in_txn_as(&context, &collection, name.as_deref(), fields, kind)
@@ -225,6 +233,7 @@ pub async fn go_create_index(
             name.as_deref(),
             request.unique,
             request.vector,
+            request.fulltext,
             request.build_in_background,
         )
         .await
@@ -308,13 +317,7 @@ pub async fn go_delete_index(
         ))
     })?;
 
-    // Validate index name
-    validate_identifier(&index_name).map_err(|_| {
-        HttpError::BadRequest(format!(
-            "invalid index name '{}': must match [A-Za-z_][A-Za-z0-9_]*",
-            index_name
-        ))
-    })?;
+    validate_index_name(&index_name)?;
 
     if let Some(context) = txn_context(&identity, &headers)? {
         state
@@ -331,6 +334,23 @@ pub async fn go_delete_index(
 
     // Return empty body to match Go DefraDB behavior
     Ok(StatusCode::OK)
+}
+
+/// Public index names are identifiers; a full-text index's canonical internal
+/// name is accepted so the same listed name can remove it.
+fn validate_index_name(name: &str) -> Result<(), HttpError> {
+    if validate_identifier(name).is_ok() {
+        return Ok(());
+    }
+    if let Some(field) = name.strip_prefix("__fulltext__:") {
+        if validate_identifier(field).is_ok() {
+            return Ok(());
+        }
+    }
+    Err(HttpError::BadRequest(format!(
+        "invalid index name '{}': must match [A-Za-z_][A-Za-z0-9_]*",
+        name
+    )))
 }
 
 /// List all indexes across all collections (Go-compatible route).
@@ -409,6 +429,41 @@ mod tests {
         .unwrap();
         assert!(!legacy.build_in_background);
         assert_eq!(legacy.vector.unwrap().dimensions, 3);
+    }
+
+    #[test]
+    fn fulltext_configuration_gets_its_field_from_the_request() {
+        let request: GoCreateIndexRequest = serde_json::from_str(
+            r#"{"Fields":[{"Name":"body"}],"FullText":{"Language":"french","K1":1.3,"B":0.6}}"#,
+        )
+        .unwrap();
+        let fields: Vec<_> = request
+            .fields
+            .iter()
+            .map(|field| schema::IndexedFieldDescription {
+                name: field.name.clone(),
+                descending: field.descending,
+            })
+            .collect();
+        let kind =
+            db::IndexManager::requested_kind(&fields, false, None, request.fulltext).unwrap();
+        assert_eq!(
+            kind,
+            schema::IndexKind::FullText(schema::FullTextIndexDescription {
+                field_name: "body".into(),
+                language: "french".into(),
+                k1: 1.3,
+                b: 0.6,
+            })
+        );
+    }
+
+    #[test]
+    fn only_the_canonical_fulltext_name_extends_index_name_validation() {
+        assert!(validate_index_name("by_body").is_ok());
+        assert!(validate_index_name("__fulltext__:body").is_ok());
+        assert!(validate_index_name("__fulltext__:body/path").is_err());
+        assert!(validate_index_name("other:body").is_err());
     }
 
     #[test]

@@ -5,7 +5,9 @@ use std::sync::Arc;
 use acp::nac::NodePermission;
 use db::IndexManager;
 use defra_core::{ActionExecution, RequestContext};
-use schema::{IndexDescription, IndexedFieldDescription, VectorIndexDescription};
+use schema::{
+    FullTextIndexDescription, IndexDescription, IndexedFieldDescription, VectorIndexDescription,
+};
 use serde::Serialize;
 
 use super::NodeCore;
@@ -29,6 +31,7 @@ impl NodeCore<'_> {
     /// of collection `collection`, `unique` or not, and index the documents
     /// it already holds: a vector index when `vector` describes one, an
     /// ordered one otherwise. Go's `Collection.CreateIndex`.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) async fn create_index(
         &self,
         context: &RequestContext,
@@ -37,14 +40,18 @@ impl NodeCore<'_> {
         fields: Vec<IndexedFieldDescription>,
         unique: bool,
         vector: Option<VectorIndexDescription>,
+        fulltext: Option<FullTextIndexDescription>,
     ) -> Result<IndexDescription> {
-        self.new_index(context, collection, name, fields, unique, vector, true)
-            .await
+        self.new_index(
+            context, collection, name, fields, unique, vector, fulltext, true,
+        )
+        .await
     }
 
     /// [`Self::create_index`], returning once the index is defined: it is
     /// listed as building until its backfill completes. Go's
     /// `Collection.NewIndex`.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) async fn start_index(
         &self,
         context: &RequestContext,
@@ -53,9 +60,12 @@ impl NodeCore<'_> {
         fields: Vec<IndexedFieldDescription>,
         unique: bool,
         vector: Option<VectorIndexDescription>,
+        fulltext: Option<FullTextIndexDescription>,
     ) -> Result<IndexDescription> {
-        self.new_index(context, collection, name, fields, unique, vector, false)
-            .await
+        self.new_index(
+            context, collection, name, fields, unique, vector, fulltext, false,
+        )
+        .await
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -67,12 +77,13 @@ impl NodeCore<'_> {
         fields: Vec<IndexedFieldDescription>,
         unique: bool,
         vector: Option<VectorIndexDescription>,
+        fulltext: Option<FullTextIndexDescription>,
         wait_for_build: bool,
     ) -> Result<IndexDescription> {
         let caller = self.node.admitted_caller(context)?;
         if caller.txn().is_some() {
-            let kind =
-                IndexManager::requested_kind(&fields, unique, vector).map_err(db::Error::from)?;
+            let kind = IndexManager::requested_kind(&fields, unique, vector, fulltext)
+                .map_err(db::Error::from)?;
             return self
                 .node
                 .runner()
@@ -91,7 +102,7 @@ impl NodeCore<'_> {
                 database
                     .check_node_access_as(&context, NodePermission::IndexCreate)
                     .await?;
-                let kind = IndexManager::requested_kind(&fields, unique, vector)
+                let kind = IndexManager::requested_kind(&fields, unique, vector, fulltext)
                     .map_err(db::Error::from)?;
                 Ok(match wait_for_build {
                     true => {
@@ -203,7 +214,7 @@ fn listings(
     db::index_listing(version, actions)
         .into_iter()
         .map(|(index, execution)| IndexListing {
-            description: index.clone(),
+            description: index,
             collection_name: version.name.clone(),
             execution,
         })

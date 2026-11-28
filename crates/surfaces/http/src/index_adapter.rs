@@ -66,6 +66,7 @@ impl<S: Store + 'static> IndexOperations for IndexAdapter<S> {
         }))
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn create_index(
         &self,
         collection: &str,
@@ -73,6 +74,7 @@ impl<S: Store + 'static> IndexOperations for IndexAdapter<S> {
         name: Option<&str>,
         unique: bool,
         vector: Option<schema::VectorIndexDescription>,
+        fulltext: Option<schema::FullTextIndexDescription>,
         build_in_background: bool,
     ) -> Result<IndexInfo, String> {
         self.check_access(true, acp::nac::NodePermission::IndexCreate)
@@ -85,7 +87,7 @@ impl<S: Store + 'static> IndexOperations for IndexAdapter<S> {
                 descending: false,
             })
             .collect();
-        let kind = IndexManager::requested_kind(&indexed_fields, unique, vector)
+        let kind = IndexManager::requested_kind(&indexed_fields, unique, vector, fulltext)
             .map_err(|e| format!("{}", e))?;
         let index_desc = if build_in_background {
             self.database
@@ -162,7 +164,7 @@ impl<S: Store + 'static> IndexOperations for IndexAdapter<S> {
                 .list_index_actions_as(&self.context(), col.collection_id())
                 .await
                 .map_err(|e| format!("{}", e))?;
-            for idx in col.get_indexes() {
+            for (idx, execution) in db::index_listing(col.schema(), &actions) {
                 result.push(IndexInfo {
                     kind: idx.kind,
                     id: idx.id,
@@ -182,7 +184,7 @@ impl<S: Store + 'static> IndexOperations for IndexAdapter<S> {
                         })
                         .collect(),
                     unique: idx.unique,
-                    execution: actions.get(&idx.id).cloned(),
+                    execution: Some(execution),
                 });
             }
         }

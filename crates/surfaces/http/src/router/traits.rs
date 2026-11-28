@@ -34,6 +34,7 @@ pub trait IndexOperations: defra_core::thread_bounds::MaybeSendSync {
     /// vector config and build an ordinary index over the vector field.
     /// When `build_in_background` is true, return after the index definition
     /// commits and let the backfill finish independently.
+    #[allow(clippy::too_many_arguments)]
     async fn create_index(
         &self,
         collection: &str,
@@ -41,6 +42,7 @@ pub trait IndexOperations: defra_core::thread_bounds::MaybeSendSync {
         name: Option<&str>,
         unique: bool,
         vector: Option<schema::VectorIndexDescription>,
+        fulltext: Option<schema::FullTextIndexDescription>,
         build_in_background: bool,
     ) -> Result<IndexInfo, String>;
 

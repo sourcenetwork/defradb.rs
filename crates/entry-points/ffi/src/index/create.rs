@@ -54,6 +54,7 @@ pub unsafe fn defra_index_new(
                         fields,
                         is_unique != 0,
                         vector,
+                        None,
                     )
                     .await
             })
