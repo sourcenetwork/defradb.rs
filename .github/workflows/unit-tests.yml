@@ -56,17 +56,31 @@ jobs:
         -p lens-host -p defra-wasm -p benches -p ffi-test
       NODE_P2P: -p defra-node --features p2p,http,libp2p
     steps:
+      # macOS builds one feature set for every step: each cargo command with other
+      # features or packages rebuilt a large part of the tree (about 25 of a 63-minute
+      # job). So `all` turns on the node's P2P features and the iroh transport, and
+      # takes conformance's library tests into the same run. Linux still covers the
+      # crates without those features.
       - name: Pick the packages
         env:
           GROUP: ${{ matrix.group }}
         run: |
+          features=""
+          filter="all()"
           case "$GROUP" in
-            all) packages="$CORE $DATA $NETWORK $SURFACES" ;;
+            all)
+              packages="$CORE $DATA $NETWORK $SURFACES -p conformance"
+              features="--features defra-node/p2p,defra-node/http,defra-node/libp2p,p2p/iroh-transport"
+              filter="not (package(conformance) & not kind(lib))" ;;
             core) packages="$CORE" ;; data) packages="$DATA" ;;
             network) packages="$NETWORK" ;; surfaces) packages="$SURFACES" ;;
             node-p2p) packages="$NODE_P2P" ;;
           esac
-          echo "PACKAGES=$packages" >> "$GITHUB_ENV"
+          {
+            echo "PACKAGES=$packages"
+            echo "FEATURES=$features"
+            echo "FILTER=$filter"
+          } >> "$GITHUB_ENV"
       - if: inputs.os == 'linux'
         uses: runs-on/action@v2
       - uses: actions/checkout@v7
@@ -88,16 +102,16 @@ jobs:
         with:
           shared-key: unit
           save-if: ${{ github.ref == 'refs/heads/main' && (matrix.group == 'surfaces' || matrix.group == 'all') }}
-      - run: cargo nextest run --cargo-profile super-dev $PACKAGES
+      - run: cargo nextest run --cargo-profile super-dev $PACKAGES $FEATURES -E "$FILTER"
       # The proofs registry anchors and family matrix are static checks the merge
       # queue kept failing on (#3308); they reuse this group's p2p build.
-      - if: matrix.group == 'network' || matrix.group == 'all'
+      - if: matrix.group == 'network'
         run: cargo nextest run --cargo-profile super-dev -p conformance --lib
-      # The node's P2P tests need features the workspace run leaves off.
-      - if: matrix.group == 'all'
-        run: cargo nextest run --cargo-profile super-dev $NODE_P2P
+      # Same packages and features as the run above, so nothing is rebuilt.
       - name: Check loopback gateway discovery listeners
         if: runner.os == 'macOS'
-        run: cargo test --profile super-dev -p p2p --features iroh-transport --lib iroh::endpoint_config::bind_tests::loopback_endpoint_does_not_open_wildcard_gateway_discovery_listeners -- --exact --ignored
+        run: >-
+          cargo nextest run --cargo-profile super-dev $PACKAGES $FEATURES --run-ignored only
+          -E 'package(p2p) & test(=iroh::endpoint_config::bind_tests::loopback_endpoint_does_not_open_wildcard_gateway_discovery_listeners)'
       # nextest does not run doctests.
-      - run: cargo test --doc --profile super-dev $PACKAGES
+      - run: cargo test --doc --profile super-dev $PACKAGES $FEATURES
